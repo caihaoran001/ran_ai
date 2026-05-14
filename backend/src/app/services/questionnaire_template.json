@@ -1,0 +1,1044 @@
+{
+  "title": "高燃人生28天训练营｜AI用户主档（必填）",
+  "fields": [
+    {
+      "id": "SEGMENTATION1774103277530mn0fa9y2",
+      "key": "SEGMENTATION1774103277530mn0fa9y2",
+      "type": "SEGMENTATION",
+      "title": "模块 1｜身份建档",
+      "label": "模块 1｜身份建档",
+      "subtitle": "当您完成并提交以下问卷信息，即代表您同意授权我们将问卷信息用于后续健康评估、服务联系和训练营陪跑。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774103358253mn0fc08d",
+      "key": "SIMPLE1774103358253mn0fc08d",
+      "type": "SIMPLE",
+      "title": "您的真实姓名",
+      "label": "您的真实姓名",
+      "subtitle": "用于后续服务联系、社群管理",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774103429810mn0fdjg2",
+      "key": "SIMPLE1774103429810mn0fdjg2",
+      "type": "SIMPLE",
+      "title": "您的手机号",
+      "label": "您的手机号",
+      "subtitle": "用于后续服务联系、社群管理",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774103480574mn0femm6",
+      "key": "SIMPLE1774103480574mn0femm6",
+      "type": "SIMPLE",
+      "title": "抖音昵称 / 常用称呼",
+      "label": "抖音昵称 / 常用称呼",
+      "subtitle": "填写抖音昵称方便我们对应找到您的抖音订单。您也可以告诉我们希望我们日常私聊时称呼您的方式。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774103553031mn0fg6ix",
+      "key": "RADIO1774103553031mn0fg6ix",
+      "type": "RADIO",
+      "title": "您的性别",
+      "label": "您的性别",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "男",
+        "女"
+      ]
+    },
+    {
+      "id": "SIMPLE1774103589114mn0fgyd6",
+      "key": "SIMPLE1774103589114mn0fgyd6",
+      "type": "SIMPLE",
+      "title": "您的年龄",
+      "label": "您的年龄",
+      "subtitle": "",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774103860160mn0fmri8",
+      "key": "SIMPLE1774103860160mn0fmri8",
+      "type": "SIMPLE",
+      "title": "您所在的城市",
+      "label": "您所在的城市",
+      "subtitle": "",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774103904301mn0fnpkf",
+      "key": "RADIO1774103904301mn0fnpkf",
+      "type": "RADIO",
+      "title": "我们方便联系您的时间段",
+      "label": "我们方便联系您的时间段",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "上午9-12点之间",
+        "下午13-18点之间",
+        "晚上20-22点之间",
+        "全天都可以"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774103999829mn0fpr9y",
+      "key": "SEGMENTATION1774103999829mn0fpr9y",
+      "type": "SEGMENTATION",
+      "title": "模块 2｜基础身体信息",
+      "label": "模块 2｜基础身体信息",
+      "subtitle": "本段用于建立您的基础档案，辅助判断执行难点与身体状态。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774104038286mn0fqky6",
+      "key": "SIMPLE1774104038286mn0fqky6",
+      "type": "SIMPLE",
+      "title": "您的身高（cm/厘米）",
+      "label": "您的身高（cm/厘米）",
+      "subtitle": "",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774104087629mn0frn0t",
+      "key": "SIMPLE1774104087629mn0frn0t",
+      "type": "SIMPLE",
+      "title": "您当前体重（kg/公斤）",
+      "label": "您当前体重（kg/公斤）",
+      "subtitle": "",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774104132462mn0fslm6",
+      "key": "SIMPLE1774104132462mn0fslm6",
+      "type": "SIMPLE",
+      "title": "您当前的体脂率（建议测量，可后续告知）",
+      "label": "您当前的体脂率（建议测量，可后续告知）",
+      "subtitle": "",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774104236120mn0futlk",
+      "key": "SIMPLE1774104236120mn0futlk",
+      "type": "SIMPLE",
+      "title": "您当前的腰围（建议测量，可后续告知）",
+      "label": "您当前的腰围（建议测量，可后续告知）",
+      "subtitle": "",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774104297253mn0fw4rr",
+      "key": "RADIO1774104297253mn0fw4rr",
+      "type": "RADIO",
+      "title": "您最近 3 个月体重变化",
+      "label": "您最近 3 个月体重变化",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "基本稳定",
+        "缓慢上升",
+        "明显上升",
+        "缓慢下降",
+        "明显下降",
+        "不确定"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774104390470mn0fy4p2",
+      "key": "SEGMENTATION1774104390470mn0fy4p2",
+      "type": "SEGMENTATION",
+      "title": "模块 3｜您为什么来参加这次训练营？",
+      "label": "模块 3｜您为什么来参加这次训练营？",
+      "subtitle": "本段帮您发现真正的问题和本次28天想改善的体验。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "CHECKBOX1774104416332mn0fyoni",
+      "key": "CHECKBOX1774104416332mn0fyoni",
+      "type": "CHECKBOX",
+      "title": "您当前最想先解决的是哪类问题？",
+      "label": "您当前最想先解决的是哪类问题？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "感觉总是累、没精神",
+        "总是容易饿、吃完还想吃",
+        "晚上嘴馋、控制不住",
+        "作息乱、睡不好",
+        "白天脑子不清楚、专注度差",
+        "腰腹部肥胖明显、身体发沉",
+        "吃得不算多，但状态和体型都不理想",
+        "情绪不稳、压力一大就容易乱",
+        "便秘、胀气、肠胃消化总是不舒服",
+        "没有明显健康问题，想进入更规律、更高能量的生活状态",
+        "其他"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774104667027mn0g4239",
+      "key": "CHECKBOX1774104667027mn0g4239",
+      "type": "CHECKBOX",
+      "title": "您最希望 28 天后看到哪些变化？",
+      "label": "您最希望 28 天后看到哪些变化？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "白天更有精神",
+        "晚上更容易入睡，不起夜，睡眠质量明显提高",
+        "白天饥饿感更稳定",
+        "晚上不容易乱吃",
+        "身体更轻盈、腰腹部维度缩减",
+        "每天节律更稳定、情绪更稳",
+        "脑子更清醒、专注更好",
+        "饮食更容易控制",
+        "开始进入“可持续变好”的状态",
+        "体重体态更匀称，您也可以在“其他”选项填写您的体重和腰围数字管理目标（如X个月减重X公斤，减少XX厘米）",
+        "其他"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774104915668mn0g9dxy",
+      "key": "CHECKBOX1774104915668mn0g9dxy",
+      "type": "CHECKBOX",
+      "title": "您最担心自己坚持不下来28天的原因是什么？",
+      "label": "您最担心自己坚持不下来28天的原因是什么？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "工作忙",
+        "作息乱",
+        "应酬或外食多",
+        "家庭节奏影响",
+        "情绪压力大",
+        "晚上容易破功",
+        "总想走捷径",
+        "执行几天就疲了，做事情没毅力",
+        "想要的很多，不知道先抓什么",
+        "其他"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774105083327mn0gczb3",
+      "key": "SEGMENTATION1774105083327mn0gczb3",
+      "type": "SEGMENTATION",
+      "title": "模块 4｜基础节律与职业场景",
+      "label": "模块 4｜基础节律与职业场景",
+      "subtitle": "本段用于辅助判断您当前属于哪类节律人群，以决定应从能量、饮食、睡眠的哪个模块优先切入",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774105107178mn0gdhpo",
+      "key": "RADIO1774105107178mn0gdhpo",
+      "type": "RADIO",
+      "title": "您的工作 / 学习节奏更接近哪一种？",
+      "label": "您的工作 / 学习节奏更接近哪一种？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "固定白班",
+        "固定白班，经常加班",
+        "固定晚班 / 夜班",
+        "白班/夜班轮班",
+        "自由度高，时间不固定",
+        "高校学生节奏",
+        "家庭照护型节奏（带小孩/照顾老人等）",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774105241706mn0ggdik",
+      "key": "RADIO1774105241706mn0ggdik",
+      "type": "RADIO",
+      "title": "您通常入睡的时间段是",
+      "label": "您通常入睡的时间段是",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "22:30前",
+        "22:30–23:30",
+        "23:30–00:30",
+        "00:30–01:30",
+        "01:30后",
+        "不固定"
+      ]
+    },
+    {
+      "id": "RADIO1774105303177mn0ghoy4",
+      "key": "RADIO1774105303177mn0ghoy4",
+      "type": "RADIO",
+      "title": "您通常起床的时间段是",
+      "label": "您通常起床的时间段是",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "6:00前",
+        "6:00–7:00",
+        "7:00–8:00",
+        "8:00–9:00",
+        "9:00后",
+        "不固定"
+      ]
+    },
+    {
+      "id": "RADIO1774105374228mn0gj7rr",
+      "key": "RADIO1774105374228mn0gj7rr",
+      "type": "RADIO",
+      "title": "您一周大约有几天是 23:30 后入睡？",
+      "label": "您一周大约有几天是 23:30 后入睡？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "0–1天",
+        "2–3天",
+        "4–5天",
+        "6–7天"
+      ]
+    },
+    {
+      "id": "RADIO1774105428032mn0gkdab",
+      "key": "RADIO1774105428032mn0gkdab",
+      "type": "RADIO",
+      "title": "您晚餐通常在几点吃？",
+      "label": "您晚餐通常在几点吃？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "18:00前",
+        "18:00–19:00",
+        "19:00–20:00",
+        "20:00–21:00",
+        "21:00后",
+        "不固定"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774105613109mn0goc3b",
+      "key": "CHECKBOX1774105613109mn0goc3b",
+      "type": "CHECKBOX",
+      "title": "您目前最常见的饮食场景是？",
+      "label": "您目前最常见的饮食场景是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "自己做饭",
+        "公司食堂 / 学校食堂",
+        "外卖",
+        "应酬",
+        "家人安排",
+        "不规律，经常漏餐",
+        "其他"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774105760075mn0grhhp",
+      "key": "CHECKBOX1774105760075mn0grhhp",
+      "type": "CHECKBOX",
+      "title": "您夜间通常是否会加餐？",
+      "label": "您夜间通常是否会加餐？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "晚餐后就不吃了",
+        "晚上会忍不住吃小零食",
+        "喜欢吃夜宵",
+        "其他"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774105914655mn0gusrj",
+      "key": "SEGMENTATION1774105914655mn0gusrj",
+      "type": "SEGMENTATION",
+      "title": "模块 5｜饮食与消化现状（基础）",
+      "label": "模块 5｜饮食与消化现状（基础）",
+      "subtitle": "本段用于判断您是否已经处在“瘦素紊乱 / 饥饿节律失衡 / 饮食控制困难”的状态。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774105949628mn0gvjr2",
+      "key": "RADIO1774105949628mn0gvjr2",
+      "type": "RADIO",
+      "title": "您的一日三餐是否规律？",
+      "label": "您的一日三餐是否规律？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "非常规律，三餐按时吃",
+        "总体还算规律，三餐基本按时吃",
+        "不太规律",
+        "很不规律"
+      ]
+    },
+    {
+      "id": "RADIO1774106134803mn0gzimv",
+      "key": "RADIO1774106134803mn0gzimv",
+      "type": "RADIO",
+      "title": "您哪一餐最容易失控？",
+      "label": "您哪一餐最容易失控？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "早餐",
+        "午餐",
+        "晚餐",
+        "夜宵",
+        "加餐零食",
+        "都差不多"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774106190188mn0h0pda",
+      "key": "CHECKBOX1774106190188mn0h0pda",
+      "type": "CHECKBOX",
+      "title": "您是否经常出现这些情况？",
+      "label": "您是否经常出现这些情况？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "食欲特别旺盛，食量很大",
+        "不饿也会习惯性找吃的",
+        "情绪一来就想吃东西",
+        "一到晚上就容易嘴馋",
+        "不吃甜的就难受",
+        "饭后容易困",
+        "饭后容易胀",
+        "便秘或排便不规律",
+        "暂无明显问题"
+      ]
+    },
+    {
+      "id": "RADIO1774106329171mn0h3olx",
+      "key": "RADIO1774106329171mn0h3olx",
+      "type": "RADIO",
+      "title": "您的早餐习惯是？",
+      "label": "您的早餐习惯是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "基本每天吃",
+        "偶尔不吃",
+        "经常不吃",
+        "完全看当天情况"
+      ]
+    },
+    {
+      "id": "RADIO1774106385794mn0h4was",
+      "key": "RADIO1774106385794mn0h4was",
+      "type": "RADIO",
+      "title": "喝了咖啡 / 茶 / 功能饮料后，您更接近哪种反应？",
+      "label": "喝了咖啡 / 茶 / 功能饮料后，您更接近哪种反应？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "很提神，但不会心慌或者太亢奋",
+        "提神明显，但稍微容易心慌",
+        "下午喝会影响睡眠",
+        "很敏感，不太敢喝",
+        "喝了基本没感觉"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774106479180mn0h6wcs",
+      "key": "SEGMENTATION1774106479180mn0h6wcs",
+      "type": "SEGMENTATION",
+      "title": "模块 6｜能量、压力与白天状态",
+      "label": "模块 6｜能量、压力与白天状态",
+      "subtitle": "本段用于判断您是否存在能量不足、波动、硬撑或透支的问题。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774106601945mn0h9j2z",
+      "key": "RADIO1774106601945mn0h9j2z",
+      "type": "RADIO",
+      "title": "请给自己最近 2 周的整体精力状态打分",
+      "label": "请给自己最近 2 周的整体精力状态打分",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "状态很差",
+        "状态较差，提不起劲儿",
+        "状态一般，勉强够用",
+        "状态不错，还希望提高",
+        "状态满满"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774106739991mn0hchln",
+      "key": "CHECKBOX1774106739991mn0hchln",
+      "type": "CHECKBOX",
+      "title": "您白天最常见的状态是（如有）？",
+      "label": "您白天最常见的状态是（如有）？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "早上起不来，很难进入工作/学习状态",
+        "上午还行，下午精力明显下滑",
+        "精力忽高忽低，需要靠咖啡或意志力硬撑",
+        "容易脑雾、反应慢",
+        "一忙就上头，一停下来就跨",
+        "白天总觉得累",
+        "还算稳定"
+      ]
+    },
+    {
+      "id": "RADIO1774106869788mn0hf9r2",
+      "key": "RADIO1774106869788mn0hf9r2",
+      "type": "RADIO",
+      "title": "您最近的压力水平更接近几分？",
+      "label": "您最近的压力水平更接近几分？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "基本没压力",
+        "可以轻松应对",
+        "压力有点明显了，但还在应对能力范围内",
+        "压力大，觉得很辛苦",
+        "压力爆棚，感觉随时会崩"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107036716mn0hiujy",
+      "key": "CHECKBOX1774107036716mn0hiujy",
+      "type": "CHECKBOX",
+      "title": "压力大时您更容易出现什么反应？",
+      "label": "压力大时您更容易出现什么反应？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "焦虑、脑子停不下来、睡不好",
+        "急躁、没耐心、容易发脾气",
+        "想吃东西缓冲",
+        "身体很累但停不下来",
+        "情绪低落",
+        "大脑麻木、做事拖延",
+        "没什么太大变化，能扛过"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774107178536mn0hlvzc",
+      "key": "SEGMENTATION1774107178536mn0hlvzc",
+      "type": "SEGMENTATION",
+      "title": "模块 7｜睡眠与恢复",
+      "label": "模块 7｜睡眠与恢复",
+      "subtitle": "本段用于判断您是否存在入睡困难、浅睡易醒、节律紊乱或睡眠恢复能力差的问题。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774107228737mn0hmypv",
+      "key": "RADIO1774107228737mn0hmypv",
+      "type": "RADIO",
+      "title": "您对最近睡眠质量的主观评价是？",
+      "label": "您对最近睡眠质量的主观评价是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "很好",
+        "还可以",
+        "一般",
+        "不太好",
+        "很差"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107333066mn0hp77x",
+      "key": "CHECKBOX1774107333066mn0hp77x",
+      "type": "CHECKBOX",
+      "title": "您更常见的睡眠问题是？",
+      "label": "您更常见的睡眠问题是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "很难入睡",
+        "睡着后容易醒",
+        "不管几点睡都醒得早",
+        "做梦多",
+        "睡很久也不解乏",
+        "起床困难",
+        "白天容易犯困",
+        "睡眠时间很不固定",
+        "暂无明显问题"
+      ]
+    },
+    {
+      "id": "RADIO1774107460930mn0hrxvo",
+      "key": "RADIO1774107460930mn0hrxvo",
+      "type": "RADIO",
+      "title": "您夜间入睡之后是否会醒？",
+      "label": "您夜间入睡之后是否会醒？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "基本不会夜醒",
+        "偶尔会夜醒",
+        "经常会夜醒（1次）",
+        "几乎每天都会夜醒（2次甚至更多次）"
+      ]
+    },
+    {
+      "id": "RADIO1774107574262mn0hudbt",
+      "key": "RADIO1774107574262mn0hudbt",
+      "type": "RADIO",
+      "title": "您睡完醒来后的第一感觉更接近哪种？",
+      "label": "您睡完醒来后的第一感觉更接近哪种？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "可以很快清醒",
+        "还行，但要缓一会儿才能动起来",
+        "身体和脑袋感觉很沉、很难启动",
+        "明明睡了却还是累"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774107682414mn0hwory",
+      "key": "SEGMENTATION1774107682414mn0hwory",
+      "type": "SEGMENTATION",
+      "title": "模块 8｜运动与执行能力",
+      "label": "模块 8｜运动与执行能力",
+      "subtitle": "这一段帮助我们更好理解您的身体代谢驱动状态。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774107759627mn0hycct",
+      "key": "RADIO1774107759627mn0hycct",
+      "type": "RADIO",
+      "title": "您每周的运动频次是？",
+      "label": "您每周的运动频次是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "0次",
+        "1–2次",
+        "3–4次",
+        "5次及以上"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107823025mn0hzp9v",
+      "key": "CHECKBOX1774107823025mn0hzp9v",
+      "type": "CHECKBOX",
+      "title": "您通常的运动类型是？",
+      "label": "您通常的运动类型是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "散步/快走",
+        "跑步/有氧",
+        "力量训练",
+        "瑜伽或拉伸",
+        "游泳",
+        "球类",
+        "无固定运动",
+        "其他"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107925408mn0i1w9u",
+      "key": "CHECKBOX1774107925408mn0i1w9u",
+      "type": "CHECKBOX",
+      "title": "您更能接受哪种方式开始改变？",
+      "label": "您更能接受哪种方式开始改变？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "从饮食先改",
+        "从睡眠先改",
+        "从能量和白天状态先改",
+        "从轻运动开始",
+        "需要有人带着一步步来"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774108003942mn0i3kva",
+      "key": "SEGMENTATION1774108003942mn0i3kva",
+      "type": "SEGMENTATION",
+      "title": "模块 9｜健康情况与补充说明",
+      "label": "模块 9｜健康情况与补充说明",
+      "subtitle": "",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774108071693mn0i515a",
+      "key": "SIMPLE1774108071693mn0i515a",
+      "type": "SIMPLE",
+      "title": "过敏 / 特殊饮食限制 / 伤痛限制/正在用药 / 既往病史补充（强烈建议详细填写，没有则填“无”）",
+      "label": "过敏 / 特殊饮食限制 / 伤痛限制/正在用药 / 既往病史补充（强烈建议详细填写，没有则填“无”）",
+      "subtitle": "",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "FILE1774108153106mn0i6ryq",
+      "key": "FILE1774108153106mn0i6ryq",
+      "type": "FILE",
+      "title": "是否愿意上传近期体检报告 / 指标图片（如有）",
+      "label": "是否愿意上传近期体检报告 / 指标图片（如有）",
+      "subtitle": "",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SEGMENTATION1774171370170mn1jtqka",
+      "key": "SEGMENTATION1774171370170mn1jtqka",
+      "type": "SEGMENTATION",
+      "title": "模块 5-2 | 饮食结构现状（进阶筛选）",
+      "label": "模块 5-2 | 饮食结构现状（进阶筛选）",
+      "subtitle": "本段用于判断您当前长期饮食模式处在什么结构区，以帮助您逐步调优进阶至“瘦素优先”的饮食方式。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774171736563mn1k1l9x",
+      "key": "RADIO1774171736563mn1k1l9x",
+      "type": "RADIO",
+      "title": "您一餐中主食（米饭、面、面包、饺子、粥等）的占比通常是？",
+      "label": "您一餐中主食（米饭、面、面包、饺子、粥等）的占比通常是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "基本不吃",
+        "很少，通常不超过一小份（一拳头/小半碗）",
+        "会吃一点，但不是主角",
+        "通常占半盘左右/一整饭碗",
+        "往往比肉和菜加起来还多",
+        "主食很多，还常叠加甜饮 / 甜点"
+      ]
+    },
+    {
+      "id": "RADIO1774171867362mn1k4e78",
+      "key": "RADIO1774171867362mn1k4e78",
+      "type": "RADIO",
+      "title": "您每天的蛋白质摄入更接近哪一种？",
+      "label": "您每天的蛋白质摄入更接近哪一种？",
+      "subtitle": "建议每餐摄入25g蛋白质（如：一掌心大小肉类）。",
+      "required": true,
+      "options": [
+        "主要靠肉类，且摄入量很高",
+        "每餐都有明确蛋白质来源",
+        "大多数正餐有蛋白质，但不一定够",
+        "经常一餐里蛋白质很少",
+        "很多时候主食和零食为主，蛋白质明显不足",
+        "经常吃得很乱，顾不上到底吃了多少"
+      ]
+    },
+    {
+      "id": "RADIO1774172055667mn1k8fhy",
+      "key": "RADIO1774172055667mn1k8fhy",
+      "type": "RADIO",
+      "title": "您吃蔬菜的习惯更接近哪一种？",
+      "label": "您吃蔬菜的习惯更接近哪一种？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "很少吃，甚至长期不吃",
+        "吃低碳蔬菜很多，主食很少",
+        "基本每餐都会吃不少蔬菜",
+        "会吃一点，但通常不够半盘",
+        "很多时候几乎没有蔬菜",
+        "经常吃外卖 / 夜宵 / 炸物，基本不吃蔬菜"
+      ]
+    },
+    {
+      "id": "RADIO1774172195394mn1kbfb8",
+      "key": "RADIO1774172195394mn1kbfb8",
+      "type": "RADIO",
+      "title": "您喝含糖饮料或吃甜食的频率是？",
+      "label": "您喝含糖饮料或吃甜食的频率是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "基本没有",
+        "极少",
+        "一周 1–2 次",
+        "一周 3–5 次",
+        "基本每天一次",
+        "每天多次"
+      ]
+    },
+    {
+      "id": "RADIO1774172399733mn1kfszi",
+      "key": "RADIO1774172399733mn1kfszi",
+      "type": "RADIO",
+      "title": "你吃深加工食品的频率是？",
+      "label": "你吃深加工食品的频率是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "几乎不吃",
+        "很少吃",
+        "一周 1–2 次",
+        "一周 3–4 次",
+        "基本每天都会有",
+        "一天不止一次"
+      ]
+    },
+    {
+      "id": "RADIO1774172399734mn1kfszr",
+      "key": "RADIO1774172399734mn1kfszr",
+      "type": "RADIO",
+      "title": "你的加餐 / 嘴馋通常吃什么？",
+      "label": "你的加餐 / 嘴馋通常吃什么？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "我基本不加餐，饮食控制很强",
+        "鸡蛋、肉、奶酪、坚果、无糖酸奶这类",
+        "水果或少量健康零食",
+        "面包、饼干、谷物棒这类",
+        "奶茶、甜点、冰淇淋、糖果",
+        "薯片、炸物、泡面、烧烤、酒精等"
+      ]
+    },
+    {
+      "id": "RADIO1774172399735mn1kft01",
+      "key": "RADIO1774172399735mn1kft01",
+      "type": "RADIO",
+      "title": "哪一句最符合你的长期饮食模式？",
+      "label": "哪一句最符合你的长期饮食模式？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "我执行的是排除型饮食，很多食物都主动不吃",
+        "我以肉类 / 动物性食物为核心，种类很少",
+        "我在认真控碳，希望保持稳定燃脂状态",
+        "我追求低糖、少加工、蛋白优先、主食适量",
+        "我主食偏多，是典型高碳饮食",
+        "我甜的很多，是典型高糖饮食",
+        "我整体都比较乱，经常外卖、宵夜、炸物、酒精混着来"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774172753810mn1kne6q",
+      "key": "SEGMENTATION1774172753810mn1kne6q",
+      "type": "SEGMENTATION",
+      "title": "模块 10 | 如果您愿意，我们可以快速为您做个长期体质和当前失衡状态评估",
+      "label": "模块 10 | 如果您愿意，我们可以快速为您做个长期体质和当前失衡状态评估",
+      "subtitle": "非必填项，但如果开始填写，需要完整填写12道单选题。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774173217404mn1kxbwh",
+      "key": "RADIO1774173217404mn1kxbwh",
+      "type": "RADIO",
+      "title": "体型与代谢",
+      "label": "体型与代谢",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "偏瘦，增重较难",
+        "中等匀称，代谢快，容易饿",
+        "偏壮或偏胖，减重较难",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217404mn1kxbwn",
+      "key": "RADIO1774173217404mn1kxbwn",
+      "type": "RADIO",
+      "title": "体感温度",
+      "label": "体感温度",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "手脚偏凉，怕冷",
+        "容易怕热，天热更不舒服",
+        "怕湿冷，阴雨天更容易发沉",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbwt",
+      "key": "RADIO1774173217405mn1kxbwt",
+      "type": "RADIO",
+      "title": "食欲节奏",
+      "label": "食欲节奏",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "胃口不太稳定，忙起来会忘记吃",
+        "饿得快，不按时吃饭会明显难受",
+        "饿得不快，吃得不多也能撑很久",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbwz",
+      "key": "RADIO1774173217405mn1kxbwz",
+      "type": "RADIO",
+      "title": "消化与排便",
+      "label": "消化与排便",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "容易胀气，或偏干、偏难排",
+        "消化快，偶尔容易有烧心或胃里发热感",
+        "消化偏慢，饭后容易觉得顶、沉",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbx5",
+      "key": "RADIO1774173217405mn1kxbx5",
+      "type": "RADIO",
+      "title": "皮肤与身体感受",
+      "label": "皮肤与身体感受",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "皮肤偏干，嘴唇也容易干",
+        "皮肤偏敏感，容易发热、泛红",
+        "皮肤偏厚润，容易浮肿或出油",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbxb",
+      "key": "RADIO1774173217405mn1kxbxb",
+      "type": "RADIO",
+      "title": "睡眠状态",
+      "label": "睡眠状态",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "不太容易入睡，或容易醒",
+        "睡得还可以，但压力大时容易烦躁",
+        "睡得沉，起床慢，白天容易犯困",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbxh",
+      "key": "RADIO1774173217405mn1kxbxh",
+      "type": "RADIO",
+      "title": "精力节奏",
+      "label": "精力节奏",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "精力来得快、掉得也快",
+        "精力足，做事有冲劲",
+        "精力稳，但启动慢、热身久",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbxn",
+      "key": "RADIO1774173217405mn1kxbxn",
+      "type": "RADIO",
+      "title": "做事风格",
+      "label": "做事风格",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "节奏快、点子多、变化也快",
+        "效率高、目标感强、要求高",
+        "稳、慢、有耐心，不急不躁",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217406mn1kxbxt",
+      "key": "RADIO1774173217406mn1kxbxt",
+      "type": "RADIO",
+      "title": "情绪特点",
+      "label": "情绪特点",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "情绪起伏较快，容易紧张或多想",
+        "容易急、容易上火，也容易不耐烦",
+        "情绪总体平稳，但有时容易懒散或拖延",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217406mn1kxbxz",
+      "key": "RADIO1774173217406mn1kxbxz",
+      "type": "RADIO",
+      "title": "记忆特点",
+      "label": "记忆特点",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "学得快，但不重复容易忘",
+        "理解和判断快，记重点能力强",
+        "记得慢一些，但记住后较稳",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217406mn1kxby5",
+      "key": "RADIO1774173217406mn1kxby5",
+      "type": "RADIO",
+      "title": "压力下反应",
+      "label": "压力下反应",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "会焦虑、睡不好，脑子停不下来",
+        "会烦躁、着急，想尽快解决",
+        "会闷着、拖着，或者靠吃东西缓冲",
+        "其他"
+      ]
+    },
+    {
+      "id": "RADIO1774173217406mn1kxbyb",
+      "key": "RADIO1774173217406mn1kxbyb",
+      "type": "RADIO",
+      "title": "生活节律",
+      "label": "生活节律",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "作息和饮食容易不规律",
+        "事情一多就容易过度用力",
+        "容易过于安逸，运动和改变启动较慢",
+        "其他"
+      ]
+    },
+    {
+      "id": "SIMPLE1774699899282mnaahy8j",
+      "key": "SIMPLE1774699899282mnaahy8j",
+      "type": "SIMPLE",
+      "title": "邀请您做个小采访，您是如何了解到并愿意加入“加速燃”系统的？",
+      "label": "邀请您做个小采访，您是如何了解到并愿意加入“加速燃”系统的？",
+      "subtitle": "我们尤其希望了解您在哪里看到了什么内容（因此购买了产品并且进群接受我们的服务）、我们的内容对您的以往在执行的健康计划有何种影响？您对我们的视频/直播/产品讲解&呈现有无意见和建议？",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774108047588mn0i4ijq",
+      "key": "RADIO1774108047588mn0i4ijq",
+      "type": "RADIO",
+      "title": "您目前是否有正在关注或需要提醒我们的身体健康情况？",
+      "label": "您目前是否有正在关注或需要提醒我们的身体健康情况？",
+      "subtitle": "您可以特别提醒我们您当前存在的健康问题。",
+      "required": true,
+      "options": [
+        "没有",
+        "其他",
+        "有，后面补充说明"
+      ]
+    }
+  ]
+}

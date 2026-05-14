@@ -1,0 +1,75 @@
+from __future__ import annotations
+
+import enum
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Enum, ForeignKey, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base
+from app.models.mixins import TimestampMixin
+
+if TYPE_CHECKING:
+    from app.models.service_case import ServiceCase
+
+
+class MessageDirection(str, enum.Enum):
+    INBOUND = "inbound"
+    OUTBOUND = "outbound"
+
+
+class MessageSenderType(str, enum.Enum):
+    USER = "user"
+    STAFF = "staff"
+    BOT = "bot"
+    SYSTEM = "system"
+
+
+class MessagePurpose(str, enum.Enum):
+    CHAT = "chat"
+    CHECKIN = "checkin"
+    REMINDER = "reminder"
+    DOCUMENT_DELIVERY = "document_delivery"
+    MANUAL = "manual"
+
+
+class MessageStatus(str, enum.Enum):
+    RECEIVED = "received"
+    PENDING = "pending"
+    SENT = "sent"
+    FAILED = "failed"
+
+
+class Message(TimestampMixin, Base):
+    __tablename__ = "messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service_case_id: Mapped[int | None] = mapped_column(
+        ForeignKey("service_cases.id"),
+        index=True,
+    )
+    group_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    wecom_message_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    direction: Mapped[MessageDirection] = mapped_column(
+        Enum(MessageDirection, name="message_direction"),
+        nullable=False,
+    )
+    sender_type: Mapped[MessageSenderType] = mapped_column(
+        Enum(MessageSenderType, name="message_sender_type"),
+        nullable=False,
+    )
+    message_type: Mapped[str] = mapped_column(String(32), default="text", nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    purpose: Mapped[MessagePurpose] = mapped_column(
+        Enum(MessagePurpose, name="message_purpose"),
+        default=MessagePurpose.CHAT,
+        nullable=False,
+    )
+    status: Mapped[MessageStatus] = mapped_column(
+        Enum(MessageStatus, name="message_status"),
+        default=MessageStatus.RECEIVED,
+        nullable=False,
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+
+    service_case: Mapped[ServiceCase | None] = relationship(back_populates="messages")

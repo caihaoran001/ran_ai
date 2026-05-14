@@ -1,0 +1,8 @@
+This project includes code derived from NousResearch Hermes Agent:
+
+  https://github.com/nousresearch/hermes-agent
+
+The upstream project is licensed under the MIT License. The standalone bridge
+keeps the WeCom AI Bot WebSocket integration shape while replacing Hermes
+gateway abstractions with local dataclasses and callbacks.
+
