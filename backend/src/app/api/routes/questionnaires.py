@@ -18,7 +18,7 @@ from app.schemas.questionnaire import (
     QuestionnaireSubmissionRead,
     QuestionnaireSubmit,
 )
-from app.services.document_service import generate_profile
+from app.services.document_service import generate_profile, generate_documents
 from app.db.session import SessionLocal
 from app.services.questionnaire_template import get_active_questionnaire_fields
 
@@ -68,7 +68,7 @@ async def submit_questionnaire(
     await session.commit()
     await session.refresh(submission)
     if get_settings().ai_api_key:
-        background_tasks.add_task(_generate_profile_once, service_case.id)
+        background_tasks.add_task(_generate_profile_and_documents, service_case.id)
     return submission
 
 
@@ -102,7 +102,7 @@ async def _latest_submission(
     )
 
 
-async def _generate_profile_once(service_case_id: int) -> None:
+async def _generate_profile_and_documents(service_case_id: int) -> None:
     async with SessionLocal() as session:
         existing = await session.scalar(
             select(UserProfile.id)
@@ -116,8 +116,9 @@ async def _generate_profile_once(service_case_id: int) -> None:
             return
         try:
             await generate_profile(session, service_case)
+            await generate_documents(session, service_case, auto_send=get_settings().auto_send_documents)
         except Exception:
-            logger.exception("Failed to generate profile for service_case_id=%s", service_case_id)
+            logger.exception("Failed to generate profile and documents for service_case_id=%s", service_case_id)
 
 
 async def _sync_user_from_answers(

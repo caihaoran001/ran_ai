@@ -81,6 +81,11 @@ class Settings(BaseSettings):
         validation_alias="REMINDER_MESSAGE",
     )
 
+    auto_send_documents: bool = Field(
+        default=False,
+        validation_alias="AUTO_SEND_DOCUMENTS",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

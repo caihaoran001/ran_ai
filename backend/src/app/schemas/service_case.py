@@ -36,6 +36,7 @@ class ServiceCaseUpdate(BaseModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
     notes: str | None = None
+    auto_send_documents: bool | None = None
 
 
 class ServiceCaseRead(Timestamped):
@@ -48,6 +49,7 @@ class ServiceCaseRead(Timestamped):
     started_at: datetime | None
     ended_at: datetime | None
     notes: str | None
+    auto_send_documents: bool = False
     deleted_at: datetime | None = None
     user: UserRead | None = None
 

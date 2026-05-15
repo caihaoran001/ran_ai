@@ -10,6 +10,7 @@ from app.api.routes import (
     questionnaire_templates,
     questionnaires,
     service_cases,
+    settings,
     users,
     wecom,
 )
@@ -24,3 +25,4 @@ api_router.include_router(checkins.router, tags=["checkins"])
 api_router.include_router(messages.router, tags=["messages"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(wecom.router, tags=["wecom"])
+api_router.include_router(settings.router, tags=["settings"])

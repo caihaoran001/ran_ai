@@ -30,6 +30,7 @@ export type ServiceCase = {
   questionnaire_token: string;
   status: string;
   notes?: string | null;
+  auto_send_documents: boolean;
   deleted_at?: string | null;
   user?: { id: number; name: string; phone?: string | null; wecom_user_id?: string | null } | null;
   created_at: string;
@@ -84,5 +85,20 @@ export type Checkin = {
   id: number;
   checkin_date: string;
   content: string;
+  created_at: string;
+};
+
+export type Message = {
+  id: number;
+  service_case_id: number | null;
+  group_id: string;
+  wecom_message_id: string | null;
+  direction: "inbound" | "outbound";
+  sender_type: "user" | "bot" | "staff";
+  message_type: string;
+  content: string;
+  purpose: string;
+  status: string;
+  error: string | null;
   created_at: string;
 };
