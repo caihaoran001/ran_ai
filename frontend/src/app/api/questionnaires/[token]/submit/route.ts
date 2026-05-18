@@ -8,7 +8,9 @@ export async function POST(
 ) {
   const { token } = await params;
   const body = await request.text();
-  const response = await fetch(`${SERVER_API_BASE_URL}/questionnaires/${token}/submit`, {
+  const template = new URL(request.url).searchParams.get("template");
+  const suffix = template ? `?template=${encodeURIComponent(template)}` : "";
+  const response = await fetch(`${SERVER_API_BASE_URL}/questionnaires/${token}/submit${suffix}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body,

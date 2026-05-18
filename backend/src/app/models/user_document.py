@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 class DocumentType(str, enum.Enum):
     ENERGY_RESTART_PRESCRIPTION = "energy_restart_prescription"
     DAY28_EXECUTION_STANDARD = "day28_execution_standard"
+    STAGE_REPORT = "stage_report"
+    GRADUATION_REPORT = "graduation_report"
 
 
 class DocumentStatus(str, enum.Enum):
@@ -41,6 +43,7 @@ class UserDocument(TimestampMixin, Base):
     )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     content_md: Mapped[str] = mapped_column(Text, nullable=False)
+    content_json: Mapped[dict | None] = mapped_column(JSON)
     file_path: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(DocumentStatus, name="document_status"),

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { api, Checkin } from "@/lib/api";
+import { api } from "@/lib/api";
 
 type Summary = {
   service_cases_total: number;
@@ -7,6 +7,16 @@ type Summary = {
   checkins_today: number;
   messages_today: number;
   pending_documents: number;
+  new_users_today: number;
+  risk_users: number;
+  human_intervention_users?: number;
+  unfollowed_users: number;
+  renewal_followup_users?: number;
+  repurchase_soon_users: number;
+  renewal_intent_users?: number;
+  refund_intent_users?: number;
+  lost_users: number;
+  emotional_users_today?: number;
 };
 
 export default async function DashboardPage() {
@@ -16,9 +26,18 @@ export default async function DashboardPage() {
     checkins_today: 0,
     messages_today: 0,
     pending_documents: 0,
+    new_users_today: 0,
+    risk_users: 0,
+    human_intervention_users: 0,
+    unfollowed_users: 0,
+    renewal_followup_users: 0,
+    repurchase_soon_users: 0,
+    renewal_intent_users: 0,
+    refund_intent_users: 0,
+    lost_users: 0,
+    emotional_users_today: 0,
   }));
-
-  const checkins = await api<Checkin[]>("/checkins").catch(() => []);
+  const renewalFollowupUsers = summary.renewal_followup_users ?? summary.repurchase_soon_users;
 
   return (
     <div className="space-y-8">
@@ -29,74 +48,117 @@ export default async function DashboardPage() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <StatCard
+          label="今日新增用户"
+          value={summary.new_users_today}
+          icon="➕"
+          color="blue"
+          href="/users"
+          description="今天新创建且未删除的服务单。"
+        />
+        <StatCard
+          label="风险用户"
+          value={summary.risk_users}
+          icon="⚠️"
+          color="red"
+          href="/users"
+          description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险词，需要人工关注。"
+        />
+        <StatCard
+          label="待人工介入"
+          value={summary.human_intervention_users ?? 0}
+          icon="🚨"
+          color="red"
+          href="/users"
+          description="LLM 识别到健康红线、客诉退款、医疗边界、强续购等需要真人处理的服务单。"
+        />
+        <StatCard
+          label="未跟进（2-7天）"
+          value={summary.unfollowed_users}
+          icon="⏳"
+          color="yellow"
+          href="/users"
+          description="服务中，且最近 2-7 天没有用户入站消息的服务单；与流失用户互斥。"
+        />
+        <StatCard
+          label="续购跟进窗口"
+          value={renewalFollowupUsers}
+          icon="🛒"
+          color="green"
+          href="/users"
+          description="按服务天数推算：已服务 18-28 天，适合人工做续购沟通，不代表用户已表达购买意愿。"
+        />
+        <StatCard
+          label="明确续购意向"
+          value={summary.renewal_intent_users ?? 0}
+          icon="💚"
+          color="green"
+          href="/users"
+          description="用户聊天中出现续费、复购、再买、继续购买等表达。"
+        />
+        <StatCard
+          label="退款/退出意向"
+          value={summary.refund_intent_users ?? 0}
+          icon="↩"
+          color="red"
+          href="/users"
+          description="用户聊天中出现退款、退费、不继续、退出、退群等表达。"
+        />
+        <StatCard
+          label="流失用户"
+          value={summary.lost_users}
+          icon="📉"
+          color="orange"
+          href="/users"
+          description="服务中，且超过 7 天没有用户入站消息的服务单；不再计入未跟进。"
+        />
+        <StatCard
           label="服务单总数"
           value={summary.service_cases_total}
           icon="📋"
           color="blue"
+          href="/users"
+          description="当前未删除服务单总数。"
         />
         <StatCard
           label="服务中"
           value={summary.service_cases_in_service}
           icon="🟢"
           color="green"
+          href="/users"
+          description="状态为服务中的服务单。"
         />
         <StatCard
           label="今日打卡"
           value={summary.checkins_today}
           icon="✅"
           color="yellow"
+          href="/checkins"
+          description="今天提交的打卡记录数。"
         />
         <StatCard
           label="今日消息"
           value={summary.messages_today}
           icon="💬"
           color="purple"
+          href="/users"
+          description="今天产生的企微入站和出站消息总数。"
+        />
+        <StatCard
+          label="今日情绪预警"
+          value={summary.emotional_users_today ?? 0}
+          icon="🌧️"
+          color="red"
+          href="/users"
+          description="今天入站消息中，经语义识别出现明显负面情绪、执行挫败或心理风险线索的用户数。"
         />
         <StatCard
           label="待审核文件"
           value={summary.pending_documents}
           icon="📄"
           color="orange"
+          href="/documents"
+          description="每个服务单当前有效的最新文档里，状态为草稿或待审核的文件数。历史版本不计入。"
         />
-      </div>
-
-      <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-4">
-          <h2 className="text-lg font-semibold text-zinc-900">最近打卡</h2>
-          <Link href="/checkins" className="text-sm text-blue-600 hover:text-blue-700">
-            查看全部 →
-          </Link>
-        </div>
-        <div className="p-6">
-          {checkins.length > 0 ? (
-            <div className="space-y-3">
-              {checkins.slice(0, 10).map((checkin) => (
-                <div
-                  key={checkin.id}
-                  className="flex items-center justify-between rounded-lg border border-zinc-100 p-4 transition-colors hover:border-zinc-200 hover:bg-zinc-50"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100 text-green-700">
-                      ✓
-                    </div>
-                    <div>
-                      <div className="font-medium text-zinc-900">{checkin.content}</div>
-                      <div className="text-sm text-zinc-500">{checkin.checkin_date}</div>
-                    </div>
-                  </div>
-                  <div className="text-sm text-zinc-400">
-                    {formatTime(checkin.created_at)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="py-12 text-center text-zinc-400">
-              <div className="mb-2 text-4xl">📋</div>
-              <p>暂无打卡记录</p>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -107,11 +169,15 @@ function StatCard({
   value,
   icon,
   color,
+  href,
+  description,
 }: {
   label: string;
   value: number;
   icon: string;
   color: string;
+  href: string;
+  description: string;
 }) {
   const colorClasses: Record<string, string> = {
     blue: "bg-blue-50 border-blue-200",
@@ -119,25 +185,21 @@ function StatCard({
     yellow: "bg-yellow-50 border-yellow-200",
     purple: "bg-purple-50 border-purple-200",
     orange: "bg-orange-50 border-orange-200",
+    red: "bg-red-50 border-red-200",
   };
 
   return (
-    <div className={`rounded-xl border p-6 ${colorClasses[color] || "bg-zinc-50 border-zinc-200"}`}>
+    <Link
+      href={href}
+      title={description}
+      className={`block rounded-xl border p-6 transition hover:-translate-y-0.5 hover:shadow-sm ${colorClasses[color] || "bg-zinc-50 border-zinc-200"}`}
+    >
       <div className="flex items-center justify-between">
         <span className="text-2xl">{icon}</span>
         <span className="text-3xl font-bold text-zinc-900">{value}</span>
       </div>
       <div className="mt-2 text-sm font-medium text-zinc-600">{label}</div>
-    </div>
+      <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-500">{description}</p>
+    </Link>
   );
-}
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
 }

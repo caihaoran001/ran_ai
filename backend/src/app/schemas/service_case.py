@@ -37,6 +37,9 @@ class ServiceCaseUpdate(BaseModel):
     ended_at: datetime | None = None
     notes: str | None = None
     auto_send_documents: bool | None = None
+    ai_auto_reply_enabled: bool | None = None
+    needs_human_intervention: bool | None = None
+    reset_risk: bool | None = None  # 人工解除高风险标记
 
 
 class ServiceCaseRead(Timestamped):
@@ -50,6 +53,13 @@ class ServiceCaseRead(Timestamped):
     ended_at: datetime | None
     notes: str | None
     auto_send_documents: bool = False
+    ai_auto_reply_enabled: bool = True
+    risk_level: str = "normal"
+    risk_flags: list[dict] | None = None
+    needs_human_intervention: bool = False
+    intervention_reasons: list[dict] | None = None
+    renewal_intent_flags: list[dict] | None = None
+    refund_intent_flags: list[dict] | None = None
     deleted_at: datetime | None = None
     user: UserRead | None = None
 

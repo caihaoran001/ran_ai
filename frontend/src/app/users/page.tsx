@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { api, User, ServiceCase } from "@/lib/api";
-import { DeleteUserButton } from "./user-actions";
+import { formatChinaShortDateTime } from "@/lib/format";
+import { DeleteServiceCaseButton } from "./user-actions";
+import { NewCaseForm } from "../cases/new-case-form";
 
 export default async function UsersPage({
   searchParams,
@@ -10,6 +12,7 @@ export default async function UsersPage({
   const { deleted } = await searchParams;
   const showDeleted = deleted === "1";
   const users = await api<User[]>(`/users${showDeleted ? "?deleted=true" : ""}`).catch(() => []);
+  const serviceCases = showDeleted ? [] : await api<ServiceCase[]>("/service-cases").catch(() => []);
 
   return (
     <div className="space-y-6">
@@ -19,7 +22,7 @@ export default async function UsersPage({
             {showDeleted ? "已删除用户" : "用户管理"}
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
-            {showDeleted ? "查看已删除用户的历史记录" : "管理用户及其服务空间"}
+            {showDeleted ? "查看已删除用户的历史记录" : "一个客户空间对应一个服务单"}
           </p>
         </div>
         <div className="flex rounded-lg border border-zinc-200 bg-white p-1 text-sm shadow-sm">
@@ -42,11 +45,13 @@ export default async function UsersPage({
         </div>
       </div>
 
+      {!showDeleted && <NewCaseForm />}
+
       <div className="grid gap-6">
-        {users.map((user) => (
-          <UserCard key={user.id} user={user} showDeleted={showDeleted} />
-        ))}
-        {users.length === 0 && (
+        {showDeleted
+          ? users.map((user) => <DeletedUserCard key={user.id} user={user} />)
+          : serviceCases.map((serviceCase) => <ServiceCaseCard key={serviceCase.id} serviceCase={serviceCase} />)}
+        {(showDeleted ? users.length : serviceCases.length) === 0 && (
           <div className="rounded-xl border border-zinc-200 bg-white p-12 text-center text-zinc-500">
             {showDeleted ? "暂无已删除用户" : "暂无用户"}
           </div>
@@ -56,12 +61,48 @@ export default async function UsersPage({
   );
 }
 
-function UserCard({ user, showDeleted }: { user: User; showDeleted: boolean }) {
+function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
+  const user = serviceCase.user;
   return (
     <div className="rounded-xl border border-zinc-200 bg-white shadow-sm transition-shadow hover:shadow-md">
       <div className="flex items-start justify-between border-b border-zinc-100 p-6">
         <div className="flex items-center gap-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-xl font-bold text-blue-700">
+            {(user?.name ?? "用").charAt(0)}
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-900">
+              {user ? (
+                <Link href={`/users/${user.id}`} className="hover:text-blue-600 hover:underline">
+                  {user.name}
+                </Link>
+              ) : (
+                "待填写问卷用户"
+              )}
+            </h3>
+            <div className="mt-1 flex items-center gap-3 text-sm text-zinc-500">
+              {user?.phone && <span>📱 {user.phone}</span>}
+              {user?.wecom_user_id && <span>💬 已绑定企微</span>}
+            </div>
+          </div>
+        </div>
+        {user && <DeleteServiceCaseButton serviceCaseId={serviceCase.id} userName={user.name} />}
+      </div>
+
+      <div className="p-6">
+        <h4 className="mb-4 text-sm font-medium text-zinc-500">服务单</h4>
+        <ServiceCaseItem serviceCase={serviceCase} />
+      </div>
+    </div>
+  );
+}
+
+function DeletedUserCard({ user }: { user: User }) {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+      <div className="flex items-start justify-between border-b border-zinc-100 p-6">
+        <div className="flex items-center gap-4">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100 text-xl font-bold text-zinc-600">
             {user.name.charAt(0)}
           </div>
           <div>
@@ -72,24 +113,13 @@ function UserCard({ user, showDeleted }: { user: User; showDeleted: boolean }) {
             </div>
           </div>
         </div>
-        <div>
-          {showDeleted ? (
-            <span className="text-sm text-zinc-400">
-              删除于 {formatDateTime(user.deleted_at)}
-            </span>
-          ) : (
-            <DeleteUserButton userId={user.id} userName={user.name} />
-          )}
-        </div>
+        <span className="text-sm text-zinc-400">删除于 {formatChinaShortDateTime(user.deleted_at)}</span>
       </div>
-
       <div className="p-6">
-        <h4 className="mb-4 text-sm font-medium text-zinc-500">服务单</h4>
-        {user.service_cases && user.service_cases.length > 0 ? (
+        <h4 className="mb-4 text-sm font-medium text-zinc-500">历史服务单</h4>
+        {user.service_cases?.length ? (
           <div className="space-y-3">
-            {user.service_cases.map((serviceCase) => (
-              <ServiceCaseItem key={serviceCase.id} serviceCase={serviceCase} />
-            ))}
+            {user.service_cases.map((serviceCase) => <ServiceCaseItem key={serviceCase.id} serviceCase={serviceCase} />)}
           </div>
         ) : (
           <p className="text-sm text-zinc-400">暂无服务单</p>
@@ -130,24 +160,18 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
         <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusColors[serviceCase.status] || "bg-zinc-100 text-zinc-600"}`}>
           {statusLabels[serviceCase.status] || serviceCase.status}
         </span>
+        {serviceCase.needs_human_intervention && (
+          <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-red-700">待人工介入</span>
+        )}
+        {serviceCase.risk_level === "high" && (
+          <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-medium text-orange-700">高风险</span>
+        )}
       </div>
       <div className="flex items-center gap-4 text-sm text-zinc-500">
         <span>群: {serviceCase.group_id.slice(0, 20)}...</span>
-        <span>{formatDateTime(serviceCase.created_at)}</span>
+        <span>{formatChinaShortDateTime(serviceCase.created_at)}</span>
         <span className="text-blue-600">查看详情 →</span>
       </div>
     </Link>
   );
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
 }

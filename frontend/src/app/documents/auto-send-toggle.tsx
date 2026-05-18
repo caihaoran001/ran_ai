@@ -9,10 +9,10 @@ export function AutoSendToggle({ initialValue }: { initialValue: boolean }) {
 
   async function toggle() {
     setBusy(true);
-    await fetch(`${API_BASE}/settings/auto-send`, {
+    await fetch(`${API_BASE}/settings/content-delivery-policy`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ auto_send_documents: !isAutoSend }),
+      body: JSON.stringify({ mode: !isAutoSend ? "auto_send" : "manual_review" }),
     });
     setIsAutoSend(!isAutoSend);
     setBusy(false);
@@ -22,9 +22,9 @@ export function AutoSendToggle({ initialValue }: { initialValue: boolean }) {
     <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-semibold text-zinc-900">自动发送设置</h3>
+          <h3 className="font-semibold text-zinc-900">文件自动发送策略</h3>
           <p className="mt-1 text-sm text-zinc-500">
-            开启后，所有服务单的文档生成后会自动发送到企业微信群
+            控制《处方单》及《阶段报告》的自动下发。开启后，非风险文件将跳过审核直接发送给用户。
           </p>
         </div>
         <label className="relative inline-flex cursor-pointer items-center">
@@ -40,7 +40,7 @@ export function AutoSendToggle({ initialValue }: { initialValue: boolean }) {
       </div>
       {isAutoSend && (
         <div className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-700">
-          已开启自动发送模式。文档生成后将直接发送到群，无需人工审核。
+          🚀 已开启自动交付模式。系统将自动发送低风险文件，显著提升运营效率。
         </div>
       )}
     </div>

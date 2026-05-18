@@ -1,0 +1,306 @@
+[
+  {
+    "primary_category": "体重结果与阶段反馈",
+    "secondary_category": "不掉秤/掉秤慢/平台期",
+    "typical_user_phrases": [
+      "就是不瘦",
+      "体重又没降",
+      "为什么没效果"
+    ],
+    "keywords": [
+      "不瘦",
+      "没降",
+      "不掉秤",
+      "平台",
+      "没效果"
+    ],
+    "reply_strategy": "先稳情绪→解释体重滞后→看腰围/体感→追问睡眠/晚餐/排便→给今日动作",
+    "risk_level": "L0-L1"
+  },
+  {
+    "primary_category": "体重结果与阶段反馈",
+    "secondary_category": "体重波动/反弹/暴涨",
+    "typical_user_phrases": [
+      "吃一餐就暴涨",
+      "昨天少吃还重了"
+    ],
+    "keywords": [
+      "暴涨",
+      "反弹",
+      "浮动",
+      "重了",
+      "一斤"
+    ],
+    "reply_strategy": "解释多为水分/盐分/肠道/作息→固定晨起空腹测→看7日趋势",
+    "risk_level": "L0-L1"
+  },
+  {
+    "primary_category": "饮食执行与餐盘结构",
+    "secondary_category": "早餐/午餐/晚餐结构",
+    "typical_user_phrases": [
+      "今天吃了鱼",
+      "鸡蛋",
+      "青菜",
+      "这顿可以吗"
+    ],
+    "keywords": [
+      "早餐",
+      "午餐",
+      "晚餐",
+      "鱼",
+      "蛋",
+      "菜",
+      "肉"
+    ],
+    "reply_strategy": "先肯定可取点→提醒先菜再肉再主食→吃好不吃撑→对应产品随餐",
+    "risk_level": "L0"
+  },
+  {
+    "primary_category": "饮食执行与餐盘结构",
+    "secondary_category": "主食/碳水/水果管理",
+    "typical_user_phrases": [
+      "能不能吃米饭",
+      "水果是不是会胖",
+      "土豆算主食吗"
+    ],
+    "keywords": [
+      "米饭",
+      "面",
+      "土豆",
+      "红薯",
+      "玉米",
+      "水果"
+    ],
+    "reply_strategy": "区分主食与水果糖分→给份量和顺序→避免完全不吃",
+    "risk_level": "L0"
+  },
+  {
+    "primary_category": "饮食执行与餐盘结构",
+    "secondary_category": "极端节食/怕吃",
+    "typical_user_phrases": [
+      "怕吃了更重",
+      "晚餐不敢吃"
+    ],
+    "keywords": [
+      "怕吃",
+      "不敢吃",
+      "不吃晚餐",
+      "只喝咖啡"
+    ],
+    "reply_strategy": "先安抚→明确极端节食伤代谢→给6-7分饱晚餐模板",
+    "risk_level": "L1"
+  },
+  {
+    "primary_category": "产品使用与方案调整",
+    "secondary_category": "早C午B晚A喝法",
+    "typical_user_phrases": [
+      "早C午B晚A怎么喝",
+      "随餐还是空腹"
+    ],
+    "keywords": [
+      "早C",
+      "午B",
+      "晚A",
+      "喝法",
+      "随餐",
+      "空腹"
+    ],
+    "reply_strategy": "说明时间/剂量/水量/随餐原则→根据睡眠和肠胃敏感度调整",
+    "risk_level": "L0-L1"
+  },
+  {
+    "primary_category": "产品使用与方案调整",
+    "secondary_category": "MCT/卡点钥匙/加油包",
+    "typical_user_phrases": [
+      "加油包是什么",
+      "MCT怎么用"
+    ],
+    "keywords": [
+      "MCT",
+      "卡点钥匙",
+      "加油包",
+      "椰子油"
+    ],
+    "reply_strategy": "解释用途→适合场景→排便正常者不必强加→观察肠胃",
+    "risk_level": "L1"
+  },
+  {
+    "primary_category": "身体体感与健康反馈",
+    "secondary_category": "排便/便秘/腹泻",
+    "typical_user_phrases": [
+      "便秘怎么办",
+      "拉肚子正常吗"
+    ],
+    "keywords": [
+      "便秘",
+      "大便",
+      "排便",
+      "拉肚子",
+      "腹泻"
+    ],
+    "reply_strategy": "追问水量/蔬菜/油脂/产品剂量→轻症调整→持续不适转人工",
+    "risk_level": "L1-L2"
+  },
+  {
+    "primary_category": "身体体感与健康反馈",
+    "secondary_category": "腹胀/腹痛/胃反应",
+    "typical_user_phrases": [
+      "肚子疼",
+      "胀气",
+      "胃不舒服"
+    ],
+    "keywords": [
+      "腹痛",
+      "肚子疼",
+      "胃",
+      "胀气",
+      "恶心"
+    ],
+    "reply_strategy": "先暂停刺激性调整→记录程度和持续时间→转人工复核，必要时建议就医",
+    "risk_level": "L2-L3"
+  },
+  {
+    "primary_category": "身体体感与健康反馈",
+    "secondary_category": "姨妈期/生理期",
+    "typical_user_phrases": [
+      "姨妈来了体重涨",
+      "姨妈前想吃炸鸡"
+    ],
+    "keywords": [
+      "姨妈",
+      "月经",
+      "经期",
+      "生理期",
+      "水肿"
+    ],
+    "reply_strategy": "解释激素/水肿正常→目标改成稳住不涨→降低强度→保暖休息",
+    "risk_level": "L1"
+  },
+  {
+    "primary_category": "睡眠压力与节律管理",
+    "secondary_category": "睡眠/熬夜/压力",
+    "typical_user_phrases": [
+      "最近睡不好",
+      "压力大",
+      "熬夜后不掉秤"
+    ],
+    "keywords": [
+      "睡眠",
+      "熬夜",
+      "压力",
+      "失眠",
+      "做梦"
+    ],
+    "reply_strategy": "强调睡眠影响代谢→前移咖啡因→晚间放松→白天补休",
+    "risk_level": "L1-L2"
+  },
+  {
+    "primary_category": "运动与生活方式",
+    "secondary_category": "低摩擦运动",
+    "typical_user_phrases": [
+      "不爱运动",
+      "步数少",
+      "爬楼梯算吗"
+    ],
+    "keywords": [
+      "运动",
+      "步数",
+      "散步",
+      "爬楼梯",
+      "饭后"
+    ],
+    "reply_strategy": "不给高压运动计划→饭后10-20分钟/爬楼梯/家务开始",
+    "risk_level": "L0"
+  },
+  {
+    "primary_category": "打卡督导与数据追踪",
+    "secondary_category": "打卡/腰围/体脂/报告",
+    "typical_user_phrases": [
+      "早上打卡",
+      "报告什么时候出"
+    ],
+    "keywords": [
+      "打卡",
+      "腰围",
+      "体脂",
+      "报告",
+      "表单"
+    ],
+    "reply_strategy": "正反馈→提醒固定时间记录→指导看趋势→必要时补资料",
+    "risk_level": "L0"
+  },
+  {
+    "primary_category": "交易售后与服务流程",
+    "secondary_category": "活动/购买/复购",
+    "typical_user_phrases": [
+      "现在有什么活动",
+      "怎么买",
+      "怎么复购"
+    ],
+    "keywords": [
+      "活动",
+      "优惠",
+      "价格",
+      "购买",
+      "复购",
+      "赠品"
+    ],
+    "reply_strategy": "统一官方活动口径→引导直播间/专属链接→避免私自承诺",
+    "risk_level": "L1"
+  },
+  {
+    "primary_category": "交易售后与服务流程",
+    "secondary_category": "退款/免单/未达标",
+    "typical_user_phrases": [
+      "按你们方案还不瘦怎么办",
+      "能退款吗"
+    ],
+    "keywords": [
+      "退款",
+      "免单",
+      "未达标",
+      "全额"
+    ],
+    "reply_strategy": "按官方规则解释→强调连续打卡和执行标准→转人工确认资格",
+    "risk_level": "L1-L2"
+  },
+  {
+    "primary_category": "风险边界与专业转介",
+    "secondary_category": "疾病/用药/孕哺/体检异常",
+    "typical_user_phrases": [
+      "有结石能喝吗",
+      "吃药能用吗",
+      "怀孕能喝吗"
+    ],
+    "keywords": [
+      "结石",
+      "药",
+      "医生",
+      "孕",
+      "哺乳",
+      "体检",
+      "血压",
+      "血糖"
+    ],
+    "reply_strategy": "不诊断不替代医生→保守建议→转人工/医生确认→记录风险",
+    "risk_level": "L3"
+  },
+  {
+    "primary_category": "情绪陪伴与认知纠偏",
+    "secondary_category": "焦虑/想放弃/自责",
+    "typical_user_phrases": [
+      "我要哭了",
+      "我很怕",
+      "坚持不下去了"
+    ],
+    "keywords": [
+      "流泪",
+      "哭",
+      "怕",
+      "焦虑",
+      "放弃"
+    ],
+    "reply_strategy": "先抱住情绪→复盘已做到的→只改一个动作→持续陪伴",
+    "risk_level": "L1"
+  }
+]

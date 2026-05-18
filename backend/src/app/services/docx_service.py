@@ -5,8 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
+
+from app.services.document_templates import render_document_content
 
 
 def write_markdown_docx(content: str, output_path: Path) -> None:
@@ -55,6 +58,42 @@ def write_markdown_docx(content: str, output_path: Path) -> None:
 
 def write_structured_docx(title: str, payload: dict[str, Any], output_path: Path) -> None:
     write_markdown_docx(render_structured_markdown(title, payload), output_path)
+
+
+def write_template_docx(content_json: dict[str, Any], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    doc = Document()
+    section = doc.sections[0]
+    section.top_margin = Cm(2.0)
+    section.bottom_margin = Cm(2.0)
+    section.left_margin = Cm(1.8)
+    section.right_margin = Cm(1.8)
+    _setup_styles(doc)
+
+    _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=10, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_paragraph(doc, str(content_json.get("title") or "交付文件"), bold=True, size=14, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    recipient = str(content_json.get("recipient") or "").strip()
+    if recipient:
+        _add_paragraph(doc, f"To：{recipient}", bold=True, size=10)
+
+    for block in content_json.get("blocks") or []:
+        title = str(block.get("title") or "").strip()
+        if title:
+            _add_paragraph(doc, title, bold=True, size=11)
+        kind = block.get("kind")
+        if kind == "table":
+            _add_table(doc, block.get("rows") or [])
+        elif kind == "list":
+            for item in block.get("items") or []:
+                text = str(item or "").strip()
+                if text:
+                    _add_paragraph(doc, f"• {text}", size=10)
+        else:
+            for line in str(block.get("content") or "").splitlines():
+                _add_paragraph(doc, line, size=10)
+
+    _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=10, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    doc.save(output_path)
 
 
 def render_structured_markdown(title: str, payload: dict[str, Any]) -> str:
@@ -106,6 +145,10 @@ def render_structured_markdown(title: str, payload: dict[str, Any]) -> str:
     return "\n".join(line for line in lines if line is not None).strip()
 
 
+def render_template_markdown(content_json: dict[str, Any]) -> str:
+    return render_document_content(content_json)
+
+
 def safe_filename(value: str) -> str:
     return re.sub(r'[\\/:*?"<>|\\n\\r]+', "_", value).strip() or "未命名"
 
@@ -116,3 +159,54 @@ def _string(value: Any) -> str:
     if isinstance(value, (dict, list)):
         return ""
     return str(value).strip()
+
+
+def _setup_styles(doc: Document) -> None:
+    styles = doc.styles
+    for style_name in ("Normal", "Heading 1", "Heading 2", "Heading 3"):
+        style = styles[style_name]
+        style.font.name = "Microsoft YaHei"
+        style._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
+        style.font.size = Pt(10)
+        paragraph_format = style.paragraph_format
+        paragraph_format.space_before = Pt(0)
+        paragraph_format.space_after = Pt(6)
+        paragraph_format.line_spacing = Pt(17)
+
+
+def _add_paragraph(
+    doc: Document,
+    text: str,
+    *,
+    bold: bool = False,
+    size: int = 10,
+    alignment: WD_ALIGN_PARAGRAPH | None = None,
+) -> None:
+    paragraph = doc.add_paragraph(style="Normal")
+    if alignment is not None:
+        paragraph.alignment = alignment
+    paragraph.paragraph_format.space_after = Pt(6)
+    run = paragraph.add_run(text)
+    run.font.name = "Microsoft YaHei"
+    run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
+    run.font.size = Pt(size)
+    run.bold = bold
+
+
+def _add_table(doc: Document, rows: list[list[dict[str, Any]]]) -> None:
+    if not rows:
+        return
+    table = doc.add_table(rows=len(rows), cols=max(len(row) for row in rows))
+    table.style = "Table Grid"
+    for row_index, row in enumerate(rows):
+        for cell_index, cell in enumerate(row):
+            value = cell.get("value") if isinstance(cell, dict) else cell
+            target = table.cell(row_index, cell_index)
+            target.text = str(value or "")
+            for paragraph in target.paragraphs:
+                for run in paragraph.runs:
+                    run.font.name = "Microsoft YaHei"
+                    run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
+                    run.font.size = Pt(9)
+                    run.bold = bool(isinstance(cell, dict) and not cell.get("editable", True))
+    doc.add_paragraph("")

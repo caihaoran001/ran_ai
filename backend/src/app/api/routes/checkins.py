@@ -10,6 +10,8 @@ from app.db.session import get_session
 from app.models.checkin import Checkin
 from app.models.service_case import ServiceCase
 from app.schemas.checkin import CheckinCreate, CheckinRead
+from app.services.checkin_service import normalize_checkin_json
+from app.services.intervention_service import analyze_intervention, merge_case_insight
 
 router = APIRouter()
 
@@ -23,6 +25,21 @@ async def list_case_checkins(
         select(Checkin)
         .where(Checkin.service_case_id == service_case_id)
         .order_by(Checkin.checkin_date.desc(), Checkin.created_at.desc())
+    )
+    return list(result)
+
+
+@router.get("/checkins", response_model=list[CheckinRead])
+async def list_checkins(
+    limit: int = 20,
+    session: AsyncSession = Depends(get_session),
+) -> list[Checkin]:
+    result = await session.scalars(
+        select(Checkin)
+        .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
+        .where(ServiceCase.deleted_at.is_(None))
+        .order_by(Checkin.created_at.desc())
+        .limit(min(max(limit, 1), 100))
     )
     return list(result)
 
@@ -47,8 +64,14 @@ async def create_case_checkin(
         checkin_date=payload.checkin_date or date.today(),
         content=payload.content,
         raw_message_id=payload.raw_message_id,
-        parsed_json=payload.parsed_json,
+        parsed_json=normalize_checkin_json(payload.parsed_json, payload.content),
     )
+    insight = await analyze_intervention(
+        source="checkin",
+        content=payload.content,
+        context={"service_case_id": service_case.id, "parsed_json": checkin.parsed_json},
+    )
+    merge_case_insight(service_case, insight)
     session.add(checkin)
     await session.commit()
     await session.refresh(checkin)

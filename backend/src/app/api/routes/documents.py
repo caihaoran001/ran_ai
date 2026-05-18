@@ -15,6 +15,7 @@ from app.schemas.document import DocumentUpdate, UserDocumentRead, UserProfileRe
 from app.services.document_service import (
     generate_documents,
     generate_profile,
+    generate_stage_report,
     rewrite_document_file,
     send_case_documents,
     send_one_document,
@@ -48,11 +49,25 @@ async def generate_case_documents(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/service-cases/{service_case_id}/stage-reports/generate", response_model=UserDocumentRead)
+async def generate_case_stage_report(
+    service_case_id: int,
+    stage: str,
+    session: AsyncSession = Depends(get_session),
+) -> UserDocument:
+    service_case = await _case_or_404(session, service_case_id)
+    try:
+        return await generate_stage_report(session, service_case, stage=stage)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/service-cases/{service_case_id}/documents/send", response_model=list[UserDocumentRead])
 async def send_all_case_documents(
     service_case_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[UserDocument]:
+    await _case_or_404(session, service_case_id)
     try:
         return await send_case_documents(session, service_case_id)
     except RuntimeError as exc:
@@ -74,7 +89,7 @@ async def list_case_documents(
         return documents
     latest_by_type = {}
     for document in documents:
-        latest_by_type.setdefault(document.document_type, document)
+        latest_by_type.setdefault(_document_identity(document), document)
     return list(latest_by_type.values())
 
 
@@ -157,3 +172,9 @@ async def _case_or_404(session: AsyncSession, service_case_id: int) -> ServiceCa
     if service_case.deleted_at:
         raise HTTPException(status_code=400, detail="deleted service case is read-only")
     return service_case
+
+
+def _document_identity(document: UserDocument) -> tuple[str, str]:
+    content_json = document.content_json if isinstance(document.content_json, dict) else {}
+    stage = str(content_json.get("stage") or "")
+    return (str(document.document_type), stage)

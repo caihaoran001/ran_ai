@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -47,6 +47,13 @@ class ServiceCase(TimestampMixin, Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(String(2000))
     auto_send_documents: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    risk_level: Mapped[str] = mapped_column(String(32), default="normal", index=True)
+    risk_flags: Mapped[list[dict] | None] = mapped_column(JSON)
+    needs_human_intervention: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    intervention_reasons: Mapped[list[dict] | None] = mapped_column(JSON)
+    renewal_intent_flags: Mapped[list[dict] | None] = mapped_column(JSON)
+    refund_intent_flags: Mapped[list[dict] | None] = mapped_column(JSON)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User | None] = relationship(back_populates="service_cases")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Date, ForeignKey, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Date, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -15,9 +15,6 @@ if TYPE_CHECKING:
 
 class Checkin(TimestampMixin, Base):
     __tablename__ = "checkins"
-    __table_args__ = (
-        UniqueConstraint("service_case_id", "checkin_date", name="uq_checkin_case_date"),
-    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     service_case_id: Mapped[int] = mapped_column(

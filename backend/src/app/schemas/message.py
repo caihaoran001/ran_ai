@@ -11,6 +11,10 @@ class MessageSend(BaseModel):
     purpose: MessagePurpose = MessagePurpose.MANUAL
 
 
+class MessageUpdate(BaseModel):
+    content: str | None = Field(default=None, min_length=1)
+
+
 class MessageRead(Timestamped):
     id: int
     service_case_id: int | None
@@ -23,3 +27,5 @@ class MessageRead(Timestamped):
     purpose: MessagePurpose
     status: MessageStatus
     error: str | None
+    analysis_json: dict | None = None
+    trigger: MessageRead | None = None

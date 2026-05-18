@@ -30,7 +30,7 @@ export default async function CheckinsPage() {
               {checkins.slice(0, 7).map((checkin) => (
                 <div key={checkin.id} className="rounded-md border border-zinc-200 px-3 py-2">
                   <span className="mr-3 text-zinc-500">{checkin.checkin_date}</span>
-                  {checkin.content}
+                  <StructuredCheckin checkin={checkin} />
                 </div>
               ))}
               {checkins.length === 0 && <p className="text-zinc-500">暂无打卡</p>}
@@ -38,6 +38,32 @@ export default async function CheckinsPage() {
           </section>
         ))}
       </div>
+    </div>
+  );
+}
+
+function StructuredCheckin({ checkin }: { checkin: Checkin }) {
+  const parsed = checkin.parsed_json;
+  if (!parsed) return <span>{checkin.content}</span>;
+  const product = parsed.product_schedule || {};
+  const rows = [
+    ["早C", product.morning_c],
+    ["午B", product.noon_b],
+    ["晚A", product.night_a],
+    ["饮水", parsed.water],
+    ["睡眠", parsed.sleep],
+    ["情绪", parsed.mood],
+    ["运动", parsed.exercise],
+    ["体重", parsed.weight],
+  ].filter(([, value]) => value);
+  if (rows.length === 0) return <span>{checkin.content}</span>;
+  return (
+    <div className="mt-2 grid gap-1 md:grid-cols-4">
+      {rows.map(([label, value]) => (
+        <span key={label} className="rounded bg-zinc-50 px-2 py-1">
+          <span className="text-zinc-500">{label}：</span>{value}
+        </span>
+      ))}
     </div>
   );
 }

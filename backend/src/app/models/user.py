@@ -19,8 +19,8 @@ class User(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    phone: Mapped[str | None] = mapped_column(String(32), unique=True)
-    wecom_user_id: Mapped[str | None] = mapped_column(String(128), unique=True)
+    phone: Mapped[str | None] = mapped_column(String(32), index=True)
+    wecom_user_id: Mapped[str | None] = mapped_column(String(128), index=True)
     notes: Mapped[str | None] = mapped_column(String(1000))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

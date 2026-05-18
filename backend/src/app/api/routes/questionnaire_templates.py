@@ -5,11 +5,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.schemas.questionnaire_template import (
+    QuestionnaireTemplateConfigRead,
+    QuestionnaireTemplateConfigUpdate,
     QuestionnaireTemplateRead,
     QuestionnaireTemplateUpdate,
 )
+from app.services.checkin_questionnaires import (
+    get_checkin_questionnaire_schedule,
+    save_checkin_questionnaire_schedule,
+)
 from app.services.questionnaire_template import (
+    get_active_questionnaire_template,
+    get_all_active_questionnaire_templates,
     get_active_questionnaire_fields,
+    save_questionnaire_templates,
     save_active_questionnaire_fields,
 )
 
@@ -20,8 +29,8 @@ router = APIRouter()
 async def get_template(
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnaireTemplateRead:
-    fields = await get_active_questionnaire_fields(session)
-    return QuestionnaireTemplateRead(name="燃AI 1.0 问卷", fields=fields)
+    template = await get_active_questionnaire_template(session)
+    return QuestionnaireTemplateRead(**template)
 
 
 @router.put("", response_model=QuestionnaireTemplateRead)
@@ -33,5 +42,42 @@ async def update_template(
         session,
         payload.fields,
         name=payload.name,
+        template_key=payload.template_key,
+        title=payload.title,
+        description=payload.description,
     )
-    return QuestionnaireTemplateRead(name=template.name, fields=template.fields_json)
+    return QuestionnaireTemplateRead(
+        name=template.name,
+        template_key=template.template_key,
+        title=template.title,
+        description=template.description,
+        fields=template.fields_json,
+    )
+
+
+@router.get("/config", response_model=QuestionnaireTemplateConfigRead)
+async def get_template_config(
+    session: AsyncSession = Depends(get_session),
+) -> QuestionnaireTemplateConfigRead:
+    templates = [
+        QuestionnaireTemplateRead(**item)
+        for item in await get_all_active_questionnaire_templates(session)
+    ]
+    schedule = await get_checkin_questionnaire_schedule(session)
+    return QuestionnaireTemplateConfigRead(templates=templates, schedule=schedule)
+
+
+@router.put("/config", response_model=QuestionnaireTemplateConfigRead)
+async def update_template_config(
+    payload: QuestionnaireTemplateConfigUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> QuestionnaireTemplateConfigRead:
+    templates = [
+        QuestionnaireTemplateRead(**item)
+        for item in await save_questionnaire_templates(
+            session,
+            [item.model_dump() for item in payload.templates],
+        )
+    ]
+    schedule = await save_checkin_questionnaire_schedule(session, payload.schedule)
+    return QuestionnaireTemplateConfigRead(templates=templates, schedule=schedule)

@@ -1,4 +1,5 @@
 from app.models.checkin import Checkin
+from app.models.app_setting import AppSetting
 from app.models.message import Message
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.questionnaire_template import QuestionnaireTemplate
@@ -10,6 +11,7 @@ from app.models.user_profile import UserProfile
 
 __all__ = [
     "Checkin",
+    "AppSetting",
     "DocumentStatus",
     "DocumentType",
     "Message",

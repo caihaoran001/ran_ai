@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import ForeignKey, JSON
+from sqlalchemy import ForeignKey, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -21,6 +21,7 @@ class QuestionnaireSubmission(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    template_key: Mapped[str] = mapped_column(String(80), default="intake", nullable=False, index=True)
     answers_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
     service_case: Mapped[ServiceCase] = relationship(back_populates="questionnaire_submissions")

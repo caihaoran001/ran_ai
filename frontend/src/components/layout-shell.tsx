@@ -5,7 +5,7 @@ import Link from "next/link";
 
 const navItems = [
   { href: "/users", label: "用户管理", icon: "👥" },
-  { href: "/documents", label: "文档审核", icon: "📄" },
+  { href: "/documents", label: "审核控制台", icon: "🛡️" },
   { href: "/questionnaire-config", label: "问卷配置", icon: "⚙️" },
   { href: "/dashboard", label: "数据看板", icon: "📊" },
 ];

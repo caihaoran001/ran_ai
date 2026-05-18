@@ -19,6 +19,7 @@ class UserProfileRead(Timestamped):
 class DocumentUpdate(BaseModel):
     title: str | None = None
     content_md: str | None = None
+    content_json: dict | None = None
     status: DocumentStatus | None = None
 
 
@@ -28,6 +29,7 @@ class UserDocumentRead(Timestamped):
     document_type: DocumentType
     title: str
     content_md: str
+    content_json: dict | None
     file_path: str | None
     status: DocumentStatus
     generated_by_model: str | None

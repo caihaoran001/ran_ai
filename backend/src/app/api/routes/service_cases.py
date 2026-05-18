@@ -147,10 +147,54 @@ async def update_service_case(
     )
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if data.pop("reset_risk", False):
+        service_case.risk_level = "normal"
+        service_case.risk_flags = None
+        service_case.needs_human_intervention = False
+        service_case.intervention_reasons = None
+    for key, value in data.items():
         setattr(service_case, key, value)
     await session.commit()
     await session.refresh(service_case)
+    result = await session.scalar(
+        select(ServiceCase)
+        .where(ServiceCase.id == service_case.id)
+        .options(selectinload(ServiceCase.user))
+    )
+    assert result is not None
+    return result
+
+
+@router.delete("/{service_case_id}", response_model=ServiceCaseRead)
+async def delete_service_case(
+    service_case_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ServiceCase:
+    service_case = await session.scalar(
+        select(ServiceCase)
+        .where(ServiceCase.id == service_case_id)
+        .options(selectinload(ServiceCase.user))
+    )
+    if not service_case:
+        raise HTTPException(status_code=404, detail="service case not found")
+    if not service_case.deleted_at:
+        deleted_at = datetime.now(timezone.utc)
+        service_case.deleted_at = deleted_at
+        if service_case.user_id:
+            active_sibling = await session.scalar(
+                select(ServiceCase.id)
+                .where(
+                    ServiceCase.user_id == service_case.user_id,
+                    ServiceCase.id != service_case.id,
+                    ServiceCase.deleted_at.is_(None),
+                )
+                .limit(1)
+            )
+            if not active_sibling and service_case.user and not service_case.user.deleted_at:
+                service_case.user.deleted_at = deleted_at
+        await session.commit()
+        await session.refresh(service_case)
     result = await session.scalar(
         select(ServiceCase)
         .where(ServiceCase.id == service_case.id)

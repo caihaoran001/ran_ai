@@ -31,7 +31,16 @@ export type ServiceCase = {
   status: string;
   notes?: string | null;
   auto_send_documents: boolean;
+  ai_auto_reply_enabled: boolean;
   deleted_at?: string | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+  risk_level?: string;
+  risk_flags?: Array<Record<string, string>> | null;
+  needs_human_intervention?: boolean;
+  intervention_reasons?: Array<Record<string, string>> | null;
+  renewal_intent_flags?: Array<Record<string, string | boolean>> | null;
+  refund_intent_flags?: Array<Record<string, string | boolean>> | null;
   user?: { id: number; name: string; phone?: string | null; wecom_user_id?: string | null } | null;
   created_at: string;
   updated_at: string;
@@ -77,15 +86,58 @@ export type UserDocument = {
   document_type: string;
   title: string;
   content_md: string;
+  content_json?: DocumentContentJson | null;
   file_path?: string | null;
   status: string;
+  reviewed_at?: string | null;
+  sent_at?: string | null;
+};
+
+export type DocumentTableCell = {
+  value: string;
+  editable?: boolean;
+};
+
+export type DocumentContentBlock = {
+  key: string;
+  title: string;
+  kind: "text" | "list" | "table";
+  content?: string;
+  items?: string[];
+  rows?: DocumentTableCell[][];
+};
+
+export type DocumentContentJson = {
+  template_version: string;
+  title: string;
+  recipient?: string;
+  stage?: string;
+  blocks: DocumentContentBlock[];
 };
 
 export type Checkin = {
   id: number;
+  service_case_id?: number;
+  group_id?: string;
+  user_id?: number | null;
   checkin_date: string;
   content: string;
+  parsed_json?: CheckinParsed | null;
   created_at: string;
+};
+
+export type CheckinParsed = {
+  product_schedule?: {
+    morning_c?: string;
+    noon_b?: string;
+    night_a?: string;
+    summary?: string;
+  };
+  water?: string;
+  sleep?: string;
+  mood?: string;
+  exercise?: string;
+  weight?: string;
 };
 
 export type Message = {
@@ -100,5 +152,7 @@ export type Message = {
   purpose: string;
   status: string;
   error: string | null;
+  analysis_json?: Record<string, unknown> | null;
+  trigger?: Message | null;
   created_at: string;
 };

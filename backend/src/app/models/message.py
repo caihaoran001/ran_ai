@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, String, Text
+from sqlalchemy import Enum, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -71,5 +71,8 @@ class Message(TimestampMixin, Base):
         nullable=False,
     )
     error: Mapped[str | None] = mapped_column(Text)
-
+    analysis_json: Mapped[dict | None] = mapped_column(JSON)
+    trigger_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id"), index=True)
+    
+    trigger: Mapped[Message | None] = relationship(remote_side=[id])
     service_case: Mapped[ServiceCase | None] = relationship(back_populates="messages")

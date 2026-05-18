@@ -4,9 +4,11 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { CAI_HAORAN_SAMPLE_ANSWERS } from "./sample-answers";
 
 type Questionnaire = {
   token: string;
+  template_key: string;
   fields: {
     key: string;
     type: string;
@@ -36,7 +38,7 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
     }
     setSubmitting(true);
     setError(null);
-    const url = `/api/questionnaires/${questionnaire.token}/submit`;
+    const url = `/api/questionnaires/${questionnaire.token}/submit?template=${encodeURIComponent(questionnaire.template_key)}`;
     try {
       const response = await fetch(url, {
         method: "POST",
@@ -62,8 +64,29 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
     return <div className="rounded-lg border border-zinc-200 bg-white p-6">已提交，感谢配合。</div>;
   }
 
+  function fillCaiHaoranSample() {
+    const availableKeys = new Set(questionnaire.fields.map((field) => field.key));
+    const sample = Object.fromEntries(
+      Object.entries(CAI_HAORAN_SAMPLE_ANSWERS).filter(([key]) => availableKeys.has(key)),
+    );
+    setAnswers(sample);
+    setError(null);
+  }
+
   return (
     <form onSubmit={submit} className="space-y-4 rounded-lg border border-zinc-200 bg-white p-4">
+      {questionnaire.template_key === "intake" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+          <div className="text-sm text-amber-900">试验辅助：一键填入蔡浩然样例问卷。</div>
+          <Button
+            type="button"
+            className="bg-amber-700 hover:bg-amber-600"
+            onClick={fillCaiHaoranSample}
+          >
+            一键选择蔡浩然版
+          </Button>
+        </div>
+      )}
       {questionnaire.fields.map((field) => (
         <FieldInput
           key={field.key}

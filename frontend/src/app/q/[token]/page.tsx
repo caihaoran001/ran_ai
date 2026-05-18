@@ -1,9 +1,14 @@
 import { QuestionnaireForm } from "./questionnaire-form";
 import { api } from "@/lib/api";
+import { formatChinaDateTime } from "@/lib/format";
 
 type Questionnaire = {
   service_case_id: number;
   token: string;
+  template_key: string;
+  title?: string | null;
+  description?: string | null;
+  allow_repeat: boolean;
   user_name?: string | null;
   fields: {
     key: string;
@@ -19,20 +24,29 @@ type Questionnaire = {
   } | null;
 };
 
-export default async function QuestionnairePage({ params }: { params: Promise<{ token: string }> }) {
+export default async function QuestionnairePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ token: string }>;
+  searchParams?: Promise<{ template?: string }>;
+}) {
   const { token } = await params;
-  const questionnaire = await api<Questionnaire>(`/questionnaires/${token}`);
+  const template = (await searchParams)?.template;
+  const suffix = template ? `?template=${encodeURIComponent(template)}` : "";
+  const questionnaire = await api<Questionnaire>(`/questionnaires/${token}${suffix}`);
+  const isReadonly = Boolean(questionnaire.latest_submission && !questionnaire.allow_repeat);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">燃AI服务问卷</h1>
+        <h1 className="text-2xl font-semibold">{questionnaire.title ?? "燃AI服务问卷"}</h1>
         <p className="mt-1 text-sm text-zinc-500">
           {questionnaire.user_name ?? "用户"}，
-          {questionnaire.latest_submission ? "以下是已提交的问卷内容。" : "请完成以下信息。"}
+          {isReadonly ? "以下是已提交的问卷内容。" : (questionnaire.description ?? "请完成以下信息。")}
         </p>
       </div>
-      {questionnaire.latest_submission ? (
+      {isReadonly ? (
         <QuestionnaireReadonly questionnaire={questionnaire} />
       ) : (
         <QuestionnaireForm questionnaire={questionnaire} />
@@ -96,13 +110,5 @@ function formatAnswer(value: unknown) {
 
 function formatDateTime(value?: string | null) {
   if (!value) return "未知时间";
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
+  return formatChinaDateTime(value, "未知时间");
 }

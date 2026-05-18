@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Message } from "@/lib/api";
+import { formatChinaMonthDayTime } from "@/lib/format";
 
 export function ChatMessages({ messages }: { messages: Message[] }) {
   const [expanded, setExpanded] = useState(false);
@@ -15,7 +16,7 @@ export function ChatMessages({ messages }: { messages: Message[] }) {
     );
   }
 
-  const displayMessages = expanded ? messages : messages.slice(0, 10);
+  const displayMessages = messages;
 
   return (
     <section className="rounded-lg border border-zinc-200 bg-white p-4">
@@ -23,7 +24,7 @@ export function ChatMessages({ messages }: { messages: Message[] }) {
         <h2 className="font-medium">聊天记录</h2>
         <span className="text-sm text-zinc-500">{messages.length} 条</span>
       </div>
-      <div className="mt-3 space-y-3">
+      <div className="mt-3 max-h-[480px] overflow-y-auto space-y-3 pr-1">
         {displayMessages.map((msg) => (
           <div
             key={msg.id}
@@ -50,6 +51,9 @@ export function ChatMessages({ messages }: { messages: Message[] }) {
                 {msg.purpose === "checkin" && (
                   <span className="rounded bg-yellow-100 px-1 text-yellow-700">打卡</span>
                 )}
+                {msg.purpose === "document_delivery" && (
+                  <span className="rounded bg-blue-100 px-1 text-blue-700">文件</span>
+                )}
               </div>
               <div className="whitespace-pre-wrap">{msg.content}</div>
               {msg.status === "failed" && (
@@ -59,24 +63,10 @@ export function ChatMessages({ messages }: { messages: Message[] }) {
           </div>
         ))}
       </div>
-      {messages.length > 10 && (
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="mt-3 w-full rounded-md border border-zinc-200 py-2 text-sm text-zinc-600 hover:bg-zinc-50"
-        >
-          {expanded ? "收起" : `展开全部 ${messages.length} 条`}
-        </button>
-      )}
     </section>
   );
 }
 
 function formatTime(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
+  return formatChinaMonthDayTime(value);
 }

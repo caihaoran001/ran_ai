@@ -5,32 +5,59 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { API_BASE } from "@/lib/api";
 
-export function DeleteUserButton({ userId, userName }: { userId: number; userName: string }) {
+export function DeleteServiceCaseButton({
+  serviceCaseId,
+  userName,
+}: {
+  serviceCaseId: number;
+  userName: string;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
-  async function deleteUser() {
-    if (!window.confirm(`确认删除用户「${userName}」？删除后历史记录仍可在已删除用户中查看。`)) {
+  async function deleteServiceCase() {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
       return;
     }
     setBusy(true);
     try {
-      const response = await fetch(`${API_BASE}/users/${userId}`, { method: "DELETE" });
+      const response = await fetch(`${API_BASE}/service-cases/${serviceCaseId}`, { method: "DELETE" });
       if (!response.ok) throw new Error(await response.text());
       router.refresh();
+    } catch (err: any) {
+      alert(`删除失败: ${err.message || err}`);
     } finally {
       setBusy(false);
+      setConfirmDelete(false);
     }
   }
 
   return (
-    <Button
-      type="button"
-      className="h-8 bg-white px-2 text-xs text-red-600 shadow-none ring-1 ring-red-200 hover:bg-red-50"
-      disabled={busy}
-      onClick={deleteUser}
-    >
-      {busy ? "删除中" : "删除"}
-    </Button>
+    <div className="flex items-center gap-2">
+      {confirmDelete && (
+        <button
+          type="button"
+          className="text-xs text-zinc-500 hover:text-zinc-700"
+          onClick={() => setConfirmDelete(false)}
+          disabled={busy}
+        >
+          取消
+        </button>
+      )}
+      <Button
+        type="button"
+        className={`h-8 px-2 text-xs shadow-none ring-1 transition-all ${
+          confirmDelete
+            ? "bg-red-600 text-white hover:bg-red-700 ring-red-600 font-semibold"
+            : "bg-white text-red-600 ring-red-200 hover:bg-red-50"
+        }`}
+        disabled={busy}
+        onClick={deleteServiceCase}
+      >
+        {busy ? "删除中" : confirmDelete ? "确定删除？" : "删除"}
+      </Button>
+    </div>
   );
 }
