@@ -68,18 +68,17 @@ EXECUTION_FIELD_SPEC = {
     "path_goal": "更适合的总路径目标",
     "day28_goal": "第一个28天目标",
     "current_phase_goal": "当前阶段目标",
-    "principle": "执行总原则",
-    "product_rhythm": "早C/午B/晚A节律说明",
+    "principle": "执行总原则，一句话，强调先守早C/午B/晚A和关键生活动作，再抓结果",
     "weekly_plan": [
-        {"week": "第1周", "focus": "重点", "standard": "执行标准"},
-        {"week": "第2周", "focus": "重点", "standard": "执行标准"},
-        {"week": "第3周", "focus": "重点", "standard": "执行标准"},
-        {"week": "第4周", "focus": "重点", "standard": "执行标准"},
+        {"week": "第1周", "focus": "稳住节律 / 先守底盘", "standard": "执行标准，1-2个短句，不要长篇解释"},
+        {"week": "第2周", "focus": "拉高关键动作一致性", "standard": "执行标准，1-2个短句，不要长篇解释"},
+        {"week": "第3周", "focus": "开始抓结果指标", "standard": "执行标准，1-2个短句，不要长篇解释"},
+        {"week": "第4周", "focus": "稳定复现 / 做实结果", "standard": "执行标准，1-2个短句，不要长篇解释"},
     ],
-    "daily_checkin": "每日固定打卡要求",
+    "daily_checkin": "每日固定打卡要求。早C/午B/晚A合并成一项，不要拆成三条。",
     "week5_12": "第5-8周和第9-12周提前说明",
     "weekly_standard": "每周通过标准",
-    "reminder": "提醒，包含不替代医疗建议",
+    "reminder": "个性化提醒，必须结合用户作息/运动/睡眠/不适/夜班等情况；不要写通用套话；必要时提醒就医",
 }
 
 
@@ -104,6 +103,13 @@ def prompt_schema_for(document_type: DocumentType) -> dict[str, Any]:
     if document_type == DocumentType.ENERGY_RESTART_PRESCRIPTION:
         return ENERGY_FIELD_SPEC
     return EXECUTION_FIELD_SPEC
+
+
+def combined_prompt_schema() -> dict[str, Any]:
+    return {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: ENERGY_FIELD_SPEC,
+        DocumentType.DAY28_EXECUTION_STANDARD.value: EXECUTION_FIELD_SPEC,
+    }
 
 
 def stage_report_prompt_schema(stage: str) -> dict[str, Any]:
@@ -152,13 +158,23 @@ def build_stage_report_content_json(
 
 
 def render_document_content(content_json: dict[str, Any]) -> str:
-    lines = ["Powered by HumanBurning.AI", f"# {content_json.get('title') or '交付文件'}"]
+    lines = []
+    if content_json.get("show_header_brand", True):
+        lines.append("Powered by HumanBurning.AI")
+    lines.append(f"# {content_json.get('title') or '交付文件'}")
     recipient = _text(content_json.get("recipient"))
-    if recipient:
+    if recipient and content_json.get("show_recipient", True):
         lines.append(f"To：{recipient}")
     for block in content_json.get("blocks") or []:
         title = _text(block.get("title"))
         kind = block.get("kind")
+        if block.get("display") == "inline":
+            content = _text(block.get("content"))
+            if title and content:
+                lines.append(f"{title}：{content}")
+            elif content:
+                lines.append(content)
+            continue
         if title:
             lines.extend(["", f"## {title}"])
         if kind == "table":
@@ -174,12 +190,16 @@ def render_document_content(content_json: dict[str, Any]) -> str:
             content = _text(block.get("content"))
             if content:
                 lines.append(content)
-    lines.extend(["", "Powered by HumanBurning.AI"])
+    if content_json.get("show_footer_brand", True):
+        lines.extend(["", "Powered by HumanBurning.AI"])
     return "\n".join(lines).strip()
 
 
 def _build_energy(title: str, user_name: str, fields: dict[str, Any]) -> dict[str, Any]:
     overview = _dict(fields.get("overview"))
+    display_title = title
+    if "v6.3" not in display_title:
+        display_title = f"{display_title} v6.3"
     blocks = [
         {
             "key": "overview",
@@ -225,7 +245,7 @@ def _build_energy(title: str, user_name: str, fields: dict[str, Any]) -> dict[st
         _text_block("first_week_signals", "13. 前7天重点看4个信号", fields.get("first_week_signals")),
         _text_block("notice", "14. 说明", "本处方单用于生活方式管理和燃AI 28天训练营执行指导，不替代医疗诊断、药物治疗或医生建议。"),
     ]
-    return _payload(title=title, recipient=fields.get("recipient") or user_name, blocks=blocks)
+    return _payload(title=display_title, recipient=fields.get("recipient") or user_name, blocks=blocks)
 
 
 def _build_execution(title: str, user_name: str, fields: dict[str, Any]) -> dict[str, Any]:
@@ -234,23 +254,46 @@ def _build_execution(title: str, user_name: str, fields: dict[str, Any]) -> dict
         rows = []
     rows_by_week = {str(row.get("week")): row for row in rows if isinstance(row, dict)}
     table_rows = [[_label("周次"), _label("重点"), _label("执行标准")]]
+    fixed_focus = {
+        "第1周": "稳住节律 / 先守底盘",
+        "第2周": "拉高关键动作一致性",
+        "第3周": "开始抓结果指标",
+        "第4周": "稳定复现 / 做实结果",
+    }
     for week in ("第1周", "第2周", "第3周", "第4周"):
         row = rows_by_week.get(week, {})
-        table_rows.append([_label(week), _editable(row.get("focus")), _editable(row.get("standard"))])
+        table_rows.append(
+            [
+                _label(week),
+                _editable(fixed_focus[week]),
+                _editable(_compact_standard(row.get("standard")) or _default_week_standard(week)),
+            ]
+        )
     blocks = [
-        _text_block("weight_band", "您当前所属减重带", fields.get("weight_band")),
-        _text_block("path_goal", "更适合的总路径目标", fields.get("path_goal")),
-        _text_block("day28_goal", "第一个28天目标", fields.get("day28_goal")),
-        _text_block("current_phase_goal", "当前阶段目标", fields.get("current_phase_goal")),
-        _text_block("principle", "执行总原则", fields.get("principle")),
-        _text_block("product_rhythm", "早C / 午B / 晚A底盘说明", fields.get("product_rhythm")),
+        _inline_block("weight_band", "您当前所属减重带", fields.get("weight_band")),
+        _inline_block("path_goal", "更适合的总路径目标", fields.get("path_goal")),
+        _inline_block("day28_goal", "第一个28天目标", fields.get("day28_goal")),
+        _inline_block("current_phase_goal", "当前阶段目标", fields.get("current_phase_goal")),
+        _inline_block("principle", "执行总原则", fields.get("principle") or "先守早C/午B/晚A和晚间收口底盘，再用饮食、步行和睡眠放大结果。"),
+        _text_block(
+            "fixed_rhythm",
+            "",
+            "这28天，早C / 午B / 晚A按时饮用，是整个执行标准的底盘：它在每天重复给身体“启动—续航—收口”的节律信号，帮助白天更稳、下午不塌、晚上更容易收口。",
+        ),
         {"key": "weekly_plan", "title": "28天逐周执行标准", "kind": "table", "rows": table_rows},
-        _text_block("daily_checkin", "每日固定打卡（每天只打这5项）", fields.get("daily_checkin")),
-        _text_block("week5_12", "第5–8周和第9–12周提前说明", fields.get("week5_12")),
-        _text_block("weekly_standard", "每周通过标准", fields.get("weekly_standard")),
-        _text_block("reminder", "提醒", fields.get("reminder")),
+        _text_block(
+            "daily_checkin",
+            "每日固定打卡（每天只打这5项）",
+            _daily_checkin_text(fields.get("daily_checkin")),
+        ),
+        _text_block("week5_12", "第5–8周和第9–12周提前说明", fields.get("week5_12") or "第5–8周继续放大已经稳定的动作，第9–12周再根据体重、腰围、睡眠和排便反馈微调目标；不要在第一个28天里一次性加太多动作。"),
+        _text_block("weekly_standard", "每周通过标准", fields.get("weekly_standard") or "本周不追求完美，重点看三杯节律是否稳定、晚餐是否收口、睡眠和排便是否比上一周更稳。"),
+        _text_block("reminder", "提醒", _personal_reminder(fields.get("reminder"))),
     ]
-    return _payload(title=f"{user_name}｜{title}（1页版）", recipient=user_name, blocks=blocks)
+    payload = _payload(title=f"{user_name}｜{title}（1页版）", recipient="", blocks=blocks)
+    payload["show_recipient"] = False
+    payload["show_footer_brand"] = False
+    return payload
 
 
 def normalize_content_json(value: dict[str, Any]) -> dict[str, Any]:
@@ -281,13 +324,23 @@ def _payload(*, title: str, recipient: Any, blocks: list[dict[str, Any]]) -> dic
 
 
 def _text_block(key: str, title: str, content: Any) -> dict[str, Any]:
-    return {"key": key, "title": title, "kind": "text", "content": _text(content)}
+    return {"key": key, "title": title, "kind": "text", "content": _clean_text(content)}
+
+
+def _inline_block(key: str, title: str, content: Any) -> dict[str, Any]:
+    return {
+        "key": key,
+        "title": title,
+        "kind": "text",
+        "display": "inline",
+        "content": _clean_inline_value(content, title),
+    }
 
 
 def _list_block(key: str, title: str, items: Any) -> dict[str, Any]:
     if not isinstance(items, list):
         items = [_text(items)] if _text(items) else []
-    return {"key": key, "title": title, "kind": "list", "items": [_text(item) for item in items if _text(item)]}
+    return {"key": key, "title": title, "kind": "list", "items": [_clean_text(item) for item in items if _text(item)]}
 
 
 def _success_path_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -351,7 +404,7 @@ def _label(value: Any) -> dict[str, Any]:
 
 
 def _editable(value: Any) -> dict[str, Any]:
-    return {"value": _text(value), "editable": True}
+    return {"value": _clean_text(value), "editable": True}
 
 
 def _text(value: Any) -> str:
@@ -360,6 +413,91 @@ def _text(value: Any) -> str:
     if isinstance(value, (dict, list)):
         return ""
     return str(value).strip()
+
+
+def _clean_text(value: Any) -> str:
+    text_val = _text(value)
+    if not text_val:
+        return ""
+    replacements = {
+        "✅": "",
+        "📊": "",
+        "👉": "",
+        "✔": "",
+        "☑": "",
+        "**": "",
+        "###": "",
+        "##": "",
+        "#": "",
+    }
+    for old, new in replacements.items():
+        text_val = text_val.replace(old, new)
+    lines = []
+    for line in text_val.splitlines():
+        cleaned = line.strip()
+        cleaned = cleaned.lstrip("-•* ").strip()
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines).strip()
+
+
+def _clean_inline_value(value: Any, title: str) -> str:
+    text_val = _clean_text(value)
+    prefixes = (
+        title,
+        title.replace("您当前", "当前"),
+        title.replace("第一个", "第1个"),
+        title.replace("更适合的", "您当前更适合的"),
+    )
+    for prefix in prefixes:
+        text_val = _clean_prefix(text_val, prefix)
+    return text_val
+
+
+def _compact_standard(value: Any) -> str:
+    text_val = _clean_text(value)
+    if not text_val:
+        return ""
+    parts = [part.strip() for part in re_split_standard(text_val) if part.strip()]
+    if not parts:
+        return text_val[:80]
+    compact = "；".join(parts[:3])
+    return compact[:90].rstrip("；，,。") + "。"
+
+
+def re_split_standard(value: str) -> list[str]:
+    import re
+
+    return re.split(r"[。；;\n]+", value)
+
+
+def _default_week_standard(week: str) -> str:
+    defaults = {
+        "第1周": "早C/午B/晚A按时完成；晚餐主食控制在1拳内；每天完成基础步数。",
+        "第2周": "连续5天守住三杯节律；晚餐后走15–20分钟；不额外加宵夜。",
+        "第3周": "记录体重和腰围；每周安排2次轻力量；继续观察睡眠和排便。",
+        "第4周": "把收口、步数和轻力量做满；复盘腰腹、睡眠和排便变化。",
+    }
+    return defaults.get(week, "")
+
+
+def _daily_checkin_text(value: Any) -> str:
+    return "1）早C/午B/晚A是否全部完成；2）晚餐主食是否≤1拳；3）是否完成步数或饭后活动；4）睡眠是否按计划收口；5）排便是否顺畅。"
+
+
+def _personal_reminder(value: Any) -> str:
+    text_val = _clean_text(value)
+    text_val = _clean_prefix(text_val, "提醒")
+    generic = {"注意坚持执行。", "请按计划执行，如有不适请及时就医。", "本文件不替代医疗建议。"}
+    if not text_val or text_val in generic or len(text_val) < 18:
+        return "不建议跑跳冲刺和极端断食；如睡眠被工作或照护节奏打乱，含咖啡因的早C/午B必须放在计划睡眠前8小时以外。持续不适请及时就医。"
+    return text_val
+
+
+def re_sub_multi_space(value: str) -> str:
+    import re
+
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _clean_prefix(value: Any, prefix: str) -> str:
