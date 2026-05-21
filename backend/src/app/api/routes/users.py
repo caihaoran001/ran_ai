@@ -28,7 +28,10 @@ async def list_users(
         .options(selectinload(User.service_cases).selectinload(ServiceCase.user))
         .order_by((User.deleted_at if deleted else User.created_at).desc())
     )
-    return list(result)
+    users = list(result)
+    for u in users:
+        u.service_cases = [sc for sc in u.service_cases if sc.deleted_at is None]
+    return users
 
 
 @router.get("/{user_id}", response_model=UserDetail)
@@ -38,12 +41,13 @@ async def get_user(
 ) -> UserDetail:
     user = await session.scalar(
         select(User)
-        .where(User.id == user_id)
+        .where(User.id == user_id, User.deleted_at.is_(None))
         .options(selectinload(User.service_cases).selectinload(ServiceCase.user))
     )
     if not user:
         raise HTTPException(status_code=404, detail="user not found")
 
+    user.service_cases = [sc for sc in user.service_cases if sc.deleted_at is None]
     case_ids = [case.id for case in user.service_cases]
     latest_profile = None
     if case_ids:
@@ -66,7 +70,7 @@ async def delete_user(
 ) -> UserDetail:
     user = await session.scalar(
         select(User)
-        .where(User.id == user_id)
+        .where(User.id == user_id, User.deleted_at.is_(None))
         .options(selectinload(User.service_cases).selectinload(ServiceCase.user))
     )
     if not user:

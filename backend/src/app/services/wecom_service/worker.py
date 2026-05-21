@@ -19,6 +19,7 @@ class WeComBotWorker:
         self.settings = settings or get_settings()
         self.bridge: WeComBotBridge | None = None
         self.engine: RanrenAIEngine | None = None
+        self._tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         config = WeComConfig.from_env()
@@ -38,6 +39,11 @@ class WeComBotWorker:
     async def stop(self) -> None:
         set_current_channel(None)
         self.engine = None
+        if self._tasks:
+            logger.info("Waiting for %d pending WeCom tasks to finish...", len(self._tasks))
+            # Wait for all running message handling tasks to finish gracefully
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+            self._tasks.clear()
         if self.bridge:
             await self.bridge.disconnect()
             self.bridge = None
@@ -50,7 +56,17 @@ class WeComBotWorker:
         if not self.engine:
             logger.warning("RanrenAI engine is not initialized")
             return
-        await self.engine.handle_message(from_wecom_message(message))
+        # Run handling in a background task so a slow LLM call doesn't block the WeCom bridge event loop.
+        # Track tasks to ensure graceful shutdown during exits.
+        task = asyncio.create_task(self._safe_handle_message(message))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _safe_handle_message(self, message: WeComMessage) -> None:
+        try:
+            await self.engine.handle_message(from_wecom_message(message))
+        except Exception:
+            logger.exception("Failed to handle WeCom message: %s", message.id)
 
 
 async def run_forever() -> None:

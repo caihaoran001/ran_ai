@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, JSON, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, JSON, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -32,11 +32,19 @@ class ServiceCaseStatus(str, enum.Enum):
 
 class ServiceCase(TimestampMixin, Base):
     __tablename__ = "service_cases"
+    __table_args__ = (
+        Index(
+            "ux_service_cases_group_id_active",
+            "group_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     case_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    group_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    group_id: Mapped[str] = mapped_column(String(128), nullable=False)
     questionnaire_token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     status: Mapped[ServiceCaseStatus] = mapped_column(
         Enum(ServiceCaseStatus, name="service_case_status"),

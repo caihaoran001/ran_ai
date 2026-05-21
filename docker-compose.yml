@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:15-alpine
+    image: ${POSTGRES_IMAGE:-postgres:15-alpine}
     container_name: ran-ai-postgres
     restart: unless-stopped
     environment:
@@ -26,13 +26,18 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ran_ai}:${POSTGRES_PASSWORD:-ran_ai_password}@postgres:5432/${POSTGRES_DB:-ran_ai}
+      BACKEND_ADMIN_API_KEY: ${BACKEND_ADMIN_API_KEY:-change-me-internal-api-key}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-3000},http://127.0.0.1:${FRONTEND_PORT:-3000}}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
+      - ./backend/pyproject.toml:/app/pyproject.toml
+      - ./backend/uv.lock:/app/uv.lock
       - ./backend/src:/app/src
+      - ./backend/scripts:/app/scripts
       - ./backend/alembic:/app/alembic
       - ./generated_documents:/app/generated_documents
 
@@ -42,9 +47,11 @@ services:
     container_name: ran-ai-frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api}
       SERVER_API_BASE_URL: http://backend:8000/api
+      BACKEND_ADMIN_API_KEY: ${BACKEND_ADMIN_API_KEY:-change-me-internal-api-key}
       FRONTEND_PUBLIC_BASE_URL: ${FRONTEND_PUBLIC_BASE_URL:-http://localhost:3000}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:

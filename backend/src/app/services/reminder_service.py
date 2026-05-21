@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import Settings, get_settings
 from app.db.session import SessionLocal
@@ -19,12 +21,16 @@ from app.models.message import (
 from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
+from app.models.user_document import DocumentType, UserDocument
 from app.services.channels import send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
 from app.services.document_service import generate_stage_report
+from app.services.knowledge_evolution import KnowledgeEvolutionService
+from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
 
 
 logger = logging.getLogger(__name__)
+SCHEDULER_ADVISORY_LOCK_KEY = 2026051901
 
 
 class ReminderService:
@@ -32,10 +38,18 @@ class ReminderService:
         self.settings = settings or get_settings()
         self._task: asyncio.Task | None = None
         self._stopped = asyncio.Event()
+        self._last_knowledge_scan: datetime | None = None
 
     async def start(self) -> None:
-        if not self.settings.reminder_enabled:
-            logger.info("Reminder service disabled")
+        knowledge_enabled = self.settings.knowledge_evolution_enabled
+        if not knowledge_enabled:
+            try:
+                async with SessionLocal() as session:
+                    knowledge_enabled = (await get_knowledge_evolution_config(session, settings=self.settings)).enabled
+            except Exception:
+                logger.exception("Failed to load knowledge evolution config")
+        if not self.settings.reminder_enabled and not knowledge_enabled:
+            logger.info("Reminder and knowledge evolution services disabled")
             return
         self._stopped.clear()
         self._task = asyncio.create_task(self._run_loop(), name="reminder-service")
@@ -55,9 +69,15 @@ class ReminderService:
     async def _run_loop(self) -> None:
         while not self._stopped.is_set():
             try:
-                await self.check_once()
-                await self.check_questionnaire_sends_once()
-                await self.check_stage_reports_once()
+                async with _scheduler_advisory_lock() as acquired:
+                    if not acquired:
+                        logger.debug("Reminder scheduler skipped: advisory lock is held by another worker")
+                    else:
+                        if self.settings.reminder_enabled:
+                            await self.check_once()
+                            await self.check_questionnaire_sends_once()
+                            await self.check_stage_reports_once()
+                        await self.check_knowledge_evolution_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -91,23 +111,32 @@ class ReminderService:
                     )
                 )
             )
-            for service_case in service_cases:
-                today = now.date()
-                seen = await _has_event(
-                    session,
-                    service_case.id,
-                    rule_id="daily_checkin",
-                    event_date=today,
-                    event_type=ReminderEventType.SEEN,
+            # Pre-fetch today's daily_checkin reminder events to perform in-memory checks
+            today = now.date()
+            reminder_events = list(
+                await session.scalars(
+                    select(ReminderEvent).where(
+                        ReminderEvent.rule_id == "daily_checkin",
+                        ReminderEvent.event_date == today,
+                    )
                 )
-                reminded = await _has_event(
+            )
+            seen_set = {e.service_case_id for e in reminder_events if e.event_type == ReminderEventType.SEEN}
+            reminded_set = {e.service_case_id for e in reminder_events if e.event_type == ReminderEventType.REMINDED}
+
+            for service_case in service_cases:
+                seen = service_case.id in seen_set
+                reminded = service_case.id in reminded_set
+                if seen or reminded:
+                    continue
+                reminder_event = await _reserve_reminder_event(
                     session,
                     service_case.id,
                     rule_id="daily_checkin",
                     event_date=today,
                     event_type=ReminderEventType.REMINDED,
                 )
-                if seen or reminded:
+                if not reminder_event:
                     continue
 
                 content = self.settings.reminder_message.format(
@@ -131,17 +160,10 @@ class ReminderService:
                 if result.success:
                     message.status = MessageStatus.SENT
                     message.wecom_message_id = result.message_id
-                    session.add(
-                        ReminderEvent(
-                            service_case_id=service_case.id,
-                            rule_id="daily_checkin",
-                            event_date=today,
-                            event_type=ReminderEventType.REMINDED,
-                        )
-                    )
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error
+                    await session.delete(reminder_event)
             await session.commit()
 
     async def check_questionnaire_sends_once(self) -> None:
@@ -165,6 +187,19 @@ class ReminderService:
                     )
                 )
             )
+            # Pre-fetch today's questionnaire reminder events to check in memory
+            today = now.date()
+            reminder_events = list(
+                await session.scalars(
+                    select(ReminderEvent).where(
+                        ReminderEvent.rule_id.like("questionnaire:%"),
+                        ReminderEvent.event_date == today,
+                        ReminderEvent.event_type == ReminderEventType.REMINDED,
+                    )
+                )
+            )
+            reminded_questionnaires = {(e.service_case_id, e.rule_id) for e in reminder_events}
+
             for service_case in service_cases:
                 day = _service_day(service_case.started_at, now, timezone)
                 rule = _questionnaire_rule_for_day(schedule, day)
@@ -174,13 +209,16 @@ class ReminderService:
                 if not template_key:
                     continue
                 rule_id = f"questionnaire:{template_key}:day{day}"
-                if await _has_event(
+                if (service_case.id, rule_id) in reminded_questionnaires:
+                    continue
+                reminder_event = await _reserve_reminder_event(
                     session,
                     service_case.id,
                     rule_id=rule_id,
-                    event_date=now.date(),
+                    event_date=today,
                     event_type=ReminderEventType.REMINDED,
-                ):
+                )
+                if not reminder_event:
                     continue
 
                 user = await session.get(User, service_case.user_id) if service_case.user_id else None
@@ -220,17 +258,10 @@ class ReminderService:
                 if result.success:
                     message.status = MessageStatus.SENT
                     message.wecom_message_id = result.message_id
-                    session.add(
-                        ReminderEvent(
-                            service_case_id=service_case.id,
-                            rule_id=rule_id,
-                            event_date=now.date(),
-                            event_type=ReminderEventType.REMINDED,
-                        )
-                    )
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error
+                    await session.delete(reminder_event)
             await session.commit()
 
     async def check_stage_reports_once(self) -> None:
@@ -245,6 +276,24 @@ class ReminderService:
                     )
                 )
             )
+            case_ids = [c.id for c in service_cases]
+            if not case_ids:
+                return
+
+            # Pre-fetch all stage/graduation reports for active cases in one query
+            documents = list(
+                await session.scalars(
+                    select(UserDocument).where(
+                        UserDocument.service_case_id.in_(case_ids),
+                        UserDocument.document_type.in_([DocumentType.STAGE_REPORT, DocumentType.GRADUATION_REPORT]),
+                    )
+                )
+            )
+            existing_reports = set()
+            for doc in documents:
+                if isinstance(doc.content_json, dict) and doc.content_json.get("stage"):
+                    existing_reports.add((doc.service_case_id, doc.content_json.get("stage")))
+
             for service_case in service_cases:
                 started_at = service_case.started_at
                 if not started_at:
@@ -254,9 +303,45 @@ class ReminderService:
                 days = int((now - started_at.astimezone(ZoneInfo(self.settings.reminder_timezone))).total_seconds() // 86400)
                 for threshold, stage in ((3, "day3"), (7, "day7"), (14, "day14"), (21, "day21"), (28, "day28")):
                     if days >= threshold:
-                        await generate_stage_report(session, service_case, stage=stage)
+                        if (service_case.id, stage) not in existing_reports:
+                            await generate_stage_report(session, service_case, stage=stage)
                 if days >= 28:
-                    await generate_stage_report(session, service_case, stage="graduation")
+                    if (service_case.id, "graduation") not in existing_reports:
+                        await generate_stage_report(session, service_case, stage="graduation")
+
+    async def check_knowledge_evolution_once(self) -> None:
+        now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
+        async with SessionLocal() as session:
+            config = await get_knowledge_evolution_config(session, settings=self.settings)
+            if not config.enabled:
+                return
+            now = datetime.now(ZoneInfo(config.timezone))
+            if self._last_knowledge_scan:
+                elapsed = (now - self._last_knowledge_scan).total_seconds()
+                if elapsed < config.interval_seconds:
+                    return
+            service = KnowledgeEvolutionService()
+            created, skipped = 0, 0
+            qa_at = _parse_time(config.qa_at)
+            if now.time() >= qa_at:
+                qa_created, qa_skipped = await service.scan_daily_qa(
+                    session,
+                    timezone_name=config.timezone,
+                    limit=config.daily_qa_limit,
+                )
+                created += qa_created
+                skipped += qa_skipped
+            case_created, case_skipped = await service.scan_stage_cases(
+                session,
+                stage_days=parse_case_days(config.case_days),
+                timezone_name=config.timezone,
+                limit_per_case=config.case_limit_per_case,
+            )
+            created += case_created
+            skipped += case_skipped
+            if created or skipped:
+                logger.info("Knowledge evolution scan finished: created=%s skipped=%s", created, skipped)
+        self._last_knowledge_scan = now
 
 
 async def mark_seen(service_case_id: int, event_date: date | None = None) -> None:
@@ -280,6 +365,23 @@ async def mark_seen(service_case_id: int, event_date: date | None = None) -> Non
         await session.commit()
 
 
+@asynccontextmanager
+async def _scheduler_advisory_lock():
+    async with SessionLocal() as session:
+        acquired = bool(
+            await session.scalar(
+                text("SELECT pg_try_advisory_lock(:key)").bindparams(key=SCHEDULER_ADVISORY_LOCK_KEY)
+            )
+        )
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                await session.execute(
+                    text("SELECT pg_advisory_unlock(:key)").bindparams(key=SCHEDULER_ADVISORY_LOCK_KEY)
+                )
+
+
 async def _has_event(
     session,
     service_case_id: int,
@@ -299,6 +401,29 @@ async def _has_event(
     return value is not None
 
 
+async def _reserve_reminder_event(
+    session,
+    service_case_id: int,
+    *,
+    rule_id: str,
+    event_date: date,
+    event_type: ReminderEventType,
+) -> ReminderEvent | None:
+    event = ReminderEvent(
+        service_case_id=service_case_id,
+        rule_id=rule_id,
+        event_date=event_date,
+        event_type=event_type,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(event)
+            await session.flush()
+    except IntegrityError:
+        return None
+    return event
+
+
 def _parse_time(value: str) -> time:
     hour, minute, *rest = value.split(":")
     return time(int(hour), int(minute), int(rest[0]) if rest else 0)
@@ -306,6 +431,10 @@ def _parse_time(value: str) -> time:
 
 def _parse_weekdays(value: str) -> set[int]:
     return {int(item.strip()) for item in value.split(",") if item.strip()}
+
+
+def _parse_int_list(value: str) -> list[int]:
+    return [int(item.strip()) for item in value.split(",") if item.strip().isdigit()]
 
 
 def _service_day(started_at: datetime | None, now: datetime, timezone: ZoneInfo) -> int:

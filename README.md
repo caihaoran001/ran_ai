@@ -34,6 +34,9 @@ cp .env.example .env
 AI_API_KEY=your-ai-api-key
 WECOM_BOT_ID=your-bot-id
 WECOM_SECRET=your-secret
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-me
+BACKEND_ADMIN_API_KEY=change-me-internal-api-key
 ```
 
 启动数据库、后端、前端：
@@ -47,7 +50,7 @@ docker compose up -d --build
 ```text
 Frontend: http://localhost:3002
 Backend:  http://localhost:8000
-Docs:     http://localhost:8000/docs
+Docs:     http://localhost:8000/docs (需要后端内部 API Key)
 ```
 
 ## 本地开发
@@ -69,7 +72,11 @@ npm install
 npm run dev
 ```
 
-如果用 Docker Compose，前端容器内部仍然监听 3000，但宿主机映射到 `FRONTEND_PORT`，当前 `.env` 使用的是 `3002`。
+如果用 Docker Compose，前端容器内部仍然监听 3000，但宿主机映射到 `FRONTEND_PORT`，`.env.example` 默认使用 `3002`。
+
+当前 Docker Compose 面向本地/局域网试验环境：后端默认在 `ENVIRONMENT=development` 时开启 reload，前端使用 `next dev`。正式部署前应切换生产镜像、设置强后台密码和 `BACKEND_ADMIN_API_KEY`，并将 `ENVIRONMENT=production`。
+
+后台页面通过前端同源代理访问后端 API。浏览器不会拿到 `BACKEND_ADMIN_API_KEY`；该密钥只在 Next 服务端和 FastAPI 后端之间使用。直接访问后端 `/api/*` 管理接口需要请求头 `X-Admin-API-Key`，公开问卷链接仍然通过 token 访问。
 
 ## 数据库
 
@@ -95,6 +102,7 @@ uv run alembic upgrade head
 - `user_documents`
 - `checkins`
 - `messages`
+- `knowledge_drafts`
 - `reminder_events`
 
 ## AI 配置
@@ -128,7 +136,7 @@ AI_MAX_TOKENS=4000
 
 ## 打卡与风险控制
 
-用户在群里发送 `#打卡` 后，系统会保留原文，并尽量解析 6 个结构化字段：
+打卡主要通过 H5 每日行动/节点复盘问卷提交，系统会保存原始内容，并结构化记录核心字段：
 
 - 早C午B晚A
 - 饮水
@@ -137,18 +145,18 @@ AI_MAX_TOKENS=4000
 - 运动
 - 体重
 
-这些字段会用于服务单详情、打卡页、阶段报告和看板统计。
+这些字段会用于服务单详情、打卡页、阶段报告和看板统计。群聊普通消息不再依赖 `#打卡` 正则解析，避免把业务绑死在关键词格式上。
 
-MVP 风险识别会扫描打卡和聊天内容，命中孕妇、哺乳期、慢病、抑郁症、激素类药物、肝肾异常、结石、严重失眠、胸痛、心悸、过敏、情绪崩溃或医疗承诺相关表达时，会把服务单标记为高风险。高风险用户不会自动发送 AI 生成内容，必须人工审核。
+MVP 风险识别通过 LLM 做意图识别与信息提取，判断是否需要人工介入、风险原因、续购意向和退款/退出意向。高风险用户不会自动发送 AI 生成内容，必须人工审核；高风险固定拦截话术属于预设安全话术，可以立即发送，用于安抚并提示联系班主任。
 
 文档审核页提供内容发送策略：
 
 - `manual_review`：AI 生成内容默认进入人工审核
 - `auto_send`：低风险内容生成后自动发送，高风险内容仍进入人工审核
 
-## 知识库回复
+## 知识库回复与知识沉淀
 
-机器人回复会先用 LlamaIndex 检索 FAQ 知识库，再把命中的内容交给 DeepSeek 生成最终回复。当前第一版用的是 LlamaIndex `SimpleKeywordTableIndex`，不需要 embedding 模型和向量数据库；后续知识库变大后，可以替换为 embedding + pgvector/Qdrant/Milvus 等向量检索。默认知识库在：
+机器人回复会优先检索数据库知识索引 `knowledge_chunks`，再把命中的知识块交给 DeepSeek 生成最终回复。数据库索引支持结构化 FAQ、审核通过的知识草稿、Markdown/TXT 知识块，以及可选 embedding 检索；若数据库没有命中，会降级到本地 Markdown/LlamaIndex 关键词检索。默认本地知识库目录在：
 
 ```text
 backend/src/app/services/knowledge_base/
@@ -159,6 +167,92 @@ backend/src/app/services/knowledge_base/
 ```bash
 KNOWLEDGE_BASE_DIR=/path/to/faq
 KNOWLEDGE_BASE_TOP_K=3
+```
+
+客户 QA 表四可以导入为“干净检索正文 + 审计元数据”两份文件：
+
+```bash
+cd backend
+uv run python scripts/import_qa_excel.py \
+  --source ../参考文件/HumanBurningAI_营养师客服班主任_QA库框架_v1.xlsx
+```
+
+默认会生成：
+
+- `backend/src/app/services/knowledge_base/ranren_ai_qa_from_excel.md`：机器人检索用，只包含用户常见问法、参考回复和回复结构。
+- `backend/src/app/services/knowledge_base/ranren_ai_qa_from_excel.metadata.json`：审计用，保留表格里的分类、标签、风险、转人工等字段，但不参与检索。
+
+客户 QA 表 `02_分类字典` 的“识别关键词”可导入为关键词检索白名单：
+
+```bash
+cd backend
+uv run python scripts/import_keyword_whitelist.py \
+  --source ../参考文件/HumanBurningAI_营养师客服班主任_QA库框架_v1.xlsx
+```
+
+默认会生成：
+
+- `backend/src/app/services/knowledge_base/keyword_whitelist.json`
+
+关键词 fallback 检索只使用这份白名单命中的业务词；`jieba` 分词只作为辅助，不再把所有切词结果都拿去查库。向量语义检索不受这份白名单限制。
+
+Embedding 服务密钥不要写入仓库，可以放在本地 `.env`：
+
+```bash
+EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+EMBEDDING_API_KEY=
+EMBEDDING_MODEL=text-embedding-v4
+```
+
+中期知识库已经拆成两层：
+
+- `knowledge_faqs`：结构化 FAQ 业务表，支持后台新增、编辑、禁用和版本管理。
+- `knowledge_chunks`：检索索引表，承接 Markdown、FAQ 和审核通过的知识草稿，用于机器人 RAG 检索。
+
+审核控制台的“结构化 FAQ”区域可直接维护 FAQ；FAQ 启用时会同步到 `knowledge_chunks`，禁用后不再参与检索。审核控制台的“知识索引”区域可以把 `knowledge_base` 目录下的 Markdown/TXT 同步到 `knowledge_chunks` 表。机器人回复时会优先查询数据库知识块；若数据库没有命中，再降级使用原 Markdown/LlamaIndex 检索。
+
+同步接口：
+
+```bash
+curl -X POST http://localhost:8000/api/knowledge-base/index/sync \
+  -H "x-admin-api-key: ${BACKEND_ADMIN_API_KEY}" \
+  -H "content-type: application/json" \
+  -d '{"embed": false}'
+```
+
+配置好 `EMBEDDING_API_KEY` 后可以生成向量：
+
+```bash
+curl -X POST http://localhost:8000/api/knowledge-base/index/sync \
+  -H "x-admin-api-key: ${BACKEND_ADMIN_API_KEY}" \
+  -H "content-type: application/json" \
+  -d '{"embed": true}'
+```
+
+当前向量先存在 `knowledge_chunks.embedding` JSON 字段，并在应用层做余弦相似度检索，便于在不替换现有 Postgres 镜像的情况下先跑通中期 RAG。长期 pgvector 迁移已经预留：如果数据库镜像提供 `vector` 扩展，迁移会自动创建 `knowledge_chunks.embedding_vector vector(1024)` 和 HNSW cosine 索引。
+
+当前默认 `postgres:15-alpine` 镜像不包含 pgvector。要启用 pgvector，可先备份数据，再在 `.env` 中切换：
+
+```bash
+POSTGRES_IMAGE=pgvector/pgvector:pg15
+```
+
+长期知识自我进化已和数据库索引打通：FAQ 草稿批准后会创建结构化 FAQ，并同步到 `knowledge_chunks`，如果已配置 embedding 会同步向量化。
+
+审核控制台支持“知识草稿”：
+
+- FAQ 草稿：按自然日聊天记录沉淀，建议每天 0 点跑前一日聊天。
+- 优秀案例草稿：按服务阶段 3/7/14/21/28 天沉淀，每次只读取上一阶段之后的新聊天窗口，避免重复使用早期素材。
+- 输入只使用已落库聊天记录，系统做基础脱敏后由 LLM 根据燃人AI服务思想生成待审核草稿。
+- 草稿必须人工批准后才会进入结构化 FAQ 表或 `knowledge_chunks` 案例索引，不再追加写入本地文本文件。
+- 审核控制台可视化配置知识自我进化的启用开关、扫描间隔、FAQ 扫描时间、阶段案例天数和读取上限；数据库配置优先于 `.env` 默认值。
+
+可选定时扫描默认关闭：
+
+```bash
+KNOWLEDGE_EVOLUTION_ENABLED=false
+KNOWLEDGE_EVOLUTION_QA_AT=00:00
+KNOWLEDGE_EVOLUTION_CASE_DAYS=3,7,14,21,28
 ```
 
 ## 企业微信机器人
@@ -176,7 +270,6 @@ WECOM_SECRET=your-secret
 - 接收企业微信群消息
 - 按 `group_id` 关联 `service_cases`
 - 写入 `messages`
-- 识别 `#打卡` 并写入 `checkins`
 - 普通聊天会检索知识库后调用 DeepSeek 生成回复
 - 群里发送“发送本群入营问卷”会自动创建或复用本群服务单，并回复本群专属问卷链接
 - 后台人工发送、提醒发送、AI 回复统一通过企微服务完成
@@ -191,7 +284,7 @@ app/services/ranren_ai/       通道无关的业务处理引擎
 app/services/wecom_service/   当前企微 AI Bot 接入 worker
 ```
 
-`RanrenAIEngine` 只依赖通用 `MessageChannel`，负责入营问卷指令、打卡识别、知识库检索、LLM 回复和消息落库。当前企微 worker 只把 `WeComMessage` 转成 `ChannelMessage` 后交给引擎处理。后续如果换成其他通道，只需要实现新的 `MessageChannel` adapter，并把入站消息转成 `ChannelMessage`。
+`RanrenAIEngine` 只依赖通用 `MessageChannel`，负责入营问卷指令、知识库检索、LLM 回复和消息落库。当前企微 worker 只把 `WeComMessage` 转成 `ChannelMessage` 后交给引擎处理。后续如果换成其他通道，只需要实现新的 `MessageChannel` adapter，并把入站消息转成 `ChannelMessage`。
 
 测试阶段可以临时放开入站策略：
 
@@ -202,14 +295,13 @@ WECOM_GROUP_POLICY=open
 
 ## 定时提醒
 
-工作日中午 12 点，如果用户当天没有发送符合 `^#打卡` 的消息，机器人会主动提醒：
+工作日中午 12 点，如果用户当天没有满足提醒条件，机器人会主动提醒：
 
 ```bash
 REMINDER_ENABLED=true
 REMINDER_AT=12:00
 REMINDER_TIMEZONE=Asia/Shanghai
 REMINDER_WEEKDAYS=1,2,3,4,5
-REMINDER_REQUIRED_PATTERN=^#打卡
 ```
 
 提醒状态写入 `reminder_events`，同一天不会重复提醒。

@@ -14,7 +14,9 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const user = await api<User>(`/users/${id}`);
   const profile = user.latest_profile;
-  const serviceCase = user.service_cases[0];
+  const serviceCase = [...user.service_cases].sort(
+    (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
+  )[0];
   const checkins = serviceCase ? await api<Checkin[]>(`/service-cases/${serviceCase.id}/checkins`).catch(() => []) : [];
   const messages = serviceCase ? await api<Message[]>(`/service-cases/${serviceCase.id}/messages`).catch(() => []) : [];
   const questionnaire = serviceCase ? await api<Questionnaire>(`/questionnaires/${serviceCase.questionnaire_token}`).catch(() => null) : null;

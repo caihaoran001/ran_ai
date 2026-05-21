@@ -52,7 +52,7 @@ export default async function DashboardPage() {
           value={summary.new_users_today}
           icon="➕"
           color="blue"
-          href="/users"
+          href="/users?filter=new_today"
           description="今天新创建且未删除的服务单。"
         />
         <StatCard
@@ -60,7 +60,7 @@ export default async function DashboardPage() {
           value={summary.risk_users}
           icon="⚠️"
           color="red"
-          href="/users"
+          href="/users?filter=risk"
           description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险词，需要人工关注。"
         />
         <StatCard
@@ -68,7 +68,7 @@ export default async function DashboardPage() {
           value={summary.human_intervention_users ?? 0}
           icon="🚨"
           color="red"
-          href="/users"
+          href="/users?filter=human_intervention"
           description="LLM 识别到健康红线、客诉退款、医疗边界、强续购等需要真人处理的服务单。"
         />
         <StatCard
@@ -76,7 +76,7 @@ export default async function DashboardPage() {
           value={summary.unfollowed_users}
           icon="⏳"
           color="yellow"
-          href="/users"
+          href="/users?filter=unfollowed"
           description="服务中，且最近 2-7 天没有用户入站消息的服务单；与流失用户互斥。"
         />
         <StatCard
@@ -84,7 +84,7 @@ export default async function DashboardPage() {
           value={renewalFollowupUsers}
           icon="🛒"
           color="green"
-          href="/users"
+          href="/users?filter=renewal_followup"
           description="按服务天数推算：已服务 18-28 天，适合人工做续购沟通，不代表用户已表达购买意愿。"
         />
         <StatCard
@@ -92,7 +92,7 @@ export default async function DashboardPage() {
           value={summary.renewal_intent_users ?? 0}
           icon="💚"
           color="green"
-          href="/users"
+          href="/users?filter=renewal_intent"
           description="用户聊天中出现续费、复购、再买、继续购买等表达。"
         />
         <StatCard
@@ -100,7 +100,7 @@ export default async function DashboardPage() {
           value={summary.refund_intent_users ?? 0}
           icon="↩"
           color="red"
-          href="/users"
+          href="/users?filter=refund_intent"
           description="用户聊天中出现退款、退费、不继续、退出、退群等表达。"
         />
         <StatCard
@@ -108,7 +108,7 @@ export default async function DashboardPage() {
           value={summary.lost_users}
           icon="📉"
           color="orange"
-          href="/users"
+          href="/users?filter=lost"
           description="服务中，且超过 7 天没有用户入站消息的服务单；不再计入未跟进。"
         />
         <StatCard
@@ -124,7 +124,7 @@ export default async function DashboardPage() {
           value={summary.service_cases_in_service}
           icon="🟢"
           color="green"
-          href="/users"
+          href="/users?filter=in_service"
           description="状态为服务中的服务单。"
         />
         <StatCard
@@ -140,7 +140,7 @@ export default async function DashboardPage() {
           value={summary.messages_today}
           icon="💬"
           color="purple"
-          href="/users"
+          href="/users?filter=messaged_today"
           description="今天产生的企微入站和出站消息总数。"
         />
         <StatCard
@@ -148,7 +148,7 @@ export default async function DashboardPage() {
           value={summary.emotional_users_today ?? 0}
           icon="🌧️"
           color="red"
-          href="/users"
+          href="/users?filter=human_intervention"
           description="今天入站消息中，经语义识别出现明显负面情绪、执行挫败或心理风险线索的用户数。"
         />
         <StatCard

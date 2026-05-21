@@ -6,6 +6,8 @@ from app.api.routes import (
     checkins,
     dashboard,
     documents,
+    knowledge_drafts,
+    knowledge_faqs,
     messages,
     questionnaire_templates,
     questionnaires,
@@ -21,6 +23,8 @@ api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(questionnaires.router, prefix="/questionnaires", tags=["questionnaires"])
 api_router.include_router(questionnaire_templates.router, prefix="/questionnaire-template", tags=["questionnaire-template"])
 api_router.include_router(documents.router, tags=["documents"])
+api_router.include_router(knowledge_drafts.router, tags=["knowledge-drafts"])
+api_router.include_router(knowledge_faqs.router, tags=["knowledge-faqs"])
 api_router.include_router(checkins.router, tags=["checkins"])
 api_router.include_router(messages.router, tags=["messages"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])

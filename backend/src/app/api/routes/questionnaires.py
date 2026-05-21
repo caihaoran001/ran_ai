@@ -43,7 +43,7 @@ async def get_questionnaire(
     template: str = Query(default="intake"),
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnairePublic:
-    service_case = await _case_by_token(session, token, include_deleted=True)
+    service_case = await _case_by_token(session, token, include_deleted=False)
     if template == "personalized_checkin":
         latest_profile = await session.scalar(
             select(UserProfile)
@@ -283,13 +283,35 @@ def _checkin_json_from_answers(answers: dict, content: str) -> dict:
         "mood": answers.get("mood") or answers.get("today_feedback") or answers.get("biggest_positive_change") or "",
         "exercise": answers.get("exercise") or answers.get("exercise_status") or "",
         "weight": answers.get("morning_weight") or answers.get("current_weight") or "",
+        "waist": answers.get("waist") or answers.get("waist_line") or answers.get("current_waist") or "",
+        "diet": answers.get("diet") or answers.get("diet_structure") or answers.get("diet_execution") or "",
+        "bowel": answers.get("bowel") or answers.get("bowel_status") or answers.get("排便") or "",
+        "hunger": answers.get("hunger") or answers.get("appetite") or answers.get("食欲") or "",
+        "sensation": answers.get("sensation") or answers.get("body_feeling") or answers.get("体感") or "",
+        "discomfort": answers.get("discomfort") or answers.get("uncomfortable") or answers.get("不适") or "",
+        "tomorrow_focus": answers.get("tomorrow_focus") or answers.get("tomorrow_goal") or "",
     }
+    _merge_personalized_checkin_answers(provided, answers)
     return normalize_checkin_json(provided, content)
 
 
 def _join_answers(answers: dict, keys: tuple[str, ...]) -> str:
     values = [str(answers.get(key) or "").strip() for key in keys]
     return "；".join(value for value in values if value)
+
+
+def _merge_personalized_checkin_answers(provided: dict, answers: dict) -> None:
+    personalized_mapping = {
+        "personalized_weight": "weight",
+        "personalized_water": "water",
+        "personalized_sleep": "sleep",
+        "personalized_diet": "diet",
+        "personalized_exercise": "exercise",
+    }
+    for source_key, target_key in personalized_mapping.items():
+        value = str(answers.get(source_key) or "").strip()
+        if value and not provided.get(target_key):
+            provided[target_key] = value
 
 
 async def _generate_profile_and_documents(service_case_id: int) -> None:
@@ -301,14 +323,30 @@ async def _generate_profile_and_documents(service_case_id: int) -> None:
         )
         if existing:
             return
-        service_case = await session.get(ServiceCase, service_case_id)
+        service_case = await session.scalar(
+            select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
+        )
         if not service_case:
             return
         try:
             await generate_profile(session, service_case)
             await generate_documents(session, service_case, auto_send=get_settings().auto_send_documents)
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to generate profile and documents for service_case_id=%s", service_case_id)
+            await session.rollback()
+            failed_case = await session.scalar(
+                select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
+            )
+            if failed_case:
+                _append_generation_error_note(failed_case, exc)
+                await session.commit()
+
+
+def _append_generation_error_note(service_case: ServiceCase, exc: Exception) -> None:
+    timestamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
+    message = f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
+    existing = service_case.notes or ""
+    service_case.notes = (f"{existing}\n{message}" if existing else message)[-2000:]
 
 
 async def _sync_user_from_answers(

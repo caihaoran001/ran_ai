@@ -1,5 +1,8 @@
 from app.models.checkin import Checkin
 from app.models.app_setting import AppSetting
+from app.models.knowledge_chunk import KnowledgeChunk
+from app.models.knowledge_draft import KnowledgeDraft
+from app.models.knowledge_faq import KnowledgeFAQ, KnowledgeFAQVersion
 from app.models.message import Message
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.questionnaire_template import QuestionnaireTemplate
@@ -14,6 +17,10 @@ __all__ = [
     "AppSetting",
     "DocumentStatus",
     "DocumentType",
+    "KnowledgeChunk",
+    "KnowledgeDraft",
+    "KnowledgeFAQ",
+    "KnowledgeFAQVersion",
     "Message",
     "QuestionnaireSubmission",
     "QuestionnaireTemplate",

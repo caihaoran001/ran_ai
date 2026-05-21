@@ -20,6 +20,11 @@ class Settings(BaseSettings):
         default="http://localhost:3002",
         validation_alias="FRONTEND_PUBLIC_BASE_URL",
     )
+    backend_admin_api_key: str = Field(
+        default="change-me-internal-api-key",
+        validation_alias="BACKEND_ADMIN_API_KEY",
+    )
+    cors_allowed_origins: str = Field(default="", validation_alias="CORS_ALLOWED_ORIGINS")
 
     database_url: str = Field(
         default="postgresql+asyncpg://ran_ai:ran_ai_password@localhost:54322/ran_ai",
@@ -41,6 +46,20 @@ class Settings(BaseSettings):
     )
     knowledge_base_dir: str = Field(default="", validation_alias="KNOWLEDGE_BASE_DIR")
     knowledge_base_top_k: int = Field(default=3, validation_alias="KNOWLEDGE_BASE_TOP_K")
+    embedding_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        validation_alias="EMBEDDING_BASE_URL",
+    )
+    embedding_api_key: str = Field(default="", validation_alias="EMBEDDING_API_KEY")
+    embedding_model: str = Field(default="text-embedding-v4", validation_alias="EMBEDDING_MODEL")
+    knowledge_evolution_enabled: bool = Field(default=False, validation_alias="KNOWLEDGE_EVOLUTION_ENABLED")
+    knowledge_evolution_interval_seconds: float = Field(
+        default=3600.0,
+        validation_alias="KNOWLEDGE_EVOLUTION_INTERVAL_SECONDS",
+    )
+    knowledge_evolution_lookback_hours: int = Field(default=24, validation_alias="KNOWLEDGE_EVOLUTION_LOOKBACK_HOURS")
+    knowledge_evolution_qa_at: str = Field(default="00:00", validation_alias="KNOWLEDGE_EVOLUTION_QA_AT")
+    knowledge_evolution_case_days: str = Field(default="3,7,14,21,28", validation_alias="KNOWLEDGE_EVOLUTION_CASE_DAYS")
 
     wecom_bot_id: str = Field(default="", validation_alias="WECOM_BOT_ID")
     wecom_secret: str = Field(default="", validation_alias="WECOM_SECRET")
@@ -72,10 +91,6 @@ class Settings(BaseSettings):
         validation_alias="REMINDER_TIMEZONE",
     )
     reminder_weekdays: str = Field(default="1,2,3,4,5", validation_alias="REMINDER_WEEKDAYS")
-    reminder_required_pattern: str = Field(
-        default="^#打卡",
-        validation_alias="REMINDER_REQUIRED_PATTERN",
-    )
     reminder_message: str = Field(
         default="现在已经到 {time} 了，还没有收到你的打卡，请补一下。",
         validation_alias="REMINDER_MESSAGE",

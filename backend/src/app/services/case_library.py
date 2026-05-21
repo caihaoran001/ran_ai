@@ -68,8 +68,6 @@ def _score_case(case: dict[str, Any], query: str, analysis: dict[str, Any]) -> i
     emotion_signal = analysis.get("emotion_signal") if isinstance(analysis, dict) else None
     if isinstance(emotion_signal, dict) and emotion_signal.get("detected"):
         score += 2
-    if any(word in haystack for word in ("焦虑", "质疑", "没用", "不想坚持", "放弃", "太难", "好累", "崩溃")):
-        score += 2
     return score
 
 
@@ -89,26 +87,9 @@ def _analysis_text(analysis: dict[str, Any]) -> str:
 
 
 def _tokens(text: str) -> set[str]:
-    words = (
-        "睡眠",
-        "情绪",
-        "体重",
-        "腰围",
-        "坚持",
-        "打卡",
-        "饮水",
-        "晚间",
-        "乱吃",
-        "焦虑",
-        "质疑",
-        "放弃",
-        "执行",
-        "收口",
-        "平台",
-        "停滞",
-        "压力",
-    )
-    return {word for word in words if word in text}
+    import re
+
+    return set(re.findall(r"[\w\u4e00-\u9fff]{2,}", text))
 
 
 def _render_case(case: dict[str, Any]) -> str:

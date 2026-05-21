@@ -6,9 +6,10 @@ from pathlib import Path
 
 @lru_cache
 def get_manual_prompt() -> str:
+    repo_root_prompt = Path(__file__).resolve().parents[4] / "手动版提示词.md"
     for path in (
+        repo_root_prompt,
         Path(__file__).with_name("manual_prompt.md"),
-        Path(__file__).resolve().parents[4] / "手动版提示词.md",
     ):
         if path.exists():
             return path.read_text(encoding="utf-8")

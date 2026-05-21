@@ -122,7 +122,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                         <a
                           suppressHydrationWarning
                           className="text-sm text-blue-600 hover:text-blue-700"
-                          href={`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api"}/documents/${document.id}/download`}
+                          href={`/api/backend/documents/${document.id}/download`}
                         >
                           下载
                         </a>

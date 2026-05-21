@@ -3,6 +3,7 @@
 backend/.venv/
 frontend/node_modules/
 frontend/.next/
+*.tsbuildinfo
 __pycache__/
 *.py[cod]
 .wecom_cache/
@@ -10,3 +11,4 @@ __pycache__/
 .ruff_cache/
 generated_documents/
 .sisyphus/
+.antigravitycli/

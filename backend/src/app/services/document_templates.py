@@ -70,12 +70,12 @@ EXECUTION_FIELD_SPEC = {
     "current_phase_goal": "当前阶段目标",
     "principle": "执行总原则，一句话，强调先守早C/午B/晚A和关键生活动作，再抓结果",
     "weekly_plan": [
-        {"week": "第1周", "focus": "稳住节律 / 先守底盘", "standard": "执行标准，1-2个短句，不要长篇解释"},
-        {"week": "第2周", "focus": "拉高关键动作一致性", "standard": "执行标准，1-2个短句，不要长篇解释"},
-        {"week": "第3周", "focus": "开始抓结果指标", "standard": "执行标准，1-2个短句，不要长篇解释"},
-        {"week": "第4周", "focus": "稳定复现 / 做实结果", "standard": "执行标准，1-2个短句，不要长篇解释"},
+        {"week": "第1周", "focus": "稳住节律 / 先守底盘", "required_actions": "必须动作，1-2个极简短句，例如：醒后早C、工作中段午B、晚间晚A；晚餐无主食", "pass_standard": "通过标准，例如：≥5天完成固定节律"},
+        {"week": "第2周", "focus": "拉高关键动作一致性", "required_actions": "必须动作，例如：晚餐边界+运动频次一起做", "pass_standard": "通过标准，例如：≥5天完成饮食和运动"},
+        {"week": "第3周", "focus": "开始抓结果指标", "required_actions": "必须动作，例如：记录体重/腰腹/睡眠或情绪", "pass_standard": "通过标准，例如：至少2项指标变好"},
+        {"week": "第4周", "focus": "稳定复现 / 做实结果", "required_actions": "必须动作，例如：不加码冒进，复现有效动作", "pass_standard": "通过标准，例如：连续5天不掉线"},
     ],
-    "daily_checkin": "每日固定打卡要求。早C/午B/晚A合并成一项，不要拆成三条。",
+    "daily_checkin": "每日固定打卡要求。包含5项打卡清单，且针对用户的具体痛点进行个性化定制。早C/午B/晚A合并成一项（例如：“1. 早C/午B/晚A是否完成”），并且其他打卡项必须结合用户的个性化阻碍（例如：“2. 午B是否14:00前完成”、“5. 情绪稳定度和饭后困评分”），不要输出硬编码的通用套话！",
     "week5_12": "第5-8周和第9-12周提前说明",
     "weekly_standard": "每周通过标准",
     "reminder": "个性化提醒，必须结合用户作息/运动/睡眠/不适/夜班等情况；不要写通用套话；必要时提醒就医",
@@ -253,22 +253,55 @@ def _build_execution(title: str, user_name: str, fields: dict[str, Any]) -> dict
     if not isinstance(rows, list):
         rows = []
     rows_by_week = {str(row.get("week")): row for row in rows if isinstance(row, dict)}
-    table_rows = [[_label("周次"), _label("重点"), _label("执行标准")]]
+    table_rows = [[_label("周次"), _label("核心目标"), _label("必须动作"), _label("通过标准")]]
+    
     fixed_focus = {
         "第1周": "稳住节律 / 先守底盘",
         "第2周": "拉高关键动作一致性",
         "第3周": "开始抓结果指标",
         "第4周": "稳定复现 / 做实结果",
     }
+    
+    fixed_actions = {
+        "第1周": "早C午B晚A不断；晚餐主食控制在1拳内；每天完成基础步数。",
+        "第2周": "连续5天守住三杯节律；晚餐后走15–20分钟；不额外加宵夜。",
+        "第3周": "记录体重和腰围；开始加入轻力量训练；继续观察睡眠和排便。",
+        "第4周": "把晚餐收口、步数和轻力量做满；复现有效动作。",
+    }
+    
+    fixed_pass = {
+        "第1周": "≥5天完成固定节律",
+        "第2周": "≥5天完成饮食和运动",
+        "第3周": "至少2项指标（体重/围度/体感）变好",
+        "第4周": "连续5天不掉线",
+    }
+    
     for week in ("第1周", "第2周", "第3周", "第4周"):
         row = rows_by_week.get(week, {})
+        focus_val = row.get("focus") or fixed_focus[week]
+        
+        # Backward compatibility for old single 'standard' field
+        actions_val = row.get("required_actions") or row.get("standard")
+        if not actions_val:
+            actions_val = fixed_actions[week]
+        else:
+            actions_val = _clean_text(actions_val)
+            
+        pass_val = row.get("pass_standard")
+        if not pass_val:
+            pass_val = fixed_pass[week]
+        else:
+            pass_val = _clean_text(pass_val)
+            
         table_rows.append(
             [
                 _label(week),
-                _editable(fixed_focus[week]),
-                _editable(_compact_standard(row.get("standard")) or _default_week_standard(week)),
+                _editable(focus_val),
+                _editable(actions_val),
+                _editable(pass_val),
             ]
         )
+        
     blocks = [
         _inline_block("weight_band", "您当前所属减重带", fields.get("weight_band")),
         _inline_block("path_goal", "更适合的总路径目标", fields.get("path_goal")),
@@ -345,14 +378,41 @@ def _list_block(key: str, title: str, items: Any) -> dict[str, Any]:
 
 def _success_path_block(fields: dict[str, Any]) -> dict[str, Any]:
     value = _dict(fields.get("success_path"))
-    lines = [
-        _text(value.get("intro")) or "您的成功路径，不是只看这28天。",
-        _text(value.get("weight_band")),
-        _text(value.get("total_goal")),
-        _text(value.get("day28_goal")),
-        _text(value.get("week5_8")),
-        _text(value.get("week9_12")),
-    ]
+    intro = _text(value.get("intro")) or "您的成功路径，不是只看这28天。"
+    
+    bullets = []
+    
+    wb = _text(value.get("weight_band"))
+    if wb:
+        if not wb.startswith("•"):
+            wb = f"• 您当前所属减重带：{_clean_prefix(wb, '您当前所属减重带')}"
+        bullets.append(wb)
+        
+    tg = _text(value.get("total_goal"))
+    if tg:
+        if not tg.startswith("•"):
+            tg = f"• 您当前更适合的总路径目标：{_clean_prefix(tg, '您当前更适合的总路径目标')}"
+        bullets.append(tg)
+        
+    d28 = _text(value.get("day28_goal"))
+    if d28:
+        if not d28.startswith("•"):
+            d28 = f"• 第一个28天：{_clean_prefix(d28, '第一个28天')}"
+        bullets.append(d28)
+        
+    w5_8 = _text(value.get("week5_8"))
+    if w5_8:
+        if not w5_8.startswith("•"):
+            w5_8 = f"• 第5–8周：{_clean_prefix(w5_8, '第5–8周')}"
+        bullets.append(w5_8)
+        
+    w9_12 = _text(value.get("week9_12"))
+    if w9_12:
+        if not w9_12.startswith("•"):
+            w9_12 = f"• 第9–12周：{_clean_prefix(w9_12, '第9–12周')}"
+        bullets.append(w9_12)
+        
+    lines = [intro] + bullets
     return _text_block("success_path", "5. 您当前所属减重带与成功路径", "\n".join(line for line in lines if line))
 
 
@@ -379,12 +439,30 @@ def _expected_block(fields: dict[str, Any]) -> dict[str, Any]:
 
 def _product_block(fields: dict[str, Any]) -> dict[str, Any]:
     value = _dict(fields.get("product_schedule"))
-    lines = [
-        _text(value.get("morning_c")),
-        _text(value.get("noon_b")),
-        _text(value.get("night_a")),
-        _text(value.get("summary")),
-    ]
+    summary = _text(value.get("summary"))
+    morning = _text(value.get("morning_c"))
+    noon = _text(value.get("noon_b"))
+    night = _text(value.get("night_a"))
+    
+    bullets = []
+    if morning:
+        if not morning.startswith("•"):
+            morning = f"• 早C：{_clean_prefix(morning, '早C')}"
+        bullets.append(morning)
+    if noon:
+        if not noon.startswith("•"):
+            noon = f"• 午B：{_clean_prefix(noon, '午B')}"
+        bullets.append(noon)
+    if night:
+        if not night.startswith("•"):
+            night = f"• 晚A：{_clean_prefix(night, '晚A')}"
+        bullets.append(night)
+        
+    lines = []
+    if summary:
+        lines.append(summary)
+    lines.extend(bullets)
+    
     return _text_block("product_schedule", "11. 产品排班：早C / 午B / 晚A", "\n".join(line for line in lines if line))
 
 
@@ -482,7 +560,33 @@ def _default_week_standard(week: str) -> str:
 
 
 def _daily_checkin_text(value: Any) -> str:
-    return "1）早C/午B/晚A是否全部完成；2）晚餐主食是否≤1拳；3）是否完成步数或饭后活动；4）睡眠是否按计划收口；5）排便是否顺畅。"
+    if not value:
+        return "1. 早C/午B/晚A是否全部完成\n2. 晚餐主食是否控制在1拳内\n3. 每天是否完成基础步数\n4. 睡眠是否按计划收口\n5. 排便是否顺畅。"
+    
+    if isinstance(value, list):
+        cleaned_items = []
+        for idx, item in enumerate(value, 1):
+            cleaned = _clean_text(item)
+            if cleaned:
+                cleaned_items.append(f"{idx}. {cleaned}")
+        if cleaned_items:
+            return "\n".join(cleaned_items)
+            
+    text_val = _clean_text(value)
+    lines = []
+    import re
+    parts = re.split(r'[;\n；\n]+', text_val)
+    idx = 1
+    for part in parts:
+        cleaned = part.strip().lstrip("-•* ").strip()
+        cleaned = re.sub(r'^\d+[\.、\)\）]\s*', '', cleaned)
+        if cleaned:
+            lines.append(f"{idx}. {cleaned}")
+            idx += 1
+            
+    if lines:
+        return "\n".join(lines)
+    return text_val
 
 
 def _personal_reminder(value: Any) -> str:

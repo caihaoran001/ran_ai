@@ -1,7 +1,7 @@
 export const API_BASE =
   typeof window === "undefined"
     ? (process.env.SERVER_API_BASE_URL ?? "http://localhost:8000/api")
-    : (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api");
+    : "/api/backend";
 
 export const FRONTEND_BASE =
   process.env.FRONTEND_PUBLIC_BASE_URL ??
@@ -13,6 +13,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "content-type": "application/json",
+      ...(typeof window === "undefined"
+        ? {"x-admin-api-key": process.env.BACKEND_ADMIN_API_KEY ?? "change-me-internal-api-key"}
+        : {}),
       ...(init?.headers ?? {}),
     },
     cache: "no-store",
@@ -102,6 +105,7 @@ export type DocumentContentBlock = {
   key: string;
   title: string;
   kind: "text" | "list" | "table";
+  display?: "inline";
   content?: string;
   items?: string[];
   rows?: DocumentTableCell[][];
@@ -155,4 +159,61 @@ export type Message = {
   analysis_json?: Record<string, unknown> | null;
   trigger?: Message | null;
   created_at: string;
+};
+
+export type KnowledgeDraft = {
+  id: number;
+  draft_type: "qa" | "case" | string;
+  status: "pending" | "approved" | "rejected" | string;
+  title: string;
+  question: string;
+  answer: string;
+  category?: string | null;
+  tags?: string[] | null;
+  reason?: string | null;
+  evidence?: string | null;
+  sanitized_text?: string | null;
+  source_message_ids?: number[] | null;
+  content_json?: Record<string, unknown> | null;
+  content_hash: string;
+  published_to?: string | null;
+  approved_at?: string | null;
+  rejected_at?: string | null;
+  rejected_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeIndexStats = {
+  total_chunks: number;
+  embedded_chunks: number;
+  by_source_type: Record<string, number>;
+};
+
+export type KnowledgeFAQ = {
+  id: number;
+  faq_uid: string;
+  status: "active" | "disabled" | "archived" | string;
+  title: string;
+  question: string;
+  answer: string;
+  category?: string | null;
+  tags?: string[] | null;
+  source_type?: string | null;
+  source_id?: string | null;
+  version: number;
+  disabled_at?: string | null;
+  archived_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeEvolutionSetting = {
+  enabled: boolean;
+  interval_seconds: number;
+  qa_at: string;
+  daily_qa_limit: number;
+  case_days: string;
+  case_limit_per_case: number;
+  timezone: string;
 };

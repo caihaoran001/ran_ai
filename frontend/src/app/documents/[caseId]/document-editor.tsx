@@ -235,6 +235,10 @@ function StructuredEditor({
 function renderPreviewText(value: DocumentContentJson) {
   const lines = [`# ${value.title}`];
   for (const block of value.blocks) {
+    if (block.display === "inline") {
+      lines.push(`${block.title}：${block.content ?? ""}`);
+      continue;
+    }
     lines.push("", `## ${block.title}`);
     if (block.kind === "table") {
       for (const row of block.rows ?? []) {

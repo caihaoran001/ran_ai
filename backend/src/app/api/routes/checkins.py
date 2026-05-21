@@ -21,6 +21,12 @@ async def list_case_checkins(
     service_case_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[Checkin]:
+    service_case = await session.scalar(
+        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
+    )
+    if not service_case:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="service case not found")
+
     result = await session.scalars(
         select(Checkin)
         .where(Checkin.service_case_id == service_case_id)
@@ -54,7 +60,9 @@ async def create_case_checkin(
     payload: CheckinCreate,
     session: AsyncSession = Depends(get_session),
 ) -> Checkin:
-    service_case = await session.get(ServiceCase, service_case_id)
+    service_case = await session.scalar(
+        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
+    )
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
     checkin = Checkin(
@@ -76,3 +84,4 @@ async def create_case_checkin(
     await session.commit()
     await session.refresh(checkin)
     return checkin
+

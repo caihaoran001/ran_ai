@@ -2,17 +2,21 @@ import Link from "next/link";
 import { api, User, ServiceCase } from "@/lib/api";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { DeleteServiceCaseButton } from "./user-actions";
-import { NewCaseForm } from "../cases/new-case-form";
 
 export default async function UsersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ deleted?: string }>;
+  searchParams: Promise<{ deleted?: string; filter?: string }>;
 }) {
-  const { deleted } = await searchParams;
+  const { deleted, filter } = await searchParams;
   const showDeleted = deleted === "1";
+  const activeFilter = showDeleted ? undefined : filter;
   const users = await api<User[]>(`/users${showDeleted ? "?deleted=true" : ""}`).catch(() => []);
-  const serviceCases = showDeleted ? [] : await api<ServiceCase[]>("/service-cases").catch(() => []);
+  const serviceCasePath = activeFilter
+    ? `/service-cases?filter=${encodeURIComponent(activeFilter)}`
+    : "/service-cases";
+  const serviceCases = showDeleted ? [] : await api<ServiceCase[]>(serviceCasePath).catch(() => []);
+  const filterLabel = activeFilter ? SERVICE_CASE_FILTER_LABELS[activeFilter] : undefined;
 
   return (
     <div className="space-y-6">
@@ -22,7 +26,11 @@ export default async function UsersPage({
             {showDeleted ? "已删除用户" : "用户管理"}
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
-            {showDeleted ? "查看已删除用户的历史记录" : "一个客户空间对应一个服务单"}
+            {showDeleted
+              ? "查看已删除用户的历史记录"
+              : filterLabel
+                ? `当前筛选：${filterLabel}`
+                : "一个客户空间对应一个服务单"}
           </p>
         </div>
         <div className="flex rounded-lg border border-zinc-200 bg-white p-1 text-sm shadow-sm">
@@ -45,7 +53,14 @@ export default async function UsersPage({
         </div>
       </div>
 
-      {!showDeleted && <NewCaseForm />}
+      {filterLabel && (
+        <div className="flex items-center justify-between rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm">
+          <span className="text-blue-800">已按“{filterLabel}”筛选服务单。</span>
+          <Link href="/users" className="font-medium text-blue-700 hover:underline">
+            清除筛选
+          </Link>
+        </div>
+      )}
 
       <div className="grid gap-6">
         {showDeleted
@@ -60,6 +75,19 @@ export default async function UsersPage({
     </div>
   );
 }
+
+const SERVICE_CASE_FILTER_LABELS: Record<string, string> = {
+  new_today: "今日新增用户",
+  risk: "风险用户",
+  human_intervention: "待人工介入",
+  unfollowed: "未跟进（2-7天）",
+  renewal_followup: "续购跟进窗口",
+  renewal_intent: "明确续购意向",
+  refund_intent: "退款/退出意向",
+  lost: "流失用户",
+  in_service: "服务中",
+  messaged_today: "今日有消息",
+};
 
 function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
   const user = serviceCase.user;

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 from llama_index.core import Document, Settings
 from llama_index.core.indices.keyword_table import SimpleKeywordTableIndex
@@ -15,22 +14,22 @@ from app.core.config import Settings as AppSettings
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+KEYWORD_WHITELIST_FILE = "keyword_whitelist.json"
+MAX_QUERY_TERMS = 12
 
 
 class KnowledgeBase:
     def __init__(self, settings: AppSettings | None = None):
         self.settings = settings or get_settings()
         self._documents = self._load_documents()
-        self._category_rules = self._load_category_rules()
         self._index = self._build_index()
 
     def retrieve(self, query: str) -> str:
         query = query.strip()
         if not query:
             return ""
-        category_context = self._category_context(query)
         if not self._index:
-            return f"[问答分类框架命中]\n{category_context}" if category_context else ""
+            return ""
         try:
             retriever = self._index.as_retriever(
                 similarity_top_k=self.settings.knowledge_base_top_k
@@ -42,13 +41,9 @@ class KnowledgeBase:
         snippets = [node.node.get_content().strip() for node in nodes if node.node.get_content().strip()]
         if not snippets:
             snippets = self._fallback_search(query)
-        if not snippets and not category_context:
+        if not snippets:
             return ""
-        blocks = []
-        if category_context:
-            blocks.append(f"[问答分类框架命中]\n{category_context}")
-        blocks.extend(f"[知识库命中 {index + 1}]\n{snippet}" for index, snippet in enumerate(snippets))
-        return "\n\n".join(blocks)
+        return "\n\n".join(f"[知识库命中 {index + 1}]\n{snippet}" for index, snippet in enumerate(snippets))
 
     def _build_index(self):
         if not self._documents:
@@ -65,49 +60,8 @@ class KnowledgeBase:
                 documents.append(Document(text=section, metadata={"source": str(file_path)}))
         return documents
 
-    def _load_category_rules(self) -> list[dict[str, Any]]:
-        path = _default_kb_dir() / "qa_category_rules.json"
-        if not path.exists():
-            return []
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            logger.exception("Failed to load QA category rules")
-            return []
-        return data if isinstance(data, list) else []
-
-    def _category_context(self, query: str) -> str:
-        matches: list[tuple[int, dict[str, Any], list[str]]] = []
-        for rule in self._category_rules:
-            keywords = [str(item) for item in rule.get("keywords") or [] if str(item)]
-            phrases = [str(item) for item in rule.get("typical_user_phrases") or [] if str(item)]
-            category_terms = [
-                str(rule.get("primary_category") or ""),
-                str(rule.get("secondary_category") or ""),
-            ]
-            hit_keywords = [keyword for keyword in [*keywords, *phrases, *category_terms] if keyword and keyword in query]
-            if hit_keywords:
-                score = sum(3 if keyword in keywords else 1 for keyword in hit_keywords)
-                matches.append((score, rule, hit_keywords))
-        if not matches:
-            return ""
-        matches.sort(key=lambda item: item[0], reverse=True)
-        lines = []
-        for _, rule, hit_keywords in matches[:3]:
-            lines.append(
-                "\n".join(
-                    [
-                        f"- 分类：{rule.get('primary_category')}｜{rule.get('secondary_category')}",
-                        f"  命中：{'、'.join(hit_keywords[:8])}",
-                        f"  回复策略：{rule.get('reply_strategy')}",
-                        f"  风险/转人工：{rule.get('risk_level')}",
-                    ]
-                )
-            )
-        return "\n".join(lines)
-
     def _fallback_search(self, query: str) -> list[str]:
-        query_terms = [*_query_terms(query), *self._matched_category_keywords(query)]
+        query_terms = _query_terms(query)
         if not query_terms:
             return []
         scored: list[tuple[int, str]] = []
@@ -118,15 +72,6 @@ class KnowledgeBase:
                 scored.append((score, content.strip()))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [content for _, content in scored[: self.settings.knowledge_base_top_k]]
-
-    def _matched_category_keywords(self, query: str) -> list[str]:
-        keywords: set[str] = set()
-        for rule in self._category_rules:
-            for keyword in rule.get("keywords") or []:
-                keyword_text = str(keyword)
-                if keyword_text and keyword_text in query:
-                    keywords.add(keyword_text)
-        return sorted(keywords, key=len, reverse=True)
 
 
 @lru_cache
@@ -163,9 +108,71 @@ def _split_sections(text: str) -> list[str]:
     return [f"{title}\n\n{section}".strip() for section in body_sections]
 
 
+@lru_cache
+def _keyword_whitelist() -> tuple[str, ...]:
+    path = _default_kb_dir() / KEYWORD_WHITELIST_FILE
+    if not path.exists():
+        return ()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        logger.warning("Keyword whitelist JSON is invalid: %s", path)
+        return ()
+    keywords = payload.get("keywords") if isinstance(payload, dict) else None
+    if not isinstance(keywords, list):
+        logger.warning("Keyword whitelist missing keywords list: %s", path)
+        return ()
+    cleaned = set()
+    for keyword in keywords:
+        if keyword is None:
+            continue
+        value = str(keyword).strip()
+        if value:
+            cleaned.add(value)
+    return tuple(sorted(cleaned, key=lambda item: (-len(item), item)))
+
+
+def _legacy_query_terms(query: str) -> list[str]:
+    import jieba
+
+    tags = re.findall(r"#[\w\u4e00-\u9fff]+", query)
+    words = [
+        word.strip()
+        for word in jieba.lcut(query)
+        if len(word.strip()) >= 2 and re.match(r"[\w\u4e00-\u9fff]", word.strip())
+    ]
+    terms = list(set(tags + words))
+    return sorted(terms, key=len, reverse=True)[:MAX_QUERY_TERMS]
+
+
 def _query_terms(query: str) -> list[str]:
-    terms = set(re.findall(r"#[\w\u4e00-\u9fff]+|[\w\u4e00-\u9fff]{2,}", query))
-    for token in ("打卡", "问卷", "画像", "处方单", "执行标准", "提醒", "docx"):
-        if token in query:
-            terms.add(token)
-    return sorted(terms, key=len, reverse=True)
+    import jieba
+
+    query_text = query.strip()
+    if not query_text:
+        return []
+
+    tags = re.findall(r"#[\w\u4e00-\u9fff]+", query_text)
+    whitelist = _keyword_whitelist()
+    if not whitelist:
+        return _legacy_query_terms(query_text)
+
+    terms = set(tags)
+    query_lower = query_text.lower()
+    whitelist_by_lower = {keyword.lower(): keyword for keyword in whitelist}
+
+    # 先做业务短语直匹配，避免 jieba 把“早C午B晚A”“不吃晚餐”等关键表达切碎。
+    for keyword in whitelist:
+        if keyword in query_text or keyword.lower() in query_lower:
+            terms.add(keyword)
+
+    # 再允许 jieba 切出的词命中白名单；未入白名单的泛词不参与关键词检索。
+    for word in jieba.lcut(query_text):
+        token = word.strip()
+        if len(token) < 2 or not re.match(r"[\w\u4e00-\u9fff]", token):
+            continue
+        matched_keyword = whitelist_by_lower.get(token.lower())
+        if matched_keyword:
+            terms.add(matched_keyword)
+
+    return sorted(terms, key=lambda item: (-len(item), item))[:MAX_QUERY_TERMS]

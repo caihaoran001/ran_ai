@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from app.models.service_case import ServiceCase
 from app.services.ai_service import AIService
+
+logger = logging.getLogger(__name__)
 
 
 async def analyze_intervention(
@@ -21,8 +24,35 @@ async def analyze_intervention(
             context=context,
         )
     except Exception:
-        insight = {}
+        logger.exception("Failed to analyze intervention insight for source=%s", source)
+        insight = _classifier_unavailable_insight(source)
     return normalize_insight(insight, source=source, content=_content_with_context(content, context))
+
+
+def _classifier_unavailable_insight(source: str) -> dict[str, Any]:
+    return {
+        "requires_human_intervention": True,
+        "risk_flags": [
+            {
+                "code": "risk_classifier_unavailable",
+                "level": "high",
+                "reason": "风控/意图识别服务调用失败，系统无法确认该内容安全。",
+                "evidence": "LLM 风控识别失败",
+                "source": source,
+            }
+        ],
+        "intervention_reasons": [
+            {
+                "code": "risk_classifier_unavailable",
+                "level": "high",
+                "reason": "需要人工复核后再继续自动生成或发送内容。",
+                "evidence": "LLM 风控识别失败",
+                "source": source,
+            }
+        ],
+        "confidence": 0.0,
+        "notes": "风控识别失败，已按高风险兜底处理。",
+    }
 
 
 def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> dict[str, Any]:
@@ -37,8 +67,8 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
             {
                 "code": item.get("code", "risk"),
                 "level": item.get("level", "high"),
-                "reason": item.get("reason") or "命中健康、心理或医疗合规风险，需要人工关注。",
-                "evidence": item.get("evidence") or item.get("keyword") or "",
+                "reason": item.get("reason") or "",
+                "evidence": item.get("evidence") or "",
                 "source": item.get("source") or source,
             }
             for item in risk_flags
@@ -49,7 +79,7 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
             {
                 "code": "emotional_distress",
                 "level": "high",
-                "reason": emotion_signal.get("reason") or "用户表达强烈负面情绪，需要人工介入。",
+                "reason": emotion_signal.get("reason") or "",
                 "evidence": emotion_signal.get("evidence") or "",
                 "source": emotion_signal.get("source") or source,
             }
@@ -166,10 +196,6 @@ def _dedupe_items(items: list[dict]) -> list[dict]:
         seen.add(key)
         deduped.append(item)
     return deduped
-
-
-def _first_keyword(content: str, keywords: tuple[str, ...]) -> str:
-    return next((keyword for keyword in keywords if keyword in content), "")
 
 
 def _answer_text(value: Any) -> str:

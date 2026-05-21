@@ -4,7 +4,7 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import distinct, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -49,15 +49,32 @@ async def dashboard_summary(
             ServiceCase.deleted_at.is_(None),
             Message.created_at >= today_start,
             Message.created_at < today_end,
-            Message.direction == MessageDirection.INBOUND,
-            Message.sender_type == MessageSenderType.USER,
         )
     )
-    pending_documents = sum(
-        1
-        for document in await _latest_documents(session)
-        if document.status in (DocumentStatus.DRAFT, DocumentStatus.REVIEWING)
+    # High-performance DISTINCT ON DB-level count of the latest documents to prevent loading all documents in memory
+    from sqlalchemy import text
+    doc_subq = (
+        select(UserDocument.status)
+        .distinct(
+            UserDocument.service_case_id,
+            UserDocument.document_type,
+            text("content_json->>'stage'")
+        )
+        .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
+        .where(ServiceCase.deleted_at.is_(None))
+        .order_by(
+            UserDocument.service_case_id,
+            UserDocument.document_type,
+            text("content_json->>'stage'"),
+            UserDocument.created_at.desc()
+        )
+        .subquery()
     )
+    pending_documents = await session.scalar(
+        select(func.count())
+        .select_from(doc_subq)
+        .where(doc_subq.c.status.in_([DocumentStatus.DRAFT, DocumentStatus.REVIEWING]))
+    ) or 0
     new_users_today = await session.scalar(
         select(func.count(ServiceCase.id)).where(
             ServiceCase.deleted_at.is_(None),
@@ -162,30 +179,6 @@ async def dashboard_summary(
     )
 
 
-EMOTION_FALLBACK_KEYWORDS = (
-    "想死",
-    "自杀",
-    "轻生",
-    "不想活",
-    "活不下去",
-    "情绪崩溃",
-    "崩溃",
-    "烦躁",
-    "焦虑",
-    "难过",
-    "不想坚持",
-    "放弃",
-    "抑郁",
-    "好累",
-    "没用",
-    "太难了",
-    "受不了",
-    "想哭",
-    "心态炸了",
-    "撑不住",
-)
-
-
 def _has_emotion_signal(message: Message) -> bool:
     analysis = message.analysis_json if isinstance(message.analysis_json, dict) else None
     if analysis is not None:
@@ -193,7 +186,7 @@ def _has_emotion_signal(message: Message) -> bool:
         if isinstance(emotion_signal, dict):
             return bool(emotion_signal.get("detected"))
         return _analysis_has_emotion_code(analysis)
-    return any(keyword in message.content for keyword in EMOTION_FALLBACK_KEYWORDS)
+    return False
 
 
 def _analysis_has_emotion_code(analysis: dict) -> bool:
@@ -206,42 +199,6 @@ def _analysis_has_emotion_code(analysis: dict) -> bool:
             if isinstance(item, dict) and item.get("code") in emotion_codes:
                 return True
     return False
-
-
-async def _latest_documents(session: AsyncSession) -> list[UserDocument]:
-    documents = list(
-        await session.scalars(
-            select(UserDocument)
-            .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
-            .where(ServiceCase.deleted_at.is_(None))
-            .order_by(UserDocument.created_at.desc())
-        )
-    )
-    latest_by_key: dict[tuple[int, str, str], UserDocument] = {}
-    for document in documents:
-        latest_by_key.setdefault(_document_identity(document), document)
-    return list(latest_by_key.values())
-
-
-def _document_identity(document: UserDocument) -> tuple[int, str, str]:
-    content_json = document.content_json if isinstance(document.content_json, dict) else {}
-    stage = str(content_json.get("stage") or "")
-    return (document.service_case_id, str(document.document_type), stage)
-
-
-async def _count_intent_users(session: AsyncSession, keywords: tuple[str, ...]) -> int:
-    clauses = [Message.content.ilike(f"%{keyword}%") for keyword in keywords]
-    count = await session.scalar(
-        select(func.count(distinct(ServiceCase.id)))
-        .join(Message, Message.service_case_id == ServiceCase.id)
-        .where(
-            ServiceCase.deleted_at.is_(None),
-            Message.direction == MessageDirection.INBOUND,
-            or_(*clauses),
-        )
-    )
-    return count or 0
-
 
 async def _count_flagged_cases(session: AsyncSession, condition) -> int:
     count = await session.scalar(

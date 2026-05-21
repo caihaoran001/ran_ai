@@ -3,13 +3,16 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.config import get_settings
 from app.db.session import get_session
 from app.services.content_policy import (
     get_ai_reply_delivery_mode,
     get_content_delivery_mode,
     set_ai_reply_delivery_mode,
     set_content_delivery_mode,
+)
+from app.services.knowledge_evolution_settings import (
+    get_knowledge_evolution_config,
+    set_knowledge_evolution_config,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,13 +28,18 @@ class ContentDeliveryPolicy(BaseModel):
 
 
 @router.get("/settings/auto-send")
-async def get_auto_send_setting() -> dict[str, bool]:
-    return {"auto_send_documents": get_settings().auto_send_documents}
+async def get_auto_send_setting(session: AsyncSession = Depends(get_session)) -> dict[str, bool]:
+    return {"auto_send_documents": await get_content_delivery_mode(session) == "auto_send"}
 
 
 @router.post("/settings/auto-send")
-async def update_auto_send_setting(payload: AutoSendSetting) -> dict[str, bool]:
-    return {"auto_send_documents": payload.auto_send_documents}
+async def update_auto_send_setting(
+    payload: AutoSendSetting,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, bool]:
+    mode = "auto_send" if payload.auto_send_documents else "manual_review"
+    saved = await set_content_delivery_mode(mode, session)
+    return {"auto_send_documents": saved == "auto_send"}
 
 
 @router.get("/settings/content-delivery-policy", response_model=ContentDeliveryPolicy)
@@ -77,3 +85,30 @@ async def update_risk_fixed_reply_api(
 ) -> RiskFixedReply:
     from app.services.content_policy import set_risk_fixed_reply
     return RiskFixedReply(content=await set_risk_fixed_reply(payload.content, session))
+
+
+class KnowledgeEvolutionSetting(BaseModel):
+    enabled: bool = False
+    interval_seconds: int = 3600
+    qa_at: str = "00:00"
+    daily_qa_limit: int = 500
+    case_days: str = "3,7,14,21,28"
+    case_limit_per_case: int = 200
+    timezone: str = "Asia/Shanghai"
+
+
+@router.get("/settings/knowledge-evolution", response_model=KnowledgeEvolutionSetting)
+async def get_knowledge_evolution_setting_api(
+    session: AsyncSession = Depends(get_session),
+) -> KnowledgeEvolutionSetting:
+    config = await get_knowledge_evolution_config(session)
+    return KnowledgeEvolutionSetting(**config.__dict__)
+
+
+@router.post("/settings/knowledge-evolution", response_model=KnowledgeEvolutionSetting)
+async def update_knowledge_evolution_setting_api(
+    payload: KnowledgeEvolutionSetting,
+    session: AsyncSession = Depends(get_session),
+) -> KnowledgeEvolutionSetting:
+    config = await set_knowledge_evolution_config(session, payload.model_dump())
+    return KnowledgeEvolutionSetting(**config.__dict__)

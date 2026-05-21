@@ -39,7 +39,7 @@ async def get_ai_reply_delivery_mode(session: AsyncSession | None = None) -> str
         setting = await session.get(AppSetting, AI_REPLY_SETTING_KEY)
         if setting:
             return _normalize(setting.value_json.get("mode"))
-    return "auto_send"
+    return "manual_review"
 
 
 async def set_ai_reply_delivery_mode(value: str, session: AsyncSession | None = None) -> str:

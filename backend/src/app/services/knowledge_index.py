@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text as sql_text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -66,7 +66,6 @@ async def sync_knowledge_chunks(
                     existing.metadata_json = chunk["metadata_json"]
                     existing.content_hash = chunk["content_hash"]
                     existing.embedding = None
-                    existing.embedding_vector = None
                     existing.embedding_model = None
                     existing.embedded_at = None
                     existing.status = "active"
@@ -107,7 +106,6 @@ async def upsert_text_chunk(
         if existing.content_hash != content_hash:
             existing.content_hash = content_hash
             existing.embedding = None
-            existing.embedding_vector = None
             existing.embedding_model = None
             existing.embedded_at = None
         chunk = existing
@@ -160,11 +158,13 @@ async def embed_missing_chunks(
             batch = chunks[index : index + batch_size]
             vectors = await embedding_service.embed_texts([_embedding_text(chunk) for chunk in batch])
             now = datetime.now(timezone.utc)
+            pgvector_available = await _pgvector_available(session)
             for chunk, vector in zip(batch, vectors, strict=False):
                 chunk.embedding = vector
-                chunk.embedding_vector = vector
                 chunk.embedding_model = embedding_service.model
                 chunk.embedded_at = now
+                if pgvector_available:
+                    await _store_embedding_vector(session, chunk.id, vector)
                 embedded += 1
             await session.commit()
     finally:
@@ -185,9 +185,10 @@ async def embed_chunk(
     try:
         vector = await embedding_service.embed_text(_embedding_text(chunk))
         chunk.embedding = vector
-        chunk.embedding_vector = vector
         chunk.embedding_model = embedding_service.model
         chunk.embedded_at = datetime.now(timezone.utc)
+        if await _pgvector_available(session):
+            await _store_embedding_vector(session, chunk.id, vector)
         await session.commit()
         return True
     finally:
@@ -264,29 +265,46 @@ async def retrieve_case_context_db(
     finally:
         await embedding_service.close()
 
-    from sqlalchemy import text
     qv_str = "[" + ",".join(str(x) for x in query_vector) + "]"
-    rows = list(
-        await session.execute(
-            select(KnowledgeChunk.content)
-            .where(
-                KnowledgeChunk.status == "active",
-                KnowledgeChunk.source_type == "case",
-                KnowledgeChunk.embedding_vector.is_not(None),
-                KnowledgeChunk.embedding_model == settings.embedding_model,
-                text("embedding_vector <=> CAST(:qv AS vector) < :max_distance"),
+    if await _pgvector_available(session):
+        rows = list(
+            await session.execute(
+                sql_text(
+                    """
+                    SELECT content
+                    FROM knowledge_chunks
+                    WHERE status = 'active'
+                      AND source_type = 'case'
+                      AND embedding_vector IS NOT NULL
+                      AND embedding_model = :model
+                      AND embedding_vector <=> CAST(:qv AS vector) < :max_distance
+                    ORDER BY embedding_vector <=> CAST(:qv AS vector)
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "model": settings.embedding_model,
+                    "qv": qv_str,
+                    "max_distance": VECTOR_DISTANCE_THRESHOLD,
+                    "limit": limit,
+                },
             )
-            .order_by(text("embedding_vector <=> CAST(:qv AS vector)"))
-            .params(qv=qv_str, max_distance=VECTOR_DISTANCE_THRESHOLD)
-            .limit(limit)
         )
-    )
-    if not rows:
+        snippets = [row[0].strip() for row in rows]
+    else:
+        app_results = await _retrieve_by_json_embedding(
+            session,
+            query_vector,
+            settings=settings,
+            source_type="case",
+            top_k=limit,
+        )
+        snippets = [content for _, content in app_results]
+    if not snippets:
         return ""
 
     from app.services.case_library import _skill_text
     skill = _skill_text()
-    snippets = [row[0].strip() for row in rows]
     return "\n\n".join([skill, *snippets]) if skill else "\n\n".join(snippets)
 
 
@@ -320,7 +338,7 @@ async def _retrieve_by_embedding(
     embedded_count = await session.scalar(
         select(func.count(KnowledgeChunk.id)).where(
             KnowledgeChunk.status == "active",
-            KnowledgeChunk.embedding_vector.is_not(None),
+            KnowledgeChunk.embedding.is_not(None),
             KnowledgeChunk.embedding_model == settings.embedding_model,
         )
     )
@@ -337,21 +355,35 @@ async def _retrieve_by_embedding(
     finally:
         await embedding_service.close()
 
-    from sqlalchemy import text
     qv_str = "[" + ",".join(str(x) for x in query_vector) + "]"
-    res = await session.execute(
-        select(KnowledgeChunk.id, KnowledgeChunk.content)
-        .where(
-            KnowledgeChunk.status == "active",
-            KnowledgeChunk.embedding_vector.is_not(None),
-            KnowledgeChunk.embedding_model == settings.embedding_model,
-            text("embedding_vector <=> CAST(:qv AS vector) < :max_distance"),
+    if await _pgvector_available(session):
+        res = await session.execute(
+            sql_text(
+                """
+                SELECT id, content
+                FROM knowledge_chunks
+                WHERE status = 'active'
+                  AND embedding_vector IS NOT NULL
+                  AND embedding_model = :model
+                  AND embedding_vector <=> CAST(:qv AS vector) < :max_distance
+                ORDER BY embedding_vector <=> CAST(:qv AS vector)
+                LIMIT :limit
+                """
+            ),
+            {
+                "model": settings.embedding_model,
+                "qv": qv_str,
+                "max_distance": VECTOR_DISTANCE_THRESHOLD,
+                "limit": settings.knowledge_base_top_k * 2,
+            },
         )
-        .order_by(text("embedding_vector <=> CAST(:qv AS vector)"))
-        .params(qv=qv_str, max_distance=VECTOR_DISTANCE_THRESHOLD)
-        .limit(settings.knowledge_base_top_k * 2)
+        return [(row[0], row[1].strip()) for row in res.all()]
+    return await _retrieve_by_json_embedding(
+        session,
+        query_vector,
+        settings=settings,
+        top_k=settings.knowledge_base_top_k * 2,
     )
-    return [(row[0], row[1].strip()) for row in res.all()]
 
 
 async def _retrieve_by_text(session: AsyncSession, query: str, *, top_k: int) -> list[tuple[int, str]]:
@@ -387,6 +419,69 @@ async def _retrieve_by_text(session: AsyncSession, query: str, *, top_k: int) ->
         )
     )
     return [(row[0], row[1].strip()) for row in rows]
+
+
+async def _retrieve_by_json_embedding(
+    session: AsyncSession,
+    query_vector: list[float],
+    *,
+    settings: Settings,
+    top_k: int,
+    source_type: str | None = None,
+) -> list[tuple[int, str]]:
+    conditions = [
+        KnowledgeChunk.status == "active",
+        KnowledgeChunk.embedding.is_not(None),
+        KnowledgeChunk.embedding_model == settings.embedding_model,
+    ]
+    if source_type:
+        conditions.append(KnowledgeChunk.source_type == source_type)
+    chunks = list(
+        await session.scalars(
+            select(KnowledgeChunk)
+            .where(*conditions)
+            .order_by(KnowledgeChunk.id.asc())
+        )
+    )
+    scored: list[tuple[float, int, str]] = []
+    for chunk in chunks:
+        vector = chunk.embedding if isinstance(chunk.embedding, list) else []
+        score = _cosine_similarity(query_vector, [float(item) for item in vector])
+        if score > 1 - VECTOR_DISTANCE_THRESHOLD:
+            scored.append((score, chunk.id, chunk.content.strip()))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [(chunk_id, content) for _, chunk_id, content in scored[:top_k]]
+
+
+async def _pgvector_available(session: AsyncSession) -> bool:
+    value = await session.scalar(
+        sql_text(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'knowledge_chunks'
+                  AND column_name = 'embedding_vector'
+            )
+            """
+        )
+    )
+    return bool(value)
+
+
+async def _store_embedding_vector(session: AsyncSession, chunk_id: int, vector: list[float]) -> None:
+    vector_text = "[" + ",".join(str(x) for x in vector) + "]"
+    await session.execute(
+        sql_text(
+            """
+            UPDATE knowledge_chunks
+            SET embedding_vector = CAST(:vector AS vector)
+            WHERE id = :chunk_id
+            """
+        ),
+        {"vector": vector_text, "chunk_id": chunk_id},
+    )
 
 
 async def _active_chunk_count(session: AsyncSession) -> int:

@@ -2,24 +2,34 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 export function middleware(req: NextRequest) {
-  // Allow access to public assets and questionnaire endpoints without auth
+  const pathname = req.nextUrl.pathname;
+  // Allow access to public assets and questionnaire endpoints without auth.
   if (
-    req.nextUrl.pathname.startsWith('/q/') || 
-    req.nextUrl.pathname.startsWith('/_next') ||
-    req.nextUrl.pathname.includes('.') // public files like favicon.ico
+    pathname.startsWith('/q/') ||
+    (pathname.startsWith('/api/questionnaires/') && pathname.endsWith('/submit')) ||
+    pathname.startsWith('/_next') ||
+    (!pathname.startsWith('/api/') && pathname.includes('.')) // public files like favicon.ico
   ) {
     return NextResponse.next();
   }
 
   const basicAuth = req.headers.get('authorization');
+  const expectedUser = process.env.ADMIN_USERNAME || 'admin';
+  const expectedPassword = process.env.ADMIN_PASSWORD || 'change-me';
   
   if (basicAuth) {
-    const authValue = basicAuth.split(' ')[1];
-    const [user, pwd] = atob(authValue).split(':');
+    try {
+      const [scheme, authValue] = basicAuth.split(' ');
+      if (scheme !== 'Basic' || !authValue) {
+        throw new Error('invalid authorization header');
+      }
+      const [user, pwd] = atob(authValue).split(':');
 
-    // The requested simple password
-    if (user === 'admin' && pwd === '123') {
-      return NextResponse.next();
+      if (user === expectedUser && pwd === expectedPassword) {
+        return NextResponse.next();
+      }
+    } catch {
+      // Fall through to the same 401 response for malformed credentials.
     }
   }
 
@@ -32,5 +42,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 };

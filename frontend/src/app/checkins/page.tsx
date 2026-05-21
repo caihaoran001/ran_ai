@@ -3,18 +3,24 @@ import { api, ServiceCase, Checkin } from "@/lib/api";
 
 export default async function CheckinsPage() {
   const cases = await api<ServiceCase[]>("/service-cases").catch(() => []);
-  const rows = await Promise.all(
-    cases.map(async (item) => ({
-      serviceCase: item,
-      checkins: await api<Checkin[]>(`/service-cases/${item.id}/checkins`).catch(() => []),
-    })),
-  );
+  const recentCheckins = await api<Checkin[]>("/checkins?limit=100").catch(() => []);
+  const checkinsByCase = new Map<number, Checkin[]>();
+  for (const checkin of recentCheckins) {
+    if (!checkin.service_case_id) continue;
+    const items = checkinsByCase.get(checkin.service_case_id) ?? [];
+    items.push(checkin);
+    checkinsByCase.set(checkin.service_case_id, items);
+  }
+  const rows = cases.map((item) => ({
+    serviceCase: item,
+    checkins: checkinsByCase.get(item.id) ?? [],
+  }));
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">打卡记录</h1>
-        <p className="mt-1 text-sm text-zinc-500">按服务单查看用户每日打卡。</p>
+        <p className="mt-1 text-sm text-zinc-500">按服务单查看最近 100 条打卡。</p>
       </div>
       <div className="grid gap-4">
         {rows.map(({ serviceCase, checkins }) => (

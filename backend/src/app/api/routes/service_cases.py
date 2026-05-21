@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -25,13 +26,18 @@ router = APIRouter()
 
 @router.get("", response_model=list[ServiceCaseRead])
 async def list_service_cases(
+    filter: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[ServiceCase]:
-    result = await session.scalars(
+    statement = (
         select(ServiceCase)
         .where(ServiceCase.deleted_at.is_(None))
         .options(selectinload(ServiceCase.user))
         .order_by(ServiceCase.created_at.desc())
+    )
+    statement = _apply_service_case_filter(statement, filter)
+    result = await session.scalars(
+        statement
     )
     return list(result)
 
@@ -72,7 +78,7 @@ async def get_service_case(
 ) -> ServiceCase:
     service_case = await session.scalar(
         select(ServiceCase)
-        .where(ServiceCase.id == service_case_id)
+        .where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
         .options(selectinload(ServiceCase.user))
     )
     if not service_case:
@@ -86,7 +92,7 @@ async def get_service_case_stats(
     session: AsyncSession = Depends(get_session),
 ) -> ServiceCaseStats:
     service_case = await session.scalar(
-        select(ServiceCase).where(ServiceCase.id == service_case_id)
+        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
     )
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
@@ -173,7 +179,7 @@ async def delete_service_case(
 ) -> ServiceCase:
     service_case = await session.scalar(
         select(ServiceCase)
-        .where(ServiceCase.id == service_case_id)
+        .where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
         .options(selectinload(ServiceCase.user))
     )
     if not service_case:
@@ -206,3 +212,69 @@ async def delete_service_case(
 
 def _generate_case_no() -> str:
     return f"RAI-{datetime.now().strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}"
+
+
+def _apply_service_case_filter(statement, metric: str | None):
+    if not metric:
+        return statement
+
+    now = datetime.now(timezone.utc)
+    china_tz = ZoneInfo("Asia/Shanghai")
+    today = datetime.now(china_tz).date()
+    today_start = datetime.combine(today, time.min, tzinfo=china_tz).astimezone(timezone.utc)
+    today_end = today_start + timedelta(days=1)
+
+    if metric == "new_today":
+        return statement.where(
+            ServiceCase.created_at >= today_start,
+            ServiceCase.created_at < today_end,
+        )
+    if metric == "risk":
+        return statement.where(ServiceCase.risk_level == "high")
+    if metric == "human_intervention":
+        return statement.where(ServiceCase.needs_human_intervention.is_(True))
+    if metric == "in_service":
+        return statement.where(ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
+    if metric == "renewal_followup":
+        return statement.where(
+            ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+            ServiceCase.started_at.is_not(None),
+            ServiceCase.started_at <= now - timedelta(days=18),
+            ServiceCase.started_at >= now - timedelta(days=28),
+        )
+    if metric == "renewal_intent":
+        return statement.where(ServiceCase.renewal_intent_flags.is_not(None))
+    if metric == "refund_intent":
+        return statement.where(ServiceCase.refund_intent_flags.is_not(None))
+    if metric in {"unfollowed", "lost"}:
+        last_message_subq = (
+            select(Message.service_case_id, func.max(Message.created_at).label("last_at"))
+            .where(Message.direction == MessageDirection.INBOUND)
+            .group_by(Message.service_case_id)
+            .subquery()
+        )
+        last_activity_at = func.coalesce(last_message_subq.c.last_at, ServiceCase.created_at)
+        statement = statement.outerjoin(last_message_subq, last_message_subq.c.service_case_id == ServiceCase.id)
+        if metric == "unfollowed":
+            return statement.where(
+                ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                last_activity_at < now - timedelta(days=2),
+                last_activity_at >= now - timedelta(days=7),
+            )
+        return statement.where(
+            ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+            last_activity_at < now - timedelta(days=7),
+        )
+    if metric == "messaged_today":
+        message_subq = (
+            select(Message.service_case_id)
+            .where(
+                Message.created_at >= today_start,
+                Message.created_at < today_end,
+            )
+            .distinct()
+            .subquery()
+        )
+        return statement.join(message_subq, message_subq.c.service_case_id == ServiceCase.id)
+
+    return statement

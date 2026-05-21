@@ -80,6 +80,7 @@ async def list_case_documents(
     include_history: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> list[UserDocument]:
+    await _case_or_404(session, service_case_id)
     documents = list(await session.scalars(
         select(UserDocument)
         .where(UserDocument.service_case_id == service_case_id)
@@ -166,11 +167,11 @@ async def download_document(
 
 
 async def _case_or_404(session: AsyncSession, service_case_id: int) -> ServiceCase:
-    service_case = await session.get(ServiceCase, service_case_id)
+    service_case = await session.scalar(
+        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
+    )
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
-    if service_case.deleted_at:
-        raise HTTPException(status_code=400, detail="deleted service case is read-only")
     return service_case
 
 

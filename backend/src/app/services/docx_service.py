@@ -70,14 +70,18 @@ def write_template_docx(content_json: dict[str, Any], output_path: Path) -> None
     section.right_margin = Cm(1.8)
     _setup_styles(doc)
 
-    _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=10, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    if content_json.get("show_header_brand", True):
+        _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=10, alignment=WD_ALIGN_PARAGRAPH.CENTER)
     _add_paragraph(doc, str(content_json.get("title") or "交付文件"), bold=True, size=14, alignment=WD_ALIGN_PARAGRAPH.CENTER)
     recipient = str(content_json.get("recipient") or "").strip()
-    if recipient:
+    if recipient and content_json.get("show_recipient", True):
         _add_paragraph(doc, f"To：{recipient}", bold=True, size=10)
 
     for block in content_json.get("blocks") or []:
         title = str(block.get("title") or "").strip()
+        if block.get("display") == "inline":
+            _add_inline_paragraph(doc, title, str(block.get("content") or "").strip())
+            continue
         if title:
             _add_paragraph(doc, title, bold=True, size=11)
         kind = block.get("kind")
@@ -90,9 +94,11 @@ def write_template_docx(content_json: dict[str, Any], output_path: Path) -> None
                     _add_paragraph(doc, f"• {text}", size=10)
         else:
             for line in str(block.get("content") or "").splitlines():
-                _add_paragraph(doc, line, size=10)
+                if line.strip():
+                    _add_paragraph(doc, line, size=10)
 
-    _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=10, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    if content_json.get("show_footer_brand", True):
+        _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=10, alignment=WD_ALIGN_PARAGRAPH.CENTER)
     doc.save(output_path)
 
 
@@ -191,6 +197,21 @@ def _add_paragraph(
     run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
     run.font.size = Pt(size)
     run.bold = bold
+
+
+def _add_inline_paragraph(doc: Document, title: str, content: str) -> None:
+    paragraph = doc.add_paragraph(style="Normal")
+    paragraph.paragraph_format.space_after = Pt(6)
+    if title:
+        title_run = paragraph.add_run(f"{title}：")
+        title_run.font.name = "Microsoft YaHei"
+        title_run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
+        title_run.font.size = Pt(10)
+        title_run.bold = True
+    content_run = paragraph.add_run(content)
+    content_run.font.name = "Microsoft YaHei"
+    content_run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
+    content_run.font.size = Pt(10)
 
 
 def _add_table(doc: Document, rows: list[list[dict[str, Any]]]) -> None:

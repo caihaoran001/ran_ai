@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const SERVER_API_BASE_URL = process.env.SERVER_API_BASE_URL ?? "http://backend:8000/api";
+const SERVER_API_BASE_URL = process.env.SERVER_API_BASE_URL ?? "http://localhost:8000/api";
 
 export async function POST(
   request: Request,

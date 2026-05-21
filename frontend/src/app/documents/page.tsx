@@ -1,15 +1,48 @@
 import Link from "next/link";
-import { api, UserDocument, ServiceCase, Message } from "@/lib/api";
+import {
+  api,
+  UserDocument,
+  ServiceCase,
+  Message,
+  KnowledgeDraft,
+  KnowledgeIndexStats,
+  KnowledgeFAQ,
+  KnowledgeEvolutionSetting,
+} from "@/lib/api";
 import { AutoSendToggle } from "./auto-send-toggle";
 import { AiReplyToggle } from "./ai-reply-toggle";
 import { PendingMessageActions } from "./pending-message-actions";
 import { RiskReplyConfig } from "./risk-reply-config";
+import {
+  KnowledgeDraftActions,
+  KnowledgeDraftScanButton,
+  KnowledgeEvolutionConfigPanel,
+  KnowledgeFAQEditor,
+  KnowledgeIndexSyncButton,
+} from "./knowledge-draft-actions";
 
 export default async function DocumentsListPage() {
   const serviceCases = await api<ServiceCase[]>("/service-cases").catch(() => []);
   const policy = await api<{ mode: string }>("/settings/content-delivery-policy").catch(() => ({ mode: "manual_review" }));
-  const aiReplyPolicy = await api<{ mode: string }>("/settings/ai-reply-delivery-policy").catch(() => ({ mode: "auto_send" }));
+  const aiReplyPolicy = await api<{ mode: string }>("/settings/ai-reply-delivery-policy").catch(() => ({ mode: "manual_review" }));
   const pendingMessages = await api<Message[]>("/messages/pending-ai").catch(() => []);
+  const pendingKnowledgeDrafts = await api<KnowledgeDraft[]>("/knowledge-drafts?status=pending").catch(() => []);
+  const approvedKnowledgeDrafts = await api<KnowledgeDraft[]>("/knowledge-drafts?status=approved").catch(() => []);
+  const knowledgeFaqs = await api<KnowledgeFAQ[]>("/knowledge-faqs?status=all").catch(() => []);
+  const knowledgeEvolutionConfig = await api<KnowledgeEvolutionSetting>("/settings/knowledge-evolution").catch(() => ({
+    enabled: false,
+    interval_seconds: 3600,
+    qa_at: "00:00",
+    daily_qa_limit: 500,
+    case_days: "3,7,14,21,28",
+    case_limit_per_case: 200,
+    timezone: "Asia/Shanghai",
+  }));
+  const knowledgeIndexStats = await api<KnowledgeIndexStats>("/knowledge-base/index/stats").catch(() => ({
+    total_chunks: 0,
+    embedded_chunks: 0,
+    by_source_type: {},
+  }));
   const casesById = new Map(serviceCases.map((item) => [item.id, item]));
 
   const allDocuments: Array<UserDocument & { case_no: string; group_id: string; user_name: string; user_phone: string }> = [];
@@ -50,6 +83,14 @@ export default async function DocumentsListPage() {
 
       <PendingMessageGroup messages={pendingMessages} casesById={casesById} />
 
+      <KnowledgeDraftGroup
+        pendingDrafts={pendingKnowledgeDrafts}
+        approvedDrafts={approvedKnowledgeDrafts}
+        indexStats={knowledgeIndexStats}
+        faqs={knowledgeFaqs}
+        evolutionConfig={knowledgeEvolutionConfig}
+      />
+
       {allDocuments.length > 0 ? (
         <div className="grid gap-6 lg:grid-cols-2">
           <DocumentGroup
@@ -75,6 +116,121 @@ export default async function DocumentsListPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function KnowledgeDraftGroup({
+  pendingDrafts,
+  approvedDrafts,
+  indexStats,
+  faqs,
+  evolutionConfig,
+}: {
+  pendingDrafts: KnowledgeDraft[];
+  approvedDrafts: KnowledgeDraft[];
+  indexStats: KnowledgeIndexStats;
+  faqs: KnowledgeFAQ[];
+  evolutionConfig: KnowledgeEvolutionSetting;
+}) {
+  const sourceText = Object.entries(indexStats.by_source_type)
+    .map(([source, count]) => `${source} ${count}`)
+    .join(" · ");
+
+  return (
+    <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+      <div className="border-b border-zinc-100 px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-zinc-900">知识草稿</h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              FAQ 按自然日聊天沉淀；优秀案例按 3/7/14/21/28 天阶段窗口沉淀，批准后才进入知识库或案例库。
+            </p>
+          </div>
+          <KnowledgeDraftScanButton />
+        </div>
+      </div>
+      <div className="border-b border-zinc-100 bg-zinc-50/50 px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <div className="text-xs text-zinc-500">数据库知识块</div>
+              <div className="mt-1 text-xl font-semibold text-zinc-900">{indexStats.total_chunks}</div>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-500">已向量化</div>
+              <div className="mt-1 text-xl font-semibold text-zinc-900">{indexStats.embedded_chunks}</div>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-500">来源</div>
+              <div className="mt-1 max-w-md truncate text-sm text-zinc-700">{sourceText || "暂无"}</div>
+            </div>
+          </div>
+          <KnowledgeIndexSyncButton />
+        </div>
+      </div>
+      <div className="border-b border-zinc-100 p-4">
+        <KnowledgeEvolutionConfigPanel initialConfig={evolutionConfig} />
+      </div>
+      <div className="grid gap-4 p-4 xl:grid-cols-[1.5fr_1fr_1.2fr]">
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-700">待审核</h3>
+            <span className="text-sm text-zinc-500">{pendingDrafts.length} 条</span>
+          </div>
+          {pendingDrafts.length > 0 ? (
+            <div className="space-y-4">
+              {pendingDrafts.map((draft) => (
+                <div key={draft.id} className="rounded-lg border border-zinc-200 p-4">
+                  <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                    <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                      {draft.draft_type === "case" ? "优秀案例" : "FAQ"}
+                    </span>
+                    {draft.category && <span>{draft.category}</span>}
+                    <span>{draft.created_at}</span>
+                  </div>
+                  {draft.reason && <p className="mb-3 text-sm text-zinc-500">入选原因：{draft.reason}</p>}
+                  {draft.evidence && <p className="mb-3 rounded-md bg-zinc-50 p-3 text-sm text-zinc-600">证据：{draft.evidence}</p>}
+                  <KnowledgeDraftActions
+                    draftId={draft.id}
+                    initialTitle={draft.title}
+                    initialQuestion={draft.question}
+                    initialAnswer={draft.answer}
+                    initialCategory={draft.category}
+                    initialTags={draft.tags}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-zinc-200 py-10 text-center text-sm text-zinc-400">
+              暂无待审核知识草稿
+            </div>
+          )}
+        </div>
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-700">已入库</h3>
+            <span className="text-sm text-zinc-500">{approvedDrafts.length} 条</span>
+          </div>
+          <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+            {approvedDrafts.slice(0, 20).map((draft) => (
+              <div key={draft.id} className="rounded-lg border border-zinc-200 p-3 text-sm">
+                <div className="font-medium text-zinc-800">{draft.title}</div>
+                <div className="mt-1 text-xs text-zinc-500">
+                  {draft.draft_type === "case" ? "优秀案例" : "FAQ"} · {draft.published_to || "已入库"}
+                </div>
+              </div>
+            ))}
+            {approvedDrafts.length === 0 && (
+              <div className="rounded-lg border border-dashed border-zinc-200 py-10 text-center text-sm text-zinc-400">
+                暂无已入库草稿
+              </div>
+            )}
+          </div>
+        </div>
+        <KnowledgeFAQEditor faqs={faqs} />
+      </div>
+    </section>
   );
 }
 

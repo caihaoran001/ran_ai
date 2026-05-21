@@ -24,7 +24,9 @@ async def list_case_messages(
     service_case_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[Message]:
-    service_case = await session.get(ServiceCase, service_case_id)
+    service_case = await session.scalar(
+        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
+    )
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
     result = await session.scalars(
@@ -48,7 +50,9 @@ async def send_case_message(
     payload: MessageSend,
     session: AsyncSession = Depends(get_session),
 ) -> Message:
-    service_case = await session.get(ServiceCase, service_case_id)
+    service_case = await session.scalar(
+        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
+    )
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
 

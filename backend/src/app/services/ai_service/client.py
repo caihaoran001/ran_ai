@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from html import escape
 import json
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 from app.core.config import Settings, get_settings
 
@@ -21,17 +22,40 @@ class AIService:
     async def generate_text(self, *, system_prompt: str, user_prompt: str) -> str:
         if not self.settings.ai_api_key:
             raise RuntimeError("AI_API_KEY is required")
-        response = await self._client.chat.completions.create(
-            model=self.settings.ai_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=self.settings.ai_temperature,
-            max_tokens=self.settings.ai_max_tokens,
+        response = await self._create_chat_completion_with_retry(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
         )
         content = response.choices[0].message.content if response.choices else ""
         return (content or "").strip()
+
+    async def _create_chat_completion_with_retry(self, *, system_prompt: str, user_prompt: str):
+        retryable_status_codes = {408, 409, 425, 429, 500, 502, 503, 504}
+        max_attempts = 3
+        last_error: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                return await self._client.chat.completions.create(
+                    model=self.settings.ai_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=self.settings.ai_temperature,
+                    max_tokens=self.settings.ai_max_tokens,
+                )
+            except APIStatusError as exc:
+                last_error = exc
+                if exc.status_code not in retryable_status_codes or attempt >= max_attempts - 1:
+                    raise
+            except (APIConnectionError, APITimeoutError, RateLimitError) as exc:
+                last_error = exc
+                if attempt >= max_attempts - 1:
+                    raise
+            await asyncio.sleep(0.5 * (2**attempt))
+        if last_error:
+            raise last_error
+        raise RuntimeError("AI completion failed")
 
     async def generate_profile(self, answers: dict[str, Any]) -> tuple[dict[str, Any], str]:
         text = await self.generate_text(
@@ -121,7 +145,7 @@ class AIService:
                 "}\n\n"
 
                 "【判断纪律】\n"
-                "1. 结合 recent_user_messages 上下文进行多轮会话的合并研判。\n"
+                "1. 结合 recent_user_messages 上下文进行多轮会话的合并研判；该字段可能包含“用户/营养师/班主任”的双向历史对话。\n"
                 "2. 没有明确证据时，保持 detected=false 且数组为空。\n"
                 "3. 禁止对无害词汇过度标记：如'稍微有点心慌可能是咖啡因敏感'属于正常反馈，不应标为 L2/L3。\n"
                 "4. 用户转述他人经历（如'我朋友得了糖尿病'）不构成该用户自身的健康风险。"
