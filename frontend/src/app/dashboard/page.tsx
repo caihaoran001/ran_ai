@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ReactNode } from "react";
 import { api } from "@/lib/api";
 
 type Summary = {
@@ -6,6 +7,7 @@ type Summary = {
   service_cases_in_service: number;
   checkins_today: number;
   messages_today: number;
+  messages_outbound_today?: number;
   pending_documents: number;
   new_users_today: number;
   risk_users: number;
@@ -25,6 +27,7 @@ export default async function DashboardPage() {
     service_cases_in_service: 0,
     checkins_today: 0,
     messages_today: 0,
+    messages_outbound_today: 0,
     pending_documents: 0,
     new_users_today: 0,
     risk_users: 0,
@@ -136,12 +139,28 @@ export default async function DashboardPage() {
           description="今天提交的打卡记录数。"
         />
         <StatCard
-          label="今日消息"
+          label="今日用户消息"
           value={summary.messages_today}
           icon="💬"
           color="purple"
           href="/users?filter=messaged_today"
-          description="今天产生的企微入站和出站消息总数。"
+          description={
+            <>
+              今天收到的企微用户消息数。今日社群双向消息共{" "}
+              <span className="mx-0.5 px-1.5 py-0.5 rounded-md bg-purple-100/90 text-purple-700 font-semibold border border-purple-200/60 text-[11px]">
+                {summary.messages_today + (summary.messages_outbound_today ?? 0)}
+              </span>{" "}
+              条（其中用户发送{" "}
+              <span className="mx-0.5 px-1.5 py-0.5 rounded-md bg-blue-100/90 text-blue-700 font-semibold border border-blue-200/60 text-[11px]">
+                {summary.messages_today}
+              </span>{" "}
+              条，班主任/机器人回复{" "}
+              <span className="mx-0.5 px-1.5 py-0.5 rounded-md bg-zinc-100/90 text-zinc-700 font-semibold border border-zinc-200/60 text-[11px]">
+                {summary.messages_outbound_today ?? 0}
+              </span>{" "}
+              条）。
+            </>
+          }
         />
         <StatCard
           label="今日情绪预警"
@@ -177,7 +196,7 @@ function StatCard({
   icon: string;
   color: string;
   href: string;
-  description: string;
+  description: ReactNode;
 }) {
   const colorClasses: Record<string, string> = {
     blue: "bg-blue-50 border-blue-200",
@@ -191,7 +210,7 @@ function StatCard({
   return (
     <Link
       href={href}
-      title={description}
+      title={typeof description === "string" ? description : undefined}
       className={`block rounded-xl border p-6 transition hover:-translate-y-0.5 hover:shadow-sm ${colorClasses[color] || "bg-zinc-50 border-zinc-200"}`}
     >
       <div className="flex items-center justify-between">
@@ -199,7 +218,7 @@ function StatCard({
         <span className="text-3xl font-bold text-zinc-900">{value}</span>
       </div>
       <div className="mt-2 text-sm font-medium text-zinc-600">{label}</div>
-      <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-500">{description}</p>
+      <p className="mt-2 text-xs leading-5 text-zinc-500">{description}</p>
     </Link>
   );
 }

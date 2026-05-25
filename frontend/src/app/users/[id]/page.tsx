@@ -1,14 +1,6 @@
 import Link from "next/link";
-import { api, Checkin, Message, User } from "@/lib/api";
+import { api, Checkin, Message, User, UserDocument } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
-
-type Questionnaire = {
-  fields: { key: string; label?: string; title?: string }[];
-  latest_submission?: {
-    answers_json: Record<string, unknown>;
-    created_at: string;
-  } | null;
-};
 
 export default async function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -19,11 +11,12 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   )[0];
   const checkins = serviceCase ? await api<Checkin[]>(`/service-cases/${serviceCase.id}/checkins`).catch(() => []) : [];
   const messages = serviceCase ? await api<Message[]>(`/service-cases/${serviceCase.id}/messages`).catch(() => []) : [];
-  const questionnaire = serviceCase ? await api<Questionnaire>(`/questionnaires/${serviceCase.questionnaire_token}`).catch(() => null) : null;
-  const answers = questionnaire?.latest_submission?.answers_json ?? {};
-  const answerLookup = buildAnswerLookup(questionnaire?.fields ?? [], answers);
+  const documents = serviceCase ? await api<UserDocument[]>(`/service-cases/${serviceCase.id}/documents`).catch(() => []) : [];
   const latestParsed = checkins[0]?.parsed_json;
   const uniqueCheckinDays = new Set(checkins.map(c => c.checkin_date).filter(Boolean)).size;
+  const energyDocument = documents.find((item) => item.document_type === "energy_restart_prescription");
+  const executionDocument = documents.find((item) => item.document_type === "day28_execution_standard");
+  const overview = recordValue(profile?.profile_json?.overview);
 
   return (
     <div className="space-y-6">
@@ -43,10 +36,10 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <Info label="真实姓名" value={user.name} />
           <Info label="手机号" value={user.phone ?? "暂无数据"} />
           <Info label="企微ID" value={user.wecom_user_id ?? "暂无数据"} />
-          <Info label="性别/年龄" value={profileText(profile?.profile_json, "gender_age") || answerByLabel(answerLookup, ["性别", "年龄"]) || "暂无数据"} />
-          <Info label="身高/体重" value={profileText(profile?.profile_json, "height_weight") || answerByLabel(answerLookup, ["身高", "体重"]) || latestParsed?.weight || "暂无数据"} />
-          <Info label="BMI" value={profileText(profile?.profile_json, "bmi") || answerByLabel(answerLookup, ["BMI", "bmi"]) || "暂无数据"} />
-          <Info label="腰围" value={profileText(profile?.profile_json, "waist") || answerByLabel(answerLookup, ["腰围"]) || "暂无数据"} />
+          <Info label="性别/年龄" value={text(overview.gender_age) || "暂无数据"} />
+          <Info label="身高/体重" value={text(overview.height_weight) || "暂无数据"} />
+          <Info label="BMI" value={text(overview.bmi) || "暂无数据"} />
+          <Info label="腰围" value={text(overview.waist) || text(overview.waist_bodyfat) || "暂无数据"} />
         </div>
       </section>
 
@@ -58,9 +51,15 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         {profile ? (
           <ProfileView profile={profile.profile_json} fallback={profile.summary} serviceCase={serviceCase} />
         ) : (
-          <p className="mt-3 text-sm text-zinc-500">尚未生成用户画像。用户提交问卷后会自动生成一次，也可以在服务单详情手动触发。</p>
+          <p className="mt-3 text-sm text-zinc-500">尚未生成用户画像。用户提交入营问卷后，系统会自动生成画像和交付文件。</p>
         )}
       </section>
+      {(energyDocument || executionDocument) && (
+        <section className="rounded-lg border border-zinc-200 bg-white p-4">
+          <h2 className="font-medium">交付文件摘要</h2>
+          <DocumentHighlights energyDocument={energyDocument} executionDocument={executionDocument} />
+        </section>
+      )}
       {serviceCase && (
         <section className="rounded-lg border border-zinc-200 bg-white p-4">
           <h2 className="font-medium">正在进行的方案</h2>
@@ -87,16 +86,13 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <Info label="打卡天数" value={`${uniqueCheckinDays} 天`} />
         </div>
       </section>
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
-        <h2 className="font-medium">AI总结</h2>
-        <p className="mt-3 max-h-40 overflow-y-auto text-sm leading-6 pr-1">{profile?.summary || "暂无数据"}</p>
-      </section>
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
+      <section className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-zinc-500">
         <h2 className="font-medium">购买与复购</h2>
+        <p className="mt-2 text-xs">订单数据尚未接入，仅预留展示位。</p>
         <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
-          <Info label="购买记录" value="暂无数据" />
-          <Info label="复购记录" value="暂无数据" />
-          <Info label="客单价" value="暂无数据" />
+          <Info label="购买记录" value="未接入" muted />
+          <Info label="复购记录" value="未接入" muted />
+          <Info label="客单价" value="未接入" muted />
         </div>
       </section>
       <section className="rounded-lg border border-zinc-200 bg-white p-4">
@@ -125,11 +121,11 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   );
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function Info({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
   return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+    <div className={`rounded-md border p-3 ${muted ? "border-zinc-200 bg-zinc-100 text-zinc-400" : "border-zinc-200 bg-zinc-50"}`}>
       <div className="text-xs text-zinc-500">{label}</div>
-      <div className="mt-1 font-medium text-zinc-900">{value}</div>
+      <div className={`mt-1 font-medium ${muted ? "text-zinc-400" : "text-zinc-900"}`}>{value}</div>
     </div>
   );
 }
@@ -145,13 +141,13 @@ function ProfileView({
 }) {
   const summary = text(profile.summary) || fallback;
   const items = [
-    ["风险识别", serviceCase?.risk_level === "high" ? reasonText(serviceCase.risk_flags) : text(profile.risk_identification) || text(profile.risks) || "暂无明确风险"],
-    ["减重带判断", text(profile.weight_loss_band) || text(profile.weight_band) || text(profile.fat_loss_stage) || "暂无数据"],
+    ["风控风险", serviceCase?.risk_level === "high" ? reasonText(serviceCase.risk_flags) : "暂无明确风险"],
+    ["减重带判断", profileText(profile, "weight_loss_band") || text(profile.weight_loss_band) || "暂无数据"],
     ["当前状态", text(profile.state) || "暂无数据"],
     ["核心问题", text(profile.main_problem) || "暂无数据"],
     ["28 天目标", text(profile.day28_goal) || "暂无数据"],
     ["标签", arrayText(profile.tags) || text(profile.tags) || "暂无数据"],
-    ["运营备注", text(profile.notes) || "暂无数据"],
+    ["AI陪跑建议", text(profile.notes) || "暂无数据"],
   ];
 
   return (
@@ -165,6 +161,77 @@ function ProfileView({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function DocumentHighlights({
+  energyDocument,
+  executionDocument,
+}: {
+  energyDocument?: UserDocument;
+  executionDocument?: UserDocument;
+}) {
+  const oneSentence = blockText(energyDocument, "one_sentence");
+  const judgementPoints = blockItems(energyDocument, "judgement_points");
+  const currentStateSegments = splitCurrentState(blockText(energyDocument, "current_state"));
+  const moduleDiagnosis = blockText(energyDocument, "module_diagnosis");
+  const successPath = blockText(energyDocument, "success_path");
+  const nonNegotiable = blockText(energyDocument, "non_negotiable");
+  const principle = blockText(executionDocument, "principle");
+  const dailyCheckin = splitChecklist(blockText(executionDocument, "daily_checkin"));
+
+  return (
+    <div className="mt-3 space-y-4 text-sm leading-6">
+      {oneSentence && <SummaryTextCard title="一句话结论" value={oneSentence} />}
+      {judgementPoints.length > 0 && <SummaryListCard title="判断依据" items={judgementPoints} />}
+      {(currentStateSegments.state || currentStateSegments.insulin || currentStateSegments.leptin || currentStateSegments.hormone || currentStateSegments.priority || moduleDiagnosis) && (
+        <div className="grid gap-3 md:grid-cols-2">
+          {currentStateSegments.state && <SummaryTextCard title="当前身体状态" value={currentStateSegments.state} />}
+          {(currentStateSegments.insulin || currentStateSegments.leptin || currentStateSegments.hormone) && (
+            <SummaryTextCard
+              title="胰岛素 / 瘦素 / 激素判断"
+              value={[
+                currentStateSegments.insulin,
+                currentStateSegments.leptin,
+                currentStateSegments.hormone,
+              ].filter(Boolean).join("\n")}
+            />
+          )}
+          {currentStateSegments.priority && <SummaryTextCard title="当前最该先抓的方向" value={currentStateSegments.priority} />}
+          {moduleDiagnosis && <SummaryTextCard title="模块诊断" value={moduleDiagnosis} />}
+        </div>
+      )}
+      <div className="grid gap-3 md:grid-cols-2">
+        {successPath && <SummaryTextCard title="成功路径" value={successPath} />}
+        {nonNegotiable && <SummaryTextCard title="最不能打折的一件事" value={nonNegotiable} />}
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {principle && <SummaryTextCard title="执行总原则" value={principle} />}
+        {dailyCheckin.length > 0 && <SummaryListCard title="每日打卡项" items={dailyCheckin} />}
+      </div>
+    </div>
+  );
+}
+
+function SummaryTextCard({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+      <div className="text-xs font-medium text-zinc-500">{title}</div>
+      <div className="mt-1 whitespace-pre-wrap">{value}</div>
+    </div>
+  );
+}
+
+function SummaryListCard({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+      <div className="text-xs font-medium text-zinc-500">{title}</div>
+      <ul className="mt-2 space-y-1">
+        {items.map((item) => (
+          <li key={item} className="ml-5 list-disc">{item}</li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -184,6 +251,71 @@ function profileText(profile: Record<string, unknown> | undefined, key: string) 
     return text((overview as Record<string, unknown>)[key]);
   }
   return text(profile[key]);
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function blockByKey(document: UserDocument | undefined, key: string) {
+  const blocks = Array.isArray(document?.content_json?.blocks) ? document?.content_json?.blocks : [];
+  return blocks.find((block) => block.key === key);
+}
+
+function blockText(document: UserDocument | undefined, key: string) {
+  const block = blockByKey(document, key);
+  return typeof block?.content === "string" ? block.content.trim() : "";
+}
+
+function blockItems(document: UserDocument | undefined, key: string) {
+  const block = blockByKey(document, key);
+  return Array.isArray(block?.items)
+    ? block.items.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+}
+
+function splitChecklist(value: string) {
+  return value
+    .split("\n")
+    .map((item) => item.replace(/^\d+[\.\、]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function splitCurrentState(value: string) {
+  const lines = value.split("\n").map((line) => line.trim()).filter(Boolean);
+  const stateLines: string[] = [];
+  let insulin = "";
+  let leptin = "";
+  let hormone = "";
+  let priority = "";
+  for (const line of lines) {
+    if (line.startsWith("胰岛素抵抗判断：")) {
+      insulin = line.replace("胰岛素抵抗判断：", "").trim();
+      continue;
+    }
+    if (line.startsWith("瘦素敏感判断：")) {
+      leptin = line.replace("瘦素敏感判断：", "").trim();
+      continue;
+    }
+    if (line.startsWith("激素阶段影响判断：")) {
+      hormone = line.replace("激素阶段影响判断：", "").trim();
+      continue;
+    }
+    if (line.startsWith("当前最该先抓的方向：")) {
+      priority = line.replace("当前最该先抓的方向：", "").trim();
+      continue;
+    }
+    stateLines.push(line);
+  }
+  return {
+    state: stateLines.join("\n"),
+    insulin,
+    leptin,
+    hormone,
+    priority,
+  };
 }
 
 function weightTrend(checkins: Checkin[]) {
@@ -220,28 +352,4 @@ function intentText(flags?: Array<Record<string, string | boolean>> | null) {
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
   return formatChinaDateTime(value);
-}
-
-function buildAnswerLookup(fields: Questionnaire["fields"], answers: Record<string, unknown>) {
-  const rows: Array<[string, string]> = [];
-  for (const field of fields) {
-    const key = field.key;
-    const value = answers[key];
-    if (value === undefined || value === null || value === "") continue;
-    rows.push([field.title || field.label || key, answerText(value)]);
-  }
-  return rows;
-}
-
-function answerByLabel(rows: Array<[string, string]>, keywords: string[]) {
-  const matched = rows
-    .filter(([label]) => keywords.some((keyword) => label.toLowerCase().includes(keyword.toLowerCase())))
-    .map(([label, value]) => `${label}：${value}`);
-  return matched.join("；");
-}
-
-function answerText(value: unknown) {
-  if (Array.isArray(value)) return value.join("、");
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
 }

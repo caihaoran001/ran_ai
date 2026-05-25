@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import { QuestionnaireConfigEditor } from "./questionnaire-config-editor";
+import { RiskReplyConfig } from "./risk-reply-config";
 
 type Template = {
   template_key: string;
@@ -17,14 +18,19 @@ type Config = {
 export default async function QuestionnaireConfigPage() {
   const config = await api<Config>("/questionnaire-template/config");
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold">问卷配置</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          配置入营问卷、每日打卡问卷、阶段复盘问卷，以及机器人定时发送文案。
+        <h1 className="text-2xl font-bold text-zinc-900">运营规则配置</h1>
+        <p className="mt-1.5 text-sm text-zinc-500">
+          管理群内自动发卷策略、定时发送文案、跳过日期规则以及高风险安全拦截话术。
         </p>
       </div>
+      
       <QuestionnaireConfigEditor config={config} />
+      
+      <div className="border-t border-zinc-200/80 pt-8">
+        <RiskReplyConfig />
+      </div>
     </div>
   );
 }

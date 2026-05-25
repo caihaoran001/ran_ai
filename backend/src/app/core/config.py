@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     ai_api_key: str = Field(default="", validation_alias="AI_API_KEY")
     ai_model: str = Field(default="deepseek-v4-flash", validation_alias="AI_MODEL")
     ai_temperature: float = Field(default=0.3, validation_alias="AI_TEMPERATURE")
-    ai_max_tokens: int = Field(default=1800, validation_alias="AI_MAX_TOKENS")
+    ai_max_tokens: int = Field(default=8000, validation_alias="AI_MAX_TOKENS")
     ai_timeout_seconds: float = Field(default=60.0, validation_alias="AI_TIMEOUT_SECONDS")
     document_output_dir: str = Field(
         default="generated_documents",
@@ -99,6 +99,14 @@ class Settings(BaseSettings):
     auto_send_documents: bool = Field(
         default=False,
         validation_alias="AUTO_SEND_DOCUMENTS",
+    )
+    faq_vector_distance_threshold: float = Field(
+        default=0.35,
+        validation_alias="FAQ_VECTOR_DISTANCE_THRESHOLD",
+    )
+    case_vector_distance_threshold: float = Field(
+        default=0.45,
+        validation_alias="CASE_VECTOR_DISTANCE_THRESHOLD",
     )
 
 

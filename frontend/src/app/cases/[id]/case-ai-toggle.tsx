@@ -32,8 +32,8 @@ export function CaseAiToggle({
       onClick={toggle}
       className={`rounded-md px-3 py-2 text-sm font-medium transition disabled:opacity-50 ${
         enabled
-          ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
-          : "bg-zinc-900 text-white hover:bg-zinc-800"
+          ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100 shadow-sm"
+          : "bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-200 hover:text-zinc-700 shadow-sm"
       }`}
     >
       {enabled ? "AI 自动回复开启" : "AI 自动回复关闭"}

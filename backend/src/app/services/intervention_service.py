@@ -35,8 +35,8 @@ def _classifier_unavailable_insight(source: str) -> dict[str, Any]:
         "risk_flags": [
             {
                 "code": "risk_classifier_unavailable",
-                "level": "high",
-                "reason": "风控/意图识别服务调用失败，系统无法确认该内容安全。",
+                "level": "medium",
+                "reason": "风控/意图识别服务调用失败，当前内容需要人工兜底复核。",
                 "evidence": "LLM 风控识别失败",
                 "source": source,
             }
@@ -44,14 +44,14 @@ def _classifier_unavailable_insight(source: str) -> dict[str, Any]:
         "intervention_reasons": [
             {
                 "code": "risk_classifier_unavailable",
-                "level": "high",
+                "level": "medium",
                 "reason": "需要人工复核后再继续自动生成或发送内容。",
                 "evidence": "LLM 风控识别失败",
                 "source": source,
             }
         ],
         "confidence": 0.0,
-        "notes": "风控识别失败，已按高风险兜底处理。",
+        "notes": "风控识别失败，已按中风险人工复核兜底处理。",
     }
 
 

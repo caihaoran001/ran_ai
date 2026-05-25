@@ -15,6 +15,7 @@ from app.models.message import (
 from app.models.service_case import ServiceCase
 from app.schemas.message import MessageRead, MessageSend, MessageUpdate
 from app.services.channels import send_channel_text
+from app.services.service_case_queries import active_service_case_condition, get_active_service_case, get_service_case
 
 router = APIRouter()
 
@@ -24,9 +25,7 @@ async def list_case_messages(
     service_case_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[Message]:
-    service_case = await session.scalar(
-        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
-    )
+    service_case = await get_service_case(session, service_case_id)
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
     result = await session.scalars(
@@ -50,9 +49,7 @@ async def send_case_message(
     payload: MessageSend,
     session: AsyncSession = Depends(get_session),
 ) -> Message:
-    service_case = await session.scalar(
-        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
-    )
+    service_case = await get_active_service_case(session, service_case_id)
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
 
@@ -91,7 +88,7 @@ async def list_pending_ai_messages(
         select(Message)
         .join(ServiceCase, Message.service_case_id == ServiceCase.id)
         .where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             Message.direction == MessageDirection.OUTBOUND,
             Message.sender_type == MessageSenderType.BOT,
             Message.purpose == MessagePurpose.CHAT,

@@ -12,6 +12,7 @@ from app.models.service_case import ServiceCase
 from app.schemas.checkin import CheckinCreate, CheckinRead
 from app.services.checkin_service import normalize_checkin_json
 from app.services.intervention_service import analyze_intervention, merge_case_insight
+from app.services.service_case_queries import active_service_case_condition, get_active_service_case, get_service_case
 
 router = APIRouter()
 
@@ -21,9 +22,7 @@ async def list_case_checkins(
     service_case_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[Checkin]:
-    service_case = await session.scalar(
-        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
-    )
+    service_case = await get_service_case(session, service_case_id)
     if not service_case:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="service case not found")
 
@@ -43,7 +42,7 @@ async def list_checkins(
     result = await session.scalars(
         select(Checkin)
         .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
-        .where(ServiceCase.deleted_at.is_(None))
+        .where(active_service_case_condition())
         .order_by(Checkin.created_at.desc())
         .limit(min(max(limit, 1), 100))
     )
@@ -60,9 +59,7 @@ async def create_case_checkin(
     payload: CheckinCreate,
     session: AsyncSession = Depends(get_session),
 ) -> Checkin:
-    service_case = await session.scalar(
-        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
-    )
+    service_case = await get_active_service_case(session, service_case_id)
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
     checkin = Checkin(
@@ -84,4 +81,3 @@ async def create_case_checkin(
     await session.commit()
     await session.refresh(checkin)
     return checkin
-

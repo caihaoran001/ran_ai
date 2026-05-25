@@ -12,6 +12,13 @@ from sqlalchemy.orm import selectinload
 from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.checkin import Checkin
+from app.models.message import (
+    Message,
+    MessageDirection,
+    MessagePurpose,
+    MessageSenderType,
+    MessageStatus,
+)
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
@@ -22,8 +29,10 @@ from app.schemas.questionnaire import (
     QuestionnaireSubmissionRead,
     QuestionnaireSubmit,
 )
-from app.services.document_service import generate_profile, generate_documents
+from app.services.document_service import generate_profile_and_documents
 from app.db.session import SessionLocal
+from app.services.channels import send_channel_text
+from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
 from app.services.intervention_service import (
     analyze_intervention,
     merge_case_insight,
@@ -31,6 +40,7 @@ from app.services.intervention_service import (
 )
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.questionnaire_template import get_active_questionnaire_template
+from app.services.service_case_queries import active_service_case_condition, get_active_service_case
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +186,7 @@ async def submit_questionnaire(
         answers_json=payload.answers,
     )
     if template == "intake":
-        service_case.status = ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
+        service_case.status = ServiceCaseStatus.GENERATING if get_settings().ai_api_key else ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
         await _sync_user_from_answers(session, service_case, fields, payload.answers)
     elif template != "intake":
         _create_checkin_from_questionnaire(session, service_case, fields, payload.answers)
@@ -195,6 +205,7 @@ async def submit_questionnaire(
     await session.commit()
     await session.refresh(submission)
     if template == "intake" and get_settings().ai_api_key:
+        background_tasks.add_task(_send_intake_submit_reply, service_case.id)
         background_tasks.add_task(_generate_profile_and_documents, service_case.id)
     return submission
 
@@ -207,7 +218,7 @@ async def _case_by_token(
 ) -> ServiceCase:
     conditions = [ServiceCase.questionnaire_token == token]
     if not include_deleted:
-        conditions.append(ServiceCase.deleted_at.is_(None))
+        conditions.append(active_service_case_condition())
     service_case = await session.scalar(
         select(ServiceCase)
         .where(*conditions)
@@ -316,37 +327,76 @@ def _merge_personalized_checkin_answers(provided: dict, answers: dict) -> None:
 
 async def _generate_profile_and_documents(service_case_id: int) -> None:
     async with SessionLocal() as session:
-        existing = await session.scalar(
-            select(UserProfile.id)
-            .where(UserProfile.service_case_id == service_case_id)
-            .limit(1)
-        )
-        if existing:
-            return
-        service_case = await session.scalar(
-            select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
-        )
+        service_case = await get_active_service_case(session, service_case_id)
         if not service_case:
             return
         try:
-            await generate_profile(session, service_case)
-            await generate_documents(session, service_case, auto_send=get_settings().auto_send_documents)
+            await generate_profile_and_documents(session, service_case, auto_send=get_settings().auto_send_documents)
         except Exception as exc:
             logger.exception("Failed to generate profile and documents for service_case_id=%s", service_case_id)
             await session.rollback()
-            failed_case = await session.scalar(
-                select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
-            )
+            failed_case = await get_active_service_case(session, service_case_id)
             if failed_case:
                 _append_generation_error_note(failed_case, exc)
                 await session.commit()
 
 
+async def _send_intake_submit_reply(service_case_id: int) -> None:
+    async with SessionLocal() as session:
+        service_case = await get_active_service_case(session, service_case_id)
+        if not service_case:
+            return
+        schedule = await get_checkin_questionnaire_schedule(session)
+        reply = schedule.get("intake_submit_reply")
+        if not isinstance(reply, dict) or reply.get("enabled", True) is False:
+            return
+        user = await session.get(User, service_case.user_id) if service_case.user_id else None
+        content = _format_template(
+            str(reply.get("message") or ""),
+            {
+                "user_name": user.name if user else "",
+                "case_no": service_case.case_no,
+                "group_id": service_case.group_id,
+            },
+        ).strip()
+        if not content:
+            return
+        result = await send_channel_text(service_case.group_id, content)
+        session.add(
+            Message(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                wecom_message_id=result.message_id,
+                direction=MessageDirection.OUTBOUND,
+                sender_type=MessageSenderType.BOT,
+                message_type="markdown",
+                content=content,
+                purpose=MessagePurpose.CHAT,
+                status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
+                error=result.error,
+            )
+        )
+        await session.commit()
+
+
 def _append_generation_error_note(service_case: ServiceCase, exc: Exception) -> None:
     timestamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
-    message = f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
+    settings = get_settings()
+    service_case.status = ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
+    message = (
+        f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
+        f"（AI_MAX_TOKENS={settings.ai_max_tokens}）"
+    )
     existing = service_case.notes or ""
     service_case.notes = (f"{existing}\n{message}" if existing else message)[-2000:]
+
+
+def _format_template(template: str, context: dict[str, object]) -> str:
+    class _SafeDict(dict[str, object]):
+        def __missing__(self, key: str) -> str:
+            return "{" + key + "}"
+
+    return template.format_map(_SafeDict(context))
 
 
 async def _sync_user_from_answers(

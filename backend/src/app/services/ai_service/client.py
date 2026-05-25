@@ -8,6 +8,7 @@ from typing import Any
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 from app.core.config import Settings, get_settings
+from app.services.ai_service.json_utils import parse_json_object
 
 
 class AIService:
@@ -26,6 +27,12 @@ class AIService:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
+        finish = response.choices[0].finish_reason if response.choices else None
+        if finish == "length":
+            raise RuntimeError(
+                f"AI output truncated at max_tokens={self.settings.ai_max_tokens}。"
+                "请增大 AI_MAX_TOKENS 后重试。"
+            )
         content = response.choices[0].message.content if response.choices else ""
         return (content or "").strip()
 
@@ -56,36 +63,6 @@ class AIService:
         if last_error:
             raise last_error
         raise RuntimeError("AI completion failed")
-
-    async def generate_profile(self, answers: dict[str, Any]) -> tuple[dict[str, Any], str]:
-        text = await self.generate_text(
-            system_prompt=(
-                "你是燃AI内部运营助手。基于问卷生成用户画像，并量身制定为期28天的每日固定打卡任务（共5项，这是必填项目，重点追踪用户的个案卡点、习惯纠正与身体指标）。\n"
-                "输出 JSON，字段必须包含:\n"
-                "- summary (字符串): 用户健康情况总体概述。\n"
-                "- state (字符串): 状态评估。\n"
-                "- main_problem (字符串): 核心主要问题。\n"
-                "- day28_goal (字符串): 28天减重与健康目标。\n"
-                "- risks (字符串): 潜在风险评估。\n"
-                "- notes (字符串): 给班主任的运营备注。\n"
-                "- personalized_checkin_fields (数组): 包含5个专门针对该用户的每日固定打卡任务。每个打卡任务是一个字典，包含以下字段:\n"
-                "  - id (字符串): 使用固定的键名，分别为: 'personalized_weight'、'personalized_water'、'personalized_sleep'、'personalized_diet'、'personalized_exercise'。\n"
-                "  - key (字符串): 与 id 相同。\n"
-                "  - type (字符串): 'SIMPLE' (文本输入框，用于体重等) 或 'RADIO' (单选是/否)。\n"
-                "  - title (字符串): 针对该用户的个性化提问文案。定制规则如下：\n"
-                "    - 'personalized_weight': 固定为 '今日晨起体重（kg）'，type 固定为 'SIMPLE'。\n"
-                "    - 'personalized_water': 根据用户体重计算推荐饮水量（体重kg × 35ml，向上取整到0.5L），例如体重60kg推荐2.0L，体重80kg推荐3.0L。写成 '今日饮水是否达到 X 升？'，type 为 'RADIO'。\n"
-                "    - 'personalized_sleep': 根据用户作息习惯定制目标，例如用户经常熬夜到1点则写 '昨晚是否在 23:30 前入睡？'，type 为 'RADIO'。\n"
-                "    - 'personalized_diet': 根据用户具体饮食问题定制目标，例如用户晚餐常吃主食则写 '今日晚餐主食是否控制在1拳以内？'，type 为 'RADIO'。\n"
-                "    - 'personalized_exercise': 根据用户运动基础定制目标，例如久坐用户写 '今日是否完成7000步或饭后散步15分钟？'，type 为 'RADIO'。\n"
-                "  - label (字符串): 与 title 相同。\n"
-                "  - required (布尔值): 必须为 true。\n"
-                "  - options (数组): 如果 type 是 'RADIO'，则必须为 ['是', '否']；如果 type 是 'SIMPLE'，则为空数组 []。"
-            ),
-            user_prompt=f"问卷答案：\n{json.dumps(answers, ensure_ascii=False, indent=2)}",
-        )
-        parsed = _parse_json_object(text)
-        return parsed, str(parsed.get("summary") or text[:1000])
 
     async def extract_intervention_insight(
         self,
@@ -156,48 +133,9 @@ class AIService:
                 f"上下文：\n<context>\n{_prompt_data(json.dumps(context or {}, ensure_ascii=False, indent=2))}\n</context>"
             ),
         )
-        return _parse_json_object(text)
-
-    async def generate_document(
-        self,
-        *,
-        document_type: str,
-        title: str,
-        answers: dict[str, Any],
-        profile: dict[str, Any] | None,
-    ) -> str:
-        return await self.generate_text(
-            system_prompt=(
-                "你是燃AI交付文件撰写助手。只输出 Markdown 正文。"
-                "内容要面向内部审核，不做医疗诊断或治疗承诺。"
-            ),
-            user_prompt=(
-                f"请生成交付文件：{title}\n"
-                f"document_type={document_type}\n\n"
-                f"用户画像：\n{json.dumps(profile or {}, ensure_ascii=False, indent=2)}\n\n"
-                f"问卷答案：\n{json.dumps(answers, ensure_ascii=False, indent=2)}"
-            ),
-        )
+        return parse_json_object(text)
 
     async def close(self) -> None:
         await self._client.close()
-
-
-def _parse_json_object(text: str) -> dict[str, Any]:
-    try:
-        value = json.loads(text)
-        return value if isinstance(value, dict) else {"summary": text, "raw": value}
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                value = json.loads(text[start : end + 1])
-                return value if isinstance(value, dict) else {"summary": text, "raw": value}
-            except json.JSONDecodeError:
-                pass
-    return {"summary": text, "raw_text": text}
-
-
 def _prompt_data(value: object) -> str:
     return escape(str(value or ""), quote=False)

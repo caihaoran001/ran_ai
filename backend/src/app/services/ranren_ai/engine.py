@@ -27,6 +27,7 @@ from app.services.content_policy import get_ai_reply_delivery_mode
 from app.services.intervention_service import analyze_intervention, merge_case_insight
 from app.services.knowledge_index import retrieve_indexed_knowledge, retrieve_case_context_db
 from app.services.knowledge_base import _query_terms, retrieve_knowledge
+from app.services.service_case_queries import select_active_service_cases
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +203,7 @@ class RanrenAIEngine:
     ) -> None:
         async with SessionLocal() as session:
             if service_case_id:
-                stmt = select(ServiceCase).where(ServiceCase.id == service_case_id).options(selectinload(ServiceCase.user))
+                stmt = select_active_service_cases(ServiceCase.id == service_case_id).options(selectinload(ServiceCase.user))
                 service_case = await session.scalar(stmt)
             else:
                 service_case = None
@@ -335,11 +336,7 @@ class RanrenAIEngine:
 
     async def _latest_active_case(self, session, group_id: str) -> ServiceCase | None:
         return await session.scalar(
-            select(ServiceCase)
-            .where(
-                ServiceCase.group_id == group_id,
-                ServiceCase.deleted_at.is_(None),
-            )
+            select_active_service_cases(ServiceCase.group_id == group_id)
             .order_by(ServiceCase.created_at.desc())
             .limit(1)
         )

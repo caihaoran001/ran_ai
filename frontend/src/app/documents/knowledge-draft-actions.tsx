@@ -6,9 +6,24 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { API_BASE, KnowledgeEvolutionSetting, KnowledgeFAQ } from "@/lib/api";
+import {
+  Tag,
+  BookOpen,
+  Sparkles,
+  Database,
+  RefreshCw,
+  Edit2,
+  Check,
+  X,
+  Compass,
+  SlidersHorizontal,
+  ChevronRight,
+  Settings2
+} from "lucide-react";
 
 export function KnowledgeDraftActions({
   draftId,
+  draftType = "qa",
   initialTitle,
   initialQuestion,
   initialAnswer,
@@ -16,6 +31,7 @@ export function KnowledgeDraftActions({
   initialTags,
 }: {
   draftId: number;
+  draftType?: string;
   initialTitle: string;
   initialQuestion: string;
   initialAnswer: string;
@@ -29,6 +45,7 @@ export function KnowledgeDraftActions({
   const [category, setCategory] = useState(initialCategory || "");
   const [tags, setTags] = useState((initialTags || []).join("、"));
   const [busy, setBusy] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
   async function save() {
     await fetch(`${API_BASE}/knowledge-drafts/${draftId}`, {
@@ -63,39 +80,214 @@ export function KnowledgeDraftActions({
     router.refresh();
   }
 
+  if (!isEditing) {
+    return (
+      <div className="space-y-4 pt-2">
+        {/* Title */}
+        <div className="flex items-start gap-2 pt-1">
+          <BookOpen className="h-4 w-4 mt-0.5 text-zinc-400 shrink-0" />
+          <div className="text-sm font-bold text-zinc-800 leading-snug">
+            {title || <span className="italic text-zinc-400 font-normal">（暂无设定标题）</span>}
+          </div>
+        </div>
+        
+        {/* Question block */}
+        <div className="group rounded-xl bg-zinc-50 border border-zinc-200/60 p-3.5 shadow-3xs hover:bg-zinc-50/80 hover:border-zinc-300 transition-all duration-200">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">
+            <Compass className="h-3.5 w-3.5 text-blue-500" />
+            <span>{draftType === "case" ? "💬 案例背景与适用场景：" : "💬 用户常见提问方式 (标准问法)："}</span>
+          </div>
+          <p className="text-sm text-zinc-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-zinc-200">
+            {question}
+          </p>
+        </div>
+
+        {/* Answer block */}
+        <div className="group rounded-xl bg-blue-50/10 border border-blue-100/60 p-3.5 shadow-3xs hover:bg-blue-50/20 hover:border-blue-200 transition-all duration-200">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold text-blue-700/60 uppercase tracking-wider mb-2">
+            <Sparkles className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
+            <span>{draftType === "case" ? "🌟 金牌服务过程与改善结果：" : "💡 推荐业务标准回复："}</span>
+          </div>
+          <p className="text-sm text-zinc-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-blue-200">
+            {answer}
+          </p>
+        </div>
+
+        {/* Tags preview */}
+        {tags.trim() && (
+          <div className="flex flex-wrap gap-2 items-center pt-1.5 border-t border-zinc-100/60">
+            <div className="flex items-center gap-1 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+              <Tag className="h-3 w-3 text-zinc-400" />
+              <span>关联标签:</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {tags.split(/[、,，]/).map((item) => item.trim()).filter(Boolean).map((tag, idx) => (
+                <span 
+                  key={idx} 
+                  className="rounded-full bg-zinc-100 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-150 px-2.5 py-0.5 text-2xs font-semibold text-zinc-600 border border-zinc-200/60 transition-all duration-150 cursor-default"
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-4 mt-3">
+          <Button
+            type="button"
+            className="text-xs border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 hover:text-zinc-800 transition-all duration-205 active:scale-[0.97] font-semibold flex items-center gap-1.5 px-3 py-1.5 h-8.5"
+            onClick={() => setIsEditing(true)}
+          >
+            <Edit2 className="h-3.5 w-3.5 text-zinc-500" />
+            <span>编辑草稿内容</span>
+          </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-2xs transition-all duration-205 active:scale-[0.97] px-4 h-8.5 flex items-center gap-1.5"
+              onClick={approve}
+              disabled={busy}
+            >
+              {busy ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  <span>处理中...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="h-3.5 w-3.5" />
+                  <span>批准入库</span>
+                </>
+              )}
+            </Button>
+            <Button
+              type="button"
+              className="text-xs border border-zinc-200 bg-white text-zinc-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 transition-all duration-205 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
+              onClick={reject}
+              disabled={busy}
+            >
+              <X className="h-3.5 w-3.5" />
+              <span>驳回</span>
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-3">
-      <input
-        className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium"
-        value={title}
-        onChange={(event) => setTitle(event.target.value)}
-      />
-      <input
-        className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-        placeholder="分类"
-        value={category}
-        onChange={(event) => setCategory(event.target.value)}
-      />
-      <input
-        className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-        placeholder="标签，用顿号分隔"
-        value={tags}
-        onChange={(event) => setTags(event.target.value)}
-      />
-      <Textarea className="min-h-20 text-sm" value={question} onChange={(event) => setQuestion(event.target.value)} />
-      <Textarea className="min-h-32 text-sm" value={answer} onChange={(event) => setAnswer(event.target.value)} />
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" className="bg-emerald-700 hover:bg-emerald-600" onClick={approve} disabled={busy}>
-          {busy ? "处理中..." : "批准入库"}
-        </Button>
+    <div className="space-y-4 pt-4 border-t border-zinc-100 mt-3 animate-fadeIn">
+      {/* Title form group */}
+      <div className="space-y-1.5">
+        <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1.5">
+          <BookOpen className="h-3.5 w-3.5 text-zinc-400" />
+          <span>{draftType === "case" ? "优秀案例标题" : "知识草稿标题"}</span>
+        </label>
+        <input
+          className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-semibold text-zinc-800 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs"
+          placeholder={draftType === "case" ? "给此案例起一个清晰的标题描述..." : "给这条知识起一个清晰的主题名称..."}
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+        />
+      </div>
+
+      {/* Category and Tags inline grid */}
+      <div className="grid gap-4 grid-cols-2">
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1.5">
+            <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-400" />
+            <span>{draftType === "case" ? "案例所属分类" : "所属分类"}</span>
+          </label>
+          <input
+            className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs"
+            placeholder={draftType === "case" ? "例如：情绪转正、坚持执行" : "例如：营养干预、标准解答"}
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1.5">
+            <Tag className="h-3.5 w-3.5 text-zinc-400" />
+            <span>{draftType === "case" ? "案例标签 (用顿号“、”分隔)" : "标签 (用顿号“、”分隔)"}</span>
+          </label>
+          <input
+            className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs"
+            placeholder={draftType === "case" ? "例如：平台期、突破、减脂" : "例如：低血糖、孕妇"}
+            value={tags}
+            onChange={(event) => setTags(event.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Question textarea */}
+      <div className="space-y-1.5">
+        <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1.5">
+          <Compass className="h-3.5 w-3.5 text-zinc-400" />
+          <span>{draftType === "case" ? "案例背景 / 适用场景描述" : "标准提问方式 (常见问法)"}</span>
+        </label>
+        <Textarea
+          className="min-h-20 text-sm leading-relaxed text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs rounded-lg px-3.5 py-2 border-zinc-200"
+          placeholder={draftType === "case" ? "描述案例的背景适用场景和遇到的平台期问题..." : "输入标准问题或用户常见提问的模板..."}
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+        />
+      </div>
+
+      {/* Answer textarea */}
+      <div className="space-y-1.5">
+        <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5 text-zinc-400" />
+          <span>{draftType === "case" ? "案例金牌服务过程与改善结果" : "推荐标准回复内容"}</span>
+        </label>
+        <Textarea
+          className="min-h-32 text-sm leading-relaxed text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs rounded-lg px-3.5 py-2 border-zinc-200"
+          placeholder={draftType === "case" ? "编写详细的辅导细节、心理鼓励步骤和最后的体重改善结果..." : "编写最规范、科学且具有指导意义的标准回复..."}
+          value={answer}
+          onChange={(event) => setAnswer(event.target.value)}
+        />
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-4 mt-3">
         <Button
           type="button"
-          className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
-          onClick={reject}
-          disabled={busy}
+          className="text-xs border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-all duration-200 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
+          onClick={() => setIsEditing(false)}
         >
-          驳回
+          <X className="h-3.5 w-3.5 text-zinc-400" />
+          <span>返回预览</span>
         </Button>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-2xs transition-all duration-200 active:scale-[0.97] px-4 h-8.5 flex items-center gap-1.5"
+            onClick={approve}
+            disabled={busy}
+          >
+            {busy ? (
+              <>
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                <span>处理中...</span>
+              </>
+            ) : (
+              <>
+                <Check className="h-3.5 w-3.5" />
+                <span>保存并批准入库</span>
+              </>
+            )}
+          </Button>
+          <Button
+            type="button"
+            className="text-xs border border-zinc-200 bg-white text-zinc-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 transition-all duration-200 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
+            onClick={reject}
+            disabled={busy}
+          >
+            <X className="h-3.5 w-3.5" />
+            <span>驳回</span>
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -124,21 +316,23 @@ export function KnowledgeDraftScanButton() {
     <div className="flex flex-wrap items-center gap-2">
       <Button
         type="button"
-        className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+        className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 font-semibold text-xs transition-all active:scale-[0.98] h-8.5 flex items-center gap-1.5"
         onClick={() => scan("recent_qa")}
         disabled={busy}
       >
-        {busy ? "扫描中..." : "提取近3天FAQ"}
+        <Compass className={`h-3.5 w-3.5 text-blue-500 ${busy ? "animate-spin" : ""}`} />
+        <span>{busy ? "扫描中..." : "提取近3天FAQ"}</span>
       </Button>
       <Button
         type="button"
-        className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+        className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 font-semibold text-xs transition-all active:scale-[0.98] h-8.5 flex items-center gap-1.5"
         onClick={() => scan("stage_cases")}
         disabled={busy}
       >
-        {busy ? "扫描中..." : "检查阶段案例"}
+        <Sparkles className={`h-3.5 w-3.5 text-purple-500 ${busy ? "animate-pulse" : ""}`} />
+        <span>{busy ? "扫描中..." : "检查阶段案例"}</span>
       </Button>
-      {message && <span className="text-sm text-zinc-500">{message}</span>}
+      {message && <span className="text-xs font-semibold text-blue-650 bg-blue-50 border border-blue-100 px-2 py-1 rounded-md animate-fadeIn">{message}</span>}
     </div>
   );
 }
@@ -163,85 +357,83 @@ export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig
   }
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold text-zinc-900">知识自我进化配置</h3>
-          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-            控制每日 FAQ 草稿、阶段优秀案例草稿的后台定时扫描。未审核内容不会自动上线。
-          </p>
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50/20 p-5 shadow-3xs">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-150 pb-4 mb-4">
+        <div className="flex items-start gap-2.5">
+          <Settings2 className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-bold text-zinc-800 flex items-center gap-1.5">知识自我进化配置</h3>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+              控制每日 FAQ 草稿、阶段优秀案例草稿的后台定时扫描任务。未通过人工审核的内容不会自动上线到知识库中。
+            </p>
+          </div>
         </div>
-        <label className="flex items-center gap-2 text-sm text-zinc-700">
-          <input
-            type="checkbox"
-            checked={config.enabled}
-            onChange={(event) => setConfig({ ...config, enabled: event.target.checked })}
-          />
-          启用定时扫描
-        </label>
+        <div className="flex items-center gap-3 bg-white py-1.5 px-3.5 rounded-lg border border-zinc-200 shadow-3xs">
+          <span className="text-xs font-bold text-zinc-700">启用定时自动进化</span>
+          <button
+            type="button"
+            onClick={() => setConfig({ ...config, enabled: !config.enabled })}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+              config.enabled ? "bg-blue-600" : "bg-zinc-200"
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                config.enabled ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <Field label="扫描间隔（秒）">
-          <input
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-            type="number"
-            min={60}
-            max={86400}
-            value={config.interval_seconds}
-            onChange={(event) => setConfig({ ...config, interval_seconds: Number(event.target.value) })}
-          />
-        </Field>
+      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
         <Field label="每日 FAQ 扫描时间">
           <input
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
             type="time"
             value={config.qa_at}
             onChange={(event) => setConfig({ ...config, qa_at: event.target.value })}
           />
         </Field>
-        <Field label="时区">
-          <input
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+        <Field label="系统时区">
+          <select
+            className="w-full rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all font-medium cursor-pointer"
             value={config.timezone}
             onChange={(event) => setConfig({ ...config, timezone: event.target.value })}
-          />
-        </Field>
-        <Field label="每日聊天读取上限">
-          <input
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-            type="number"
-            min={20}
-            max={2000}
-            value={config.daily_qa_limit}
-            onChange={(event) => setConfig({ ...config, daily_qa_limit: Number(event.target.value) })}
-          />
+          >
+            <option value="Asia/Shanghai">亚洲/上海 (Asia/Shanghai)</option>
+          </select>
         </Field>
         <Field label="阶段案例天数">
           <input
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
             value={config.case_days}
             placeholder="3,7,14,21,28"
             onChange={(event) => setConfig({ ...config, case_days: event.target.value })}
           />
         </Field>
-        <Field label="每个服务单读取上限">
-          <input
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-            type="number"
-            min={20}
-            max={1000}
-            value={config.case_limit_per_case}
-            onChange={(event) => setConfig({ ...config, case_limit_per_case: Number(event.target.value) })}
-          />
-        </Field>
       </div>
 
-      <div className="mt-4 flex items-center gap-2">
-        <Button type="button" onClick={save} disabled={busy}>
-          {busy ? "保存中..." : "保存配置"}
+      <div className="mt-5 flex items-center gap-3 border-t border-zinc-150 pt-4">
+        <Button 
+          type="button" 
+          onClick={save} 
+          disabled={busy}
+          className="bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-all duration-200 active:scale-[0.97] px-4 shadow-2xs h-8.5 flex items-center gap-1.5"
+        >
+          {busy ? (
+            <>
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              <span>保存中...</span>
+            </>
+          ) : (
+            <>
+              <Check className="h-3.5 w-3.5" />
+              <span>保存配置</span>
+            </>
+          )}
         </Button>
-        {message && <span className="text-sm text-zinc-500">{message}</span>}
+        {message && <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md animate-fadeIn">{message}</span>}
       </div>
     </div>
   );
@@ -249,10 +441,10 @@ export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-medium text-zinc-500">{label}</span>
+    <div className="block space-y-1">
+      <span className="block text-xs font-bold text-zinc-450 uppercase tracking-wider">{label}</span>
       {children}
-    </label>
+    </div>
   );
 }
 
@@ -285,21 +477,14 @@ export function KnowledgeIndexSyncButton() {
     <div className="flex flex-wrap items-center gap-2">
       <Button
         type="button"
-        className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
-        onClick={() => sync(false)}
-        disabled={busy}
-      >
-        {busy ? "同步中..." : "同步知识块"}
-      </Button>
-      <Button
-        type="button"
-        className="bg-zinc-900 text-white hover:bg-zinc-700"
+        className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold shadow-xs transition-all active:scale-[0.98] h-8.5 flex items-center gap-1.5 px-4 border border-transparent"
         onClick={() => sync(true)}
         disabled={busy}
       >
-        {busy ? "向量化中..." : "同步并向量化"}
+        <RefreshCw className={`h-3.5 w-3.5 text-white/90 ${busy ? "animate-spin" : ""}`} />
+        <span>{busy ? "向量化中..." : "同步并向量化"}</span>
       </Button>
-      {message && <span className="text-sm text-zinc-500">{message}</span>}
+      {message && <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md animate-fadeIn">{message}</span>}
     </div>
   );
 }
@@ -336,66 +521,125 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 pb-3">
         <div>
-          <h3 className="text-sm font-semibold text-zinc-700">结构化 FAQ</h3>
-          <p className="mt-1 text-xs text-zinc-500">支持新增、编辑、禁用和版本递增；启用状态会同步到知识索引。</p>
+          <h3 className="text-sm font-bold text-zinc-800">结构化 FAQ 管理</h3>
+          <p className="mt-1 text-xs text-zinc-500 leading-relaxed">
+            支持标准 FAQ 的发布、编辑修改、禁用状态控制与版本库自动升级；激活的 FAQ 将被同步到向量检索块中。
+          </p>
         </div>
         <Button
           type="button"
-          className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+          className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 font-semibold text-xs px-3 h-8 flex items-center gap-1 active:scale-[0.98] transition-all"
           onClick={() => setCreating((value) => !value)}
         >
-          {creating ? "收起" : "新增 FAQ"}
+          <span>{creating ? "收起面板" : "新增 FAQ"}</span>
         </Button>
       </div>
 
       {creating && (
-        <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-3">
-          <input
-            className="mb-2 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium"
-            placeholder="标题"
-            value={draft.title}
-            onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-          />
-          <input
-            className="mb-2 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-            placeholder="分类"
-            value={draft.category}
-            onChange={(event) => setDraft({ ...draft, category: event.target.value })}
-          />
-          <input
-            className="mb-2 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-            placeholder="标签，用顿号分隔"
-            value={draft.tags}
-            onChange={(event) => setDraft({ ...draft, tags: event.target.value })}
-          />
-          <Textarea
-            className="mb-2 min-h-16 text-sm"
-            placeholder="用户常见问法"
-            value={draft.question}
-            onChange={(event) => setDraft({ ...draft, question: event.target.value })}
-          />
-          <Textarea
-            className="mb-2 min-h-24 text-sm"
-            placeholder="参考回复"
-            value={draft.answer}
-            onChange={(event) => setDraft({ ...draft, answer: event.target.value })}
-          />
-          <Button type="button" onClick={createFaq} disabled={busyId === "new" || !draft.title || !draft.question || !draft.answer}>
-            {busyId === "new" ? "保存中..." : "保存 FAQ"}
-          </Button>
+        <div className="rounded-xl border border-blue-150 bg-blue-50/5 p-4.5 space-y-4 shadow-xs animate-fadeIn">
+          <div className="flex items-center gap-2 border-b border-blue-100/50 pb-2">
+            <Sparkles className="h-4 w-4 text-blue-600 shrink-0" />
+            <h4 className="text-xs font-bold text-blue-900 uppercase tracking-wider">🌟 新增结构化 FAQ</h4>
+          </div>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
+                <BookOpen className="h-3.5 w-3.5 text-zinc-400" />
+                <span>问答主题 / 标题</span>
+              </label>
+              <input
+                className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-semibold text-zinc-800 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white"
+                placeholder="请输入明确的标题主题，例如：孕妇空腹低血糖应对"
+                value={draft.title}
+                onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+              />
+            </div>
+            
+            <div className="grid gap-3 grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-400" />
+                  <span>分类</span>
+                </label>
+                <input
+                  className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white"
+                  placeholder="例如：健康FAQ"
+                  value={draft.category}
+                  onChange={(event) => setDraft({ ...draft, category: event.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
+                  <Tag className="h-3.5 w-3.5 text-zinc-400" />
+                  <span>标签 (用顿号“、”分隔)</span>
+                </label>
+                <input
+                  className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white"
+                  placeholder="例如：孕期、低血糖"
+                  value={draft.tags}
+                  onChange={(event) => setDraft({ ...draft, tags: event.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
+                <Compass className="h-3.5 w-3.5 text-zinc-400" />
+                <span>用户常见提问方式</span>
+              </label>
+              <Textarea
+                className="min-h-16 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white rounded-lg border-zinc-200 px-3.5 py-2"
+                placeholder="例如：孕妇早上起来经常低血糖怎么办？有什么快速恢复的办法吗？"
+                value={draft.question}
+                onChange={(event) => setDraft({ ...draft, question: event.target.value })}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
+                <Sparkles className="h-3.5 w-3.5 text-zinc-400" />
+                <span>参考标准回复内容</span>
+              </label>
+              <Textarea
+                className="min-h-24 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white rounded-lg border-zinc-200 px-3.5 py-2"
+                placeholder="请输入最标准的专业指导回复文本，将做为机器人回复模板依据..."
+                value={draft.answer}
+                onChange={(event) => setDraft({ ...draft, answer: event.target.value })}
+              />
+            </div>
+
+            <Button 
+              type="button" 
+              className="bg-blue-600 hover:bg-blue-500 text-white shadow-2xs font-semibold transition-all active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none mt-1 h-9 flex items-center gap-1.5 px-4"
+              onClick={createFaq} 
+              disabled={busyId === "new" || !draft.title || !draft.question || !draft.answer}
+            >
+              {busyId === "new" ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  <span>发布中...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="h-4 w-4" />
+                  <span>保存并发布 FAQ</span>
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       )}
 
-      <div className="max-h-[520px] space-y-3 overflow-y-auto pr-1">
+      <div className="max-h-[520px] space-y-3.5 overflow-y-auto pr-1">
         {faqs.map((faq) => (
           <KnowledgeFAQRow key={faq.id} faq={faq} busy={busyId === faq.id} setBusy={setBusyId} />
         ))}
         {faqs.length === 0 && (
-          <div className="rounded-lg border border-dashed border-zinc-200 py-10 text-center text-sm text-zinc-400">
-            暂无结构化 FAQ
+          <div className="rounded-xl border border-dashed border-zinc-200 py-12 text-center text-sm text-zinc-400 bg-zinc-50/20">
+            暂无任何结构化 FAQ，点击右上角 “新增 FAQ” 进行创建。
           </div>
         )}
       </div>
@@ -447,44 +691,195 @@ function KnowledgeFAQRow({
   }
 
   return (
-    <div className="rounded-lg border border-zinc-200 p-3">
-      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-        <span className={faq.status === "active" ? "text-emerald-700" : "text-zinc-500"}>
-          {faq.status === "active" ? "启用" : faq.status === "disabled" ? "已禁用" : faq.status}
-        </span>
-        <span>v{faq.version}</span>
-        {faq.category && <span>{faq.category}</span>}
+    <div className={`rounded-xl border p-4 shadow-3xs transition-all duration-200 ${
+      faq.status === "active" 
+        ? "border-l-4 border-l-emerald-500 border-zinc-200 bg-white hover:border-zinc-300" 
+        : "border-l-4 border-l-zinc-300 border-zinc-200 bg-zinc-50/40 opacity-80 hover:opacity-100 hover:border-zinc-300"
+    }`}>
+      {/* Row Header Info */}
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`rounded-full px-2 py-0.5 text-2xs font-bold tracking-wide ${
+            faq.status === "active" 
+              ? "bg-emerald-50 text-emerald-700 border border-emerald-250/20" 
+              : "bg-zinc-150 text-zinc-500 border border-zinc-200/50"
+          }`}>
+            {faq.status === "active" ? "● 启用中" : "○ 已禁用"}
+          </span>
+          <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-2xs font-semibold text-zinc-500 border border-zinc-200/40">
+            v{faq.version}
+          </span>
+          {faq.category && (
+            <span className="rounded-md bg-blue-50/60 text-blue-700 border border-blue-100/50 px-1.5 py-0.5 text-2xs font-semibold">
+              {faq.category}
+            </span>
+          )}
+        </div>
+        <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">FAQ #{faq.id}</span>
       </div>
+
       {editing ? (
-        <div className="space-y-2">
-          <input className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium" value={title} onChange={(event) => setTitle(event.target.value)} />
-          <input className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={category} onChange={(event) => setCategory(event.target.value)} />
-          <input className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={tags} onChange={(event) => setTags(event.target.value)} />
-          <Textarea className="min-h-16 text-sm" value={question} onChange={(event) => setQuestion(event.target.value)} />
-          <Textarea className="min-h-24 text-sm" value={answer} onChange={(event) => setAnswer(event.target.value)} />
-          <div className="flex gap-2">
-            <Button type="button" onClick={save} disabled={busy}>{busy ? "保存中..." : "保存新版本"}</Button>
-            <Button type="button" className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50" onClick={() => setEditing(false)}>
-              取消
+        <div className="space-y-4 pt-3.5 border-t border-zinc-100 mt-3 animate-fadeIn">
+          {/* FAQ Title input */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
+              <BookOpen className="h-3.5 w-3.5 text-zinc-450" />
+              <span>FAQ 主题标题</span>
+            </label>
+            <input 
+              className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-semibold text-zinc-800 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white" 
+              value={title} 
+              onChange={(event) => setTitle(event.target.value)} 
+            />
+          </div>
+
+          {/* FAQ Category & Tags grid */}
+          <div className="grid gap-3 grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
+                <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-450" />
+                <span>FAQ 类别</span>
+              </label>
+              <input 
+                className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white" 
+                value={category} 
+                onChange={(event) => setCategory(event.target.value)} 
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
+                <Tag className="h-3.5 w-3.5 text-zinc-450" />
+                <span>FAQ 标签 (顿号分隔)</span>
+              </label>
+              <input 
+                className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white" 
+                value={tags} 
+                onChange={(event) => setTags(event.target.value)} 
+              />
+            </div>
+          </div>
+
+          {/* FAQ Question textarea */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
+              <Compass className="h-3.5 w-3.5 text-zinc-450" />
+              <span>标准提问方式</span>
+            </label>
+            <Textarea 
+              className="min-h-16 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all rounded-lg border-zinc-200 px-3.5 py-2 bg-white" 
+              value={question} 
+              onChange={(event) => setQuestion(event.target.value)} 
+            />
+          </div>
+
+          {/* FAQ Answer textarea */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
+              <Sparkles className="h-3.5 w-3.5 text-zinc-450" />
+              <span>标准回复内容</span>
+            </label>
+            <Textarea 
+              className="min-h-24 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all rounded-lg border-zinc-200 px-3.5 py-2 bg-white" 
+              value={answer} 
+              onChange={(event) => setAnswer(event.target.value)} 
+            />
+          </div>
+
+          {/* Action buttons during edit */}
+          <div className="flex gap-2 pt-2 border-t border-zinc-150 mt-2">
+            <Button 
+              type="button" 
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-all duration-200 active:scale-[0.97] shadow-2xs px-3.5 text-xs h-8.5 flex items-center gap-1.5" 
+              onClick={save} 
+              disabled={busy}
+            >
+              {busy ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  <span>保存中...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="h-3.5 w-3.5" />
+                  <span>保存新版本</span>
+                </>
+              )}
+            </Button>
+            <Button 
+              type="button" 
+              className="border border-zinc-250 bg-white text-zinc-700 hover:bg-zinc-50 font-semibold transition-all duration-200 active:scale-[0.97] text-xs h-8.5 px-3 flex items-center gap-1" 
+              onClick={() => setEditing(false)}
+            >
+              <X className="h-3.5 w-3.5 text-zinc-400" />
+              <span>取消</span>
             </Button>
           </div>
         </div>
       ) : (
-        <div>
-          <div className="font-medium text-zinc-900">{faq.title}</div>
-          <p className="mt-2 line-clamp-2 text-sm text-zinc-600">{faq.question}</p>
-          <p className="mt-1 line-clamp-2 text-sm text-zinc-500">{faq.answer}</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button type="button" className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50" onClick={() => setEditing(true)}>
-              编辑
+        <div className="space-y-3.5">
+          {/* FAQ Title */}
+          <div className="font-bold text-zinc-800 leading-snug text-sm">{faq.title}</div>
+          
+          {/* Collapsible Q&A blocks */}
+          <div className="text-xs text-zinc-650 leading-relaxed bg-zinc-50 p-2.5 rounded-lg border border-zinc-150">
+            <div className="font-bold text-zinc-400 mb-1 flex items-center gap-1 text-[10px]">
+              <Compass className="h-3 w-3 text-blue-500" />
+              <span>标准常见问法：</span>
+            </div>
+            <div className="pl-4 border-l border-zinc-200/80 font-normal whitespace-pre-wrap">{faq.question}</div>
+          </div>
+          
+          <div className="text-xs text-zinc-750 leading-relaxed bg-zinc-50 p-2.5 rounded-lg border border-zinc-150">
+            <div className="font-bold text-zinc-400 mb-1 flex items-center gap-1 text-[10px]">
+              <Sparkles className="h-3 w-3 text-amber-500 animate-pulse" />
+              <span>标准回复口径：</span>
+            </div>
+            <div className="pl-4 border-l border-zinc-200/80 font-normal whitespace-pre-wrap">{faq.answer}</div>
+          </div>
+          
+          {/* FAQ Tags */}
+          {faq.tags && faq.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 pt-1.5 border-t border-zinc-100/50">
+              {faq.tags.map((tag, idx) => (
+                <span 
+                  key={idx} 
+                  className="rounded bg-zinc-100 hover:bg-blue-50/50 px-2 py-0.5 text-2xs font-semibold text-zinc-500 border border-zinc-200/40 transition-all duration-150 cursor-default"
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Action buttons in preview */}
+          <div className="mt-3.5 flex flex-wrap gap-2 pt-2.5 border-t border-zinc-100/60">
+            <Button 
+              type="button" 
+              className="border border-zinc-250 bg-white text-zinc-600 hover:bg-zinc-50 hover:text-zinc-800 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1" 
+              onClick={() => setEditing(true)}
+            >
+              <Edit2 className="h-3.5 w-3.5 text-zinc-500" />
+              <span>编辑 FAQ</span>
             </Button>
             {faq.status === "active" ? (
-              <Button type="button" className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50" onClick={() => setStatus("disable")} disabled={busy}>
-                禁用
+              <Button 
+                type="button" 
+                className="border border-zinc-250 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-100 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1" 
+                onClick={() => setStatus("disable")} 
+                disabled={busy}
+              >
+                <X className="h-3.5 w-3.5 text-rose-500" />
+                <span>禁用</span>
               </Button>
             ) : (
-              <Button type="button" className="bg-emerald-700 hover:bg-emerald-600" onClick={() => setStatus("enable")} disabled={busy}>
-                启用
+              <Button 
+                type="button" 
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1 shadow-3xs" 
+                onClick={() => setStatus("enable")} 
+                disabled={busy}
+              >
+                <Check className="h-3.5 w-3.5 text-white" />
+                <span>启用</span>
               </Button>
             )}
           </div>

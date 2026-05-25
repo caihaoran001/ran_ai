@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 class ServiceCaseStatus(str, enum.Enum):
     CREATED = "created"
     QUESTIONNAIRE_SUBMITTED = "questionnaire_submitted"
+    GENERATING = "generating"
     DOCUMENTS_GENERATED = "documents_generated"
     REVIEWING = "reviewing"
     APPROVED = "approved"
@@ -53,6 +54,8 @@ class ServiceCase(TimestampMixin, Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    questionnaire_to_llm_output_ms: Mapped[int | None] = mapped_column()
     notes: Mapped[str | None] = mapped_column(String(2000))
     auto_send_documents: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=True)

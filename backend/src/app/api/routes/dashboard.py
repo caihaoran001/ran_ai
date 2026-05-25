@@ -13,6 +13,7 @@ from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, UserDocument
 from app.schemas.dashboard import DashboardSummary
+from app.services.service_case_queries import active_service_case_condition
 
 router = APIRouter()
 
@@ -22,11 +23,11 @@ async def dashboard_summary(
     session: AsyncSession = Depends(get_session),
 ) -> DashboardSummary:
     total = await session.scalar(
-        select(func.count(ServiceCase.id)).where(ServiceCase.deleted_at.is_(None))
+        select(func.count(ServiceCase.id)).where(active_service_case_condition())
     )
     in_service = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
         )
     )
@@ -38,7 +39,7 @@ async def dashboard_summary(
         select(func.count(Checkin.id))
         .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
         .where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             Checkin.checkin_date == today,
         )
     )
@@ -46,11 +47,23 @@ async def dashboard_summary(
         select(func.count(Message.id))
         .join(ServiceCase, Message.service_case_id == ServiceCase.id)
         .where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             Message.created_at >= today_start,
             Message.created_at < today_end,
+            Message.direction == MessageDirection.INBOUND,
+            Message.sender_type == MessageSenderType.USER,
         )
-    )
+    ) or 0
+    messages_outbound_today = await session.scalar(
+        select(func.count(Message.id))
+        .join(ServiceCase, Message.service_case_id == ServiceCase.id)
+        .where(
+            active_service_case_condition(),
+            Message.created_at >= today_start,
+            Message.created_at < today_end,
+            Message.direction == MessageDirection.OUTBOUND,
+        )
+    ) or 0
     # High-performance DISTINCT ON DB-level count of the latest documents to prevent loading all documents in memory
     from sqlalchemy import text
     doc_subq = (
@@ -61,7 +74,7 @@ async def dashboard_summary(
             text("content_json->>'stage'")
         )
         .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
-        .where(ServiceCase.deleted_at.is_(None))
+        .where(active_service_case_condition())
         .order_by(
             UserDocument.service_case_id,
             UserDocument.document_type,
@@ -77,20 +90,20 @@ async def dashboard_summary(
     ) or 0
     new_users_today = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             ServiceCase.created_at >= today_start,
             ServiceCase.created_at < today_end,
         )
     )
     risk_users = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             ServiceCase.risk_level == "high",
         )
     )
     human_intervention_users = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             ServiceCase.needs_human_intervention.is_(True),
         )
     )
@@ -106,7 +119,7 @@ async def dashboard_summary(
         select(func.count(ServiceCase.id))
         .outerjoin(last_message_subq, last_message_subq.c.service_case_id == ServiceCase.id)
         .where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
             last_activity_at < now - timedelta(days=2),
             last_activity_at >= now - timedelta(days=7),
@@ -116,14 +129,14 @@ async def dashboard_summary(
         select(func.count(ServiceCase.id))
         .outerjoin(last_message_subq, last_message_subq.c.service_case_id == ServiceCase.id)
         .where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
             last_activity_at < now - timedelta(days=7),
         )
     )
     renewal_followup_users = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
             ServiceCase.started_at.is_not(None),
             ServiceCase.started_at <= now - timedelta(days=18),
@@ -144,7 +157,7 @@ async def dashboard_summary(
             select(Message)
             .join(ServiceCase, Message.service_case_id == ServiceCase.id)
             .where(
-                ServiceCase.deleted_at.is_(None),
+                active_service_case_condition(),
                 Message.created_at >= today_start,
                 Message.created_at < today_end,
                 Message.direction == MessageDirection.INBOUND,
@@ -165,6 +178,7 @@ async def dashboard_summary(
         service_cases_in_service=in_service or 0,
         checkins_today=checkins_today or 0,
         messages_today=messages_today or 0,
+        messages_outbound_today=messages_outbound_today or 0,
         pending_documents=pending_documents or 0,
         new_users_today=new_users_today or 0,
         risk_users=risk_users or 0,
@@ -203,7 +217,7 @@ def _analysis_has_emotion_code(analysis: dict) -> bool:
 async def _count_flagged_cases(session: AsyncSession, condition) -> int:
     count = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            ServiceCase.deleted_at.is_(None),
+            active_service_case_condition(),
             condition,
         )
     )

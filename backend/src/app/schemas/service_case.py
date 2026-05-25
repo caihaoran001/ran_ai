@@ -51,6 +51,8 @@ class ServiceCaseRead(Timestamped):
     status: ServiceCaseStatus
     started_at: datetime | None
     ended_at: datetime | None
+    content_generated_at: datetime | None
+    questionnaire_to_llm_output_ms: int | None
     notes: str | None
     auto_send_documents: bool = False
     ai_auto_reply_enabled: bool = True

@@ -41,6 +41,16 @@ def default_checkin_schedule() -> dict[str, Any]:
         "enabled": True,
         "send_at": "09:00",
         "timezone": "Asia/Shanghai",
+        "intake_submit_reply": {
+            "enabled": True,
+            "message": (
+                "问卷已收到，正在生成专属方案。\n\n"
+                "我们会基于你的填写结果生成：\n"
+                "1.《个人能量重启处方单》\n"
+                "2.《28天执行标准与打卡要求》\n\n"
+                "生成完成后会第一时间发送给你，请稍等。"
+            ),
+        },
         "rules": [
             {
                 "day": 1,
@@ -147,6 +157,16 @@ def normalize_checkin_schedule(value: dict[str, Any] | None) -> dict[str, Any]:
     schedule["enabled"] = bool(schedule.get("enabled", True))
     schedule["send_at"] = str(schedule.get("send_at") or default["send_at"])
     schedule["timezone"] = str(schedule.get("timezone") or default["timezone"])
+    intake_submit_reply = schedule.get("intake_submit_reply")
+    if not isinstance(intake_submit_reply, dict):
+        intake_submit_reply = default["intake_submit_reply"]
+    schedule["intake_submit_reply"] = {
+        "enabled": intake_submit_reply.get("enabled", True) is not False,
+        "message": str(
+            intake_submit_reply.get("message")
+            or default["intake_submit_reply"]["message"]
+        ),
+    }
 
     rules = schedule.get("rules")
     if not isinstance(rules, list):

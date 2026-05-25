@@ -38,6 +38,8 @@ export type ServiceCase = {
   deleted_at?: string | null;
   started_at?: string | null;
   ended_at?: string | null;
+  content_generated_at?: string | null;
+  questionnaire_to_llm_output_ms?: number | null;
   risk_level?: string;
   risk_flags?: Array<Record<string, string>> | null;
   needs_human_intervention?: boolean;

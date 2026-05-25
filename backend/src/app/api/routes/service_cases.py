@@ -12,13 +12,19 @@ from sqlalchemy.orm import selectinload
 from app.db.session import get_session
 from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection
-from app.models.service_case import ServiceCase
+from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.schemas.service_case import (
     ServiceCaseCreate,
     ServiceCaseRead,
     ServiceCaseStats,
     ServiceCaseUpdate,
+)
+from app.services.service_case_queries import (
+    active_service_case_condition,
+    get_active_service_case,
+    get_service_case as get_service_case_any,
+    select_active_service_cases,
 )
 
 router = APIRouter()
@@ -30,8 +36,7 @@ async def list_service_cases(
     session: AsyncSession = Depends(get_session),
 ) -> list[ServiceCase]:
     statement = (
-        select(ServiceCase)
-        .where(ServiceCase.deleted_at.is_(None))
+        select_active_service_cases()
         .options(selectinload(ServiceCase.user))
         .order_by(ServiceCase.created_at.desc())
     )
@@ -62,11 +67,7 @@ async def create_service_case(
     )
     session.add(service_case)
     await session.commit()
-    result = await session.scalar(
-        select(ServiceCase)
-        .where(ServiceCase.id == service_case.id)
-        .options(selectinload(ServiceCase.user))
-    )
+    result = await get_active_service_case(session, service_case.id, options=(selectinload(ServiceCase.user),))
     assert result is not None
     return result
 
@@ -76,11 +77,7 @@ async def get_service_case(
     service_case_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> ServiceCase:
-    service_case = await session.scalar(
-        select(ServiceCase)
-        .where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
-        .options(selectinload(ServiceCase.user))
-    )
+    service_case = await get_service_case_any(session, service_case_id, options=(selectinload(ServiceCase.user),))
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
     return service_case
@@ -91,9 +88,7 @@ async def get_service_case_stats(
     service_case_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> ServiceCaseStats:
-    service_case = await session.scalar(
-        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
-    )
+    service_case = await get_service_case_any(session, service_case_id)
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
 
@@ -148,9 +143,7 @@ async def update_service_case(
     payload: ServiceCaseUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> ServiceCase:
-    service_case = await session.scalar(
-        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
-    )
+    service_case = await get_active_service_case(session, service_case_id)
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
     data = payload.model_dump(exclude_unset=True)
@@ -163,11 +156,7 @@ async def update_service_case(
         setattr(service_case, key, value)
     await session.commit()
     await session.refresh(service_case)
-    result = await session.scalar(
-        select(ServiceCase)
-        .where(ServiceCase.id == service_case.id)
-        .options(selectinload(ServiceCase.user))
-    )
+    result = await get_active_service_case(session, service_case.id, options=(selectinload(ServiceCase.user),))
     assert result is not None
     return result
 
@@ -177,11 +166,7 @@ async def delete_service_case(
     service_case_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> ServiceCase:
-    service_case = await session.scalar(
-        select(ServiceCase)
-        .where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
-        .options(selectinload(ServiceCase.user))
-    )
+    service_case = await get_active_service_case(session, service_case_id, options=(selectinload(ServiceCase.user),))
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
     if not service_case.deleted_at:
@@ -193,7 +178,7 @@ async def delete_service_case(
                 .where(
                     ServiceCase.user_id == service_case.user_id,
                     ServiceCase.id != service_case.id,
-                    ServiceCase.deleted_at.is_(None),
+                    active_service_case_condition(),
                 )
                 .limit(1)
             )

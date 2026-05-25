@@ -48,10 +48,10 @@ ENERGY_FIELD_SPEC = {
         "day14_28": "第14-28天变化",
     },
     "non_negotiable": {
-        "title": "这28天最不能打折的一件事",
+        "title": "这28天最不能打折的一件事。必须来自用户最特异的个人风险信号或成败卡点，禁止写通用答案",
         "content": "原因和提醒",
     },
-    "week_actions": ["本周直接执行，3-5条"],
+    "week_actions": ["本周直接执行，3-5条。至少包含1条运动建议，且运动建议必须写出类型+频率+时长+禁忌时间窗口"],
     "product_schedule": {
         "morning_c": "早C",
         "noon_b": "午B",
@@ -66,7 +66,7 @@ ENERGY_FIELD_SPEC = {
 EXECUTION_FIELD_SPEC = {
     "weight_band": "当前所属减重带",
     "path_goal": "更适合的总路径目标",
-    "day28_goal": "第一个28天目标",
+    "day28_goal": "第一个28天目标，必须写出具体斤数范围，不可只写定性描述",
     "current_phase_goal": "当前阶段目标",
     "principle": "执行总原则，一句话，强调先守早C/午B/晚A和关键生活动作，再抓结果",
     "weekly_plan": [
@@ -75,10 +75,10 @@ EXECUTION_FIELD_SPEC = {
         {"week": "第3周", "focus": "开始抓结果指标", "required_actions": "必须动作，例如：记录体重/腰腹/睡眠或情绪", "pass_standard": "通过标准，例如：至少2项指标变好"},
         {"week": "第4周", "focus": "稳定复现 / 做实结果", "required_actions": "必须动作，例如：不加码冒进，复现有效动作", "pass_standard": "通过标准，例如：连续5天不掉线"},
     ],
-    "daily_checkin": "每日固定打卡要求。包含5项打卡清单，且针对用户的具体痛点进行个性化定制。早C/午B/晚A合并成一项（例如：“1. 早C/午B/晚A是否完成”），并且其他打卡项必须结合用户的个性化阻碍（例如：“2. 午B是否14:00前完成”、“5. 情绪稳定度和饭后困评分”），不要输出硬编码的通用套话！",
+    "daily_checkin": "每日固定打卡要求。包含5项打卡清单，且针对用户的具体痛点进行个性化定制。早C/午B/晚A合并成一项；至少2项打卡必须是正向动作（做到什么），不能全是限制项；情绪稳定度和饭后困必须合并为1项综合观察，不要输出硬编码的通用套话。",
     "week5_12": "第5-8周和第9-12周提前说明",
-    "weekly_standard": "每周通过标准",
-    "reminder": "个性化提醒，必须结合用户作息/运动/睡眠/不适/夜班等情况；不要写通用套话；必要时提醒就医",
+    "weekly_standard": "每周通过标准，必须包含至少1次体重/围度/体感记录",
+    "reminder": "个性化提醒，第一句必须是定心丸，例如“结果看连续性，不看单日完美”；必须结合用户作息/运动/睡眠/不适/夜班等情况；不要写通用套话；必要时提醒就医",
 }
 
 
@@ -123,11 +123,12 @@ def build_document_content_json(
     document_type: DocumentType,
     title: str,
     user_name: str,
+    display_name: str | None = None,
     fields: dict[str, Any],
 ) -> dict[str, Any]:
     if document_type == DocumentType.ENERGY_RESTART_PRESCRIPTION:
-        return _build_energy(title, user_name, fields)
-    return _build_execution(title, user_name, fields)
+        return _build_energy(title, user_name, display_name, fields)
+    return _build_execution(title, user_name, display_name, fields)
 
 
 def build_stage_report_content_json(
@@ -195,7 +196,7 @@ def render_document_content(content_json: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
-def _build_energy(title: str, user_name: str, fields: dict[str, Any]) -> dict[str, Any]:
+def _build_energy(title: str, user_name: str, display_name: str | None, fields: dict[str, Any]) -> dict[str, Any]:
     overview = _dict(fields.get("overview"))
     display_title = title
     if "v6.3" not in display_title:
@@ -245,10 +246,10 @@ def _build_energy(title: str, user_name: str, fields: dict[str, Any]) -> dict[st
         _text_block("first_week_signals", "13. 前7天重点看4个信号", fields.get("first_week_signals")),
         _text_block("notice", "14. 说明", "本处方单用于生活方式管理和燃AI 28天训练营执行指导，不替代医疗诊断、药物治疗或医生建议。"),
     ]
-    return _payload(title=display_title, recipient=fields.get("recipient") or user_name, blocks=blocks)
+    return _payload(title=display_title, recipient=fields.get("recipient") or display_name or user_name, blocks=blocks)
 
 
-def _build_execution(title: str, user_name: str, fields: dict[str, Any]) -> dict[str, Any]:
+def _build_execution(title: str, user_name: str, display_name: str | None, fields: dict[str, Any]) -> dict[str, Any]:
     rows = fields.get("weekly_plan")
     if not isinstance(rows, list):
         rows = []
@@ -263,17 +264,17 @@ def _build_execution(title: str, user_name: str, fields: dict[str, Any]) -> dict
     }
     
     fixed_actions = {
-        "第1周": "早C午B晚A不断；晚餐主食控制在1拳内；每天完成基础步数。",
-        "第2周": "连续5天守住三杯节律；晚餐后走15–20分钟；不额外加宵夜。",
-        "第3周": "记录体重和腰围；开始加入轻力量训练；继续观察睡眠和排便。",
-        "第4周": "把晚餐收口、步数和轻力量做满；复现有效动作。",
+        "第1周": "早C午B晚A不断；每天至少吃2拳蔬菜；完成每周3次30分钟快走。",
+        "第2周": "连续5天守住三杯节律；每周2次15分钟徒手力量；晚餐后步行15–20分钟。",
+        "第3周": "记录体重和腰围；继续快走和轻力量；观察睡眠、饭后困和排便变化。",
+        "第4周": "把蔬菜、快走和轻力量做满；复现有效动作，不过度加码。",
     }
     
     fixed_pass = {
-        "第1周": "≥5天完成固定节律",
-        "第2周": "≥5天完成饮食和运动",
-        "第3周": "至少2项指标（体重/围度/体感）变好",
-        "第4周": "连续5天不掉线",
+        "第1周": "≥5天完成固定节律，并至少记录1次体重/围度/体感。",
+        "第2周": "≥5天完成饮食和运动，并至少记录1次体重/围度/体感。",
+        "第3周": "至少完成1次体重/围度/体感记录，且至少2项指标变好。",
+        "第4周": "连续5天不掉线，并至少完成1次体重/围度/体感记录。",
     }
     
     for week in ("第1周", "第2周", "第3周", "第4周"):
@@ -320,10 +321,10 @@ def _build_execution(title: str, user_name: str, fields: dict[str, Any]) -> dict
             _daily_checkin_text(fields.get("daily_checkin")),
         ),
         _text_block("week5_12", "第5–8周和第9–12周提前说明", fields.get("week5_12") or "第5–8周继续放大已经稳定的动作，第9–12周再根据体重、腰围、睡眠和排便反馈微调目标；不要在第一个28天里一次性加太多动作。"),
-        _text_block("weekly_standard", "每周通过标准", fields.get("weekly_standard") or "本周不追求完美，重点看三杯节律是否稳定、晚餐是否收口、睡眠和排便是否比上一周更稳。"),
+        _text_block("weekly_standard", "每周通过标准", fields.get("weekly_standard") or "本周不追求完美，重点看三杯节律是否稳定，并至少完成1次体重 / 围度 / 体感记录，确认自己比上一周更稳。"),
         _text_block("reminder", "提醒", _personal_reminder(fields.get("reminder"))),
     ]
-    payload = _payload(title=f"{user_name}｜{title}（1页版）", recipient="", blocks=blocks)
+    payload = _payload(title=f"{display_name or user_name}｜{title}（1页版）", recipient="", blocks=blocks)
     payload["show_recipient"] = False
     payload["show_footer_brand"] = False
     return payload
@@ -561,7 +562,7 @@ def _default_week_standard(week: str) -> str:
 
 def _daily_checkin_text(value: Any) -> str:
     if not value:
-        return "1. 早C/午B/晚A是否全部完成\n2. 晚餐主食是否控制在1拳内\n3. 每天是否完成基础步数\n4. 睡眠是否按计划收口\n5. 排便是否顺畅。"
+        return "1. 早C/午B/晚A是否全部完成\n2. 今天是否至少吃到2拳蔬菜\n3. 今天是否完成计划内快走/力量训练\n4. 睡眠是否按计划收口\n5. 情绪稳定度和饭后困综合评分。"
     
     if isinstance(value, list):
         cleaned_items = []
@@ -594,7 +595,9 @@ def _personal_reminder(value: Any) -> str:
     text_val = _clean_prefix(text_val, "提醒")
     generic = {"注意坚持执行。", "请按计划执行，如有不适请及时就医。", "本文件不替代医疗建议。"}
     if not text_val or text_val in generic or len(text_val) < 18:
-        return "不建议跑跳冲刺和极端断食；如睡眠被工作或照护节奏打乱，含咖啡因的早C/午B必须放在计划睡眠前8小时以外。持续不适请及时就医。"
+        return "结果看连续性，不看单日完美。不建议跑跳冲刺和极端断食；如睡眠被工作或照护节奏打乱，含咖啡因的早C/午B必须放在计划睡眠前8小时以外。持续不适请及时就医。"
+    if "结果看连续性" not in text_val and "不看单日完美" not in text_val:
+        return f"结果看连续性，不看单日完美。{text_val}"
     return text_val
 
 

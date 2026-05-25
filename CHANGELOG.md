@@ -1,5 +1,182 @@
 # CHANGELOG
 
+## 2026-05-25 - 恢复提交回执配置与用户画像摘要
+
+- 入营问卷提交后新增可配置群内回执；发送结果会写入聊天记录，失败只记录错误不影响问卷提交和文档生成。
+- 运营规则配置页恢复“入营问卷提交后群内回执”配置项，支持开关、编辑文案和 `{user_name}` / `{case_no}` / `{group_id}` 变量。
+- 用户详情页移除重复的“AI总结”模块，基本信息优先读取 `profile.profile_json.overview`，并新增两份交付文件的关键摘要展示。
+
+## 2026-05-22 - intake 生成默认 token 上限提升
+
+### 修改内容
+
+**问题：**
+1. 入营分析现在是一次 LLM 同时输出画像 + 两份文档填充值，且 prompt 规则明显变长。
+2. `AI_MAX_TOKENS` 的代码默认值和 `.env.example` 仍停留在较低值，容易在新环境里导致 JSON 输出被截断。
+3. JSON 截断后会触发 `parse_json_object()` 的 `summary` fallback，最终表现为 `intake analysis package generated empty document content`。
+
+**解决方案：**
+- `backend/src/app/core/config.py` 中 `AI_MAX_TOKENS` 默认值从 `1800` 提升到 `8000`。
+- `.env.example` 同步提升到 `8000`，避免新部署环境继续沿用过低上限。
+- 当前本机 `.env` 已是 `8000`，本次无需再改运行中环境值。
+
+## 2026-05-22 - 入营交付文件向甲方参考版继续对齐
+
+### 修改内容
+
+**问题：**
+1. 文档称呼没有优先使用问卷里的“抖音昵称 / 常用称呼”，执行单标题也没有体现“称呼（真实姓名）”。
+2. intake prompt 仍可能产出中医辨证术语、重复从同一类证据反复推导、以及过于通用的“最不能打折的一件事”。
+3. 运动建议、每日打卡、每周通过标准和提醒段落还不够贴近甲方参考版的风格与约束。
+
+**解决方案：**
+- `intake_facts.py` 新增：
+  - `preferred_name`
+  - `recipient_name`
+  - 当问卷填写了常用称呼时，格式化为 `NAR 先生（蔡浩然）` 这类展示名。
+- `document_service.py` 生成两份文件时改为：
+  - 文件内容显示用 `recipient_name`
+  - 文件落盘命名仍保留真实姓名链路
+  - `_user_name()` 也会优先读取问卷中的常用称呼，再 fallback 到真实姓名。
+- `document_templates.py` 调整：
+  - 28 天执行单标题使用 `recipient_name｜标题（1页版）`
+  - 默认打卡项改为更偏正向动作，并把“情绪稳定度和饭后困”合并成一项
+  - 默认每周通过标准加入“至少一次体重/围度/体感记录”
+  - 默认提醒第一句固定补上“结果看连续性，不看单日完美”。
+- `_intake_generation_system_prompt()` 增强：
+  - 明确禁止中医辨证/医学分型术语
+  - 判断依据要求跨不同类型问卷证据分散引用
+  - “最不能打折的一件事”必须来自用户最特异的个人风险信号
+  - 运动建议必须包含类型 + 频率 + 时长 + 禁忌时间窗口
+  - 每日至少 2 项打卡为正向动作
+  - 每周通过标准必须包含 1 次体重 / 围度 / 体感记录
+  - reminder 第一行必须先给用户一句定心丸
+  - `day28_goal` 必须输出具体斤数范围。
+
+## 2026-05-22 - 活跃服务单查询统一与软删除漏过滤修复
+
+### 修改内容
+
+**问题：**
+1. `ranren_ai/engine.py` 在按 `service_case_id` 回查服务单时漏掉了 `deleted_at IS NULL`，已删除服务单收到消息后仍可能继续走 AI 处理链路。
+2. `ServiceCase.deleted_at.is_(None)` 在多个路由和服务中散落手写，容易出现新增查询时漏过滤的情况。
+3. `service_cases.py` 的按 id 读取详情也存在裸查，和其余默认“只看活跃服务单”的行为不一致。
+
+**解决方案：**
+- 新增 `backend/src/app/services/service_case_queries.py`，统一提供：
+  - `active_service_case_condition()`
+  - `select_active_service_cases()`
+  - `get_active_service_case()`
+- `engine.py` 改为通过统一 helper 查询活跃服务单，补上已删除服务单的拦截。
+- `documents.py`、`messages.py`、`checkins.py`、`service_cases.py`、`questionnaires.py`、`document_service.py`、`reminder_service.py`、`knowledge_evolution.py`、`dashboard.py` 的默认活跃服务单查询改为复用统一 helper 或统一条件。
+- 保留“需要查看已删除历史”的特殊查询逻辑，不做全局 `before_compile` 隐式改写，避免误伤后台历史数据访问。
+
+## 2026-05-22 - intake 清理与公共 JSON 解析收口
+
+### 修改内容
+
+**问题：**
+1. `_parse_json_object` 在 `ai_service/client.py`、`document_service.py`、`knowledge_evolution.py` 各复制了一份，回退行为还不一致。
+2. `AIService.generate_document()` 已无调用，属于死代码。
+3. `generate_profile()` 仍保留独立 intake LLM 生成链，和 `generate_profile_and_documents()` 逻辑重复。
+4. `document_service.py` 中 `_weight_change()` 用了动态 `__import__("re")`。
+5. 风控识别服务异常时，兜底被直接标成高风险，运营无法区分“真实高风险”和“分类器不可用”。
+6. 问卷路由对 `generate_profile_and_documents` 做了别名导入，增加追踪成本。
+7. intake facts 覆盖文档 payload 时，`DocumentType(document_type)` 遇到异常 key 会直接抛错。
+
+**解决方案：**
+- 新增 `backend/src/app/services/ai_service/json_utils.py`，统一提供 `parse_json_object()`，三处调用全部改为复用公共版本。
+- 公共 JSON 解析器统一失败兜底为 `{"summary": text}`，并保留代码块剥离、首个 JSON 对象提取、嵌套 JSON 字符串展开能力。
+- 删除 `AIService.generate_document()` 死代码。
+- `generate_profile()` 不再单独走一套 LLM 生成逻辑，改为复用 `generate_profile_and_documents()` 的结果。
+- `document_service.py` 顶部直接 `import re`，移除动态导入写法。
+- `intervention_service.py` 中 `risk_classifier_unavailable` 从高风险下调为中风险，并保留人工复核标记与明确 code。
+- `questionnaires.py` 去掉 `generate_intake_outputs` 别名，直接使用真实函数名。
+- `_apply_intake_facts_to_document_payloads()` 对非法文档类型增加防御，不再因异常 key 直接中断。
+
+## 2026-05-21 - 入营分析改为一次 LLM 生成画像和两份文件
+
+### 修改内容
+
+**问题：**
+1. 入营问卷后的用户画像和两份交付文件仍是两次模型调用，虽然有共同事实层兜底，但核心判断仍可能轻微漂移。
+2. `intake_facts` 中曾为饮水和情绪性进食做特殊证据判断，职责过重。
+3. 用户详情页“尚未生成用户画像”占位文案仍提示可在服务单详情手动触发，但该入口已不存在。
+
+**解决方案：**
+- 新增统一的 `intake_analysis_package` 生成链路，一次 LLM 调用同时输出：
+  - 后台用户画像 `profile`
+  - 《个人能量重启处方单》模板填充值
+  - 《28天执行标准与打卡要求》模板填充值
+- 问卷提交后台任务改为直接调用统一链路，不再先单独生成画像、再单独生成文档。
+- `generate_documents()` 手动接口也复用统一链路，生成文档时同步落一份同源画像，避免画像和文件来自不同分析。
+- `intake_facts` 回归确定性事实抽取，只保留基础信息、BMI、减重带、核心问卷字段等，不再维护饮水/情绪性进食特殊规则。
+- 入营生成主链路不再读取 `手动版提示词.md` 或 `manual_prompt.md`，改为在 `document_service.py` 中使用自动化专用 system prompt。
+- 删除后端 `manual_prompt.py` / `manual_prompt.md`，避免 Docker 容器回退旧 Excel 批量提示词。
+- 自动化专用 system prompt 只保留判断方法、输出 JSON 结构和医疗边界；移除“统一版式要求”“文件命名规则”等由代码负责的章节。
+- 更新用户详情页空画像占位文案，去掉已不存在的“服务单详情手动触发”描述。
+
+---
+
+## 2026-05-21 - 入营问卷画像与交付文档共同事实层
+
+### 修改内容
+
+**问题：**
+1. 用户画像和两份交付文档分别生成，减重带、核心问题等字段可能不一致。
+2. LLM 在问卷没有明确饮水量或情绪性进食证据时，可能过度推断“饮水不足”“情绪影响饮食控制”等结论。
+
+**解决方案：**
+- 新增 `intake_facts.py`，从入营问卷字段中确定性抽取姓名、性别、年龄、身高、体重、BMI、减重带、腰围/体脂、核心诉求、压力反应等共同事实。
+- `generate_profile()` 和交付文档生成统一接入 `intake_facts`，并要求 BMI、减重带以共同事实为准。
+- 当问卷没有饮水字段时，禁止把饮水不足写成已知问题；当问卷没有情绪性进食证据时，禁止写报复性进食、情绪性进食或情绪影响饮食控制。
+- 对生成后的画像和文档 payload 再做一次关键字段覆盖，降低 LLM 输出漂移。
+- 已为 15 号服务单重新生成用户画像；未重新生成或重发已发送文档，避免误发。
+
+---
+
+## 2026-05-21 - 已删除用户画像详情可访问修复
+
+### 修改内容
+
+**问题：**
+1. 从已删除服务单点击“查看完整用户画像与打卡历史”会进入 `/users/{id}`。
+2. 后端用户详情接口仍只允许未删除用户，导致已删除用户详情返回 404，前端页面抛错。
+
+**解决方案：**
+- `GET /api/users/{id}` 允许读取已删除用户。
+- 未删除用户详情仍只展示活跃服务单；已删除用户详情展示历史服务单。
+- 已验证 `/users/14` 页面返回 200。
+
+---
+
+## 2026-05-21 - 用户画像展示、文档补生成与软删除历史修复
+
+### 修改内容
+
+**问题：**
+1. 用户详情基础信息直接拼接问卷标题和值，导致“您的性别：男；您的年龄：30”这类冗余展示。
+2. BMI、减重带等基础字段过度依赖 AI 画像，缺少确定性计算与兜底。
+3. 用户画像页把 AI 生成的 `risks` 当作“风险识别”展示，容易与真实风控结果冲突。
+4. “运营备注”其实来自 AI 生成，命名容易误导。
+5. 购买/复购字段尚未接入订单业务，但普通样式会让人误以为已有真实数据。
+6. 画像已生成但交付文件生成失败时，服务单会显示“已生成文档”但交付文件为 0。
+7. 自动任务发现已有画像后会直接返回，无法自动补生成失败的交付文件。
+8. 已删除用户列表把历史服务单过滤掉，导致页面显示“暂无服务单”。
+
+**解决方案：**
+- 用户详情页从问卷答案中提取性别、年龄、身高、体重、腰围并做简洁展示。
+- BMI 在前端按身高体重确定性计算；减重带根据 BMI 做基础兜底判断。
+- “风险识别”改为“风控风险”，只展示服务单真实风控结果；AI 的执行卡点不再冒充风控风险。
+- “运营备注”改名为“AI陪跑建议”。
+- 购买/复购模块置灰，并明确标注订单数据尚未接入。
+- `generate_profile()` 不再把服务单标记为 `documents_generated`；只有文档真正生成后才进入文档/审核/服务状态。
+- 自动后台任务在画像已存在但文档缺失时仍会继续补生成交付文件。
+- 交付文件生成增加兜底：组合 JSON 失败时退回单文件生成，并要求问卷事实优先于旧画像，避免旧画像污染后续文档。
+- 已删除用户 API 保留历史服务单，已删除服务单详情可打开查看。
+
+---
+
 ## 2026-05-21 - 发送一致性与看板筛选口径修复
 
 ### 修改内容
@@ -525,3 +702,27 @@
 
 > [!NOTE]
 > 2026-05-18 及以前的历史更新已被整理归档至 [CHANGELOG_archive.md](file:///home/chr/桌面/ran_ai/docs/history/CHANGELOG_archive.md)。
+## 2026-05-22 - intake 生成截断显式报错与详情页失败提示
+
+- 后端 `AIService.generate_text()` 新增 `finish_reason == "length"` 检查；当大模型因为 `max_tokens` 截断时，直接抛出明确错误，避免后续走到“JSON 解析失败 -> 空文档内容”的静默失败链路。
+- 问卷后台任务追加错误备注时，补充当前 `AI_MAX_TOKENS` 值，方便运营和开发直接定位是否是 token 上限问题。
+- 服务单详情页在“已提交问卷但暂无文档”且备注中存在自动生成失败记录时，显示红色提示框，直接暴露失败原因给运营侧。
+- 服务单详情页失败提示框新增“重试生成”按钮，沿用当前后台按钮风格；重试失败时会在卡片内直接显示新的错误信息。
+- “重试生成”改为后台任务式触发：点击后后端立即返回已受理，生成过程在后台继续执行，刷新页面或离开当前页不会中断。
+
+## 2026-05-22 - 服务单新增 generating 状态
+
+- 服务单状态枚举新增 `generating`，用于表示问卷提交后或手动重试后，后台正在生成画像与交付文件。
+- 入营问卷提交后，如已配置 AI，则服务单立即进入 `generating`；生成失败时回退到 `questionnaire_submitted` 并保留失败备注。
+- 服务单详情页新增“文件生成中”提示，并在该状态下每 3 秒自动刷新一次页面。
+- 用户管理列表对 `generating` 状态显示“文件生成中”并附带旋转加载图标。
+- H5 问卷提交完成文案改为“问卷已提交，文件生成中，稍后可在服务单详情查看。”
+- 修复“重试生成失败后服务单卡在 generating”的问题；失败备注写入时会同步回退到 `questionnaire_submitted`。
+- 新增 Alembic merge revision，消除 `20260522_0015` 与 `e2a0533d4a1c` 的双 head 分叉。
+- 修复 `service_case_status` 枚举新值大小写不一致的问题；数据库中的 `generating` 已统一更正为 `GENERATING`，避免状态切换时报 `InvalidTextRepresentationError`。
+
+## 2026-05-22 - 服务单新增文件内容生成耗时
+
+- 服务单新增 `content_generated_at` 和 `questionnaire_to_llm_output_ms` 字段，用于记录从入营问卷提交到 LLM 成功产出内容包的耗时。
+- 交付文件生成成功后会把该耗时写回服务单，便于后续排查模型响应速度与用户等待时长。
+- 服务单详情页新增“内容生成耗时”指标卡，直接展示问卷提交到 LLM 输出的用时。

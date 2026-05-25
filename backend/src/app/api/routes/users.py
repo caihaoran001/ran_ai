@@ -30,7 +30,8 @@ async def list_users(
     )
     users = list(result)
     for u in users:
-        u.service_cases = [sc for sc in u.service_cases if sc.deleted_at is None]
+        if not deleted:
+            u.service_cases = [sc for sc in u.service_cases if sc.deleted_at is None]
     return users
 
 
@@ -41,13 +42,14 @@ async def get_user(
 ) -> UserDetail:
     user = await session.scalar(
         select(User)
-        .where(User.id == user_id, User.deleted_at.is_(None))
+        .where(User.id == user_id)
         .options(selectinload(User.service_cases).selectinload(ServiceCase.user))
     )
     if not user:
         raise HTTPException(status_code=404, detail="user not found")
 
-    user.service_cases = [sc for sc in user.service_cases if sc.deleted_at is None]
+    if not user.deleted_at:
+        user.service_cases = [sc for sc in user.service_cases if sc.deleted_at is None]
     case_ids = [case.id for case in user.service_cases]
     latest_profile = None
     if case_ids:

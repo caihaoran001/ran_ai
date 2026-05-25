@@ -3,13 +3,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.db.session import get_session
-from app.models.service_case import ServiceCase
+from app.db.session import SessionLocal
+from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, UserDocument
 from app.schemas.document import DocumentUpdate, UserDocumentRead, UserProfileRead
 from app.services.document_service import (
@@ -20,6 +22,7 @@ from app.services.document_service import (
     send_case_documents,
     send_one_document,
 )
+from app.services.service_case_queries import get_active_service_case, get_service_case
 
 router = APIRouter()
 
@@ -47,6 +50,23 @@ async def generate_case_documents(
         return await generate_documents(session, service_case, auto_send=auto_send)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/service-cases/{service_case_id}/generate-documents/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_generate_case_documents(
+    service_case_id: int,
+    background_tasks: BackgroundTasks,
+    auto_send: bool = False,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    service_case = await _case_or_404(session, service_case_id)
+    service_case.status = ServiceCaseStatus.GENERATING
+    await session.commit()
+    background_tasks.add_task(_generate_documents_in_background, service_case_id, auto_send)
+    return {"detail": "document generation queued"}
 
 
 @router.post("/service-cases/{service_case_id}/stage-reports/generate", response_model=UserDocumentRead)
@@ -80,7 +100,7 @@ async def list_case_documents(
     include_history: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> list[UserDocument]:
-    await _case_or_404(session, service_case_id)
+    await _case_or_404(session, service_case_id, include_deleted=True)
     documents = list(await session.scalars(
         select(UserDocument)
         .where(UserDocument.service_case_id == service_case_id)
@@ -92,6 +112,24 @@ async def list_case_documents(
     for document in documents:
         latest_by_type.setdefault(_document_identity(document), document)
     return list(latest_by_type.values())
+
+
+@router.get("/documents", response_model=list[UserDocumentRead])
+async def list_all_documents(
+    include_history: bool = False,
+    session: AsyncSession = Depends(get_session),
+) -> list[UserDocument]:
+    documents = list(await session.scalars(
+        select(UserDocument)
+        .order_by(UserDocument.created_at.desc())
+    ))
+    if include_history:
+        return documents
+    latest_by_key = {}
+    for document in documents:
+        key = (document.service_case_id, *_document_identity(document))
+        latest_by_key.setdefault(key, document)
+    return list(latest_by_key.values())
 
 
 @router.get("/documents/{document_id}", response_model=UserDocumentRead)
@@ -166,9 +204,16 @@ async def download_document(
     )
 
 
-async def _case_or_404(session: AsyncSession, service_case_id: int) -> ServiceCase:
-    service_case = await session.scalar(
-        select(ServiceCase).where(ServiceCase.id == service_case_id, ServiceCase.deleted_at.is_(None))
+async def _case_or_404(
+    session: AsyncSession,
+    service_case_id: int,
+    *,
+    include_deleted: bool = False,
+) -> ServiceCase:
+    service_case = (
+        await get_service_case(session, service_case_id)
+        if include_deleted
+        else await get_active_service_case(session, service_case_id)
     )
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
@@ -179,3 +224,30 @@ def _document_identity(document: UserDocument) -> tuple[str, str]:
     content_json = document.content_json if isinstance(document.content_json, dict) else {}
     stage = str(content_json.get("stage") or "")
     return (str(document.document_type), stage)
+
+
+async def _generate_documents_in_background(service_case_id: int, auto_send: bool) -> None:
+    async with SessionLocal() as session:
+        service_case = await get_active_service_case(session, service_case_id)
+        if not service_case:
+            return
+        try:
+            await generate_documents(session, service_case, auto_send=auto_send)
+        except Exception as exc:
+            await session.rollback()
+            failed_case = await get_active_service_case(session, service_case_id)
+            if failed_case:
+                _append_generation_error_note(failed_case, exc)
+                await session.commit()
+
+
+def _append_generation_error_note(service_case: ServiceCase, exc: Exception) -> None:
+    timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    settings = get_settings()
+    service_case.status = ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
+    message = (
+        f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
+        f"（AI_MAX_TOKENS={settings.ai_max_tokens}）"
+    )
+    existing = service_case.notes or ""
+    service_case.notes = (f"{existing}\n{message}" if existing else message)[-2000:]

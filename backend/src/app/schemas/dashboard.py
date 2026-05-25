@@ -8,6 +8,7 @@ class DashboardSummary(BaseModel):
     service_cases_in_service: int
     checkins_today: int
     messages_today: int
+    messages_outbound_today: int = 0
     pending_documents: int
     new_users_today: int = 0
     risk_users: int = 0

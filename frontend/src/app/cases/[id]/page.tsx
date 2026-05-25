@@ -3,8 +3,10 @@ import { api, FRONTEND_BASE, ServiceCase, ServiceCaseStats, UserDocument, Checki
 import { formatChinaDateTime } from "@/lib/format";
 import { CaseActions } from "./case-actions";
 import { CaseRiskReset } from "./case-risk-reset";
+import { CaseGeneratingPoller } from "./case-generating-poller";
 import { ChatMessages } from "./chat-messages";
 import { QuestionnaireSection } from "./questionnaire-section";
+import { RetryGenerateDocuments } from "./retry-generate-documents";
 import { StageReportActions } from "./stage-report-actions";
 
 type Questionnaire = {
@@ -31,9 +33,15 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const messages = await api<Message[]>(`/service-cases/${id}/messages`).catch(() => []);
   const questionnaire = await api<Questionnaire>(`/questionnaires/${serviceCase.questionnaire_token}`).catch(() => null);
   const questionnaireUrl = `${FRONTEND_BASE.replace(/\/$/, "")}/q/${serviceCase.questionnaire_token}`;
+  const isGenerating = serviceCase.status === "generating";
+  const generationError =
+    serviceCase.status === "questionnaire_submitted" && documents.length === 0
+      ? extractGenerationError(serviceCase.notes)
+      : null;
 
   return (
     <div className="space-y-8">
+      {isGenerating && <CaseGeneratingPoller />}
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-3">
@@ -84,12 +92,30 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         )}
       </div>
 
+      {generationError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+          <p className="font-medium">⚠️ 文件自动生成失败</p>
+          <p className="mt-1 break-words">{generationError}</p>
+          {!serviceCase.deleted_at && (
+            <RetryGenerateDocuments caseId={serviceCase.id} autoSend={serviceCase.auto_send_documents} />
+          )}
+        </div>
+      )}
+
+      {isGenerating && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-blue-700">
+          <p className="font-medium">⏳ 文件生成中</p>
+          <p className="mt-1">正在生成您的专属文件，预计 10-30 秒。页面会每 3 秒自动刷新一次，您现在离开页面也不会中断。</p>
+        </div>
+      )}
+
       <div className="grid gap-4 md:grid-cols-4">
         <InfoCard title="问卷链接" value={questionnaireUrl} icon="🔗" />
         <InfoCard title="交付文件" value={`${documents.length} 份`} icon="📄" />
         <InfoCard title="打卡记录" value={`${checkins.length} 条`} icon="✅" />
         <InfoCard title="聊天记录" value={`${messages.length} 条`} icon="💬" />
         <InfoCard title="已服务时长" value={formatServiceDuration(serviceCase.started_at)} icon="⏱️" />
+        <InfoCard title="内容生成耗时" value={formatGenerationDuration(serviceCase.questionnaire_to_llm_output_ms)} icon="⚡" />
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -212,6 +238,7 @@ function StatusBadge({ status }: { status: string }) {
   const statusConfig: Record<string, { label: string; className: string }> = {
     created: { label: "已创建", className: "bg-zinc-100 text-zinc-700" },
     questionnaire_submitted: { label: "已提交问卷", className: "bg-yellow-50 text-yellow-700" },
+    generating: { label: "文件生成中", className: "bg-blue-50 text-blue-700" },
     documents_generated: { label: "已生成文档", className: "bg-blue-50 text-blue-700" },
     reviewing: { label: "审核中", className: "bg-purple-50 text-purple-700" },
     approved: { label: "已批准", className: "bg-green-50 text-green-700" },
@@ -256,6 +283,26 @@ function formatServiceDuration(startedAt?: string | null) {
   const hours = totalHours % 24;
   if (days <= 0) return `${hours}h`;
   return `${days}天零${hours}h`;
+}
+
+function formatGenerationDuration(durationMs?: number | null) {
+  if (!durationMs || durationMs < 0) return "暂无";
+  if (durationMs < 1000) return `${durationMs}ms`;
+  const totalSeconds = durationMs / 1000;
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(totalSeconds >= 10 ? 1 : 2)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}分${seconds.toFixed(1)}秒`;
+}
+
+function extractGenerationError(notes?: string | null) {
+  if (!notes || !notes.includes("自动生成画像/交付文件失败")) return null;
+  const lines = notes
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const matched = [...lines].reverse().find((line) => line.includes("自动生成画像/交付文件失败"));
+  return matched?.replace(/^\[[^\]]+\]\s*/, "") ?? null;
 }
 
 function formatRiskFlags(flags?: Array<Record<string, string>> | null) {

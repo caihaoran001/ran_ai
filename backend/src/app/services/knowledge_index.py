@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -285,7 +286,7 @@ async def retrieve_case_context_db(
                 {
                     "model": settings.embedding_model,
                     "qv": qv_str,
-                    "max_distance": VECTOR_DISTANCE_THRESHOLD,
+                    "max_distance": settings.case_vector_distance_threshold,
                     "limit": limit,
                 },
             )
@@ -373,7 +374,7 @@ async def _retrieve_by_embedding(
             {
                 "model": settings.embedding_model,
                 "qv": qv_str,
-                "max_distance": VECTOR_DISTANCE_THRESHOLD,
+                "max_distance": settings.faq_vector_distance_threshold,
                 "limit": settings.knowledge_base_top_k * 2,
             },
         )
@@ -421,6 +422,22 @@ async def _retrieve_by_text(session: AsyncSession, query: str, *, top_k: int) ->
     return [(row[0], row[1].strip()) for row in rows]
 
 
+def _calculate_similarities(
+    query_vector: list[float],
+    chunk_data: list[tuple[int, str, list[float]]],
+    threshold: float,
+) -> list[tuple[float, int, str]]:
+    scored: list[tuple[float, int, str]] = []
+    for chunk_id, content, embedding in chunk_data:
+        vector = embedding if isinstance(embedding, list) else []
+        vector_floats = [float(item) for item in vector]
+        score = _cosine_similarity(query_vector, vector_floats)
+        if score > 1 - threshold:
+            scored.append((score, chunk_id, content.strip()))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored
+
+
 async def _retrieve_by_json_embedding(
     session: AsyncSession,
     query_vector: list[float],
@@ -436,20 +453,32 @@ async def _retrieve_by_json_embedding(
     ]
     if source_type:
         conditions.append(KnowledgeChunk.source_type == source_type)
-    chunks = list(
-        await session.scalars(
-            select(KnowledgeChunk)
-            .where(*conditions)
-            .order_by(KnowledgeChunk.id.asc())
-        )
+    
+    # Query database using field selection instead of ORM objects to avoid thread-safety and session issues
+    query = (
+        select(KnowledgeChunk.id, KnowledgeChunk.content, KnowledgeChunk.embedding)
+        .where(*conditions)
+        .order_by(KnowledgeChunk.id.asc())
     )
-    scored: list[tuple[float, int, str]] = []
-    for chunk in chunks:
-        vector = chunk.embedding if isinstance(chunk.embedding, list) else []
-        score = _cosine_similarity(query_vector, [float(item) for item in vector])
-        if score > 1 - VECTOR_DISTANCE_THRESHOLD:
-            scored.append((score, chunk.id, chunk.content.strip()))
-    scored.sort(key=lambda item: item[0], reverse=True)
+    rows = (await session.execute(query)).all()
+    chunk_data = [
+        (row[0], row[1], row[2])
+        for row in rows
+        if row[2] is not None
+    ]
+
+    threshold = (
+        settings.case_vector_distance_threshold
+        if source_type == "case"
+        else settings.faq_vector_distance_threshold
+    )
+
+    scored = await asyncio.to_thread(
+        _calculate_similarities,
+        query_vector,
+        chunk_data,
+        threshold,
+    )
     return [(chunk_id, content) for _, chunk_id, content in scored[:top_k]]
 
 

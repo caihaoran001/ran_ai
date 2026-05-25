@@ -26,11 +26,10 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
+  async function submitAnswers(nextAnswers: Record<string, string>) {
     const missing = questionnaire.fields.find((field) => {
       if (!field.required || field.type === "SEGMENTATION") return false;
-      return !String(answers[field.key] ?? "").trim();
+      return !String(nextAnswers[field.key] ?? "").trim();
     });
     if (missing) {
       setError(`请填写：${missing.title ?? missing.label}`);
@@ -43,7 +42,7 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
       const response = await fetch(url, {
         method: "POST",
         headers: {"content-type": "application/json"},
-        body: JSON.stringify({ answers }),
+        body: JSON.stringify({ answers: nextAnswers }),
       });
       if (!response.ok) {
         throw new Error(await response.text());
@@ -60,17 +59,25 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
     }
   }
 
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    await submitAnswers(answers);
+  }
+
   if (done) {
-    return <div className="rounded-lg border border-zinc-200 bg-white p-6">已提交，感谢配合。</div>;
+    return <div className="rounded-lg border border-zinc-200 bg-white p-6">问卷已提交，文件生成中，稍后可在服务单详情查看。</div>;
   }
 
   function fillCaiHaoranSample() {
-    const availableKeys = new Set(questionnaire.fields.map((field) => field.key));
-    const sample = Object.fromEntries(
-      Object.entries(CAI_HAORAN_SAMPLE_ANSWERS).filter(([key]) => availableKeys.has(key)),
-    );
+    const sample = caiHaoranSampleAnswers(questionnaire);
     setAnswers(sample);
     setError(null);
+  }
+
+  async function submitCaiHaoranSample() {
+    const sample = caiHaoranSampleAnswers(questionnaire);
+    setAnswers(sample);
+    await submitAnswers(sample);
   }
 
   return (
@@ -78,13 +85,24 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
       {questionnaire.template_key === "intake" && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
           <div className="text-sm text-amber-900">试验辅助：一键填入蔡浩然样例问卷。</div>
-          <Button
-            type="button"
-            className="bg-amber-700 hover:bg-amber-600"
-            onClick={fillCaiHaoranSample}
-          >
-            一键选择蔡浩然版
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              className="border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+              onClick={fillCaiHaoranSample}
+              disabled={submitting}
+            >
+              一键选择蔡浩然版
+            </Button>
+            <Button
+              type="button"
+              className="bg-amber-700 hover:bg-amber-600"
+              onClick={submitCaiHaoranSample}
+              disabled={submitting}
+            >
+              一键提交蔡浩然版
+            </Button>
+          </div>
         </div>
       )}
       {questionnaire.fields.map((field) => (
@@ -98,6 +116,13 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
       {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       <Button disabled={submitting}>{submitting ? "提交中" : "提交问卷"}</Button>
     </form>
+  );
+}
+
+function caiHaoranSampleAnswers(questionnaire: Questionnaire): Record<string, string> {
+  const availableKeys = new Set(questionnaire.fields.map((field) => field.key));
+  return Object.fromEntries(
+    Object.entries(CAI_HAORAN_SAMPLE_ANSWERS).filter(([key]) => availableKeys.has(key)),
   );
 }
 

@@ -16,3 +16,49 @@ body {
 a {
   text-decoration: none;
 }
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translate(50%, -20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes highlightPulse {
+  0% {
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+    background-color: rgba(59, 130, 246, 0.05);
+  }
+  100% {
+    box-shadow: 0 0 0 0px rgba(59, 130, 246, 0);
+    background-color: transparent;
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-toast-in {
+  animation: toastSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-highlight-pulse {
+  animation: highlightPulse 2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+

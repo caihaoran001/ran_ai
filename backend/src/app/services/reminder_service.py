@@ -27,6 +27,7 @@ from app.services.checkin_questionnaires import get_checkin_questionnaire_schedu
 from app.services.document_service import generate_stage_report
 from app.services.knowledge_evolution import KnowledgeEvolutionService
 from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
+from app.services.service_case_queries import select_active_service_cases
 
 
 logger = logging.getLogger(__name__)
@@ -100,8 +101,7 @@ class ReminderService:
         async with SessionLocal() as session:
             service_cases = list(
                 await session.scalars(
-                    select(ServiceCase).where(
-                        ServiceCase.deleted_at.is_(None),
+                    select_active_service_cases(
                         ServiceCase.status.in_(
                             [
                                 ServiceCaseStatus.APPROVED,
@@ -180,8 +180,7 @@ class ReminderService:
 
             service_cases = list(
                 await session.scalars(
-                    select(ServiceCase).where(
-                        ServiceCase.deleted_at.is_(None),
+                    select_active_service_cases(
                         ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
                         ServiceCase.started_at.is_not(None),
                     )
@@ -264,13 +263,24 @@ class ReminderService:
                     await session.delete(reminder_event)
             await session.commit()
 
+    async def _generate_report_for_case_worker(self, case_id: int, stage: str) -> None:
+        async with SessionLocal() as session:
+            service_case = await session.get(ServiceCase, case_id)
+            if not service_case:
+                logger.error(f"Service case {case_id} not found in worker")
+                return
+            try:
+                await generate_stage_report(session, service_case, stage=stage)
+                logger.info(f"Concurrently generated stage report {stage} for case {case_id}")
+            except Exception:
+                logger.exception(f"Failed to generate stage report {stage} for case {case_id}")
+
     async def check_stage_reports_once(self) -> None:
         now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
         async with SessionLocal() as session:
             service_cases = list(
                 await session.scalars(
-                    select(ServiceCase).where(
-                        ServiceCase.deleted_at.is_(None),
+                    select_active_service_cases(
                         ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
                         ServiceCase.started_at.is_not(None),
                     )
@@ -294,20 +304,26 @@ class ReminderService:
                 if isinstance(doc.content_json, dict) and doc.content_json.get("stage"):
                     existing_reports.add((doc.service_case_id, doc.content_json.get("stage")))
 
-            for service_case in service_cases:
-                started_at = service_case.started_at
-                if not started_at:
-                    continue
-                if started_at.tzinfo is None:
-                    started_at = started_at.replace(tzinfo=ZoneInfo("UTC"))
-                days = int((now - started_at.astimezone(ZoneInfo(self.settings.reminder_timezone))).total_seconds() // 86400)
-                for threshold, stage in ((3, "day3"), (7, "day7"), (14, "day14"), (21, "day21"), (28, "day28")):
-                    if days >= threshold:
-                        if (service_case.id, stage) not in existing_reports:
-                            await generate_stage_report(session, service_case, stage=stage)
-                if days >= 28:
-                    if (service_case.id, "graduation") not in existing_reports:
-                        await generate_stage_report(session, service_case, stage="graduation")
+        # Define the task list for parallel execution using distinct sessions
+        tasks = []
+        for service_case in service_cases:
+            started_at = service_case.started_at
+            if not started_at:
+                continue
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=ZoneInfo("UTC"))
+            days = int((now - started_at.astimezone(ZoneInfo(self.settings.reminder_timezone))).total_seconds() // 86400)
+            for threshold, stage in ((3, "day3"), (7, "day7"), (14, "day14"), (21, "day21"), (28, "day28")):
+                if days >= threshold:
+                    if (service_case.id, stage) not in existing_reports:
+                        tasks.append(self._generate_report_for_case_worker(service_case.id, stage))
+            if days >= 28:
+                if (service_case.id, "graduation") not in existing_reports:
+                    tasks.append(self._generate_report_for_case_worker(service_case.id, "graduation"))
+
+        if tasks:
+            logger.info(f"Concurrently generating {len(tasks)} stage reports via scheduler")
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def check_knowledge_evolution_once(self) -> None:
         now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
@@ -447,9 +463,10 @@ def _service_day(started_at: datetime | None, now: datetime, timezone: ZoneInfo)
 
 
 def _questionnaire_rule_for_day(schedule: dict, day: int) -> dict | None:
-    for rule in schedule.get("rules") or []:
-        if isinstance(rule, dict) and int(rule.get("day") or -1) == day:
-            return rule
+    if schedule.get("rules_enabled", True) is not False:
+        for rule in schedule.get("rules") or []:
+            if isinstance(rule, dict) and int(rule.get("day") or -1) == day:
+                return rule
     daily_rule = schedule.get("daily_rule")
     if not isinstance(daily_rule, dict) or not daily_rule.get("enabled", True):
         return None

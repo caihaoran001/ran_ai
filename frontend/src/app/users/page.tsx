@@ -2,6 +2,7 @@ import Link from "next/link";
 import { api, User, ServiceCase } from "@/lib/api";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { DeleteServiceCaseButton } from "./user-actions";
+import { Phone, MessageSquare, Clock, LoaderCircle } from "lucide-react";
 
 export default async function UsersPage({
   searchParams,
@@ -35,16 +36,16 @@ export default async function UsersPage({
         </div>
         <div className="flex rounded-lg border border-zinc-200 bg-white p-1 text-sm shadow-sm">
           <Link
-            className={`rounded-md px-4 py-2 transition-colors ${
-              !showDeleted ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50"
+            className={`rounded-md px-4 py-2 transition-all duration-200 ${
+              !showDeleted ? "bg-blue-600 text-white font-medium shadow-sm" : "text-zinc-600 hover:bg-zinc-50"
             }`}
             href="/users"
           >
             正常用户
           </Link>
           <Link
-            className={`rounded-md px-4 py-2 transition-colors ${
-              showDeleted ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50"
+            className={`rounded-md px-4 py-2 transition-all duration-200 ${
+              showDeleted ? "bg-blue-600 text-white font-medium shadow-sm" : "text-zinc-600 hover:bg-zinc-50"
             }`}
             href="/users?deleted=1"
           >
@@ -92,25 +93,35 @@ const SERVICE_CASE_FILTER_LABELS: Record<string, string> = {
 function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
   const user = serviceCase.user;
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white shadow-sm transition-shadow hover:shadow-md">
+    <div className="rounded-xl border border-zinc-200 bg-white shadow-sm transition-all duration-300 hover:shadow-md hover:border-zinc-300/80">
       <div className="flex items-start justify-between border-b border-zinc-100 p-6">
         <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-xl font-bold text-blue-700">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-xl font-bold text-blue-600 border border-blue-100 shadow-sm">
             {(user?.name ?? "用").charAt(0)}
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-zinc-900">
+            <h3 className="text-lg font-bold text-zinc-950">
               {user ? (
-                <Link href={`/users/${user.id}`} className="hover:text-blue-600 hover:underline">
+                <Link href={`/users/${user.id}`} className="hover:text-blue-600 transition-colors">
                   {user.name}
                 </Link>
               ) : (
                 "待填写问卷用户"
               )}
             </h3>
-            <div className="mt-1 flex items-center gap-3 text-sm text-zinc-500">
-              {user?.phone && <span>📱 {user.phone}</span>}
-              {user?.wecom_user_id && <span>💬 已绑定企微</span>}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500 font-semibold">
+              {user?.phone && (
+                <span className="flex items-center gap-1">
+                  <Phone className="h-3.5 w-3.5 text-zinc-400" />
+                  {user.phone}
+                </span>
+              )}
+              {user?.wecom_user_id && (
+                <span className="flex items-center gap-1 text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                  <MessageSquare className="h-3.5 w-3.5 text-emerald-500" />
+                  已绑定企微
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -118,7 +129,7 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
       </div>
 
       <div className="p-6">
-        <h4 className="mb-4 text-sm font-medium text-zinc-500">服务单</h4>
+        <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-400">服务单</h4>
         <ServiceCaseItem serviceCase={serviceCase} />
       </div>
     </div>
@@ -127,24 +138,37 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
 
 function DeletedUserCard({ user }: { user: User }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+    <div className="rounded-xl border border-zinc-200 bg-white shadow-sm transition-shadow duration-300 hover:shadow-md">
       <div className="flex items-start justify-between border-b border-zinc-100 p-6">
         <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100 text-xl font-bold text-zinc-600">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-zinc-50 text-xl font-bold text-zinc-500 border border-zinc-100">
             {user.name.charAt(0)}
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-zinc-900">{user.name}</h3>
-            <div className="mt-1 flex items-center gap-3 text-sm text-zinc-500">
-              {user.phone && <span>📱 {user.phone}</span>}
-              {user.wecom_user_id && <span>💬 已绑定企微</span>}
+            <h3 className="text-lg font-bold text-zinc-950">{user.name}</h3>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500 font-semibold">
+              {user.phone && (
+                <span className="flex items-center gap-1">
+                  <Phone className="h-3.5 w-3.5 text-zinc-400" />
+                  {user.phone}
+                </span>
+              )}
+              {user.wecom_user_id && (
+                <span className="flex items-center gap-1 text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full border border-zinc-200/60">
+                  <MessageSquare className="h-3.5 w-3.5 text-zinc-400" />
+                  已绑定企微
+                </span>
+              )}
             </div>
           </div>
         </div>
-        <span className="text-sm text-zinc-400">删除于 {formatChinaShortDateTime(user.deleted_at)}</span>
+        <span className="flex items-center gap-1 text-xs font-semibold text-zinc-400">
+          <Clock className="h-3.5 w-3.5" />
+          删除于 {formatChinaShortDateTime(user.deleted_at)}
+        </span>
       </div>
       <div className="p-6">
-        <h4 className="mb-4 text-sm font-medium text-zinc-500">历史服务单</h4>
+        <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-400">历史服务单</h4>
         {user.service_cases?.length ? (
           <div className="space-y-3">
             {user.service_cases.map((serviceCase) => <ServiceCaseItem key={serviceCase.id} serviceCase={serviceCase} />)}
@@ -161,6 +185,7 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
   const statusColors: Record<string, string> = {
     created: "bg-zinc-100 text-zinc-600",
     questionnaire_submitted: "bg-yellow-50 text-yellow-700",
+    generating: "bg-blue-50 text-blue-700",
     documents_generated: "bg-blue-50 text-blue-700",
     reviewing: "bg-purple-50 text-purple-700",
     approved: "bg-green-50 text-green-700",
@@ -171,6 +196,7 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
   const statusLabels: Record<string, string> = {
     created: "已创建",
     questionnaire_submitted: "已提交问卷",
+    generating: "文件生成中",
     documents_generated: "已生成文档",
     reviewing: "审核中",
     approved: "已批准",
@@ -186,7 +212,10 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
       <div className="flex items-center gap-4">
         <div className="text-sm font-medium text-zinc-900">{serviceCase.case_no}</div>
         <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusColors[serviceCase.status] || "bg-zinc-100 text-zinc-600"}`}>
-          {statusLabels[serviceCase.status] || serviceCase.status}
+          <span className="inline-flex items-center gap-1">
+            {serviceCase.status === "generating" && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
+            {statusLabels[serviceCase.status] || serviceCase.status}
+          </span>
         </span>
         {serviceCase.needs_human_intervention && (
           <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-red-700">待人工介入</span>

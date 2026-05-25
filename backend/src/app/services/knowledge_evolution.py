@@ -17,10 +17,11 @@ from app.models.app_setting import AppSetting
 from app.models.knowledge_draft import KnowledgeDraft
 from app.models.message import Message, MessageDirection, MessagePurpose
 from app.models.service_case import ServiceCase, ServiceCaseStatus
-from app.services.ai_service import AIService
+from app.services.ai_service import AIService, parse_json_object
 from app.services.knowledge_faq_service import create_faq
 from app.services.knowledge_index import upsert_text_chunk
 from app.services.knowledge_base import get_knowledge_base
+from app.services.service_case_queries import select_active_service_cases
 
 
 DAILY_QA_SCAN_SETTING_KEY = "knowledge_evolution_daily_qa_scans"
@@ -134,9 +135,7 @@ class KnowledgeEvolutionService:
         now = datetime.now(timezone_info)
         service_cases = list(
             await session.scalars(
-                select(ServiceCase)
-                .where(
-                    ServiceCase.deleted_at.is_(None),
+                select_active_service_cases(
                     ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
                     ServiceCase.started_at.is_not(None),
                 )
@@ -281,7 +280,7 @@ class KnowledgeEvolutionService:
                 f"已脱敏群聊：\n<sanitized_conversation>\n{_prompt_data(conversation)}\n</sanitized_conversation>"
             ),
         )
-        return _parse_json_object(text)
+        return parse_json_object(text)
 
     @staticmethod
     def _qa_extraction_prompt() -> str:
@@ -621,27 +620,3 @@ def _message_ids(value: object, messages: list[Message]) -> list[int]:
 def _content_hash(draft_type: str, question: str, answer: str) -> str:
     raw = f"{draft_type}\n{question}\n{answer}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _parse_json_object(text: str) -> dict[str, Any]:
-    text = (text or "").strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    try:
-        value = json.loads(text)
-        return value if isinstance(value, dict) else {}
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                value = json.loads(text[start : end + 1])
-                return value if isinstance(value, dict) else {}
-            except json.JSONDecodeError:
-                return {}
-    return {}
