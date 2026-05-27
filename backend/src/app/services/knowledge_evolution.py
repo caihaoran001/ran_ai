@@ -156,14 +156,17 @@ class KnowledgeEvolutionService:
             if not service_case.started_at:
                 continue
             service_day = _service_day(service_case.started_at, now, timezone_info)
-            for index, stage_day in enumerate(sorted_stages):
+            existing_case_summaries = await _existing_case_summaries(
+                session,
+                service_case_id=service_case.id,
+            )
+            for stage_day in sorted_stages:
                 if service_day < stage_day:
                     continue
                 scan_key = f"{service_case.id}:day{stage_day}"
                 if not force and scan_key in processed_set:
                     continue
-                previous_stage = sorted_stages[index - 1] if index > 0 else 0
-                start_at, end_at = _stage_window(service_case.started_at, previous_stage, stage_day, timezone_info)
+                start_at, end_at = _stage_window(service_case.started_at, 0, stage_day, timezone_info)
                 messages = await _case_messages_between(
                     session,
                     service_case=service_case,
@@ -186,7 +189,8 @@ class KnowledgeEvolutionService:
                             "stage_day": stage_day,
                             "window_start": start_at.isoformat(),
                             "window_end": end_at.isoformat(),
-                            "note": "优秀案例按阶段窗口提取，本阶段只读取上一阶段之后的新聊天，避免重复吃早期素材。",
+                            "existing_case_summaries": existing_case_summaries,
+                            "note": "优秀案例按阶段全历史提取，会综合当前阶段之前的完整聊天；若已提供既有案例摘要，请避免重复生成同一案例，只补充新的转折、证据或阶段性突破。",
                         },
                     )
                     created_total += created
@@ -359,6 +363,12 @@ class KnowledgeEvolutionService:
             "3. 情绪转正：从焦虑崩溃到被班主任安抚后重拾信心。\n"
             "4. 执行突破：体重平台期后突然掉秤、腰围变化、睡眠改善等正反馈。\n\n"
 
+            "【去重要求】\n"
+            "如果 <scan_context> 里提供了 existing_case_summaries，代表这些案例已经沉淀过或正在审核中。\n"
+            "你可以参考它们理解上下文，但禁止重复生成同一故事、同一转折、同一证据链。\n"
+            "只有当聊天中出现新的阶段突破、新的情绪转折、新的执行亮点或新的复用角度时，才输出新的优秀案例。\n"
+            "如果完整聊天里没有新的高价值案例，请返回 {\"candidates\": []}。\n\n"
+
             "【JSON 字段结构与严格定义】\n"
             "请输出如下结构的 JSON 对象：\n"
             "{\n"
@@ -506,6 +516,39 @@ async def _case_messages_between(
         .limit(limit)
     )
     return list(result)
+
+
+async def _existing_case_summaries(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    drafts = list(
+        await session.scalars(
+            select(KnowledgeDraft)
+            .where(
+                KnowledgeDraft.draft_type == "case",
+                KnowledgeDraft.status.in_(("pending", "approved")),
+            )
+            .order_by(KnowledgeDraft.created_at.asc())
+        )
+    )
+    summaries: list[dict[str, Any]] = []
+    for draft in drafts:
+        context = draft.content_json if isinstance(draft.content_json, dict) else {}
+        if context.get("service_case_id") != service_case_id:
+            continue
+        summaries.append(
+            {
+                "title": draft.title[:40],
+                "stage": str(context.get("stage") or ""),
+                "category": (draft.category or "")[:40],
+                "evidence": (draft.evidence or "")[:100],
+                "answer_summary": (draft.answer or "")[:140],
+            }
+        )
+    return summaries[-limit:]
 
 
 def _date_window(target: date, timezone_info: ZoneInfo) -> tuple[datetime, datetime]:

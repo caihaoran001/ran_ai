@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.knowledge_draft import KnowledgeDraft
 from app.schemas.knowledge_draft import (
@@ -13,11 +12,9 @@ from app.schemas.knowledge_draft import (
     KnowledgeIndexSyncResult,
     KnowledgeDraftRead,
     KnowledgeDraftReject,
-    KnowledgeDraftScanRequest,
-    KnowledgeDraftScanResult,
     KnowledgeDraftUpdate,
 )
-from app.services.knowledge_evolution import KnowledgeEvolutionService, approve_draft, reject_draft
+from app.services.knowledge_evolution import approve_draft, reject_draft
 from app.services.knowledge_index import knowledge_index_stats, sync_knowledge_chunks
 
 router = APIRouter()
@@ -53,38 +50,6 @@ async def list_knowledge_drafts(
         query = query.where(KnowledgeDraft.status == status)
     result = await session.scalars(query)
     return list(result)
-
-
-@router.post("/knowledge-drafts/scan", response_model=KnowledgeDraftScanResult)
-async def scan_knowledge_drafts(
-    payload: KnowledgeDraftScanRequest,
-    session: AsyncSession = Depends(get_session),
-) -> KnowledgeDraftScanResult:
-    service = KnowledgeEvolutionService()
-    if payload.mode == "stage_cases":
-        settings = get_settings()
-        created, skipped = await service.scan_stage_cases(
-            session,
-            stage_days=_parse_int_list(settings.knowledge_evolution_case_days),
-            force=payload.force,
-        )
-    elif payload.mode == "recent_qa":
-        created, skipped = await service.scan_messages(
-            session,
-            hours=payload.hours,
-            limit=payload.limit,
-        )
-    else:
-        created, skipped = await service.scan_daily_qa(
-            session,
-            limit=payload.limit,
-            force=payload.force,
-        )
-    return KnowledgeDraftScanResult(created=created, skipped=skipped)
-
-
-def _parse_int_list(value: str) -> list[int]:
-    return [int(item.strip()) for item in value.split(",") if item.strip().isdigit()]
 
 
 @router.patch("/knowledge-drafts/{draft_id}", response_model=KnowledgeDraftRead)

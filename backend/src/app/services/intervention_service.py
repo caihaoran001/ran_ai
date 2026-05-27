@@ -102,9 +102,12 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
 def merge_case_insight(service_case: ServiceCase, insight: dict[str, Any]) -> None:
     risks = _normalize_items(insight.get("risk_flags"), source="")
     if risks:
-        has_high_risk = any(r.get("level") in {"high", "medium"} for r in risks)
+        has_high_risk = any(r.get("level") == "high" for r in risks)
+        has_medium_risk = any(r.get("level") == "medium" for r in risks)
         if has_high_risk:
             service_case.risk_level = "high"
+        elif has_medium_risk and service_case.risk_level != "high":
+            service_case.risk_level = "medium"
         service_case.risk_flags = _merge_lists(service_case.risk_flags, risks)
 
     reasons = _normalize_items(insight.get("intervention_reasons"), source="")

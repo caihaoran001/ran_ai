@@ -28,18 +28,6 @@ class KnowledgeDraftRead(Timestamped):
     rejected_reason: str | None = None
 
 
-class KnowledgeDraftScanRequest(BaseModel):
-    hours: int = Field(default=24, ge=1, le=24 * 30)
-    limit: int = Field(default=200, ge=20, le=1000)
-    mode: str = "daily_qa"
-    force: bool = False
-
-
-class KnowledgeDraftScanResult(BaseModel):
-    created: int
-    skipped: int = 0
-
-
 class KnowledgeDraftUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     question: str | None = Field(default=None, min_length=1)

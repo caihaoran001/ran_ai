@@ -211,7 +211,7 @@ class RanrenAIEngine:
             # Decide if we use fixed reply or LLM
             is_high_risk = (
                 (service_case and service_case.risk_level == "high") or
-                (analysis and analysis.get("requires_human_intervention"))
+                (analysis and any(r.get("level") == "high" for r in analysis.get("risk_flags", [])))
             )
 
             if is_high_risk:
