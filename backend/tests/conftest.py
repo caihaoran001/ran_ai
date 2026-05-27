@@ -51,11 +51,19 @@ def mock_message_channel():
     from app.services.channels.base import MessageChannel, ChannelSendResult
 
     class TestMessageChannel(MessageChannel):
-        async def send_text(self, chat_id: str, content: str) -> ChannelSendResult:
+        async def send_text(
+            self, chat_id: str, content: str, *, reply_to: str | None = None, **kwargs
+        ) -> ChannelSendResult:
             return ChannelSendResult(success=True, message_id="mock-text-id")
 
         async def send_document(
-            self, chat_id: str, file_path: str, caption: str | None = None
+            self,
+            chat_id: str,
+            file_path: str,
+            caption: str | None = None,
+            *,
+            reply_to: str | None = None,
+            **kwargs,
         ) -> ChannelSendResult:
             return ChannelSendResult(success=True, message_id="mock-doc-id")
 
@@ -190,6 +198,44 @@ class MockAIService:
         matched = self._match(system_prompt)
         if matched is not None:
             return matched
+        if "提炼出可用于标准知识检索的 QA 问答对" in system_prompt:
+            return json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "draft_type": "qa",
+                            "title": "平台期情绪安抚",
+                            "question": "体重暂时不变化时，应该怎么稳定情绪并继续执行？",
+                            "answer": "先别急，短期数字不代表整段趋势。你已经在坚持了，今天先只守住一个最小动作：晚餐后不加餐。顺便回看下昨晚睡眠和今天排便怎么样。",
+                            "category": "心理焦虑",
+                            "tags": ["平台期", "情绪安抚", "继续执行"],
+                            "reason": "适合沉淀为高频焦虑场景下的标准答复。",
+                            "evidence": "怎么一点都不掉，我有点急了。",
+                            "source_message_ids": [1, 2],
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        if "提炼出可作为优秀案例展示的用户故事片段" in system_prompt:
+            return json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "draft_type": "case",
+                            "title": "焦虑后稳住执行",
+                            "question": "用户在平台期焦虑，但没有放弃，继续守住节律。",
+                            "answer": "这位用户在短期不掉秤时没有退出，而是继续按节律完成早C/午B/晚A，并逐步把晚间加餐收住，后续状态更稳。",
+                            "category": "情绪转正",
+                            "tags": ["平台期", "坚持执行", "节律稳定"],
+                            "reason": "能用于安抚同类焦虑用户，强调连续性比单日数字更重要。",
+                            "evidence": "怎么一点都不掉，我有点急了。",
+                            "source_message_ids": [1, 2],
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
         return '{"summary":"mock","sections":[]}'
 
     async def extract_intervention_insight(self, *, source, content, context=None):
@@ -269,16 +315,19 @@ async def mock_ai():
     mock = MockAIService()
     import app.services.ai_service.client as client_mod
     import app.services.document_service as doc_mod
+    import app.services.knowledge_evolution as evolution_mod
     import app.services.ranren_ai.engine as engine_mod
     import app.services.intervention_service as intervention_mod
 
     orig_client = client_mod.AIService
     orig_doc = doc_mod.AIService
+    orig_evolution = evolution_mod.AIService
     orig_engine = engine_mod.AIService
     orig_intervention = intervention_mod.AIService
 
     client_mod.AIService = lambda *a, **kw: mock
     doc_mod.AIService = lambda *a, **kw: mock
+    evolution_mod.AIService = lambda *a, **kw: mock
     engine_mod.AIService = lambda *a, **kw: mock
     intervention_mod.AIService = lambda *a, **kw: mock
 
@@ -286,6 +335,7 @@ async def mock_ai():
 
     client_mod.AIService = orig_client
     doc_mod.AIService = orig_doc
+    evolution_mod.AIService = orig_evolution
     engine_mod.AIService = orig_engine
     intervention_mod.AIService = orig_intervention
 
@@ -307,6 +357,10 @@ async def db_session():
             pass
         session.rollback = mock_rollback
 
+        session.info["test_trans"] = trans
+        session.info["orig_commit"] = orig_commit
+        session.info["orig_rollback"] = orig_rollback
+
         yield session
         
         session.commit = orig_commit
@@ -320,6 +374,7 @@ async def db_session():
 @pytest_asyncio.fixture(autouse=True)
 async def mock_session_local(db_session):
     import sys
+    import importlib
     import app.db.session
 
     orig_session_local = app.db.session.SessionLocal
@@ -349,19 +404,23 @@ async def mock_session_local(db_session):
         "app.services.reminder_service",
     ]
     for mod_name in modules_to_patch:
-        if mod_name in sys.modules:
-            mod = sys.modules[mod_name]
+        try:
+            mod = importlib.import_module(mod_name)
             if hasattr(mod, "SessionLocal"):
                 setattr(mod, "SessionLocal", mock_creator)
+        except Exception:
+            pass
 
     yield
 
     app.db.session.SessionLocal = orig_session_local
     for mod_name in modules_to_patch:
-        if mod_name in sys.modules:
-            mod = sys.modules[mod_name]
+        try:
+            mod = importlib.import_module(mod_name)
             if hasattr(mod, "SessionLocal"):
                 setattr(mod, "SessionLocal", orig_session_local)
+        except Exception:
+            pass
 
 
 @pytest_asyncio.fixture
@@ -398,7 +457,7 @@ async def public_client(mock_ai, db_session):
         yield ac
 
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _dispose_engine_after_test():
     yield
     from app.db.session import engine

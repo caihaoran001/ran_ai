@@ -1,7 +1,12 @@
 """Designed user messages simulating a realistic 28-day service journey.
 
-Each entry: (day, content, expected_behavior)
-expected_behavior is used by the MockAIService to simulate the right risk/intent response.
+Each entry contains:
+- day: which service day the message belongs to
+- content: the actual user message text seeded into the database
+- description: developer-facing note describing what the scenario is meant to cover
+
+Only ``content`` is written into test messages. ``description`` is not sent to the
+model and does not participate in runtime judgment.
 """
 
 from __future__ import annotations

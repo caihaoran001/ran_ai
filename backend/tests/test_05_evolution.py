@@ -79,8 +79,16 @@ async def test_evolution_generates_drafts_from_seeded_chat(
 
     await admin_client.post("/settings/knowledge-evolution", json={"enabled": True})
 
+    from sqlalchemy import update
+    await db_session.execute(
+        update(ServiceCase)
+        .where(ServiceCase.id != case["id"])
+        .values(status=ServiceCaseStatus.CREATED)
+    )
+    await db_session.flush()
+
     from app.services.knowledge_evolution import KnowledgeEvolutionService
-    service = KnowledgeEvolutionService()
+    service = KnowledgeEvolutionService(ai=mock_ai)
     qa_count, _case_scan = await service.scan_messages(
         db_session, hours=720, limit=200,
     )
@@ -109,3 +117,87 @@ async def test_evolution_generates_drafts_from_seeded_chat(
     assert len(case_drafts) > 0, (
         f"打卡数据应产生案例草稿。当前: qa={len(qa_drafts)} case={len(case_drafts)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_stage_case_scan_uses_full_history_and_existing_case_context(
+    admin_client,
+    db_session,
+    mock_ai,
+):
+    suffix = secrets.token_hex(6)
+    group_id = f"test-evo-history-{suffix}"
+    resp = await admin_client.post(
+        "/service-cases",
+        json={"group_id": group_id, "user": {"name": "案例上下文测试"}},
+    )
+    assert resp.status_code == 201
+    case = resp.json()
+
+    await seed_chat_messages(db_session, case["id"], group_id)
+    sc = await db_session.get(ServiceCase, case["id"])
+    sc.status = ServiceCaseStatus.IN_SERVICE
+    sc.started_at = datetime.now(timezone.utc) - timedelta(days=28)
+    await db_session.flush()
+
+    existing = KnowledgeDraft(
+        draft_type="case",
+        status="approved",
+        title="已沉淀旧案例",
+        question="旧案例背景",
+        answer="旧案例结果",
+        category="坚持执行",
+        evidence="旧证据",
+        content_hash=f"existing-{suffix}",
+        content_json={"service_case_id": case["id"], "stage": "day3"},
+    )
+    db_session.add(existing)
+    await db_session.flush()
+
+    from sqlalchemy import update
+    await db_session.execute(
+        update(ServiceCase)
+        .where(ServiceCase.id != case["id"])
+        .values(status=ServiceCaseStatus.CREATED)
+    )
+    await db_session.flush()
+
+    from app.services.knowledge_evolution import KnowledgeEvolutionService
+
+    service = KnowledgeEvolutionService(ai=mock_ai)
+    created, _skipped = await service.scan_stage_cases(
+        db_session,
+        stage_days=[7],
+        limit_per_case=200,
+        force=True,
+    )
+    assert created > 0
+
+    drafts = list(
+        await db_session.scalars(
+            select(KnowledgeDraft)
+            .where(
+                KnowledgeDraft.draft_type == "case",
+                KnowledgeDraft.status == "pending",
+            )
+            .order_by(KnowledgeDraft.id.desc())
+        )
+    )
+
+    latest = next(
+        (
+            draft
+            for draft in drafts
+            if isinstance(draft.content_json, dict)
+            and draft.content_json.get("service_case_id") == case["id"]
+            and draft.content_json.get("stage") == "day7"
+        ),
+        None,
+    )
+    assert latest is not None
+    assert latest.content_json is not None
+    assert latest.content_json.get("stage") == "day7"
+    assert latest.content_json.get("service_case_id") == case["id"]
+    existing_summaries = latest.content_json.get("existing_case_summaries") or []
+    assert existing_summaries, "应把既有案例摘要传给本次阶段扫描"
+    assert existing_summaries[0]["title"] == "已沉淀旧案例"
