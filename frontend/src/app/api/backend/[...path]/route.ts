@@ -33,7 +33,7 @@ async function proxy(
     if (value) responseHeaders.set(key, value);
   }
 
-  return new NextResponse(await response.arrayBuffer(), {
+  return new NextResponse(response.body, {
     status: response.status,
     headers: responseHeaders,
   });

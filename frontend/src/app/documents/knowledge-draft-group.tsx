@@ -50,8 +50,6 @@ export function FAQEvolutionCenter({
   const [config, setConfig] = useState(evolutionConfig);
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
-  const [scanBusy, setScanBusy] = useState(false);
-  const [scanMessage, setScanMessage] = useState("");
 
   const sourceText = Object.entries(indexStats.by_source_type)
     .map(([source, count]) => `${source} ${count}`)
@@ -67,20 +65,6 @@ export function FAQEvolutionCenter({
     });
     setSaveMessage(response.ok ? "配置已保存" : "保存失败");
     setSaveBusy(false);
-    router.refresh();
-  }
-
-  async function triggerScan() {
-    setScanBusy(true);
-    setScanMessage("");
-    const response = await fetch(`${API_BASE}/knowledge-drafts/scan`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "recent_qa", hours: 72, limit: 300 }),
-    });
-    const data = await response.json().catch(() => null);
-    setScanMessage(response.ok ? `已提取 ${data?.created ?? 0} 条 FAQ 草稿` : "扫描失败");
-    setScanBusy(false);
     router.refresh();
   }
 
@@ -169,17 +153,10 @@ export function FAQEvolutionCenter({
                 {saveBusy ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                 <span>保存配置</span>
               </Button>
-              <Button
-                type="button"
-                className="border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs transition-all active:scale-[0.98] h-8.5 flex items-center gap-1.5 shadow-2xs"
-                onClick={triggerScan}
-                disabled={scanBusy}
-              >
-                <RefreshCw className={`h-3.5 w-3.5 text-zinc-500 ${scanBusy ? "animate-spin" : ""}`} />
-                <span>{scanBusy ? "正在提取..." : "立即手动提取 FAQ (近3天)"}</span>
-              </Button>
               {saveMessage && <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">{saveMessage}</span>}
-              {scanMessage && <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-md animate-fadeIn">{scanMessage}</span>}
+              <span className="text-xs font-medium text-zinc-500">
+                系统会按计划自动扫描每日聊天并生成 FAQ 草稿，运营侧只需审核与修订。
+              </span>
             </div>
           </div>
         )}
@@ -354,8 +331,6 @@ export function ExcellentCaseEvolutionCenter({
   const [config, setConfig] = useState(evolutionConfig);
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
-  const [scanBusy, setScanBusy] = useState(false);
-  const [scanMessage, setScanMessage] = useState("");
 
   async function saveConfig() {
     setSaveBusy(true);
@@ -367,20 +342,6 @@ export function ExcellentCaseEvolutionCenter({
     });
     setSaveMessage(response.ok ? "配置已保存" : "保存失败");
     setSaveBusy(false);
-    router.refresh();
-  }
-
-  async function triggerScan() {
-    setScanBusy(true);
-    setScanMessage("");
-    const response = await fetch(`${API_BASE}/knowledge-drafts/scan`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "stage_cases" }),
-    });
-    const data = await response.json().catch(() => null);
-    setScanMessage(response.ok ? `已完成扫描，新增 ${data?.created ?? 0} 个优秀案例` : "扫描失败");
-    setScanBusy(false);
     router.refresh();
   }
 
@@ -459,17 +420,10 @@ export function ExcellentCaseEvolutionCenter({
                 {saveBusy ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                 <span>保存配置</span>
               </Button>
-              <Button
-                type="button"
-                className="border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs transition-all active:scale-[0.98] h-8.5 flex items-center gap-1.5 shadow-2xs"
-                onClick={triggerScan}
-                disabled={scanBusy}
-              >
-                <Sparkles className={`h-3.5 w-3.5 text-zinc-500 ${scanBusy ? "animate-pulse" : ""}`} />
-                <span>{scanBusy ? "正在提取..." : "立即手动提取案例 (基于服务阶段)"}</span>
-              </Button>
               {saveMessage && <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">{saveMessage}</span>}
-              {scanMessage && <span className="text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-100 px-2.5 py-1 rounded-md animate-fadeIn">{scanMessage}</span>}
+              <span className="text-xs font-medium text-zinc-500">
+                系统会在 3/7/14/21/28 天自动扫描阶段聊天，生成优秀案例草稿，运营侧只负责审核入库。
+              </span>
             </div>
           </div>
         )}

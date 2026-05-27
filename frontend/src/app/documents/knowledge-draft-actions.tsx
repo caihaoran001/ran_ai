@@ -293,50 +293,6 @@ export function KnowledgeDraftActions({
   );
 }
 
-export function KnowledgeDraftScanButton() {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-
-  async function scan(mode: "recent_qa" | "stage_cases") {
-    setBusy(true);
-    setMessage("");
-    const response = await fetch(`${API_BASE}/knowledge-drafts/scan`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode, hours: 72, limit: 300 }),
-    });
-    const data = await response.json().catch(() => null);
-    setMessage(response.ok ? `新增 ${data?.created ?? 0} 条，跳过 ${data?.skipped ?? 0} 条` : "生成失败");
-    setBusy(false);
-    router.refresh();
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Button
-        type="button"
-        className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 font-semibold text-xs transition-all active:scale-[0.98] h-8.5 flex items-center gap-1.5"
-        onClick={() => scan("recent_qa")}
-        disabled={busy}
-      >
-        <Compass className={`h-3.5 w-3.5 text-blue-500 ${busy ? "animate-spin" : ""}`} />
-        <span>{busy ? "扫描中..." : "提取近3天FAQ"}</span>
-      </Button>
-      <Button
-        type="button"
-        className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 font-semibold text-xs transition-all active:scale-[0.98] h-8.5 flex items-center gap-1.5"
-        onClick={() => scan("stage_cases")}
-        disabled={busy}
-      >
-        <Sparkles className={`h-3.5 w-3.5 text-purple-500 ${busy ? "animate-pulse" : ""}`} />
-        <span>{busy ? "扫描中..." : "检查阶段案例"}</span>
-      </Button>
-      {message && <span className="text-xs font-semibold text-blue-650 bg-blue-50 border border-blue-100 px-2 py-1 rounded-md animate-fadeIn">{message}</span>}
-    </div>
-  );
-}
-
 export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig: KnowledgeEvolutionSetting }) {
   const router = useRouter();
   const [config, setConfig] = useState(initialConfig);
@@ -473,20 +429,8 @@ export function KnowledgeIndexSyncButton() {
     router.refresh();
   }
 
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Button
-        type="button"
-        className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold shadow-xs transition-all active:scale-[0.98] h-8.5 flex items-center gap-1.5 px-4 border border-transparent"
-        onClick={() => sync(true)}
-        disabled={busy}
-      >
-        <RefreshCw className={`h-3.5 w-3.5 text-white/90 ${busy ? "animate-spin" : ""}`} />
-        <span>{busy ? "向量化中..." : "同步并向量化"}</span>
-      </Button>
-      {message && <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md animate-fadeIn">{message}</span>}
-    </div>
-  );
+  // 前台运营界面已隐藏该技术维度按钮，其底层能力已收归至“开发者自测控制台”，保证用户体验的纯粹角色扮演
+  return null;
 }
 
 export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {

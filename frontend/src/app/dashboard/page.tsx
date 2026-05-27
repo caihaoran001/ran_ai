@@ -179,6 +179,29 @@ export default async function DashboardPage() {
           description="每个服务单当前有效的最新文档里，状态为草稿或待审核的文件数。历史版本不计入。"
         />
       </div>
+
+      {/* 开发者系统健康自测试 Banner 引导 */}
+      <div className="mt-8 p-6 rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50/80 via-white to-zinc-50/50 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+            <h3 className="text-sm font-bold text-zinc-900 flex items-center gap-1.5">
+              ⚡ 自动化链路自我进化与诊断中心
+            </h3>
+          </div>
+          <p className="text-xs text-zinc-500 leading-relaxed max-w-3xl">
+            系统集成了 7 项核心功能自动化链路测试（包含真实大模型多轮对话、处方 Word 编译、24小时群聊 FAQ 沉淀、服务阶段案例沉淀）。测试执行支持全自动数据库物理回滚清理，对线上生产数据零污染。
+          </p>
+        </div>
+        <div>
+          <Link
+            href="/system-diagnostics"
+            className="inline-flex items-center justify-center px-4.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition active:translate-y-0.5 whitespace-nowrap"
+          >
+            进入诊断控制台 →
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }

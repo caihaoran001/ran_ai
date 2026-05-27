@@ -30,11 +30,22 @@ export function StageReportActions({
 
   async function generate(stage: string) {
     setBusyStage(stage);
-    await fetch(`${API_BASE}/service-cases/${serviceCaseId}/stage-reports/generate?stage=${stage}`, {
-      method: "POST",
-    });
-    setBusyStage(null);
-    router.refresh();
+    try {
+      const res = await fetch(`${API_BASE}/service-cases/${serviceCaseId}/stage-reports/generate?stage=${stage}`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        alert(`${STAGES.find(([s]) => s === stage)?.[1] || ""}报告生成成功！`);
+      } else {
+        const text = await res.text();
+        alert(`生成失败: ${text || "服务器异常"}`);
+      }
+    } catch (e: any) {
+      alert(`生成出错: ${e.message || e}`);
+    } finally {
+      setBusyStage(null);
+      router.refresh();
+    }
   }
 
   return (

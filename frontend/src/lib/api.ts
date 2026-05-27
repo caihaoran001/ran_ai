@@ -219,3 +219,17 @@ export type KnowledgeEvolutionSetting = {
   case_limit_per_case: number;
   timezone: string;
 };
+
+export type DiagnosticsSummary = {
+  database: {
+    status: "connected" | "failed" | "checking" | string;
+    message: string;
+  };
+  ai_probe: {
+    status: "connected" | "failed" | "not_configured" | "checking" | string;
+    message: string;
+    latency_ms?: number | null;
+    model?: string | null;
+  };
+  checked_at: number;
+};
