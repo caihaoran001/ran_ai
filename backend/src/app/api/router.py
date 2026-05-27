@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     checkins,
     dashboard,
+    diagnostics,
     documents,
     knowledge_drafts,
     knowledge_faqs,
@@ -28,5 +29,6 @@ api_router.include_router(knowledge_faqs.router, tags=["knowledge-faqs"])
 api_router.include_router(checkins.router, tags=["checkins"])
 api_router.include_router(messages.router, tags=["messages"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+api_router.include_router(diagnostics.router, prefix="/diagnostics", tags=["diagnostics"])
 api_router.include_router(wecom.router, tags=["wecom"])
 api_router.include_router(settings.router, tags=["settings"])
