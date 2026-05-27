@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-05-25 - 诊断控制台测试清单与容器测试目录对齐
+
+- 修正 `diagnostics.py` 中 01~07 测试清单，改为指向当前仓库真实存在的测试文件：`test_01_intake.py`、`test_02_chat.py`、`test_03_checkin.py`、`test_04_stage_reports.py`、`test_05_evolution.py`、`test_06_toggles.py`、`test_07_real_llm_e2e.py`。
+- 诊断执行前增加测试文件存在性校验；若清单与当前仓库不一致，会在流式日志中明确提示“测试文件不存在”，不再让旧容器残留文件误导结果。
+- `docker-compose.yml` 为后端容器新增 `./backend/tests:/app/tests` 挂载，确保开发环境中诊断控制台始终运行当前工作区测试。
+- `backend/Dockerfile` 构建镜像时新增 `COPY tests ./tests`，并改为安装 `dev` 依赖组，确保容器内具备 `pytest` / `pytest-asyncio`，诊断控制台不再因缺少测试运行器而全部报红。
+
 ## 2026-05-25 - 恢复提交回执配置与用户画像摘要
 
 - 入营问卷提交后新增可配置群内回执；发送结果会写入聊天记录，失败只记录错误不影响问卷提交和文档生成。
@@ -702,6 +709,26 @@
 
 > [!NOTE]
 > 2026-05-18 及以前的历史更新已被整理归档至 [CHANGELOG_archive.md](file:///home/chr/桌面/ran_ai/docs/history/CHANGELOG_archive.md)。
+## 2026-05-25 - 诊断控制台指标改为真实探针
+
+- 后端新增 `/api/diagnostics/summary`，实时返回数据库连通状态与 AI 连通探针结果。
+- 数据库状态卡不再使用前端写死的 `CONNECTED`，改为真实执行 `SELECT 1` 的探针结果。
+- AI 指标卡不再显示伪造的 `1.35s`，改为单次真实模型连通探针耗时；若未配置 `AI_API_KEY` 或探针失败，会明确显示对应状态。
+- 前端诊断页在加载时和执行测试后都会自动刷新这两个指标，并将文案从“平均延迟”调整为更准确的“探针延迟”。
+
+## 2026-05-25 - 知识进化阶段扫描收口与测试基线校准
+
+- 优秀案例阶段扫描改为“按当前阶段的完整历史聊天提取”，不再只读取上一阶段之后的新消息。
+- 阶段案例扫描在送给 LLM 前，会附带同一服务单已存在的优秀案例摘要，要求模型避免重复生成同一故事，只补充新的转折、证据或阶段突破。
+- 移除后台知识草稿页里的手动 FAQ / 手动优秀案例扫描入口，运营侧只保留自动进化配置、草稿审核与入库编辑。
+- 下线公开的 `/api/knowledge-drafts/scan` 手动扫描接口，知识进化只保留定时自动扫描链路。
+- 测试 `MockAIService` 现在同时接管 `knowledge_evolution`，为 FAQ / case 提取提供稳定 JSON 返回，避免知识进化测试误走真实模型。
+- 新增阶段案例测试，覆盖“全历史扫描 + 既有案例摘要去重上下文”这一新行为。
+- 在 backend 容器里复跑关键测试：
+  - `test_05_evolution.py` 5 passed
+  - `test_02_chat.py` 6 passed
+  - `test_01_intake.py` 4 passed
+
 ## 2026-05-22 - intake 生成截断显式报错与详情页失败提示
 
 - 后端 `AIService.generate_text()` 新增 `finish_reason == "length"` 检查；当大模型因为 `max_tokens` 截断时，直接抛出明确错误，避免后续走到“JSON 解析失败 -> 空文档内容”的静默失败链路。
