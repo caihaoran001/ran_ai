@@ -37,6 +37,7 @@ services:
       - ./backend/pyproject.toml:/app/pyproject.toml
       - ./backend/uv.lock:/app/uv.lock
       - ./backend/src:/app/src
+      - ./backend/tests:/app/tests
       - ./backend/scripts:/app/scripts
       - ./backend/alembic:/app/alembic
       - ./generated_documents:/app/generated_documents
