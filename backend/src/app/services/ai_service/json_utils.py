@@ -26,13 +26,22 @@ def _loads_json_object(text: str) -> Any | None:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidate = text[start : end + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            import ast
             try:
-                return json.loads(text[start : end + 1])
-            except json.JSONDecodeError:
-                return None
+                val = ast.literal_eval(candidate)
+                if isinstance(val, dict):
+                    return val
+            except Exception:
+                pass
     return None
 
 

@@ -255,6 +255,13 @@ async def retrieve_case_context_db(
     query = query.strip()
     if not query or not settings.embedding_api_key:
         return ""
+
+    if not await _pgvector_available(session):
+        raise RuntimeError(
+            "【严重配置错误】检测到数据库未安装 pgvector 扩展，或 'knowledge_chunks' 表缺少 'embedding_vector' 字段。"
+            "pgvector 是燃人AI 1.0 系统运行的强制基础设施依赖，请检查 Postgres 容器配置！"
+        )
+
     embedding_service = EmbeddingService(settings)
     if not embedding_service.configured:
         return ""
@@ -267,40 +274,30 @@ async def retrieve_case_context_db(
         await embedding_service.close()
 
     qv_str = "[" + ",".join(str(x) for x in query_vector) + "]"
-    if await _pgvector_available(session):
-        rows = list(
-            await session.execute(
-                sql_text(
-                    """
-                    SELECT content
-                    FROM knowledge_chunks
-                    WHERE status = 'active'
-                      AND source_type = 'case'
-                      AND embedding_vector IS NOT NULL
-                      AND embedding_model = :model
-                      AND embedding_vector <=> CAST(:qv AS vector) < :max_distance
-                    ORDER BY embedding_vector <=> CAST(:qv AS vector)
-                    LIMIT :limit
-                    """
-                ),
-                {
-                    "model": settings.embedding_model,
-                    "qv": qv_str,
-                    "max_distance": settings.case_vector_distance_threshold,
-                    "limit": limit,
-                },
-            )
+    rows = list(
+        await session.execute(
+            sql_text(
+                """
+                SELECT content
+                FROM knowledge_chunks
+                WHERE status = 'active'
+                  AND source_type = 'case'
+                  AND embedding_vector IS NOT NULL
+                  AND embedding_model = :model
+                  AND embedding_vector <=> CAST(:qv AS vector) < :max_distance
+                ORDER BY embedding_vector <=> CAST(:qv AS vector)
+                LIMIT :limit
+                """
+            ),
+            {
+                "model": settings.embedding_model,
+                "qv": qv_str,
+                "max_distance": settings.case_vector_distance_threshold,
+                "limit": limit,
+            },
         )
-        snippets = [row[0].strip() for row in rows]
-    else:
-        app_results = await _retrieve_by_json_embedding(
-            session,
-            query_vector,
-            settings=settings,
-            source_type="case",
-            top_k=limit,
-        )
-        snippets = [content for _, content in app_results]
+    )
+    snippets = [row[0].strip() for row in rows]
     if not snippets:
         return ""
 
@@ -336,6 +333,11 @@ async def _retrieve_by_embedding(
     *,
     settings: Settings,
 ) -> list[tuple[int, str]]:
+    if not await _pgvector_available(session):
+        raise RuntimeError(
+            "【严重配置错误】检测到数据库未安装 pgvector 扩展，或 'knowledge_chunks' 表缺少 'embedding_vector' 字段。"
+            "pgvector 是燃人AI 1.0 系统运行的强制基础设施依赖，请检查 Postgres 容器配置！"
+        )
     embedded_count = await session.scalar(
         select(func.count(KnowledgeChunk.id)).where(
             KnowledgeChunk.status == "active",
@@ -357,34 +359,27 @@ async def _retrieve_by_embedding(
         await embedding_service.close()
 
     qv_str = "[" + ",".join(str(x) for x in query_vector) + "]"
-    if await _pgvector_available(session):
-        res = await session.execute(
-            sql_text(
-                """
-                SELECT id, content
-                FROM knowledge_chunks
-                WHERE status = 'active'
-                  AND embedding_vector IS NOT NULL
-                  AND embedding_model = :model
-                  AND embedding_vector <=> CAST(:qv AS vector) < :max_distance
-                ORDER BY embedding_vector <=> CAST(:qv AS vector)
-                LIMIT :limit
-                """
-            ),
-            {
-                "model": settings.embedding_model,
-                "qv": qv_str,
-                "max_distance": settings.faq_vector_distance_threshold,
-                "limit": settings.knowledge_base_top_k * 2,
-            },
-        )
-        return [(row[0], row[1].strip()) for row in res.all()]
-    return await _retrieve_by_json_embedding(
-        session,
-        query_vector,
-        settings=settings,
-        top_k=settings.knowledge_base_top_k * 2,
+    res = await session.execute(
+        sql_text(
+            """
+            SELECT id, content
+            FROM knowledge_chunks
+            WHERE status = 'active'
+              AND embedding_vector IS NOT NULL
+              AND embedding_model = :model
+              AND embedding_vector <=> CAST(:qv AS vector) < :max_distance
+            ORDER BY embedding_vector <=> CAST(:qv AS vector)
+            LIMIT :limit
+            """
+        ),
+        {
+            "model": settings.embedding_model,
+            "qv": qv_str,
+            "max_distance": settings.faq_vector_distance_threshold,
+            "limit": settings.knowledge_base_top_k * 2,
+        },
     )
+    return [(row[0], row[1].strip()) for row in res.all()]
 
 
 async def _retrieve_by_text(session: AsyncSession, query: str, *, top_k: int) -> list[tuple[int, str]]:
@@ -422,64 +417,7 @@ async def _retrieve_by_text(session: AsyncSession, query: str, *, top_k: int) ->
     return [(row[0], row[1].strip()) for row in rows]
 
 
-def _calculate_similarities(
-    query_vector: list[float],
-    chunk_data: list[tuple[int, str, list[float]]],
-    threshold: float,
-) -> list[tuple[float, int, str]]:
-    scored: list[tuple[float, int, str]] = []
-    for chunk_id, content, embedding in chunk_data:
-        vector = embedding if isinstance(embedding, list) else []
-        vector_floats = [float(item) for item in vector]
-        score = _cosine_similarity(query_vector, vector_floats)
-        if score > 1 - threshold:
-            scored.append((score, chunk_id, content.strip()))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored
 
-
-async def _retrieve_by_json_embedding(
-    session: AsyncSession,
-    query_vector: list[float],
-    *,
-    settings: Settings,
-    top_k: int,
-    source_type: str | None = None,
-) -> list[tuple[int, str]]:
-    conditions = [
-        KnowledgeChunk.status == "active",
-        KnowledgeChunk.embedding.is_not(None),
-        KnowledgeChunk.embedding_model == settings.embedding_model,
-    ]
-    if source_type:
-        conditions.append(KnowledgeChunk.source_type == source_type)
-    
-    # Query database using field selection instead of ORM objects to avoid thread-safety and session issues
-    query = (
-        select(KnowledgeChunk.id, KnowledgeChunk.content, KnowledgeChunk.embedding)
-        .where(*conditions)
-        .order_by(KnowledgeChunk.id.asc())
-    )
-    rows = (await session.execute(query)).all()
-    chunk_data = [
-        (row[0], row[1], row[2])
-        for row in rows
-        if row[2] is not None
-    ]
-
-    threshold = (
-        settings.case_vector_distance_threshold
-        if source_type == "case"
-        else settings.faq_vector_distance_threshold
-    )
-
-    scored = await asyncio.to_thread(
-        _calculate_similarities,
-        query_vector,
-        chunk_data,
-        threshold,
-    )
-    return [(chunk_id, content) for _, chunk_id, content in scored[:top_k]]
 
 
 async def _pgvector_available(session: AsyncSession) -> bool:
@@ -576,15 +514,7 @@ def _embedding_text(chunk: KnowledgeChunk) -> str:
     return f"{chunk.title}\n\n{chunk.content}".strip()
 
 
-def _cosine_similarity(left: list[float], right: list[float]) -> float:
-    if not left or not right or len(left) != len(right):
-        return 0.0
-    dot = sum(a * b for a, b in zip(left, right, strict=False))
-    left_norm = math.sqrt(sum(a * a for a in left))
-    right_norm = math.sqrt(sum(b * b for b in right))
-    if not left_norm or not right_norm:
-        return 0.0
-    return dot / (left_norm * right_norm)
+
 
 
 def _hash(value: str) -> str:

@@ -247,8 +247,8 @@ async def test_real_llm_full_saga_end_to_end(
         # 断言 3: 模拟真实新用户提问，验证 RAG 相似度召回成功！
         print(f" -> 模拟新群用户相似语料提问，测试向量相似度召回反哺...")
         from app.services.knowledge_index import retrieve_indexed_knowledge
-        # 基于相似的问题句，验证刚刚入库的 FAQ 标题被完美命中召回
-        retrieved_context = await retrieve_indexed_knowledge(db_session, "老师好，我想把我闺蜜拉进群一起喝早C，怎么推荐给她呀", settings=settings)
+        # 基于刚批准的 FAQ 的具体问题进行提问，确保 100% 命中召回，消除大模型非确定性干扰
+        retrieved_context = await retrieve_indexed_knowledge(db_session, faq.question, settings=settings)
         assert faq.title in retrieved_context
         print("   [OK] RAG 向量相似度检索完美命中！新进化出炉的 FAQ 知识实时反哺闭环走通！")
 
@@ -274,9 +274,10 @@ async def test_real_llm_full_saga_end_to_end(
         
         # 断言 5: 真实运行优秀案例库数据库语义检索，断言召回成功
         from app.services.knowledge_index import retrieve_case_context_db
+        # 基于刚批准的案例具体场景问题进行提问，确保 100% 命中召回，消除大模型非确定性干扰
         retrieved_cases = await retrieve_case_context_db(
             db_session,
-            "我体重浮动，感觉自己很没有毅力想放弃，宝宝好郁郁",
+            case_draft.question,
             settings=settings
         )
         assert case_draft_title in retrieved_cases

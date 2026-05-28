@@ -384,18 +384,21 @@ async def mark_seen(service_case_id: int, event_date: date | None = None) -> Non
 @asynccontextmanager
 async def _scheduler_advisory_lock():
     async with SessionLocal() as session:
-        acquired = bool(
-            await session.scalar(
-                text("SELECT pg_try_advisory_lock(:key)").bindparams(key=SCHEDULER_ADVISORY_LOCK_KEY)
-            )
-        )
-        try:
-            yield acquired
-        finally:
-            if acquired:
-                await session.execute(
-                    text("SELECT pg_advisory_unlock(:key)").bindparams(key=SCHEDULER_ADVISORY_LOCK_KEY)
+        if session.in_transaction():
+            acquired = bool(
+                await session.scalar(
+                    text("SELECT pg_try_advisory_xact_lock(:key)").bindparams(key=SCHEDULER_ADVISORY_LOCK_KEY)
                 )
+            )
+            yield acquired
+        else:
+            async with session.begin():
+                acquired = bool(
+                    await session.scalar(
+                        text("SELECT pg_try_advisory_xact_lock(:key)").bindparams(key=SCHEDULER_ADVISORY_LOCK_KEY)
+                    )
+                )
+                yield acquired
 
 
 async def _has_event(
