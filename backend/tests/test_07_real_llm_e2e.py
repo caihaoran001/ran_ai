@@ -224,7 +224,6 @@ async def test_real_llm_full_saga_end_to_end(
         await db_session.flush()
         
         # 断言 1: 正式 FAQ 实体记录已产生
-        db_session.expire_all()
         from app.models.knowledge_faq import KnowledgeFAQ
         faq_records = list(await db_session.scalars(
             select(KnowledgeFAQ).where(KnowledgeFAQ.source_id == str(qa_draft_id))

@@ -14,3 +14,4 @@ generated_documents/
 backend/pytest_output.log
 .sisyphus/
 .antigravitycli/
+scratch/

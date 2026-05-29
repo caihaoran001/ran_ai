@@ -1,6 +1,6 @@
 # 燃AI 1.0
 
-燃AI 1.0 是内部运营系统：一个企业微信群对应一个真实用户的 28 天服务空间。系统负责服务单、H5 问卷、LLM 生成用户画像和交付文件、人工审核、打卡记录、企微机器人消息收发和基础看板。
+燃AI 1.0 是内部运营系统：一个社群对应一个真实用户的 28 天服务空间。系统负责服务单、H5 问卷、LLM 生成用户画像和交付文件、人工审核、打卡记录、QiWe 实验通道消息收发和基础看板。
 
 ## 技术栈
 
@@ -8,13 +8,13 @@
 - Backend: FastAPI + Python + SQLAlchemy + Alembic
 - Database: PostgreSQL
 - AI: OpenAI SDK 兼容配置，默认可接 DeepSeek
-- Messaging: 企业微信 AI Bot WebSocket bridge
+- Messaging: QiWe 实验通道
 - Runtime: Docker Compose
 
 ## 项目结构
 
 ```text
-backend/      FastAPI、SQLAlchemy、Alembic、AI 服务、企微机器人服务
+backend/      FastAPI、SQLAlchemy、Alembic、AI 服务、QiWe 消息通道
 frontend/     Next.js 后台和 H5 问卷
 docker-compose.yml
 .env.example
@@ -32,8 +32,10 @@ cp .env.example .env
 
 ```bash
 AI_API_KEY=your-ai-api-key
-WECOM_BOT_ID=your-bot-id
-WECOM_SECRET=your-secret
+QIWEI_ENABLED=true
+QIWEI_TOKEN=your-qiwei-token
+QIWEI_GUID=your-online-device-guid
+QIWEI_CALLBACK_SECRET=change-me-callback-secret
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=change-me
 BACKEND_ADMIN_API_KEY=change-me-internal-api-key
@@ -255,43 +257,40 @@ KNOWLEDGE_EVOLUTION_QA_AT=00:00
 KNOWLEDGE_EVOLUTION_CASE_DAYS=3,7,14,21,28
 ```
 
-## 企业微信机器人
+## QiWe 实验通道
 
-企微机器人是 backend 的核心组成部分。启用：
+QiWe 是当前主要消息通道。启用：
 
 ```bash
-WECOM_WORKER_ENABLED=true
-WECOM_BOT_ID=your-bot-id
-WECOM_SECRET=your-secret
+QIWEI_ENABLED=true
+QIWEI_TOKEN=your-qiwei-token
+QIWEI_GUID=your-online-device-guid
+QIWEI_CALLBACK_SECRET=change-me-callback-secret
+QIWEI_BATCH_WINDOW_SECONDS=8
 ```
 
-机器人职责：
+通道职责：
 
-- 接收企业微信群消息
+- 接收 QiWe callback 推送的群消息
+- callback URL 需要携带 `?secret=...`，或由上游请求头传入 `X-Qiwei-Callback-Secret`
+- 同一群同一用户连续文本先聚合，再交给燃AI处理
 - 按 `group_id` 关联 `service_cases`
 - 写入 `messages`
 - 普通聊天会检索知识库后调用 DeepSeek 生成回复
 - 群里发送“发送本群入营问卷”会自动创建或复用本群服务单，并回复本群专属问卷链接
-- 后台人工发送、提醒发送、AI 回复统一通过企微服务完成
+- 后台人工发送、提醒发送、AI 回复统一通过 QiWe 服务完成
 
 ## 消息通道与燃人AI
 
 消息接入已经拆成两层：
 
 ```text
-app/services/channels/        通用消息通道接口、当前通道注册表、企微 adapter
+app/services/channels/        通用消息通道接口、当前通道注册表、QiWe adapter
 app/services/ranren_ai/       通道无关的业务处理引擎
-app/services/wecom_service/   当前企微 AI Bot 接入 worker
+app/services/qiwe_service/    QiWe 群消息聚合
 ```
 
-`RanrenAIEngine` 只依赖通用 `MessageChannel`，负责入营问卷指令、知识库检索、LLM 回复和消息落库。当前企微 worker 只把 `WeComMessage` 转成 `ChannelMessage` 后交给引擎处理。后续如果换成其他通道，只需要实现新的 `MessageChannel` adapter，并把入站消息转成 `ChannelMessage`。
-
-测试阶段可以临时放开入站策略：
-
-```bash
-WECOM_DM_POLICY=open
-WECOM_GROUP_POLICY=open
-```
+`RanrenAIEngine` 只依赖通用 `MessageChannel`，负责入营问卷指令、知识库检索、LLM 回复和消息落库。QiWe callback 会把文本消息转成 `ChannelMessage`，并按 8 秒窗口聚合后交给引擎处理。
 
 ## 定时提醒
 

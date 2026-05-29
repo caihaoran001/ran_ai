@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import escape
 import logging
 import secrets
+import time
 from datetime import datetime
 
 from sqlalchemy import and_, or_, select
@@ -21,6 +22,7 @@ from app.models.service_case import ServiceCase
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.checkin import Checkin
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ai_service import AIService
 from app.services.channels.base import ChannelMessage, MessageChannel
 from app.services.content_policy import get_ai_reply_delivery_mode
@@ -29,7 +31,7 @@ from app.services.knowledge_index import retrieve_indexed_knowledge, retrieve_ca
 from app.services.knowledge_base import _query_terms, retrieve_knowledge
 from app.services.service_case_queries import select_active_service_cases
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 RANREN_AI_SYSTEM_PROMPT = (
@@ -90,6 +92,7 @@ class RanrenAIEngine:
         self.settings = settings or get_settings()
 
     async def handle_message(self, message: ChannelMessage) -> None:
+        started_at = time.monotonic()
         should_send_questionnaire = "发送本群入营问卷" in message.text
         service_case_id: int | None = None
         analysis: dict | None = None
@@ -99,7 +102,7 @@ class RanrenAIEngine:
             if should_send_questionnaire and not service_case:
                 service_case = await self._create_case_for_message(session, message)
 
-            if service_case:
+            if service_case and not should_send_questionnaire:
                 recent_user_messages = await self._recent_user_messages(session, service_case.id)
                 analysis = await analyze_intervention(
                     source="chat_message",
@@ -113,6 +116,8 @@ class RanrenAIEngine:
                     },
                 )
                 merge_case_insight(service_case, analysis)
+                service_case_id = service_case.id
+            elif service_case:
                 service_case_id = service_case.id
 
             purpose = MessagePurpose.CHAT
@@ -132,9 +137,37 @@ class RanrenAIEngine:
             session.add(db_inbound)
             await session.commit()
             inbound_id = db_inbound.id
+            logger.info(
+                "RanrenAI inbound stored channel=%s chat_id=%s message_id=%s db_message_id=%s service_case_id=%s command=%s elapsed_ms=%.1f",
+                message.channel,
+                message.chat_id,
+                message.message_id,
+                inbound_id,
+                service_case_id,
+                should_send_questionnaire,
+                (time.monotonic() - started_at) * 1000,
+            )
 
         if should_send_questionnaire:
             await self._reply_questionnaire_link(message, service_case, trigger_id=inbound_id)
+            logger.info(
+                "RanrenAI command handled channel=%s chat_id=%s message_id=%s trigger_id=%s total_elapsed_ms=%.1f",
+                message.channel,
+                message.chat_id,
+                message.message_id,
+                inbound_id,
+                (time.monotonic() - started_at) * 1000,
+            )
+            return
+        if not service_case_id:
+            logger.info(
+                "RanrenAI ignored message without service case channel=%s chat_id=%s message_id=%s trigger_id=%s total_elapsed_ms=%.1f",
+                message.channel,
+                message.chat_id,
+                message.message_id,
+                inbound_id,
+                (time.monotonic() - started_at) * 1000,
+            )
             return
         if purpose == MessagePurpose.CHAT:
             await self._reply_with_ai(message, service_case_id=service_case_id, analysis=analysis, trigger_id=inbound_id)
@@ -165,6 +198,7 @@ class RanrenAIEngine:
     ) -> None:
         if not service_case:
             return
+        started_at = time.monotonic()
         base_url = self.settings.frontend_public_base_url.rstrip("/")
         link = f"{base_url}/q/{service_case.questionnaire_token}"
         reply = (
@@ -183,6 +217,7 @@ class RanrenAIEngine:
             reply,
             reply_to=message.message_id,
         )
+        send_elapsed_ms = (time.monotonic() - started_at) * 1000
         await self._record_outbound(
             message=message,
             service_case_id=service_case.id,
@@ -191,6 +226,14 @@ class RanrenAIEngine:
             status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
             error=result.error,
             trigger_id=trigger_id,
+        )
+        logger.info(
+            "RanrenAI questionnaire reply sent chat_id=%s trigger_id=%s success=%s channel_message_id=%s send_elapsed_ms=%.1f",
+            message.chat_id,
+            trigger_id,
+            result.success,
+            result.message_id,
+            send_elapsed_ms,
         )
 
     async def _reply_with_ai(
@@ -262,14 +305,16 @@ class RanrenAIEngine:
                     logger.exception("AI reply failed")
                     reply = "抱歉，我刚才处理这条消息时出错了，请稍后再试。"
 
-                should_send = await self._should_send_ai_reply(session, service_case, analysis)
+                should_send = await self._should_send_ai_reply(session, service_case, analysis, message)
             
         if should_send:
+            send_started_at = time.monotonic()
             result = await self.channel.send_text(
                 message.chat_id,
                 reply,
                 reply_to=message.message_id,
             )
+            send_elapsed_ms = (time.monotonic() - send_started_at) * 1000
             await self._record_outbound(
                 message=message,
                 service_case_id=service_case_id,
@@ -278,6 +323,14 @@ class RanrenAIEngine:
                 status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
                 error=result.error,
                 trigger_id=trigger_id,
+            )
+            logger.info(
+                "RanrenAI AI reply sent chat_id=%s trigger_id=%s success=%s channel_message_id=%s send_elapsed_ms=%.1f",
+                message.chat_id,
+                trigger_id,
+                result.success,
+                result.message_id,
+                send_elapsed_ms,
             )
             return
             
@@ -296,6 +349,7 @@ class RanrenAIEngine:
         session,
         service_case: ServiceCase | None,
         analysis: dict | None,
+        message: ChannelMessage,
     ) -> bool:
         if service_case and not service_case.ai_auto_reply_enabled:
             return False
@@ -303,6 +357,8 @@ class RanrenAIEngine:
             return False
         if analysis and analysis.get("requires_human_intervention"):
             return False
+        if message.channel == "qiwe":
+            return True
         return await get_ai_reply_delivery_mode(session) == "auto_send"
 
     async def _record_outbound(
@@ -351,21 +407,23 @@ class RanrenAIEngine:
     ) -> list[str]:
         conditions = [
             Message.service_case_id == service_case_id,
-            Message.purpose == MessagePurpose.CHAT,
             or_(
                 and_(
                     Message.direction == MessageDirection.INBOUND,
                     Message.sender_type == MessageSenderType.USER,
+                    Message.purpose == MessagePurpose.CHAT,
                     Message.status == MessageStatus.RECEIVED,
                 ),
                 and_(
                     Message.direction == MessageDirection.OUTBOUND,
                     Message.sender_type == MessageSenderType.BOT,
+                    Message.purpose.in_([MessagePurpose.CHAT, MessagePurpose.DOCUMENT_DELIVERY]),
                     Message.status == MessageStatus.SENT,
                 ),
                 and_(
                     Message.direction == MessageDirection.OUTBOUND,
                     Message.sender_type == MessageSenderType.STAFF,
+                    Message.purpose.in_([MessagePurpose.CHAT, MessagePurpose.DOCUMENT_DELIVERY]),
                     Message.status == MessageStatus.SENT,
                 ),
             ),
@@ -386,8 +444,10 @@ class RanrenAIEngine:
 
         # 1. User Name / Info
         user_name = "未知用户"
-        if service_case.user:
-            user_name = service_case.user.name or "未知用户"
+        if service_case.user_id:
+            user = await session.get(User, service_case.user_id)
+            if user:
+                user_name = user.name or "未知用户"
 
         # 2. Serving Duration (Days)
         days_text = "服务准备中"
@@ -457,11 +517,73 @@ class RanrenAIEngine:
         else:
             checkin_texts.append("- 暂无打卡记录。")
 
+        documents = list(
+            await session.scalars(
+                select(UserDocument)
+                .where(UserDocument.service_case_id == service_case.id)
+                .order_by(UserDocument.created_at.desc())
+            )
+        )
+        latest_by_type: dict[DocumentType, UserDocument] = {}
+        for document in documents:
+            latest_by_type.setdefault(document.document_type, document)
+        doc_status_labels = {
+            DocumentStatus.DRAFT: "草稿",
+            DocumentStatus.REVIEWING: "待审核",
+            DocumentStatus.SENT: "已发送",
+        }
+        doc_title_labels = {
+            DocumentType.ENERGY_RESTART_PRESCRIPTION: "个人能量重启处方单",
+            DocumentType.DAY28_EXECUTION_STANDARD: "28天执行标准与打卡要求",
+            DocumentType.STAGE_REPORT: "阶段报告",
+            DocumentType.GRADUATION_REPORT: "毕业报告",
+        }
+        document_lines: list[str] = []
+        for document_type in (
+            DocumentType.ENERGY_RESTART_PRESCRIPTION,
+            DocumentType.DAY28_EXECUTION_STANDARD,
+            DocumentType.STAGE_REPORT,
+            DocumentType.GRADUATION_REPORT,
+        ):
+            document = latest_by_type.get(document_type)
+            if not document:
+                continue
+            status = doc_status_labels.get(document.status, document.status.value)
+            sent_suffix = (
+                f"（发送于 {document.sent_at.astimezone().strftime('%Y-%m-%d %H:%M')}）"
+                if document.sent_at
+                else ""
+            )
+            document_lines.append(f"- {doc_title_labels[document_type]}：{status}{sent_suffix}")
+
+        latest_delivery = await session.scalar(
+            select(Message)
+            .where(
+                Message.service_case_id == service_case.id,
+                Message.purpose == MessagePurpose.DOCUMENT_DELIVERY,
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.sender_type == MessageSenderType.BOT,
+                Message.status == MessageStatus.SENT,
+            )
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        latest_delivery_text = "暂无交付发送记录。"
+        if latest_delivery:
+            latest_delivery_text = (
+                f"{latest_delivery.content} "
+                f"（{latest_delivery.created_at.astimezone().strftime('%Y-%m-%d %H:%M')}）"
+            )
+
         # Combine everything into a beautiful Markdown context
         user_context = (
             f"### 👤 用户画像与体征信息 ({days_text})\n"
             f"- 用户姓名：{user_name}\n"
             f"- 身体状况及方案总结：{profile_summary}\n\n"
+            f"### 📦 服务进度与交付状态\n"
+            f"- 当前服务单状态：{service_case.status.value}\n"
+            + ("\n".join(document_lines) + "\n" if document_lines else "- 暂无交付文件。\n")
+            + f"- 最近一次交付动作：{latest_delivery_text}\n\n"
             f"### 📈 最近打卡趋势 (近3次记录)\n"
             + "\n".join(checkin_texts)
         )

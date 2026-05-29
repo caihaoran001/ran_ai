@@ -394,7 +394,7 @@ function ScheduleEditor({
           <div className="space-y-1">
             <h3 className="text-base font-semibold text-zinc-900">自动发送问卷计划总开关</h3>
             <p className="text-xs leading-relaxed text-zinc-500 max-w-2xl">
-              控制整个运营系统的自动发卷服务。关闭后，下方所有的定点规则、回执确认等逻辑都将彻底挂起，不会向企业微信群发送任何消息。
+              控制整个运营系统的自动发卷服务。关闭后，下方所有的定点规则、回执确认等逻辑都将彻底挂起，不会向当前消息通道发送任何消息。
             </p>
           </div>
           <Switch

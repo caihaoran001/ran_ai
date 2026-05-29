@@ -9,27 +9,36 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import get_settings
+from app.services.channels import set_current_channel
+from app.services.channels.qiwe import QiWeChannel
+from app.services.qiwe_service.aggregator import QiWeMessageAggregator
 from app.services.reminder_service import ReminderService
-from app.services.wecom_service.worker import WeComBotWorker
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     reminder_service = ReminderService(settings)
-    wecom_worker: WeComBotWorker | None = None
-    if settings.wecom_worker_enabled:
-        wecom_worker = WeComBotWorker(settings)
-        await wecom_worker.start()
+    qiwe_aggregator: QiWeMessageAggregator | None = None
+    qiwe_should_start = settings.qiwei_enabled or bool(settings.qiwei_token and settings.qiwei_guid)
+    if qiwe_should_start:
+        channel = QiWeChannel(settings)
+        set_current_channel(channel)
+        qiwe_aggregator = QiWeMessageAggregator(
+            channel,
+            window_seconds=settings.qiwei_batch_window_seconds,
+        )
     await reminder_service.start()
     app.state.reminder_service = reminder_service
-    app.state.wecom_worker = wecom_worker
+    app.state.qiwe_aggregator = qiwe_aggregator
     try:
         yield
     finally:
         await reminder_service.stop()
-        if wecom_worker:
-            await wecom_worker.stop()
+        if qiwe_aggregator:
+            await qiwe_aggregator.stop()
+        if qiwe_should_start:
+            set_current_channel(None)
 
 
 def create_app() -> FastAPI:
@@ -89,6 +98,8 @@ def _requires_admin_auth(request: Request) -> bool:
     if request.method == "OPTIONS":
         return False
     if path == "/health":
+        return False
+    if path == "/api/channels/qiwe/callback":
         return False
     if _is_public_questionnaire_path(path, request.method):
         return False

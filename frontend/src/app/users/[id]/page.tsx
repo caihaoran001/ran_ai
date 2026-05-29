@@ -22,7 +22,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">{user.name}</h1>
-        <p className="mt-1 text-sm text-zinc-500">{user.phone ?? "无手机号"} · {user.wecom_user_id ?? "无企微用户 ID"}</p>
+        <p className="mt-1 text-sm text-zinc-500">{user.phone ?? "无手机号"} · {user.wecom_user_id ?? "无聊天用户 ID"}</p>
         {user.deleted_at && (
           <p className="mt-2 inline-flex rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">
             已删除：{formatDateTime(user.deleted_at)}
@@ -35,7 +35,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <Info label="用户ID" value={String(user.id)} />
           <Info label="真实姓名" value={user.name} />
           <Info label="手机号" value={user.phone ?? "暂无数据"} />
-          <Info label="企微ID" value={user.wecom_user_id ?? "暂无数据"} />
+          <Info label="聊天用户ID" value={user.wecom_user_id ?? "暂无数据"} />
           <Info label="性别/年龄" value={text(overview.gender_age) || "暂无数据"} />
           <Info label="身高/体重" value={text(overview.height_weight) || "暂无数据"} />
           <Info label="BMI" value={text(overview.bmi) || "暂无数据"} />

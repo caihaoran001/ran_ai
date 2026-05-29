@@ -119,7 +119,7 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
               {user?.wecom_user_id && (
                 <span className="flex items-center gap-1 text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
                   <MessageSquare className="h-3.5 w-3.5 text-emerald-500" />
-                  已绑定企微
+                  已绑定聊天用户
                 </span>
               )}
             </div>
@@ -156,7 +156,7 @@ function DeletedUserCard({ user }: { user: User }) {
               {user.wecom_user_id && (
                 <span className="flex items-center gap-1 text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full border border-zinc-200/60">
                   <MessageSquare className="h-3.5 w-3.5 text-zinc-400" />
-                  已绑定企微
+                  已绑定聊天用户
                 </span>
               )}
             </div>

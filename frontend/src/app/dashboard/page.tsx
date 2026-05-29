@@ -146,7 +146,7 @@ export default async function DashboardPage() {
           href="/users?filter=messaged_today"
           description={
             <>
-              今天收到的企微用户消息数。今日社群双向消息共{" "}
+              今天收到的用户入站消息数。今日社群双向消息共{" "}
               <span className="mx-0.5 px-1.5 py-0.5 rounded-md bg-purple-100/90 text-purple-700 font-semibold border border-purple-200/60 text-[11px]">
                 {summary.messages_today + (summary.messages_outbound_today ?? 0)}
               </span>{" "}

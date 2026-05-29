@@ -9,7 +9,7 @@ export default async function CasesPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">服务单</h1>
-        <p className="mt-1 text-sm text-zinc-500">一个企业微信群对应一个 28 天服务空间。</p>
+        <p className="mt-1 text-sm text-zinc-500">一个社群对应一个 28 天服务空间。</p>
       </div>
       <NewCaseForm />
       <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">

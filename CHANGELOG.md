@@ -1,5 +1,33 @@
 # CHANGELOG
 
+## 2026-05-29 - QiWe 极简实验通道接入
+
+- 新增 QiWe 消息通道，支持通过 `QIWEI_TOKEN` / `QIWEI_GUID` 发送群文本与文件。
+- 新增 `POST /api/channels/qiwe/callback`，接收 QiWe 文本回调并转成统一 `ChannelMessage`。
+- 新增 `QIWEI_CALLBACK_SECRET`，QiWe 回调可通过 `?secret=` 或 `X-Qiwei-Callback-Secret` 校验来源。
+- 新增 QiWe 群消息聚合器，同一群同一用户 8 秒内连续文本会合并后再交给燃AI处理。
+- QiWe 聚合器改为固定窗口：第一条消息启动计时，窗口内后续消息只追加不重置计时，避免持续输入导致 AI 无限延后。
+- “发送本群入营问卷”等系统指令绕过聚合窗口，直接进入燃AI业务引擎，并复用 message_id 去重。
+- QiWe 普通消息在已有关联服务单时默认自动发送 AI 回复；未关联服务单的群只记录消息，不触发普通 AI 回复。
+- 高风险、人工介入仍沿用现有风控拦截逻辑。
+- 后端启动时优先注册 QiWe 为当前消息通道，不再启动企微官方 worker；文档和示例配置同步切换到 QiWe。
+
+## 2026-05-29 - 聊天上下文补入文档交付状态，收紧入营文档文风
+
+- 修复“文件已经发群里，用户回一句‘收到’，AI 仍按问卷刚提交来回复”的问题：
+  - 聊天历史检索不再只看 `chat`，会同时纳入机器人/班主任已发送的 `document_delivery` 消息。
+  - 用户上下文新增“服务进度与交付状态”区块，明确给模型提供当前服务单状态、两份核心文档的最新状态，以及最近一次交付动作。
+- 收紧入营问卷生成 package 的系统提示词，重点压缩处方单与执行单的表达密度：
+  - 强化“一页版、短句、少解释、少重复”的整体风格。
+  - 判断依据改为更短的证据句，避免写成解释段落。
+  - 成功路径、预期变化、提醒等模块明确限制为 1-2 句，避免说明书式铺陈。
+  - 本周执行动作明确收口为 3 条；“最不能打折的一件事”要求只写一句定点动作，不再补第二层解释。
+- 修复 `RanrenAIEngine._build_user_context()` 对 `service_case.user` 的隐式懒加载依赖，改为按 `user_id` 显式查询，避免 async 测试和部分运行场景下触发 `MissingGreenlet`。
+- 容器内复跑针对性测试：
+  - `test_02_chat.py`
+  - `test_09_qiwe_channel.py`
+  - 合计 `21 passed`
+
 ## 2026-05-25 - 诊断控制台测试清单与容器测试目录对齐
 
 - 修正 `diagnostics.py` 中 01~07 测试清单，改为指向当前仓库真实存在的测试文件：`test_01_intake.py`、`test_02_chat.py`、`test_03_checkin.py`、`test_04_stage_reports.py`、`test_05_evolution.py`、`test_06_toggles.py`、`test_07_real_llm_e2e.py`。

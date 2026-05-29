@@ -80,6 +80,19 @@ class Settings(BaseSettings):
     wecom_groups_json: str = Field(default="", validation_alias="WECOM_GROUPS_JSON")
     wecom_worker_enabled: bool = Field(default=False, validation_alias="WECOM_WORKER_ENABLED")
 
+    qiwei_enabled: bool = Field(default=False, validation_alias="QIWEI_ENABLED")
+    qiwei_token: str = Field(default="", validation_alias="QIWEI_TOKEN")
+    qiwei_guid: str = Field(default="", validation_alias="QIWEI_GUID")
+    qiwei_callback_secret: str = Field(default="", validation_alias="QIWEI_CALLBACK_SECRET")
+    qiwei_base_url: str = Field(
+        default="http://manager.qiweapi.com/qiwe",
+        validation_alias="QIWEI_BASE_URL",
+    )
+    qiwei_batch_window_seconds: float = Field(
+        default=8.0,
+        validation_alias="QIWEI_BATCH_WINDOW_SECONDS",
+    )
+
     reminder_enabled: bool = Field(default=False, validation_alias="REMINDER_ENABLED")
     reminder_check_interval_seconds: float = Field(
         default=30.0,

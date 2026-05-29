@@ -3,6 +3,7 @@ nest_asyncio.apply()
 
 import json
 import os
+os.environ["DOCUMENT_OUTPUT_DIR"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_documents")
 import sys
 import asyncio
 
@@ -460,8 +461,8 @@ async def public_client(mock_ai, db_session):
 @pytest_asyncio.fixture(autouse=True)
 async def _dispose_engine_after_test():
     yield
-    from app.db.session import engine
-    await engine.dispose()
+    # 已改用 NullPool，无需且严禁在 function 级 teardown 重复销毁全局单例 engine 以防止事件循环冲突
+    pass
 
 
 

@@ -31,7 +31,7 @@ export function NewCaseForm() {
   return (
     <form onSubmit={submit} className="grid gap-3 rounded-lg border border-zinc-200 bg-white p-4 md:grid-cols-[1fr_1fr_1fr_auto]">
       <Input placeholder="用户姓名，可等问卷提交后自动填充" value={name} onChange={(event) => setName(event.target.value)} />
-      <Input placeholder="企业微信群 group_id" value={groupId} onChange={(event) => setGroupId(event.target.value)} required />
+      <Input placeholder="社群 group_id" value={groupId} onChange={(event) => setGroupId(event.target.value)} required />
       <Input placeholder="手机号，可选" value={phone} onChange={(event) => setPhone(event.target.value)} />
       <Button disabled={busy}>{busy ? "创建中" : "创建服务单"}</Button>
     </form>
