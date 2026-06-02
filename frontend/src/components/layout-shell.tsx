@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Users, ShieldCheck, Settings, BarChart3 } from "lucide-react";
+import { InterventionBadge } from "@/components/intervention-notifier";
 
 const navItems = [
   { href: "/users", label: "用户管理", icon: Users },
@@ -59,6 +60,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
                   }`}
                 />
                 {item.label}
+                {item.href === "/documents" && <InterventionBadge />}
               </Link>
             );
           })}
