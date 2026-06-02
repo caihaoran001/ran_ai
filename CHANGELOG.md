@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 2026-06-02 - 风控 LLM 提示词优化与审核控制台红点提醒
+
+- 风控 LLM 新增「L1 与 L2 的边界判断标准」段落，包含 4 步核对流程和具体示例，解决"用户批评机器人本身被判 L1"的误判问题。
+- 移除风控 LLM 的「重新触发 L2」规则（用户不认可），同时简化 engine 注入的 context，不再传递 `current_risk_level`、`intervention_reasons`、`risk_flags`、`current_action_focus` 等字段。
+- 风控 LLM 的 L2 判定改为：当前消息本身满足攻击/质疑/要求停止，或当前消息明显延续历史冲突主题才升级；普通咨询/确认/感谢不会仅凭历史冲突升级。
+- 审核控制台导航项新增红色数字角标，有待人工介入的服务单时显示数量，无则隐藏。替换原来每个页面右上角的浮动通知。
+- `intervention-notifier.tsx` 从 175 行精简为 31 行，删除浮动 UI、桌面通知、acknowledgedIds 逻辑，只保留轮询和 badge 渲染。
+- MockAIService 兼容 `scenario` 等新参数，修复 `test_06_toggles.py` 失败。
+
 ## 2026-06-02 - 成效引擎可靠性与 QiWe 兜底修复
 
 - 新增 `ai_usage_logs` 用于落库记录 LLM 调用场景、模型、token、耗时和估算金额；服务单详情展示单个用户 AI 调用成本，数据看板新增总成本卡片并可进入每用户成本明细页。
