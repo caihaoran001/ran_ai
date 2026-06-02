@@ -43,6 +43,11 @@ class FakeEngine:
         self.messages.append(message)
 
 
+class FailingEngine:
+    async def handle_message(self, message: ChannelMessage) -> None:
+        raise RuntimeError("boom")
+
+
 class FakeChannel:
     name = "qiwe"
 
@@ -227,6 +232,35 @@ async def test_qiwe_aggregator_dispatch_now_reuses_dedupe():
 
 
 @pytest.mark.asyncio
+async def test_qiwe_aggregator_swallows_engine_failure_for_callback_safety():
+    aggregator = QiWeMessageAggregator(FakeChannel(), window_seconds=0.01, engine=FailingEngine())
+
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="普通消息",
+        message_id="failure-id",
+        user_id="u1",
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    await aggregator.dispatch_now(message)
+    await aggregator.enqueue(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id="room-1",
+            chat_type="group",
+            text="聚合消息",
+            message_id="failure-id-2",
+            user_id="u1",
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+    await asyncio.sleep(0.03)
+
+
+@pytest.mark.asyncio
 async def test_qiwe_aggregator_allows_message_after_ttl():
     engine = FakeEngine()
     aggregator = QiWeMessageAggregator(
@@ -371,6 +405,9 @@ async def test_qiwe_questionnaire_command_skips_intervention_llm(monkeypatch):
                 added_messages.append(obj)
 
         async def commit(self):
+            return None
+
+        async def flush(self):
             return None
 
     reply_calls: list[tuple[ChannelMessage, object, object]] = []

@@ -251,6 +251,42 @@ class MockAIService:
             return _intent_insight("renewal", content[:80], source)
         return _normal_insight()
 
+    async def extract_outcome_insight(self, *, content, context):
+        text = content or ""
+        missing = list((context or {}).get("missing_fields") or [])
+        events = []
+        if "没那么困" in text or "精神" in text:
+            events.append(
+                {
+                    "field_key": "energy_change" if "energy_change" in missing else (missing[0] if missing else "energy_change"),
+                    "event_type": "improved",
+                    "value": "用户反馈白天精神状态有改善",
+                    "evidence_text": text[:80],
+                    "confidence": 0.9,
+                }
+            )
+        if "睡" in text:
+            events.append(
+                {
+                    "field_key": "sleep_change" if "sleep_change" in missing else (missing[0] if missing else "sleep_change"),
+                    "event_type": "feedback",
+                    "value": "用户反馈睡眠变化",
+                    "evidence_text": text[:80],
+                    "confidence": 0.82,
+                }
+            )
+        followup_field = next((item for item in missing if item not in {event["field_key"] for event in events}), "")
+        return {
+            "outcome_events": events,
+            "followup_plan": {
+                "should_ask": bool(followup_field),
+                "field_key": followup_field,
+                "question": "这两天睡眠有没有也跟着稳一点？" if followup_field else "",
+                "reason": "当前阶段成效证据还缺一项自然反馈。",
+            },
+            "notes": "mock outcome",
+        }
+
     async def close(self):
         pass
 
@@ -317,18 +353,21 @@ async def mock_ai():
     import app.services.ai_service.client as client_mod
     import app.services.document_service as doc_mod
     import app.services.knowledge_evolution as evolution_mod
+    import app.services.outcome_engine as outcome_mod
     import app.services.ranren_ai.engine as engine_mod
     import app.services.intervention_service as intervention_mod
 
     orig_client = client_mod.AIService
     orig_doc = doc_mod.AIService
     orig_evolution = evolution_mod.AIService
+    orig_outcome = outcome_mod.AIService
     orig_engine = engine_mod.AIService
     orig_intervention = intervention_mod.AIService
 
     client_mod.AIService = lambda *a, **kw: mock
     doc_mod.AIService = lambda *a, **kw: mock
     evolution_mod.AIService = lambda *a, **kw: mock
+    outcome_mod.AIService = lambda *a, **kw: mock
     engine_mod.AIService = lambda *a, **kw: mock
     intervention_mod.AIService = lambda *a, **kw: mock
 
@@ -337,6 +376,7 @@ async def mock_ai():
     client_mod.AIService = orig_client
     doc_mod.AIService = orig_doc
     evolution_mod.AIService = orig_evolution
+    outcome_mod.AIService = orig_outcome
     engine_mod.AIService = orig_engine
     intervention_mod.AIService = orig_intervention
 

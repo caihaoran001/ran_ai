@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { api, FRONTEND_BASE, ServiceCase, ServiceCaseStats, UserDocument, Checkin, Message } from "@/lib/api";
+import { api, FRONTEND_BASE, ServiceCase, ServiceCaseStats, UserDocument, Checkin, Message, OutcomeBundle } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
 import { CaseActions } from "./case-actions";
 import { CaseRiskReset } from "./case-risk-reset";
@@ -8,6 +8,7 @@ import { ChatMessages } from "./chat-messages";
 import { QuestionnaireSection } from "./questionnaire-section";
 import { RetryGenerateDocuments } from "./retry-generate-documents";
 import { StageReportActions } from "./stage-report-actions";
+import { OutcomeSection } from "./outcome-section";
 
 type Questionnaire = {
   fields: {
@@ -26,12 +27,24 @@ type Questionnaire = {
 export default async function CaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const serviceCase = await api<ServiceCase>(`/service-cases/${id}`);
-  const documents = await api<UserDocument[]>(`/service-cases/${id}/documents`).catch(() => []);
-  const documentHistory = await api<UserDocument[]>(`/service-cases/${id}/documents?include_history=true`).catch(() => documents);
-  const checkins = await api<Checkin[]>(`/service-cases/${id}/checkins`).catch(() => []);
-  const stats = await api<ServiceCaseStats>(`/service-cases/${id}/stats`).catch(() => null);
-  const messages = await api<Message[]>(`/service-cases/${id}/messages`).catch(() => []);
-  const questionnaire = await api<Questionnaire>(`/questionnaires/${serviceCase.questionnaire_token}`).catch(() => null);
+  const [
+    documents,
+    documentHistoryResult,
+    checkins,
+    stats,
+    messages,
+    outcomes,
+    questionnaire,
+  ] = await Promise.all([
+    api<UserDocument[]>(`/service-cases/${id}/documents`).catch(() => []),
+    api<UserDocument[]>(`/service-cases/${id}/documents?include_history=true`).catch(() => null),
+    api<Checkin[]>(`/service-cases/${id}/checkins`).catch(() => []),
+    api<ServiceCaseStats>(`/service-cases/${id}/stats`).catch(() => null),
+    api<Message[]>(`/service-cases/${id}/messages`).catch(() => []),
+    api<OutcomeBundle>(`/service-cases/${id}/outcomes`).catch(() => null),
+    api<Questionnaire>(`/questionnaires/${serviceCase.questionnaire_token}`).catch(() => null),
+  ]);
+  const documentHistory = documentHistoryResult ?? documents;
   const questionnaireUrl = `${FRONTEND_BASE.replace(/\/$/, "")}/q/${serviceCase.questionnaire_token}`;
   const isGenerating = serviceCase.status === "generating";
   const generationError =
@@ -126,6 +139,8 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         <InfoCard title="续购意向" value={formatIntentFlags(serviceCase.renewal_intent_flags)} icon="💚" />
         <InfoCard title="退款/退出意向" value={formatIntentFlags(serviceCase.refund_intent_flags)} icon="↩" />
       </div>
+
+      <OutcomeSection bundle={outcomes} />
 
       <div className="grid gap-6 md:grid-cols-2">
         <QuestionnaireSection questionnaire={questionnaire} />

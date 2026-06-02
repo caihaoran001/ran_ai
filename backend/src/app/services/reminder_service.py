@@ -18,6 +18,7 @@ from app.models.message import (
     MessageSenderType,
     MessageStatus,
 )
+from app.models.outcome import OutcomeSnapshot
 from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
@@ -27,6 +28,7 @@ from app.services.checkin_questionnaires import get_checkin_questionnaire_schedu
 from app.services.document_service import generate_stage_report
 from app.services.knowledge_evolution import KnowledgeEvolutionService
 from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
+from app.services.outcome_engine import generate_outcome_snapshot
 from app.services.service_case_queries import select_active_service_cases
 
 
@@ -49,8 +51,8 @@ class ReminderService:
                     knowledge_enabled = (await get_knowledge_evolution_config(session, settings=self.settings)).enabled
             except Exception:
                 logger.exception("Failed to load knowledge evolution config")
-        if not self.settings.reminder_enabled and not knowledge_enabled:
-            logger.info("Reminder and knowledge evolution services disabled")
+        if not self.settings.reminder_enabled and not knowledge_enabled and not self.settings.outcome_snapshots_enabled:
+            logger.info("Reminder, outcome snapshot and knowledge evolution services disabled")
             return
         self._stopped.clear()
         self._task = asyncio.create_task(self._run_loop(), name="reminder-service")
@@ -78,6 +80,8 @@ class ReminderService:
                             await self.check_once()
                             await self.check_questionnaire_sends_once()
                             await self.check_stage_reports_once()
+                        if self.settings.outcome_snapshots_enabled:
+                            await self.check_outcome_snapshots_once()
                         await self.check_knowledge_evolution_once()
             except asyncio.CancelledError:
                 raise
@@ -324,6 +328,65 @@ class ReminderService:
         if tasks:
             logger.info(f"Concurrently generating {len(tasks)} stage reports via scheduler")
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _generate_outcome_snapshot_for_case_worker(self, case_id: int, milestone: str) -> None:
+        async with SessionLocal() as session:
+            service_case = await session.get(ServiceCase, case_id)
+            if not service_case:
+                logger.error("Service case %s not found in outcome snapshot worker", case_id)
+                return
+            try:
+                await generate_outcome_snapshot(session, service_case, milestone=milestone)
+                await session.commit()
+                logger.info("Generated outcome snapshot %s for case %s", milestone, case_id)
+            except Exception:
+                logger.exception("Failed to generate outcome snapshot %s for case %s", milestone, case_id)
+
+    async def check_outcome_snapshots_once(self) -> None:
+        now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
+        async with SessionLocal() as session:
+            service_cases = list(
+                await session.scalars(
+                    select_active_service_cases(
+                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                        ServiceCase.started_at.is_not(None),
+                    )
+                )
+            )
+            case_ids = [item.id for item in service_cases]
+            if not case_ids:
+                return
+            snapshots = list(
+                await session.scalars(
+                    select(OutcomeSnapshot).where(OutcomeSnapshot.service_case_id.in_(case_ids))
+                )
+            )
+            existing = {(item.service_case_id, item.milestone) for item in snapshots}
+
+        tasks = []
+        for service_case in service_cases:
+            started_at = service_case.started_at
+            if not started_at:
+                continue
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=ZoneInfo("UTC"))
+            days = max((now.date() - started_at.astimezone(ZoneInfo(self.settings.reminder_timezone)).date()).days + 1, 1)
+            for threshold, milestone in (
+                (1, "day1"),
+                (3, "day3"),
+                (7, "day7"),
+                (14, "day14"),
+                (28, "day28"),
+                (90, "day90"),
+                (365, "day365"),
+            ):
+                if days >= threshold and (service_case.id, milestone) not in existing:
+                    tasks.append(self._generate_outcome_snapshot_for_case_worker(service_case.id, milestone))
+        if tasks:
+            logger.info("Generating %s outcome snapshots via scheduler", len(tasks))
+            batch_size = 5
+            for i in range(0, len(tasks), batch_size):
+                await asyncio.gather(*tasks[i:i + batch_size], return_exceptions=True)
 
     async def check_knowledge_evolution_once(self) -> None:
         now = datetime.now(ZoneInfo(self.settings.reminder_timezone))

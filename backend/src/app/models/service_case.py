@@ -13,11 +13,13 @@ from app.models.mixins import TimestampMixin
 if TYPE_CHECKING:
     from app.models.checkin import Checkin
     from app.models.message import Message
+    from app.models.outcome import OutcomeEvent, OutcomeSnapshot, OutcomeStageState
     from app.models.questionnaire import QuestionnaireSubmission
     from app.models.reminder import ReminderEvent
     from app.models.user import User
     from app.models.user_document import UserDocument
     from app.models.user_profile import UserProfile
+    from app.models.user_state_profile import UserStateProfile
 
 
 class ServiceCaseStatus(str, enum.Enum):
@@ -89,6 +91,22 @@ class ServiceCase(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     reminder_events: Mapped[list[ReminderEvent]] = relationship(
+        back_populates="service_case",
+        cascade="all, delete-orphan",
+    )
+    outcome_events: Mapped[list[OutcomeEvent]] = relationship(
+        back_populates="service_case",
+        cascade="all, delete-orphan",
+    )
+    outcome_stage_states: Mapped[list[OutcomeStageState]] = relationship(
+        back_populates="service_case",
+        cascade="all, delete-orphan",
+    )
+    outcome_snapshots: Mapped[list[OutcomeSnapshot]] = relationship(
+        back_populates="service_case",
+        cascade="all, delete-orphan",
+    )
+    user_state_profile: Mapped[UserStateProfile | None] = relationship(
         back_populates="service_case",
         cascade="all, delete-orphan",
     )

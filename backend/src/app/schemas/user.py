@@ -9,6 +9,14 @@ from app.schemas.document import UserProfileRead
 from app.schemas.service_case import ServiceCaseRead
 
 
+class UserStateProfileRead(Timestamped):
+    id: int
+    service_case_id: int
+    state_json: dict
+    summary: str | None = None
+    source: str
+
+
 class UserListItem(Timestamped):
     id: int
     name: str
@@ -21,3 +29,4 @@ class UserListItem(Timestamped):
 
 class UserDetail(UserListItem):
     latest_profile: UserProfileRead | None = None
+    latest_state_profile: UserStateProfileRead | None = None

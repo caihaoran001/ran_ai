@@ -10,6 +10,7 @@ from app.api.routes import (
     knowledge_drafts,
     knowledge_faqs,
     messages,
+    outcomes,
     qiwe,
     questionnaire_templates,
     questionnaires,
@@ -28,6 +29,7 @@ api_router.include_router(knowledge_drafts.router, tags=["knowledge-drafts"])
 api_router.include_router(knowledge_faqs.router, tags=["knowledge-faqs"])
 api_router.include_router(checkins.router, tags=["checkins"])
 api_router.include_router(messages.router, tags=["messages"])
+api_router.include_router(outcomes.router, tags=["outcomes"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(diagnostics.router, prefix="/diagnostics", tags=["diagnostics"])
 api_router.include_router(qiwe.router, tags=["qiwe"])

@@ -94,7 +94,17 @@ class QiWeMessageAggregator:
             message.user_id,
             message.message_id,
         )
-        await self.engine.handle_message(message)
+        try:
+            await self.engine.handle_message(message)
+        except Exception as exc:
+            logger.exception(
+                "QiWe immediate dispatch failed chat_id=%s user_id=%s message_id=%s error_type=%s",
+                message.chat_id,
+                message.user_id,
+                message.message_id,
+                type(exc).__name__,
+            )
+            return
         logger.info(
             "QiWe immediate dispatch done chat_id=%s user_id=%s message_id=%s elapsed_ms=%.1f",
             message.chat_id,
@@ -138,7 +148,20 @@ class QiWeMessageAggregator:
             first.message_id,
             last.message_id,
         )
-        await self.engine.handle_message(_merge_messages(batch.messages))
+        merged = _merge_messages(batch.messages)
+        try:
+            await self.engine.handle_message(merged)
+        except Exception as exc:
+            logger.exception(
+                "QiWe fixed window flush failed chat_id=%s user_id=%s count=%s first_message_id=%s last_message_id=%s error_type=%s",
+                first.chat_id,
+                first.user_id,
+                len(batch.messages),
+                first.message_id,
+                last.message_id,
+                type(exc).__name__,
+            )
+            return
         logger.info(
             "QiWe fixed window flush done chat_id=%s user_id=%s count=%s elapsed_ms=%.1f",
             first.chat_id,

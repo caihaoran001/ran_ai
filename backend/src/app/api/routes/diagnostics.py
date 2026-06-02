@@ -109,6 +109,7 @@ async def get_diagnostics_summary(
         try:
             reply = await asyncio.wait_for(
                 service.generate_text(
+                    scenario="diagnostics_probe",
                     system_prompt="你是系统健康检查助手。请只回复 OK。",
                     user_prompt="health check",
                 ),

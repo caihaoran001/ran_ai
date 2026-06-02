@@ -11,6 +11,7 @@ from app.db.session import get_session
 from app.models.service_case import ServiceCase
 from app.models.user import User
 from app.models.user_profile import UserProfile
+from app.models.user_state_profile import UserStateProfile
 from app.schemas.user import UserDetail, UserListItem
 
 router = APIRouter()
@@ -52,6 +53,7 @@ async def get_user(
         user.service_cases = [sc for sc in user.service_cases if sc.deleted_at is None]
     case_ids = [case.id for case in user.service_cases]
     latest_profile = None
+    latest_state_profile = None
     if case_ids:
         latest_profile = await session.scalar(
             select(UserProfile)
@@ -59,9 +61,16 @@ async def get_user(
             .order_by(UserProfile.created_at.desc())
             .limit(1)
         )
+        latest_state_profile = await session.scalar(
+            select(UserStateProfile)
+            .where(UserStateProfile.service_case_id.in_(case_ids))
+            .order_by(UserStateProfile.updated_at.desc())
+            .limit(1)
+        )
 
     data = UserDetail.model_validate(user)
     data.latest_profile = latest_profile
+    data.latest_state_profile = latest_state_profile
     return data
 
 

@@ -63,42 +63,50 @@ def write_structured_docx(title: str, payload: dict[str, Any], output_path: Path
 def write_template_docx(content_json: dict[str, Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
+    title = str(content_json.get("title") or "交付文件")
+    compact_execution = "28天执行标准与打卡要求" in title
     section = doc.sections[0]
-    section.top_margin = Cm(2.0)
-    section.bottom_margin = Cm(2.0)
-    section.left_margin = Cm(1.8)
-    section.right_margin = Cm(1.8)
-    _setup_styles(doc)
+    if compact_execution:
+        section.top_margin = Cm(1.45)
+        section.bottom_margin = Cm(1.45)
+        section.left_margin = Cm(1.45)
+        section.right_margin = Cm(1.45)
+    else:
+        section.top_margin = Cm(2.0)
+        section.bottom_margin = Cm(2.0)
+        section.left_margin = Cm(1.8)
+        section.right_margin = Cm(1.8)
+    _setup_styles(doc, compact=compact_execution)
 
     if content_json.get("show_header_brand", True):
-        _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=10, alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_paragraph(doc, str(content_json.get("title") or "交付文件"), bold=True, size=14, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+        _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=9 if compact_execution else 10, alignment=WD_ALIGN_PARAGRAPH.CENTER, compact=compact_execution)
+    _add_paragraph(doc, title, bold=True, size=12 if compact_execution else 14, alignment=WD_ALIGN_PARAGRAPH.CENTER, compact=compact_execution)
     recipient = str(content_json.get("recipient") or "").strip()
     if recipient and content_json.get("show_recipient", True):
-        _add_paragraph(doc, f"To：{recipient}", bold=True, size=10)
+        _add_paragraph(doc, f"To：{recipient}", bold=True, size=9 if compact_execution else 10, compact=compact_execution)
 
     for block in content_json.get("blocks") or []:
-        title = str(block.get("title") or "").strip()
+        block_title = str(block.get("title") or "").strip()
         if block.get("display") == "inline":
-            _add_inline_paragraph(doc, title, str(block.get("content") or "").strip())
+            _add_inline_paragraph(doc, block_title, str(block.get("content") or "").strip(), compact=compact_execution)
             continue
-        if title:
-            _add_paragraph(doc, title, bold=True, size=11)
+        if block_title:
+            _add_paragraph(doc, block_title, bold=True, size=10 if compact_execution else 11, compact=compact_execution)
         kind = block.get("kind")
         if kind == "table":
-            _add_table(doc, block.get("rows") or [])
+            _add_table(doc, block.get("rows") or [], compact=compact_execution)
         elif kind == "list":
             for item in block.get("items") or []:
                 text = str(item or "").strip()
                 if text:
-                    _add_paragraph(doc, f"• {text}", size=10)
+                    _add_paragraph(doc, f"• {text}", size=9 if compact_execution else 10, compact=compact_execution)
         else:
             for line in str(block.get("content") or "").splitlines():
                 if line.strip():
-                    _add_paragraph(doc, line, size=10)
+                    _add_paragraph(doc, line, size=9 if compact_execution else 10, compact=compact_execution)
 
     if content_json.get("show_footer_brand", True):
-        _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=10, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+        _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=9 if compact_execution else 10, alignment=WD_ALIGN_PARAGRAPH.CENTER, compact=compact_execution)
     doc.save(output_path)
 
 
@@ -167,17 +175,17 @@ def _string(value: Any) -> str:
     return str(value).strip()
 
 
-def _setup_styles(doc: Document) -> None:
+def _setup_styles(doc: Document, *, compact: bool = False) -> None:
     styles = doc.styles
     for style_name in ("Normal", "Heading 1", "Heading 2", "Heading 3"):
         style = styles[style_name]
         style.font.name = "Microsoft YaHei"
         style._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
-        style.font.size = Pt(10)
+        style.font.size = Pt(9 if compact else 10)
         paragraph_format = style.paragraph_format
         paragraph_format.space_before = Pt(0)
-        paragraph_format.space_after = Pt(6)
-        paragraph_format.line_spacing = Pt(17)
+        paragraph_format.space_after = Pt(2 if compact else 6)
+        paragraph_format.line_spacing = Pt(13.5 if compact else 17)
 
 
 def _add_paragraph(
@@ -187,11 +195,13 @@ def _add_paragraph(
     bold: bool = False,
     size: int = 10,
     alignment: WD_ALIGN_PARAGRAPH | None = None,
+    compact: bool = False,
 ) -> None:
     paragraph = doc.add_paragraph(style="Normal")
     if alignment is not None:
         paragraph.alignment = alignment
-    paragraph.paragraph_format.space_after = Pt(6)
+    paragraph.paragraph_format.space_after = Pt(2 if compact else 6)
+    paragraph.paragraph_format.line_spacing = Pt(13.5 if compact else 17)
     run = paragraph.add_run(text)
     run.font.name = "Microsoft YaHei"
     run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
@@ -199,22 +209,23 @@ def _add_paragraph(
     run.bold = bold
 
 
-def _add_inline_paragraph(doc: Document, title: str, content: str) -> None:
+def _add_inline_paragraph(doc: Document, title: str, content: str, *, compact: bool = False) -> None:
     paragraph = doc.add_paragraph(style="Normal")
-    paragraph.paragraph_format.space_after = Pt(6)
+    paragraph.paragraph_format.space_after = Pt(2 if compact else 6)
+    paragraph.paragraph_format.line_spacing = Pt(13.5 if compact else 17)
     if title:
         title_run = paragraph.add_run(f"{title}：")
         title_run.font.name = "Microsoft YaHei"
         title_run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
-        title_run.font.size = Pt(10)
+        title_run.font.size = Pt(9 if compact else 10)
         title_run.bold = True
     content_run = paragraph.add_run(content)
     content_run.font.name = "Microsoft YaHei"
     content_run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
-    content_run.font.size = Pt(10)
+    content_run.font.size = Pt(9 if compact else 10)
 
 
-def _add_table(doc: Document, rows: list[list[dict[str, Any]]]) -> None:
+def _add_table(doc: Document, rows: list[list[dict[str, Any]]], *, compact: bool = False) -> None:
     if not rows:
         return
     table = doc.add_table(rows=len(rows), cols=max(len(row) for row in rows))
@@ -225,9 +236,12 @@ def _add_table(doc: Document, rows: list[list[dict[str, Any]]]) -> None:
             target = table.cell(row_index, cell_index)
             target.text = str(value or "")
             for paragraph in target.paragraphs:
+                paragraph.paragraph_format.space_after = Pt(0)
+                paragraph.paragraph_format.line_spacing = Pt(11.5 if compact else 13)
                 for run in paragraph.runs:
                     run.font.name = "Microsoft YaHei"
                     run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
-                    run.font.size = Pt(9)
+                    run.font.size = Pt(8 if compact else 9)
                     run.bold = bool(isinstance(cell, dict) and not cell.get("editable", True))
-    doc.add_paragraph("")
+    if not compact:
+        doc.add_paragraph("")

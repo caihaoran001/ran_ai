@@ -72,6 +72,16 @@ export type UserProfile = {
   updated_at: string;
 };
 
+export type UserStateProfile = {
+  id: number;
+  service_case_id: number;
+  state_json: Record<string, unknown>;
+  summary?: string | null;
+  source: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type User = {
   id: number;
   name: string;
@@ -81,6 +91,7 @@ export type User = {
   deleted_at?: string | null;
   service_cases: ServiceCase[];
   latest_profile?: UserProfile | null;
+  latest_state_profile?: UserStateProfile | null;
   created_at: string;
   updated_at: string;
 };
@@ -161,6 +172,67 @@ export type Message = {
   analysis_json?: Record<string, unknown> | null;
   trigger?: Message | null;
   created_at: string;
+};
+
+export type OutcomeEvent = {
+  id: number;
+  service_case_id: number;
+  message_id?: number | null;
+  milestone: string;
+  field_key: string;
+  event_type: string;
+  value_text: string;
+  evidence_text: string;
+  confidence: number;
+  source: string;
+  occurred_at?: string | null;
+  metadata_json?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OutcomeStageState = {
+  id: number;
+  service_case_id: number;
+  milestone: string;
+  status: string;
+  collected_fields?: Record<string, OutcomeCollectedField> | null;
+  missing_fields?: string[] | null;
+  last_followup_field?: string | null;
+  last_followup_question?: string | null;
+  last_followup_at?: string | null;
+  followup_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OutcomeCollectedField = {
+  value?: string;
+  evidence_text?: string;
+  event_type?: string;
+  confidence?: number;
+  message_id?: number;
+  updated_at?: string;
+};
+
+export type OutcomeSnapshot = {
+  id: number;
+  service_case_id: number;
+  milestone: string;
+  status: string;
+  metrics_json?: Record<string, unknown> | null;
+  evidence_json?: Record<string, unknown> | null;
+  ai_summary?: string | null;
+  action_items?: Array<Record<string, unknown>> | null;
+  generated_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OutcomeBundle = {
+  events: OutcomeEvent[];
+  states: OutcomeStageState[];
+  snapshots: OutcomeSnapshot[];
 };
 
 export type KnowledgeDraft = {

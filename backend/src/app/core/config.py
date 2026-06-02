@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     ai_temperature: float = Field(default=0.3, validation_alias="AI_TEMPERATURE")
     ai_max_tokens: int = Field(default=8000, validation_alias="AI_MAX_TOKENS")
     ai_timeout_seconds: float = Field(default=60.0, validation_alias="AI_TIMEOUT_SECONDS")
+    ai_max_concurrent_requests: int = Field(
+        default=10,
+        validation_alias="AI_MAX_CONCURRENT_REQUESTS",
+    )
     document_output_dir: str = Field(
         default="generated_documents",
         validation_alias="DOCUMENT_OUTPUT_DIR",
@@ -108,6 +112,7 @@ class Settings(BaseSettings):
         default="现在已经到 {time} 了，还没有收到你的打卡，请补一下。",
         validation_alias="REMINDER_MESSAGE",
     )
+    outcome_snapshots_enabled: bool = Field(default=True, validation_alias="OUTCOME_SNAPSHOTS_ENABLED")
 
     auto_send_documents: bool = Field(
         default=False,

@@ -6,6 +6,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const user = await api<User>(`/users/${id}`);
   const profile = user.latest_profile;
+  const stateProfile = user.latest_state_profile;
   const serviceCase = [...user.service_cases].sort(
     (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
   )[0];
@@ -54,6 +55,15 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <p className="mt-3 text-sm text-zinc-500">尚未生成用户画像。用户提交入营问卷后，系统会自动生成画像和交付文件。</p>
         )}
       </section>
+      {stateProfile && (
+        <section className="rounded-lg border border-zinc-200 bg-white p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-medium">当前用户状态</h2>
+            <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">持续更新</span>
+          </div>
+          <StateProfileView state={stateProfile.state_json} updatedAt={stateProfile.updated_at} />
+        </section>
+      )}
       {(energyDocument || executionDocument) && (
         <section className="rounded-lg border border-zinc-200 bg-white p-4">
           <h2 className="font-medium">交付文件摘要</h2>
@@ -165,6 +175,151 @@ function ProfileView({
   );
 }
 
+function StateProfileView({
+  state,
+  updatedAt,
+}: {
+  state: Record<string, unknown>;
+  updatedAt: string;
+}) {
+  const domains = recordValue(state.domains);
+  const visibleDomains = [
+    "action_focus",
+    "goals",
+    "need_analysis",
+    "diet_structure",
+    "rhythm_structure",
+    "product_usage",
+    "body_feedback",
+    "risk_profile",
+    "outcome_changes",
+  ]
+    .map((key) => [key, recordValue(domains[key])] as const)
+    .filter(([, domain]) => Object.keys(recordValue(domain.current)).length || (Array.isArray(domain.history) && domain.history.length > 0));
+
+  return (
+    <div className="mt-3 space-y-4 text-sm">
+      <p className="text-xs text-zinc-500">
+        当前状态由入营问卷、聊天反馈、打卡和阶段成效证据自动更新；旧证据会保留在证据链中。
+        最近更新：{formatDateTime(updatedAt)}
+      </p>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {visibleDomains.map(([key, domain]) => (
+          <StateDomainCard key={key} domain={domain} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StateDomainCard({ domain }: { domain: Record<string, unknown> }) {
+  const current = recordValue(domain.current);
+  const currentValue = recordValue(current.value);
+  const history = Array.isArray(domain.history) ? domain.history.map(recordValue).filter(Boolean).slice(-3).reverse() : [];
+  const label = text(domain.label) || "状态";
+  const evidence = text(current.evidence);
+
+  if (label === "当前行动重点") {
+    return <ActionFocusCard currentValue={currentValue} current={current} history={history} evidence={evidence} />;
+  }
+
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-medium text-zinc-500">{label}</div>
+        {text(current.updated_at) && <div className="text-[11px] text-zinc-400">{formatDateTime(text(current.updated_at))}</div>}
+      </div>
+      {Object.keys(currentValue).length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {Object.entries(currentValue).slice(0, 5).map(([key, value]) => (
+            <div key={key} className="leading-6">
+              <span className="text-zinc-500">{stateFieldLabel(key)}：</span>
+              <span>{formatStateValue(value)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-2 text-zinc-500">暂无当前状态</div>
+      )}
+      {evidence && <p className="mt-2 rounded bg-white px-2 py-1 text-xs leading-5 text-zinc-500">依据：{evidence}</p>}
+      {history.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-blue-600">查看证据链</summary>
+          <div className="mt-2 space-y-2">
+            {history.map((item, index) => (
+              <div key={`${text(item.evidence)}-${index}`} className="rounded border border-zinc-100 bg-white p-2 text-xs leading-5">
+                <div className="text-zinc-400">{formatDateTime(text(item.occurred_at))}</div>
+                <div className="mt-1 text-zinc-600">{text(item.evidence) || formatStateValue(item.value)}</div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function ActionFocusCard({
+  currentValue,
+  current,
+  history,
+  evidence,
+}: {
+  currentValue: Record<string, unknown>;
+  current: Record<string, unknown>;
+  history: Record<string, unknown>[];
+  evidence: string;
+}) {
+  const focus = recordValue(currentValue.current_focus);
+  const candidates = recordValue(currentValue.candidates);
+  const sortedCandidates = Object.values(candidates)
+    .map(recordValue)
+    .filter((item) => text(item.label))
+    .sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0))
+    .slice(0, 3);
+
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-medium text-zinc-500">当前行动重点</div>
+        {text(current.updated_at) && <div className="text-[11px] text-zinc-400">{formatDateTime(text(current.updated_at))}</div>}
+      </div>
+      {text(focus.label) ? (
+        <div className="mt-2 space-y-1 leading-6">
+          <div><span className="text-zinc-500">重点：</span>{text(focus.label)}</div>
+          <div><span className="text-zinc-500">动作：</span>{text(focus.action) || "暂无动作"}</div>
+          <div><span className="text-zinc-500">分数：</span>{String(focus.score ?? "暂无")}</div>
+          {text(focus.soft_lock_until) && <div><span className="text-zinc-500">稳定期至：</span>{formatDateTime(text(focus.soft_lock_until))}</div>}
+        </div>
+      ) : (
+        <div className="mt-2 text-zinc-500">暂无当前行动重点</div>
+      )}
+      {sortedCandidates.length > 0 && (
+        <div className="mt-3 rounded bg-white px-2 py-2 text-xs leading-5 text-zinc-500">
+          <div className="font-medium text-zinc-600">候选池</div>
+          {sortedCandidates.map((item) => (
+            <div key={text(item.key) || text(item.label)}>{text(item.label)}：{String(item.score ?? "0")}</div>
+          ))}
+        </div>
+      )}
+      {evidence && <p className="mt-2 rounded bg-white px-2 py-1 text-xs leading-5 text-zinc-500">依据：{evidence}</p>}
+      {history.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-blue-600">查看变更记录</summary>
+          <div className="mt-2 space-y-2">
+            {history.map((item, index) => (
+              <div key={`${text(item.evidence)}-${index}`} className="rounded border border-zinc-100 bg-white p-2 text-xs leading-5">
+                <div className="text-zinc-400">{formatDateTime(text(item.occurred_at))}</div>
+                <div className="mt-1 text-zinc-600">{text(item.evidence) || formatStateValue(item.value)}</div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function DocumentHighlights({
   energyDocument,
   executionDocument,
@@ -257,6 +412,62 @@ function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function stateFieldLabel(key: string) {
+  const labels: Record<string, string> = {
+    name: "姓名",
+    preferred_name: "称呼",
+    gender: "性别",
+    age: "年龄",
+    height_cm: "身高",
+    weight_kg: "体重",
+    bmi: "BMI",
+    waist: "腰围",
+    bodyfat: "体脂率",
+    weight_loss_band: "减重带",
+    main_needs: "服务需求",
+    day28_expectation: "28天期待",
+    day28_goal: "28天目标",
+    main_problem: "核心问题",
+    current_focus: "当前重点",
+    candidates: "候选池",
+    surface_needs: "表层需求",
+    deep_needs: "深层需求",
+    priority_need: "优先需求",
+    system_outputs: "系统输出",
+    next_actions: "下一步动作",
+    evidence_notes: "需求证据",
+    health_note: "健康提醒",
+    risks: "风险识别",
+    adherence_worry: "坚持风险",
+    pressure_reaction: "压力反应",
+    diet_pattern: "饮食结构",
+    profile_state: "状态判断",
+    product_schedule: "产品执行",
+    discomfort_feedback: "不适反馈",
+    energy_change: "精神变化",
+    sleep_change: "睡眠变化",
+    bowel_change: "排便变化",
+    weight_change: "体重变化",
+    waist_or_body_change: "腰围/体感",
+    weight_result: "体重结果",
+    waist_result: "腰围结果",
+    challenge_goal_result: "目标结果",
+  };
+  return labels[key] ?? key;
+}
+
+function formatStateValue(value: unknown): string {
+  if (value === null || value === undefined) return "暂无数据";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(formatStateValue).filter(Boolean).join("、");
+  }
+  const record = recordValue(value);
+  return text(record.value) || Object.values(record).map(formatStateValue).filter(Boolean).join("；") || "暂无数据";
 }
 
 function blockByKey(document: UserDocument | undefined, key: string) {

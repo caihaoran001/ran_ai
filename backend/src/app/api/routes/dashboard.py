@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
+from statistics import mean
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessageSenderType
+from app.models.outcome import OutcomeEvent, OutcomeSnapshot
 from app.models.service_case import ServiceCase, ServiceCaseStatus
-from app.models.user_document import DocumentStatus, UserDocument
-from app.schemas.dashboard import DashboardSummary
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
+from app.models.user_profile import UserProfile
+from app.schemas.dashboard import DashboardMetric, DashboardSummary, OutcomeDashboardSummary
 from app.services.service_case_queries import active_service_case_condition
 
 router = APIRouter()
@@ -172,6 +176,13 @@ async def dashboard_summary(
             if message.service_case_id and _has_emotion_signal(message)
         }
     )
+    outcome_summary = await _build_outcome_summary(
+        session,
+        total_cases=total or 0,
+        renewal_intent_users=renewal_intent_users,
+        refund_intent_users=refund_intent_users,
+        now=now,
+    )
 
     return DashboardSummary(
         service_cases_total=total or 0,
@@ -190,6 +201,7 @@ async def dashboard_summary(
         refund_intent_users=refund_intent_users,
         lost_users=lost_users or 0,
         emotional_users_today=emotional_users_today or 0,
+        outcome_summary=outcome_summary,
     )
 
 
@@ -222,3 +234,341 @@ async def _count_flagged_cases(session: AsyncSession, condition) -> int:
         )
     )
     return count or 0
+
+
+async def _build_outcome_summary(
+    session: AsyncSession,
+    *,
+    total_cases: int,
+    renewal_intent_users: int,
+    refund_intent_users: int,
+    now: datetime,
+) -> OutcomeDashboardSummary:
+    active_cases = total_cases
+    day7_eligible = await _eligible_case_count(session, now=now, day=7)
+    day28_eligible = await _eligible_case_count(session, now=now, day=28)
+
+    profile_cases = await _distinct_active_case_count(session, UserProfile.service_case_id)
+    core_document_cases = await _core_document_case_count(session)
+    day7_snapshots = await _snapshot_case_count(session, milestone="day7", now=now, day=7)
+    day28_complete_checkins = await _checkin_completion_case_count(session, now=now, day=28, minimum_days=20)
+    result_signal_cases = await _outcome_event_case_count(
+        session,
+        {
+            "weight_change",
+            "waist_or_body_change",
+            "weight_result",
+            "waist_result",
+            "challenge_goal_result",
+        },
+    )
+    body_feedback_cases = await _outcome_event_case_count(
+        session,
+        {
+            "energy_change",
+            "sleep_change",
+            "bowel_change",
+            "positive_body_signal",
+        },
+    )
+    discomfort_cases = await _outcome_event_case_count(session, {"discomfort_feedback"})
+    referral_cases = await _outcome_event_case_count(session, {"referral_signal"})
+    day28_weight_avg, day28_weight_count, day28_waist_avg, day28_waist_count = await _day28_change_averages(
+        session,
+        now=now,
+    )
+
+    return OutcomeDashboardSummary(
+        active_cases=active_cases,
+        eligible_day7_cases=day7_eligible,
+        eligible_day28_cases=day28_eligible,
+        metrics=[
+            _rate_metric(
+                key="profile_completion_rate",
+                label="建档完成率",
+                numerator=profile_cases,
+                denominator=active_cases,
+                description="已有用户画像的服务单占比，用来判断获客数据与建档质量。",
+            ),
+            _rate_metric(
+                key="core_document_generation_rate",
+                label="核心交付生成率",
+                numerator=core_document_cases,
+                denominator=active_cases,
+                description="已生成两份核心交付文件的服务单占比，用来判断系统承接效率。",
+            ),
+            _rate_metric(
+                key="day7_snapshot_rate",
+                label="7日成效快照覆盖率",
+                numerator=day7_snapshots,
+                denominator=day7_eligible,
+                description="已到第7天的服务单中，完成阶段成效沉淀的占比。",
+            ),
+            _rate_metric(
+                key="day28_checkin_completion_rate",
+                label="28天打卡完成率",
+                numerator=day28_complete_checkins,
+                denominator=day28_eligible,
+                description="已到第28天的服务单中，至少沉淀20天打卡记录的占比。",
+            ),
+            _rate_metric(
+                key="result_signal_rate",
+                label="体重/围度/目标结果记录率",
+                numerator=result_signal_cases,
+                denominator=active_cases,
+                description="聊天或阶段快照中已沉淀体重、围度或目标结果证据的用户占比。",
+            ),
+            _rate_metric(
+                key="body_feedback_rate",
+                label="睡眠/排便/能量反馈率",
+                numerator=body_feedback_cases,
+                denominator=active_cases,
+                description="已收集到睡眠、排便、精神能量等体感反馈证据的用户占比。",
+            ),
+            _rate_metric(
+                key="discomfort_feedback_rate",
+                label="不适反馈率",
+                numerator=discomfort_cases,
+                denominator=active_cases,
+                description="用户明确反馈心慌、失眠、不舒服等不适线索的占比，越高越需要人工关注。",
+            ),
+            _rate_metric(
+                key="renewal_intent_rate",
+                label="明确复购意向率",
+                numerator=renewal_intent_users,
+                denominator=active_cases,
+                description="用户聊天中明确表达继续购买、续期或推荐购买的占比。",
+            ),
+            _rate_metric(
+                key="refund_intent_rate",
+                label="退款/退出意向率",
+                numerator=refund_intent_users,
+                denominator=active_cases,
+                description="用户聊天中明确表达退款、退群、不继续等意向的占比。",
+            ),
+            _rate_metric(
+                key="referral_signal_rate",
+                label="推荐线索率",
+                numerator=referral_cases,
+                denominator=active_cases,
+                description="聊天中出现推荐朋友、同事或家人参与的真实线索占比。",
+            ),
+            _value_metric(
+                key="avg_day28_weight_change",
+                label="28天平均体重变化",
+                value=day28_weight_avg,
+                unit="kg",
+                sample_count=day28_weight_count,
+                description="来自第28天阶段快照的体重变化均值；样本不足时不展示结论。",
+            ),
+            _value_metric(
+                key="avg_day28_waist_change",
+                label="28天平均腰围变化",
+                value=day28_waist_avg,
+                unit="cm",
+                sample_count=day28_waist_count,
+                description="来自第28天阶段快照的腰围变化均值；样本不足时不展示结论。",
+            ),
+        ],
+    )
+
+
+async def _eligible_case_count(session: AsyncSession, *, now: datetime, day: int) -> int:
+    eligible_before = _service_day_eligible_before(now, day)
+    count = await session.scalar(
+        select(func.count(ServiceCase.id)).where(
+            active_service_case_condition(),
+            ServiceCase.started_at.is_not(None),
+            ServiceCase.started_at < eligible_before,
+        )
+    )
+    return count or 0
+
+
+async def _distinct_active_case_count(session: AsyncSession, service_case_column) -> int:
+    count = await session.scalar(
+        select(func.count(distinct(service_case_column)))
+        .join(ServiceCase, service_case_column == ServiceCase.id)
+        .where(active_service_case_condition())
+    )
+    return count or 0
+
+
+async def _core_document_case_count(session: AsyncSession) -> int:
+    doc_counts = (
+        select(
+            UserDocument.service_case_id.label("service_case_id"),
+            func.count(distinct(UserDocument.document_type)).label("document_count"),
+        )
+        .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
+        .where(
+            active_service_case_condition(),
+            UserDocument.document_type.in_(
+                [
+                    DocumentType.ENERGY_RESTART_PRESCRIPTION,
+                    DocumentType.DAY28_EXECUTION_STANDARD,
+                ]
+            ),
+        )
+        .group_by(UserDocument.service_case_id)
+        .subquery()
+    )
+    count = await session.scalar(
+        select(func.count()).select_from(doc_counts).where(doc_counts.c.document_count >= 2)
+    )
+    return count or 0
+
+
+async def _snapshot_case_count(session: AsyncSession, *, milestone: str, now: datetime, day: int) -> int:
+    eligible_before = _service_day_eligible_before(now, day)
+    count = await session.scalar(
+        select(func.count(distinct(ServiceCase.id)))
+        .join(OutcomeSnapshot, OutcomeSnapshot.service_case_id == ServiceCase.id)
+        .where(
+            active_service_case_condition(),
+            ServiceCase.started_at.is_not(None),
+            ServiceCase.started_at < eligible_before,
+            OutcomeSnapshot.milestone == milestone,
+        )
+    )
+    return count or 0
+
+
+async def _checkin_completion_case_count(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    day: int,
+    minimum_days: int,
+) -> int:
+    eligible_before = _service_day_eligible_before(now, day)
+    completed_cases = (
+        select(
+            Checkin.service_case_id.label("service_case_id"),
+            func.count(distinct(Checkin.checkin_date)).label("checkin_days"),
+        )
+        .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
+        .where(
+            active_service_case_condition(),
+            ServiceCase.started_at.is_not(None),
+            ServiceCase.started_at < eligible_before,
+        )
+        .group_by(Checkin.service_case_id)
+        .subquery()
+    )
+    count = await session.scalar(
+        select(func.count()).select_from(completed_cases).where(completed_cases.c.checkin_days >= minimum_days)
+    )
+    return count or 0
+
+
+async def _outcome_event_case_count(session: AsyncSession, field_keys: set[str]) -> int:
+    count = await session.scalar(
+        select(func.count(distinct(OutcomeEvent.service_case_id)))
+        .join(ServiceCase, OutcomeEvent.service_case_id == ServiceCase.id)
+        .where(
+            active_service_case_condition(),
+            OutcomeEvent.field_key.in_(sorted(field_keys)),
+        )
+    )
+    return count or 0
+
+
+async def _day28_change_averages(
+    session: AsyncSession,
+    *,
+    now: datetime,
+) -> tuple[float | None, int, float | None, int]:
+    eligible_before = _service_day_eligible_before(now, 28)
+    snapshots = list(
+        await session.scalars(
+            select(OutcomeSnapshot)
+            .join(ServiceCase, OutcomeSnapshot.service_case_id == ServiceCase.id)
+            .where(
+                active_service_case_condition(),
+                ServiceCase.started_at.is_not(None),
+                ServiceCase.started_at < eligible_before,
+                OutcomeSnapshot.milestone == "day28",
+            )
+        )
+    )
+    weight_changes = [_float_metric((item.metrics_json or {}).get("weight_change")) for item in snapshots]
+    waist_changes = [_float_metric((item.metrics_json or {}).get("waist_change")) for item in snapshots]
+    weight_values = [item for item in weight_changes if item is not None]
+    waist_values = [item for item in waist_changes if item is not None]
+    return (
+        round(mean(weight_values), 2) if weight_values else None,
+        len(weight_values),
+        round(mean(waist_values), 2) if waist_values else None,
+        len(waist_values),
+    )
+
+
+def _rate_metric(
+    *,
+    key: str,
+    label: str,
+    numerator: int,
+    denominator: int,
+    description: str,
+) -> DashboardMetric:
+    if denominator <= 0:
+        return DashboardMetric(
+            key=key,
+            label=label,
+            value=None,
+            unit="%",
+            numerator=numerator,
+            denominator=denominator,
+            description=description,
+            status="no_sample",
+        )
+    return DashboardMetric(
+        key=key,
+        label=label,
+        value=round(numerator * 100 / denominator, 1),
+        unit="%",
+        numerator=numerator,
+        denominator=denominator,
+        description=description,
+    )
+
+
+def _value_metric(
+    *,
+    key: str,
+    label: str,
+    value: float | None,
+    unit: str,
+    sample_count: int,
+    description: str,
+) -> DashboardMetric:
+    return DashboardMetric(
+        key=key,
+        label=label,
+        value=value,
+        unit=unit,
+        denominator=sample_count,
+        description=description,
+        status="ok" if value is not None else "no_sample",
+    )
+
+
+def _service_day_eligible_before(now: datetime, day: int) -> datetime:
+    """Return the UTC boundary for natural China-date service-day eligibility."""
+    china_tz = ZoneInfo("Asia/Shanghai")
+    latest_start_date = now.astimezone(china_tz).date() - timedelta(days=day - 1)
+    next_day_start = datetime.combine(
+        latest_start_date + timedelta(days=1),
+        time.min,
+        tzinfo=china_tz,
+    )
+    return next_day_start.astimezone(timezone.utc)
+
+
+def _float_metric(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None

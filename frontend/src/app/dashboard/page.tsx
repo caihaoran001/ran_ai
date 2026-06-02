@@ -19,6 +19,25 @@ type Summary = {
   refund_intent_users?: number;
   lost_users: number;
   emotional_users_today?: number;
+  outcome_summary?: OutcomeSummary;
+};
+
+type OutcomeMetric = {
+  key: string;
+  label: string;
+  value?: number | null;
+  unit: string;
+  numerator?: number | null;
+  denominator?: number | null;
+  description: string;
+  status: string;
+};
+
+type OutcomeSummary = {
+  active_cases: number;
+  eligible_day7_cases: number;
+  eligible_day28_cases: number;
+  metrics: OutcomeMetric[];
 };
 
 export default async function DashboardPage() {
@@ -39,6 +58,12 @@ export default async function DashboardPage() {
     refund_intent_users: 0,
     lost_users: 0,
     emotional_users_today: 0,
+    outcome_summary: {
+      active_cases: 0,
+      eligible_day7_cases: 0,
+      eligible_day28_cases: 0,
+      metrics: [],
+    },
   }));
   const renewalFollowupUsers = summary.renewal_followup_users ?? summary.repurchase_soon_users;
 
@@ -180,6 +205,8 @@ export default async function DashboardPage() {
         />
       </div>
 
+      <OutcomeSummaryPanel summary={summary.outcome_summary} />
+
       {/* 开发者系统健康自测试 Banner 引导 */}
       <div className="mt-8 p-6 rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50/80 via-white to-zinc-50/50 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="space-y-1">
@@ -204,6 +231,116 @@ export default async function DashboardPage() {
       </div>
     </div>
   );
+}
+
+function OutcomeSummaryPanel({ summary }: { summary?: OutcomeSummary }) {
+  const metrics = summary?.metrics ?? [];
+  const primaryKeys = new Set([
+    "profile_completion_rate",
+    "core_document_generation_rate",
+    "day7_snapshot_rate",
+    "day28_checkin_completion_rate",
+    "result_signal_rate",
+    "body_feedback_rate",
+  ]);
+  const primaryMetrics = metrics.filter((metric) => primaryKeys.has(metric.key));
+  const signalMetrics = metrics.filter((metric) => !primaryKeys.has(metric.key));
+
+  return (
+    <section className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
+      <div className="border-b border-zinc-100 px-6 py-5">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-zinc-900">客户成效引擎</h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              汇总真实执行数据、成效证据和体感反馈；样本不足时不硬下结论。
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs text-zinc-500">
+            <span className="rounded-full bg-zinc-100 px-3 py-1">有效服务单 {summary?.active_cases ?? 0}</span>
+            <span className="rounded-full bg-zinc-100 px-3 py-1">7日样本 {summary?.eligible_day7_cases ?? 0}</span>
+            <span className="rounded-full bg-zinc-100 px-3 py-1">28日样本 {summary?.eligible_day28_cases ?? 0}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 p-6 lg:grid-cols-3">
+        {primaryMetrics.map((metric) => (
+          <OutcomeMetricCard key={metric.key} metric={metric} />
+        ))}
+        {!primaryMetrics.length && (
+          <div className="col-span-full rounded-xl border border-dashed border-zinc-200 p-8 text-center text-sm text-zinc-500">
+            暂无成效指标，等用户聊天、打卡和阶段快照沉淀后会自动显示。
+          </div>
+        )}
+      </div>
+
+      {!!signalMetrics.length && (
+        <div className="border-t border-zinc-100 px-6 py-5">
+          <h3 className="text-sm font-semibold text-zinc-900">经营信号</h3>
+          <div className="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {signalMetrics.map((metric) => (
+              <OutcomeSignalRow key={metric.key} metric={metric} />
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function OutcomeMetricCard({ metric }: { metric: OutcomeMetric }) {
+  const noSample = metric.status === "no_sample";
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-5">
+      <div className="text-sm font-medium text-zinc-600">{metric.label}</div>
+      <div className="mt-3 flex items-end gap-2">
+        <span className={noSample ? "text-base font-semibold text-zinc-400" : "text-3xl font-bold text-zinc-950"}>
+          {formatOutcomeValue(metric)}
+        </span>
+        {metric.status !== "no_sample" && metric.unit && (
+          <span className="pb-1 text-sm font-medium text-zinc-500">{metric.unit}</span>
+        )}
+      </div>
+      <div className="mt-2 text-xs text-zinc-500">{formatOutcomeDenominator(metric)}</div>
+      <p className="mt-3 text-xs leading-5 text-zinc-500">{metric.description}</p>
+    </div>
+  );
+}
+
+function OutcomeSignalRow({ metric }: { metric: OutcomeMetric }) {
+  return (
+    <div className="rounded-xl border border-zinc-200 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium text-zinc-700">{metric.label}</span>
+        <span className="text-sm font-bold text-zinc-950">
+          {formatOutcomeValue(metric)}
+          {metric.status !== "no_sample" ? metric.unit : ""}
+        </span>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-zinc-500">{metric.description}</p>
+    </div>
+  );
+}
+
+function formatOutcomeValue(metric: OutcomeMetric) {
+  if (metric.status === "no_sample" || metric.value === null || metric.value === undefined) {
+    return "暂无样本";
+  }
+  if (Number.isInteger(metric.value)) {
+    return String(metric.value);
+  }
+  return metric.value.toFixed(1).replace(/\.0$/, "");
+}
+
+function formatOutcomeDenominator(metric: OutcomeMetric) {
+  if (metric.denominator === null || metric.denominator === undefined) {
+    return "来自阶段快照聚合";
+  }
+  if (metric.numerator === null || metric.numerator === undefined) {
+    return `样本 ${metric.denominator}`;
+  }
+  return `样本 ${metric.numerator ?? 0}/${metric.denominator}`;
 }
 
 function StatCard({

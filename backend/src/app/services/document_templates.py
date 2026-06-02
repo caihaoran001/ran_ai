@@ -48,10 +48,10 @@ ENERGY_FIELD_SPEC = {
         "day14_28": "第14-28天变化",
     },
     "non_negotiable": {
-        "title": "这28天最不能打折的一件事。必须来自用户最特异的个人风险信号或成败卡点，禁止写通用答案",
-        "content": "原因和提醒",
+        "title": "这28天最不能打折的一件事。写成一个短动作，必须来自用户最特异的个人风险信号或成败卡点，禁止写通用答案",
+        "content": "可选。只有当 title 只是短主题时才补一句原因；如果 title 已经是完整动作，留空",
     },
-    "week_actions": ["本周直接执行，3-5条。至少包含1条运动建议，且运动建议必须写出类型+频率+时长+禁忌时间窗口"],
+    "week_actions": ["本周直接执行，固定3条。至少包含1条运动建议，且运动建议必须写出类型+频率+时长+禁忌时间窗口"],
     "product_schedule": {
         "morning_c": "早C",
         "noon_b": "午B",
@@ -70,10 +70,10 @@ EXECUTION_FIELD_SPEC = {
     "current_phase_goal": "当前阶段目标",
     "principle": "执行总原则，一句话，强调先守早C/午B/晚A和关键生活动作，再抓结果",
     "weekly_plan": [
-        {"week": "第1周", "focus": "稳住节律 / 先守底盘", "required_actions": "必须动作，1-2个极简短句，例如：醒后早C、工作中段午B、晚间晚A；晚餐无主食", "pass_standard": "通过标准，例如：≥5天完成固定节律"},
-        {"week": "第2周", "focus": "拉高关键动作一致性", "required_actions": "必须动作，例如：晚餐边界+运动频次一起做", "pass_standard": "通过标准，例如：≥5天完成饮食和运动"},
-        {"week": "第3周", "focus": "开始抓结果指标", "required_actions": "必须动作，例如：记录体重/腰腹/睡眠或情绪", "pass_standard": "通过标准，例如：至少2项指标变好"},
-        {"week": "第4周", "focus": "稳定复现 / 做实结果", "required_actions": "必须动作，例如：不加码冒进，复现有效动作", "pass_standard": "通过标准，例如：连续5天不掉线"},
+        {"week": "第1周", "focus": "稳住节律 / 先守底盘", "required_actions": "执行标准，1个短句，例如：醒后早C、工作中段午B、晚间晚A；晚餐主食≤1拳；每天7000步。"},
+        {"week": "第2周", "focus": "拉高关键动作一致性", "required_actions": "执行标准，1个短句，例如：连续5天不漏早餐；晚餐后走15–20分钟；应酬日不加宵夜。"},
+        {"week": "第3周", "focus": "开始抓结果指标", "required_actions": "执行标准，1个短句，例如：每周2次轻力量；记录腰围和体重。"},
+        {"week": "第4周", "focus": "稳定复现 / 做实结果", "required_actions": "执行标准，1个短句，例如：把睡前收口、7000步、2次轻力量做满。"},
     ],
     "daily_checkin": "每日固定打卡要求。包含5项打卡清单，且针对用户的具体痛点进行个性化定制。早C/午B/晚A合并成一项；至少2项打卡必须是正向动作（做到什么），不能全是限制项；情绪稳定度和饭后困必须合并为1项综合观察，不要输出硬编码的通用套话。",
     "week5_12": "第5-8周和第9-12周提前说明",
@@ -235,15 +235,11 @@ def _build_energy(title: str, user_name: str, display_name: str | None, fields: 
         _text_block("constitution", "6. 长期体质和当前失衡初步判断", fields.get("constitution")),
         _module_block(fields),
         _expected_block(fields),
-        _text_block(
-            "non_negotiable",
-            f"9. 您这28天最不能打折的一件事是：{_text(_dict(fields.get('non_negotiable')).get('title')) or '先守住最关键动作'}",
-            _dict(fields.get("non_negotiable")).get("content"),
-        ),
-        _list_block("week_actions", "10. 本周直接执行：不要等想明白再开始", fields.get("week_actions")),
+        _non_negotiable_block(fields),
+        _list_block("week_actions", "10. 本周直接执行：不要等想明白再开始", fields.get("week_actions"), limit=3),
         _product_block(fields),
         _text_block("special_reminder", "12. 特别提醒", fields.get("special_reminder")),
-        _text_block("first_week_signals", "13. 前7天重点看4个信号", fields.get("first_week_signals")),
+        _first_week_signals_block(fields),
         _text_block("notice", "14. 说明", "本处方单用于生活方式管理和燃AI 28天训练营执行指导，不替代医疗诊断、药物治疗或医生建议。"),
     ]
     return _payload(title=display_title, recipient=fields.get("recipient") or display_name or user_name, blocks=blocks)
@@ -254,7 +250,7 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
     if not isinstance(rows, list):
         rows = []
     rows_by_week = {str(row.get("week")): row for row in rows if isinstance(row, dict)}
-    table_rows = [[_label("周次"), _label("核心目标"), _label("必须动作"), _label("通过标准")]]
+    table_rows = [[_label("周次"), _label("重点"), _label("执行标准")]]
     
     fixed_focus = {
         "第1周": "稳住节律 / 先守底盘",
@@ -270,45 +266,31 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
         "第4周": "把蔬菜、快走和轻力量做满；复现有效动作，不过度加码。",
     }
     
-    fixed_pass = {
-        "第1周": "≥5天完成固定节律，并至少记录1次体重/围度/体感。",
-        "第2周": "≥5天完成饮食和运动，并至少记录1次体重/围度/体感。",
-        "第3周": "至少完成1次体重/围度/体感记录，且至少2项指标变好。",
-        "第4周": "连续5天不掉线，并至少完成1次体重/围度/体感记录。",
-    }
-    
     for week in ("第1周", "第2周", "第3周", "第4周"):
         row = rows_by_week.get(week, {})
-        focus_val = row.get("focus") or fixed_focus[week]
+        focus_val = _execution_sentence(row.get("focus") or fixed_focus[week], max_parts=1, max_len=18)
         
         # Backward compatibility for old single 'standard' field
         actions_val = row.get("required_actions") or row.get("standard")
         if not actions_val:
             actions_val = fixed_actions[week]
         else:
-            actions_val = _clean_text(actions_val)
-            
-        pass_val = row.get("pass_standard")
-        if not pass_val:
-            pass_val = fixed_pass[week]
-        else:
-            pass_val = _clean_text(pass_val)
+            actions_val = _execution_sentence(actions_val, max_parts=3, max_len=58)
             
         table_rows.append(
             [
                 _label(week),
                 _editable(focus_val),
                 _editable(actions_val),
-                _editable(pass_val),
             ]
         )
         
     blocks = [
-        _inline_block("weight_band", "您当前所属减重带", fields.get("weight_band")),
-        _inline_block("path_goal", "更适合的总路径目标", fields.get("path_goal")),
-        _inline_block("day28_goal", "第一个28天目标", fields.get("day28_goal")),
-        _inline_block("current_phase_goal", "当前阶段目标", fields.get("current_phase_goal")),
-        _inline_block("principle", "执行总原则", fields.get("principle") or "先守早C/午B/晚A和晚间收口底盘，再用饮食、步行和睡眠放大结果。"),
+        _inline_block("weight_band", "您当前所属减重带", _execution_sentence(fields.get("weight_band"), max_parts=1, max_len=28)),
+        _inline_block("path_goal", "更适合的总路径目标", _execution_sentence(fields.get("path_goal"), max_parts=1, max_len=46)),
+        _inline_block("day28_goal", "第一个28天目标", _execution_sentence(fields.get("day28_goal"), max_parts=2, max_len=68)),
+        _inline_block("current_phase_goal", "当前阶段目标", _execution_sentence(fields.get("current_phase_goal"), max_parts=1, max_len=48)),
+        _inline_block("principle", "执行总原则", _execution_sentence(fields.get("principle") or "先守早C/午B/晚A和晚间收口底盘，再用饮食、步行和睡眠放大结果。", max_parts=2, max_len=72)),
         _text_block(
             "fixed_rhythm",
             "",
@@ -320,9 +302,9 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
             "每日固定打卡（每天只打这5项）",
             _daily_checkin_text(fields.get("daily_checkin")),
         ),
-        _text_block("week5_12", "第5–8周和第9–12周提前说明", fields.get("week5_12") or "第5–8周继续放大已经稳定的动作，第9–12周再根据体重、腰围、睡眠和排便反馈微调目标；不要在第一个28天里一次性加太多动作。"),
-        _text_block("weekly_standard", "每周通过标准", fields.get("weekly_standard") or "本周不追求完美，重点看三杯节律是否稳定，并至少完成1次体重 / 围度 / 体感记录，确认自己比上一周更稳。"),
-        _text_block("reminder", "提醒", _personal_reminder(fields.get("reminder"))),
+        _text_block("week5_12", "第5–8周和第9–12周提前说明", _execution_sentence(fields.get("week5_12") or "第5–8周继续放大已经稳定的动作，第9–12周再根据体重、腰围、睡眠和排便反馈微调目标；不要在第一个28天里一次性加太多动作。", max_parts=2, max_len=92)),
+        _text_block("weekly_standard", "每周通过标准", _weekly_standard_text(fields.get("weekly_standard"))),
+        _text_block("reminder", "提醒", _reminder_text(fields.get("reminder"))),
     ]
     payload = _payload(title=f"{display_name or user_name}｜{title}（1页版）", recipient="", blocks=blocks)
     payload["show_recipient"] = False
@@ -353,8 +335,21 @@ def _payload(*, title: str, recipient: Any, blocks: list[dict[str, Any]]) -> dic
         "template_version": "ranai_docx_v1",
         "title": title,
         "recipient": _text(recipient),
-        "blocks": [block for block in blocks if block],
+        "blocks": [block for block in blocks if _is_non_empty_block(block)],
     }
+
+
+def _is_non_empty_block(block: dict[str, Any]) -> bool:
+    if not block:
+        return False
+    kind = block.get("kind")
+    if kind == "table":
+        return bool(block.get("rows"))
+    if kind == "list":
+        return bool(block.get("items"))
+    if block.get("key") == "non_negotiable":
+        return bool(_text(block.get("title")))
+    return bool(_text(block.get("content")) or block.get("display") == "inline" and _text(block.get("content")))
 
 
 def _text_block(key: str, title: str, content: Any) -> dict[str, Any]:
@@ -371,10 +366,38 @@ def _inline_block(key: str, title: str, content: Any) -> dict[str, Any]:
     }
 
 
-def _list_block(key: str, title: str, items: Any) -> dict[str, Any]:
+def _list_block(key: str, title: str, items: Any, *, limit: int | None = None) -> dict[str, Any]:
     if not isinstance(items, list):
         items = [_text(items)] if _text(items) else []
-    return {"key": key, "title": title, "kind": "list", "items": [_clean_text(item) for item in items if _text(item)]}
+    cleaned = [_clean_text(item) for item in items if _text(item)]
+    if limit is not None:
+        cleaned = cleaned[:limit]
+    return {"key": key, "title": title, "kind": "list", "items": cleaned}
+
+
+def _non_negotiable_block(fields: dict[str, Any]) -> dict[str, Any]:
+    value = _dict(fields.get("non_negotiable"))
+    title = _text(value.get("title")) or "先守住最关键动作"
+    content = _text(value.get("content"))
+    if len(title) >= 18 or any(word in title for word in ("全部", "不晚于", "完成", "控制", "放在", "守住")):
+        content = ""
+    return _text_block(
+        "non_negotiable",
+        f"9. 您这28天最不能打折的一件事是：{title}",
+        content,
+    )
+
+
+def _first_week_signals_block(fields: dict[str, Any]) -> dict[str, Any]:
+    value = fields.get("first_week_signals")
+    if isinstance(value, list):
+        lines = [_clean_text(item) for item in value if _clean_text(item)]
+        return _list_block("first_week_signals", "13. 前7天重点看4个信号", lines, limit=4)
+    text_val = _clean_text(value)
+    if not text_val:
+        return _list_block("first_week_signals", "13. 前7天重点看4个信号", [], limit=4)
+    lines = [part.strip() for part in re_split_standard(text_val) if part.strip()]
+    return _list_block("first_week_signals", "13. 前7天重点看4个信号", lines or [text_val], limit=4)
 
 
 def _success_path_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -542,6 +565,47 @@ def _compact_standard(value: Any) -> str:
         return text_val[:80]
     compact = "；".join(parts[:3])
     return compact[:90].rstrip("；，,。") + "。"
+
+
+def _execution_sentence(value: Any, *, max_parts: int, max_len: int) -> str:
+    text_val = _clean_text(value)
+    if not text_val:
+        return ""
+    parts = [part.strip() for part in re_split_standard(text_val) if part.strip()]
+    if not parts:
+        parts = [text_val]
+    selected: list[str] = []
+    for part in parts:
+        candidate = "；".join([*selected, part]).strip("；，,。 ")
+        if selected and len(candidate) > max_len:
+            break
+        selected.append(part)
+        if len(selected) >= max_parts:
+            break
+    compact = "；".join(selected or parts[:1]).strip("；，,。 ")
+    return compact + ("。" if compact and compact[-1] not in "。！？" else "")
+
+
+def _weekly_standard_text(value: Any) -> str:
+    text_val = _execution_sentence(value, max_parts=3, max_len=98)
+    if not text_val:
+        return "每周至少5天完成三杯节律；至少记录1次体重或围度/体感；结果不稳时先看睡眠、排便和晚餐边界。"
+    if "体重" not in text_val and "围度" not in text_val and "体感" not in text_val:
+        text_val = text_val.rstrip("。") + "；至少记录1次体重或围度/体感。"
+    return text_val
+
+
+def _reminder_text(value: Any) -> str:
+    text_val = _personal_reminder(value)
+    parts = [part.strip() for part in re_split_standard(text_val) if part.strip()]
+    if not parts:
+        return "结果看连续性，不看单日完美。持续不适请及时就医。"
+    compact = "。".join(parts[:2]).strip("。")
+    if "结果看连续性" not in compact and "不看单日完美" not in compact:
+        compact = f"结果看连续性，不看单日完美。{compact}"
+    if len(compact) > 82:
+        compact = compact[:82].rstrip("；，,。 ")
+    return compact + ("。" if compact[-1] not in "。！？" else "")
 
 
 def re_split_standard(value: str) -> list[str]:

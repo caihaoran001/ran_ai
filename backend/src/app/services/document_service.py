@@ -38,6 +38,7 @@ from app.services.intake_facts import build_intake_fact_summary
 from app.services.intake_facts import sanitize_profile_json
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.service_case_queries import get_active_service_case
+from app.services.user_state_profile import initialize_user_state_from_intake
 from app.services.channels import send_channel_document, send_channel_text
 from app.services.risk_service import is_high_risk
 
@@ -95,6 +96,12 @@ async def generate_profile_and_documents(
         generated_by_model=ai.settings.ai_model,
     )
     session.add(profile)
+    await initialize_user_state_from_intake(
+        session,
+        service_case=service_case,
+        profile_json=package["profile_json"],
+        intake_facts=intake_facts,
+    )
     documents: list[UserDocument] = []
     for document_type, title in DOCUMENT_DEFINITIONS.items():
         fields_payload = package["document_payloads"].get(document_type.value) or {}
@@ -442,6 +449,8 @@ async def _generate_intake_analysis_package(
     readable_answers = _readable_answers(fields, submission.answers_json)
     intake_facts = build_intake_fact_summary(fields, submission.answers_json)
     text = await ai.generate_text(
+        scenario="intake_doc",
+        temperature=0.3,
         system_prompt=_intake_generation_system_prompt(),
         user_prompt=(
             f"当前用户：{user_name}\n"
@@ -493,6 +502,14 @@ def _intake_package_schema() -> dict[str, object]:
             "main_problem": "核心主要问题",
             "day28_goal": "28天目标",
             "risks": "只写问卷明确出现的健康/心理/医疗风险；无明确风险写暂无明确风险",
+            "need_analysis": {
+                "surface_needs": ["用户表面表达的需求，例如减重、睡好、精神好"],
+                "deep_needs": ["表层需求背后的真实服务需求，只基于问卷事实推断"],
+                "priority_need": "当前最优先满足的一个需求",
+                "system_outputs": ["系统应交付的方案、动作、产品调优、陪跑或复盘方向"],
+                "next_actions": ["接下来最该推进的1-3个动作"],
+                "evidence_notes": ["对应的问卷证据，2-4条"],
+            },
             "notes": "AI陪跑建议，供运营参考",
             "personalized_checkin_fields": [
                 {
@@ -525,6 +542,7 @@ def _normalize_profile_from_package(
         profile.setdefault("state", shared.get("execution_principle"))
     profile = sanitize_profile_json(dict(profile), intake_facts)
     profile.setdefault("risks", "暂无明确风险")
+    profile["need_analysis"] = _normalize_need_analysis(profile.get("need_analysis"), intake_facts, shared)
     profile.setdefault("notes", "建议围绕问卷中明确的执行卡点进行轻量陪跑，避免一次性增加太多动作。")
     profile.setdefault("personalized_checkin_fields", _fallback_personalized_checkin_fields(intake_facts))
     return profile
@@ -543,6 +561,64 @@ def _profile_from_document_payloads(document_payloads: dict[str, dict]) -> dict[
         "risks": "暂无明确风险",
         "notes": _text_from_payload(energy.get("special_reminder")) or "建议围绕问卷中的核心执行卡点进行陪跑。",
     }
+
+
+def _normalize_need_analysis(value: object, facts: dict[str, object], shared: dict[str, object]) -> dict[str, object]:
+    """Keep the need engine structured even when the LLM omits optional fields.
+
+    This is intentionally not a keyword classifier. It preserves the user's
+    own stated needs and lets the generation prompt infer deeper needs from
+    questionnaire evidence.
+    """
+
+    analysis = value if isinstance(value, dict) else {}
+    main_needs = _split_need_text(facts.get("main_needs"))
+    expectation = _split_need_text(facts.get("day28_expectation"))
+    surface_needs = _clean_list(analysis.get("surface_needs")) or main_needs or expectation
+    deep_needs = _clean_list(analysis.get("deep_needs"))
+    outputs = _clean_list(analysis.get("system_outputs"))
+    actions = _clean_list(analysis.get("next_actions"))
+    evidence = _clean_list(analysis.get("evidence_notes"))
+
+    return {
+        "surface_needs": surface_needs or ["待补充"],
+        "deep_needs": deep_needs or ["待结合聊天和打卡继续识别"],
+        "priority_need": str(
+            analysis.get("priority_need")
+            or shared.get("core_problem")
+            or facts.get("main_needs")
+            or "待补充"
+        ),
+        "system_outputs": outputs or _clean_list(
+            [
+                shared.get("day28_goal"),
+                shared.get("execution_principle"),
+            ]
+        ) or ["待根据方案生成结果补充"],
+        "next_actions": actions or ["按已生成方案先完成入营前3天执行与反馈"],
+        "evidence_notes": evidence or _clean_list(
+            [
+                f"服务需求：{facts.get('main_needs')}",
+                f"28天期待：{facts.get('day28_expectation')}",
+                f"执行担心：{facts.get('adherence_worry')}",
+            ]
+        ),
+    }
+
+
+def _split_need_text(value: object) -> list[str]:
+    text = str(value or "").strip()
+    if not text or text in {"未提供", "暂无数据"}:
+        return []
+    return [item.strip() for item in re.split(r"[、,，；;|/]+", text) if item.strip()]
+
+
+def _clean_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return _split_need_text(value)
+    return []
 
 
 def _profile_summary_from_documents(document_payloads: dict[str, dict]) -> str:
@@ -637,6 +713,17 @@ def _intake_generation_system_prompt() -> str:
         "减重带、核心问题、总路径目标、第一个28天目标、当前阶段目标、执行总原则、风险提醒不能各说各话。"
         "profile 是后台摘要视图，不要另起一套判断；只能从 shared_analysis 和两份文件填充值中提炼。"
         "\n\n"
+        "必须额外生成 profile.need_analysis，作为「健康需求识别引擎」的初始结果。"
+        "它要把用户表面说的「我想瘦、我想有精神、我想不便秘、我想睡好、我想不焦虑、我想长期健康、我想被鼓励」"
+        "转译成系统真正要解决的深层需求与交付动作。"
+        "示例方向：减重背后可能是体型、掌控感或被看见；便秘背后可能是肠道节律、饮食结构或水分不足；"
+        "没精神背后可能是睡眠债、咖啡因使用不当或营养不足；睡不好背后可能是晚间节律、压力或产品时机；"
+        "易焦虑背后可能是情绪奖励缺失或目标过高；想长期健康背后可能是代谢健康、肌肉、睡眠或炎症管理；"
+        "想被鼓励背后可能是社群支持、营养感、身份感或荣誉感。"
+        "这些只是识别框架，不是硬套标签；必须引用用户问卷证据，证据不足就写待继续观察。"
+        "system_outputs 要写系统应输出什么，例如28天路径、每日动作、饮食/水/纤维/运动调优、早C/午B/晚A节律、睡前流程、低摩擦执行、90天健康计划、荣誉/推荐线索等。"
+        "禁止把需求识别写成医疗诊断或人格判断。"
+        "\n\n"
         "每位用户必须按以下顺序完成判断，缺一不可："
         "现象读取 → 减重带判断 → 当前主问题 → 判断依据 → 12周成功路径 → 当前28天执行纠偏 → 预期改善。"
         "禁止只写结论不写依据；禁止只写生活方式常识不对应问卷具体内容。"
@@ -703,21 +790,27 @@ def _intake_generation_system_prompt() -> str:
         "胃部不适：统一随餐。夜班/倒班：改写为「启动杯—续航杯—收尾杯」。每日固定打卡中早C/午B/晚A 合并为一项。"
         "「这28天最不能打折的一件事」必须来自用户最特异的个人风险信号或成败卡点，例如咖啡因敏感、晚睡、情绪化进食、夜班作息；"
         "禁止写成「坚持产品节律」「按时喝三杯」这类所有人都适用的通用答案。"
-        "这一项只写一句定点动作，不要再补第二句解释。\n"
+        "这一项 title 优先写成完整定点动作；如果 title 已经是完整动作，content 留空，不要再补第二句解释。\n"
         "\n\n"
         "处方单（energy_restart_prescription）需覆盖：用户信息概览表、一句话结论、判断依据、当前身体状态真正该关注什么、"
         "胰岛素抵抗/瘦素敏感/激素阶段判断、成功路径、长期体质与失衡判断、节律/饮食/睡眠/压力/身体活动五项模块诊断、"
-        "预期变化、最不能打折的一件事、本周执行动作、产品排班、特别提醒。\n"
-        "执行单（day28_execution_standard）需覆盖：减重带、总路径目标、28天目标、当前阶段目标、执行总原则、"
-        "4周逐周执行计划（每周含 focus / required_actions / pass_standard）、每日固定打卡（5项）、"
+        "预期变化、最不能打折的一件事、本周执行动作、产品排班、前7天重点看4个信号。"
+        "special_reminder 只有在有明确不适、疾病、用药、孕哺、检测或安全边界时才输出；没有就留空，不要硬写提醒。\n"
+        "执行单（day28_execution_standard）必须写成运营交付用的 1 页执行纸，不是解释文章。"
+        "结构只允许是：顶部5项定调（减重带、总路径目标、28天目标、当前阶段目标、执行总原则）→"
+        "产品底盘固定句 → 28天逐周执行标准 → 每日固定打卡5项 → 第5-12周提前说明 → 每周通过标准 → 提醒。"
+        "4周逐周执行计划只输出 week / focus / required_actions；不要把 pass_standard 写进每一周，统一放到 weekly_standard 字段。"
+        "每周 required_actions 必须是一个短句，最多 3 个动作，用分号连接，像「醒后早C、工作中段午B、晚间晚A；晚餐主食≤1拳；每天7000步。」"
+        "不要写为什么，不要写机制解释，不要写鼓励语。"
+        "每日固定打卡（5项）、"
         "第5-12周提前说明、每周通过标准、个性化提醒。\n"
         "daily_checkin 只有5项：第1项固定为早C/午B/晚A合并打卡，后4项围绕用户具体卡点定制（如午B时间、晚餐收口、"
         "蔬菜摄入、睡眠时间、情绪稳定度和饭后困综合评分），禁止通用套话。"
         "至少 2 项打卡要设计成正向动作（做到什么），其次才是禁止动作（不做什么）。"
-        "每周通过标准必须包含 1 次体重 / 围度 / 体感记录作为基础门槛。"
+        "每周通过标准写成 1 句，必须包含 1 次体重 / 围度 / 体感记录作为基础门槛。"
         "reminder 必须个性化，结合用户作息/睡眠/运动/不适/夜班等信息；第一句必须是一句定心丸，例如「结果看连续性，不看单日完美」。"
         "提醒总共控制在 2 句内，不要写成一整段说明书；必要时提醒就医。"
-        "执行单整体必须有“一页版”感受：句子短、信息密、少解释、少重复。\n"
+        "执行单整体必须像参考版：句子短、信息密、动作多、解释少；禁止为了完整而扩写。\n"
         "处方单也要克制：一句话结论 1 句；当前状态模块以 4-5 条短判断呈现；本周执行动作固定 3 条；不要比参考版更啰嗦。"
         "\n\n"
         "所有健康相关判断只能写成生活方式管理建议，不能写成诊断、治疗、用药建议或疗效承诺。"
@@ -891,6 +984,8 @@ async def _generate_stage_payload(
         )
     try:
         text = await ai.generate_text(
+            scenario="stage_report",
+            temperature=0.3,
             system_prompt=prompt,
             user_prompt=(
                 f"用户：{user_name}\n服务单：{service_case.case_no}\n报告：{title}\n阶段：{stage}\n"
