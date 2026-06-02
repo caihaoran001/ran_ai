@@ -130,6 +130,16 @@ class RanrenAIEngine:
 
             purpose = MessagePurpose.CHAT
 
+            meta = {
+                "sender_id": message.user_id,
+                "sender_name": message.user_name,
+                "timestamp": int(message.timestamp.timestamp()),
+            }
+            if analysis is None:
+                analysis = {"_qiwe_meta": meta}
+            else:
+                analysis["_qiwe_meta"] = meta
+
             db_inbound = Message(
                 service_case_id=service_case.id if service_case else None,
                 group_id=message.chat_id,
@@ -221,7 +231,12 @@ class RanrenAIEngine:
             if service_case:
                 merge_case_insight(service_case, analysis)
             if db_inbound:
-                db_inbound.analysis_json = analysis
+                existing = db_inbound.analysis_json or {}
+                meta = existing.get("_qiwe_meta")
+                new_analysis = dict(analysis)
+                if meta:
+                    new_analysis["_qiwe_meta"] = meta
+                db_inbound.analysis_json = new_analysis
             await session.commit()
 
     async def _run_outcome_analysis(
@@ -266,7 +281,12 @@ class RanrenAIEngine:
         async with SessionLocal() as session:
             db_inbound = await session.get(Message, inbound_id)
             if db_inbound:
-                db_inbound.analysis_json = analysis
+                existing = db_inbound.analysis_json or {}
+                meta = existing.get("_qiwe_meta")
+                new_analysis = dict(analysis)
+                if meta:
+                    new_analysis["_qiwe_meta"] = meta
+                db_inbound.analysis_json = new_analysis
             await session.commit()
 
     async def _create_case_for_message(
@@ -274,7 +294,7 @@ class RanrenAIEngine:
     ) -> ServiceCase:
         user = User(
             name="待填写问卷用户",
-            wecom_user_id=message.user_id if message.channel == "wecom" else None,
+            wecom_user_id=message.user_id if message.channel in ("wecom", "qiwe") else None,
             notes=f"由 {message.channel} 入营问卷指令自动创建",
         )
         session.add(user)

@@ -34,7 +34,7 @@ async def list_case_messages(
             Message.group_id == service_case.group_id,
             Message.created_at >= service_case.created_at,
         )
-        .order_by(Message.created_at.asc())
+        .order_by(Message.created_at.asc(), Message.id.asc())
     )
     return list(result)
 

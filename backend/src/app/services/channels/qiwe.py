@@ -33,13 +33,52 @@ class QiWeChannel:
     ) -> ChannelSendResult:
         if not self._ready:
             return ChannelSendResult(success=False, error="QIWEI_TOKEN or QIWEI_GUID is missing")
+
+        reply_payload = None
+        if reply_to:
+            try:
+                from app.db.session import SessionLocal
+                from app.models.message import Message
+                from sqlalchemy import select
+
+                async with SessionLocal() as session:
+                    stmt = select(Message).where(
+                        Message.wecom_message_id == reply_to,
+                        Message.direction == "inbound"
+                    )
+                    db_msg = await session.scalar(stmt)
+                    if db_msg:
+                        meta = (db_msg.analysis_json or {}).get("_qiwe_meta") or {}
+                        sender_id = meta.get("sender_id") or ""
+                        sender_name = meta.get("sender_name") or ""
+                        timestamp = meta.get("timestamp") or int(db_msg.created_at.timestamp())
+
+                        reply_payload = {
+                            "type": 0,  # 0 for text message
+                            "userId": str(sender_id),
+                            "showName": str(sender_name),
+                            "timeStamp": int(timestamp),
+                            "msgUniqueIdentifier": str(reply_to),
+                            "msgData": {
+                                "content": db_msg.content
+                            }
+                        }
+            except Exception as e:
+                import logging
+                logger = logging.getLogger("uvicorn.error")
+                logger.error(f"Failed to lookup reply_to message details: {e}")
+
+        params = {
+            "guid": self.guid,
+            "toId": str(chat_id),
+            "content": content,
+        }
+        if reply_payload:
+            params["reply"] = reply_payload
+
         payload = {
             "method": "/msg/sendText",
-            "params": {
-                "guid": self.guid,
-                "toId": str(chat_id),
-                "content": content,
-            },
+            "params": params,
         }
         return await self._post_json("/api/qw/doApi", payload)
 
