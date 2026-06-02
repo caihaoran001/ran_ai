@@ -6,6 +6,7 @@ import re
 import secrets
 import time
 from datetime import datetime
+from typing import Awaitable, Callable
 from urllib.parse import urlparse
 
 from sqlalchemy import and_, or_, select
@@ -85,6 +86,8 @@ RANREN_AI_SYSTEM_PROMPT = (
     "【回复格式要求】\n"
     "每一句回答都要简洁、说人话、易读、多换行。如果有知识库内容提供，优先结合知识库标准答复；如果提供了历史优秀案例，可以合理引用其场景进行情感共鸣，但禁止虚构。\n"
     "合理、克制地使用 0-2 个暖心 emoji（如 🌟、🥑、💧），不要堆表情；避免使用 **加粗**、斜体、表格等移动端显示不稳定的 Markdown 格式。\n"
+    "禁止使用 Markdown 标记符号（例如 **、###、表格线）；群聊里直接用自然短句换行即可。\n"
+    "禁止宣称自己 7×24、24小时、全天在线或永远即时响应。可以说“我会尽量及时回应，重要问题班主任会一起跟进”。\n"
     "引用知识库和标准回复时，优先保留并呼应用户发言中触发的核心业务名词，例如早C、午B、晚A、平台期、不掉秤、空腹、随餐等，以保持服务话术一致。\n"
     "但组织回复时必须自然、温暖、顺畅，绝对避免生硬地机械复读或拼接用户的原始吐槽原话。\n"
     "【真实需求使用原则】\n"
@@ -104,9 +107,15 @@ DEFAULT_RISK_REPLY = (
 class RanrenAIEngine:
     """Channel-agnostic business engine for inbound customer messages."""
 
-    def __init__(self, channel: MessageChannel, settings: Settings | None = None):
+    def __init__(
+        self,
+        channel: MessageChannel,
+        settings: Settings | None = None,
+        has_pending_newer_message: Callable[[ChannelMessage], Awaitable[bool]] | None = None,
+    ):
         self.channel = channel
         self.settings = settings or get_settings()
+        self.has_pending_newer_message = has_pending_newer_message
 
     async def handle_message(self, message: ChannelMessage) -> None:
         started_at = time.monotonic()
@@ -130,15 +139,16 @@ class RanrenAIEngine:
 
             purpose = MessagePurpose.CHAT
 
-            meta = {
-                "sender_id": message.user_id,
-                "sender_name": message.user_name,
-                "timestamp": int(message.timestamp.timestamp()),
-            }
-            if analysis is None:
-                analysis = {"_qiwe_meta": meta}
-            else:
-                analysis["_qiwe_meta"] = meta
+            if not should_send_questionnaire:
+                meta = {
+                    "sender_id": message.user_id,
+                    "sender_name": message.user_name,
+                    "timestamp": int(message.timestamp.timestamp()),
+                }
+                if analysis is None:
+                    analysis = {"_qiwe_meta": meta}
+                else:
+                    analysis["_qiwe_meta"] = meta
 
             db_inbound = Message(
                 service_case_id=service_case.id if service_case else None,
@@ -185,6 +195,7 @@ class RanrenAIEngine:
                 content=message.text,
                 context={
                     "service_case_id": service_case_id,
+                    "message_id": inbound_id,
                     "group_id": message.chat_id,
                     "current_message": message.text,
                     "recent_user_messages": recent_user_messages,
@@ -433,6 +444,8 @@ class RanrenAIEngine:
                     scenario="ai_reply",
                     system_prompt=RANREN_AI_SYSTEM_PROMPT,
                     user_prompt=ai_user_prompt,
+                    service_case_id=service_case_id,
+                    message_id=trigger_id,
                 )
             except Exception:
                 logger.exception("AI reply failed")
@@ -443,6 +456,22 @@ class RanrenAIEngine:
                 should_send = await self._should_send_ai_reply(session, service_case, analysis, message)
             
         if should_send:
+            if await self._has_newer_inbound_message(service_case_id=service_case_id, trigger_id=trigger_id):
+                logger.info(
+                    "RanrenAI skip stale AI reply chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id,
+                    trigger_id,
+                    service_case_id,
+                )
+                return
+            if self.has_pending_newer_message and await self.has_pending_newer_message(message):
+                logger.info(
+                    "RanrenAI skip AI reply because newer raw messages are queued chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id,
+                    trigger_id,
+                    service_case_id,
+                )
+                return
             send_started_at = time.monotonic()
             result = await self.channel.send_text(
                 message.chat_id,
@@ -524,6 +553,25 @@ class RanrenAIEngine:
                 )
             )
             await session.commit()
+
+    async def _has_newer_inbound_message(self, *, service_case_id: int | None, trigger_id: int | None) -> bool:
+        if not service_case_id or not trigger_id:
+            return False
+        async with SessionLocal() as session:
+            newer_id = await session.scalar(
+                select(Message.id)
+                .where(
+                    Message.service_case_id == service_case_id,
+                    Message.id > trigger_id,
+                    Message.direction == MessageDirection.INBOUND,
+                    Message.sender_type == MessageSenderType.USER,
+                    Message.purpose == MessagePurpose.CHAT,
+                    Message.status == MessageStatus.RECEIVED,
+                )
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+            return newer_id is not None
 
     async def _latest_active_case(self, session, group_id: str) -> ServiceCase | None:
         return await session.scalar(
@@ -736,6 +784,27 @@ class RanrenAIEngine:
         )
         return user_context
 
+    async def _build_intervention_context(self, session, *, service_case: ServiceCase | None) -> dict:
+        if not service_case:
+            return {}
+        context: dict[str, object] = {
+            "current_risk_level": service_case.risk_level,
+            "needs_human_intervention": service_case.needs_human_intervention,
+            "intervention_reasons": service_case.intervention_reasons or [],
+            "risk_flags": service_case.risk_flags or [],
+        }
+        state_profile = await session.scalar(
+            select(UserStateProfile)
+            .where(UserStateProfile.service_case_id == service_case.id)
+            .order_by(UserStateProfile.updated_at.desc())
+            .limit(1)
+        )
+        if state_profile:
+            action_focus = _state_action_focus(state_profile.state_json)
+            if action_focus:
+                context["current_action_focus"] = action_focus
+        return context
+
 
 def _prompt_data(value: object) -> str:
     """Escape user-controlled text before placing it inside prompt data tags."""
@@ -744,6 +813,18 @@ def _prompt_data(value: object) -> str:
 
 def _sanitize_ai_reply(reply: str, settings: Settings) -> str:
     text = (reply or "").strip()
+    for marker in ("**", "__", "###", "##", "#"):
+        text = text.replace(marker, "")
+    online_claim_patterns = (
+        r"27\s*[×xX]\s*7\s*(?:都)?(?:在线|陪伴|响应)?",
+        r"7\s*[×xX]\s*24\s*(?:小时)?(?:在线|陪伴|响应)?",
+        r"24\s*小时(?:都)?(?:在线|陪伴|响应)",
+        r"全天(?:都)?(?:在线|陪伴|响应)",
+        r"随时(?:都)?(?:在线|响应|回复)",
+    )
+    for pattern in online_claim_patterns:
+        text = re.sub(pattern, "我会尽量及时回应，重要问题班主任也会一起跟进", text, flags=re.IGNORECASE)
+
     allowed_hosts = {
         host
         for host in (
@@ -794,6 +875,31 @@ def _compact_state_profile_for_prompt(state_json: object) -> str:
         if compact:
             lines.append(f"- {label}：{compact}")
     return "\n".join(lines) if lines else "暂无动态状态"
+
+
+def _state_action_focus(state_json: object) -> dict[str, object] | None:
+    if not isinstance(state_json, dict):
+        return None
+    domains = state_json.get("domains")
+    if not isinstance(domains, dict):
+        return None
+    action_focus = domains.get("action_focus")
+    if not isinstance(action_focus, dict):
+        return None
+    current = action_focus.get("current")
+    if not isinstance(current, dict):
+        return None
+    value = current.get("value")
+    if not isinstance(value, dict) or not value:
+        return None
+    return {
+        "key": value.get("key") or "",
+        "label": value.get("label") or "",
+        "action": value.get("action") or "",
+        "reason": value.get("reason") or "",
+        "score": value.get("score") or 0,
+        "evidence": value.get("evidence") or [],
+    }
 
 
 def _short_prompt_value(value: object) -> str:

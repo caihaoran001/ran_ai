@@ -11,9 +11,11 @@ from typing import Any
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 from app.core.config import Settings, get_settings
+from app.db.session import SessionLocal
+from app.models.ai_usage import AIUsageLog
 from app.services.ai_service.json_utils import parse_json_object
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 _LIMITERS: dict[int, asyncio.Semaphore] = {}
 
@@ -25,6 +27,25 @@ def _get_limiter(max_concurrent: int) -> asyncio.Semaphore:
         limiter = asyncio.Semaphore(limit)
         _LIMITERS[limit] = limiter
     return limiter
+
+
+def _estimated_cost_yuan(*, prompt_tokens: int | None, completion_tokens: int | None, settings: Settings) -> float | None:
+    if prompt_tokens is None and completion_tokens is None:
+        return None
+    prompt_price = max(float(settings.ai_prompt_cost_per_1m_tokens or 0), 0.0)
+    completion_price = max(float(settings.ai_completion_cost_per_1m_tokens or 0), 0.0)
+    prompt_cost = (prompt_tokens or 0) * prompt_price / 1_000_000
+    completion_cost = (completion_tokens or 0) * completion_price / 1_000_000
+    return round(prompt_cost + completion_cost, 8)
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class AIService:
@@ -43,6 +64,8 @@ class AIService:
         user_prompt: str,
         scenario: str = "generic",
         temperature: float | None = None,
+        service_case_id: int | None = None,
+        message_id: int | None = None,
     ) -> str:
         if not self.settings.ai_api_key:
             raise RuntimeError("AI_API_KEY is required")
@@ -76,6 +99,17 @@ class AIService:
                 attempts,
                 True,
             )
+            await self._record_usage(
+                scenario=scenario,
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                finish_reason=finish,
+                usage=usage,
+                attempts=attempts,
+                success=True,
+                error_type=None,
+                service_case_id=service_case_id,
+                message_id=message_id,
+            )
             return (content or "").strip()
         except Exception as exc:
             logger.info(
@@ -91,7 +125,62 @@ class AIService:
                 False,
                 type(exc).__name__,
             )
+            await self._record_usage(
+                scenario=scenario,
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                finish_reason=finish,
+                usage=usage,
+                attempts=attempts,
+                success=False,
+                error_type=type(exc).__name__,
+                service_case_id=service_case_id,
+                message_id=message_id,
+            )
             raise
+
+    async def _record_usage(
+        self,
+        *,
+        scenario: str,
+        elapsed_ms: int,
+        finish_reason: str | None,
+        usage: Any,
+        attempts: int,
+        success: bool,
+        error_type: str | None,
+        service_case_id: int | None,
+        message_id: int | None,
+    ) -> None:
+        prompt_tokens = getattr(usage, "prompt_tokens", None)
+        completion_tokens = getattr(usage, "completion_tokens", None)
+        total_tokens = getattr(usage, "total_tokens", None)
+        estimated_cost = _estimated_cost_yuan(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            settings=self.settings,
+        )
+        try:
+            async with SessionLocal() as session:
+                session.add(
+                    AIUsageLog(
+                        service_case_id=service_case_id,
+                        message_id=message_id,
+                        scenario=scenario,
+                        model=self.settings.ai_model,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
+                        estimated_cost_yuan=estimated_cost,
+                        elapsed_ms=elapsed_ms,
+                        attempts=attempts,
+                        success=success,
+                        finish_reason=finish_reason,
+                        error_type=error_type,
+                    )
+                )
+                await session.commit()
+        except Exception:
+            logger.exception("Failed to record llm usage scenario=%s service_case_id=%s", scenario, service_case_id)
 
     async def _create_chat_completion_with_retry(
         self,
@@ -136,9 +225,12 @@ class AIService:
         content: str,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        context = context or {}
         text = await self.generate_text(
             scenario="intervention_risk",
             temperature=0.3,
+            service_case_id=_int_or_none(context.get("service_case_id")),
+            message_id=_int_or_none(context.get("message_id")),
             system_prompt=(
                 "你是燃AI的健康服务风控和运营意图识别助手。\n"
                 "你的任务是精准识别群聊/问卷中是否存在以下三个等级的风险，并输出结构化 JSON 对象（只输出纯 JSON，不要 Markdown 包装）。\n\n"
@@ -149,8 +241,16 @@ class AIService:
 
                 "【严格的风险分级标准】\n"
                 "- L3 健康高风险（level='high'）：疾病（糖尿病/高血压/甲减/结石）、用药（长期服药/激素药）、孕产哺乳期、体检指标严重异常、强烈过敏反应、抑郁/自残心理危机、疗效承诺或替代药物诊疗请求。此类风险必须拦截 AI 自动回复，requires_human_intervention=true。\n"
-                "- L2 体感不适/投诉风险（level='medium'）：失眠、腹痛腹泻、胃部不适、胀气恶心、心悸心慌、持续身体不适等生理体感波动。requires_human_intervention=true，AI 仍可给出温和指导，但必须提示转人工复核。\n"
+                "- L2 体感不适/投诉风险（level='medium'）：失眠、腹痛腹泻、胃部不适、胀气恶心、心悸心慌、持续身体不适等生理体感波动；或用户持续表达强烈不满、质疑专业性/身份、辱骂、要求停止机器人、要求人工/班主任介入、对服务明显失控。requires_human_intervention=true，AI 仍可给出温和指导，但必须提示转人工复核。\n"
                 "- L1 执行/服务敏感（level='low'）：怕吃不敢吃、轻度控卡焦虑、对产品使用疑惑、普通活动咨询、口头询问退款退出规则。requires_human_intervention=false，AI 正常应答，仅做静默标记。\n\n"
+
+                "【L1 与 L2 的边界判断标准】\n"
+                "按以下 4 步核对：\n"
+                "① 看当前消息本身是否含有对机器人/AI身份的质疑、辱骂、要求停止或攻击性短句；\n"
+                "② 再看 recent_user_messages 近 3-5 轮里有没有投诉、冲突、质疑专业性/身份的记录；\n"
+                "③ 两条都不满足 → L1；任一条满足 → L2；\n"
+                "④ 仅批评产品/服务/效果（如'套餐有点贵'、'什么时候发货'、'晚A是什么'、'怕吃不敢吃'、'我最近没掉秤'）属于 L1，不升级。\n"
+                "注意：批评机器人本身（如'你以为你很专业吗'、'你懂个蛋'、'别跟我说话了'、'你话真多能不能精简点'、'你以为你是谁'）属于 L2。'滚'、'闭嘴'等攻击性短句无条件算 L2；'啊？'、'说话！'等短句必须与质疑/攻击/投诉连在一起才升级，单独一句不升级。\n\n"
 
                 "【输出 JSON 字段定义（每个字段独立，禁止合并命名）】\n"
                 "{\n"
@@ -189,7 +289,7 @@ class AIService:
                 "}\n\n"
 
                 "【判断纪律】\n"
-                "1. 结合 recent_user_messages 上下文进行多轮会话的合并研判；该字段可能包含“用户/营养师/班主任”的双向历史对话。\n"
+                "1. 结合 recent_user_messages 上下文进行多轮会话的合并研判；该字段可能包含\u201c用户/营养师/班主任\u201d的双向历史对话。\n"
                 "2. 没有明确证据时，保持 detected=false 且数组为空。\n"
                 "3. 禁止对无害词汇过度标记：如'稍微有点心慌可能是咖啡因敏感'属于正常反馈，不应标为 L2/L3。\n"
                 "4. 用户转述他人经历（如'我朋友得了糖尿病'）不构成该用户自身的健康风险。"
@@ -211,6 +311,8 @@ class AIService:
         text = await self.generate_text(
             scenario="outcome_extract",
             temperature=0.3,
+            service_case_id=_int_or_none(context.get("service_case_id")),
+            message_id=_int_or_none(context.get("message_id")),
             system_prompt=(
                 "你是燃AI的客户成效信息提取器。\n"
                 "你的任务不是聊天回复，而是从用户原话和动态阶段目标中提取可被追溯的成效证据，并判断是否适合顺手追问一个问题。\n\n"
