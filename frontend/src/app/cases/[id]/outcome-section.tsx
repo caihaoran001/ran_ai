@@ -1,0 +1,294 @@
+import { OutcomeBundle, OutcomeEvent, OutcomeSnapshot, OutcomeStageState } from "@/lib/api";
+import { formatChinaDateTime } from "@/lib/format";
+
+const MILESTONES = [
+  ["day1", "第1天", "建档与理解"],
+  ["day3", "第3天", "启动执行"],
+  ["day7", "第7天", "体感变化"],
+  ["day14", "第14天", "平台期与调方案"],
+  ["day28", "第28天", "目标达成"],
+  ["day90", "第90天", "习惯形成"],
+  ["day365", "第365天", "长期会员与推荐"],
+] as const;
+
+const FIELD_LABELS: Record<string, string> = {
+  profile_completed: "完成建档",
+  plan_understood: "理解方案",
+  documents_received: "收到文件",
+  started_execution: "开始执行",
+  product_schedule: "早C/午B/晚A节奏",
+  discomfort_feedback: "不适反馈",
+  rhythm_understood: "理解执行节奏",
+  weight_change: "体重变化",
+  waist_or_body_change: "腰围/裤腰/体感变化",
+  energy_change: "精神状态变化",
+  sleep_change: "睡眠变化",
+  bowel_change: "排便变化",
+  plateau_signal: "平台期信号",
+  execution_rate_signal: "执行率信号",
+  adjustment_need: "调方案需求",
+  positive_body_signal: "正向体感",
+  challenge_goal_result: "目标达成情况",
+  weight_result: "28天体重结果",
+  waist_result: "28天腰围/体态结果",
+  habit_stability: "执行习惯稳定性",
+  next_stage_intent: "下一阶段意向",
+  lifestyle_habit: "生活方式习惯",
+  long_term_weight_stability: "长期体重/围度稳定",
+  self_management: "自我管理能力",
+  long_term_membership: "长期会员",
+  referral_signal: "推荐他人",
+  brand_advocacy: "品牌认同",
+};
+
+const EVENT_LABELS: Record<string, string> = {
+  improved: "改善",
+  worsened: "变差",
+  unchanged: "无变化",
+  completed: "完成",
+  not_completed: "未完成",
+  feedback: "反馈",
+  discomfort: "不适",
+  observation: "观察",
+};
+
+export function OutcomeSection({
+  bundle,
+}: {
+  bundle: OutcomeBundle | null;
+}) {
+  const events = bundle?.events ?? [];
+  const states = bundle?.states ?? [];
+  const snapshots = bundle?.snapshots ?? [];
+  const latestState = states[states.length - 1];
+  const snapshotMap = new Map(snapshots.map((item) => [item.milestone, item]));
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white shadow-sm md:col-span-2">
+      <div className="flex flex-col gap-3 border-b border-zinc-100 px-6 py-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="font-semibold text-zinc-900">客户成效引擎</h2>
+          <p className="mt-1 text-sm text-zinc-500">
+            自动从聊天与打卡中沉淀成效证据，记录阶段缺口，并辅助机器人自然追问。
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <MiniMetric label="证据" value={events.length} />
+          <MiniMetric label="阶段" value={states.length} />
+          <MiniMetric label="快照" value={snapshots.length} />
+        </div>
+      </div>
+
+      <div className="space-y-6 p-6">
+        {latestState ? (
+          <StageStateCard state={latestState} />
+        ) : (
+          <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 py-5 text-sm text-zinc-500">
+            暂无成效状态。用户在服务群内产生普通聊天后，系统会自动提取可追溯的成效证据。
+          </div>
+        )}
+
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-900">阶段快照</h3>
+            <span className="text-xs text-zinc-400">系统到达节点后自动沉淀</span>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {MILESTONES.map(([key, dayLabel, label]) => {
+              const snapshot = snapshotMap.get(key);
+              return (
+                <div key={key} className="rounded-lg border border-zinc-200 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-zinc-500">{dayLabel}</p>
+                      <p className="mt-1 font-medium text-zinc-900">{label}</p>
+                    </div>
+                    <SnapshotStatus hasSnapshot={Boolean(snapshot)} />
+                  </div>
+                  {snapshot ? (
+                    <SnapshotSummary snapshot={snapshot} />
+                  ) : (
+                    <p className="mt-3 text-xs leading-5 text-zinc-400">尚未生成该阶段快照。</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-900">最近成效证据</h3>
+            <span className="text-xs text-zinc-400">按聊天提取时间倒序</span>
+          </div>
+          {events.length > 0 ? (
+            <div className="space-y-3">
+              {events.slice(0, 8).map((event) => (
+                <OutcomeEventRow key={event.id} event={event} />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-zinc-200 py-8 text-center text-sm text-zinc-400">
+              暂无聊天成效证据
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StageStateCard({ state }: { state: OutcomeStageState }) {
+  const collectedEntries = Object.entries(state.collected_fields ?? {});
+  const missing = state.missing_fields ?? [];
+  const total = collectedEntries.length + missing.length;
+  const progress = total > 0 ? Math.round((collectedEntries.length / total) * 100) : 0;
+
+  return (
+    <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-blue-500">{milestoneName(state.milestone)}</p>
+          <h3 className="mt-1 text-lg font-semibold text-zinc-900">当前阶段收集进度 {progress}%</h3>
+          <p className="mt-1 text-sm text-zinc-500">
+            已收集 {collectedEntries.length} 项，仍缺 {missing.length} 项。
+          </p>
+        </div>
+        {state.last_followup_question && (
+          <div className="max-w-md rounded-lg border border-blue-100 bg-white px-3 py-2 text-xs text-zinc-600">
+            <p className="text-zinc-400">最近追问</p>
+            <p className="mt-1 text-zinc-700">{state.last_followup_question}</p>
+            <p className="mt-1 text-zinc-400">{formatDateTime(state.last_followup_at)}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-white">
+        <div className="h-full rounded-full bg-blue-500" style={{ width: `${progress}%` }} />
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div>
+          <p className="mb-2 text-xs font-medium text-zinc-500">已收集</p>
+          {collectedEntries.length > 0 ? (
+            <div className="space-y-2">
+              {collectedEntries.slice(0, 5).map(([field, value]) => (
+                <div key={field} className="rounded-lg bg-white px-3 py-2 text-sm">
+                  <p className="font-medium text-zinc-900">{fieldLabel(field)}</p>
+                  <p className="mt-1 text-zinc-600">{value?.value || value?.evidence_text || "已记录"}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-zinc-400">暂无</p>
+          )}
+        </div>
+        <div>
+          <p className="mb-2 text-xs font-medium text-zinc-500">待自然补齐</p>
+          {missing.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {missing.map((field) => (
+                <span key={field} className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-600">
+                  {fieldLabel(field)}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-emerald-600">当前阶段证据较完整</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SnapshotSummary({ snapshot }: { snapshot: OutcomeSnapshot }) {
+  const metrics = snapshot.metrics_json ?? {};
+  return (
+    <div className="mt-3 space-y-2 text-xs text-zinc-500">
+      <p className="line-clamp-2 text-zinc-600">{snapshot.ai_summary || "已生成快照。"}</p>
+      <div className="flex flex-wrap gap-2">
+        <MetricPill label="打卡" value={metricValue(metrics.checkin_days, "天")} />
+        <MetricPill label="已收集" value={metricValue(metrics.collected_count, "项")} />
+        <MetricPill label="缺失" value={metricValue(metrics.missing_count, "项")} />
+      </div>
+      <p className="text-zinc-400">{formatDateTime(snapshot.generated_at)}</p>
+    </div>
+  );
+}
+
+function OutcomeEventRow({ event }: { event: OutcomeEvent }) {
+  return (
+    <div className="rounded-lg border border-zinc-100 p-4">
+      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600">
+              {milestoneName(event.milestone)}
+            </span>
+            <span className="text-sm font-medium text-zinc-900">{fieldLabel(event.field_key)}</span>
+            <span className="text-xs text-zinc-400">{eventLabel(event.event_type)}</span>
+          </div>
+          <p className="mt-2 text-sm text-zinc-700">{event.value_text}</p>
+          <p className="mt-1 text-xs text-zinc-500">证据：{event.evidence_text}</p>
+        </div>
+        <div className="shrink-0 text-right text-xs text-zinc-400">
+          <p>{Math.round((event.confidence || 0) * 100)}%</p>
+          <p className="mt-1">{formatDateTime(event.created_at)}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
+      <p className="text-lg font-semibold text-zinc-900">{value}</p>
+      <p className="text-zinc-400">{label}</p>
+    </div>
+  );
+}
+
+function SnapshotStatus({ hasSnapshot }: { hasSnapshot: boolean }) {
+  return (
+    <span
+      className={
+        hasSnapshot
+          ? "rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700"
+          : "rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-500"
+      }
+    >
+      {hasSnapshot ? "已沉淀" : "待自动生成"}
+    </span>
+  );
+}
+
+function MetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="rounded-md bg-zinc-100 px-2 py-1 text-zinc-600">
+      {label} {value}
+    </span>
+  );
+}
+
+function metricValue(value: unknown, suffix: string) {
+  return typeof value === "number" ? `${value}${suffix}` : "暂无";
+}
+
+function milestoneName(key: string) {
+  const item = MILESTONES.find(([milestone]) => milestone === key);
+  return item ? `${item[1]} ${item[2]}` : key;
+}
+
+function fieldLabel(key: string) {
+  return FIELD_LABELS[key] || key;
+}
+
+function eventLabel(key: string) {
+  return EVENT_LABELS[key] || key;
+}
+
+function formatDateTime(value?: string | null) {
+  return formatChinaDateTime(value, "暂无");
+}
