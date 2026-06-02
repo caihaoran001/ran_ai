@@ -15,25 +15,42 @@ backend/
 │   │   ├── channels/        # 消息渠道抽象层
 │   │   ├── ranren_ai/       # 渠道无关业务引擎
 │   │   ├── qiwe_service/    # QiWe 消息聚合
+│   │   ├── wecom_service/   # 企微通道 (legacy，字段保留不再迁移)
 │   │   ├── knowledge_base/  # 本地 Markdown FAQ fallback
-│   │   ├── document_service # 交付文件生成
+│   │   ├── case_library.py  # 优秀案例库检索
+│   │   ├── checkin_questionnaires.py  # 打卡问卷模板
 │   │   ├── checkin_service  # 打卡处理
-│   │   ├── reminder_service # 定时提醒 + 知识进化调度
+│   │   ├── content_policy.py # 内容发送策略 (风控拦截 + AI 回复模式)
+│   │   ├── document_service # 交付文件生成
+│   │   ├── document_templates.py # 文档模板引擎 (处方单/执行单/阶段报告)
+│   │   ├── docx_service.py  # python-docx 渲染落盘
+│   │   ├── embedding_service.py # Embedding 向量生成
 │   │   ├── intake_facts.py  # 入营事实确定性提取
+│   │   ├── intervention_service.py # 风控干预分析 (LLM 风险/意图识别)
+│   │   ├── knowledge_evolution.py  # 知识草稿自动生成
+│   │   ├── knowledge_evolution_settings.py # 知识进化配置
+│   │   ├── knowledge_faq_service.py # 结构化 FAQ 管理
+│   │   ├── outcome_engine.py # 成效追踪引擎 (多里程碑 + 行动焦点)
+│   │   ├── questionnaire_template.py # 入营问卷模板
+│   │   ├── reminder_service # 定时提醒 + 知识进化调度 + outcome snapshot
+│   │   ├── risk_service.py  # 风险判断
 │   │   ├── service_case_queries.py # 服务单查询辅助
-│   │   └── knowledge_evolution.py  # 知识草稿自动生成
-│   ├── workers/       # 后台任务 (定时提醒)
+│   │   └── user_state_profile.py # 用户动态状态画像 (outcome → JSONB 投影)
+│   ├── workers/       # 后台任务 (定时提醒 + 企微 worker)
 │   ├── db/            # 数据库会话管理
 │   └── core/          # 配置和常量
 ├── alembic/           # 数据库迁移
-├── tests/             # 自动化测试 (29 用例，Mock LLM)
+├── tests/             # 自动化测试 (56 用例，Mock LLM + 真实 LLM E2E)
 │   ├── conftest.py       # Mock AIService + FastAPI test app
 │   ├── test_01_intake.py # 入营全链路
 │   ├── test_02_chat.py   # 聊天风控
 │   ├── test_03_checkin.py# 打卡数据
 │   ├── test_04_stage_reports.py # 阶段报告
 │   ├── test_05_evolution.py # 知识进化
-│   └── test_06_toggles.py # 系统开关
+│   ├── test_06_toggles.py # 系统开关
+│   ├── test_07_real_llm_e2e.py # 真实 LLM 端到端：28 天陪伴对话 + RAG 自进化 + 案例反哺
+│   ├── test_09_qiwe_channel.py # QiWe 通道：聚合去重 + 失败兜底
+│   └── test_10_outcome_engine.py # 成效引擎：提取 + 状态更新 + 行动焦点
 └── pyproject.toml     # 依赖和入口点
 ```
 
@@ -56,10 +73,24 @@ backend/
 | 数据库知识索引 | `src/app/services/knowledge_index.py` | `knowledge_chunks` 检索，支持 embedding/关键词 fallback |
 | 知识自我进化 | `src/app/services/knowledge_evolution.py` | FAQ/案例草稿自动提取 |
 | 本地知识库 fallback | `src/app/services/knowledge_base.py` | Markdown/LlamaIndex 降级检索 |
-| 定时提醒 | `src/app/services/reminder_service.py` | 打卡提醒 + 阶段报告生成 + 知识进化调度 |
+| 定时提醒 | `src/app/services/reminder_service.py` | 打卡提醒 + 阶段报告生成 + 知识进化调度 + outcome snapshot |
 | 入营事实提取 | `src/app/services/intake_facts.py` | 问卷确定性事实抽取 (BMI/减重带) |
 | 服务单查询 | `src/app/services/service_case_queries.py` | `get_active_service_case` / `get_service_case` |
-| 自动化测试 | `tests/` | 29 用例，Mock LLM，见 `tests/README.md` |
+| 成效引擎 | `src/app/services/outcome_engine.py` | 多里程碑阶段状态 + 行动焦点评分 + outcome snapshot |
+| 用户状态画像 | `src/app/services/user_state_profile.py` | outcome events → JSONB state 投影 (action_focus / need_analysis / body_feedback) |
+| Embedding 服务 | `src/app/services/embedding_service.py` | 知识 chunks 向量化 (OpenAI 兼容) |
+| 内容策略 | `src/app/services/content_policy.py` | 风控拦截 + AI 回复模式判断 (manual_review / auto_send) |
+| 风控干预 | `src/app/services/intervention_service.py` | LLM 风控识别 + service_case 风险/续购/退款合并 |
+| 结构化 FAQ | `src/app/services/knowledge_faq_service.py` | FAQ 业务表 + 知识索引同步 |
+| 案例库 | `src/app/services/case_library.py` | 优秀案例库检索 |
+| 文档模板 | `src/app/services/document_templates.py` | 处方单/执行单/阶段报告/毕业报告模板 |
+| DOCX 渲染 | `src/app/services/docx_service.py` | python-docx 落盘为 .docx |
+| 风险判断 | `src/app/services/risk_service.py` | `is_high_risk` 等风险判定 |
+| 打卡问卷模板 | `src/app/services/checkin_questionnaires.py` | 每日打卡问卷 schema 调度 |
+| 入营问卷模板 | `src/app/services/questionnaire_template.py` | 入营问卷字段 JSON |
+| 知识进化配置 | `src/app/services/knowledge_evolution_settings.py` | 知识进化定时参数 + 开关 |
+| 企微通道 (legacy) | `src/app/services/wecom_service/` | 企微字段保留，不再迁移到 QiWe 路径 |
+| 自动化测试 | `tests/` | 56 用例 (Mock LLM + 真实 LLM E2E)，见 `tests/README.md` |
 
 ## CONVENTIONS
 
@@ -76,6 +107,9 @@ backend/
 ```bash
 # API 服务
 uv run ran-ai-api
+
+# 企微通道 worker (legacy，新通道走 QiWe)
+uv run ran-ai-wecom-worker
 
 # 定时任务调度器
 uv run ran-ai-scheduler
