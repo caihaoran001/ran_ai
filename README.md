@@ -101,10 +101,14 @@ uv run alembic upgrade head
 - `service_cases`
 - `questionnaire_submissions`
 - `user_profiles`
+- `user_state_profiles`（动态状态画像，outcome events → JSONB 投影）
 - `user_documents`
 - `checkins`
 - `messages`
+- `outcome_events` / `outcome_snapshots` / `outcome_stage_states`（成效追踪）
 - `knowledge_drafts`
+- `knowledge_faqs`（结构化 FAQ）
+- `knowledge_chunks`（检索索引）
 - `reminder_events`
 
 ## AI 配置
@@ -305,13 +309,36 @@ REMINDER_WEEKDAYS=1,2,3,4,5
 
 提醒状态写入 `reminder_events`，同一天不会重复提醒。
 
+## 成效追踪
+
+成效引擎 (`backend/src/app/services/outcome_engine.py`) 会在每条群聊消息上做结构化提取：
+
+- `outcome_events` 记录字段级的成效证据（来自用户原话），配合 `(service_case_id, message_id, field_key)` 唯一约束去重
+- `outcome_stage_states` 按里程碑（day1/day3/day7/day14/day28/day90/day365）维护当前阶段目标、收集进度、最近追问
+- `outcome_snapshots` 在每个里程碑触发时聚合事件 + 打卡 + 状态，生成阶段总结（`OUTCOME_SNAPSHOTS_ENABLED=true`）
+- `user_state_profiles` 把 outcome events 投影成 JSONB 状态画像（`action_focus` / `need_analysis` / `body_feedback` / `risk_profile` / `outcome_changes` 等领域），AI 回复会引用当前 action focus 作为隐性背景
+
+服务单详情页可查看阶段状态和最近事件。LLM 提取用 temperature=0.3，复用 AI service semaphore 控制并发。
+
+## 系统诊断
+
+`/api/diagnostics/*` 提供系统自检和 AI 连通探针：
+
+- `GET /api/diagnostics/test-suites` — 列出可运行的测试套件
+- `GET /api/diagnostics/summary` — 数据库连通 + AI 探针（模型/延迟/状态）
+- `GET /api/diagnostics/run/{test_id}` — 流式运行指定测试套件（pytest 输出实时回传）
+- `GET /api/diagnostics/history` / `POST /api/diagnostics/clear-history` — 跨设备共享的自测历史
+
+对应前端页面 `/system-diagnostics`。
+
 ## 页面
 
 - `/users` 用户列表，可进入用户详情查看服务单和最新用户画像
 - `/cases` 服务单列表
-- `/cases/[id]` 服务单详情
+- `/cases/[id]` 服务单详情（含成效追踪、行动焦点、最近追问）
 - `/q/[token]` H5 问卷
 - `/questionnaire-config` 问卷配置，后台直接编辑问卷字段 JSON，新的问卷链接会读取最新配置
 - `/documents/[caseId]` 交付文件审核
 - `/checkins` 打卡记录
-- `/dashboard` 基础看板
+- `/dashboard` 基础看板（含成效统计、行动焦点分布）
+- `/system-diagnostics` 系统自测 + AI 探针面板
