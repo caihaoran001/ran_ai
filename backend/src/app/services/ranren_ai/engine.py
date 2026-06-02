@@ -519,6 +519,8 @@ class RanrenAIEngine:
             return False
         if service_case and service_case.risk_level == "high":
             return False
+        if service_case and service_case.needs_human_intervention:
+            return False
         if analysis and analysis.get("requires_human_intervention"):
             return False
         if message.channel == "qiwe":
