@@ -36,8 +36,9 @@ export function InterventionBadge() {
 
   if (count === 0) return null;
   return (
-    <span className="absolute -right-4 -top-2 min-w-[18px] h-[18px] rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center font-bold">
-      {count > 99 ? "99+" : count}
+    <span className="absolute -right-4 -top-2 h-2.5 w-2.5">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
     </span>
   );
 }
