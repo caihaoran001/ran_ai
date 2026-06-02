@@ -59,8 +59,10 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
                       : "text-zinc-400 group-hover:text-zinc-700 group-hover:scale-110"
                   }`}
                 />
-                {item.label}
-                {item.href === "/documents" && <InterventionBadge />}
+                <span className="relative">
+                  {item.label}
+                  {item.href === "/documents" && <InterventionBadge />}
+                </span>
               </Link>
             );
           })}
