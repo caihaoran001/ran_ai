@@ -75,3 +75,6 @@ class ServiceCaseStats(BaseModel):
     last_user_message_at: datetime | None
     checkin_count: int
     last_checkin_at: datetime | None
+    ai_total_calls: int = 0
+    ai_total_tokens: int = 0
+    ai_estimated_cost_yuan: float = 0.0

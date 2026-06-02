@@ -44,6 +44,14 @@ class Settings(BaseSettings):
         default=10,
         validation_alias="AI_MAX_CONCURRENT_REQUESTS",
     )
+    ai_prompt_cost_per_1m_tokens: float = Field(
+        default=0.0,
+        validation_alias="AI_PROMPT_COST_PER_1M_TOKENS",
+    )
+    ai_completion_cost_per_1m_tokens: float = Field(
+        default=0.0,
+        validation_alias="AI_COMPLETION_COST_PER_1M_TOKENS",
+    )
     document_output_dir: str = Field(
         default="generated_documents",
         validation_alias="DOCUMENT_OUTPUT_DIR",
@@ -111,6 +119,12 @@ class Settings(BaseSettings):
     reminder_message: str = Field(
         default="现在已经到 {time} 了，还没有收到你的打卡，请补一下。",
         validation_alias="REMINDER_MESSAGE",
+    )
+    inactive_followup_enabled: bool = Field(default=True, validation_alias="INACTIVE_FOLLOWUP_ENABLED")
+    inactive_followup_hours: int = Field(default=24, validation_alias="INACTIVE_FOLLOWUP_HOURS")
+    inactive_followup_message: str = Field(
+        default="今天先稳住一个小动作就好。你这边如果遇到执行卡点，可以直接发群里，我来帮你一起拆小一点。",
+        validation_alias="INACTIVE_FOLLOWUP_MESSAGE",
     )
     outcome_snapshots_enabled: bool = Field(default=True, validation_alias="OUTCOME_SNAPSHOTS_ENABLED")
 

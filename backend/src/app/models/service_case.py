@@ -11,6 +11,7 @@ from app.db.base import Base
 from app.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
+    from app.models.ai_usage import AIUsageLog
     from app.models.checkin import Checkin
     from app.models.message import Message
     from app.models.outcome import OutcomeEvent, OutcomeSnapshot, OutcomeStageState
@@ -107,6 +108,10 @@ class ServiceCase(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     user_state_profile: Mapped[UserStateProfile | None] = relationship(
+        back_populates="service_case",
+        cascade="all, delete-orphan",
+    )
+    ai_usage_logs: Mapped[list[AIUsageLog]] = relationship(
         back_populates="service_case",
         cascade="all, delete-orphan",
     )

@@ -20,6 +20,15 @@ type Summary = {
   lost_users: number;
   emotional_users_today?: number;
   outcome_summary?: OutcomeSummary;
+  ai_cost_summary?: AICostSummary;
+};
+
+type AICostSummary = {
+  total_calls: number;
+  total_tokens: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  estimated_cost_yuan: number;
 };
 
 type OutcomeMetric = {
@@ -63,6 +72,13 @@ export default async function DashboardPage() {
       eligible_day7_cases: 0,
       eligible_day28_cases: 0,
       metrics: [],
+    },
+    ai_cost_summary: {
+      total_calls: 0,
+      total_tokens: 0,
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      estimated_cost_yuan: 0,
     },
   }));
   const renewalFollowupUsers = summary.renewal_followup_users ?? summary.repurchase_soon_users;
@@ -203,6 +219,7 @@ export default async function DashboardPage() {
           href="/documents"
           description="每个服务单当前有效的最新文档里，状态为草稿或待审核的文件数。历史版本不计入。"
         />
+        <AICostCard summary={summary.ai_cost_summary} />
       </div>
 
       <OutcomeSummaryPanel summary={summary.outcome_summary} />
@@ -352,7 +369,7 @@ function StatCard({
   description,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   icon: string;
   color: string;
   href: string;
@@ -379,6 +396,46 @@ function StatCard({
       </div>
       <div className="mt-2 text-sm font-medium text-zinc-600">{label}</div>
       <p className="mt-2 text-xs leading-5 text-zinc-500">{description}</p>
+    </Link>
+  );
+}
+
+function AICostCard({ summary }: { summary?: AICostSummary }) {
+  const calls = summary?.total_calls ?? 0;
+  const tokens = summary?.total_tokens ?? 0;
+  const cost = summary?.estimated_cost_yuan ?? 0;
+  const hasData = calls > 0 || tokens > 0 || cost > 0;
+
+  return (
+    <Link
+      href="/dashboard/ai-costs"
+      title="查看每个用户的 AI 调用成本明细"
+      className="block rounded-xl border border-zinc-200 bg-white p-6 transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-sm"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-zinc-600">AI 调用成本</div>
+          <div className="mt-2 text-2xl font-bold text-zinc-900">
+            {hasData ? `¥${cost.toFixed(2)}` : "暂无成本数据"}
+          </div>
+        </div>
+        <span className="rounded-lg bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-500">
+          LLM
+        </span>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-lg bg-zinc-50 px-3 py-2">
+          <div className="text-zinc-400">调用</div>
+          <div className="mt-1 font-semibold text-zinc-700">{calls.toLocaleString("zh-CN")} 次</div>
+        </div>
+        <div className="rounded-lg bg-zinc-50 px-3 py-2">
+          <div className="text-zinc-400">Tokens</div>
+          <div className="mt-1 font-semibold text-zinc-700">{tokens.toLocaleString("zh-CN")}</div>
+        </div>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-zinc-500">
+        {hasData ? "点击查看各用户成本明细。" : "产生新的 LLM 调用后会自动记录。"}
+      </p>
     </Link>
   );
 }

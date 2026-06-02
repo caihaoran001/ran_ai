@@ -1,4 +1,5 @@
 from app.models.checkin import Checkin
+from app.models.ai_usage import AIUsageLog
 from app.models.app_setting import AppSetting
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.knowledge_draft import KnowledgeDraft
@@ -16,6 +17,7 @@ from app.models.user_state_profile import UserStateProfile
 
 __all__ = [
     "Checkin",
+    "AIUsageLog",
     "AppSetting",
     "DocumentStatus",
     "DocumentType",

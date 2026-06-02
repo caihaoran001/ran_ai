@@ -451,6 +451,7 @@ async def _generate_intake_analysis_package(
     text = await ai.generate_text(
         scenario="intake_doc",
         temperature=0.3,
+        service_case_id=service_case.id,
         system_prompt=_intake_generation_system_prompt(),
         user_prompt=(
             f"当前用户：{user_name}\n"
@@ -986,6 +987,7 @@ async def _generate_stage_payload(
         text = await ai.generate_text(
             scenario="stage_report",
             temperature=0.3,
+            service_case_id=service_case.id,
             system_prompt=prompt,
             user_prompt=(
                 f"用户：{user_name}\n服务单：{service_case.case_no}\n报告：{title}\n阶段：{stage}\n"

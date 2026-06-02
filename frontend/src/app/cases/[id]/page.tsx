@@ -129,6 +129,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         <InfoCard title="聊天记录" value={`${messages.length} 条`} icon="💬" />
         <InfoCard title="已服务时长" value={formatServiceDuration(serviceCase.started_at)} icon="⏱️" />
         <InfoCard title="内容生成耗时" value={formatGenerationDuration(serviceCase.questionnaire_to_llm_output_ms)} icon="⚡" />
+        <InfoCard title="AI调用成本" value={formatAICost(stats?.ai_estimated_cost_yuan, stats?.ai_total_tokens)} icon="🧠" />
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -217,7 +218,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           </div>
         </div>
 
-        <ChatMessages messages={messages} />
+        <ChatMessages messages={messages} userName={serviceCase.user?.name} />
       </div>
     </div>
   );
@@ -286,6 +287,12 @@ function InfoCard({ title, value, icon }: { title: string; value: string; icon: 
 function formatDateTime(value?: string | null) {
   if (!value) return "暂无";
   return formatChinaDateTime(value, "暂无");
+}
+
+function formatAICost(cost?: number | null, tokens?: number | null) {
+  const tokenText = `${tokens ?? 0} tokens`;
+  if (!cost) return `¥0.00 · ${tokenText}`;
+  return `¥${cost.toFixed(2)} · ${tokenText}`;
 }
 
 function formatServiceDuration(startedAt?: string | null) {

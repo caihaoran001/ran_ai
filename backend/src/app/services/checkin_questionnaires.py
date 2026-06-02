@@ -51,6 +51,11 @@ def default_checkin_schedule() -> dict[str, Any]:
                 "生成完成后会第一时间发送给你，请稍等。"
             ),
         },
+        "inactive_followup": {
+            "enabled": True,
+            "hours": 24,
+            "message": "今天先稳住一个小动作就好。你这边如果遇到执行卡点，可以直接发群里，我来帮你一起拆小一点。",
+        },
         "rules": [
             {
                 "day": 1,
@@ -165,6 +170,22 @@ def normalize_checkin_schedule(value: dict[str, Any] | None) -> dict[str, Any]:
         "message": str(
             intake_submit_reply.get("message")
             or default["intake_submit_reply"]["message"]
+        ),
+    }
+    inactive_followup = schedule.get("inactive_followup")
+    if not isinstance(inactive_followup, dict):
+        inactive_followup = default["inactive_followup"]
+    hours = inactive_followup.get("hours", default["inactive_followup"]["hours"])
+    try:
+        hours_int = int(hours)
+    except (TypeError, ValueError):
+        hours_int = default["inactive_followup"]["hours"]
+    schedule["inactive_followup"] = {
+        "enabled": inactive_followup.get("enabled", True) is not False,
+        "hours": max(1, hours_int),
+        "message": str(
+            inactive_followup.get("message")
+            or default["inactive_followup"]["message"]
         ),
     }
 

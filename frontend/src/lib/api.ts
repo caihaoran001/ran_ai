@@ -60,6 +60,9 @@ export type ServiceCaseStats = {
   last_user_message_at?: string | null;
   checkin_count: number;
   last_checkin_at?: string | null;
+  ai_total_calls: number;
+  ai_total_tokens: number;
+  ai_estimated_cost_yuan: number;
 };
 
 export type UserProfile = {
@@ -171,6 +174,8 @@ export type Message = {
   error: string | null;
   analysis_json?: Record<string, unknown> | null;
   trigger?: Message | null;
+  display_at?: string;
+  display_sender_name?: string | null;
   created_at: string;
 };
 

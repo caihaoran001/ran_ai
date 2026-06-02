@@ -1,11 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Message } from "@/lib/api";
-import { formatChinaMonthDayTime } from "@/lib/format";
+import { formatChinaDateTime } from "@/lib/format";
 
-export function ChatMessages({ messages }: { messages: Message[] }) {
+export function ChatMessages({ messages, userName }: { messages: Message[]; userName?: string | null }) {
   const [expanded, setExpanded] = useState(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    list.scrollTop = list.scrollHeight;
+  }, [messages.length]);
 
   if (messages.length === 0) {
     return (
@@ -24,7 +31,7 @@ export function ChatMessages({ messages }: { messages: Message[] }) {
         <h2 className="font-medium">聊天记录</h2>
         <span className="text-sm text-zinc-500">{messages.length} 条</span>
       </div>
-      <div className="mt-3 max-h-[480px] overflow-y-auto space-y-3 pr-1">
+      <div ref={listRef} className="mt-3 max-h-[480px] overflow-y-auto space-y-3 pr-1">
         {displayMessages.map((msg) => (
           <div
             key={msg.id}
@@ -43,11 +50,11 @@ export function ChatMessages({ messages }: { messages: Message[] }) {
                 <span>
                   {msg.direction === "outbound"
                     ? msg.sender_type === "bot"
-                      ? "机器人"
+                      ? "燃人.AI"
                       : "运营"
-                    : "用户"}
+                    : msg.display_sender_name || userName || "用户"}
                 </span>
-                <span>{formatTime(msg.created_at)}</span>
+                <span>{formatTime(msg.display_at ?? msg.created_at)}</span>
                 {msg.purpose === "checkin" && (
                   <span className="rounded bg-yellow-100 px-1 text-yellow-700">打卡</span>
                 )}
@@ -68,5 +75,5 @@ export function ChatMessages({ messages }: { messages: Message[] }) {
 }
 
 function formatTime(value: string) {
-  return formatChinaMonthDayTime(value);
+  return formatChinaDateTime(value);
 }

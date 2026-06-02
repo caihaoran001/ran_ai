@@ -23,10 +23,19 @@ class MessageEngine(Protocol):
 @dataclass
 class _PendingBatch:
     messages: list[ChannelMessage] = field(default_factory=list)
-    task: asyncio.Task | None = None
+    timer_task: asyncio.Task | None = None
+    processing_task: asyncio.Task | None = None
 
 
 class QiWeMessageAggregator:
+    """Aggregate short QiWe messages into conversation turns.
+
+    A single group/user pair is processed as one lane: while one merged turn is
+    being handled by the AI engine, newly arriving messages wait for the next
+    fixed window. This prevents two AI replies for the same user from racing
+    each other and appearing out of order in the group.
+    """
+
     def __init__(
         self,
         channel: MessageChannel,
@@ -40,14 +49,14 @@ class QiWeMessageAggregator:
         self.window_seconds = window_seconds
         self.dedupe_ttl_seconds = dedupe_ttl_seconds
         self.dedupe_max_size = dedupe_max_size
-        self.engine = engine or RanrenAIEngine(channel)
+        self.engine = engine or RanrenAIEngine(channel, has_pending_newer_message=self.has_pending_messages_for)
         self._batches: dict[tuple[str, str], _PendingBatch] = {}
         self._seen_message_ids: OrderedDict[str, float] = OrderedDict()
         self._next_seen_prune_at = 0.0
         self._lock = asyncio.Lock()
 
     async def enqueue(self, message: ChannelMessage) -> None:
-        key = (message.chat_id, message.user_id or "")
+        key = _conversation_key(message)
         async with self._lock:
             if self._is_duplicate_locked(message):
                 logger.info(
@@ -57,10 +66,22 @@ class QiWeMessageAggregator:
                     message.message_id,
                 )
                 return
+
             batch = self._batches.setdefault(key, _PendingBatch())
             batch.messages.append(message)
-            if not batch.task or batch.task.done():
-                batch.task = asyncio.create_task(self._flush_later(key))
+
+            if batch.processing_task and not batch.processing_task.done():
+                logger.info(
+                    "QiWe message queued while previous reply is running chat_id=%s user_id=%s message_id=%s pending_size=%s",
+                    message.chat_id,
+                    message.user_id,
+                    message.message_id,
+                    len(batch.messages),
+                )
+                return
+
+            if not batch.timer_task or batch.timer_task.done():
+                batch.timer_task = asyncio.create_task(self._flush_later(key))
                 logger.info(
                     "QiWe fixed window started chat_id=%s user_id=%s message_id=%s window_seconds=%.2f",
                     message.chat_id,
@@ -113,9 +134,20 @@ class QiWeMessageAggregator:
             (time.monotonic() - started_at) * 1000,
         )
 
+    async def has_pending_messages_for(self, message: ChannelMessage) -> bool:
+        key = _conversation_key(message)
+        async with self._lock:
+            batch = self._batches.get(key)
+            return bool(batch and batch.messages)
+
     async def stop(self) -> None:
         async with self._lock:
-            tasks = [batch.task for batch in self._batches.values() if batch.task]
+            tasks = [
+                task
+                for batch in self._batches.values()
+                for task in (batch.timer_task, batch.processing_task)
+                if task
+            ]
             self._batches.clear()
         for task in tasks:
             if task and not task.done():
@@ -133,40 +165,63 @@ class QiWeMessageAggregator:
             logger.exception("QiWe message flush failed for key=%s", key)
 
     async def flush(self, key: tuple[str, str]) -> None:
-        started_at = time.monotonic()
         async with self._lock:
-            batch = self._batches.pop(key, None)
-        if not batch or not batch.messages:
-            return
-        first = batch.messages[0]
-        last = batch.messages[-1]
+            batch = self._batches.get(key)
+            if not batch or not batch.messages:
+                return
+            if batch.processing_task and not batch.processing_task.done():
+                if not batch.timer_task or batch.timer_task.done():
+                    batch.timer_task = asyncio.create_task(self._flush_later(key))
+                logger.info("QiWe fixed window delayed because previous reply is still running key=%s", key)
+                return
+
+            messages = batch.messages
+            batch.messages = []
+            batch.timer_task = None
+            task = asyncio.create_task(self._process_batch(key, messages))
+            batch.processing_task = task
+        await task
+
+    async def _process_batch(self, key: tuple[str, str], messages: list[ChannelMessage]) -> None:
+        started_at = time.monotonic()
+        first = messages[0]
+        last = messages[-1]
         logger.info(
             "QiWe fixed window flush start chat_id=%s user_id=%s count=%s first_message_id=%s last_message_id=%s",
             first.chat_id,
             first.user_id,
-            len(batch.messages),
+            len(messages),
             first.message_id,
             last.message_id,
         )
-        merged = _merge_messages(batch.messages)
         try:
-            await self.engine.handle_message(merged)
+            await self.engine.handle_message(_merge_messages(messages))
         except Exception as exc:
             logger.exception(
                 "QiWe fixed window flush failed chat_id=%s user_id=%s count=%s first_message_id=%s last_message_id=%s error_type=%s",
                 first.chat_id,
                 first.user_id,
-                len(batch.messages),
+                len(messages),
                 first.message_id,
                 last.message_id,
                 type(exc).__name__,
             )
             return
+        finally:
+            async with self._lock:
+                batch = self._batches.get(key)
+                if batch and batch.processing_task is asyncio.current_task():
+                    batch.processing_task = None
+                    if batch.messages:
+                        batch.timer_task = asyncio.create_task(self._flush_later(key))
+                    else:
+                        self._batches.pop(key, None)
+
         logger.info(
             "QiWe fixed window flush done chat_id=%s user_id=%s count=%s elapsed_ms=%.1f",
             first.chat_id,
             first.user_id,
-            len(batch.messages),
+            len(messages),
             (time.monotonic() - started_at) * 1000,
         )
 
@@ -195,6 +250,10 @@ class QiWeMessageAggregator:
         while len(self._seen_message_ids) > self.dedupe_max_size:
             self._seen_message_ids.popitem(last=False)
         self._next_seen_prune_at = now + min(self.dedupe_ttl_seconds, 60.0)
+
+
+def _conversation_key(message: ChannelMessage) -> tuple[str, str]:
+    return (message.chat_id, message.user_id or "")
 
 
 def _merge_messages(messages: list[ChannelMessage]) -> ChannelMessage:

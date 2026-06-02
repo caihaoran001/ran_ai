@@ -10,13 +10,15 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
+from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot
 from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
-from app.schemas.dashboard import DashboardMetric, DashboardSummary, OutcomeDashboardSummary
+from app.schemas.dashboard import AICostCaseItem, AICostSummary, DashboardMetric, DashboardSummary, OutcomeDashboardSummary
 from app.services.service_case_queries import active_service_case_condition
 
 router = APIRouter()
@@ -183,6 +185,7 @@ async def dashboard_summary(
         refund_intent_users=refund_intent_users,
         now=now,
     )
+    ai_cost_summary = await _build_ai_cost_summary(session)
 
     return DashboardSummary(
         service_cases_total=total or 0,
@@ -202,7 +205,62 @@ async def dashboard_summary(
         lost_users=lost_users or 0,
         emotional_users_today=emotional_users_today or 0,
         outcome_summary=outcome_summary,
+        ai_cost_summary=ai_cost_summary,
     )
+
+
+@router.get("/ai-costs", response_model=list[AICostCaseItem])
+async def dashboard_ai_costs(
+    session: AsyncSession = Depends(get_session),
+) -> list[AICostCaseItem]:
+    rows = await session.execute(
+        select(
+            ServiceCase.id,
+            ServiceCase.case_no,
+            ServiceCase.user_id,
+            User.name,
+            ServiceCase.group_id,
+            func.count(AIUsageLog.id),
+            func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
+            func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0),
+            func.coalesce(func.sum(AIUsageLog.completion_tokens), 0),
+            func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0),
+            func.max(AIUsageLog.created_at),
+        )
+        .join(ServiceCase, AIUsageLog.service_case_id == ServiceCase.id)
+        .outerjoin(User, ServiceCase.user_id == User.id)
+        .where(active_service_case_condition())
+        .group_by(ServiceCase.id, ServiceCase.case_no, ServiceCase.user_id, User.name, ServiceCase.group_id)
+        .order_by(func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0).desc(), func.max(AIUsageLog.created_at).desc())
+    )
+    return [
+        AICostCaseItem(
+            service_case_id=service_case_id,
+            case_no=case_no,
+            user_id=user_id,
+            user_name=user_name,
+            group_id=group_id,
+            total_calls=total_calls or 0,
+            total_tokens=total_tokens or 0,
+            prompt_tokens=prompt_tokens or 0,
+            completion_tokens=completion_tokens or 0,
+            estimated_cost_yuan=round(float(cost or 0), 6),
+            last_call_at=last_call_at,
+        )
+        for (
+            service_case_id,
+            case_no,
+            user_id,
+            user_name,
+            group_id,
+            total_calls,
+            total_tokens,
+            prompt_tokens,
+            completion_tokens,
+            cost,
+            last_call_at,
+        ) in rows
+    ]
 
 
 def _has_emotion_signal(message: Message) -> bool:
@@ -213,6 +271,28 @@ def _has_emotion_signal(message: Message) -> bool:
             return bool(emotion_signal.get("detected"))
         return _analysis_has_emotion_code(analysis)
     return False
+
+
+async def _build_ai_cost_summary(session: AsyncSession) -> AICostSummary:
+    row = await session.execute(
+        select(
+            func.count(AIUsageLog.id),
+            func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
+            func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0),
+            func.coalesce(func.sum(AIUsageLog.completion_tokens), 0),
+            func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0),
+        )
+        .outerjoin(ServiceCase, AIUsageLog.service_case_id == ServiceCase.id)
+        .where((AIUsageLog.service_case_id.is_(None)) | active_service_case_condition())
+    )
+    total_calls, total_tokens, prompt_tokens, completion_tokens, cost = row.one()
+    return AICostSummary(
+        total_calls=total_calls or 0,
+        total_tokens=total_tokens or 0,
+        prompt_tokens=prompt_tokens or 0,
+        completion_tokens=completion_tokens or 0,
+        estimated_cost_yuan=round(float(cost or 0), 6),
+    )
 
 
 def _analysis_has_emotion_code(analysis: dict) -> bool:

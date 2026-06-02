@@ -214,6 +214,7 @@ async def analyze_and_update_outcomes(
         intervention_analysis=intervention_analysis,
         recent_messages=recent_messages or [],
     )
+    context["message_id"] = message.id
 
     raw = await _extract_outcome_safely(message.content, context)
     result = await apply_outcome_analysis(
@@ -254,6 +255,7 @@ async def prepare_outcome_extraction(
         intervention_analysis=intervention_analysis,
         recent_messages=recent_messages or [],
     )
+    context["message_id"] = message.id
     return OutcomeExtractionPlan(
         service_case_id=service_case.id,
         message_id=message.id,
@@ -376,6 +378,13 @@ async def apply_outcome_analysis(
             "field_key": "",
             "question": "",
             "reason": "上一轮成效追问仍在冷却期，避免连续追问造成回复疲劳。",
+        }
+    elif followup_plan.get("should_ask") and _is_followup_context_unsuitable(message.content, created_events):
+        followup_plan = {
+            "should_ask": False,
+            "field_key": "",
+            "question": "",
+            "reason": "本轮不是成效采集语境，避免在确认、闲聊或流程问题后硬追问。",
         }
     elif followup_plan.get("should_ask"):
         state.last_followup_field = followup_plan["field_key"]
@@ -770,6 +779,39 @@ def _must_suppress_followup(intervention_analysis: dict[str, Any] | None) -> boo
         return True
     emotion = intervention_analysis.get("emotion_signal")
     if isinstance(emotion, dict) and emotion.get("detected") and emotion.get("level") in {"medium", "high"}:
+        return True
+    return False
+
+
+def _is_followup_context_unsuitable(content: str | None, created_events: list[dict[str, Any]]) -> bool:
+    """Avoid metric follow-ups after acknowledgements, tests, and service-flow questions.
+
+    The outcome extractor is intentionally broad so it does not miss useful
+    evidence. This guard only controls whether to ask an extra follow-up in the
+    chat reply. It does not block evidence already extracted from the message.
+    """
+    text = (content or "").strip()
+    if not text:
+        return True
+    compact = re.sub(r"\s+", "", text)
+    if len(compact) <= 6 and not created_events:
+        return True
+    service_flow_markers = (
+        "测试",
+        "你干啥",
+        "在吗",
+        "收到",
+        "好的",
+        "谢谢",
+        "文件",
+        "问卷",
+        "链接",
+        "发了吗",
+        "提醒",
+        "下一步",
+        "怎么做",
+    )
+    if not created_events and any(marker in compact for marker in service_flow_markers):
         return True
     return False
 

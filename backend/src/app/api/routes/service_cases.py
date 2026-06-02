@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_session
+from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection
 from app.models.service_case import ServiceCase, ServiceCaseStatus
@@ -124,6 +125,14 @@ async def get_service_case_stats(
         if started_at.tzinfo is None:
             started_at = started_at.replace(tzinfo=timezone.utc)
         days = max((now - started_at).total_seconds() / 86400, 1.0)
+    ai_usage = await session.execute(
+        select(
+            func.count(AIUsageLog.id),
+            func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
+            func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0),
+        ).where(AIUsageLog.service_case_id == service_case_id)
+    )
+    ai_calls, ai_tokens, ai_cost = ai_usage.one()
 
     return ServiceCaseStats(
         message_count=len(messages),
@@ -134,6 +143,9 @@ async def get_service_case_stats(
         last_user_message_at=inbound[-1].created_at if inbound else None,
         checkin_count=len(checkins),
         last_checkin_at=checkins[-1].created_at if checkins else None,
+        ai_total_calls=ai_calls or 0,
+        ai_total_tokens=ai_tokens or 0,
+        ai_estimated_cost_yuan=round(float(ai_cost or 0), 6),
     )
 
 

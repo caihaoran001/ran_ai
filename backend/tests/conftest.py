@@ -32,6 +32,7 @@ sqlalchemy.ext.asyncio.create_async_engine = mock_create_async_engine
 
 
 from app.core.config import get_settings
+from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessageSenderType, MessageStatus
 
@@ -195,7 +196,7 @@ class MockAIService:
                 return response
         return None
 
-    async def generate_text(self, *, system_prompt, user_prompt):
+    async def generate_text(self, *, system_prompt, user_prompt, **kwargs):
         matched = self._match(system_prompt)
         if matched is not None:
             return matched
