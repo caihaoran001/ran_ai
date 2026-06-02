@@ -1,19 +1,31 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, ServiceCase } from "@/lib/api";
+import { api } from "@/lib/api";
 
 const POLL_INTERVAL_MS = 15_000;
+
+interface PendingCountResponse {
+  count: number;
+}
 
 export function InterventionBadge() {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
+
     async function load() {
-      const cases = await api<ServiceCase[]>("/service-cases?filter=human_intervention").catch(() => []);
-      if (isMounted) setCount(cases.length);
+      // Query all pending review items from the review console
+      const [pendingMessages, pendingDrafts] = await Promise.all([
+        api<unknown[]>("/messages/pending-ai").catch(() => []),
+        api<unknown[]>("/knowledge-drafts?status=pending").catch(() => []),
+      ]);
+
+      if (!isMounted) return;
+      setCount(pendingMessages.length + pendingDrafts.length);
     }
+
     void load();
     const timer = window.setInterval(load, POLL_INTERVAL_MS);
     return () => {
