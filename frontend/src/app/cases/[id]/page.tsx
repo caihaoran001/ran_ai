@@ -129,7 +129,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         <InfoCard title="聊天记录" value={`${messages.length} 条`} icon="💬" />
         <InfoCard title="已服务时长" value={formatServiceDuration(serviceCase.started_at)} icon="⏱️" />
         <InfoCard title="内容生成耗时" value={formatGenerationDuration(serviceCase.questionnaire_to_llm_output_ms)} icon="⚡" />
-        <InfoCard title="AI调用成本" value={formatAICost(stats?.ai_estimated_cost_yuan, stats?.ai_total_tokens)} icon="🧠" />
+        <AICostInfoCard
+          cost={stats?.ai_estimated_cost_yuan}
+          tokens={stats?.ai_total_tokens}
+          calls={stats?.ai_total_calls}
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -284,15 +288,50 @@ function InfoCard({ title, value, icon }: { title: string; value: string; icon: 
   );
 }
 
+function AICostInfoCard({
+  cost,
+  tokens,
+  calls,
+}: {
+  cost?: number | null;
+  tokens?: number | null;
+  calls?: number | null;
+}) {
+  const costValue = cost ?? 0;
+  const tokenCount = tokens ?? 0;
+  const callCount = calls ?? 0;
+  return (
+    <div className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium text-indigo-700">
+          <span>🧠</span>
+          AI调用成本
+        </div>
+        <span className="rounded-full border border-indigo-100 bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-indigo-600">
+          估算
+        </span>
+      </div>
+      <div className="mt-3 text-2xl font-bold tracking-tight text-zinc-950">
+        ¥{costValue.toFixed(2)}
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-lg border border-indigo-100 bg-white/75 px-3 py-2">
+          <div className="text-zinc-400">Tokens</div>
+          <div className="mt-1 font-semibold text-zinc-800">{tokenCount.toLocaleString("zh-CN")}</div>
+        </div>
+        <div className="rounded-lg border border-indigo-100 bg-white/75 px-3 py-2">
+          <div className="text-zinc-400">调用</div>
+          <div className="mt-1 font-semibold text-zinc-800">{callCount.toLocaleString("zh-CN")} 次</div>
+        </div>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-zinc-500">按当前模型单价回算。</p>
+    </div>
+  );
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) return "暂无";
   return formatChinaDateTime(value, "暂无");
-}
-
-function formatAICost(cost?: number | null, tokens?: number | null) {
-  const tokenText = `${tokens ?? 0} tokens`;
-  if (!cost) return `¥0.00 · ${tokenText}`;
-  return `¥${cost.toFixed(2)} · ${tokenText}`;
 }
 
 function formatServiceDuration(startedAt?: string | null) {

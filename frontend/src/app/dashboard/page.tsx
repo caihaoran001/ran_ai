@@ -410,31 +410,34 @@ function AICostCard({ summary }: { summary?: AICostSummary }) {
     <Link
       href="/dashboard/ai-costs"
       title="查看每个用户的 AI 调用成本明细"
-      className="block rounded-xl border border-zinc-200 bg-white p-6 transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-sm"
+      className="block rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-sm font-medium text-zinc-600">AI 调用成本</div>
-          <div className="mt-2 text-2xl font-bold text-zinc-900">
+          <div className="flex items-center gap-2 text-sm font-semibold text-indigo-700">
+            <span>🧠</span>
+            AI 调用成本
+          </div>
+          <div className="mt-3 text-3xl font-bold tracking-tight text-zinc-950">
             {hasData ? `¥${cost.toFixed(2)}` : "暂无成本数据"}
           </div>
         </div>
-        <span className="rounded-lg bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-500">
-          LLM
+        <span className="rounded-full border border-indigo-100 bg-white/80 px-2.5 py-1 text-xs font-semibold text-indigo-600">
+          估算
         </span>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-lg bg-zinc-50 px-3 py-2">
+        <div className="rounded-lg border border-indigo-100 bg-white/75 px-3 py-2">
           <div className="text-zinc-400">调用</div>
           <div className="mt-1 font-semibold text-zinc-700">{calls.toLocaleString("zh-CN")} 次</div>
         </div>
-        <div className="rounded-lg bg-zinc-50 px-3 py-2">
+        <div className="rounded-lg border border-indigo-100 bg-white/75 px-3 py-2">
           <div className="text-zinc-400">Tokens</div>
           <div className="mt-1 font-semibold text-zinc-700">{tokens.toLocaleString("zh-CN")}</div>
         </div>
       </div>
       <p className="mt-3 text-xs leading-5 text-zinc-500">
-        {hasData ? "点击查看各用户成本明细。" : "产生新的 LLM 调用后会自动记录。"}
+        {hasData ? "按当前模型单价回算，点击查看用户明细。" : "产生新的 LLM 调用后会自动记录。"}
       </p>
     </Link>
   );

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
@@ -213,6 +214,7 @@ async def dashboard_summary(
 async def dashboard_ai_costs(
     session: AsyncSession = Depends(get_session),
 ) -> list[AICostCaseItem]:
+    ai_cost_expr = _ai_cost_expr()
     rows = await session.execute(
         select(
             ServiceCase.id,
@@ -224,14 +226,14 @@ async def dashboard_ai_costs(
             func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
             func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0),
             func.coalesce(func.sum(AIUsageLog.completion_tokens), 0),
-            func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0),
+            ai_cost_expr,
             func.max(AIUsageLog.created_at),
         )
         .join(ServiceCase, AIUsageLog.service_case_id == ServiceCase.id)
         .outerjoin(User, ServiceCase.user_id == User.id)
         .where(active_service_case_condition())
         .group_by(ServiceCase.id, ServiceCase.case_no, ServiceCase.user_id, User.name, ServiceCase.group_id)
-        .order_by(func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0).desc(), func.max(AIUsageLog.created_at).desc())
+        .order_by(ai_cost_expr.desc(), func.max(AIUsageLog.created_at).desc())
     )
     return [
         AICostCaseItem(
@@ -274,13 +276,14 @@ def _has_emotion_signal(message: Message) -> bool:
 
 
 async def _build_ai_cost_summary(session: AsyncSession) -> AICostSummary:
+    ai_cost_expr = _ai_cost_expr()
     row = await session.execute(
         select(
             func.count(AIUsageLog.id),
             func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
             func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0),
             func.coalesce(func.sum(AIUsageLog.completion_tokens), 0),
-            func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0),
+            ai_cost_expr,
         )
         .outerjoin(ServiceCase, AIUsageLog.service_case_id == ServiceCase.id)
         .where((AIUsageLog.service_case_id.is_(None)) | active_service_case_condition())
@@ -292,6 +295,18 @@ async def _build_ai_cost_summary(session: AsyncSession) -> AICostSummary:
         prompt_tokens=prompt_tokens or 0,
         completion_tokens=completion_tokens or 0,
         estimated_cost_yuan=round(float(cost or 0), 6),
+    )
+
+
+def _ai_cost_expr():
+    settings = get_settings()
+    prompt_cost_per_1m = max(float(settings.ai_prompt_cost_per_1m_tokens or 0), 0.0)
+    completion_cost_per_1m = max(float(settings.ai_completion_cost_per_1m_tokens or 0), 0.0)
+    return (
+        func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0) * prompt_cost_per_1m / 1_000_000.0
+        + func.coalesce(func.sum(AIUsageLog.completion_tokens), 0)
+        * completion_cost_per_1m
+        / 1_000_000.0
     )
 
 
