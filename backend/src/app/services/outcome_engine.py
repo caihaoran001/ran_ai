@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,7 @@ ACTION_FOCUS_THRESHOLD = 0.85
 ACTION_FOCUS_LEAD_MARGIN = 0.2
 ACTION_FOCUS_SOFT_LOCK = timedelta(days=3)
 ACTION_FOCUS_DECAY_PER_DAY = 0.08
+CHINA_TZ = ZoneInfo("Asia/Shanghai")
 
 
 ACTION_FOCUS_DEFINITIONS: dict[str, dict[str, str]] = {
@@ -212,12 +214,19 @@ async def analyze_and_update_outcomes(
 
     spec = current_milestone_spec(service_case)
     state = await get_or_create_stage_state(session, service_case.id, spec)
+    followup_time_context = await _build_followup_time_context(
+        session,
+        service_case=service_case,
+        spec=spec,
+        state=state,
+    )
     context = _analysis_context(
         service_case=service_case,
         spec=spec,
         state=state,
         intervention_analysis=intervention_analysis,
         recent_messages=recent_messages or [],
+        followup_time_context=followup_time_context,
     )
     context["message_id"] = message.id
 
@@ -253,12 +262,19 @@ async def prepare_outcome_extraction(
         return None
     spec = current_milestone_spec(service_case)
     state = await get_or_create_stage_state(session, service_case.id, spec)
+    followup_time_context = await _build_followup_time_context(
+        session,
+        service_case=service_case,
+        spec=spec,
+        state=state,
+    )
     context = _analysis_context(
         service_case=service_case,
         spec=spec,
         state=state,
         intervention_analysis=intervention_analysis,
         recent_messages=recent_messages or [],
+        followup_time_context=followup_time_context,
     )
     context["message_id"] = message.id
     return OutcomeExtractionPlan(
@@ -669,6 +685,7 @@ def _analysis_context(
     state: OutcomeStageState,
     intervention_analysis: dict[str, Any] | None,
     recent_messages: list[str],
+    followup_time_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     collected = state.collected_fields or {}
     missing = state.missing_fields or [goal.key for goal in spec.goals if goal.key not in collected]
@@ -701,7 +718,194 @@ def _analysis_context(
             "emotion_signal": (intervention_analysis or {}).get("emotion_signal") or {},
         },
         "recent_messages": recent_messages[-6:],
+        "followup_time_context": followup_time_context or {},
     }
+
+
+async def _build_followup_time_context(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    spec: OutcomeMilestoneSpec,
+    state: OutcomeStageState,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Summarize what is sensible to ask right now.
+
+    The LLM should not infer meal timing from scratch. This deterministic
+    context tells it which milestone fields are both still missing and
+    reasonable to ask at the current local time, after today's check-ins.
+    """
+
+    local_now = _local_now(now)
+    today = local_now.date()
+    checkins = list(
+        await session.scalars(
+            select(Checkin)
+            .where(
+                Checkin.service_case_id == service_case.id,
+                Checkin.checkin_date == today,
+            )
+            .order_by(Checkin.created_at.asc())
+        )
+    )
+    answered_today = _answered_today_from_checkins(checkins)
+    collected = state.collected_fields or {}
+    missing = state.missing_fields or [goal.key for goal in spec.goals if goal.key not in collected]
+    allowed_by_time = set(_time_allowed_field_keys(local_now.hour))
+    answered_field_keys = set(_answered_field_keys(answered_today))
+    allowed = [
+        field_key
+        for field_key in missing
+        if field_key in allowed_by_time and field_key not in answered_field_keys
+    ]
+    return {
+        "timezone": "Asia/Shanghai",
+        "local_time": local_now.isoformat(),
+        "local_hour": local_now.hour,
+        "answered_today": answered_today,
+        "allowed_field_keys": allowed,
+        "blocked_field_keys": [
+            field_key
+            for field_key in missing
+            if field_key not in allowed
+        ],
+        "rule": "只能围绕 allowed_field_keys 追问；如果为空，本轮不要追问。",
+    }
+
+
+def _local_now(value: datetime | None) -> datetime:
+    now = value or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(CHINA_TZ)
+
+
+def _answered_today_from_checkins(checkins: list[Checkin]) -> dict[str, Any]:
+    answered = {
+        "morning_c": False,
+        "noon_b": False,
+        "night_a": False,
+        "product_schedule": False,
+        "sleep": False,
+        "weight": False,
+        "waist": False,
+        "water": False,
+        "diet": False,
+        "bowel": False,
+        "exercise": False,
+        "body_feedback": False,
+        "discomfort": False,
+    }
+    for checkin in checkins:
+        parsed = checkin.parsed_json if isinstance(checkin.parsed_json, dict) else {}
+        schedule = parsed.get("product_schedule")
+        if isinstance(schedule, dict):
+            for key in ("morning_c", "noon_b", "night_a"):
+                if _has_value(schedule.get(key)):
+                    answered[key] = True
+            answered["product_schedule"] = any(answered[key] for key in ("morning_c", "noon_b", "night_a"))
+        for source_key, target_key in (
+            ("sleep", "sleep"),
+            ("weight", "weight"),
+            ("waist", "waist"),
+            ("water", "water"),
+            ("diet", "diet"),
+            ("bowel", "bowel"),
+            ("exercise", "exercise"),
+            ("sensation", "body_feedback"),
+            ("mood", "body_feedback"),
+            ("discomfort", "discomfort"),
+        ):
+            if _has_value(parsed.get(source_key)):
+                answered[target_key] = True
+    return answered
+
+
+def _answered_field_keys(answered_today: dict[str, Any]) -> tuple[str, ...]:
+    fields: list[str] = []
+    if answered_today.get("product_schedule"):
+        fields.extend(["product_schedule", "rhythm_understood", "started_execution", "execution_rate_signal"])
+    if answered_today.get("sleep"):
+        fields.append("sleep_change")
+    if answered_today.get("weight"):
+        fields.extend(["weight_change", "weight_result", "challenge_goal_result"])
+    if answered_today.get("waist"):
+        fields.extend(["waist_or_body_change", "waist_result"])
+    if answered_today.get("bowel"):
+        fields.append("bowel_change")
+    if answered_today.get("body_feedback"):
+        fields.extend(["energy_change", "positive_body_signal"])
+    if answered_today.get("discomfort"):
+        fields.append("discomfort_feedback")
+    return tuple(dict.fromkeys(fields))
+
+
+def _time_allowed_field_keys(hour: int) -> tuple[str, ...]:
+    if 6 <= hour < 10:
+        return (
+            "sleep_change",
+            "weight_change",
+            "bowel_change",
+            "energy_change",
+            "profile_completed",
+            "documents_received",
+            "plan_understood",
+            "started_execution",
+            "product_schedule",
+        )
+    if 10 <= hour < 14:
+        return (
+            "plan_understood",
+            "started_execution",
+            "product_schedule",
+            "rhythm_understood",
+            "documents_received",
+            "profile_completed",
+            "bowel_change",
+            "energy_change",
+        )
+    if 14 <= hour < 18:
+        return (
+            "product_schedule",
+            "rhythm_understood",
+            "energy_change",
+            "positive_body_signal",
+            "execution_rate_signal",
+            "adjustment_need",
+            "bowel_change",
+        )
+    if 18 <= hour < 22:
+        return (
+            "product_schedule",
+            "adjustment_need",
+            "execution_rate_signal",
+            "positive_body_signal",
+            "habit_stability",
+            "next_stage_intent",
+            "energy_change",
+        )
+    return (
+        "energy_change",
+        "sleep_change",
+        "bowel_change",
+        "habit_stability",
+        "next_stage_intent",
+        "self_management",
+        "lifestyle_habit",
+        "long_term_weight_stability",
+    )
+
+
+def _has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        text = value.strip()
+        return bool(text) and text not in {"未记录", "暂无", "无", "None"}
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
 
 
 async def _extract_outcome_safely(content: str, context: dict[str, Any]) -> dict[str, Any]:

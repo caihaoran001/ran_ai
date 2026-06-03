@@ -21,7 +21,6 @@ from app.models.message import (
     MessageStatus,
 )
 from app.models.questionnaire import QuestionnaireSubmission
-from app.models.checkin import Checkin
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_profile import UserProfile

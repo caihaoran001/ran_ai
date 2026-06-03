@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
@@ -14,7 +15,15 @@ from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
-from app.services.outcome_engine import analyze_and_update_outcomes, apply_outcome_analysis, current_milestone_spec, generate_outcome_snapshot, get_or_create_stage_state
+from app.services.outcome_engine import (
+    _build_followup_time_context,
+    analyze_and_update_outcomes,
+    apply_outcome_analysis,
+    current_milestone_spec,
+    generate_outcome_snapshot,
+    get_or_create_stage_state,
+    prepare_outcome_extraction,
+)
 from app.services.user_state_profile import initialize_user_state_from_intake
 
 
@@ -161,6 +170,73 @@ async def test_outcome_followup_has_cooldown_to_avoid_reply_fatigue(db_session, 
 
     assert second["followup_plan"]["should_ask"] is False
     assert "冷却期" in second["followup_plan"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_followup_time_context_blocks_answered_morning_fields(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    today = datetime(2026, 6, 3, 8, 0, tzinfo=ZoneInfo("Asia/Shanghai")).date()
+    db_session.add(
+        Checkin(
+            service_case_id=case.id,
+            group_id=case.group_id,
+            user_id=case.user_id,
+            checkin_date=today,
+            content="晨间打卡",
+            parsed_json={
+                "weight": "70.1",
+                "sleep": "23点睡，7点起，质量还行",
+                "product_schedule": {"morning_c": "已喝"},
+            },
+        )
+    )
+    await db_session.flush()
+
+    context = await _build_followup_time_context(
+        db_session,
+        service_case=case,
+        spec=spec,
+        state=state,
+        now=datetime(2026, 6, 3, 8, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    assert context["local_hour"] == 8
+    assert context["answered_today"]["weight"] is True
+    assert context["answered_today"]["sleep"] is True
+    assert "weight_change" not in context["allowed_field_keys"]
+    assert "sleep_change" not in context["allowed_field_keys"]
+    assert "energy_change" in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_outcome_plan_includes_followup_time_context(db_session):
+    case = await _setup_outcome_case(db_session, days=3)
+    message = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="今天刚开始喝，整体还行",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+
+    plan = await prepare_outcome_extraction(
+        db_session,
+        service_case_id=case.id,
+        message_id=message.id,
+        intervention_analysis={"requires_human_intervention": False},
+        recent_messages=[],
+    )
+
+    assert plan is not None
+    assert "followup_time_context" in plan.context
+    assert "allowed_field_keys" in plan.context["followup_time_context"]
 
 
 @pytest.mark.asyncio

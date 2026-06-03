@@ -325,7 +325,12 @@ class AIService:
                 "3. 如果用户当前处于高风险、退款/退出、强烈负面情绪或需要人工介入场景，不要安排成效追问。\n"
                 "4. 追问最多一个，必须围绕 outcome_context.missing_fields 中最自然的一个字段。\n"
                 "5. 如果用户已经回答了某个字段，就不要重复追问同一个字段。\n"
-                "6. 问题必须像班主任顺口问一句，不能像问卷。\n\n"
+                "6. 必须读取 outcome_context.followup_time_context：\n"
+                "   - 只能从 followup_time_context.allowed_field_keys 中选择追问 field_key。\n"
+                "   - 如果 allowed_field_keys 为空，followup_plan.should_ask 必须为 false。\n"
+                "   - 如果 answered_today 已显示用户今天回答过相关内容，不要重复追问。\n"
+                "   - 根据 local_hour 使用合适措辞：早上优先问昨晚/今早，中午问早餐/早C，下午问午餐/午B，晚上问晚餐/晚A，深夜只问整体感受或不问。\n"
+                "7. 问题必须像班主任顺口问一句，不能像问卷；不要问尚未发生的事情，例如早上不要问今天午餐/晚餐。\n\n"
                 "【只输出 JSON，字段如下】\n"
                 "{\n"
                 '  "outcome_events": [\n'
