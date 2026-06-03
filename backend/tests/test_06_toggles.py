@@ -6,6 +6,9 @@ import pytest
 from sqlalchemy import select
 
 from app.models.service_case import ServiceCase
+from app.services.channels.base import ChannelMessage
+from app.services.content_policy import set_ai_reply_delivery_mode
+from app.services.ranren_ai.engine import RanrenAIEngine
 
 
 @pytest.mark.asyncio
@@ -87,6 +90,40 @@ async def test_service_case_ai_reply_toggle(admin_client):
     resp = await admin_client.get(f"/service-cases/{case_id}")
     assert resp.status_code == 200
     assert resp.json()["ai_auto_reply_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_qiwe_ai_reply_respects_global_manual_review_policy(admin_client, db_session):
+    group_id = f"test-qiwe-ai-policy-{secrets.token_hex(6)}"
+    resp = await admin_client.post("/service-cases", json={
+        "group_id": group_id,
+        "user": {"name": "QiWe审核策略测试"},
+    })
+    assert resp.status_code == 201, resp.text
+    case_id = resp.json()["id"]
+    service_case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
+    assert service_case is not None
+
+    engine = RanrenAIEngine(channel=None)
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="今天状态不错",
+        message_id="qiwe-policy-1",
+        user_id="user-1",
+    )
+
+    await set_ai_reply_delivery_mode("manual_review", db_session)
+    try:
+        should_send = await engine._should_send_ai_reply(db_session, service_case, {}, message)
+        assert should_send is False
+
+        await set_ai_reply_delivery_mode("auto_send", db_session)
+        should_send = await engine._should_send_ai_reply(db_session, service_case, {}, message)
+        assert should_send is True
+    finally:
+        await set_ai_reply_delivery_mode("manual_review", db_session)
 
 
 @pytest.mark.asyncio

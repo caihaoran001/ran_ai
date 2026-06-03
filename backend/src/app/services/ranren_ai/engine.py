@@ -524,8 +524,6 @@ class RanrenAIEngine:
             return False
         if analysis and analysis.get("requires_human_intervention"):
             return False
-        if message.channel == "qiwe":
-            return True
         return await get_ai_reply_delivery_mode(session) == "auto_send"
 
     async def _record_outbound(
