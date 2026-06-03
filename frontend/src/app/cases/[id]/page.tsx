@@ -122,25 +122,35 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <InfoCard title="问卷链接" value={questionnaireUrl} icon="🔗" />
-        <InfoCard title="交付文件" value={`${documents.length} 份`} icon="📄" />
-        <InfoCard title="打卡记录" value={`${checkins.length} 条`} icon="✅" />
-        <InfoCard title="聊天记录" value={`${messages.length} 条`} icon="💬" />
-        <InfoCard title="已服务时长" value={formatServiceDuration(serviceCase.started_at)} icon="⏱️" />
-        <InfoCard title="内容生成耗时" value={formatGenerationDuration(serviceCase.questionnaire_to_llm_output_ms)} icon="⚡" />
-        <AICostInfoCard
-          cost={stats?.ai_estimated_cost_yuan}
-          tokens={stats?.ai_total_tokens}
-          calls={stats?.ai_total_calls}
+      <div className="grid gap-4 xl:grid-cols-12">
+        <InfoCard
+          title="问卷链接"
+          value={questionnaireUrl}
+          icon="🔗"
+          className="xl:col-span-6"
+          valueClassName="text-base sm:text-lg"
         />
+        <InfoCard title="交付文件" value={`${documents.length} 份`} icon="📄" className="xl:col-span-2" />
+        <InfoCard title="打卡记录" value={`${checkins.length} 条`} icon="✅" className="xl:col-span-2" />
+        <InfoCard title="聊天记录" value={`${messages.length} 条`} icon="💬" className="xl:col-span-2" />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+        <InfoCard title="已服务时长" value={formatServiceDuration(serviceCase.started_at)} icon="⏱️" />
+        <InfoCard title="内容生成耗时" value={formatGenerationDuration(serviceCase.questionnaire_to_llm_output_ms)} icon="⚡" />
         <InfoCard title="群最后活跃" value={formatDateTime(stats?.last_message_at)} icon="🕐" />
         <InfoCard title="用户最后发言" value={formatDateTime(stats?.last_user_message_at)} icon="👤" />
         <InfoCard title="用户发言数" value={`${stats?.inbound_message_count ?? 0} 条`} icon="📝" />
         <InfoCard title="日均发言" value={`${stats?.avg_daily_inbound_messages ?? 0} 条/天`} icon="📊" />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <AICostInfoCard
+          cost={stats?.ai_estimated_cost_yuan}
+          tokens={stats?.ai_total_tokens}
+          calls={stats?.ai_total_calls}
+          className="xl:col-span-2"
+        />
         <InfoCard title="续购意向" value={formatIntentFlags(serviceCase.renewal_intent_flags)} icon="💚" />
         <InfoCard title="退款/退出意向" value={formatIntentFlags(serviceCase.refund_intent_flags)} icon="↩" />
       </div>
@@ -276,14 +286,26 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function InfoCard({ title, value, icon }: { title: string; value: string; icon: string }) {
+function InfoCard({
+  title,
+  value,
+  icon,
+  className = "",
+  valueClassName = "",
+}: {
+  title: string;
+  value: string;
+  icon: string;
+  className?: string;
+  valueClassName?: string;
+}) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+    <div className={`rounded-xl border border-zinc-200 bg-white p-5 shadow-sm ${className}`}>
       <div className="flex items-center gap-2 text-sm text-zinc-500">
         <span>{icon}</span>
         {title}
       </div>
-      <div className="mt-2 break-all text-lg font-semibold text-zinc-900">{value}</div>
+      <div className={`mt-2 break-all text-lg font-semibold text-zinc-900 ${valueClassName}`}>{value}</div>
     </div>
   );
 }
@@ -292,39 +314,41 @@ function AICostInfoCard({
   cost,
   tokens,
   calls,
+  className = "",
 }: {
   cost?: number | null;
   tokens?: number | null;
   calls?: number | null;
+  className?: string;
 }) {
   const costValue = cost ?? 0;
   const tokenCount = tokens ?? 0;
   const callCount = calls ?? 0;
   return (
-    <div className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm font-medium text-indigo-700">
-          <span>🧠</span>
-          AI调用成本
+    <div className={`rounded-xl border border-indigo-100 bg-indigo-50/70 p-5 shadow-sm ${className}`}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-medium text-indigo-700">
+            <span>🧠</span>
+            AI调用成本
+            <span className="rounded-full border border-indigo-100 bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-indigo-600">
+              估算
+            </span>
+          </div>
+          <div className="mt-2 text-2xl font-bold tracking-tight text-zinc-950">¥{costValue.toFixed(2)}</div>
+          <p className="mt-1 text-xs text-zinc-500">按当前模型单价回算</p>
         </div>
-        <span className="rounded-full border border-indigo-100 bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-indigo-600">
-          估算
-        </span>
-      </div>
-      <div className="mt-3 text-2xl font-bold tracking-tight text-zinc-950">
-        ¥{costValue.toFixed(2)}
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-lg border border-indigo-100 bg-white/75 px-3 py-2">
-          <div className="text-zinc-400">Tokens</div>
-          <div className="mt-1 font-semibold text-zinc-800">{tokenCount.toLocaleString("zh-CN")}</div>
-        </div>
-        <div className="rounded-lg border border-indigo-100 bg-white/75 px-3 py-2">
-          <div className="text-zinc-400">调用</div>
-          <div className="mt-1 font-semibold text-zinc-800">{callCount.toLocaleString("zh-CN")} 次</div>
+        <div className="grid min-w-56 grid-cols-2 gap-2 text-xs">
+          <div className="rounded-lg border border-indigo-100 bg-white/80 px-3 py-2">
+            <div className="text-zinc-400">Tokens</div>
+            <div className="mt-1 font-semibold text-zinc-800">{tokenCount.toLocaleString("zh-CN")}</div>
+          </div>
+          <div className="rounded-lg border border-indigo-100 bg-white/80 px-3 py-2">
+            <div className="text-zinc-400">调用</div>
+            <div className="mt-1 font-semibold text-zinc-800">{callCount.toLocaleString("zh-CN")} 次</div>
+          </div>
         </div>
       </div>
-      <p className="mt-3 text-xs leading-5 text-zinc-500">按当前模型单价回算。</p>
     </div>
   );
 }

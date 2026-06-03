@@ -421,6 +421,9 @@ function AICostCard({ summary }: { summary?: AICostSummary }) {
           <div className="mt-3 text-3xl font-bold tracking-tight text-zinc-950">
             {hasData ? `¥${cost.toFixed(2)}` : "暂无成本数据"}
           </div>
+          <p className="mt-1 text-xs text-zinc-500">
+            按当前模型单价回算
+          </p>
         </div>
         <span className="rounded-full border border-indigo-100 bg-white/80 px-2.5 py-1 text-xs font-semibold text-indigo-600">
           估算
@@ -437,7 +440,7 @@ function AICostCard({ summary }: { summary?: AICostSummary }) {
         </div>
       </div>
       <p className="mt-3 text-xs leading-5 text-zinc-500">
-        {hasData ? "按当前模型单价回算，点击查看用户明细。" : "产生新的 LLM 调用后会自动记录。"}
+        {hasData ? "点击查看用户明细。" : "产生新的 LLM 调用后会自动记录。"}
       </p>
     </Link>
   );
