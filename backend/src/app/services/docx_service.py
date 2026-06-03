@@ -6,10 +6,46 @@ from typing import Any
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt
+from docx.shared import Cm, Pt, RGBColor
 
 from app.services.document_templates import render_document_content
+
+BRAND_BLUE = "2B5797"
+
+
+def _set_cell_shading(cell: Any, color_hex: str) -> None:
+    """Apply background shading to a table cell via XML."""
+    tc = cell._tc
+    tc_pr = tc.get_or_add_tcPr()
+    shading_elm = OxmlElement("w:shd")
+    shading_elm.set(qn("w:val"), "clear")
+    shading_elm.set(qn("w:color"), "auto")
+    shading_elm.set(qn("w:fill"), color_hex)
+    tc_pr.append(shading_elm)
+
+
+def _set_cell_margins(
+    cell: Any,
+    top: int = 40,
+    bottom: int = 40,
+    left: int = 80,
+    right: int = 80,
+) -> None:
+    """Set cell margins (padding) in twips (1 pt ≈ 20 twips).
+
+    Defaults: top/bottom 2pt, left/right 4pt.
+    """
+    tc = cell._tc
+    tc_pr = tc.get_or_add_tcPr()
+    tc_mar = OxmlElement("w:tcMar")
+    for side, val in (("top", top), ("bottom", bottom), ("left", left), ("right", right)):
+        node = OxmlElement(f"w:{side}")
+        node.set(qn("w:w"), str(val))
+        node.set(qn("w:type"), "dxa")
+        tc_mar.append(node)
+    tc_pr.append(tc_mar)
 
 
 def write_markdown_docx(content: str, output_path: Path) -> None:
@@ -80,7 +116,7 @@ def write_template_docx(content_json: dict[str, Any], output_path: Path) -> None
 
     if content_json.get("show_header_brand", True):
         _add_paragraph(doc, "Powered by HumanBurning.AI", bold=True, size=9 if compact_execution else 10, alignment=WD_ALIGN_PARAGRAPH.CENTER, compact=compact_execution)
-    _add_paragraph(doc, title, bold=True, size=12 if compact_execution else 14, alignment=WD_ALIGN_PARAGRAPH.CENTER, compact=compact_execution)
+    _add_paragraph(doc, title, bold=True, size=13 if compact_execution else 16, alignment=WD_ALIGN_PARAGRAPH.CENTER, compact=compact_execution, space_after=8)
     recipient = str(content_json.get("recipient") or "").strip()
     if recipient and content_json.get("show_recipient", True):
         _add_paragraph(doc, f"To：{recipient}", bold=True, size=9 if compact_execution else 10, compact=compact_execution)
@@ -91,7 +127,15 @@ def write_template_docx(content_json: dict[str, Any], output_path: Path) -> None
             _add_inline_paragraph(doc, block_title, str(block.get("content") or "").strip(), compact=compact_execution)
             continue
         if block_title:
-            _add_paragraph(doc, block_title, bold=True, size=10 if compact_execution else 11, compact=compact_execution)
+            _add_paragraph(
+                doc,
+                block_title,
+                bold=True,
+                size=10 if compact_execution else 11,
+                compact=compact_execution,
+                space_before=6,
+                left_border_color=BRAND_BLUE,
+            )
         kind = block.get("kind")
         if kind == "table":
             _add_table(doc, block.get("rows") or [], compact=compact_execution)
@@ -185,7 +229,7 @@ def _setup_styles(doc: Document, *, compact: bool = False) -> None:
         paragraph_format = style.paragraph_format
         paragraph_format.space_before = Pt(0)
         paragraph_format.space_after = Pt(2 if compact else 6)
-        paragraph_format.line_spacing = Pt(13.5 if compact else 17)
+        paragraph_format.line_spacing = Pt(15 if compact else 18)
 
 
 def _add_paragraph(
@@ -196,12 +240,30 @@ def _add_paragraph(
     size: int = 10,
     alignment: WD_ALIGN_PARAGRAPH | None = None,
     compact: bool = False,
+    space_before: int | None = None,
+    space_after: int | None = None,
+    left_border_color: str | None = None,
 ) -> None:
     paragraph = doc.add_paragraph(style="Normal")
     if alignment is not None:
         paragraph.alignment = alignment
-    paragraph.paragraph_format.space_after = Pt(2 if compact else 6)
-    paragraph.paragraph_format.line_spacing = Pt(13.5 if compact else 17)
+    if space_after is not None:
+        paragraph.paragraph_format.space_after = Pt(space_after)
+    else:
+        paragraph.paragraph_format.space_after = Pt(2 if compact else 6)
+    if space_before is not None:
+        paragraph.paragraph_format.space_before = Pt(space_before)
+    paragraph.paragraph_format.line_spacing = Pt(15 if compact else 18)
+    if left_border_color:
+        pPr = paragraph._p.get_or_add_pPr()
+        pBdr = OxmlElement("w:pBdr")
+        left_border = OxmlElement("w:left")
+        left_border.set(qn("w:val"), "single")
+        left_border.set(qn("w:sz"), "18")
+        left_border.set(qn("w:space"), "4")
+        left_border.set(qn("w:color"), left_border_color)
+        pBdr.append(left_border)
+        pPr.append(pBdr)
     run = paragraph.add_run(text)
     run.font.name = "Microsoft YaHei"
     run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
@@ -212,7 +274,7 @@ def _add_paragraph(
 def _add_inline_paragraph(doc: Document, title: str, content: str, *, compact: bool = False) -> None:
     paragraph = doc.add_paragraph(style="Normal")
     paragraph.paragraph_format.space_after = Pt(2 if compact else 6)
-    paragraph.paragraph_format.line_spacing = Pt(13.5 if compact else 17)
+    paragraph.paragraph_format.line_spacing = Pt(15 if compact else 18)
     if title:
         title_run = paragraph.add_run(f"{title}：")
         title_run.font.name = "Microsoft YaHei"
@@ -235,13 +297,21 @@ def _add_table(doc: Document, rows: list[list[dict[str, Any]]], *, compact: bool
             value = cell.get("value") if isinstance(cell, dict) else cell
             target = table.cell(row_index, cell_index)
             target.text = str(value or "")
+            _set_cell_margins(target, top=40, bottom=40, left=80, right=80)
+            is_header = row_index == 0
+            if is_header:
+                _set_cell_shading(target, BRAND_BLUE)
             for paragraph in target.paragraphs:
                 paragraph.paragraph_format.space_after = Pt(0)
-                paragraph.paragraph_format.line_spacing = Pt(11.5 if compact else 13)
+                paragraph.paragraph_format.line_spacing = Pt(13 if compact else 14)
                 for run in paragraph.runs:
                     run.font.name = "Microsoft YaHei"
                     run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
                     run.font.size = Pt(8 if compact else 9)
-                    run.bold = bool(isinstance(cell, dict) and not cell.get("editable", True))
+                    if is_header:
+                        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                        run.bold = True
+                    else:
+                        run.bold = bool(isinstance(cell, dict) and not cell.get("editable", True))
     if not compact:
         doc.add_paragraph("")
