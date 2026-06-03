@@ -73,9 +73,9 @@ export function OutcomeSection({
           </p>
         </div>
         <div className="grid grid-cols-3 gap-2 text-center text-xs">
-          <MiniMetric label="证据" value={events.length} />
-          <MiniMetric label="阶段" value={states.length} />
-          <MiniMetric label="快照" value={snapshots.length} />
+          <MiniMetric label="成效证据" value={events.length} title="已沉淀的可追溯事实条数" />
+          <MiniMetric label="阶段状态" value={states.length} title="已经开始收集的阶段数" />
+          <MiniMetric label="阶段快照" value={snapshots.length} title="系统在阶段节点沉淀的汇总记录数" />
         </div>
       </div>
 
@@ -96,6 +96,7 @@ export function OutcomeSection({
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {MILESTONES.map(([key, dayLabel, label]) => {
               const snapshot = snapshotMap.get(key);
+              const state = states.find((item) => item.milestone === key);
               return (
                 <div key={key} className="rounded-lg border border-zinc-200 p-4">
                   <div className="flex items-start justify-between gap-3">
@@ -103,10 +104,10 @@ export function OutcomeSection({
                       <p className="text-xs text-zinc-500">{dayLabel}</p>
                       <p className="mt-1 font-medium text-zinc-900">{label}</p>
                     </div>
-                    <SnapshotStatus hasSnapshot={Boolean(snapshot)} />
+                    <SnapshotStatus hasSnapshot={Boolean(snapshot)} stale={isSnapshotStale(snapshot, state)} />
                   </div>
                   {snapshot ? (
-                    <SnapshotSummary snapshot={snapshot} />
+                    <SnapshotSummary snapshot={snapshot} state={state} />
                   ) : (
                     <p className="mt-3 text-xs leading-5 text-zinc-400">尚未生成该阶段快照。</p>
                   )}
@@ -143,6 +144,7 @@ function StageStateCard({ state }: { state: OutcomeStageState }) {
   const missing = state.missing_fields ?? [];
   const total = collectedEntries.length + missing.length;
   const progress = total > 0 ? Math.round((collectedEntries.length / total) * 100) : 0;
+  const isComplete = missing.length === 0 && collectedEntries.length > 0;
 
   return (
     <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
@@ -154,11 +156,16 @@ function StageStateCard({ state }: { state: OutcomeStageState }) {
             已收集 {collectedEntries.length} 项，仍缺 {missing.length} 项。
           </p>
         </div>
-        {state.last_followup_question && (
+        {!isComplete && state.last_followup_question && (
           <div className="max-w-md rounded-lg border border-blue-100 bg-white px-3 py-2 text-xs text-zinc-600">
             <p className="text-zinc-400">最近追问</p>
             <p className="mt-1 text-zinc-700">{state.last_followup_question}</p>
             <p className="mt-1 text-zinc-400">{formatDateTime(state.last_followup_at)}</p>
+          </div>
+        )}
+        {isComplete && (
+          <div className="max-w-md rounded-lg border border-emerald-100 bg-white px-3 py-2 text-xs text-emerald-700">
+            当前阶段关键证据已收集完整，机器人不会为了本阶段继续硬追问。
           </div>
         )}
       </div>
@@ -184,7 +191,7 @@ function StageStateCard({ state }: { state: OutcomeStageState }) {
           )}
         </div>
         <div>
-          <p className="mb-2 text-xs font-medium text-zinc-500">待自然补齐</p>
+          <p className="mb-2 text-xs font-medium text-zinc-500">仍缺字段</p>
           {missing.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {missing.map((field) => (
@@ -194,7 +201,7 @@ function StageStateCard({ state }: { state: OutcomeStageState }) {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-emerald-600">当前阶段证据较完整</p>
+            <p className="text-sm text-emerald-600">当前阶段证据已收集完整</p>
           )}
         </div>
       </div>
@@ -202,10 +209,16 @@ function StageStateCard({ state }: { state: OutcomeStageState }) {
   );
 }
 
-function SnapshotSummary({ snapshot }: { snapshot: OutcomeSnapshot }) {
+function SnapshotSummary({ snapshot, state }: { snapshot: OutcomeSnapshot; state?: OutcomeStageState }) {
   const metrics = snapshot.metrics_json ?? {};
+  const stale = isSnapshotStale(snapshot, state);
   return (
     <div className="mt-3 space-y-2 text-xs text-zinc-500">
+      {stale && (
+        <p className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">
+          快照早于当前阶段状态，等待系统下次自动刷新。
+        </p>
+      )}
       <p className="line-clamp-2 text-zinc-600">{snapshot.ai_summary || "已生成快照。"}</p>
       <div className="flex flex-wrap gap-2">
         <MetricPill label="打卡" value={metricValue(metrics.checkin_days, "天")} />
@@ -241,25 +254,28 @@ function OutcomeEventRow({ event }: { event: OutcomeEvent }) {
   );
 }
 
-function MiniMetric({ label, value }: { label: string; value: number }) {
+function MiniMetric({ label, value, title }: { label: string; value: number; title: string }) {
   return (
-    <div className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2">
+    <div className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2" title={title}>
       <p className="text-lg font-semibold text-zinc-900">{value}</p>
       <p className="text-zinc-400">{label}</p>
     </div>
   );
 }
 
-function SnapshotStatus({ hasSnapshot }: { hasSnapshot: boolean }) {
+function SnapshotStatus({ hasSnapshot, stale }: { hasSnapshot: boolean; stale: boolean }) {
+  const label = hasSnapshot ? (stale ? "待刷新" : "已沉淀") : "待自动生成";
   return (
     <span
       className={
-        hasSnapshot
+        stale
+          ? "rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700"
+          : hasSnapshot
           ? "rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700"
           : "rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-500"
       }
     >
-      {hasSnapshot ? "已沉淀" : "待自动生成"}
+      {label}
     </span>
   );
 }
@@ -291,4 +307,9 @@ function eventLabel(key: string) {
 
 function formatDateTime(value?: string | null) {
   return formatChinaDateTime(value, "暂无");
+}
+
+function isSnapshotStale(snapshot?: OutcomeSnapshot, state?: OutcomeStageState) {
+  if (!snapshot || !state || !snapshot.generated_at) return false;
+  return new Date(state.updated_at).getTime() > new Date(snapshot.generated_at).getTime();
 }

@@ -18,7 +18,7 @@ from app.models.message import (
     MessageSenderType,
     MessageStatus,
 )
-from app.models.outcome import OutcomeSnapshot
+from app.models.outcome import OutcomeSnapshot, OutcomeStageState
 from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
@@ -489,7 +489,13 @@ class ReminderService:
                     select(OutcomeSnapshot).where(OutcomeSnapshot.service_case_id.in_(case_ids))
                 )
             )
-            existing = {(item.service_case_id, item.milestone) for item in snapshots}
+            snapshot_map = {(item.service_case_id, item.milestone): item for item in snapshots}
+            states = list(
+                await session.scalars(
+                    select(OutcomeStageState).where(OutcomeStageState.service_case_id.in_(case_ids))
+                )
+            )
+            state_map = {(item.service_case_id, item.milestone): item for item in states}
 
         tasks = []
         for service_case in service_cases:
@@ -508,7 +514,19 @@ class ReminderService:
                 (90, "day90"),
                 (365, "day365"),
             ):
-                if days >= threshold and (service_case.id, milestone) not in existing:
+                snapshot = snapshot_map.get((service_case.id, milestone))
+                state = state_map.get((service_case.id, milestone))
+                should_refresh = (
+                    snapshot is None
+                    or (
+                        state is not None
+                        and (
+                            snapshot.generated_at is None
+                            or state.updated_at > snapshot.generated_at
+                        )
+                    )
+                )
+                if days >= threshold and should_refresh:
                     tasks.append(self._generate_outcome_snapshot_for_case_worker(service_case.id, milestone))
         if tasks:
             logger.info("Generating %s outcome snapshots via scheduler", len(tasks))
