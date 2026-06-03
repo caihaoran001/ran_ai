@@ -257,11 +257,11 @@ class AIService:
                 '  "requires_human_intervention": boolean,  // L3或L2为true，L1为false\n'
                 '  "risk_flags": [  // 风险明细数组，无风险时为空数组[]\n'
                 "    {\n"
-                '      "code": "风险编码，如 chronic_disease / medication / pregnancy / physical_discomfort / complaint",\n'
-                '      "level": "low | medium | high",\n'
+                '      "code": "必须从以下值中选择：pregnancy / lactation / chronic_disease / depression / hormone_medication / liver_kidney / stone / severe_insomnia / chest_pain / palpitation / allergy / medical_claim / other_risk",\n'
+                '      "level": "必须从以下值中选择：low / medium / high",\n'
                 '      "reason": "一句话描述风险原因",\n'
                 '      "evidence": "从用户原话中摘取的关键证据",\n'
-                '      "source": "触发来源，如 chat_message / questionnaire"\n'
+                '      "source": "必须从以下值中选择：chat_message / questionnaire"\n'
                 "    }\n"
                 "  ],\n"
                 '  "intervention_reasons": [],  // 与risk_flags结构相同，记录需要人工介入的具体原因，无则为空数组\n'
@@ -331,7 +331,7 @@ class AIService:
                 '  "outcome_events": [\n'
                 "    {\n"
                 '      "field_key": "来自阶段目标的字段 key",\n'
-                '      "event_type": "improved | worsened | unchanged | completed | not_completed | feedback | discomfort",\n'
+                '      "event_type": "必须从以下值中选择：improved / worsened / unchanged / completed / not_completed / feedback / discomfort",\n'
                 '      "value": "提取出的简短事实",\n'
                 '      "evidence_text": "用户原话证据",\n'
                 '      "confidence": 0.0\n'

@@ -9,6 +9,18 @@ from app.services.ai_service import AIService
 
 logger = logging.getLogger(__name__)
 
+VALID_RISK_CODES = frozenset({
+    "pregnancy", "lactation", "chronic_disease", "depression",
+    "hormone_medication", "liver_kidney", "stone", "severe_insomnia",
+    "chest_pain", "palpitation", "allergy", "medical_claim", "other_risk",
+    "emotional_distress", "risk_classifier_unavailable",
+    "medication", "physical_discomfort", "complaint",
+})
+
+VALID_RISK_LEVELS = frozenset({"low", "medium", "high"})
+
+VALID_SOURCES = frozenset({"chat_message", "questionnaire"})
+
 
 async def analyze_intervention(
     *,
@@ -141,14 +153,20 @@ def _normalize_items(value: Any, *, source: str) -> list[dict[str, str]]:
     for item in value:
         if not isinstance(item, dict):
             continue
-        code = _string(item.get("code")) or "intervention"
+        code = _string(item.get("code")) or "other_risk"
+        if code not in VALID_RISK_CODES:
+            code = "other_risk"
+        level = _string(item.get("level")) or "medium"
+        if level not in VALID_RISK_LEVELS:
+            level = "medium"
+        raw_source = _string(item.get("source"))
         items.append(
             {
                 "code": code,
-                "level": _string(item.get("level")) or "medium",
+                "level": level,
                 "reason": _string(item.get("reason")),
                 "evidence": _string(item.get("evidence") or item.get("keyword")),
-                "source": _string(item.get("source")) or source,
+                "source": raw_source if raw_source in VALID_SOURCES else source,
             }
         )
     return items

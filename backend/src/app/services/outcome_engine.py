@@ -20,6 +20,11 @@ from app.services.user_state_profile import apply_outcome_events_to_user_state, 
 
 logger = logging.getLogger(__name__)
 
+VALID_EVENT_TYPES = frozenset({
+    "improved", "worsened", "unchanged", "completed", "not_completed",
+    "feedback", "discomfort",
+})
+
 FOLLOWUP_COOLDOWN = timedelta(hours=12)
 ACTION_FOCUS_THRESHOLD = 0.85
 ACTION_FOCUS_LEAD_MARGIN = 0.2
@@ -724,10 +729,12 @@ def _normalize_events(value: Any, valid_fields: set[str]) -> list[dict[str, Any]
         confidence = _confidence(item.get("confidence"))
         if field_key not in valid_fields or not evidence_text or not fact_value or confidence < 0.55:
             continue
+        raw_event_type = _string(item.get("event_type"))
+        event_type = raw_event_type if raw_event_type in VALID_EVENT_TYPES else "observation"
         events.append(
             {
                 "field_key": field_key,
-                "event_type": _string(item.get("event_type")) or "observation",
+                "event_type": event_type,
                 "value": fact_value,
                 "evidence_text": evidence_text,
                 "confidence": confidence,

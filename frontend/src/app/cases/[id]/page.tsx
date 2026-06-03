@@ -353,6 +353,12 @@ function riskLabel(flag: Record<string, string>) {
     palpitation: "心悸/心慌相关",
     allergy: "过敏相关",
     medical_claim: "医疗诊断/治疗承诺相关",
+    other_risk: "其他风险",
+    emotional_distress: "情绪危机/心理风险",
+    risk_classifier_unavailable: "风控识别不可用",
+    medication: "药物相关",
+    physical_discomfort: "身体不适相关",
+    complaint: "投诉/不满相关",
   };
   const label = labels[flag.code] || flag.code || "未知风险";
   return flag.keyword ? `${label}（命中：${flag.keyword}）` : label;
