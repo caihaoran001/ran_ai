@@ -66,7 +66,13 @@ ENERGY_FIELD_SPEC = {
 EXECUTION_FIELD_SPEC = {
     "weight_band": "当前所属减重带",
     "path_goal": "更适合的总路径目标",
-    "day28_goal": "第一个28天目标，必须写出具体斤数范围，不可只写定性描述",
+    "day28_goal": "第一个 28 天目标（必须 1-2 句完整描述，至少 25 字）。"
+                   "A带/增肌增能带：必须先写明「不以减重数字为核心目标」，"
+                   "再写本 28 天的具体主线（关联 priority_direction，例如稳定节律/睡眠修复/饮食结构修复/保肌减脂/系统化管理），"
+                   "最后以「体重 0-2 斤属于健康波动，仅作参考」收尾。"
+                   "B/C/D带：必须先写明确斤数范围（3-5 / 6-8 / 8-12 斤等），"
+                   "再写配套策略（减脂方向、饮食结构、力量+有氧节律）。"
+                   "禁止只写「0-2 斤」「先稳住」「逐步改善」这种 5 字以内裸答案。",
     "current_phase_goal": "当前阶段目标",
     "principle": "执行总原则，一句话，强调先守早C/午B/晚A和关键生活动作，再抓结果",
     "weekly_plan": [
@@ -288,7 +294,7 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
     blocks = [
         _inline_block("weight_band", "您当前所属减重带", _execution_sentence(fields.get("weight_band"), max_parts=1, max_len=28)),
         _inline_block("path_goal", "更适合的总路径目标", _execution_sentence(fields.get("path_goal"), max_parts=1, max_len=46)),
-        _inline_block("day28_goal", "第一个28天目标", _execution_sentence(fields.get("day28_goal"), max_parts=2, max_len=68)),
+        _inline_block("day28_goal", "第一个28天目标", _execution_sentence(fields.get("day28_goal"), max_parts=3, max_len=140)),
         _inline_block("current_phase_goal", "当前阶段目标", _execution_sentence(fields.get("current_phase_goal"), max_parts=1, max_len=48)),
         _inline_block("principle", "执行总原则", _execution_sentence(fields.get("principle") or "先守早C/午B/晚A和晚间收口底盘，再用饮食、步行和睡眠放大结果。", max_parts=2, max_len=72)),
         _text_block(

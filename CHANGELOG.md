@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## 2026-06-03 - day28_goal 字段强约束（完整句 + 主线目标关联）
+
+- 旧实现下 LLM 对 A带/增肌增能带用户（如 BMI 21.2 的 NAR 先生）只输出 `0-2斤` 这种 4 字裸答案，违反「不只关注体重、需关联本 28 天主线」的诉求。根因：
+  - system_prompt 给出减重带示例（A带 `28天目标 0-2 斤`），LLM 取最短形式
+  - 字段约束「必须写出明确的斤数范围或明确写明不以减重数字为目标」允许 4 字答案通过校验
+  - `_execution_sentence(max_parts=2, max_len=68)` 限制字数，但 LLM 主动选了最短形式
+- 新增 day28_goal 字段硬约束（system_prompt + EXECUTION_FIELD_SPEC.day28_goal 同步更新）：
+  - 必须 1-2 句完整描述，至少 25 字，禁止 5 字以内裸答案
+  - A带/增肌增能带：必须显式声明「不以减重数字为核心目标」+ 引用 priority_direction 写主线（节律/睡眠/饮食/保肌/系统化）+ 收尾写「0-2 斤属于健康波动，仅作参考」
+  - B/C/D带：必须先写明确斤数范围 + 配套策略
+  - 若用户 priority_direction 与减重带推荐主线冲突，必须显式说明并给出更适合的目标
+- `_execution_sentence` 对 day28_goal 的 `max_parts` 2→3、`max_len` 68→140，给完整句留足空间
+- Case 1647 (NAR 先生) 两份文档 day28_goal 按新格式手动重写：
+  - 处方单（Doc 966）：成功路径块中「第一个28天：0-2斤」→「第一个28天：不以减重数字为核心目标；本 28 天主线是稳定节律...仅作参考」
+  - 28天执行标准（Doc 967）：inline 块中「第一个28天目标：0-2斤。」→「第一个28天目标：<完整句>」
+- 旧 .docx 文件保留以便回溯
+
 ## 2026-06-03 - non_negotiable 块反模式修复（title-as-content → 统一语义）
 
 - `_non_negotiable_block` 旧实现把 LLM 给的具体动作拼到 `block.title` 末尾、再把 `block.content` 强制清空，导致：
