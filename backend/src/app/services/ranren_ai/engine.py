@@ -343,6 +343,7 @@ class RanrenAIEngine:
             message.chat_id,
             reply,
             reply_to=message.message_id,
+            reply_context=message.raw_payload,
         )
         send_elapsed_ms = (time.monotonic() - started_at) * 1000
         await self._record_outbound(
@@ -476,6 +477,7 @@ class RanrenAIEngine:
                 message.chat_id,
                 reply,
                 reply_to=message.message_id,
+                reply_context=message.raw_payload,
             )
             send_elapsed_ms = (time.monotonic() - send_started_at) * 1000
             await self._record_outbound(

@@ -255,6 +255,10 @@ class MockAIService:
     async def extract_outcome_insight(self, *, content, context):
         text = content or ""
         missing = list((context or {}).get("missing_fields") or [])
+        followup_context = (context or {}).get("followup_time_context")
+        allowed_followup = None
+        if isinstance(followup_context, dict) and isinstance(followup_context.get("allowed_field_keys"), list):
+            allowed_followup = set(followup_context.get("allowed_field_keys") or [])
         events = []
         if "没那么困" in text or "精神" in text:
             events.append(
@@ -276,7 +280,13 @@ class MockAIService:
                     "confidence": 0.82,
                 }
             )
-        followup_field = next((item for item in missing if item not in {event["field_key"] for event in events}), "")
+        followup_candidates = [
+            item
+            for item in missing
+            if item not in {event["field_key"] for event in events}
+            and (allowed_followup is None or item in allowed_followup)
+        ]
+        followup_field = next(iter(followup_candidates), "")
         return {
             "outcome_events": events,
             "followup_plan": {

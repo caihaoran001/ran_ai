@@ -21,6 +21,7 @@ class WeComChannel:
         content: str,
         *,
         reply_to: str | None = None,
+        reply_context: object | None = None,
     ) -> ChannelSendResult:
         return _send_result(
             await self.bridge.send(chat_id=chat_id, content=content, reply_to=reply_to)
@@ -33,6 +34,7 @@ class WeComChannel:
         *,
         caption: str | None = None,
         reply_to: str | None = None,
+        reply_context: object | None = None,
     ) -> ChannelSendResult:
         return _send_result(
             await self.bridge.send_document(

@@ -240,6 +240,47 @@ async def test_outcome_plan_includes_followup_time_context(db_session):
 
 
 @pytest.mark.asyncio
+async def test_followup_is_blocked_when_not_in_allowed_time_fields(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    message = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="今天精神还可以",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+
+    result = await apply_outcome_analysis(
+        db_session,
+        service_case=case,
+        message=message,
+        spec=spec,
+        state=state,
+        raw={
+            "outcome_events": [],
+            "followup_plan": {
+                "should_ask": True,
+                "field_key": "weight_change",
+                "question": "今天体重是多少？",
+                "reason": "模型试图追问体重",
+            },
+        },
+        intervention_analysis={"requires_human_intervention": False},
+        allowed_followup_fields={"energy_change"},
+    )
+
+    assert result["followup_plan"]["should_ask"] is False
+    assert "后端拦截" in result["followup_plan"]["reason"]
+
+
+@pytest.mark.asyncio
 async def test_generate_outcome_snapshot_is_idempotent(db_session, mock_ai):
     case = await _setup_outcome_case(db_session, days=7)
     message = Message(

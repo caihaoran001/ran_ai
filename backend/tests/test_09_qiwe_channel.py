@@ -51,7 +51,14 @@ class FailingEngine:
 class FakeChannel:
     name = "qiwe"
 
-    async def send_text(self, chat_id: str, content: str, *, reply_to: str | None = None):
+    async def send_text(
+        self,
+        chat_id: str,
+        content: str,
+        *,
+        reply_to: str | None = None,
+        reply_context: object | None = None,
+    ):
         return ChannelSendResult(success=True, message_id="fake-text")
 
     async def send_document(
@@ -61,6 +68,7 @@ class FakeChannel:
         *,
         caption: str | None = None,
         reply_to: str | None = None,
+        reply_context: object | None = None,
     ):
         return ChannelSendResult(success=True, message_id="fake-doc")
 
@@ -89,6 +97,33 @@ async def test_qiwe_send_text_uses_to_id():
     assert kwargs["json"]["method"] == "/msg/sendText"
     assert kwargs["json"]["params"]["toId"] == "room-1"
     assert "told" not in kwargs["json"]["params"]
+
+
+@pytest.mark.asyncio
+async def test_qiwe_send_text_builds_reply_payload_from_context():
+    client = FakeClient([
+        {"code": 0, "msg": "成功", "data": {"msgUniqueIdentifier": "msg-1"}}
+    ])
+    channel = QiWeChannel(_settings(), http_client=client)
+
+    result = await channel.send_text(
+        "room-1",
+        "收到",
+        reply_to="origin-id",
+        reply_context={
+            "senderId": "user-1",
+            "senderName": "蔡浩然",
+            "timestamp": 1780000000,
+            "msgData": {"content": "我刚才说的那句话"},
+        },
+    )
+
+    assert result.success is True
+    params = client.calls[0][1]["json"]["params"]
+    assert params["reply"]["msgUniqueIdentifier"] == "origin-id"
+    assert params["reply"]["userId"] == "user-1"
+    assert params["reply"]["showName"] == "蔡浩然"
+    assert params["reply"]["msgData"]["content"] == "我刚才说的那句话"
 
 
 @pytest.mark.asyncio

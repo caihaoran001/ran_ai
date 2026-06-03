@@ -30,49 +30,17 @@ class QiWeChannel:
         content: str,
         *,
         reply_to: str | None = None,
+        reply_context: Any = None,
     ) -> ChannelSendResult:
         if not self._ready:
             return ChannelSendResult(success=False, error="QIWEI_TOKEN or QIWEI_GUID is missing")
-
-        reply_payload = None
-        if reply_to:
-            try:
-                from app.db.session import SessionLocal
-                from app.models.message import Message
-                from sqlalchemy import select
-
-                async with SessionLocal() as session:
-                    stmt = select(Message).where(
-                        Message.wecom_message_id == reply_to,
-                        Message.direction == "inbound"
-                    )
-                    db_msg = await session.scalar(stmt)
-                    if db_msg:
-                        meta = (db_msg.analysis_json or {}).get("_qiwe_meta") or {}
-                        sender_id = meta.get("sender_id") or ""
-                        sender_name = meta.get("sender_name") or ""
-                        timestamp = meta.get("timestamp") or int(db_msg.created_at.timestamp())
-
-                        reply_payload = {
-                            "type": 0,  # 0 for text message
-                            "userId": str(sender_id),
-                            "showName": str(sender_name),
-                            "timeStamp": int(timestamp),
-                            "msgUniqueIdentifier": str(reply_to),
-                            "msgData": {
-                                "content": db_msg.content
-                            }
-                        }
-            except Exception as e:
-                import logging
-                logger = logging.getLogger("uvicorn.error")
-                logger.error(f"Failed to lookup reply_to message details: {e}")
 
         params = {
             "guid": self.guid,
             "toId": str(chat_id),
             "content": content,
         }
+        reply_payload = _reply_payload_from_context(reply_context, reply_to)
         if reply_payload:
             params["reply"] = reply_payload
 
@@ -89,6 +57,7 @@ class QiWeChannel:
         *,
         caption: str | None = None,
         reply_to: str | None = None,
+        reply_context: Any = None,
     ) -> ChannelSendResult:
         if not self._ready:
             return ChannelSendResult(success=False, error="QIWEI_TOKEN or QIWEI_GUID is missing")
@@ -113,7 +82,7 @@ class QiWeChannel:
         }
         result = await self._post_json("/api/qw/doApi", payload)
         if caption and result.success:
-            await self.send_text(chat_id, caption)
+            await self.send_text(chat_id, caption, reply_to=reply_to, reply_context=reply_context)
         return result
 
     @property
@@ -197,4 +166,35 @@ def _message_id(payload: dict[str, Any]) -> str | None:
         value = payload.get(key)
         if value is not None:
             return str(value)
+    return None
+
+
+def _reply_payload_from_context(context: Any, reply_to: str | None) -> dict[str, Any] | None:
+    if not reply_to:
+        return None
+    item = _last_raw_item(context)
+    if not isinstance(item, dict):
+        return None
+    msg_data = item.get("msgData") if isinstance(item.get("msgData"), dict) else {}
+    content = str((msg_data or {}).get("content") or "").strip()
+    if not content:
+        return None
+    return {
+        "type": 0,
+        "userId": str(item.get("senderId") or (msg_data or {}).get("sender_id") or ""),
+        "showName": str(item.get("senderName") or (msg_data or {}).get("sender_name") or ""),
+        "timeStamp": int(item.get("timestamp") or 0),
+        "msgUniqueIdentifier": str(reply_to),
+        "msgData": {"content": content},
+    }
+
+
+def _last_raw_item(context: Any) -> dict[str, Any] | None:
+    if isinstance(context, list):
+        for item in reversed(context):
+            if isinstance(item, dict):
+                return item
+        return None
+    if isinstance(context, dict):
+        return context
     return None

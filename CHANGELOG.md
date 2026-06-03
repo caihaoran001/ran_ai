@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-06-03 - 修复 QiWe 引用回复边界与成效追问后端兜底
+
+- QiWe 引用回复不再由 `QiWeChannel` 直接查询数据库，改为业务层透传 `reply_context`，通道层只负责把上下文转换成 QiWe API 的 `reply` payload，符合渠道隔离规则。
+- `MessageChannel` 抽象扩展 `reply_context` 参数，企微官方通道保持兼容忽略，QiWe 通道用于构造群内引用回复。
+- 成效追问增加后端硬拦截：即使 LLM 输出了不在 `followup_time_context.allowed_field_keys` 内的追问字段，后端也会压掉，避免只靠提示词约束。
+- 测试补齐：
+  - QiWe 文本发送可从 `reply_context` 构造引用 payload。
+  - 成效追问字段不在当前允许范围内时会被后端拦截。
+  - Mock 成效提取器同步遵守 `allowed_field_keys`，测试行为与线上规则一致。
+
 ## 2026-06-03 - 成效追问增加时间感知与当日已答过滤
 
 - 成效引擎在调用 LLM 规划追问前，先由后端生成确定性 `followup_time_context`：

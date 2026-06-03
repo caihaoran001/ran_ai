@@ -239,6 +239,7 @@ async def analyze_and_update_outcomes(
         state=state,
         raw=raw,
         intervention_analysis=intervention_analysis,
+        allowed_followup_fields=_allowed_followup_fields_from_context(context),
     )
     return result
 
@@ -316,6 +317,7 @@ async def apply_outcome_analysis_plan(
         state=state,
         raw=raw,
         intervention_analysis=intervention_analysis,
+        allowed_followup_fields=_allowed_followup_fields_from_context(plan.context),
     )
 
 
@@ -354,6 +356,7 @@ async def apply_outcome_analysis(
     state: OutcomeStageState,
     raw: dict[str, Any],
     intervention_analysis: dict[str, Any] | None,
+    allowed_followup_fields: set[str] | None = None,
 ) -> dict[str, Any]:
     valid_fields = {goal.key for goal in spec.goals}
     collected = dict(state.collected_fields or {})
@@ -390,7 +393,7 @@ async def apply_outcome_analysis(
     state.collected_fields = collected
     state.missing_fields = missing
 
-    followup_plan = _normalize_followup(raw.get("followup_plan"), missing)
+    followup_plan = _normalize_followup(raw.get("followup_plan"), missing, allowed_followup_fields)
     if _must_suppress_followup(intervention_analysis):
         followup_plan = {"should_ask": False, "field_key": "", "question": "", "reason": "风险或人工介入场景，暂停成效追问。"}
     elif followup_plan.get("should_ask") and _is_followup_in_cooldown(state):
@@ -947,19 +950,42 @@ def _normalize_events(value: Any, valid_fields: set[str]) -> list[dict[str, Any]
     return events
 
 
-def _normalize_followup(value: Any, missing_fields: list[str]) -> dict[str, Any]:
+def _normalize_followup(
+    value: Any,
+    missing_fields: list[str],
+    allowed_fields: set[str] | None = None,
+) -> dict[str, Any]:
     if not isinstance(value, dict) or not value.get("should_ask"):
         return {"should_ask": False, "field_key": "", "question": "", "reason": ""}
     field_key = _string(value.get("field_key"))
     question = _string(value.get("question"))
     if field_key not in missing_fields or not question:
         return {"should_ask": False, "field_key": "", "question": "", "reason": ""}
+    if allowed_fields is not None and field_key not in allowed_fields:
+        return {
+            "should_ask": False,
+            "field_key": "",
+            "question": "",
+            "reason": "本轮追问字段不在当前时段或当日未答范围内，已由后端拦截。",
+        }
     return {
         "should_ask": True,
         "field_key": field_key,
         "question": question,
         "reason": _string(value.get("reason")),
     }
+
+
+def _allowed_followup_fields_from_context(context: Any) -> set[str] | None:
+    if not isinstance(context, dict):
+        return None
+    followup_context = context.get("followup_time_context")
+    if not isinstance(followup_context, dict):
+        return None
+    allowed = followup_context.get("allowed_field_keys")
+    if not isinstance(allowed, list):
+        return None
+    return {_string(item) for item in allowed if _string(item)}
 
 
 async def _event_exists(

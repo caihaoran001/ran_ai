@@ -37,6 +37,7 @@ class MessageChannel(Protocol):
         content: str,
         *,
         reply_to: str | None = None,
+        reply_context: Any = None,
     ) -> ChannelSendResult:
         ...
 
@@ -47,5 +48,6 @@ class MessageChannel(Protocol):
         *,
         caption: str | None = None,
         reply_to: str | None = None,
+        reply_context: Any = None,
     ) -> ChannelSendResult:
         ...
