@@ -48,8 +48,8 @@ ENERGY_FIELD_SPEC = {
         "day14_28": "第14-28天变化",
     },
     "non_negotiable": {
-        "title": "这28天最不能打折的一件事。写成一个短动作，必须来自用户最特异的个人风险信号或成败卡点，禁止写通用答案",
-        "content": "可选。只有当 title 只是短主题时才补一句原因；如果 title 已经是完整动作，留空",
+        "title": "短标签，2-12 字。例如「23:30 前闭眼」「守住午B 时间」",
+        "content": "这28天最不能打折的具体动作 + 一句原因。必须来自用户最特异的个人风险信号或成败卡点，禁止写通用答案",
     },
     "week_actions": ["本周直接执行，固定3条。至少包含1条运动建议，且运动建议必须写出类型+频率+时长+禁忌时间窗口"],
     "product_schedule": {
@@ -376,15 +376,35 @@ def _list_block(key: str, title: str, items: Any, *, limit: int | None = None) -
 
 
 def _non_negotiable_block(fields: dict[str, Any]) -> dict[str, Any]:
+    """生成第 9 节「您这 28 天最不能打折的一件事」。
+
+    旧版（已废弃）会把 LLM 给的具体动作拼到 title 末尾、再把 content 清空，
+    导致 block.title = "9. 您这28天最不能打折的一件事是：<答案>"，content 为空，
+    前端 StructuredEditor 把 title 当作 h3 渲染，content 渲染为空 Textarea，
+    用户详情页 blockText() 只读 content 也会显示为空。
+
+    新版语义统一：title 是章节名，content 是答案全文。
+    - 如果 LLM 同时给了 title（短标签）和 content（详细说明），合并为 content。
+    - 如果 LLM 只给了 title（短标签），用 title 作为 content。
+    - 如果 LLM 只给了 content（说明性文字），直接用 content。
+    """
     value = _dict(fields.get("non_negotiable"))
-    title = _text(value.get("title")) or "先守住最关键动作"
+    title = _text(value.get("title"))
     content = _text(value.get("content"))
-    if len(title) >= 18 or any(word in title for word in ("全部", "不晚于", "完成", "控制", "放在", "守住")):
-        content = ""
+
+    if title and content:
+        body = f"{title}。{content}".strip("。")
+    elif title:
+        body = title
+    elif content:
+        body = content
+    else:
+        body = "先守住最关键动作"
+
     return _text_block(
         "non_negotiable",
-        f"9. 您这28天最不能打折的一件事是：{title}",
-        content,
+        "9. 您这28天最不能打折的一件事",
+        body,
     )
 
 

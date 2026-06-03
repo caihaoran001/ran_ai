@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-06-03 - non_negotiable 块反模式修复（title-as-content → 统一语义）
+
+- `_non_negotiable_block` 旧实现把 LLM 给的具体动作拼到 `block.title` 末尾、再把 `block.content` 强制清空，导致：
+  - 后端 `block.title` = `"9. 您这28天最不能打折的一件事是：<完整动作>"`，`block.content` = `""`
+  - 前端 `StructuredEditor`（admin 审核页）把 title 渲染为 `<h3>`、把 content 渲染为 `<Textarea value="">`，用户看到「标题塞满答案、正文空白」
+  - 用户详情页 `blockText()` 只读 `content`，所以「最不能打折的一件事」摘要卡片永远不显示
+- 新实现统一语义：`title` 是章节名 `"9. 您这28天最不能打折的一件事"`，`content` 是答案全文（动作 + 一句原因）。前后端契约清晰，title/content 不再耦合。
+- 配套更新：`ENERGY_FIELD_SPEC.non_negotiable` schema 描述（title 写 2-12 字短标签，content 写动作+原因），`document_service.py` system prompt 显式说明新格式与后端渲染规则。
+- 历史数据：把当前所有 `non_negotiable` 块的 `title` 中 `"9. 您这28天最不能打折的一件事是："` 前缀剥到 `content` 开头，重新生成 `content_md` 与 `.docx`（Case 849/966 实际验证通过）。
+
 ## 2026-06-03 - 交付文件生成提示词加固与 Case 1647 修复
 
 - 交付文件生成系统提示词 `_intake_generation_system_prompt()` 新增 6 段硬约束，解决人工版参考文件与自动生成版之间的结构、逻辑链、个性化三类系统性差异：
