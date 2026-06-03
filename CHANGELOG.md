@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 2026-06-03 - 修复问卷"总开关"逻辑
+
+- **问题**：界面上的"自动发送问卷计划总开关"只控制数据库中的 `schedule.enabled`，但真正控制定时任务服务的是环境变量 `REMINDER_ENABLED`。用户在界面上打开开关后，自动发问卷仍然不工作。
+- **修复**：
+  - `start()` 方法：在检查环境变量之前，先读取数据库中的 `schedule.enabled`，如果为 True 就启动调度器。
+  - `_run_loop()` 方法：将 `check_questionnaire_sends_once()` 从 `if self.settings.reminder_enabled` 块中移出，让它在每次循环中都被调用（函数内部已检查 `schedule.enabled`）。
+- **效果**：现在用户在界面上打开总开关后，问卷发送任务会被执行，而不依赖环境变量 `REMINDER_ENABLED`。
+
 ## 2026-06-03 - 28天执行标准字段级硬约束（对照参考版精修）
 
 对比3份人工精修参考文件（NAR/张颖/邱京泽）与自动生成版，发现9类系统性差异：

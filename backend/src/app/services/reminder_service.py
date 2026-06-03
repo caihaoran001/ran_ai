@@ -51,8 +51,15 @@ class ReminderService:
                     knowledge_enabled = (await get_knowledge_evolution_config(session, settings=self.settings)).enabled
             except Exception:
                 logger.exception("Failed to load knowledge evolution config")
-        if not self.settings.reminder_enabled and not knowledge_enabled and not self.settings.outcome_snapshots_enabled:
-            logger.info("Reminder, outcome snapshot and knowledge evolution services disabled")
+        questionnaire_schedule_enabled = False
+        try:
+            async with SessionLocal() as session:
+                schedule = await get_checkin_questionnaire_schedule(session)
+                questionnaire_schedule_enabled = schedule.get("enabled", False)
+        except Exception:
+            logger.exception("Failed to load questionnaire schedule config")
+        if not self.settings.reminder_enabled and not knowledge_enabled and not self.settings.outcome_snapshots_enabled and not questionnaire_schedule_enabled:
+            logger.info("Reminder, outcome snapshot, knowledge evolution and questionnaire schedule services disabled")
             return
         self._stopped.clear()
         self._task = asyncio.create_task(self._run_loop(), name="reminder-service")
@@ -79,8 +86,8 @@ class ReminderService:
                         if self.settings.reminder_enabled:
                             await self.check_once()
                             await self.check_inactive_followups_once()
-                            await self.check_questionnaire_sends_once()
                             await self.check_stage_reports_once()
+                        await self.check_questionnaire_sends_once()
                         if self.settings.outcome_snapshots_enabled:
                             await self.check_outcome_snapshots_once()
                         await self.check_knowledge_evolution_once()
