@@ -513,17 +513,6 @@ def _intake_package_schema() -> dict[str, object]:
                 "evidence_notes": ["对应的问卷证据，2-4条"],
             },
             "notes": "AI陪跑建议，供运营参考",
-            "personalized_checkin_fields": [
-                {
-                    "id": "personalized_weight",
-                    "key": "personalized_weight",
-                    "type": "SIMPLE",
-                    "title": "今日晨起体重（kg）",
-                    "label": "今日晨起体重（kg）",
-                    "required": True,
-                    "options": [],
-                }
-            ],
         },
         "documents": combined_prompt_schema(),
     }
@@ -546,7 +535,10 @@ def _normalize_profile_from_package(
     profile.setdefault("risks", "暂无明确风险")
     profile["need_analysis"] = _normalize_need_analysis(profile.get("need_analysis"), intake_facts, shared)
     profile.setdefault("notes", "建议围绕问卷中明确的执行卡点进行轻量陪跑，避免一次性增加太多动作。")
-    profile.setdefault("personalized_checkin_fields", _fallback_personalized_checkin_fields(intake_facts))
+    profile["personalized_checkin_fields"] = (
+        _personalized_checkin_fields_from_documents(document_payloads)
+        or _fallback_personalized_checkin_fields(intake_facts)
+    )
     return profile
 
 
@@ -637,6 +629,65 @@ def _fallback_personalized_checkin_fields(facts: dict[str, object]) -> list[dict
         except (ValueError, TypeError):
             weight_kg = None
     return personalized_checkin_fields_with_weight(weight_kg)
+
+
+def personalized_checkin_fields_from_document_payloads(document_payloads: dict[str, dict]) -> list[dict[str, object]]:
+    return _personalized_checkin_fields_from_documents(document_payloads)
+
+
+def _personalized_checkin_fields_from_documents(document_payloads: dict[str, dict]) -> list[dict[str, object]]:
+    execution = document_payloads.get(DocumentType.DAY28_EXECUTION_STANDARD.value, {})
+    if not isinstance(execution, dict):
+        return []
+    daily_items = _parse_daily_checkin_items(execution.get("daily_checkin"))
+    if not daily_items:
+        return []
+    fields = []
+    for index, item in enumerate(daily_items[:5], start=1):
+        field_type = "RADIO" if "是否" in item else "SIMPLE"
+        fields.append(
+            {
+                "id": f"personalized_checkin_{index}",
+                "key": f"personalized_checkin_{index}",
+                "type": field_type,
+                "title": item,
+                "label": item,
+                "subtitle": "",
+                "required": True,
+                "options": ["是", "否"] if field_type == "RADIO" else [],
+            }
+        )
+    return fields
+
+
+def _parse_daily_checkin_items(value: object) -> list[str]:
+    if isinstance(value, list):
+        candidates: list[object] = value
+    else:
+        text = _text_from_payload(value)
+        candidates = re.split(r"[\n；;]+", text) if text else []
+
+    items: list[str] = []
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            raw = candidate.get("title") or candidate.get("label") or candidate.get("value") or candidate.get("content")
+        else:
+            raw = candidate
+        text = _clean_checkin_item_text(raw)
+        if text:
+            items.append(text)
+    return items
+
+
+def _clean_checkin_item_text(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"^\s*[-•*]\s*", "", text)
+    text = re.sub(r"^\s*\d+\s*[\.、\)\）]\s*", "", text)
+    text = re.sub(r"（\s*(正向动作|限制动作)\s*）", "", text)
+    text = re.sub(r"\(\s*(正向动作|限制动作)\s*\)", "", text)
+    return text.strip(" ：:；;，,。")
 
 
 def _text_from_payload(value: object) -> str:
@@ -825,6 +876,7 @@ def _intake_generation_system_prompt() -> str:
         "第5-12周提前说明、每周通过标准、个性化提醒。\n"
         "daily_checkin 只有5项：第1项固定为早C/午B/晚A合并打卡，后4项围绕用户具体卡点定制（如午B时间、晚餐收口、"
         "蔬菜摄入、睡眠时间、情绪稳定度和饭后困综合评分），禁止通用套话。"
+        "每一项必须天然适合转成问卷字段：要么是含「是否」的判断题，要么是需要用户直接填写数值/描述的填空题。"
         "至少 2 项打卡要设计成正向动作（做到什么），其次才是禁止动作（不做什么）。"
         "每周通过标准写成 1 句，必须包含 1 次体重 / 围度 / 体感记录作为基础门槛。"
         "reminder 必须个性化，结合用户作息/睡眠/运动/不适/夜班等信息；第一句必须是一句定心丸，例如「结果看连续性，不看单日完美」。"

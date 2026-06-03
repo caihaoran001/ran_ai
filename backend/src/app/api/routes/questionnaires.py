@@ -23,6 +23,7 @@ from app.models.message import (
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
+from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.checkin_service import normalize_checkin_json
 from app.schemas.questionnaire import (
@@ -30,7 +31,7 @@ from app.schemas.questionnaire import (
     QuestionnaireSubmissionRead,
     QuestionnaireSubmit,
 )
-from app.services.document_service import generate_profile_and_documents
+from app.services.document_service import generate_profile_and_documents, personalized_checkin_fields_from_document_payloads
 from app.db.session import SessionLocal
 from app.services.channels import send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
@@ -59,19 +60,7 @@ async def get_questionnaire(
     service_case = await _case_by_token(session, token, include_deleted=False)
     default_values: dict[str, Any] = {}
     if template == "personalized_checkin":
-        latest_profile = await session.scalar(
-            select(UserProfile)
-            .where(UserProfile.service_case_id == service_case.id)
-            .order_by(UserProfile.created_at.desc())
-            .limit(1)
-        )
-        fields = []
-        if latest_profile and latest_profile.profile_json:
-            fields = latest_profile.profile_json.get("personalized_checkin_fields") or []
-        
-        if not fields:
-            fields = [dict(f) for f in DEFAULT_PERSONALIZED_CHECKIN_FIELDS]
-        
+        fields = await _personalized_checkin_fields(session, service_case)
         template_payload = {
             "template_key": "personalized_checkin",
             "name": "每日行动",
@@ -113,17 +102,7 @@ async def submit_questionnaire(
 ) -> QuestionnaireSubmission:
     service_case = await _case_by_token(session, token, include_deleted=False)
     if template == "personalized_checkin":
-        latest_profile = await session.scalar(
-            select(UserProfile)
-            .where(UserProfile.service_case_id == service_case.id)
-            .order_by(UserProfile.created_at.desc())
-            .limit(1)
-        )
-        fields = []
-        if latest_profile and latest_profile.profile_json:
-            fields = latest_profile.profile_json.get("personalized_checkin_fields") or []
-        if not fields:
-            fields = [dict(f) for f in DEFAULT_PERSONALIZED_CHECKIN_FIELDS]
+        fields = await _personalized_checkin_fields(session, service_case)
     else:
         await _template_or_404(session, template)
         fields = await get_active_questionnaire_fields(session, template)
@@ -426,6 +405,47 @@ async def _generate_profile_and_documents(service_case_id: int) -> None:
             if failed_case:
                 _append_generation_error_note(failed_case, exc)
                 await session.commit()
+
+
+async def _personalized_checkin_fields(session: AsyncSession, service_case: ServiceCase) -> list[dict[str, Any]]:
+    latest_profile = await session.scalar(
+        select(UserProfile)
+        .where(UserProfile.service_case_id == service_case.id)
+        .order_by(UserProfile.created_at.desc())
+        .limit(1)
+    )
+    fields = []
+    if latest_profile and latest_profile.profile_json:
+        fields = list(latest_profile.profile_json.get("personalized_checkin_fields") or [])
+    if len(fields) >= 5:
+        return fields
+
+    document_fields = await _personalized_checkin_fields_from_latest_document(session, service_case.id)
+    if document_fields:
+        return document_fields
+    return [dict(f) for f in DEFAULT_PERSONALIZED_CHECKIN_FIELDS]
+
+
+async def _personalized_checkin_fields_from_latest_document(
+    session: AsyncSession,
+    service_case_id: int,
+) -> list[dict[str, Any]]:
+    document = await session.scalar(
+        select(UserDocument)
+        .where(
+            UserDocument.service_case_id == service_case_id,
+            UserDocument.document_type == DocumentType.DAY28_EXECUTION_STANDARD,
+        )
+        .order_by(UserDocument.created_at.desc())
+        .limit(1)
+    )
+    if not document or not isinstance(document.content_json, dict):
+        return []
+    fields = document.content_json.get("fields")
+    payload = fields if isinstance(fields, dict) else document.content_json
+    return personalized_checkin_fields_from_document_payloads(
+        {DocumentType.DAY28_EXECUTION_STANDARD.value: payload}
+    )
 
 
 async def _send_intake_submit_reply(service_case_id: int) -> None:

@@ -7,6 +7,7 @@ from app.api.routes import (
     dashboard,
     diagnostics,
     documents,
+    events,
     knowledge_drafts,
     knowledge_faqs,
     messages,
@@ -32,5 +33,6 @@ api_router.include_router(messages.router, tags=["messages"])
 api_router.include_router(outcomes.router, tags=["outcomes"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(diagnostics.router, prefix="/diagnostics", tags=["diagnostics"])
+api_router.include_router(events.router, tags=["events"])
 api_router.include_router(qiwe.router, tags=["qiwe"])
 api_router.include_router(settings.router, tags=["settings"])

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { api, UserDocument } from "@/lib/api";
+import { useSSE } from "@/hooks/use-sse";
 import { FileText, Search, RefreshCw, Eye, CheckCircle, ArrowRight, Clock, ShieldCheck } from "lucide-react";
 
 interface MappedDocument extends UserDocument {
@@ -18,6 +19,8 @@ export function DocumentSearchList() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "reviewed">("all");
   const [refreshing, setRefreshing] = useState(false);
+  const { pendingDocuments } = useSSE();
+  const lastPendingDocuments = useRef<number | null>(null);
 
   const fetchDocuments = async () => {
     try {
@@ -51,6 +54,17 @@ export function DocumentSearchList() {
   useEffect(() => {
     fetchDocuments();
   }, []);
+
+  useEffect(() => {
+    if (lastPendingDocuments.current === null) {
+      lastPendingDocuments.current = pendingDocuments;
+      return;
+    }
+    if (lastPendingDocuments.current !== pendingDocuments) {
+      lastPendingDocuments.current = pendingDocuments;
+      fetchDocuments();
+    }
+  }, [pendingDocuments]);
 
   const handleRefresh = () => {
     setRefreshing(true);

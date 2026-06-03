@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 2026-06-03 - 每日行动字段统一与审核控制台实时刷新
+
+- 入营生成时不再使用 LLM 单独输出的 `profile.personalized_checkin_fields`，改为从 `day28_execution_standard.daily_checkin` 派生每日行动问卷字段，避免 28 天执行标准有 5 项打卡要求、但每日行动问卷只出现 1 项。
+- `daily_checkin` 提示词补充约束：每项必须适合转成问卷字段，要么是含“是否”的判断题，要么是需要用户填写数值/描述的填空题。
+- 新增审核事件 SSE：
+  - 后端 `/api/events/stream` 汇总待审核 AI 回复、待审核知识草稿、待审核文件和待人工介入服务单数量。
+  - 前端 `/api/events/stream` 代理后端 SSE，不暴露后端 API key。
+  - 红点提醒改用 SSE，审核控制台监听数量变化后自动刷新，文件列表也会在待审核文件数量变化时自动重新拉取。
+
 ## 2026-06-03 - AI 调用成本口径统一与卡片视觉优化
 
 - AI 调用成本展示统一改为按当前配置的 input/output token 单价动态回算，避免历史日志在单价曾为 0 时写入的 `estimated_cost_yuan=0` 让页面显示“有 tokens 但成本为 0”。

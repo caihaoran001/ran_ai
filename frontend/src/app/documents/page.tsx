@@ -13,6 +13,7 @@ import { AiReplyToggle } from "./ai-reply-toggle";
 import { PendingMessageActions } from "./pending-message-actions";
 import { FAQEvolutionCenter, ExcellentCaseEvolutionCenter } from "./knowledge-draft-group";
 import { DocumentSearchList } from "./document-search-list";
+import { ReviewConsoleLiveRefresh } from "./review-console-live-refresh";
 
 export default async function DocumentsListPage() {
   const serviceCases = await api<ServiceCase[]>("/service-cases").catch(() => []);
@@ -40,9 +41,12 @@ export default async function DocumentsListPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-zinc-900">审核控制台</h1>
-        <p className="mt-1 text-sm text-zinc-500">集中管理交付文件与 AI 聊天回复，确保输出安全、准确。</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-zinc-900">审核控制台</h1>
+          <p className="mt-1 text-sm text-zinc-500">集中管理交付文件与 AI 聊天回复，确保输出安全、准确。</p>
+        </div>
+        <ReviewConsoleLiveRefresh />
       </div>
 
       {/* 置顶全局开关 */}

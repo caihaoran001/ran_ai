@@ -197,6 +197,11 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     assert profile is not None
     overview = (profile.profile_json or {}).get("overview") or {}
     assert overview.get("bmi") == "21.2"
+    personalized_fields = (profile.profile_json or {}).get("personalized_checkin_fields") or []
+    assert len(personalized_fields) == 5
+    assert personalized_fields[0]["title"] == "早C/午B/晚A：今日三杯是否全部完成？"
+    assert personalized_fields[0]["type"] == "RADIO"
+    assert personalized_fields[0]["options"] == ["是", "否"]
 
     docs = list(await db_session.scalars(
         select(UserDocument).where(UserDocument.service_case_id == case_id)
@@ -293,6 +298,67 @@ async def test_intake_submit_records_profile_completed_outcome(
     assert state is not None
     assert "profile_completed" in (state.collected_fields or {})
     assert "profile_completed" not in (state.missing_fields or [])
+
+
+@pytest.mark.asyncio
+async def test_personalized_checkin_falls_back_to_document_daily_checkin(admin_client, db_session):
+    group_id = f"test-personalized-checkin-{secrets.token_hex(6)}"
+    resp = await admin_client.post("/service-cases", json={
+        "group_id": group_id,
+        "user": {"name": "旧画像用户"},
+    })
+    assert resp.status_code == 201, resp.text
+    service_case = resp.json()
+    case_id = service_case["id"]
+    token = service_case["questionnaire_token"]
+
+    db_session.add(
+        UserProfile(
+            service_case_id=case_id,
+            profile_json={
+                "summary": "旧画像",
+                "personalized_checkin_fields": [
+                    {
+                        "id": "old_weight",
+                        "key": "old_weight",
+                        "type": "SIMPLE",
+                        "title": "今日晨起体重（kg）",
+                        "label": "今日晨起体重（kg）",
+                        "required": True,
+                        "options": [],
+                    }
+                ],
+            },
+            summary="旧画像",
+        )
+    )
+    db_session.add(
+        UserDocument(
+            service_case_id=case_id,
+            document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+            title="28天执行标准与打卡要求",
+            content_md="ok",
+            content_json={
+                "fields": {
+                    "daily_checkin": [
+                        "早C/午B/晚A是否全部完成",
+                        "今天是否至少吃到2拳蔬菜",
+                        "今天是否完成30分钟快走或≥7000步",
+                        "今日晨起体重（kg）",
+                        "情绪稳定度和饭后困综合评分",
+                    ]
+                }
+            },
+        )
+    )
+    await db_session.commit()
+
+    resp = await admin_client.get(f"/questionnaires/{token}?template=personalized_checkin")
+    assert resp.status_code == 200, resp.text
+    fields = resp.json()["fields"]
+    assert len(fields) == 5
+    assert fields[0]["type"] == "RADIO"
+    assert fields[3]["type"] == "SIMPLE"
 
 
 @pytest.mark.asyncio
