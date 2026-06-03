@@ -347,6 +347,64 @@ async def get_or_create_stage_state(
     return state
 
 
+async def record_intake_profile_completed(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    evidence_text: str = "用户提交入营问卷",
+) -> OutcomeEvent | None:
+    """Record deterministic day1 evidence from the intake submission flow.
+
+    This does not go through the chat/outcome LLM because questionnaire submit is
+    a first-class system event. Without this bridge, day1 progress can miss
+    `profile_completed` even though the intake HTTP API has already accepted the
+    submission.
+    """
+
+    spec = MILESTONE_BY_KEY["day1"]
+    item = {
+        "field_key": "profile_completed",
+        "event_type": "completed",
+        "value": "已完成入营问卷提交",
+        "evidence_text": evidence_text,
+        "confidence": 1.0,
+    }
+    if await _event_exists(session, service_case.id, None, item):
+        return None
+
+    now = datetime.now(timezone.utc)
+    event = OutcomeEvent(
+        service_case_id=service_case.id,
+        message_id=None,
+        milestone=spec.milestone,
+        field_key=item["field_key"],
+        event_type=item["event_type"],
+        value_text=item["value"],
+        evidence_text=item["evidence_text"],
+        confidence=item["confidence"],
+        source="questionnaire",
+        occurred_at=now,
+        metadata_json={"template_key": "intake"},
+    )
+    session.add(event)
+
+    state = await get_or_create_stage_state(session, service_case.id, spec)
+    collected = dict(state.collected_fields or {})
+    collected[item["field_key"]] = {
+        "value": item["value"],
+        "evidence_text": item["evidence_text"],
+        "event_type": item["event_type"],
+        "confidence": item["confidence"],
+        "message_id": None,
+        "updated_at": now.isoformat(),
+        "source": "questionnaire",
+    }
+    state.collected_fields = collected
+    state.missing_fields = [goal.key for goal in spec.goals if goal.key not in collected]
+    await session.flush()
+    return event
+
+
 async def apply_outcome_analysis(
     session: AsyncSession,
     *,

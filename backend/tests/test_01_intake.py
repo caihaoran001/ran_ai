@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import select
 
+from app.models.outcome import OutcomeEvent, OutcomeStageState
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
@@ -243,6 +244,55 @@ async def test_generating_status_on_submit(
     get_resp = await admin_client.get(f"/service-cases/{case_id}")
     assert get_resp.status_code == 200, get_resp.text
     assert get_resp.json()["status"] == "generating"
+
+
+@pytest.mark.asyncio
+async def test_intake_submit_records_profile_completed_outcome(
+    admin_client,
+    db_session,
+    cai_haoran_answers,
+):
+    group_id = f"test-group-intake-outcome-{secrets.token_hex(6)}"
+    resp = await admin_client.post("/service-cases", json={
+        "group_id": group_id,
+        "user": {"name": "Outcome Intake User"},
+    })
+    assert resp.status_code == 201, resp.text
+    sc = resp.json()
+    token = sc["questionnaire_token"]
+    case_id = sc["id"]
+
+    with patch(
+        "app.api.routes.questionnaires._generate_profile_and_documents",
+        new_callable=AsyncMock,
+    ):
+        submit_resp = await admin_client.post(
+            f"/questionnaires/{token}/submit?template=intake",
+            json={"answers": cai_haoran_answers},
+        )
+    assert submit_resp.status_code == 201, submit_resp.text
+
+    event = await db_session.scalar(
+        select(OutcomeEvent).where(
+            OutcomeEvent.service_case_id == case_id,
+            OutcomeEvent.milestone == "day1",
+            OutcomeEvent.field_key == "profile_completed",
+        )
+    )
+    assert event is not None
+    assert event.event_type == "completed"
+    assert event.source == "questionnaire"
+    assert event.confidence == 1.0
+
+    state = await db_session.scalar(
+        select(OutcomeStageState).where(
+            OutcomeStageState.service_case_id == case_id,
+            OutcomeStageState.milestone == "day1",
+        )
+    )
+    assert state is not None
+    assert "profile_completed" in (state.collected_fields or {})
+    assert "profile_completed" not in (state.missing_fields or [])
 
 
 @pytest.mark.asyncio

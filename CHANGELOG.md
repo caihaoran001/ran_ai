@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 2026-06-03 - 入营问卷提交写入 day1 建档成效证据
+
+- 修复成效引擎 day1 进度缺口：入营问卷提交是 HTTP API 流程，不经过聊天消息链路，导致 `profile_completed` 不能由聊天成效提取自动补齐。
+- 新增 `record_intake_profile_completed()`，在 intake 问卷提交成功时直接写入确定性成效证据：
+  - `milestone=day1`
+  - `field_key=profile_completed`
+  - `event_type=completed`
+  - `source=questionnaire`
+  - `confidence=1.0`
+- 同步更新 `OutcomeStageState.collected_fields/missing_fields`，让 day1 进度立即反映“已完成建档”。
+- 补充测试：提交入营问卷后必须出现 `profile_completed` 事件，且 day1 state 不再缺该字段。
+
 ## 2026-06-03 - 成效追问深夜措辞与时间段测试补强
 
 - 成效提取 prompt 的深夜追问规则从“只问整体感受或不问”调整为“只问整体感受、昨晚/近期睡眠，或不问”，避免深夜完全无法自然关心睡眠。

@@ -40,6 +40,7 @@ from app.services.intervention_service import (
     merge_case_insight,
     questionnaire_content,
 )
+from app.services.outcome_engine import record_intake_profile_completed
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.questionnaire_template import get_active_questionnaire_template
 from app.services.service_case_queries import active_service_case_condition, get_active_service_case
@@ -137,6 +138,7 @@ async def submit_questionnaire(
     if template == "intake":
         service_case.status = ServiceCaseStatus.GENERATING if get_settings().ai_api_key else ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
         await _sync_user_from_answers(session, service_case, fields, payload.answers)
+        await record_intake_profile_completed(session, service_case=service_case)
     elif template != "intake":
         _create_checkin_from_questionnaire(session, service_case, fields, payload.answers)
 
