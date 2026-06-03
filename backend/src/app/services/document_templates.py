@@ -64,27 +64,34 @@ ENERGY_FIELD_SPEC = {
 
 
 EXECUTION_FIELD_SPEC = {
-    "weight_band": "当前所属减重带",
-    "path_goal": "更适合的总路径目标",
+    "weight_band": "当前所属减重带，格式为「{带名}：{通俗描述}」，例如「A带：0-2斤维持优化带」「D带：20斤及以上带」。禁止「维持优化带（A带）」这种括号反转写法。",
+    "path_goal": "更适合的总路径目标，必须包含具体数字锚点（斤数范围或目标体重），例如「维持63-65kg，同时提升精力、情绪稳定度和下午续航」或「12-16斤，先把BMI和腰腹维度拉回更安全区间」。",
     "day28_goal": "第一个 28 天目标（必须 1-2 句完整描述，至少 25 字）。"
-                   "A带/增肌增能带：必须先写明「不以减重数字为核心目标」，"
-                   "再写本 28 天的具体主线（关联 priority_direction，例如稳定节律/睡眠修复/饮食结构修复/保肌减脂/系统化管理），"
-                   "最后以「体重 0-2 斤属于健康波动，仅作参考」收尾。"
-                   "B/C/D带：必须先写明确斤数范围（3-5 / 6-8 / 8-12 斤等），"
-                   "再写配套策略（减脂方向、饮食结构、力量+有氧节律）。"
-                   "禁止只写「0-2 斤」「先稳住」「逐步改善」这种 5 字以内裸答案。",
-    "current_phase_goal": "当前阶段目标",
-    "principle": "执行总原则，一句话，强调先守早C/午B/晚A和关键生活动作，再抓结果",
+                   "必须以数字范围开头、再用分号接解释，例如「0-2斤；重点不是减重，而是让白天能量和睡眠边界稳定」。"
+                   "禁止以否定句开头（如「不以减重数字为核心目标」），数字范围必须在最前面。"
+                   "A带/增肌增能带：先写斤数范围，再用分号写本 28 天主线（关联 priority_direction），最后以「仅作参考」收尾。"
+                   "B/C/D带：先写斤数范围，再写配套策略。",
+    "current_phase_goal": "当前阶段目标，用「先解决{核心问题}，不是{反面}」句式，聚焦排序而非平铺罗列，例如「先解决节律稳定，不是追求失控式掉秤」。",
+    "principle": "执行总原则，保持两段递进结构「先守{底盘动作}，再{放大动作}」，是通用指导语，不嵌入具体参数（时间点、拳数）。例如「先守底盘，再抓结果；先连续完成，再逐步加码」。",
     "weekly_plan": [
         {"week": "第1周", "focus": "稳住节律 / 先守底盘", "required_actions": "执行标准，1个短句，例如：醒后早C、工作中段午B、晚间晚A；晚餐主食≤1拳；每天7000步。"},
         {"week": "第2周", "focus": "拉高关键动作一致性", "required_actions": "执行标准，1个短句，例如：连续5天不漏早餐；晚餐后走15–20分钟；应酬日不加宵夜。"},
         {"week": "第3周", "focus": "开始抓结果指标", "required_actions": "执行标准，1个短句，例如：每周2次轻力量；记录腰围和体重。"},
         {"week": "第4周", "focus": "稳定复现 / 做实结果", "required_actions": "执行标准，1个短句，例如：把睡前收口、7000步、2次轻力量做满。"},
     ],
-    "daily_checkin": "每日固定打卡要求。包含5项打卡清单，且针对用户的具体痛点进行个性化定制。早C/午B/晚A合并成一项；至少2项打卡必须是正向动作（做到什么），不能全是限制项；情绪稳定度和饭后困必须合并为1项综合观察，不要输出硬编码的通用套话。",
-    "week5_12": "第5-8周和第9-12周提前说明",
-    "weekly_standard": "每周通过标准，必须包含至少1次体重/围度/体感记录",
-    "reminder": "个性化提醒，第一句必须是定心丸，例如“结果看连续性，不看单日完美”；必须结合用户作息/运动/睡眠/不适/夜班等情况；不要写通用套话；必要时提醒就医",
+    "daily_checkin": "每日固定打卡要求。包含5项打卡清单，且针对用户的具体痛点进行个性化定制。"
+                     "第1项固定为早C/午B/晚A合并打卡。"
+                     "5项中必须包含1项运动/步数完成情况（如「是否完成30分钟快走或≥7000步」）。"
+                     "至少2项打卡必须是正向动作（做到什么），不能全是限制项。"
+                     "情绪稳定度和饭后困必须合并为1项综合观察，不要输出硬编码的通用套话。"
+                     "禁止在每项后加括号注释（如「正向动作」「限制动作」）。",
+    "week5_12": "第5-8周和第9-12周提前说明，保持一句连贯叙述，描述前28天建立底盘后的自然延伸预期，不拆分时间段。",
+    "weekly_standard": "每周通过标准，1句，必须包含4要素：三杯完成≥5天 + 关键饮食动作≥5天 + 运动/步数达标 + 至少1次体重/围度/体感记录。",
+    "reminder": "个性化提醒，总共控制在2句内。"
+                "第一句必须是定心丸（如「结果看连续性，不看单日完美」）。"
+                "第二句是不适处理指引（如「出现持续不适、明显心慌，先停下异常动作并及时咨询专业人士」），结合用户作息/运动/睡眠/不适/夜班等信息。"
+                "禁止在reminder中重复non_negotiable的具体内容（它已经单独在处方单中）。"
+                "禁止写成长段说明书。必要时提醒就医。",
 }
 
 
@@ -292,11 +299,11 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
         )
         
     blocks = [
-        _inline_block("weight_band", "您当前所属减重带", _execution_sentence(fields.get("weight_band"), max_parts=1, max_len=28)),
-        _inline_block("path_goal", "更适合的总路径目标", _execution_sentence(fields.get("path_goal"), max_parts=1, max_len=46)),
+        _inline_block("weight_band", "您当前所属减重带", _execution_sentence(fields.get("weight_band"), max_parts=1, max_len=38)),
+        _inline_block("path_goal", "更适合的总路径目标", _execution_sentence(fields.get("path_goal"), max_parts=1, max_len=80)),
         _inline_block("day28_goal", "第一个28天目标", _execution_sentence(fields.get("day28_goal"), max_parts=3, max_len=140)),
-        _inline_block("current_phase_goal", "当前阶段目标", _execution_sentence(fields.get("current_phase_goal"), max_parts=1, max_len=48)),
-        _inline_block("principle", "执行总原则", _execution_sentence(fields.get("principle") or "先守早C/午B/晚A和晚间收口底盘，再用饮食、步行和睡眠放大结果。", max_parts=2, max_len=72)),
+        _inline_block("current_phase_goal", "当前阶段目标", _execution_sentence(fields.get("current_phase_goal"), max_parts=1, max_len=80)),
+        _inline_block("principle", "执行总原则", _execution_sentence(fields.get("principle") or "先守底盘，再抓结果；先连续完成，再逐步加码。", max_parts=2, max_len=72)),
         _text_block(
             "fixed_rhythm",
             "",

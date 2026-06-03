@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## 2026-06-03 - 28天执行标准字段级硬约束（对照参考版精修）
+
+对比3份人工精修参考文件（NAR/张颖/邱京泽）与自动生成版，发现9类系统性差异：
+1. weight_band 格式反转：参考「A带：0-2斤维持优化带」→ 生成「维持优化带（A带）」
+2. path_goal 缺具体数字：参考「维持63-65kg」→ 生成「建立稳定节律...不以减重为核心指标」（无数字锚点）
+3. day28_goal 否定句开头：参考「0-2斤；重点不是减重...」→ 生成「不以减重数字为核心目标；本28天...」（先否定再铺垫）
+4. current_phase_goal 平铺罗列：参考「先解决节律稳定，不是追求失控式掉秤」→ 生成「固定早C/午B/晚A节律，调整午餐主食结构，守住晚间收口」（无排序）
+5. principle 嵌入具体参数：参考「先守底盘，再抓结果」→ 生成「先守23:30前闭眼和早C/午B/晚A节律；再调...」（把时间点塞进原则）
+6. weekly_standard 缺运动项：参考「运动达到个人标准」→ 生成无运动标准
+7. reminder 重复 non_negotiable：参考不重复 → 生成把最不能打折塞进提醒
+8. daily_checkin 括号注释：参考「蔬菜是否≥2拳」→ 生成「午餐主食是否≤1拳、蔬菜≥2拳（正向动作）」
+9. 打卡项遗漏运动：参考「运动是否完成快走/力量」→ 生成用睡眠项替换运动项
+
+修复：
+- system_prompt 新增【执行单字段级硬约束】8 条，覆盖 weight_band/path_goal/day28_goal/
+  current_phase_goal/principle/weekly_standard/reminder/逐周表弹性场景
+- EXECUTION_FIELD_SPEC 全面更新：weight_band 格式约束、path_goal 数字锚点要求、
+  day28_goal「先数字再解释」结构、current_phase_goal「先解决X，不是Y」句式、
+  principle 通用指导语不嵌入具体参数、daily_checkin 5 项必须含运动/步数、
+  reminder 2 句上限+定心丸格式、weekly_standard 4 要素
+- _execution_sentence max_len 调整：path_goal 46→80、current_phase_goal 48→80、weight_band 28→38
+
 ## 2026-06-03 - day28_goal 字段强约束（完整句 + 主线目标关联）
 
 - 旧实现下 LLM 对 A带/增肌增能带用户（如 BMI 21.2 的 NAR 先生）只输出 `0-2斤` 这种 4 字裸答案，违反「不只关注体重、需关联本 28 天主线」的诉求。根因：
