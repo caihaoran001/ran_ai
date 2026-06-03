@@ -119,7 +119,7 @@ class RanrenAIEngine:
 
     async def handle_message(self, message: ChannelMessage) -> None:
         started_at = time.monotonic()
-        should_send_questionnaire = "发送本群入营问卷" in message.text
+        should_send_questionnaire = "发送本群入营问卷" in message.text or "发送本群专属问卷" in message.text
         service_case_id: int | None = None
         service_case_for_command: ServiceCase | None = None
         analysis: dict | None = None

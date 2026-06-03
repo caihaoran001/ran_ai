@@ -72,7 +72,7 @@ def _is_authorized_callback(request: Request, settings: Settings) -> bool:
 
 
 def _bypass_aggregator(message: ChannelMessage) -> bool:
-    return "发送本群入营问卷" in message.text
+    return "发送本群入营问卷" in message.text or "发送本群专属问卷" in message.text
 
 
 def _get_aggregator(request: Request) -> QiWeMessageAggregator:
