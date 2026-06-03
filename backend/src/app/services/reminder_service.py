@@ -141,6 +141,11 @@ class ReminderService:
                 reminded = service_case.id in reminded_set
                 if seen or reminded:
                     continue
+                if schedule.get("enabled", True):
+                    day = _service_day(service_case.started_at, now, timezone)
+                    rule = _questionnaire_rule_for_day(schedule, day)
+                    if rule:
+                        continue
                 reminder_event = await _reserve_reminder_event(
                     session,
                     service_case.id,

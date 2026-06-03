@@ -433,6 +433,7 @@ async def test_qiwe_questionnaire_command_skips_intervention_llm(monkeypatch):
     await engine.handle_message(message)
 
     assert len(added_messages) == 1
-    assert added_messages[0].analysis_json is None
+    assert added_messages[0].analysis_json is not None
+    assert added_messages[0].analysis_json.get("_qiwe_meta", {}).get("sender_id") == "user-fast-path"
     assert len(reply_calls) == 1
     assert reply_calls[0][1] is fake_case

@@ -139,16 +139,15 @@ class RanrenAIEngine:
 
             purpose = MessagePurpose.CHAT
 
-            if not should_send_questionnaire:
-                meta = {
-                    "sender_id": message.user_id,
-                    "sender_name": message.user_name,
-                    "timestamp": int(message.timestamp.timestamp()),
-                }
-                if analysis is None:
-                    analysis = {"_qiwe_meta": meta}
-                else:
-                    analysis["_qiwe_meta"] = meta
+            meta = {
+                "sender_id": message.user_id,
+                "sender_name": message.user_name,
+                "timestamp": int(message.timestamp.timestamp()),
+            }
+            if analysis is None:
+                analysis = {"_qiwe_meta": meta}
+            else:
+                analysis["_qiwe_meta"] = meta
 
             db_inbound = Message(
                 service_case_id=service_case.id if service_case else None,
