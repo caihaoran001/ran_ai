@@ -17,6 +17,7 @@ class QuestionnairePublic(BaseModel):
     user_name: str | None
     fields: list[dict[str, Any]]
     latest_submission: QuestionnaireSubmissionRead | None = None
+    default_values: dict[str, Any] = Field(default_factory=dict)
 
 
 class QuestionnaireSubmit(BaseModel):

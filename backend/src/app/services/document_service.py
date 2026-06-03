@@ -36,6 +36,7 @@ from app.services.document_templates import (
 from app.services.content_policy import get_content_delivery_mode
 from app.services.intake_facts import build_intake_fact_summary
 from app.services.intake_facts import sanitize_profile_json
+from app.services.checkin_questionnaires import personalized_checkin_fields_with_weight
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.service_case_queries import get_active_service_case
 from app.services.user_state_profile import initialize_user_state_from_intake
@@ -629,59 +630,13 @@ def _profile_summary_from_documents(document_payloads: dict[str, dict]) -> str:
 
 def _fallback_personalized_checkin_fields(facts: dict[str, object]) -> list[dict[str, object]]:
     weight = _blank_if_missing(facts.get("weight_kg"))
-    water_liters = "2"
+    weight_kg = None
     if weight:
         try:
-            water_liters = str(round((float(weight) * 35 / 1000) * 2) / 2).rstrip("0").rstrip(".")
-        except ValueError:
-            water_liters = "2"
-    return [
-        {
-            "id": "personalized_weight",
-            "key": "personalized_weight",
-            "type": "SIMPLE",
-            "title": "今日晨起体重（kg）",
-            "label": "今日晨起体重（kg）",
-            "required": True,
-            "options": [],
-        },
-        {
-            "id": "personalized_water",
-            "key": "personalized_water",
-            "type": "RADIO",
-            "title": f"今日饮水是否达到 {water_liters} 升？",
-            "label": f"今日饮水是否达到 {water_liters} 升？",
-            "required": True,
-            "options": ["是", "否"],
-        },
-        {
-            "id": "personalized_sleep",
-            "key": "personalized_sleep",
-            "type": "RADIO",
-            "title": "昨晚睡眠是否按计划收口？",
-            "label": "昨晚睡眠是否按计划收口？",
-            "required": True,
-            "options": ["是", "否"],
-        },
-        {
-            "id": "personalized_diet",
-            "key": "personalized_diet",
-            "type": "RADIO",
-            "title": "今日晚餐主食是否控制在计划范围内？",
-            "label": "今日晚餐主食是否控制在计划范围内？",
-            "required": True,
-            "options": ["是", "否"],
-        },
-        {
-            "id": "personalized_exercise",
-            "key": "personalized_exercise",
-            "type": "RADIO",
-            "title": "今日是否完成计划内步行或轻运动？",
-            "label": "今日是否完成计划内步行或轻运动？",
-            "required": True,
-            "options": ["是", "否"],
-        },
-    ]
+            weight_kg = float(weight)
+        except (ValueError, TypeError):
+            weight_kg = None
+    return personalized_checkin_fields_with_weight(weight_kg)
 
 
 def _text_from_payload(value: object) -> str:

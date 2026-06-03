@@ -22,6 +22,7 @@ type Questionnaire = {
     answers_json: Record<string, unknown>;
     created_at: string;
   } | null;
+  default_values?: Record<string, string>;
 };
 
 export default async function QuestionnairePage({

@@ -18,10 +18,12 @@ type Questionnaire = {
     required?: boolean;
     options?: string[];
   }[];
+  default_values?: Record<string, string>;
 };
 
 export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionnaire }) {
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const defaults = questionnaire.default_values ?? {};
+  const [answers, setAnswers] = useState<Record<string, string>>(defaults);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -82,6 +84,33 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
 
   return (
     <form onSubmit={submit} className="space-y-4 rounded-lg border border-zinc-200 bg-white p-4">
+      {defaults.day_no && (
+        <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+          今天是第 {defaults.day_no} 天
+        </div>
+      )}
+      {questionnaire.template_key === "stage_review" && (defaults.initial_weight || defaults.initial_waist || defaults.morning_c_days) && (
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 space-y-1.5">
+          <div className="text-sm font-medium text-zinc-700">参考信息</div>
+          {defaults.initial_weight && (
+            <p className="text-sm text-zinc-600">
+              初始体重：{defaults.initial_weight}kg
+              {answers.current_weight && ` → 当前：${answers.current_weight}kg`}
+            </p>
+          )}
+          {defaults.initial_waist && (
+            <p className="text-sm text-zinc-600">
+              初始腰围：{defaults.initial_waist}cm
+              {answers.current_waist && ` → 当前：${answers.current_waist}cm`}
+            </p>
+          )}
+          {(defaults.morning_c_days || defaults.noon_b_days || defaults.night_a_days) && (
+            <p className="text-sm text-zinc-600">
+              过去7天产品完成：早C {defaults.morning_c_days || "0/7天"}，午B {defaults.noon_b_days || "0/7天"}，晚A {defaults.night_a_days || "0/7天"}
+            </p>
+          )}
+        </div>
+      )}
       {questionnaire.template_key === "intake" && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
           <div className="text-sm text-amber-900">试验辅助：一键填入蔡浩然样例问卷。</div>

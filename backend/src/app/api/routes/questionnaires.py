@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -20,6 +21,7 @@ from app.models.message import (
     MessageStatus,
 )
 from app.models.questionnaire import QuestionnaireSubmission
+from app.models.checkin import Checkin
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_profile import UserProfile
@@ -33,6 +35,7 @@ from app.services.document_service import generate_profile_and_documents
 from app.db.session import SessionLocal
 from app.services.channels import send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
+from app.services.checkin_questionnaires import DEFAULT_PERSONALIZED_CHECKIN_FIELDS
 from app.services.intervention_service import (
     analyze_intervention,
     merge_case_insight,
@@ -54,6 +57,7 @@ async def get_questionnaire(
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnairePublic:
     service_case = await _case_by_token(session, token, include_deleted=False)
+    default_values: dict[str, Any] = {}
     if template == "personalized_checkin":
         latest_profile = await session.scalar(
             select(UserProfile)
@@ -66,58 +70,7 @@ async def get_questionnaire(
             fields = latest_profile.profile_json.get("personalized_checkin_fields") or []
         
         if not fields:
-            fields = [
-                {
-                    "id": "personalized_weight",
-                    "key": "personalized_weight",
-                    "type": "SIMPLE",
-                    "title": "今日晨起体重（kg）",
-                    "label": "今日晨起体重（kg）",
-                    "subtitle": "",
-                    "required": True,
-                    "options": []
-                },
-                {
-                    "id": "personalized_water",
-                    "key": "personalized_water",
-                    "type": "RADIO",
-                    "title": "今日饮水是否达到 2 升？",
-                    "label": "今日饮水是否达到 2 升？",
-                    "subtitle": "",
-                    "required": True,
-                    "options": ["是", "否"]
-                },
-                {
-                    "id": "personalized_sleep",
-                    "key": "personalized_sleep",
-                    "type": "RADIO",
-                    "title": "昨晚是否在 23:00 前入睡？",
-                    "label": "昨晚是否在 23:00 前入睡？",
-                    "subtitle": "",
-                    "required": True,
-                    "options": ["是", "否"]
-                },
-                {
-                    "id": "personalized_diet",
-                    "key": "personalized_diet",
-                    "type": "RADIO",
-                    "title": "今日晚餐是否保持干净饮食？（少油少糖）",
-                    "label": "今日晚餐是否保持干净饮食？（少油少糖）",
-                    "subtitle": "",
-                    "required": True,
-                    "options": ["是", "否"]
-                },
-                {
-                    "id": "personalized_exercise",
-                    "key": "personalized_exercise",
-                    "type": "RADIO",
-                    "title": "今日是否完成了预定身体活动/运动？",
-                    "label": "今日是否完成了预定身体活动/运动？",
-                    "subtitle": "",
-                    "required": True,
-                    "options": ["是", "否"]
-                }
-            ]
+            fields = [dict(f) for f in DEFAULT_PERSONALIZED_CHECKIN_FIELDS]
         
         template_payload = {
             "template_key": "personalized_checkin",
@@ -128,6 +81,8 @@ async def get_questionnaire(
         }
     else:
         template_payload = await _template_or_404(session, template)
+        if template != "intake":
+            default_values = await _build_checkin_default_values(session, service_case, template)
 
     latest_submission = await _latest_submission(session, service_case.id, template)
     return QuestionnairePublic(
@@ -140,6 +95,7 @@ async def get_questionnaire(
         user_name=service_case.user.name if service_case.user else None,
         fields=list(template_payload.get("fields") or []),
         latest_submission=latest_submission,
+        default_values=default_values,
     )
 
 
@@ -167,13 +123,7 @@ async def submit_questionnaire(
         if latest_profile and latest_profile.profile_json:
             fields = latest_profile.profile_json.get("personalized_checkin_fields") or []
         if not fields:
-            fields = [
-                {"id": "personalized_weight", "key": "personalized_weight", "type": "SIMPLE", "title": "今日晨起体重（kg）", "label": "今日晨起体重（kg）", "subtitle": "", "required": True, "options": []},
-                {"id": "personalized_water", "key": "personalized_water", "type": "RADIO", "title": "今日饮水是否达到 2 升？", "label": "今日饮水是否达到 2 升？", "subtitle": "", "required": True, "options": ["是", "否"]},
-                {"id": "personalized_sleep", "key": "personalized_sleep", "type": "RADIO", "title": "昨晚是否在 23:00 前入睡？", "label": "昨晚是否在 23:00 前入睡？", "subtitle": "", "required": True, "options": ["是", "否"]},
-                {"id": "personalized_diet", "key": "personalized_diet", "type": "RADIO", "title": "今日晚餐是否保持干净饮食？（少油少糖）", "label": "今日晚餐是否保持干净饮食？（少油少糖）", "subtitle": "", "required": True, "options": ["是", "否"]},
-                {"id": "personalized_exercise", "key": "personalized_exercise", "type": "RADIO", "title": "今日是否完成了预定身体活动/运动？", "label": "今日是否完成了预定身体活动/运动？", "subtitle": "", "required": True, "options": ["是", "否"]}
-            ]
+            fields = [dict(f) for f in DEFAULT_PERSONALIZED_CHECKIN_FIELDS]
     else:
         await _template_or_404(session, template)
         fields = await get_active_questionnaire_fields(session, template)
@@ -256,6 +206,103 @@ def _allow_repeat(template_key: str) -> bool:
     return template_key != "intake"
 
 
+async def _build_checkin_default_values(
+    session: AsyncSession,
+    service_case: ServiceCase,
+    template: str,
+) -> dict[str, Any]:
+    defaults: dict[str, Any] = {}
+    if not service_case.started_at:
+        return defaults
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    started = service_case.started_at
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=ZoneInfo("UTC"))
+    day = (now - started.astimezone(ZoneInfo("Asia/Shanghai"))).days + 1
+    defaults["day_no"] = max(1, day)
+
+    all_checkins = list(
+        await session.scalars(
+            select(Checkin)
+            .where(Checkin.service_case_id == service_case.id)
+            .order_by(Checkin.checkin_date.desc())
+        )
+    )
+
+    latest_checkin = all_checkins[0] if all_checkins else None
+    if latest_checkin and isinstance(latest_checkin.parsed_json, dict):
+        pj = latest_checkin.parsed_json
+        w = pj.get("weight")
+        if w:
+            defaults["morning_weight"] = str(w)
+        waist = pj.get("waist")
+        if waist:
+            defaults["waist"] = str(waist)
+
+    if not defaults.get("morning_weight"):
+        intake_submission = await session.scalar(
+            select(QuestionnaireSubmission)
+            .where(QuestionnaireSubmission.service_case_id == service_case.id)
+            .where(QuestionnaireSubmission.template_key == "intake")
+            .order_by(QuestionnaireSubmission.created_at.asc())
+            .limit(1)
+        )
+        if intake_submission and isinstance(intake_submission.answers_json, dict):
+            ans = intake_submission.answers_json
+            w = ans.get("weight") or ans.get("current_weight")
+            if w:
+                defaults["morning_weight"] = str(w)
+            waist = ans.get("waist") or ans.get("current_waist")
+            if waist and not defaults.get("waist"):
+                defaults["waist"] = str(waist)
+
+    if template == "stage_review":
+        intake_submission = await session.scalar(
+            select(QuestionnaireSubmission)
+            .where(QuestionnaireSubmission.service_case_id == service_case.id)
+            .where(QuestionnaireSubmission.template_key == "intake")
+            .order_by(QuestionnaireSubmission.created_at.asc())
+            .limit(1)
+        )
+        if intake_submission and isinstance(intake_submission.answers_json, dict):
+            ans = intake_submission.answers_json
+            fw = ans.get("weight") or ans.get("current_weight")
+            if fw:
+                defaults["initial_weight"] = str(fw)
+            fwaist = ans.get("waist") or ans.get("current_waist")
+            if fwaist:
+                defaults["initial_waist"] = str(fwaist)
+
+        if not defaults.get("initial_weight"):
+            first_checkin = all_checkins[-1] if all_checkins else None
+            if first_checkin and isinstance(first_checkin.parsed_json, dict):
+                fw = first_checkin.parsed_json.get("weight")
+                if fw:
+                    defaults["initial_weight"] = str(fw)
+                fwaist = first_checkin.parsed_json.get("waist")
+                if fwaist:
+                    defaults["initial_waist"] = str(fwaist)
+
+        seven_days_ago = now.date() - timedelta(days=7)
+        recent_checkins = [ci for ci in all_checkins if ci.checkin_date >= seven_days_ago]
+        c_count = 0
+        b_count = 0
+        a_count = 0
+        for ci in recent_checkins:
+            ps = (ci.parsed_json or {}).get("product_schedule") or {}
+            if isinstance(ps, dict):
+                if str(ps.get("morning_c") or "") == "已喝":
+                    c_count += 1
+                if str(ps.get("noon_b") or "") == "已喝":
+                    b_count += 1
+                if str(ps.get("night_a") or "") == "已喝":
+                    a_count += 1
+        defaults["morning_c_days"] = f"{c_count}/7天"
+        defaults["noon_b_days"] = f"{b_count}/7天"
+        defaults["night_a_days"] = f"{a_count}/7天"
+    return defaults
+
+
 def _create_checkin_from_questionnaire(
     session: AsyncSession,
     service_case: ServiceCase,
@@ -263,6 +310,12 @@ def _create_checkin_from_questionnaire(
     answers: dict,
 ) -> None:
     today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    if not answers.get("day_no") and service_case.started_at:
+        started = service_case.started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=ZoneInfo("UTC"))
+        day = (today - started.astimezone(ZoneInfo("Asia/Shanghai")).date()).days + 1
+        answers["day_no"] = max(1, day)
     content = questionnaire_content(fields, answers)
     parsed_json = _checkin_json_from_answers(answers, content)
     session.add(
@@ -295,13 +348,14 @@ def _checkin_json_from_answers(answers: dict, content: str) -> dict:
         "exercise": answers.get("exercise") or answers.get("exercise_status") or "",
         "weight": answers.get("morning_weight") or answers.get("current_weight") or "",
         "waist": answers.get("waist") or answers.get("waist_line") or answers.get("current_waist") or "",
-        "diet": answers.get("diet") or answers.get("diet_structure") or answers.get("diet_execution") or "",
+        "diet": answers.get("diet") or answers.get("diet_execution") or "",
         "bowel": answers.get("bowel") or answers.get("bowel_status") or answers.get("排便") or "",
         "hunger": answers.get("hunger") or answers.get("appetite") or answers.get("食欲") or "",
         "sensation": answers.get("sensation") or answers.get("body_feeling") or answers.get("体感") or "",
         "discomfort": answers.get("discomfort") or answers.get("uncomfortable") or answers.get("不适") or "",
         "tomorrow_focus": answers.get("tomorrow_focus") or answers.get("tomorrow_goal") or "",
     }
+    _merge_diet_from_meals(provided, answers)
     _merge_personalized_checkin_answers(provided, answers)
     return normalize_checkin_json(provided, content)
 
@@ -311,18 +365,50 @@ def _join_answers(answers: dict, keys: tuple[str, ...]) -> str:
     return "；".join(value for value in values if value)
 
 
+_PERSONALIZED_MAPPING = {
+    "personalized_weight": "weight",
+    "personalized_water": "water",
+    "personalized_sleep": "sleep",
+    "personalized_diet": "diet",
+    "personalized_exercise": "exercise",
+}
+
+
 def _merge_personalized_checkin_answers(provided: dict, answers: dict) -> None:
-    personalized_mapping = {
-        "personalized_weight": "weight",
-        "personalized_water": "water",
-        "personalized_sleep": "sleep",
-        "personalized_diet": "diet",
-        "personalized_exercise": "exercise",
-    }
-    for source_key, target_key in personalized_mapping.items():
-        value = str(answers.get(source_key) or "").strip()
-        if value and not provided.get(target_key):
-            provided[target_key] = value
+    STANDARD_KEYS = {"weight", "water", "sleep", "diet", "exercise", "bowel", "hunger", "sensation", "discomfort", "tomorrow_focus", "mood", "waist", "product_schedule"}
+    for key, value in answers.items():
+        if not key.startswith("personalized_"):
+            continue
+        value_str = str(value or "").strip()
+        if not value_str:
+            continue
+        mapped = _PERSONALIZED_MAPPING.get(key)
+        if mapped and not provided.get(mapped):
+            provided[mapped] = value_str
+        elif not mapped:
+            provided[key] = value_str
+
+
+def _merge_diet_from_meals(provided: dict, answers: dict) -> None:
+    if provided.get("diet"):
+        return
+    meal_parts = []
+    for key in ("breakfast", "lunch", "dinner"):
+        val = str(answers.get(key) or "").strip()
+        if val:
+            meal_parts.append(f"{key}: {val}")
+    if meal_parts:
+        provided["diet"] = "; ".join(meal_parts)
+    risk = str(answers.get("diet_risk") or "").strip()
+    risk_detail = str(answers.get("diet_risk_detail") or "").strip()
+    if risk and risk != "没有":
+        risk_text = f"饮食风险: {risk}"
+        if risk_detail:
+            risk_text += f" ({risk_detail})"
+        if provided.get("diet"):
+            provided["diet"] += f"; {risk_text}"
+        else:
+            provided["diet"] = risk_text
 
 
 async def _generate_profile_and_documents(service_case_id: int) -> None:
