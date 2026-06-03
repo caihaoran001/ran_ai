@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { API_BASE } from "@/lib/api";
-import { Loader2, CheckCircle2, AlertCircle, Plus, Trash2, Check, RefreshCw } from "lucide-react";
+import { Loader2, CheckCircle2, AlertCircle, Plus, Trash2, Check, RefreshCw, RotateCcw } from "lucide-react";
 
 type Template = {
   template_key: string;
@@ -154,6 +154,41 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
     }
   }
 
+  const [resetting, setResetting] = useState(false);
+
+  async function resetTemplates(templateKey?: string) {
+    const label = templateKey
+      ? `确定要将「${TEMPLATE_LABELS[templateKey] || templateKey}」还原为默认内容吗？`
+      : "确定要将全部问卷还原为默认内容吗？当前修改将丢失。";
+    if (!window.confirm(label)) return;
+
+    setResetting(true);
+    try {
+      const url = templateKey
+        ? `${API_BASE}/questionnaire-template/reset?template_key=${encodeURIComponent(templateKey)}`
+        : `${API_BASE}/questionnaire-template/reset`;
+      const response = await fetch(url, { method: "POST" });
+      if (response.ok) {
+        const data = await response.json();
+        const newTemplates = data.templates as Template[];
+        setTemplates(newTemplates);
+        setFieldsText(
+          Object.fromEntries(
+            newTemplates.map((t: Template) => [t.template_key, JSON.stringify(t.fields, null, 2)]),
+          ),
+        );
+        if (data.schedule) setSchedule(normalizeSchedule(data.schedule));
+        showToast("success", templateKey ? "该问卷已还原为默认内容" : "全部问卷已还原为默认内容");
+      } else {
+        showToast("error", `还原失败: ${await response.text()}`);
+      }
+    } catch (e: any) {
+      showToast("error", `还原失败: ${e.message || "未知错误"}`);
+    } finally {
+      setResetting(false);
+    }
+  }
+
   function updateTemplate(key: string, patch: Partial<Template>) {
     setTemplates((current) =>
       current.map((template) =>
@@ -176,34 +211,45 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
               文案支持 {"{questionnaire_link}"}、{"{day}"}、{"{user_name}"}、{"{case_no}"}、{"{group_id}"}、{"{template_key}"}。
             </p>
           </div>
-          <Button
-            type="button"
-            onClick={save}
-            disabled={saveStatus === "saving"}
-            className={`transition-all duration-300 active:scale-95 ${
-              saveStatus === "success"
-                ? "bg-emerald-600 hover:bg-emerald-500 text-white"
-                : saveStatus === "error"
-                ? "bg-rose-600 hover:bg-rose-500 text-white"
-                : "bg-blue-600 hover:bg-blue-500 text-white"
-            }`}
-          >
-            {saveStatus === "saving" ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                保存中...
-              </>
-            ) : saveStatus === "success" ? (
-              <>
-                <Check className="mr-2 h-4 w-4 animate-pulse" />
-                已保存
-              </>
-            ) : saveStatus === "error" ? (
-              <>保存失败</>
-            ) : (
-              <>保存全部配置</>
-            )}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              disabled={resetting}
+              onClick={() => resetTemplates()}
+              className="border border-zinc-200 bg-white text-zinc-600 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50/50 px-3 py-1.5 text-xs rounded-md"
+            >
+              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              一键还原全部
+            </Button>
+            <Button
+              type="button"
+              onClick={save}
+              disabled={saveStatus === "saving"}
+              className={`transition-all duration-300 active:scale-95 ${
+                saveStatus === "success"
+                  ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                  : saveStatus === "error"
+                  ? "bg-rose-600 hover:bg-rose-500 text-white"
+                  : "bg-blue-600 hover:bg-blue-500 text-white"
+              }`}
+            >
+              {saveStatus === "saving" ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  保存中...
+                </>
+              ) : saveStatus === "success" ? (
+                <>
+                  <Check className="mr-2 h-4 w-4 animate-pulse" />
+                  已保存
+                </>
+              ) : saveStatus === "error" ? (
+                <>保存失败</>
+              ) : (
+                <>保存全部配置</>
+              )}
+            </Button>
+          </div>
         </div>
         <ScheduleEditor
           schedule={schedule}
@@ -214,8 +260,21 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
 
       <section className="rounded-lg border border-zinc-200 bg-white">
         <div className="border-b border-zinc-200 p-4">
-          <h2 className="font-semibold">问卷内容</h2>
-          <p className="mt-1 text-sm text-zinc-500">每份问卷单独维护，不再把所有题目混在一个编辑框里。</p>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">问卷内容</h2>
+              <p className="mt-1 text-sm text-zinc-500">每份问卷单独维护，不再把所有题目混在一个编辑框里。</p>
+            </div>
+            <Button
+              type="button"
+              disabled={resetting}
+              onClick={() => resetTemplates(activeTemplate.template_key)}
+              className="border border-zinc-200 bg-white text-zinc-600 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50/50 px-3 py-1.5 text-xs rounded-md shrink-0"
+            >
+              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              还原此问卷
+            </Button>
+          </div>
           <div className="mt-4 flex flex-wrap gap-2">
             {templates.map((template) => (
               <button

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -15,6 +15,7 @@ from app.services.checkin_questionnaires import (
     save_checkin_questionnaire_schedule,
 )
 from app.services.questionnaire_template import (
+    default_questionnaire_templates,
     get_active_questionnaire_template,
     get_all_active_questionnaire_templates,
     get_active_questionnaire_fields,
@@ -80,4 +81,20 @@ async def update_template_config(
         )
     ]
     schedule = await save_checkin_questionnaire_schedule(session, payload.schedule)
+    return QuestionnaireTemplateConfigRead(templates=templates, schedule=schedule)
+
+
+@router.post("/reset", response_model=QuestionnaireTemplateConfigRead)
+async def reset_templates(
+    template_key: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
+) -> QuestionnaireTemplateConfigRead:
+    defaults = default_questionnaire_templates()
+    if template_key:
+        defaults = [t for t in defaults if t.get("template_key") == template_key]
+    templates = [
+        QuestionnaireTemplateRead(**item)
+        for item in await save_questionnaire_templates(session, defaults)
+    ]
+    schedule = await get_checkin_questionnaire_schedule(session)
     return QuestionnaireTemplateConfigRead(templates=templates, schedule=schedule)
