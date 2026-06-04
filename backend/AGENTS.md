@@ -48,9 +48,9 @@ backend/
 │   ├── test_04_stage_reports.py # 阶段报告
 │   ├── test_05_evolution.py # 知识进化
 │   ├── test_06_toggles.py # 系统开关
-│   ├── test_07_real_llm_e2e.py # 真实 LLM 端到端：28 天陪伴对话 + RAG 自进化 + 案例反哺
-│   ├── test_09_qiwe_channel.py # QiWe 通道：聚合去重 + 失败兜底
-│   └── test_10_outcome_engine.py # 成效引擎：提取 + 状态更新 + 行动焦点
+│   ├── test_07_real_llm_e2e.py # 独立 E2E-01：28 天完整旅程 + 多用户画像矩阵 + RAG 自进化
+│   ├── test_08_qiwe_channel.py # 健康自测 07：QiWe 聚合去重 + 失败兜底
+│   └── test_09_outcome_engine.py # 健康自测 08：成效提取 + 状态更新 + 行动焦点
 └── pyproject.toml     # 依赖和入口点
 ```
 

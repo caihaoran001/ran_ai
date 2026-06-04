@@ -20,6 +20,7 @@ _DIAGNOSTICS_RUN_LOCK = asyncio.Lock()
 TEST_SUITES = [
     {
         "id": "01",
+        "display_id": "01",
         "name": "test_01_intake",
         "description": "入营问卷基本录入与数据合法性校验",
         "file": "tests/test_01_intake.py",
@@ -30,6 +31,7 @@ TEST_SUITES = [
     },
     {
         "id": "02",
+        "display_id": "02",
         "name": "test_02_chat",
         "description": "社群模拟群聊多轮对话与情绪/健康风控拦截测试",
         "file": "tests/test_02_chat.py",
@@ -40,6 +42,7 @@ TEST_SUITES = [
     },
     {
         "id": "03",
+        "display_id": "03",
         "name": "test_03_checkin",
         "description": "打卡数据创建、解析结构和排序校验测试",
         "file": "tests/test_03_checkin.py",
@@ -50,6 +53,7 @@ TEST_SUITES = [
     },
     {
         "id": "04",
+        "display_id": "04",
         "name": "test_04_stage_reports",
         "description": "阶段报告与毕业报告自动生成测试",
         "file": "tests/test_04_stage_reports.py",
@@ -60,6 +64,7 @@ TEST_SUITES = [
     },
     {
         "id": "05",
+        "display_id": "05",
         "name": "test_05_evolution",
         "description": "24小时群聊沉淀 FAQ 知识进化与打卡校验测试",
         "file": "tests/test_05_evolution.py",
@@ -70,6 +75,7 @@ TEST_SUITES = [
     },
     {
         "id": "06",
+        "display_id": "06",
         "name": "test_06_toggles",
         "description": "策略开关、知识进化配置与软删除校验测试",
         "file": "tests/test_06_toggles.py",
@@ -80,8 +86,9 @@ TEST_SUITES = [
     },
     {
         "id": "07",
+        "display_id": "E2E-01",
         "name": "test_07_real_llm_e2e",
-        "description": "真实大模型全链路 E2E 冒烟测试（含 24 轮真实多期陪伴对话、RAG 自进化闭环与案例反哺）",
+        "description": "真实大模型 E2E：一条完整 28 天旅程 + 多类用户风控/意图场景矩阵 + RAG 自进化闭环",
         "file": "tests/test_07_real_llm_e2e.py",
         "tier": "real_e2e",
         "included_in_health_check": False,
@@ -90,6 +97,7 @@ TEST_SUITES = [
     },
     {
         "id": "08",
+        "display_id": "07",
         "name": "test_08_qiwe_channel",
         "description": "QiWe 通道代码逻辑测试：消息聚合、去重、异常处理（使用 mock 对象，不测试真实通道）",
         "file": "tests/test_08_qiwe_channel.py",
@@ -100,6 +108,7 @@ TEST_SUITES = [
     },
     {
         "id": "09",
+        "display_id": "08",
         "name": "test_09_outcome_engine",
         "description": "成效引擎测试：LLM 提取 + 阶段状态更新 + 行动焦点评分 + 时间感知",
         "file": "tests/test_09_outcome_engine.py",
@@ -303,15 +312,15 @@ async def run_diagnostics(
         if test_id == "all":
             start_banner = (
                 "======================================================================\n"
-                "🚀 [健康自测启动] 安全诊断套件 (01-06, 08-09) 串联执行中...\n"
-                "📦 测试范围: 使用 Mock AI/通道，测试数据回滚；不运行真实模型 E2E 07\n"
+                "🚀 [健康自测启动] 安全诊断套件 (01-08) 串联执行中...\n"
+                "📦 测试范围: 使用 Mock AI/通道，测试数据回滚；不运行真实模型 E2E-01\n"
                 "======================================================================\n"
             )
         else:
             suite = suites_to_run[0]
             start_banner = (
                 "======================================================================\n"
-                f"📋 [系统自测启动] 用例 {suite['id']}: {suite['name']}\n"
+                f"📋 [系统自测启动] 用例 {suite['display_id']}: {suite['name']}\n"
                 f"📝 描述信息: {suite['description']}\n"
                 f"⚙️ 物理执行文件: {suite['file']}\n"
                 "======================================================================\n"
@@ -334,7 +343,7 @@ async def run_diagnostics(
                 "suite_name": suite["name"],
                 "started_at": int(time.time()),
             }
-            active_msg = f"\n▶ 当前执行套件: {suite['id']} {suite['name']}\n"
+            active_msg = f"\n▶ 当前执行套件: {suite['display_id']} {suite['name']}\n"
             yield active_msg
             history["console_logs"][test_id].append(active_msg.rstrip("\n"))
             if test_id == "all":
@@ -479,7 +488,7 @@ async def run_diagnostics(
         overall_msg = (
             "🔴 健康自测执行完毕: 发现异常模块，请检查上方终端输出日志！\n"
             if has_overall_error else
-            "🟢 健康自测顺利通过；真实模型 E2E 07 未运行。\n"
+            "🟢 健康自测顺利通过；真实模型 E2E-01 未运行。\n"
         )
         history["console_logs"][test_id].append(overall_msg.strip())
         if test_id == "all":

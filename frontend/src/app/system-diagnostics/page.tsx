@@ -6,6 +6,7 @@ import type { DiagnosticsSummary } from "@/lib/api";
 
 type TestSuite = {
   id: string;
+  display_id: string;
   name: string;
   description: string;
   file: string;
@@ -264,8 +265,8 @@ export default function SystemDiagnosticsPage() {
     setConsoleLogs((prev) => ({
       ...prev,
       all: [
-        `🚀 [SYSTEM HEALTH] 启动安全健康自测 (01-06, 08-09) ...`,
-        `📦 使用 Mock AI/通道并回滚数据，不包含真实模型 E2E 07`,
+        `🚀 [SYSTEM HEALTH] 启动安全健康自测 (01-08) ...`,
+        `📦 使用 Mock AI/通道并回滚数据，不包含真实模型 E2E-01`,
         `======================================================================`
       ]
     }));
@@ -292,8 +293,11 @@ export default function SystemDiagnosticsPage() {
         const lines = chunk.split("\n");
         lines.forEach((line) => {
           if (line.trim()) {
-            const activeMatch = line.match(/当前执行套件:\s*(\d+)/);
-            if (activeMatch) setCurrentAllSuiteId(activeMatch[1]);
+            const activeMatch = line.match(/当前执行套件:\s*(\S+)/);
+            if (activeMatch) {
+              const activeSuite = testSuites.find((suite) => suite.display_id === activeMatch[1]);
+              if (activeSuite) setCurrentAllSuiteId(activeSuite.id);
+            }
             setConsoleLogs((prev) => {
               const currentLogs = prev.all || [];
               return {
@@ -415,6 +419,7 @@ export default function SystemDiagnosticsPage() {
     "test_soft_delete_service_case": "数据安全校验：使用 deleted_at 软删除逻辑保障业务数据的可审计可恢复性",
 
     // test_07_real_llm_e2e
+    "test_real_llm_persona_intent_matrix": "真实模型多用户画像矩阵：校验健康风险、退款投诉与积极续营三类用户的结构化判断",
     "test_real_llm_full_saga_end_to_end": "大模型终极终局闭环：24轮真实多期群聊、打卡、阶段审查、自进化、案例反哺全链路E2E实打冒烟测试"
   };
 
@@ -490,6 +495,8 @@ export default function SystemDiagnosticsPage() {
 
   const healthSuites = testSuites.filter((suite) => suite.included_in_health_check);
   const realE2ESuites = testSuites.filter((suite) => suite.tier === "real_e2e");
+  const selectedSuite = testSuites.find((suite) => suite.id === selectedSuiteId);
+  const currentHealthSuite = testSuites.find((suite) => suite.id === currentAllSuiteId);
 
   const renderSuiteCard = (suite: TestSuite) => {
     const status = statuses[suite.id] || "idle";
@@ -514,7 +521,7 @@ export default function SystemDiagnosticsPage() {
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-zinc-200/60 text-zinc-600">
-              {suite.id}
+              {suite.display_id}
             </span>
             <h3 className="text-sm font-bold text-zinc-800 truncate">{suite.name}</h3>
           </div>
@@ -610,7 +617,7 @@ export default function SystemDiagnosticsPage() {
           }`}
         >
           {runningAll
-            ? `正在执行 ${currentAllSuiteId ? `套件 ${currentAllSuiteId}` : "健康自测"}...`
+            ? `正在执行 ${currentHealthSuite ? `套件 ${currentHealthSuite.display_id}` : "健康自测"}...`
             : "一键安全健康自测"}
         </button>
       </div>
@@ -661,14 +668,14 @@ export default function SystemDiagnosticsPage() {
         />
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-3">
+      <div className="grid gap-8 xl:grid-cols-2">
         {/* 左侧：测试套件列表 */}
-        <div className="lg:col-span-1 space-y-4">
+        <div className="space-y-4">
           <div className="bg-white rounded-xl border border-zinc-200/80 p-5 shadow-sm">
             <h2 className="text-base font-bold text-zinc-900 mb-1">安全健康自测</h2>
             <p className="text-xs text-zinc-500 mb-4">一键自测只运行以下套件，使用 Mock AI/通道并回滚测试数据。</p>
 
-            <div className="space-y-3.5">
+            <div className="grid gap-3.5 sm:grid-cols-2">
               {healthSuites.map(renderSuiteCard)}
             </div>
           </div>
@@ -678,12 +685,12 @@ export default function SystemDiagnosticsPage() {
             <p className="text-xs text-zinc-500 mb-4">
               不包含在一键健康自测中。会产生模型费用、耗时较长，并永久保留测试数据。
             </p>
-            <div className="space-y-3.5">{realE2ESuites.map(renderSuiteCard)}</div>
+            <div className="grid gap-3.5">{realE2ESuites.map(renderSuiteCard)}</div>
           </div>
         </div>
 
         {/* 右侧：深邃终端控制台 */}
-        <div className="lg:col-span-2">
+        <div>
           <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-xl overflow-hidden flex flex-col h-[650px] relative">
             
             {/* 终端头部 */}
@@ -693,7 +700,7 @@ export default function SystemDiagnosticsPage() {
                 <span className="w-3 h-3 rounded-full bg-amber-500 opacity-80"></span>
                 <span className="w-3 h-3 rounded-full bg-emerald-500 opacity-80"></span>
                 <span className="text-xs font-semibold font-mono text-zinc-400 ml-2 tracking-wide">
-                  SYSTEM DIAGNOSTICS CONSOLE {selectedSuiteId === "all" ? "— 安全健康自测" : `— 用例 ${selectedSuiteId}`}
+                  SYSTEM DIAGNOSTICS CONSOLE {selectedSuiteId === "all" ? "— 安全健康自测" : `— 用例 ${selectedSuite?.display_id || selectedSuiteId}`}
                 </span>
               </div>
 
@@ -754,7 +761,7 @@ export default function SystemDiagnosticsPage() {
                       : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
                   }`}
                 >
-                  ⚡ {suite.id} ({suite.name.replace("test_", "")})
+                  ⚡ {suite.display_id} ({suite.name.replace("test_", "")})
                 </button>
               ))}
             </div>

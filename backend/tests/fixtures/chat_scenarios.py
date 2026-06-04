@@ -21,6 +21,43 @@ class ChatMessage:
     description: str = "" # What this message tests
 
 
+@dataclass(frozen=True)
+class RealLLMPersonaScenario:
+    """A short, high-signal persona used by the real-model intent matrix.
+
+    These scenarios complement the single 28-day journey below. They exercise
+    materially different user needs without multiplying the expensive full
+    journey for every persona.
+    """
+
+    key: str
+    user_name: str
+    messages: tuple[str, ...]
+    expected: str
+
+
+REAL_LLM_PERSONA_SCENARIOS: tuple[RealLLMPersonaScenario, ...] = (
+    RealLLMPersonaScenario(
+        key="medical_caution",
+        user_name="谨慎健康咨询用户",
+        messages=("我正在备孕，而且一直在服用甲状腺相关药物，这套方案还能直接照做吗？",),
+        expected="risk_and_human_intervention",
+    ),
+    RealLLMPersonaScenario(
+        key="complaint_refund",
+        user_name="明确退款用户",
+        messages=("我照着做了还是不舒服，服务也和我理解的不一样。", "我明确要求退款，请班主任联系我。"),
+        expected="refund_and_human_intervention",
+    ),
+    RealLLMPersonaScenario(
+        key="positive_renewal",
+        user_name="积极续营用户",
+        messages=("这周睡眠和精神都稳定了很多，我想续一期继续巩固，接下来怎么买？",),
+        expected="renewal",
+    ),
+)
+
+
 # ── Phase 1: 入营初期 (Day 1-3)  基础适应 ──────────────────────
 
 PHASE_1_ONBOARDING: list[ChatMessage] = [

@@ -21,9 +21,9 @@ tests/
 ├── test_04_stage_reports.py # 阶段报告自动生成：3→7→14→21→28天 + 毕业
 ├── test_05_evolution.py     # 知识进化：配置校验、种子数据模式、草稿列表
 ├── test_06_toggles.py       # 开关验证：发送策略、AI回复、服务单开关、软删除
-├── test_07_real_llm_e2e.py  # 真实 LLM 端到端：28 天陪伴对话 + RAG 自进化闭环 + 案例反哺
-├── test_09_qiwe_channel.py  # QiWe 通道：聚合去重 + 失败兜底 + 问卷指令
-└── test_10_outcome_engine.py # 成效引擎：LLM 提取 + 阶段状态更新 + 行动焦点评分
+├── test_07_real_llm_e2e.py  # 真实 LLM：28 天完整旅程 + 多用户画像意图矩阵 + RAG 自进化
+├── test_08_qiwe_channel.py  # QiWe 通道：聚合去重 + 失败兜底 + 问卷指令
+└── test_09_outcome_engine.py # 成效引擎：LLM 提取 + 阶段状态更新 + 行动焦点评分
 ```
 
 ## 测试架构
@@ -47,11 +47,11 @@ tests/
     ↓
 开关验证 → auto_send / ai_reply / evolution / soft_delete
     ↓
-真实 LLM E2E → 28天陪伴对话 + RAG 自进化闭环 + 案例反哺 (test_07)
+真实 LLM E2E → 28天陪伴对话 + 多用户画像矩阵 + RAG 自进化闭环 + 案例反哺 (E2E-01)
     ↓
-QiWe 通道 → 聚合去重 + 引擎失败兜底 (test_09)
+QiWe 通道 → 聚合去重 + 引擎失败兜底 (健康自测 07)
     ↓
-成效引擎 → LLM 提取 + 阶段状态 + 行动焦点 (test_10)
+成效引擎 → LLM 提取 + 阶段状态 + 行动焦点 (健康自测 08)
 ```
 
 ## 纯函数测试

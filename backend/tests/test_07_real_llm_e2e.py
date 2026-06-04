@@ -50,6 +50,85 @@ async def real_admin_client(db_session):
 
 
 @pytest.mark.asyncio
+async def test_real_llm_persona_intent_matrix(
+    real_admin_client,
+    db_session,
+    mock_message_channel,
+    wait_background,
+):
+    """Validate real-model decisions across distinct user personas.
+
+    This is intentionally a focused matrix rather than three additional 28-day
+    journeys. It verifies the structured decisions that drive operations while
+    keeping the real-model cost bounded.
+    """
+    from tests.fixtures.chat_scenarios import REAL_LLM_PERSONA_SCENARIOS
+
+    await real_admin_client.post("/settings/ai-reply-delivery-policy", json={"mode": "auto_send"})
+    engine = RanrenAIEngine(mock_message_channel)
+
+    try:
+        for scenario in REAL_LLM_PERSONA_SCENARIOS:
+            group_id = f"test-real-persona-{scenario.key}-{secrets.token_hex(4)}"
+            response = await real_admin_client.post(
+                "/service-cases",
+                json={"group_id": group_id, "user": {"name": scenario.user_name}},
+            )
+            assert response.status_code == 201, response.text
+            case_id = response.json()["id"]
+
+            for index, content in enumerate(scenario.messages, start=1):
+                await engine.handle_message(
+                    ChannelMessage(
+                        channel="qiwe",
+                        chat_id=group_id,
+                        chat_type="group",
+                        text=content,
+                        message_id=f"msg-real-persona-{scenario.key}-{index}-{secrets.token_hex(3)}",
+                        user_id=f"qiwe-user-{scenario.key}",
+                        message_type="text",
+                    )
+                )
+                await wait_background()
+
+            db_session.expire_all()
+            service_case = await db_session.get(ServiceCase, case_id)
+            assert service_case is not None
+            inbound_messages = list(
+                await db_session.scalars(
+                    select(Message)
+                    .where(
+                        Message.service_case_id == case_id,
+                        Message.direction == MessageDirection.INBOUND,
+                    )
+                    .order_by(Message.id.asc())
+                )
+            )
+            assert len(inbound_messages) == len(scenario.messages)
+            assert all(isinstance(message.analysis_json, dict) for message in inbound_messages)
+
+            if scenario.expected == "risk_and_human_intervention":
+                assert service_case.risk_level == "high"
+                assert service_case.needs_human_intervention is True
+                assert service_case.risk_flags
+            elif scenario.expected == "refund_and_human_intervention":
+                assert service_case.refund_intent_flags
+                assert service_case.needs_human_intervention is True
+            elif scenario.expected == "renewal":
+                assert service_case.renewal_intent_flags
+            else:
+                raise AssertionError(f"Unknown persona expectation: {scenario.expected}")
+
+            print(
+                f" -> [多用户画像验证] {scenario.user_name}: "
+                f"risk={service_case.risk_level}, human={service_case.needs_human_intervention}, "
+                f"refund={bool(service_case.refund_intent_flags)}, renewal={bool(service_case.renewal_intent_flags)}"
+            )
+    finally:
+        await real_admin_client.post("/settings/ai-reply-delivery-policy", json={"mode": "manual_review"})
+
+
+@pytest.mark.asyncio
 async def test_real_llm_full_saga_end_to_end(
     real_admin_client,
     db_session,
