@@ -9,6 +9,10 @@ type TestSuite = {
   name: string;
   description: string;
   file: string;
+  tier: "health" | "real_e2e";
+  included_in_health_check: boolean;
+  data_policy: "rollback" | "persistent";
+  requires_confirmation: boolean;
 };
 
 type TestStatus = "idle" | "running" | "passed" | "failed";
@@ -20,6 +24,7 @@ export default function SystemDiagnosticsPage() {
   const [selectedSuiteId, setSelectedSuiteId] = useState<string>("all");
   const [runningAll, setRunningAll] = useState(false);
   const [currentRunningId, setCurrentRunningId] = useState<string | null>(null);
+  const [currentAllSuiteId, setCurrentAllSuiteId] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   
   const [summaryLoading, setSummaryLoading] = useState(true);
@@ -63,6 +68,14 @@ export default function SystemDiagnosticsPage() {
               }
             }
             if (history.last_run_time) setLastRunTime(history.last_run_time);
+            if (history.active_run?.suite_id) {
+              if (history.active_run.mode === "health") {
+                setRunningAll(true);
+                setCurrentAllSuiteId(history.active_run.suite_id);
+              } else {
+                setCurrentRunningId(history.active_run.suite_id);
+              }
+            }
           } else {
             const initialStatuses: Record<string, TestStatus> = {};
             data.forEach((suite: TestSuite) => {
@@ -102,6 +115,21 @@ export default function SystemDiagnosticsPage() {
           }
         }
         if (history.last_run_time) setLastRunTime(history.last_run_time);
+        if (history.active_run?.suite_id) {
+          if (history.active_run.mode === "health") {
+            setRunningAll(true);
+            setCurrentAllSuiteId(history.active_run.suite_id);
+            setCurrentRunningId(null);
+          } else {
+            setRunningAll(false);
+            setCurrentAllSuiteId(null);
+            setCurrentRunningId(history.active_run.suite_id);
+          }
+        } else {
+          setRunningAll(false);
+          setCurrentAllSuiteId(null);
+          setCurrentRunningId(null);
+        }
       }
     } catch (e) {
       console.error("同步后端自测历史失败:", e);
@@ -131,6 +159,12 @@ export default function SystemDiagnosticsPage() {
     loadSummary();
   }, []);
 
+  useEffect(() => {
+    if (!runningAll && !currentRunningId) return;
+    const timer = window.setInterval(syncHistoryFromBackend, 2000);
+    return () => window.clearInterval(timer);
+  }, [runningAll, currentRunningId]);
+
   // 2. 日志自动滚动
   const activeLogs = consoleLogs[selectedSuiteId] || [];
 
@@ -143,6 +177,12 @@ export default function SystemDiagnosticsPage() {
   // 3. 运行特定单项测试
   const runSingleTest = async (suite: TestSuite) => {
     if (currentRunningId || runningAll) return;
+    if (
+      suite.requires_confirmation &&
+      !window.confirm("该测试会调用真实大模型、耗时较长，并永久保留测试数据。确认继续运行吗？")
+    ) {
+      return;
+    }
     
     setCurrentRunningId(suite.id);
     setSelectedSuiteId(suite.id); // 自动聚焦到当前自测
@@ -158,7 +198,11 @@ export default function SystemDiagnosticsPage() {
     }));
 
     try {
-      const response = await fetch(`/api/backend/diagnostics/run/${suite.id}`);
+      const confirmQuery = suite.requires_confirmation ? "?confirm_real_e2e=true" : "";
+      const response = await fetch(`/api/backend/diagnostics/run/${suite.id}${confirmQuery}`);
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
       if (!response.body) {
         throw new Error("响应没有正文体");
       }
@@ -195,13 +239,14 @@ export default function SystemDiagnosticsPage() {
       await syncHistoryFromBackend();
       await loadSummary();
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       setStatuses((prev) => ({ ...prev, [suite.id]: "failed" as TestStatus }));
       setConsoleLogs((prev) => {
         const currentLogs = prev[suite.id] || [];
         return {
           ...prev,
-          [suite.id]: [...currentLogs, `💥 运行异常: ${error.message || error}`]
+          [suite.id]: [...currentLogs, `💥 运行异常: ${message}`]
         };
       });
     } finally {
@@ -209,7 +254,7 @@ export default function SystemDiagnosticsPage() {
     }
   };
 
-  // 4. 一键跑全量测试 (test_01 到 test_07 串联)
+  // 4. 一键运行安全健康自测；真实 LLM E2E 必须单独确认运行。
   const runAllTests = async () => {
     if (currentRunningId || runningAll) return;
 
@@ -219,20 +264,21 @@ export default function SystemDiagnosticsPage() {
     setConsoleLogs((prev) => ({
       ...prev,
       all: [
-        `🚀 [SYSTEM HEALTH] 启动全量自动化冒烟测试 (01 ~ 07) ...`,
-        `📦 包含 7 项核心数据库/大模型/打卡/进化链的整合验证`,
+        `🚀 [SYSTEM HEALTH] 启动安全健康自测 (01-06, 08-09) ...`,
+        `📦 使用 Mock AI/通道并回滚数据，不包含真实模型 E2E 07`,
         `======================================================================`
       ]
     }));
 
     const newStatuses = { ...statuses };
-    testSuites.forEach((s) => {
+    testSuites.filter((s) => s.included_in_health_check).forEach((s) => {
       newStatuses[s.id] = "running" as TestStatus;
     });
     setStatuses(newStatuses);
 
     try {
       const response = await fetch(`/api/backend/diagnostics/run/all`);
+      if (!response.ok) throw new Error(await response.text());
       if (!response.body) throw new Error("流式响应不可用");
 
       const reader = response.body.getReader();
@@ -246,6 +292,8 @@ export default function SystemDiagnosticsPage() {
         const lines = chunk.split("\n");
         lines.forEach((line) => {
           if (line.trim()) {
+            const activeMatch = line.match(/当前执行套件:\s*(\d+)/);
+            if (activeMatch) setCurrentAllSuiteId(activeMatch[1]);
             setConsoleLogs((prev) => {
               const currentLogs = prev.all || [];
               return {
@@ -280,17 +328,19 @@ export default function SystemDiagnosticsPage() {
 
       await syncHistoryFromBackend();
       await loadSummary();
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       setConsoleLogs((prev) => {
         const currentLogs = prev.all || [];
         return {
           ...prev,
-          all: [...currentLogs, `💥 运行异常: ${err.message || err}`]
+          all: [...currentLogs, `💥 运行异常: ${message}`]
         };
       });
       await syncHistoryFromBackend();
     } finally {
       setCurrentRunningId(null);
+      setCurrentAllSuiteId(null);
       setRunningAll(false);
     }
   };
@@ -438,6 +488,93 @@ export default function SystemDiagnosticsPage() {
       ? new Date(Number(lastRunTime) * 1000).toLocaleTimeString("zh-CN", { hour12: false })
       : lastRunTime;
 
+  const healthSuites = testSuites.filter((suite) => suite.included_in_health_check);
+  const realE2ESuites = testSuites.filter((suite) => suite.tier === "real_e2e");
+
+  const renderSuiteCard = (suite: TestSuite) => {
+    const status = statuses[suite.id] || "idle";
+    const isSelected = selectedSuiteId === suite.id;
+    const isRealE2E = suite.tier === "real_e2e";
+    const isActiveInHealthRun = runningAll && currentAllSuiteId === suite.id;
+
+    return (
+      <div
+        key={suite.id}
+        onClick={() => setSelectedSuiteId(suite.id)}
+        className={`p-4 rounded-xl border transition relative cursor-pointer group ${
+          isSelected
+            ? isRealE2E
+              ? "border-amber-500 bg-amber-50/40 shadow-sm ring-1 ring-amber-500/20"
+              : "border-indigo-500 bg-indigo-50/10 shadow-sm ring-1 ring-indigo-500/20"
+            : isRealE2E
+              ? "border-amber-200 bg-amber-50/30 hover:border-amber-300"
+              : "border-zinc-100 hover:border-zinc-200/80 bg-zinc-50/50 hover:bg-zinc-50"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-zinc-200/60 text-zinc-600">
+              {suite.id}
+            </span>
+            <h3 className="text-sm font-bold text-zinc-800 truncate">{suite.name}</h3>
+          </div>
+          <StatusBulb status={status} />
+        </div>
+
+        {isActiveInHealthRun && (
+          <div className="mt-2 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[11px] font-semibold text-white">
+            当前正在执行这一项
+          </div>
+        )}
+
+        <p className="text-xs text-zinc-500 mt-2 leading-relaxed">{suite.description}</p>
+
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+            isRealE2E ? "bg-amber-100 text-amber-700" : "bg-emerald-50 text-emerald-700"
+          }`}>
+            {isRealE2E ? "真实模型 E2E" : "安全健康自测"}
+          </span>
+          <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+            suite.data_policy === "persistent" ? "bg-rose-50 text-rose-700" : "bg-zinc-100 text-zinc-600"
+          }`}>
+            {suite.data_policy === "persistent" ? "永久保留数据" : "测试数据回滚"}
+          </span>
+        </div>
+
+        <div className="mt-3 flex items-start justify-between gap-2">
+          <div className="flex flex-col gap-1 min-w-0">
+            <span className="text-[10px] text-zinc-400 font-mono select-all truncate block" title={suite.file}>
+              {suite.file}
+            </span>
+            {durations[suite.id] && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 mt-1 rounded-md text-[10px] font-bold font-mono bg-indigo-50/70 text-indigo-700 border border-indigo-100/40 w-fit">
+                耗时 <span className="text-indigo-600 font-black ml-0.5">{durations[suite.id]}</span>
+              </span>
+            )}
+          </div>
+
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              runSingleTest(suite);
+            }}
+            disabled={!!currentRunningId || runningAll}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition shrink-0 ${
+              !!currentRunningId || runningAll
+                ? "bg-zinc-50 border-zinc-200 text-zinc-400 cursor-not-allowed"
+                : isRealE2E
+                  ? "bg-amber-600 hover:bg-amber-700 border-amber-600 text-white active:scale-95"
+                  : "bg-white hover:bg-zinc-100 border-zinc-200 hover:border-zinc-300 text-zinc-700 active:scale-95"
+            }`}
+          >
+            {status === "running" ? "运行中..." : isRealE2E ? "确认后运行" : "启动测试"}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-8 pb-12">
       {/* 顶部标题与返回导航 */}
@@ -459,7 +596,7 @@ export default function SystemDiagnosticsPage() {
             ⚡ 系统健康与自测诊断控制台
           </h1>
           <p className="text-sm text-zinc-500 mt-1">
-            直接在网页中流式执行 01~07 核心测试套件，独立持久化保存每个套件的上一次运行历史与耗时。
+            快速健康自测与真实模型 E2E 已隔离，运行时会明确显示当前套件、耗时和数据影响。
           </p>
         </div>
 
@@ -472,7 +609,9 @@ export default function SystemDiagnosticsPage() {
               : "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/20 active:translate-y-0.5"
           }`}
         >
-          🚀 {runningAll ? "正在串联跑全量自测..." : "一键全量健康自测"}
+          {runningAll
+            ? `正在执行 ${currentAllSuiteId ? `套件 ${currentAllSuiteId}` : "健康自测"}...`
+            : "一键安全健康自测"}
         </button>
       </div>
 
@@ -508,8 +647,8 @@ export default function SystemDiagnosticsPage() {
         />
         <MetricCard
           title="测试套件总数"
-          value={`${testSuites.length} 个核心用例`}
-          description="01 ~ 07 自动化流程冒烟套件"
+          value={`${healthSuites.length} + ${realE2ESuites.length}`}
+          description="安全健康套件 + 真实模型 E2E"
           color="blue"
           icon="📋"
         />
@@ -526,70 +665,20 @@ export default function SystemDiagnosticsPage() {
         {/* 左侧：测试套件列表 */}
         <div className="lg:col-span-1 space-y-4">
           <div className="bg-white rounded-xl border border-zinc-200/80 p-5 shadow-sm">
-            <h2 className="text-base font-bold text-zinc-900 mb-1">测试套件（01 ~ 07）</h2>
-            <p className="text-xs text-zinc-500 mb-4">每个测试运行完均会物理清理/回滚，无残留污染。</p>
+            <h2 className="text-base font-bold text-zinc-900 mb-1">安全健康自测</h2>
+            <p className="text-xs text-zinc-500 mb-4">一键自测只运行以下套件，使用 Mock AI/通道并回滚测试数据。</p>
 
             <div className="space-y-3.5">
-              {testSuites.map((suite) => {
-                const status = statuses[suite.id] || "idle";
-                const isSelected = selectedSuiteId === suite.id;
-                return (
-                  <div 
-                    key={suite.id}
-                    onClick={() => setSelectedSuiteId(suite.id)}
-                    className={`p-4 rounded-xl border transition relative cursor-pointer group ${
-                      isSelected
-                        ? "border-indigo-500 bg-indigo-50/10 shadow-sm ring-1 ring-indigo-500/20"
-                        : "border-zinc-100 hover:border-zinc-200/80 bg-zinc-50/50 hover:bg-zinc-50"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-zinc-200/60 text-zinc-600">
-                          {suite.id}
-                        </span>
-                        <h3 className="text-sm font-bold text-zinc-800">{suite.name}</h3>
-                      </div>
-                      
-                      {/* 状态指示灯发光 */}
-                      <StatusBulb status={status} />
-                    </div>
-
-                    <p className="text-xs text-zinc-500 mt-2 leading-relaxed">
-                      {suite.description}
-                    </p>
-
-                    <div className="mt-3 flex items-start justify-between gap-2">
-                      <div className="flex flex-col gap-1 min-w-0">
-                        <span className="text-[10px] text-zinc-400 font-mono select-all truncate block" title={suite.file}>
-                          {suite.file}
-                        </span>
-                        {durations[suite.id] && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 mt-1 rounded-md text-[10px] font-bold font-mono bg-indigo-50/70 text-indigo-700 border border-indigo-100/40 select-none w-fit shadow-[0_1px_2px_rgba(99,102,241,0.05)] animate-fadeIn">
-                            ⏱️ 耗时 <span className="text-indigo-600 font-black ml-0.5">{durations[suite.id]}</span>
-                          </span>
-                        )}
-                      </div>
-                      
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation(); // 阻止触发卡片选择
-                          runSingleTest(suite);
-                        }}
-                        disabled={!!currentRunningId || runningAll}
-                        className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition shrink-0 ${
-                          !!currentRunningId || runningAll
-                            ? "bg-zinc-50 border-zinc-200 text-zinc-400 cursor-not-allowed"
-                            : "bg-white hover:bg-zinc-100 border-zinc-200 hover:border-zinc-300 text-zinc-700 active:scale-95"
-                        }`}
-                      >
-                        {status === "running" ? "运行中..." : "启动测试"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+              {healthSuites.map(renderSuiteCard)}
             </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-amber-200 p-5 shadow-sm">
+            <h2 className="text-base font-bold text-zinc-900 mb-1">真实模型验证</h2>
+            <p className="text-xs text-zinc-500 mb-4">
+              不包含在一键健康自测中。会产生模型费用、耗时较长，并永久保留测试数据。
+            </p>
+            <div className="space-y-3.5">{realE2ESuites.map(renderSuiteCard)}</div>
           </div>
         </div>
 
@@ -604,7 +693,7 @@ export default function SystemDiagnosticsPage() {
                 <span className="w-3 h-3 rounded-full bg-amber-500 opacity-80"></span>
                 <span className="w-3 h-3 rounded-full bg-emerald-500 opacity-80"></span>
                 <span className="text-xs font-semibold font-mono text-zinc-400 ml-2 tracking-wide">
-                  SYSTEM DIAGNOSTICS CONSOLE {selectedSuiteId === "all" ? "— 全量自测" : `— 用例 ${selectedSuiteId}`}
+                  SYSTEM DIAGNOSTICS CONSOLE {selectedSuiteId === "all" ? "— 安全健康自测" : `— 用例 ${selectedSuiteId}`}
                 </span>
               </div>
 
@@ -653,7 +742,7 @@ export default function SystemDiagnosticsPage() {
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
                 }`}
               >
-                📦 全量自测 (ALL)
+                📦 安全健康自测
               </button>
               {testSuites.map((suite) => (
                 <button
@@ -677,7 +766,7 @@ export default function SystemDiagnosticsPage() {
                   <div className="text-4xl">⚡</div>
                   <div className="text-zinc-500">
                     {selectedSuiteId === "all"
-                      ? "全量终端就绪。请在左侧启动单项测试，或一键全量健康自测。"
+                      ? "健康自测终端就绪。真实模型 E2E 需要在左侧单独确认运行。"
                       : `[用例 ${selectedSuiteId}] 终端就绪。目前无上一次的历史运行日志。`}
                   </div>
                   <div className="text-[10px] text-zinc-600 bg-zinc-900 border border-zinc-800 px-3 py-1 rounded-md">
@@ -697,7 +786,9 @@ export default function SystemDiagnosticsPage() {
                   )}
                   {runningAll && selectedSuiteId === "all" && (
                     <div className="flex items-center gap-1 py-1 font-mono text-indigo-400 font-bold select-none">
-                      <span>⚡ pytest is executing full suite...</span>
+                      <span>
+                        pytest 正在执行{currentAllSuiteId ? `套件 ${currentAllSuiteId}` : "安全健康自测"}...
+                      </span>
                       <span className="w-1.5 h-4 bg-indigo-400 animate-pulse"></span>
                     </div>
                   )}

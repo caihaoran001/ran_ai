@@ -86,6 +86,7 @@ async def test_evolution_generates_drafts_from_seeded_chat(
         .values(status=ServiceCaseStatus.CREATED)
     )
     await db_session.flush()
+    existing_draft_ids = set(await db_session.scalars(select(KnowledgeDraft.id)))
 
     from app.services.knowledge_evolution import KnowledgeEvolutionService
     service = KnowledgeEvolutionService(ai=mock_ai)
@@ -102,8 +103,9 @@ async def test_evolution_generates_drafts_from_seeded_chat(
 
     drafts = list(await db_session.scalars(
         select(KnowledgeDraft).where(
+            KnowledgeDraft.id.not_in(existing_draft_ids),
             KnowledgeDraft.title.isnot(None),
-        ).limit(10)
+        )
     ))
     assert len(drafts) > 0, "扫描后应能查到落库的草稿"
     for d in drafts[:3]:

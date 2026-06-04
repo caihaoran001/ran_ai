@@ -542,6 +542,16 @@ async def test_intake_initializes_user_state_profile(db_session):
 
 @pytest.mark.asyncio
 async def test_dashboard_summary_includes_global_outcome_metrics(db_session, admin_client, mock_ai):
+    baseline_response = await admin_client.get("/dashboard/summary")
+    assert baseline_response.status_code == 200
+    baseline_metrics = {
+        item["key"]: item
+        for item in baseline_response.json()["outcome_summary"]["metrics"]
+    }
+    baseline_weight = baseline_metrics["avg_day28_weight_change"]
+    baseline_weight_count = baseline_weight["denominator"]
+    baseline_weight_value = baseline_weight["value"] or 0
+
     case = await _setup_outcome_case(db_session, days=28)
     db_session.add(
         UserProfile(
@@ -627,8 +637,13 @@ async def test_dashboard_summary_includes_global_outcome_metrics(db_session, adm
     assert metrics["day28_checkin_completion_rate"]["numerator"] >= 1
     assert metrics["body_feedback_rate"]["numerator"] >= 1
     assert metrics["core_document_generation_rate"]["label"] == "核心交付生成率"
-    assert metrics["avg_day28_weight_change"]["value"] == -1.2
-    assert metrics["avg_day28_weight_change"]["denominator"] >= 1
+    expected_weight_avg = round(
+        ((baseline_weight_value * baseline_weight_count) - 1.2)
+        / (baseline_weight_count + 1),
+        2,
+    )
+    assert metrics["avg_day28_weight_change"]["value"] == expected_weight_avg
+    assert metrics["avg_day28_weight_change"]["denominator"] == baseline_weight_count + 1
 
 
 @pytest.mark.asyncio

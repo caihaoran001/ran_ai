@@ -5,7 +5,7 @@ import os
 import time
 import json
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from app.db.session import get_session
 from app.services.ai_service import AIService
 
 router = APIRouter()
+_DIAGNOSTICS_RUN_LOCK = asyncio.Lock()
 
 TEST_SUITES = [
     {
@@ -22,56 +23,94 @@ TEST_SUITES = [
         "name": "test_01_intake",
         "description": "入营问卷基本录入与数据合法性校验",
         "file": "tests/test_01_intake.py",
+        "tier": "health",
+        "included_in_health_check": True,
+        "data_policy": "rollback",
+        "requires_confirmation": False,
     },
     {
         "id": "02",
         "name": "test_02_chat",
         "description": "社群模拟群聊多轮对话与情绪/健康风控拦截测试",
         "file": "tests/test_02_chat.py",
+        "tier": "health",
+        "included_in_health_check": True,
+        "data_policy": "rollback",
+        "requires_confirmation": False,
     },
     {
         "id": "03",
         "name": "test_03_checkin",
         "description": "打卡数据创建、解析结构和排序校验测试",
         "file": "tests/test_03_checkin.py",
+        "tier": "health",
+        "included_in_health_check": True,
+        "data_policy": "rollback",
+        "requires_confirmation": False,
     },
     {
         "id": "04",
         "name": "test_04_stage_reports",
         "description": "阶段报告与毕业报告自动生成测试",
         "file": "tests/test_04_stage_reports.py",
+        "tier": "health",
+        "included_in_health_check": True,
+        "data_policy": "rollback",
+        "requires_confirmation": False,
     },
     {
         "id": "05",
         "name": "test_05_evolution",
         "description": "24小时群聊沉淀 FAQ 知识进化与打卡校验测试",
         "file": "tests/test_05_evolution.py",
+        "tier": "health",
+        "included_in_health_check": True,
+        "data_policy": "rollback",
+        "requires_confirmation": False,
     },
     {
         "id": "06",
         "name": "test_06_toggles",
         "description": "策略开关、知识进化配置与软删除校验测试",
         "file": "tests/test_06_toggles.py",
+        "tier": "health",
+        "included_in_health_check": True,
+        "data_policy": "rollback",
+        "requires_confirmation": False,
     },
     {
         "id": "07",
         "name": "test_07_real_llm_e2e",
         "description": "真实大模型全链路 E2E 冒烟测试（含 24 轮真实多期陪伴对话、RAG 自进化闭环与案例反哺）",
         "file": "tests/test_07_real_llm_e2e.py",
+        "tier": "real_e2e",
+        "included_in_health_check": False,
+        "data_policy": "persistent",
+        "requires_confirmation": True,
     },
     {
         "id": "08",
         "name": "test_08_qiwe_channel",
         "description": "QiWe 通道代码逻辑测试：消息聚合、去重、异常处理（使用 mock 对象，不测试真实通道）",
         "file": "tests/test_08_qiwe_channel.py",
+        "tier": "health",
+        "included_in_health_check": True,
+        "data_policy": "rollback",
+        "requires_confirmation": False,
     },
     {
         "id": "09",
         "name": "test_09_outcome_engine",
         "description": "成效引擎测试：LLM 提取 + 阶段状态更新 + 行动焦点评分 + 时间感知",
         "file": "tests/test_09_outcome_engine.py",
+        "tier": "health",
+        "included_in_health_check": True,
+        "data_policy": "rollback",
+        "requires_confirmation": False,
     },
 ]
+
+HEALTH_TEST_SUITES = [suite for suite in TEST_SUITES if suite["included_in_health_check"]]
 
 @router.get("/test-suites")
 async def get_test_suites():
@@ -178,7 +217,8 @@ def _load_history() -> dict:
         "statuses": {},
         "durations": {},
         "last_run_time": "尚未运行",
-        "console_logs": {}
+        "console_logs": {},
+        "active_run": None,
     }
 
 
@@ -204,14 +244,18 @@ async def clear_diagnostics_history():
         "statuses": {},
         "durations": {},
         "last_run_time": "尚未运行",
-        "console_logs": {}
+        "console_logs": {},
+        "active_run": None,
     }
     _save_history(history)
     return {"status": "ok"}
 
 
 @router.get("/run/{test_id}")
-async def run_diagnostics(test_id: str):
+async def run_diagnostics(
+    test_id: str,
+    confirm_real_e2e: bool = Query(default=False),
+):
     """
     运行特定的诊断测试套件，并以流（StreamingResponse）的形式实时回传控制台打印。
     同时将运行耗时、状态及日志实时同步至后端文件系统，支持跨终端共享。
@@ -219,15 +263,24 @@ async def run_diagnostics(test_id: str):
     # 验证 test_id
     if test_id != "all" and not any(suite["id"] == test_id for suite in TEST_SUITES):
         raise HTTPException(status_code=400, detail=f"Invalid test suite ID: {test_id}")
+    selected_suite = None if test_id == "all" else next(s for s in TEST_SUITES if s["id"] == test_id)
+    if selected_suite and selected_suite["requires_confirmation"] and not confirm_real_e2e:
+        raise HTTPException(
+            status_code=409,
+            detail="该测试会调用真实模型、耗时较长并永久保留测试数据，请确认后再运行。",
+        )
+    if _DIAGNOSTICS_RUN_LOCK.locked():
+        raise HTTPException(status_code=409, detail="已有诊断测试正在运行，请等待其完成后再试。")
+    await _DIAGNOSTICS_RUN_LOCK.acquire()
 
     async def run_test_generator():
         history = _load_history()
         
         suites_to_run = []
         if test_id == "all":
-            suites_to_run = TEST_SUITES
+            suites_to_run = HEALTH_TEST_SUITES
         else:
-            suites_to_run = [next(s for s in TEST_SUITES if s["id"] == test_id)]
+            suites_to_run = [selected_suite]
             
         for suite in suites_to_run:
             history["statuses"][suite["id"]] = "running"
@@ -241,7 +294,7 @@ async def run_diagnostics(test_id: str):
         # 清除本次运行套件的专属日志
         history["console_logs"][test_id] = []
         if test_id == "all":
-            for suite in TEST_SUITES:
+            for suite in suites_to_run:
                 history["console_logs"][suite["id"]] = []
         
         _save_history(history)
@@ -250,8 +303,8 @@ async def run_diagnostics(test_id: str):
         if test_id == "all":
             start_banner = (
                 "======================================================================\n"
-                "🚀 [全量自测启动] 自动化冒烟测试 (01 ~ 07) 串联执行中...\n"
-                "📦 测试范围: 包含用户入营、社群聊天风控、打卡、阶段总结、知识进化等全链路\n"
+                "🚀 [健康自测启动] 安全诊断套件 (01-06, 08-09) 串联执行中...\n"
+                "📦 测试范围: 使用 Mock AI/通道，测试数据回滚；不运行真实模型 E2E 07\n"
                 "======================================================================\n"
             )
         else:
@@ -268,13 +321,26 @@ async def run_diagnostics(test_id: str):
         
         history["console_logs"][test_id].append(start_banner.rstrip("\n"))
         if test_id == "all":
-            for suite in TEST_SUITES:
+            for suite in suites_to_run:
                 history["console_logs"][suite["id"]].append(start_banner.rstrip("\n"))
 
         backend_dir = _backend_dir()
         has_overall_error = False
 
         for suite in suites_to_run:
+            history["active_run"] = {
+                "mode": "health" if test_id == "all" else suite["tier"],
+                "suite_id": suite["id"],
+                "suite_name": suite["name"],
+                "started_at": int(time.time()),
+            }
+            active_msg = f"\n▶ 当前执行套件: {suite['id']} {suite['name']}\n"
+            yield active_msg
+            history["console_logs"][test_id].append(active_msg.rstrip("\n"))
+            if test_id == "all":
+                history["console_logs"][suite["id"]].append(active_msg.rstrip("\n"))
+            _save_history(history)
+
             test_file = suite["file"]
             cmd_msg = f"\n🚀 执行命令: uv run pytest {test_file} -v -s\n"
             yield cmd_msg
@@ -314,6 +380,7 @@ async def run_diagnostics(test_id: str):
             start_time = time.perf_counter()
             # 使用 PYTHONUNBUFFERED=1 保证输出无缓冲，实时流式返回
             cmd = ["uv", "run", "pytest", test_file, "-v", "-s"]
+            process = None
             try:
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
@@ -367,6 +434,11 @@ async def run_diagnostics(test_id: str):
                         history["console_logs"][suite["id"]].append(fail_msg.rstrip("\n"))
                     history["statuses"][suite["id"]] = "failed"
                     has_overall_error = True
+            except asyncio.CancelledError:
+                if process is not None and process.returncode is None:
+                    process.terminate()
+                    await process.wait()
+                raise
             except FileNotFoundError:
                 err_msg = "\n💥 运行异常: 容器内未安装 pytest，请先为 backend 运行环境安装测试依赖。\n"
                 yield err_msg
@@ -390,38 +462,52 @@ async def run_diagnostics(test_id: str):
 
         end_banner = "\n=== [SYSTEM DIAGNOSTICS END] ===\n"
         yield end_banner
+        history["active_run"] = None
         
         history["console_logs"][test_id].append(end_banner.strip())
         if test_id == "all":
-            for s in TEST_SUITES:
+            for s in suites_to_run:
                 history["console_logs"][s["id"]].append(end_banner.strip())
         
         # 追加最终整体总结日志
         summary_divider = "======================================================================\n"
         history["console_logs"][test_id].append(summary_divider.strip())
         if test_id == "all":
-            for s in TEST_SUITES:
+            for s in suites_to_run:
                 history["console_logs"][s["id"]].append(summary_divider.strip())
         
         overall_msg = (
-            "🔴 全量核心测试执行完毕: 发现异常模块，请检查上方终端输出日志！\n"
+            "🔴 健康自测执行完毕: 发现异常模块，请检查上方终端输出日志！\n"
             if has_overall_error else
-            "🟢 全量核心测试 100% 顺利通过！系统健康度达到完美水准！\n"
+            "🟢 健康自测顺利通过；真实模型 E2E 07 未运行。\n"
         )
         history["console_logs"][test_id].append(overall_msg.strip())
         if test_id == "all":
-            for s in TEST_SUITES:
+            for s in suites_to_run:
                 history["console_logs"][s["id"]].append(overall_msg.strip())
         
         history["console_logs"][test_id].append(summary_divider.strip())
         if test_id == "all":
-            for s in TEST_SUITES:
+            for s in suites_to_run:
                 history["console_logs"][s["id"]].append(summary_divider.strip())
         
         _save_history(history)
 
+    async def guarded_test_generator():
+        try:
+            async for chunk in run_test_generator():
+                yield chunk
+        finally:
+            history = _load_history()
+            history["active_run"] = None
+            for suite_id, status in list(history.get("statuses", {}).items()):
+                if status == "running":
+                    history["statuses"][suite_id] = "failed"
+            _save_history(history)
+            _DIAGNOSTICS_RUN_LOCK.release()
+
     return StreamingResponse(
-        run_test_generator(),
+        guarded_test_generator(),
         media_type="text/plain",
         headers={
             "Cache-Control": "no-cache",
