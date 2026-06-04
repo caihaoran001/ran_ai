@@ -141,11 +141,11 @@ def _make_intake_mock_response(*, weight_band: str = "维持优化带（A带）"
                          "pass_standard": "综合执行率>=70%"},
                     ],
                     "daily_checkin": (
-                        "1.早C/午B/晚A：今日三杯是否全部完成？\n"
-                        "2.睡眠：昨晚是否在23:00前入睡？实际入睡时间____\n"
-                        "3.晚餐收口：晚餐后是否吃了水果坚果零食甜饮？\n"
-                        "4.午餐主食：午餐主食是否控制在1拳内？\n"
-                        "5.情绪/饭后困：今日情绪平稳度评分(1-5)____饭后是否犯困？"
+                        "1. 今日是否完成早C/午B/晚A？（是/否）\n"
+                        "2. 今日是否在23:30前上床？（是/否）\n"
+                        "3. 今日蔬菜摄入是否达到2拳？（是/否）\n"
+                        "4. 今日是否完成7000步或有氧30分钟？（是/否）\n"
+                        "5. 今日情绪稳定度和饭后困综合评分（1-5分，1很差5很好）"
                     ),
                     "week5_12": "第5-8周在睡眠稳定后逐步拉高运动频率和饮食精细度。第9-12周进入维持模式。",
                     "weekly_standard": "每周通过标准：每周至少完成1次体重+腰围记录；晚间收口>=5天/周；23:00前入睡>=4天/周",
@@ -199,9 +199,31 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     assert overview.get("bmi") == "21.2"
     personalized_fields = (profile.profile_json or {}).get("personalized_checkin_fields") or []
     assert len(personalized_fields) == 5
-    assert personalized_fields[0]["title"] == "早C/午B/晚A：今日三杯是否全部完成？"
-    assert personalized_fields[0]["type"] == "RADIO"
-    assert personalized_fields[0]["options"] == ["是", "否"]
+
+    # 内容准确性验证：Profile 字段与预期完全一致
+    expected_labels = [
+        "今日是否完成早C/午B/晚A？（是/否）",
+        "今日是否在23:30前上床？（是/否）",
+        "今日蔬菜摄入是否达到2拳？（是/否）",
+        "今日是否完成7000步或有氧30分钟？（是/否）",
+        "今日情绪稳定度和饭后困综合评分（1-5分，1很差5很好）",
+    ]
+    for i, (pf, expected) in enumerate(zip(personalized_fields, expected_labels)):
+        assert pf["label"] == expected, f"第 {i+1} 项标签不一致"
+        if "是否" in expected:
+            assert pf["type"] == "RADIO"
+            assert pf["options"] == ["是", "否"]
+        else:
+            assert pf["type"] == "SIMPLE"
+
+    # 验证打卡链接 API 返回与 Profile 一致
+    resp = await admin_client.get(f"/questionnaires/{token}?template=personalized_checkin")
+    assert resp.status_code == 200
+    api_fields = resp.json()["fields"]
+    assert len(api_fields) == 5
+    for i, (af, pf) in enumerate(zip(api_fields, personalized_fields)):
+        assert af["label"] == pf["label"], f"API 第 {i+1} 项与 Profile 不一致"
+        assert af["type"] == pf["type"]
 
     docs = list(await db_session.scalars(
         select(UserDocument).where(UserDocument.service_case_id == case_id)

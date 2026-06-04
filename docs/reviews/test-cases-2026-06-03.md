@@ -779,3 +779,71 @@
 - **测试步骤**：POST `/api/questionnaire-template/reset`
 - **预期结果**：200，返回 4 个模板
 - **实际结果**：✅
+
+---
+
+## 五、内容准确性测试（CI/手动运行）
+
+> **说明**：以下测试用例验证内容准确性，不注册到前端诊断控制台，在 CI 或手动运行。
+> 对应 pytest 文件：`tests/test_11_content_accuracy.py`
+
+### 5.1 打卡链接内容与文档一致性
+
+#### TC-200: 打卡链接内容与文档 daily_checkin 完全一致
+
+- **前置条件**：已创建服务单、提交入营问卷、生成文档
+- **测试步骤**：
+  1. 创建服务单并提交入营问卷
+  2. 生成文档（包含 daily_checkin）
+  3. 获取 Profile 的 personalized_checkin_fields
+  4. 调用打卡链接 API（template=personalized_checkin）
+  5. 逐项对比：文档 daily_checkin、Profile 字段、API 返回字段
+- **预期结果**：
+  - 文档有 5 个打卡项
+  - Profile 有 5 个个性化字段
+  - API 返回 5 个字段
+  - 三者的字段标签完全一致
+  - 含"是否"的字段类型为 RADIO，options=["是", "否"]
+  - 不含"是否"的字段类型为 SIMPLE，options=[]
+  - 所有字段 required=True
+- **实际结果**：✅
+
+#### TC-201: 文档 daily_checkin 提取准确性
+
+- **前置条件**：无
+- **测试步骤**：
+  1. 构造包含 blocks 的文档结构
+  2. 调用 `_daily_checkin_value_from_execution()` 提取
+  3. 调用 `_parse_daily_checkin_items()` 解析
+  4. 逐项对比预期标签
+- **预期结果**：
+  - 提取成功，返回 5 项
+  - 每项标签与预期完全一致：
+    1. "今日是否完成早C/午B/晚A？（是/否）"
+    2. "今日是否在23:30前上床？（是/否）"
+    3. "今日蔬菜摄入是否达到2拳？（是/否）"
+    4. "今日是否完成7000步或有氧30分钟？（是/否）"
+    5. "今日情绪稳定度和饭后困综合评分（1-5分，1很差5很好）"
+- **实际结果**：✅
+
+#### TC-202: 旧格式（扁平 daily_checkin）提取准确性
+
+- **前置条件**：无
+- **测试步骤**：
+  1. 构造扁平 daily_checkin 字段的文档结构
+  2. 调用提取函数
+  3. 逐项对比预期标签
+- **预期结果**：与 TC-201 相同
+- **实际结果**：✅
+
+#### TC-203: 空文档处理
+
+- **前置条件**：无
+- **测试步骤**：
+  1. 构造没有 daily_checkin 的文档结构
+  2. 调用提取函数
+- **预期结果**：
+  - `_daily_checkin_value_from_execution()` 返回 None
+  - `personalized_checkin_fields_from_document_payloads()` 返回空列表
+  - 由调用方（`_personalized_checkin_fields`）处理默认值
+- **实际结果**：✅
