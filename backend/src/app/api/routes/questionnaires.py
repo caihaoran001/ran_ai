@@ -408,6 +408,12 @@ async def _generate_profile_and_documents(service_case_id: int) -> None:
 
 
 async def _personalized_checkin_fields(session: AsyncSession, service_case: ServiceCase) -> list[dict[str, Any]]:
+    # The reviewed execution document is the source of truth for the daily form.
+    # This also repairs older profiles that persisted the generic fallback fields.
+    document_fields = await _personalized_checkin_fields_from_latest_document(session, service_case.id)
+    if document_fields:
+        return document_fields
+
     latest_profile = await session.scalar(
         select(UserProfile)
         .where(UserProfile.service_case_id == service_case.id)
@@ -420,9 +426,6 @@ async def _personalized_checkin_fields(session: AsyncSession, service_case: Serv
     if len(fields) >= 5:
         return fields
 
-    document_fields = await _personalized_checkin_fields_from_latest_document(session, service_case.id)
-    if document_fields:
-        return document_fields
     return [dict(f) for f in DEFAULT_PERSONALIZED_CHECKIN_FIELDS]
 
 
@@ -441,10 +444,8 @@ async def _personalized_checkin_fields_from_latest_document(
     )
     if not document or not isinstance(document.content_json, dict):
         return []
-    fields = document.content_json.get("fields")
-    payload = fields if isinstance(fields, dict) else document.content_json
     return personalized_checkin_fields_from_document_payloads(
-        {DocumentType.DAY28_EXECUTION_STANDARD.value: payload}
+        {DocumentType.DAY28_EXECUTION_STANDARD.value: document.content_json}
     )
 
 

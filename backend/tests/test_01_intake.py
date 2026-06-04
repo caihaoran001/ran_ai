@@ -301,7 +301,7 @@ async def test_intake_submit_records_profile_completed_outcome(
 
 
 @pytest.mark.asyncio
-async def test_personalized_checkin_falls_back_to_document_daily_checkin(admin_client, db_session):
+async def test_personalized_checkin_uses_latest_document_daily_checkin_block(admin_client, db_session):
     group_id = f"test-personalized-checkin-{secrets.token_hex(6)}"
     resp = await admin_client.post("/service-cases", json={
         "group_id": group_id,
@@ -327,6 +327,17 @@ async def test_personalized_checkin_falls_back_to_document_daily_checkin(admin_c
                         "required": True,
                         "options": [],
                     }
+                ] + [
+                    {
+                        "id": f"old_default_{index}",
+                        "key": f"old_default_{index}",
+                        "type": "RADIO",
+                        "title": f"旧默认项 {index}",
+                        "label": f"旧默认项 {index}",
+                        "required": True,
+                        "options": ["是", "否"],
+                    }
+                    for index in range(2, 6)
                 ],
             },
             summary="旧画像",
@@ -339,15 +350,20 @@ async def test_personalized_checkin_falls_back_to_document_daily_checkin(admin_c
             title="28天执行标准与打卡要求",
             content_md="ok",
             content_json={
-                "fields": {
-                    "daily_checkin": [
-                        "早C/午B/晚A是否全部完成",
-                        "今天是否至少吃到2拳蔬菜",
-                        "今天是否完成30分钟快走或≥7000步",
-                        "今日晨起体重（kg）",
-                        "情绪稳定度和饭后困综合评分",
-                    ]
-                }
+                "blocks": [
+                    {
+                        "key": "daily_checkin",
+                        "title": "每日固定打卡（每天只打这5项）",
+                        "kind": "text",
+                        "content": (
+                            "1. 今日是否完成早C/午B/晚A？（是/否）\n"
+                            "2. 今日是否在23:30前上床？（是/否）\n"
+                            "3. 今日蔬菜摄入是否达到2拳？（是/否）\n"
+                            "4. 今日是否完成7000步或有氧30分钟？（是/否）\n"
+                            "5. 今日情绪稳定度和饭后困综合评分（1-5分）"
+                        ),
+                    }
+                ]
             },
         )
     )
@@ -357,8 +373,10 @@ async def test_personalized_checkin_falls_back_to_document_daily_checkin(admin_c
     assert resp.status_code == 200, resp.text
     fields = resp.json()["fields"]
     assert len(fields) == 5
+    assert fields[0]["title"] == "今日是否完成早C/午B/晚A？（是/否）"
     assert fields[0]["type"] == "RADIO"
-    assert fields[3]["type"] == "SIMPLE"
+    assert fields[4]["type"] == "SIMPLE"
+    assert all(not field["title"].startswith("旧默认项") for field in fields)
 
 
 @pytest.mark.asyncio

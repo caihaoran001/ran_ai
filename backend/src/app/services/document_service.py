@@ -639,7 +639,7 @@ def _personalized_checkin_fields_from_documents(document_payloads: dict[str, dic
     execution = document_payloads.get(DocumentType.DAY28_EXECUTION_STANDARD.value, {})
     if not isinstance(execution, dict):
         return []
-    daily_items = _parse_daily_checkin_items(execution.get("daily_checkin"))
+    daily_items = _parse_daily_checkin_items(_daily_checkin_value_from_execution(execution))
     if not daily_items:
         return []
     fields = []
@@ -658,6 +658,37 @@ def _personalized_checkin_fields_from_documents(document_payloads: dict[str, dic
             }
         )
     return fields
+
+
+def _daily_checkin_value_from_execution(execution: dict[str, object]) -> object:
+    """Read daily check-ins from either the LLM payload or rendered document JSON."""
+
+    daily_checkin = execution.get("daily_checkin")
+    if daily_checkin:
+        return daily_checkin
+
+    fields = execution.get("fields")
+    if isinstance(fields, dict) and fields.get("daily_checkin"):
+        return fields["daily_checkin"]
+
+    blocks = execution.get("blocks")
+    if not isinstance(blocks, list):
+        return None
+
+    fallback_value: object = None
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        key = str(block.get("key") or "").strip()
+        title = str(block.get("title") or "").strip()
+        value = block.get("content") or block.get("items") or block.get("value") or block.get("text")
+        if not value:
+            continue
+        if key == "daily_checkin" or "每日固定打卡" in title:
+            return value
+        if fallback_value is None and "打卡" in title:
+            fallback_value = value
+    return fallback_value
 
 
 def _parse_daily_checkin_items(value: object) -> list[str]:
