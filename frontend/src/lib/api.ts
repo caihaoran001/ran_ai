@@ -308,5 +308,10 @@ export type DiagnosticsSummary = {
     latency_ms?: number | null;
     model?: string | null;
   };
+  diagnostic_costs?: {
+    latest_run_id?: string | null;
+    latest: { calls: number; tokens: number; estimated_cost_yuan: number };
+    lifetime: { calls: number; tokens: number; estimated_cost_yuan: number };
+  };
   checked_at: number;
 };

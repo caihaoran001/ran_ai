@@ -14,7 +14,7 @@ VALID_RISK_CODES = frozenset({
     "hormone_medication", "liver_kidney", "stone", "severe_insomnia",
     "chest_pain", "palpitation", "allergy", "medical_claim", "other_risk",
     "emotional_distress", "risk_classifier_unavailable",
-    "medication", "physical_discomfort", "complaint",
+    "medication", "physical_discomfort", "complaint", "refund_request",
 })
 
 VALID_RISK_LEVELS = frozenset({"low", "medium", "high"})
@@ -96,10 +96,21 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
                 "source": emotion_signal.get("source") or source,
             }
         )
+
+    if refund_intent["detected"]:
+        intervention_reasons.append(
+            {
+                "code": "refund_request",
+                "level": "medium",
+                "reason": refund_intent.get("reason") or "用户明确表达退款或退出意向，需要人工处理。",
+                "evidence": refund_intent.get("evidence") or content[:120],
+                "source": refund_intent.get("source") or source,
+            }
+        )
     
     has_high_intervention = any(r.get("level") in {"high", "medium"} for r in intervention_reasons)
     requires = bool(insight.get("requires_human_intervention")) or has_high_intervention
-    return {
+    normalized = {
         "requires_human_intervention": requires,
         "intervention_reasons": _dedupe_items(intervention_reasons),
         "risk_flags": _dedupe_items(risk_flags),
@@ -109,6 +120,9 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
         "confidence": _number(insight.get("confidence"), default=0.0),
         "notes": _string(insight.get("notes")),
     }
+    if "requires_immediate_safety_reply" in insight:
+        normalized["requires_immediate_safety_reply"] = bool(insight.get("requires_immediate_safety_reply"))
+    return normalized
 
 
 def merge_case_insight(service_case: ServiceCase, insight: dict[str, Any]) -> None:

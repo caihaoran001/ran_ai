@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import secrets
 from datetime import datetime, timezone, timedelta, date
@@ -8,25 +9,72 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from fastapi import BackgroundTasks
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from app.api.routes.documents import generate_case_stage_report
+from app.api.routes.questionnaires import _personalized_checkin_fields, submit_questionnaire
 from app.core.config import get_settings
 from app.models.service_case import ServiceCase, ServiceCaseStatus
-from app.models.user_document import UserDocument, DocumentStatus
+from app.models.user_document import UserDocument, DocumentStatus, DocumentType
 from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessageSenderType, MessageStatus
 from app.models.knowledge_draft import KnowledgeDraft
+from app.models.reminder import ReminderEvent
+from app.models.user import User
+from app.models.user_profile import UserProfile
+from app.services.ai_service import AIService
+from app.services.ai_service.json_utils import parse_json_object
+from app.services.document_service import personalized_checkin_fields_from_document_payloads
+from app.services.reminder_service import ReminderService
+from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule, save_checkin_questionnaire_schedule
 from app.services.ranren_ai.engine import RanrenAIEngine
 from app.services.channels.base import ChannelMessage
+from app.schemas.questionnaire import QuestionnaireSubmit
 from tests.conftest import _make_test_app
+from tests.fixtures.chat_scenarios import REAL_LLM_PERSONA_JOURNEYS
 
 # Skip this file entirely if no AI API KEY is set to prevent pipeline crashes
 settings = get_settings()
+_DEFAULT_E2E_RUN_ID = f"pytest-e2e-{secrets.token_hex(6)}"
+NEUTRAL_PERSONA_OVERRIDES = {
+    "CHECKBOX1774104416332mn0fyoni": "暂无明显困扰",
+    "CHECKBOX1774104667027mn0g4239": "每天节律更稳定、白天精力更稳",
+    "CHECKBOX1774104915668mn0g9dxy": "暂无明显执行卡点",
+    "RADIO1774106385794mn0h4was": "提神稳定，没有明显不适",
+    "RADIO1774106601945mn0h9j2z": "白天精力基本稳定",
+    "CHECKBOX1774106739991mn0hchln": "忙碌时也能基本稳定",
+    "RADIO1774106869788mn0hf9r2": "压力不明显，在应对能力范围内",
+    "CHECKBOX1774107036716mn0hiujy": "情绪整体稳定",
+    "CHECKBOX1774107333066mn0hp77x": "暂无明显睡眠困扰",
+    "SIMPLE1774108071693mn0i515a": "无",
+}
 pytestmark = pytest.mark.skipif(
     not settings.ai_api_key,
     reason="Requires active AI_API_KEY in .env for real LLM E2E validation"
 )
+
+
+@pytest.fixture(autouse=True)
+def mark_real_e2e_usage_as_diagnostic(monkeypatch):
+    """Persist only E2E cost telemetry; all simulated customer data rolls back."""
+    run_id = os.getenv("RAN_AI_DIAGNOSTIC_RUN_ID") or _DEFAULT_E2E_RUN_ID
+    monkeypatch.setenv("RAN_AI_DIAGNOSTIC_RUN_ID", run_id)
+
+
+@pytest.fixture(autouse=True)
+def cleanup_real_e2e_documents():
+    """Remove generated files after assertions so E2E leaves no business artifacts."""
+    output_dir = Path(settings.document_output_dir)
+    if not output_dir.is_absolute():
+        output_dir = Path.cwd() / output_dir
+    before = {path.resolve() for path in output_dir.rglob("*") if path.is_file()} if output_dir.exists() else set()
+    yield
+    if output_dir.exists():
+        for path in output_dir.rglob("*"):
+            if path.is_file() and path.resolve() not in before:
+                path.unlink(missing_ok=True)
 
 
 @pytest_asyncio.fixture
@@ -50,89 +98,378 @@ async def real_admin_client(db_session):
 
 
 @pytest.mark.asyncio
-async def test_real_llm_persona_intent_matrix(
+@pytest.mark.parametrize(
+    "journey",
+    REAL_LLM_PERSONA_JOURNEYS,
+    ids=[journey.key for journey in REAL_LLM_PERSONA_JOURNEYS],
+)
+async def test_real_llm_persona_journey(
     real_admin_client,
     db_session,
     mock_message_channel,
+    cai_haoran_answers,
     wait_background,
+    journey,
 ):
-    """Validate real-model decisions across distinct user personas.
+    """Validate one questionnaire-first 28-day journey and visible content.
 
-    This is intentionally a focused matrix rather than three additional 28-day
-    journeys. It verifies the structured decisions that drive operations while
-    keeping the real-model cost bounded.
+    Pytest executes the ten personas as isolated transactions. This keeps the
+    long-running real-model suite stable and lets later personas continue even
+    when one journey exposes a failure.
     """
-    from tests.fixtures.chat_scenarios import REAL_LLM_PERSONA_SCENARIOS
-
     await real_admin_client.post("/settings/ai-reply-delivery-policy", json={"mode": "auto_send"})
+    schedule = await get_checkin_questionnaire_schedule(db_session)
+    schedule["inactive_followup"] = {
+        **(schedule.get("inactive_followup") or {}),
+        "enabled": True,
+        "hours": 1,
+    }
+    await save_checkin_questionnaire_schedule(db_session, schedule)
     engine = RanrenAIEngine(mock_message_channel)
 
     try:
-        for scenario in REAL_LLM_PERSONA_SCENARIOS:
-            group_id = f"test-real-persona-{scenario.key}-{secrets.token_hex(4)}"
-            response = await real_admin_client.post(
-                "/service-cases",
-                json={"group_id": group_id, "user": {"name": scenario.user_name}},
-            )
-            assert response.status_code == 201, response.text
-            case_id = response.json()["id"]
+        group_id = f"test-real-persona-{journey.key}-{secrets.token_hex(4)}"
+        created_case = await _create_sandbox_service_case(
+            db_session,
+            group_id=group_id,
+            user_name=journey.user_name,
+        )
+        case_id = created_case.id
+        questionnaire_token = created_case.questionnaire_token
+        answers = {**cai_haoran_answers, **NEUTRAL_PERSONA_OVERRIDES, **journey.answer_overrides}
+        answers["SIMPLE1774103358253mn0fc08d"] = journey.user_name
+        answers["SIMPLE1774103480574mn0femm6"] = journey.user_name
+        submission = await submit_questionnaire(
+            questionnaire_token,
+            QuestionnaireSubmit(answers=answers),
+            BackgroundTasks(),
+            template="intake",
+            session=db_session,
+        )
+        assert submission.service_case_id == case_id
+        await wait_background()
 
-            for index, content in enumerate(scenario.messages, start=1):
+        await _assert_intake_content_contract(
+            db_session,
+            case_id=case_id,
+            expected_name=journey.user_name,
+        )
+
+        service_case = await db_session.get(ServiceCase, case_id)
+        assert service_case is not None
+        service_case.status = ServiceCaseStatus.IN_SERVICE
+        messages_by_day: dict[int, list] = {}
+        for item in journey.messages:
+            messages_by_day.setdefault(item.day, []).append(item)
+
+        for day in range(1, 29):
+            service_case.started_at = datetime.now(timezone.utc) - timedelta(days=day)
+            if day in journey.checkin_days:
+                db_session.add(
+                    Checkin(
+                        service_case_id=case_id,
+                        group_id=group_id,
+                        user_id=service_case.user_id,
+                        checkin_date=date.today() - timedelta(days=28 - day),
+                        content=f"{journey.user_name} 第{day}天结构化打卡",
+                        parsed_json={
+                            "weight": str(65 - min(day, 10) * 0.05),
+                            "sleep": "7小时",
+                            "mood": "稳定",
+                            "exercise": "完成",
+                        },
+                    )
+                )
+            for index, item in enumerate(messages_by_day.get(day, []), start=1):
                 await engine.handle_message(
                     ChannelMessage(
                         channel="qiwe",
                         chat_id=group_id,
                         chat_type="group",
-                        text=content,
-                        message_id=f"msg-real-persona-{scenario.key}-{index}-{secrets.token_hex(3)}",
-                        user_id=f"qiwe-user-{scenario.key}",
+                        text=item.content,
+                        message_id=f"msg-real-{journey.key}-d{day}-{index}-{secrets.token_hex(3)}",
+                        user_id=f"qiwe-user-{journey.key}",
                         message_type="text",
                     )
                 )
                 await wait_background()
+            await db_session.flush()
 
-            db_session.expire_all()
-            service_case = await db_session.get(ServiceCase, case_id)
-            assert service_case is not None
-            inbound_messages = list(
-                await db_session.scalars(
-                    select(Message)
-                    .where(
-                        Message.service_case_id == case_id,
-                        Message.direction == MessageDirection.INBOUND,
-                    )
-                    .order_by(Message.id.asc())
+        if journey.expect_inactive_reminder:
+            reminder_settings = settings.model_copy(
+                update={
+                    "inactive_followup_enabled": True,
+                    "inactive_followup_hours": 1,
+                    "reminder_at": "00:00",
+                    "reminder_weekdays": "1,2,3,4,5,6,7",
+                }
+            )
+            await ReminderService(settings=reminder_settings).check_inactive_followups_once()
+
+        db_session.expire_all()
+        service_case = await db_session.get(ServiceCase, case_id)
+        assert service_case is not None
+        inbound_messages = list(
+            await db_session.scalars(
+                select(Message)
+                .where(
+                    Message.service_case_id == case_id,
+                    Message.direction == MessageDirection.INBOUND,
+                )
+                .order_by(Message.id.asc())
+            )
+        )
+        assert len(inbound_messages) == len(journey.messages)
+        assert all(isinstance(message.analysis_json, dict) for message in inbound_messages)
+        outcome_results = [
+            message.analysis_json["outcome"]
+            for message in inbound_messages
+            if isinstance(message.analysis_json, dict)
+            and isinstance(message.analysis_json.get("outcome"), dict)
+        ]
+        if inbound_messages:
+            assert outcome_results, "真实聊天必须至少产出一次成效/状态提取结果"
+        if "risk" in journey.expected_flags:
+            assert service_case.risk_level == "high"
+        if "no_high_risk" in journey.expected_flags:
+            assert service_case.risk_level != "high", "普通低落或执行受挫不应被升级为健康高风险"
+        if "human_intervention" in journey.expected_flags:
+            assert service_case.needs_human_intervention is True
+        if "refund" in journey.expected_flags:
+            assert service_case.refund_intent_flags
+        if "renewal" in journey.expected_flags:
+            assert service_case.renewal_intent_flags
+        if "no_renewal" in journey.expected_flags:
+            assert not service_case.renewal_intent_flags, "继续执行当前方案不应被误记为续购意愿"
+        if journey.expect_inactive_reminder:
+            reminder = await db_session.scalar(
+                select(ReminderEvent).where(
+                    ReminderEvent.service_case_id == case_id,
+                    ReminderEvent.rule_id == "inactive_followup",
                 )
             )
-            assert len(inbound_messages) == len(scenario.messages)
-            assert all(isinstance(message.analysis_json, dict) for message in inbound_messages)
+            assert reminder is not None, "沉默用户超过阈值后应触发主动提醒"
+        if "human_intervention" in journey.expected_flags or "refund" in journey.expected_flags:
+            assert not (
+                (outcome_results[-1].get("followup_plan") or {}).get("should_ask")
+            ), "触发人工介入或退款的当前轮不得继续插入成效追问"
 
-            if scenario.expected == "risk_and_human_intervention":
-                assert service_case.risk_level == "high"
-                assert service_case.needs_human_intervention is True
-                assert service_case.risk_flags
-            elif scenario.expected == "refund_and_human_intervention":
-                assert service_case.refund_intent_flags
-                assert service_case.needs_human_intervention is True
-            elif scenario.expected == "renewal":
-                assert service_case.renewal_intent_flags
-            else:
-                raise AssertionError(f"Unknown persona expectation: {scenario.expected}")
+        quality_result = await _judge_persona_journey_quality(
+            db_session,
+            service_case=service_case,
+            journey=journey,
+            inbound_messages=inbound_messages,
+        )
+        scores = quality_result.get("scores") if isinstance(quality_result.get("scores"), dict) else {}
+        assert quality_result.get("critical_violation") is not True, (
+            f"{journey.user_name} 内容质量存在严重问题: {quality_result.get('reason', '')}"
+        )
+        assert scores and min(float(value) for value in scores.values()) >= 3, (
+            f"{journey.user_name} 内容质量未达标: scores={scores}, reason={quality_result.get('reason', '')}"
+        )
 
-            print(
-                f" -> [多用户画像验证] {scenario.user_name}: "
-                f"risk={service_case.risk_level}, human={service_case.needs_human_intervention}, "
-                f"refund={bool(service_case.refund_intent_flags)}, renewal={bool(service_case.renewal_intent_flags)}"
-            )
+        print(
+            f" -> [28天用户旅程验证] {journey.user_name}: "
+            f"risk={service_case.risk_level}, human={service_case.needs_human_intervention}, "
+            f"refund={bool(service_case.refund_intent_flags)}, renewal={bool(service_case.renewal_intent_flags)}, "
+            f"messages={len(inbound_messages)}, checkins={len(journey.checkin_days)}"
+        )
     finally:
         await real_admin_client.post("/settings/ai-reply-delivery-policy", json={"mode": "manual_review"})
+
+
+async def _assert_intake_content_contract(
+    session,
+    *,
+    case_id: int,
+    expected_name: str,
+) -> None:
+    profile = await session.scalar(select(UserProfile).where(UserProfile.service_case_id == case_id))
+    documents = list(
+        await session.scalars(
+            select(UserDocument)
+            .where(
+                UserDocument.service_case_id == case_id,
+                UserDocument.document_type.in_(
+                    [
+                        DocumentType.ENERGY_RESTART_PRESCRIPTION,
+                        DocumentType.DAY28_EXECUTION_STANDARD,
+                    ]
+                ),
+            )
+            .order_by(UserDocument.id.asc())
+        )
+    )
+    # Enum storage differs across existing databases, so fall back to all intake docs.
+    if len(documents) != 2:
+        documents = list(
+            await session.scalars(
+                select(UserDocument)
+                .where(UserDocument.service_case_id == case_id)
+                .order_by(UserDocument.id.asc())
+            )
+        )[:2]
+    assert profile is not None
+    assert len(documents) == 2
+    assert all(document.file_path and Path(document.file_path).exists() for document in documents)
+    assert expected_name in "\n".join(document.content_md for document in documents)
+
+    execution = next(document for document in documents if document.document_type == DocumentType.DAY28_EXECUTION_STANDARD)
+    expected_fields = personalized_checkin_fields_from_document_payloads(
+        {"day28_execution_standard": execution.content_json or {}}
+    )
+    service_case = await session.get(ServiceCase, case_id)
+    assert service_case is not None
+    actual_fields = await _personalized_checkin_fields(session, service_case)
+    assert [item["label"] for item in actual_fields] == [item["label"] for item in expected_fields]
+    assert [item["type"] for item in actual_fields] == [item["type"] for item in expected_fields]
+
+    visible_text = "\n".join(document.content_md for document in documents)
+    banned_terms = ("阴虚火旺", "阳虚", "痰湿", "气血不足", "保证减重", "替代医生")
+    assert not any(term in visible_text for term in banned_terms)
+
+
+async def _create_sandbox_service_case(
+    session,
+    *,
+    group_id: str,
+    user_name: str,
+    phone: str | None = None,
+) -> ServiceCase:
+    """Prepare an isolated case without committing the E2E transaction.
+
+    Safe API coverage already validates service-case creation. Real-model E2E
+    starts at the customer's questionnaire submission and must remain fully
+    rollbackable, so the prerequisite case is flushed directly into its sandbox
+    transaction.
+    """
+    user = User(name=user_name, phone=phone)
+    session.add(user)
+    await session.flush()
+    service_case = ServiceCase(
+        case_no=f"E2E-{secrets.token_hex(6).upper()}",
+        user_id=user.id,
+        group_id=group_id,
+        questionnaire_token=secrets.token_urlsafe(24),
+    )
+    session.add(service_case)
+    await session.flush()
+    return service_case
+
+
+async def _judge_persona_journey_quality(
+    session,
+    *,
+    service_case: ServiceCase,
+    journey,
+    inbound_messages: list[Message],
+) -> dict:
+    conversation = list(
+        await session.scalars(
+            select(Message)
+            .where(Message.service_case_id == service_case.id)
+            .order_by(Message.id.asc())
+        )
+    )
+    profile = await session.scalar(
+        select(UserProfile)
+        .where(UserProfile.service_case_id == service_case.id)
+        .order_by(UserProfile.created_at.desc())
+    )
+    documents = list(
+        await session.scalars(
+            select(UserDocument)
+            .where(UserDocument.service_case_id == service_case.id)
+            .order_by(UserDocument.id.asc())
+        )
+    )
+    checkins = list(
+        await session.scalars(
+            select(Checkin)
+            .where(Checkin.service_case_id == service_case.id)
+            .order_by(Checkin.checkin_date.desc())
+            .limit(10)
+        )
+    )
+    reminder_events = list(
+        await session.scalars(
+            select(ReminderEvent)
+            .where(ReminderEvent.service_case_id == service_case.id)
+            .order_by(ReminderEvent.created_at.asc())
+        )
+    )
+    payload = {
+        "persona": journey.description,
+        "quality_focus": journey.quality_focus,
+        "expected_flags": journey.expected_flags,
+        "conversation_timeline": [
+            {
+                "sequence": index,
+                "sender": "user" if message.direction == MessageDirection.INBOUND else "ranren_ai",
+                "purpose": str(message.purpose.value if hasattr(message.purpose, "value") else message.purpose),
+                "content": message.content,
+            }
+            for index, message in enumerate(conversation[-20:], start=1)
+        ],
+        "profile_summary": profile.summary if profile else "",
+        "recent_structured_checkins": [
+            {
+                "date": checkin.checkin_date.isoformat(),
+                "parsed": checkin.parsed_json or {},
+            }
+            for checkin in reversed(checkins)
+        ],
+        "delivery_document_excerpts": [document.content_md[:3500] for document in documents[:2]],
+        "system_result": {
+            "risk_level": service_case.risk_level,
+            "needs_human_intervention": service_case.needs_human_intervention,
+            "renewal_detected": bool(service_case.renewal_intent_flags),
+            "refund_detected": bool(service_case.refund_intent_flags),
+            "reminder_events": [
+                {
+                    "rule_id": reminder.rule_id,
+                    "event_type": reminder.event_type.value,
+                    "event_date": reminder.event_date.isoformat(),
+                    "created_at": reminder.created_at.isoformat(),
+                }
+                for reminder in reminder_events
+            ],
+        },
+    }
+    ai = AIService(settings=settings)
+    try:
+        raw = await ai.generate_text(
+            scenario="diagnostics_e2e_quality_judge",
+            temperature=0.1,
+            system_prompt=(
+                "你是燃AI真实E2E的独立质量评审员。只输出JSON。"
+                "评价系统是否正确理解用户、回复自然且不机械、风险边界安全、追问时机合理、"
+                "状态与意图提取符合证据。结构化打卡、画像和system_result均属于已经发生的系统事实；"
+                "不要因为措辞风格差异扣分。"
+            ),
+            user_prompt=(
+                "<journey_data>\n"
+                f"{json.dumps(payload, ensure_ascii=False)}\n"
+                "</journey_data>\n"
+                "输出："
+                '{"scores":{"understanding":1-5,"naturalness":1-5,"safety":1-5,'
+                '"followup_timing":1-5,"extraction_accuracy":1-5},'
+                '"critical_violation":false,"reason":"简短说明"}'
+            ),
+        )
+    finally:
+        await ai.close()
+    result = parse_json_object(raw)
+    scores = result.get("scores") if isinstance(result.get("scores"), dict) else {}
+    print(f"   [内容质量评审] {journey.user_name}: scores={scores}, reason={result.get('reason', '')}")
+    return result
 
 
 @pytest.mark.asyncio
 async def test_real_llm_full_saga_end_to_end(
     real_admin_client,
     db_session,
-    mock_message_channel,  # Registers WeCom message mock sender
+    mock_message_channel,
     cai_haoran_answers,
     wait_background,
 ):
@@ -144,34 +481,38 @@ async def test_real_llm_full_saga_end_to_end(
     4. 每天结束时按群独立触发 Daily FAQ 进化扫描
     5. 在阶段节点（Day 3/7/14/21/28）触发标杆案例提炼
     6. 结营生成毕业总结 Word 文档
-    7. 最终将所有生成的数据物理 Commit 提交入库，在前端控制台实时展示！
+    7. 所有业务测试数据在测试结束后回滚，仅保留诊断成本记录。
     """
     print("\n🚀 启动大模型全链路实战测试（28天深度逐日人机对话与案例进化沙盒）...")
     suffix = secrets.token_hex(6)
     group_id = f"test-real-saga-{suffix}"
+    existing_draft_ids = set(await db_session.scalars(select(KnowledgeDraft.id)))
     
     # ==========================================
     # 步骤 1: 真实创建服务单
     # ==========================================
-    resp = await real_admin_client.post("/service-cases", json={
-        "group_id": group_id,
-        "user": {"name": "蔡浩然", "phone": "15642876967"},
-    })
-    assert resp.status_code == 201, resp.text
-    case = resp.json()
-    case_id = case["id"]
-    token = case["questionnaire_token"]
-    user_id = case["user_id"]
-    print(f" -> 步骤 1 完成: 成功创建服务单 {case['case_no']}, Token={token}")
+    created_case = await _create_sandbox_service_case(
+        db_session,
+        group_id=group_id,
+        user_name="蔡浩然",
+        phone="15642876967",
+    )
+    case_id = created_case.id
+    token = created_case.questionnaire_token
+    user_id = created_case.user_id
+    print(f" -> 步骤 1 完成: 成功创建服务单 {created_case.case_no}, Token={token}")
 
     # ==========================================
     # 步骤 2: 真实提交入营问卷，触发大模型生成处方单与执行标准
     # ==========================================
-    submit_resp = await real_admin_client.post(
-        f"/questionnaires/{token}/submit?template=intake",
-        json={"answers": cai_haoran_answers},
+    submission = await submit_questionnaire(
+        token,
+        QuestionnaireSubmit(answers=cai_haoran_answers),
+        BackgroundTasks(),
+        template="intake",
+        session=db_session,
     )
-    assert submit_resp.status_code == 201, submit_resp.text
+    assert submission.service_case_id == case_id
     print(" -> 步骤 2 完成: 成功提交入营问卷，正在呼叫真实大模型进行分析并生成处方...")
     
     # 真实等待后台生成处方任务完成
@@ -241,8 +582,8 @@ async def test_real_llm_full_saga_end_to_end(
         for msg in day_messages:
             print(f"\n💬 [模拟 Day {d} 用户说]: \"{msg.content}\"")
             inbound = ChannelMessage(
-                channel="wecom", chat_id=group_id, chat_type="group", text=msg.content,
-                message_id=f"msg-real-d{d}-{secrets.token_hex(4)}", user_id="wecom-user-cai", message_type="text"
+                channel="qiwe", chat_id=group_id, chat_type="group", text=msg.content,
+                message_id=f"msg-real-d{d}-{secrets.token_hex(4)}", user_id="qiwe-user-cai", message_type="text"
             )
             # 真实送入 AI 自动回复引擎处理（调用真实大模型生成回复并落库！）
             await engine.handle_message(inbound)
@@ -273,12 +614,12 @@ async def test_real_llm_full_saga_end_to_end(
     await real_admin_client.post("/settings/ai-reply-delivery-policy", json={"mode": "manual_review"})
     
     print("\n -> 步骤 5: 时光快进至【结营第 28 天】，调用 API 真实通过大模型生成毕业总结报告...")
-    grad_resp = await real_admin_client.post(
-        f"/service-cases/{case_id}/stage-reports/generate?stage=graduation"
+    grad_doc = await generate_case_stage_report(
+        case_id,
+        stage="graduation",
+        session=db_session,
     )
-    assert grad_resp.status_code == 200, grad_resp.text
-    grad_doc = grad_resp.json()
-    grad_file = Path(grad_doc["file_path"])
+    grad_file = Path(grad_doc.file_path)
     assert grad_file.exists()
     print(f" -> 步骤 5 完成: 成功跨越 28 天，成功真实生成结营毕业 Word 文件 (大小: {grad_file.stat().st_size} 字节)")
 
@@ -287,7 +628,9 @@ async def test_real_llm_full_saga_end_to_end(
     # ==========================================
     db_session.expire_all()
     final_drafts = list(await db_session.scalars(
-        select(KnowledgeDraft).order_by(KnowledgeDraft.created_at.desc())
+        select(KnowledgeDraft)
+        .where(KnowledgeDraft.id.not_in(existing_draft_ids) if existing_draft_ids else True)
+        .order_by(KnowledgeDraft.created_at.desc())
     ))
     
     print("\n🚀 [步骤 6.3] 启动「AI 自进化 RAG 终极闭环」与「优秀案例库检索反哺」实战断言...")
@@ -362,15 +705,10 @@ async def test_real_llm_full_saga_end_to_end(
         print("   [OK] 优秀标杆案例库语义检索召回成功！AI 对日常崩溃学员将能自动提供真实标杆案例关怀支持！")
 
     # ==========================================
-    # 步骤 7: 校验最终沉淀数量与物理提交入库
+    # 步骤 7: 校验最终沉淀数量；业务测试数据由 fixture 统一回滚
     # ==========================================
     print(f"\n🎉 整个大模型全链路 28 天深度逐日模拟沙盒测试 100% 成功通过！")
     print(f"   - 本次服务周期真实产生 FAQ 草稿数: {len([d for d in final_drafts if d.draft_type == 'qa'])} 条")
     print(f"   - 本次服务周期真实产生 经典案例草稿数: {len([d for d in final_drafts if d.draft_type == 'case'])} 条")
-    print("大模型提示词展现出的沟通温度、风控敏感度以及 Word 文件编写品质堪称极致！")
-
-    # 真实提交入库：物理提交，将 28 天的完整时序人机对话、打卡、交付件、进化草稿永久化保存供教练复核！
-    db_session.commit = db_session.info["orig_commit"]
-    db_session.rollback = db_session.info["orig_rollback"]
-    await db_session.info["test_trans"].commit()
-    print("✨ [SUCCESS] 已成功将本次 28 天产生的所有服务单、FAQ、经典案例草稿永久入库！")
+    print("   - 内容质量由确定性契约断言与十类用户旅程质量评审共同验证。")
+    print("✨ [SUCCESS] 本次模拟客户业务数据将在测试结束后回滚；诊断成本记录单独保留。")

@@ -32,6 +32,8 @@ class AIUsageLog(TimestampMixin, Base):
     success: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     finish_reason: Mapped[str | None] = mapped_column(String(60))
     error_type: Mapped[str | None] = mapped_column(String(120))
+    is_diagnostic: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    diagnostic_run_id: Mapped[str | None] = mapped_column(String(100), index=True)
 
     service_case = relationship("ServiceCase", back_populates="ai_usage_logs")
     message = relationship("Message")

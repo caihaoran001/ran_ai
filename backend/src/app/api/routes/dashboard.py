@@ -231,7 +231,7 @@ async def dashboard_ai_costs(
         )
         .join(ServiceCase, AIUsageLog.service_case_id == ServiceCase.id)
         .outerjoin(User, ServiceCase.user_id == User.id)
-        .where(active_service_case_condition())
+        .where(active_service_case_condition(), AIUsageLog.is_diagnostic.is_(False))
         .group_by(ServiceCase.id, ServiceCase.case_no, ServiceCase.user_id, User.name, ServiceCase.group_id)
         .order_by(ai_cost_expr.desc(), func.max(AIUsageLog.created_at).desc())
     )
@@ -286,7 +286,10 @@ async def _build_ai_cost_summary(session: AsyncSession) -> AICostSummary:
             ai_cost_expr,
         )
         .outerjoin(ServiceCase, AIUsageLog.service_case_id == ServiceCase.id)
-        .where((AIUsageLog.service_case_id.is_(None)) | active_service_case_condition())
+        .where(
+            AIUsageLog.is_diagnostic.is_(False),
+            (AIUsageLog.service_case_id.is_(None)) | active_service_case_condition(),
+        )
     )
     total_calls, total_tokens, prompt_tokens, completion_tokens, cost = row.one()
     return AICostSummary(

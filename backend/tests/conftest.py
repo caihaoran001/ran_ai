@@ -392,7 +392,7 @@ async def mock_ai():
     intervention_mod.AIService = orig_intervention
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def db_session():
     from app.db.session import SessionLocal
 

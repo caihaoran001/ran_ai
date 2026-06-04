@@ -330,7 +330,7 @@ REMINDER_WEEKDAYS=1,2,3,4,5
 - `GET /api/diagnostics/history` / `POST /api/diagnostics/clear-history` — 跨设备共享的自测历史
 
 对应前端页面 `/system-diagnostics`。页面的一键健康自测只运行使用 Mock 且回滚数据的
-`01-06、08、09`；真实模型 E2E `07` 被单独隔离，运行前必须确认，并会永久保留测试数据。
+连续编号的安全健康检查 `01-08`；真实模型 E2E 显示为 `E2E-01` 并单独隔离，运行前必须确认。模拟客户业务数据会回滚，真实模型 token、费用与耗时作为诊断记录单独保留。
 
 ## 页面
 

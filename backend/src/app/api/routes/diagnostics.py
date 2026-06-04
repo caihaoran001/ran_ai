@@ -4,15 +4,17 @@ import asyncio
 import os
 import time
 import json
+import secrets
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.session import get_session
 from app.services.ai_service import AIService
+from app.models.ai_usage import AIUsageLog
 
 router = APIRouter()
 _DIAGNOSTICS_RUN_LOCK = asyncio.Lock()
@@ -88,11 +90,11 @@ TEST_SUITES = [
         "id": "07",
         "display_id": "E2E-01",
         "name": "test_07_real_llm_e2e",
-        "description": "真实大模型 E2E：一条完整 28 天旅程 + 多类用户风控/意图场景矩阵 + RAG 自进化闭环",
+        "description": "真实大模型 E2E：10 类用户从入营问卷到 28 天陪跑，并校验内容质量、提醒、风控与成效提取",
         "file": "tests/test_07_real_llm_e2e.py",
         "tier": "real_e2e",
         "included_in_health_check": False,
-        "data_policy": "persistent",
+        "data_policy": "rollback",
         "requires_confirmation": True,
     },
     {
@@ -192,10 +194,48 @@ async def get_diagnostics_summary(
         finally:
             await service.close()
 
+    diagnostic_costs = await _diagnostic_cost_summary(session)
     return {
         "database": database,
         "ai_probe": ai_probe,
+        "diagnostic_costs": diagnostic_costs,
         "checked_at": int(time.time()),
+    }
+
+
+async def _diagnostic_cost_summary(session: AsyncSession) -> dict:
+    latest_run_id = await session.scalar(
+        select(AIUsageLog.diagnostic_run_id)
+        .where(
+            AIUsageLog.is_diagnostic.is_(True),
+            AIUsageLog.diagnostic_run_id.is_not(None),
+            AIUsageLog.diagnostic_run_id != "diagnostics-probe",
+        )
+        .order_by(AIUsageLog.created_at.desc())
+        .limit(1)
+    )
+    total = await _diagnostic_cost_row(session)
+    latest = await _diagnostic_cost_row(session, run_id=latest_run_id) if latest_run_id else {
+        "calls": 0,
+        "tokens": 0,
+        "estimated_cost_yuan": 0.0,
+    }
+    return {"latest_run_id": latest_run_id, "latest": latest, "lifetime": total}
+
+
+async def _diagnostic_cost_row(session: AsyncSession, *, run_id: str | None = None) -> dict:
+    statement = select(
+        func.count(AIUsageLog.id),
+        func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
+        func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0),
+    ).where(AIUsageLog.is_diagnostic.is_(True))
+    if run_id:
+        statement = statement.where(AIUsageLog.diagnostic_run_id == run_id)
+    calls, tokens, cost = (await session.execute(statement)).one()
+    return {
+        "calls": int(calls or 0),
+        "tokens": int(tokens or 0),
+        "estimated_cost_yuan": round(float(cost or 0), 4),
     }
 
 
@@ -276,7 +316,7 @@ async def run_diagnostics(
     if selected_suite and selected_suite["requires_confirmation"] and not confirm_real_e2e:
         raise HTTPException(
             status_code=409,
-            detail="该测试会调用真实模型、耗时较长并永久保留测试数据，请确认后再运行。",
+            detail="该测试会调用真实模型、耗时较长；业务测试数据会回滚，仅保留诊断费用与运行记录。请确认后再运行。",
         )
     if _DIAGNOSTICS_RUN_LOCK.locked():
         raise HTTPException(status_code=409, detail="已有诊断测试正在运行，请等待其完成后再试。")
@@ -318,11 +358,17 @@ async def run_diagnostics(
             )
         else:
             suite = suites_to_run[0]
+            data_note = (
+                "模拟客户业务数据回滚；真实模型 token、费用与耗时作为诊断记录单独保留"
+                if suite["tier"] == "real_e2e"
+                else "使用 Mock AI/通道，测试数据回滚"
+            )
             start_banner = (
                 "======================================================================\n"
                 f"📋 [系统自测启动] 用例 {suite['display_id']}: {suite['name']}\n"
                 f"📝 描述信息: {suite['description']}\n"
                 f"⚙️ 物理执行文件: {suite['file']}\n"
+                f"📦 数据策略: {data_note}\n"
                 "======================================================================\n"
             )
             
@@ -391,12 +437,20 @@ async def run_diagnostics(
             cmd = ["uv", "run", "pytest", test_file, "-v", "-s"]
             process = None
             try:
+                run_id = (
+                    f"e2e-{int(time.time())}-{secrets.token_hex(4)}"
+                    if suite["tier"] == "real_e2e"
+                    else ""
+                )
+                process_env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+                if run_id:
+                    process_env["RAN_AI_DIAGNOSTIC_RUN_ID"] = run_id
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     cwd=str(backend_dir),
-                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                    env=process_env,
                 )
 
                 while True:
@@ -485,11 +539,18 @@ async def run_diagnostics(
             for s in suites_to_run:
                 history["console_logs"][s["id"]].append(summary_divider.strip())
         
-        overall_msg = (
-            "🔴 健康自测执行完毕: 发现异常模块，请检查上方终端输出日志！\n"
-            if has_overall_error else
-            "🟢 健康自测顺利通过；真实模型 E2E-01 未运行。\n"
-        )
+        if test_id == "all":
+            overall_msg = (
+                "🔴 健康自测执行完毕: 发现异常模块，请检查上方终端输出日志！\n"
+                if has_overall_error
+                else "🟢 健康自测顺利通过；真实模型 E2E-01 未运行。\n"
+            )
+        else:
+            overall_msg = (
+                "🔴 单项诊断执行完毕: 发现异常，请检查上方日志。\n"
+                if has_overall_error
+                else f"🟢 单项诊断 {suites_to_run[0]['display_id']} 顺利通过。\n"
+            )
         history["console_logs"][test_id].append(overall_msg.strip())
         if test_id == "all":
             for s in suites_to_run:

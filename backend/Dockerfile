@@ -8,8 +8,10 @@ COPY alembic ./alembic
 COPY src ./src
 COPY tests ./tests
 
-ENV PYTHONPATH=/app/src
-RUN uv sync --group dev
+ENV PYTHONPATH=/app/src \
+    UV_HTTP_RETRIES=10 \
+    UV_HTTP_TIMEOUT=120
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --group dev
 
 EXPOSE 8000
 CMD ["sh", "-c", "uv run alembic upgrade head && uv run ran-ai-api"]

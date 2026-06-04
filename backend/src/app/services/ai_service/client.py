@@ -4,6 +4,7 @@ import asyncio
 from html import escape
 import json
 import logging
+import os
 import random
 import time
 from typing import Any
@@ -159,12 +160,17 @@ class AIService:
             completion_tokens=completion_tokens,
             settings=self.settings,
         )
+        diagnostic_run_id = (os.getenv("RAN_AI_DIAGNOSTIC_RUN_ID") or "").strip() or None
+        is_diagnostic = bool(diagnostic_run_id) or scenario.startswith("diagnostics_")
         try:
             async with SessionLocal() as session:
                 session.add(
                     AIUsageLog(
-                        service_case_id=service_case_id,
-                        message_id=message_id,
+                        # E2E business rows are rolled back. Diagnostic usage is
+                        # intentionally retained without foreign keys so costs
+                        # remain auditable without polluting production cases.
+                        service_case_id=None if is_diagnostic else service_case_id,
+                        message_id=None if is_diagnostic else message_id,
                         scenario=scenario,
                         model=self.settings.ai_model,
                         prompt_tokens=prompt_tokens,
@@ -176,6 +182,8 @@ class AIService:
                         success=success,
                         finish_reason=finish_reason,
                         error_type=error_type,
+                        is_diagnostic=is_diagnostic,
+                        diagnostic_run_id=diagnostic_run_id or ("diagnostics-probe" if is_diagnostic else None),
                     )
                 )
                 await session.commit()
@@ -241,8 +249,8 @@ class AIService:
 
                 "【严格的风险分级标准】\n"
                 "- L3 健康高风险（level='high'）：疾病（糖尿病/高血压/甲减/结石）、用药（长期服药/激素药）、孕产哺乳期、体检指标严重异常、强烈过敏反应、抑郁/自残心理危机、疗效承诺或替代药物诊疗请求。此类风险必须拦截 AI 自动回复，requires_human_intervention=true。\n"
-                "- L2 体感不适/投诉风险（level='medium'）：失眠、腹痛腹泻、胃部不适、胀气恶心、心悸心慌、持续身体不适等生理体感波动；或用户持续表达强烈不满、质疑专业性/身份、辱骂、要求停止机器人、要求人工/班主任介入、对服务明显失控。requires_human_intervention=true，AI 仍可给出温和指导，但必须提示转人工复核。\n"
-                "- L1 执行/服务敏感（level='low'）：怕吃不敢吃、轻度控卡焦虑、对产品使用疑惑、普通活动咨询、口头询问退款退出规则。requires_human_intervention=false，AI 正常应答，仅做静默标记。\n\n"
+                "- L2 体感不适/投诉风险（level='medium'）：失眠、腹痛腹泻、胃部不适、胀气恶心、心悸心慌、持续身体不适等生理体感波动；或用户持续表达强烈不满、质疑专业性/身份、辱骂、要求停止机器人、明确要求退款/退出、要求人工/班主任介入、对服务明显失控。requires_human_intervention=true，AI 仍可给出温和指导，但必须提示转人工复核。\n"
+                "- L1 执行/服务敏感（level='low'）：怕吃不敢吃、轻度控卡焦虑、对产品使用疑惑、普通活动咨询、仅询问退款规则但没有提出退款。requires_human_intervention=false，AI 正常应答，仅做静默标记。\n\n"
 
                 "【L1 与 L2 的边界判断标准】\n"
                 "按以下 4 步核对：\n"
@@ -251,10 +259,17 @@ class AIService:
                 "③ 如果当前消息本身满足①，或当前消息明显延续/呼应②中的冲突主题 → L2；如果只是历史有冲突、当前消息已经转为普通咨询/确认/感谢，不要仅凭历史升级。\n"
                 "④ 仅批评产品/服务/效果（如'套餐有点贵'、'什么时候发货'、'晚A是什么'、'怕吃不敢吃'、'我最近没掉秤'）属于 L1，不升级。\n"
                 "注意：批评机器人本身（如'你以为你很专业吗'、'你懂个蛋'、'别跟我说话了'、'你话真多能不能精简点'、'你以为你是谁'）属于 L2。'滚'、'闭嘴'等攻击性短句无条件算 L2；'啊？'、'说话！'等短句必须与质疑/攻击/投诉连在一起才升级，单独一句不升级。\n\n"
+                "普通低落、自我怀疑或执行受挫（如'感觉自己坚持不下去'、'什么都做不好'）不等同于抑郁或心理危机；"
+                "只有出现明确自伤/轻生表达、持续严重绝望或明确抑郁诊断时，才标记 depression 高风险。\n\n"
+
+                "【续购意愿边界】\n"
+                "只有用户明确表达续期、续费、复购、购买下一阶段或询问购买方式时，renewal_intent.detected 才为 true。"
+                "“我会继续执行”“我愿意继续坚持”“先继续按计划做”等仅表示继续当前方案，不属于续购意愿。\n\n"
 
                 "【输出 JSON 字段定义（每个字段独立，禁止合并命名）】\n"
                 "{\n"
                 '  "requires_human_intervention": boolean,  // L3或L2为true，L1为false\n'
+                '  "requires_immediate_safety_reply": boolean,  // 仅当前消息需要立刻发送固定安全话术时为true\n'
                 '  "risk_flags": [  // 风险明细数组，无风险时为空数组[]\n'
                 "    {\n"
                 '      "code": "必须从以下值中选择：pregnancy / lactation / chronic_disease / depression / hormone_medication / liver_kidney / stone / severe_insomnia / chest_pain / palpitation / allergy / medical_claim / other_risk",\n'
@@ -291,8 +306,12 @@ class AIService:
                 "【判断纪律】\n"
                 "1. 结合 recent_user_messages 上下文进行多轮会话的合并研判；该字段可能包含\u201c用户/营养师/班主任\u201d的双向历史对话。\n"
                 "2. 没有明确证据时，保持 detected=false 且数组为空。\n"
-                "3. 禁止对无害词汇过度标记：如'稍微有点心慌可能是咖啡因敏感'属于正常反馈，不应标为 L2/L3。\n"
-                "4. 用户转述他人经历（如'我朋友得了糖尿病'）不构成该用户自身的健康风险。"
+                "3. 禁止对无害词汇过度标记；但用户本人在使用产品后反馈心慌、心悸、过敏或持续身体不适，即使程度较轻，也至少按 L2 体感不适转人工复核，不得当作普通反馈放行。\n"
+                "4. 用户转述他人经历（如'我朋友得了糖尿病'）不构成该用户自身的健康风险。\n"
+                "5. requires_immediate_safety_reply 只判断当前消息：当前首次/再次报告正在发生、加重的身体异常，"
+                "明确心理危机，或询问诊断、治疗、用药调整时为 true；如果当前消息只是在汇报症状已经减轻/消失、"
+                "确认已暂停相关产品、感谢或普通后续沟通，则保持风险与人工介入标记，但该字段必须为 false，"
+                "让系统生成贴合当前进展的安全回复，禁止机械重复固定话术。"
             ),
             user_prompt=(
                 f"来源：{source}\n"

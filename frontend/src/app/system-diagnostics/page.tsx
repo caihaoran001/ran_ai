@@ -1,7 +1,24 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import {
+  ArrowLeft,
+  BrainCircuit,
+  CheckCircle2,
+  Clock3,
+  Coins,
+  Copy,
+  Database,
+  FlaskConical,
+  LoaderCircle,
+  Play,
+  RotateCcw,
+  ShieldCheck,
+  Trash2,
+  Users,
+  XCircle,
+} from "lucide-react";
 import type { DiagnosticsSummary } from "@/lib/api";
 
 type TestSuite = {
@@ -18,134 +35,86 @@ type TestSuite = {
 
 type TestStatus = "idle" | "running" | "passed" | "failed";
 
+const EMPTY_SUMMARY: DiagnosticsSummary = {
+  database: { status: "checking", message: "数据库探针检测中" },
+  ai_probe: { status: "checking", message: "AI 探针检测中", latency_ms: null, model: null },
+  checked_at: 0,
+};
+
 export default function SystemDiagnosticsPage() {
   const [testSuites, setTestSuites] = useState<TestSuite[]>([]);
   const [statuses, setStatuses] = useState<Record<string, TestStatus>>({});
+  const [durations, setDurations] = useState<Record<string, string>>({});
   const [consoleLogs, setConsoleLogs] = useState<Record<string, string[]>>({});
-  const [selectedSuiteId, setSelectedSuiteId] = useState<string>("all");
+  const [selectedSuiteId, setSelectedSuiteId] = useState("all");
   const [runningAll, setRunningAll] = useState(false);
   const [currentRunningId, setCurrentRunningId] = useState<string | null>(null);
-  const [currentAllSuiteId, setCurrentAllSuiteId] = useState<string | null>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
-  
-  const [summaryLoading, setSummaryLoading] = useState(true);
-  const [summary, setSummary] = useState<DiagnosticsSummary>({
-    database: { status: "checking", message: "数据库探针检测中" },
-    ai_probe: { status: "checking", message: "AI 探针检测中", latency_ms: null, model: null },
-    checked_at: 0,
-  });
   const [lastRunTime, setLastRunTime] = useState<string | number>("尚未运行");
-  const [durations, setDurations] = useState<Record<string, string>>({});
-
+  const [summary, setSummary] = useState<DiagnosticsSummary>(EMPTY_SUMMARY);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [autoScroll, setAutoScroll] = useState(true);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
-  // 1. 获取所有测试套件的元数据，并从后端加载历史记录
+  const healthSuites = testSuites.filter((suite) => suite.included_in_health_check);
+  const realE2ESuite = testSuites.find((suite) => suite.tier === "real_e2e");
+  const activeLogs = consoleLogs[selectedSuiteId] || [];
+  const busy = runningAll || currentRunningId !== null;
+
   useEffect(() => {
-    async function fetchSuitesAndHistory() {
-      try {
-        const res = await fetch("/api/backend/diagnostics/test-suites");
-        if (res.ok) {
-          const data = await res.json();
-          setTestSuites(data);
-          
-          // 从后端拉取持久化历史记录
-          const historyRes = await fetch("/api/backend/diagnostics/history");
-          if (historyRes.ok) {
-            const history = await historyRes.json();
-            
-            // 恢复各个用例的状态与耗时
-            const loadedStatuses: Record<string, TestStatus> = {};
-            data.forEach((suite: TestSuite) => {
-              loadedStatuses[suite.id] = (history.statuses?.[suite.id] || "idle") as TestStatus;
-            });
-            setStatuses(loadedStatuses);
-            
-            if (history.durations) setDurations(history.durations);
-            if (history.console_logs) {
-              if (Array.isArray(history.console_logs)) {
-                setConsoleLogs({ all: history.console_logs });
-              } else {
-                setConsoleLogs(history.console_logs);
-              }
-            }
-            if (history.last_run_time) setLastRunTime(history.last_run_time);
-            if (history.active_run?.suite_id) {
-              if (history.active_run.mode === "health") {
-                setRunningAll(true);
-                setCurrentAllSuiteId(history.active_run.suite_id);
-              } else {
-                setCurrentRunningId(history.active_run.suite_id);
-              }
-            }
-          } else {
-            const initialStatuses: Record<string, TestStatus> = {};
-            data.forEach((suite: TestSuite) => {
-              initialStatuses[suite.id] = "idle";
-            });
-            setStatuses(initialStatuses);
-          }
-        }
-      } catch (err) {
-        console.error("加载自测套件及历史记录失败:", err);
-      }
-    }
-    fetchSuitesAndHistory();
+    void loadInitialData();
+    void loadSummary();
   }, []);
 
-  const syncHistoryFromBackend = async () => {
-    try {
-      const res = await fetch("/api/backend/diagnostics/history");
-      if (res.ok) {
-        const history = await res.json();
-        
-        if (history.statuses) {
-          setStatuses((prev) => {
-            const nextStatuses = { ...prev };
-            Object.keys(history.statuses).forEach((id) => {
-              nextStatuses[id] = history.statuses[id] as TestStatus;
-            });
-            return nextStatuses;
-          });
-        }
-        if (history.durations) setDurations(history.durations);
-        if (history.console_logs) {
-          if (Array.isArray(history.console_logs)) {
-            setConsoleLogs({ all: history.console_logs });
-          } else {
-            setConsoleLogs(history.console_logs);
-          }
-        }
-        if (history.last_run_time) setLastRunTime(history.last_run_time);
-        if (history.active_run?.suite_id) {
-          if (history.active_run.mode === "health") {
-            setRunningAll(true);
-            setCurrentAllSuiteId(history.active_run.suite_id);
-            setCurrentRunningId(null);
-          } else {
-            setRunningAll(false);
-            setCurrentAllSuiteId(null);
-            setCurrentRunningId(history.active_run.suite_id);
-          }
-        } else {
-          setRunningAll(false);
-          setCurrentAllSuiteId(null);
-          setCurrentRunningId(null);
-        }
-      }
-    } catch (e) {
-      console.error("同步后端自测历史失败:", e);
-    }
-  };
+  useEffect(() => {
+    if (!busy) return;
+    const timer = window.setInterval(() => void syncHistory(), 2000);
+    return () => window.clearInterval(timer);
+  }, [busy]);
 
-  const loadSummary = async () => {
+  useEffect(() => {
+    if (autoScroll) terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [activeLogs, autoScroll]);
+
+  async function loadInitialData() {
+    try {
+      const suitesResponse = await fetch("/api/backend/diagnostics/test-suites");
+      if (!suitesResponse.ok) throw new Error(await suitesResponse.text());
+      const suites: TestSuite[] = await suitesResponse.json();
+      setTestSuites(suites);
+      const historyResponse = await fetch("/api/backend/diagnostics/history");
+      if (!historyResponse.ok) return;
+      applyHistory(await historyResponse.json(), suites);
+    } catch (error) {
+      console.error("加载诊断信息失败", error);
+    }
+  }
+
+  async function syncHistory() {
+    const response = await fetch("/api/backend/diagnostics/history", { cache: "no-store" });
+    if (!response.ok) return;
+    applyHistory(await response.json(), testSuites);
+  }
+
+  function applyHistory(history: Record<string, unknown>, suites: TestSuite[]) {
+    const historyStatuses = (history.statuses || {}) as Record<string, TestStatus>;
+    setStatuses(Object.fromEntries(suites.map((suite) => [suite.id, historyStatuses[suite.id] || "idle"])));
+    setDurations((history.durations || {}) as Record<string, string>);
+    const logs = history.console_logs;
+    setConsoleLogs(Array.isArray(logs) ? { all: logs as string[] } : ((logs || {}) as Record<string, string[]>));
+    setLastRunTime((history.last_run_time as string | number) || "尚未运行");
+    const activeRun = history.active_run as { mode?: string; suite_id?: string } | null;
+    setRunningAll(activeRun?.mode === "health");
+    setCurrentRunningId(activeRun?.mode && activeRun.mode !== "health" ? activeRun.suite_id || null : null);
+  }
+
+  async function loadSummary() {
     setSummaryLoading(true);
     try {
-      const res = await fetch("/api/backend/diagnostics/summary", { cache: "no-store" });
-      if (!res.ok) throw new Error(await res.text());
-      const data: DiagnosticsSummary = await res.json();
-      setSummary(data);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "诊断摘要加载失败";
+      const response = await fetch("/api/backend/diagnostics/summary", { cache: "no-store" });
+      if (!response.ok) throw new Error(await response.text());
+      setSummary(await response.json());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "诊断摘要加载失败";
       setSummary({
         database: { status: "failed", message },
         ai_probe: { status: "failed", message, latency_ms: null, model: null },
@@ -154,740 +123,338 @@ export default function SystemDiagnosticsPage() {
     } finally {
       setSummaryLoading(false);
     }
-  };
+  }
 
-  useEffect(() => {
-    loadSummary();
-  }, []);
-
-  useEffect(() => {
-    if (!runningAll && !currentRunningId) return;
-    const timer = window.setInterval(syncHistoryFromBackend, 2000);
-    return () => window.clearInterval(timer);
-  }, [runningAll, currentRunningId]);
-
-  // 2. 日志自动滚动
-  const activeLogs = consoleLogs[selectedSuiteId] || [];
-
-  useEffect(() => {
-    if (autoScroll && terminalEndRef.current) {
-      terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [activeLogs, autoScroll]);
-
-  // 3. 运行特定单项测试
-  const runSingleTest = async (suite: TestSuite) => {
-    if (currentRunningId || runningAll) return;
+  async function runSuite(suite: TestSuite) {
+    if (busy) return;
     if (
       suite.requires_confirmation &&
-      !window.confirm("该测试会调用真实大模型、耗时较长，并永久保留测试数据。确认继续运行吗？")
+      !window.confirm("将运行真实模型与 10 类用户的 28 天旅程。业务测试数据会回滚，只保留诊断费用和运行记录。确认开始吗？")
     ) {
       return;
     }
-    
+    setSelectedSuiteId(suite.id);
     setCurrentRunningId(suite.id);
-    setSelectedSuiteId(suite.id); // 自动聚焦到当前自测
-    setStatuses((prev) => ({ ...prev, [suite.id]: "running" as TestStatus }));
-    
-    setConsoleLogs((prev) => ({
-      ...prev,
-      [suite.id]: [
-        `🌐 [DIAGNOSTICS] 启动单项自测: ${suite.name} ...`,
-        `⚙️ 执行文件: ${suite.file}`,
-        `----------------------------------------------------------------------`
-      ]
-    }));
+    setStatuses((current) => ({ ...current, [suite.id]: "running" }));
+    setConsoleLogs((current) => ({ ...current, [suite.id]: [`开始运行 ${suite.display_id} ${suite.name}`] }));
+    await consumeRun(`/api/backend/diagnostics/run/${suite.id}${suite.requires_confirmation ? "?confirm_real_e2e=true" : ""}`, suite.id);
+    setCurrentRunningId(null);
+  }
 
-    try {
-      const confirmQuery = suite.requires_confirmation ? "?confirm_real_e2e=true" : "";
-      const response = await fetch(`/api/backend/diagnostics/run/${suite.id}${confirmQuery}`);
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      if (!response.body) {
-        throw new Error("响应没有正文体");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n");
-        lines.forEach((line) => {
-          if (line.trim()) {
-            setConsoleLogs((prev) => {
-              const currentLogs = prev[suite.id] || [];
-              return {
-                ...prev,
-                [suite.id]: [...currentLogs, line]
-              };
-            });
-            
-            // 实时感知单项自测结束，以便给左侧状态灯实时打点
-            if (line.includes("🟢 测试成功")) {
-              setStatuses((prev) => ({ ...prev, [suite.id]: "passed" }));
-            } else if (line.includes("🔴 测试失败")) {
-              setStatuses((prev) => ({ ...prev, [suite.id]: "failed" }));
-            }
-          }
-        });
-      }
-
-      await syncHistoryFromBackend();
-      await loadSummary();
-
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatuses((prev) => ({ ...prev, [suite.id]: "failed" as TestStatus }));
-      setConsoleLogs((prev) => {
-        const currentLogs = prev[suite.id] || [];
-        return {
-          ...prev,
-          [suite.id]: [...currentLogs, `💥 运行异常: ${message}`]
-        };
-      });
-    } finally {
-      setCurrentRunningId(null);
-    }
-  };
-
-  // 4. 一键运行安全健康自测；真实 LLM E2E 必须单独确认运行。
-  const runAllTests = async () => {
-    if (currentRunningId || runningAll) return;
-
+  async function runHealthChecks() {
+    if (busy) return;
     setRunningAll(true);
-    setSelectedSuiteId("all"); // 自动聚焦到全量大终端
-    
-    setConsoleLogs((prev) => ({
-      ...prev,
-      all: [
-        `🚀 [SYSTEM HEALTH] 启动安全健康自测 (01-08) ...`,
-        `📦 使用 Mock AI/通道并回滚数据，不包含真实模型 E2E-01`,
-        `======================================================================`
-      ]
+    setSelectedSuiteId("all");
+    setConsoleLogs((current) => ({ ...current, all: ["开始运行安全健康自测 01-08"] }));
+    setStatuses((current) => ({
+      ...current,
+      ...Object.fromEntries(healthSuites.map((suite) => [suite.id, "running" as TestStatus])),
     }));
+    await consumeRun("/api/backend/diagnostics/run/all", "all");
+    setRunningAll(false);
+  }
 
-    const newStatuses = { ...statuses };
-    testSuites.filter((s) => s.included_in_health_check).forEach((s) => {
-      newStatuses[s.id] = "running" as TestStatus;
-    });
-    setStatuses(newStatuses);
-
+  async function consumeRun(url: string, logKey: string) {
     try {
-      const response = await fetch(`/api/backend/diagnostics/run/all`);
-      if (!response.ok) throw new Error(await response.text());
-      if (!response.body) throw new Error("流式响应不可用");
-
+      const response = await fetch(url);
+      if (!response.ok || !response.body) throw new Error(await response.text());
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n");
-        lines.forEach((line) => {
-          if (line.trim()) {
-            const activeMatch = line.match(/当前执行套件:\s*(\S+)/);
-            if (activeMatch) {
-              const activeSuite = testSuites.find((suite) => suite.display_id === activeMatch[1]);
-              if (activeSuite) setCurrentAllSuiteId(activeSuite.id);
-            }
-            setConsoleLogs((prev) => {
-              const currentLogs = prev.all || [];
-              return {
-                ...prev,
-                all: [...currentLogs, line]
-              };
-            });
-            
-            // 实时感知个别用例的结束，以便给左侧状态灯实时打点
-            if (line.includes("🟢 测试成功")) {
-              const matched = line.match(/tests\/(test_\d+_[a-zA-Z0-9_]+)\.py/);
-              if (matched) {
-                const matchedFile = matched[1];
-                const matchedSuite = testSuites.find(s => s.file.includes(matchedFile));
-                if (matchedSuite) {
-                  setStatuses(prev => ({ ...prev, [matchedSuite.id]: "passed" }));
-                }
-              }
-            } else if (line.includes("🔴 测试失败")) {
-              const matched = line.match(/tests\/(test_\d+_[a-zA-Z0-9_]+)\.py/);
-              if (matched) {
-                const matchedFile = matched[1];
-                const matchedSuite = testSuites.find(s => s.file.includes(matchedFile));
-                if (matchedSuite) {
-                  setStatuses(prev => ({ ...prev, [matchedSuite.id]: "failed" }));
-                }
-              }
-            }
-          }
-        });
+        const lines = decoder.decode(value, { stream: true }).split("\n").filter(Boolean);
+        setConsoleLogs((current) => ({ ...current, [logKey]: [...(current[logKey] || []), ...lines] }));
       }
-
-      await syncHistoryFromBackend();
+      await syncHistory();
       await loadSummary();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      setConsoleLogs((prev) => {
-        const currentLogs = prev.all || [];
-        return {
-          ...prev,
-          all: [...currentLogs, `💥 运行异常: ${message}`]
-        };
-      });
-      await syncHistoryFromBackend();
-    } finally {
-      setCurrentRunningId(null);
-      setCurrentAllSuiteId(null);
-      setRunningAll(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setConsoleLogs((current) => ({ ...current, [logKey]: [...(current[logKey] || []), `运行异常: ${message}`] }));
     }
-  };
+  }
 
-  // 复制终端日志
-  const copyLogs = () => {
-    const text = activeLogs.join("\n");
-    navigator.clipboard.writeText(text);
-    alert(`[${selectedSuiteId === "all" ? "全量自测" : selectedSuiteId}] 终端日志已成功复制到剪贴板！`);
-  };
+  async function clearHistory() {
+    await fetch("/api/backend/diagnostics/clear-history", { method: "POST" });
+    setConsoleLogs({});
+    setStatuses(Object.fromEntries(testSuites.map((suite) => [suite.id, "idle"])));
+    setDurations({});
+    setLastRunTime("尚未运行");
+    setSelectedSuiteId("all");
+  }
 
-  // 清空终端日志与自测历史状态（同步后端持久层）
-  const clearLogs = async () => {
-    try {
-      await fetch("/api/backend/diagnostics/clear-history", { method: "POST" });
-      setConsoleLogs({});
-      const resetStatuses: Record<string, TestStatus> = {};
-      testSuites.forEach((suite) => {
-        resetStatuses[suite.id] = "idle";
-      });
-      setStatuses(resetStatuses);
-      setDurations({});
-      setLastRunTime("尚未运行");
-      setSelectedSuiteId("all");
-    } catch (e) {
-      console.error("清空后端自测历史失败:", e);
-    }
-  };
-
-  // 1. 定义全量自测试剂盒方法名与中文核心业务功能说明的映射字典
-  const TEST_TRANSLATIONS: Record<string, string> = {
-    // test_01_intake
-    "test_questionnaire_submit_creates_profile_and_documents": "用户入营问卷录入，自动生成用户画像与处方交付件",
-    "test_generating_status_on_submit": "提交问卷时，自动将状态锁定为'生成中'防止重复执行",
-    "test_intake_facts_bmi_calculation": "入营客观事实计算器：身高体重 BMI 计算公式及精度校对",
-    "test_failed_generation_reverts_status": "若交付文件大模型生成失败，系统自动回滚服务单状态防止挂死",
-
-    // test_02_chat
-    "test_normal_message_no_risk": "常规社群聊天：AI助手正常响应，不触发风控",
-    "test_high_risk_chronic_disease": "风控拦截测试：涉及高危慢性病/用药安全词，系统拦截并转人工",
-    "test_emotional_crisis": "情绪风控测试：检测到崩溃/极度焦虑，触发心理预警转人工",
-    "test_refund_intent": "退款意向识别：识别到退款诉求，调用客服话术规制",
-    "test_renewal_intent": "正面突破测试：识别到正面情绪/续营意向，触发反哺案例库检索",
-    "test_ai_reply_stored_as_outbound": "应答归档存储：AI自动回复的消息以outbound发送渠道正确记录",
-
-    // test_03_checkin
-    "test_create_single_checkin": "单次打卡测试：创建打卡数据并校验卡路里及水入量等指标合法性",
-    "test_seed_28_days_checkins": "时光模拟加速：批量播种生成 28 天健康陪伴打卡打分流水",
-    "test_checkin_parsed_json_structure": "打卡智能解析：校验打卡文本中提取结构化打分字段的正确性",
-    "test_checkin_date_ordering": "打卡排序排序：校验打卡瀑布流中时间戳逆序排列逻辑",
-
-    // test_04_stage_reports
-    "test_stage_report_generation_all_stages": "阶段评估生成：在第7/14/21/28天自动生成四期阶段审查总结",
-    "test_stage_report_no_duplicate_generation": "生成幂等性校验：防止在同一评估窗口内为同一个人重复生成报告",
-    "test_stage_report_content_has_checkin_data": "数据融合校验：确保阶段评估中精确提取并汇总了该阶段的打卡数据",
-    "test_graduation_report": "毕业报告自动生成：终期自动生成 Word 版结营陪伴毕业报告",
-
-    // test_05_evolution
-    "test_knowledge_evolution_config_defaults": "自进化引擎测试：系统核心进化参数的加载与默认配置开关检测",
-    "test_pure_extraction_with_seed_data": "案例提取测试：脱敏聊天数据，提取 FAQ 及主题分类标签",
-    "test_knowledge_drafts_list": "草稿中心自测：FAQ 待审核进化草稿的展示与管理接口校验",
-    "test_evolution_generates_drafts_from_seeded_chat": "知识闭环沉淀：大模型对社群聊天脱敏，自动生成待审核知识草稿",
-    "test_stage_case_scan_uses_full_history_and_existing_case_context": "标杆库自进化：全量扫描聊天历史，提炼出高分标杆优秀案例草稿",
-
-    // test_06_toggles
-    "test_content_delivery_policy_crud": "策略配置开关：交付发送策略的创建/查询/修改/删除行为校验",
-    "test_ai_reply_policy_crud": "应答策略开关：社群 AI 应答开关配置的管理行为校验",
-    "test_service_case_auto_send_toggle": "全局开关控制：全局服务单自动派发开关逻辑响应测试",
-    "test_service_case_ai_reply_toggle": "AI应答开关控制：群聊 AI 应答全局控制开关对回复链路的阻断测试",
-    "test_knowledge_evolution_settings": "全局进化控制：每日定时触发 FAQ 自进化开关的读写校验",
-    "test_content_delivery_policy_auto_send_behaviour": "联动拦截机制：在开关关闭时阻止处方文件触发自动派发逻辑",
-    "test_soft_delete_service_case": "数据安全校验：使用 deleted_at 软删除逻辑保障业务数据的可审计可恢复性",
-
-    // test_07_real_llm_e2e
-    "test_real_llm_persona_intent_matrix": "真实模型多用户画像矩阵：校验健康风险、退款投诉与积极续营三类用户的结构化判断",
-    "test_real_llm_full_saga_end_to_end": "大模型终极终局闭环：24轮真实多期群聊、打卡、阶段审查、自进化、案例反哺全链路E2E实打冒烟测试"
-  };
-
-  // 彩色终端日志渲染辅助
-  const formatLogLine = (line: string, index: number) => {
-    let displayLine = line;
-    let isOutcomeLine = false;
-    let isPassed = false;
-
-    // 匹配类似 tests/test_01_intake.py::test_name PASSED / FAILED / ERROR / SKIPPED
-    const match = line.match(/(test_[a-zA-Z0-9_]+)\s+(PASSED|FAILED|ERROR|SKIPPED)/i);
-    if (match) {
-      const testMethodName = match[1];
-      const outcome = match[2].toUpperCase();
-      const translation = TEST_TRANSLATIONS[testMethodName];
-      isOutcomeLine = true;
-      isPassed = outcome === "PASSED";
-
-      if (translation) {
-        const parts = line.split("::");
-        if (parts.length > 1) {
-          const filePart = parts[0];
-          displayLine = `${filePart} ➔ 💡 ${translation} (${testMethodName}) [ ${isPassed ? "🟢 通过" : `🔴 失败 (${outcome})`} ]`;
-        } else {
-          displayLine = `${line.replace(match[0], "")}${testMethodName} ➔ 💡 ${translation} [ ${isPassed ? "🟢 通过" : `🔴 失败 (${outcome})`} ]`;
-        }
-      }
-    }
-
-    // 根据关键字着色
-    let textColor = "text-zinc-300";
-    if (isOutcomeLine) {
-      textColor = isPassed ? "text-emerald-400 font-semibold" : "text-rose-400 font-bold";
-    } else if (line.includes("🟢 测试成功") || line.includes("🎉") || line.includes("PASSED") || line.includes("100% 成功")) {
-      textColor = "text-emerald-400 font-semibold";
-    } else if (line.includes("🔴 测试失败") || line.includes("FAILED") || line.includes("❌") || line.includes("💥")) {
-      textColor = "text-rose-400 font-semibold";
-    } else if (line.includes("🚀 执行命令") || line.includes("启动单项") || line.includes("SYSTEM HEALTH")) {
-      textColor = "text-indigo-400 font-medium";
-    } else if (line.includes("💬 [用户") || line.includes("🤖 [AI 助理")) {
-      textColor = "text-sky-300";
-    } else if (line.startsWith("===") || line.startsWith("---") || line.startsWith("=======")) {
-      textColor = "text-zinc-600";
-    }
-
-    return (
-      <div key={index} className={`py-0.5 leading-6 ${textColor} select-text font-mono break-all`}>
-        {displayLine}
-      </div>
-    );
-  };
-
-  const dbStatusValue =
-    summary.database.status === "connected"
-      ? "CONNECTED"
-      : summary.database.status === "checking"
-        ? "CHECKING"
-        : "FAILED";
-
-  const aiLatencyValue =
-    summary.ai_probe.status === "connected" && typeof summary.ai_probe.latency_ms === "number"
-      ? `${(summary.ai_probe.latency_ms / 1000).toFixed(2)}s`
-      : summary.ai_probe.status === "not_configured"
-        ? "NOT CONFIGURED"
-        : summary.ai_probe.status === "checking"
-          ? "CHECKING"
-          : "FAILED";
-
-  const formattedLastRunTime = 
-    typeof lastRunTime === "number" || (!isNaN(Number(lastRunTime)) && lastRunTime !== "尚未运行")
-      ? new Date(Number(lastRunTime) * 1000).toLocaleTimeString("zh-CN", { hour12: false })
-      : lastRunTime;
-
-  const healthSuites = testSuites.filter((suite) => suite.included_in_health_check);
-  const realE2ESuites = testSuites.filter((suite) => suite.tier === "real_e2e");
-  const selectedSuite = testSuites.find((suite) => suite.id === selectedSuiteId);
-  const currentHealthSuite = testSuites.find((suite) => suite.id === currentAllSuiteId);
-
-  const renderSuiteCard = (suite: TestSuite) => {
-    const status = statuses[suite.id] || "idle";
-    const isSelected = selectedSuiteId === suite.id;
-    const isRealE2E = suite.tier === "real_e2e";
-    const isActiveInHealthRun = runningAll && currentAllSuiteId === suite.id;
-
-    return (
-      <div
-        key={suite.id}
-        onClick={() => setSelectedSuiteId(suite.id)}
-        className={`p-4 rounded-xl border transition relative cursor-pointer group ${
-          isSelected
-            ? isRealE2E
-              ? "border-amber-500 bg-amber-50/40 shadow-sm ring-1 ring-amber-500/20"
-              : "border-indigo-500 bg-indigo-50/10 shadow-sm ring-1 ring-indigo-500/20"
-            : isRealE2E
-              ? "border-amber-200 bg-amber-50/30 hover:border-amber-300"
-              : "border-zinc-100 hover:border-zinc-200/80 bg-zinc-50/50 hover:bg-zinc-50"
-        }`}
-      >
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-zinc-200/60 text-zinc-600">
-              {suite.display_id}
-            </span>
-            <h3 className="text-sm font-bold text-zinc-800 truncate">{suite.name}</h3>
-          </div>
-          <StatusBulb status={status} />
-        </div>
-
-        {isActiveInHealthRun && (
-          <div className="mt-2 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[11px] font-semibold text-white">
-            当前正在执行这一项
-          </div>
-        )}
-
-        <p className="text-xs text-zinc-500 mt-2 leading-relaxed">{suite.description}</p>
-
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
-            isRealE2E ? "bg-amber-100 text-amber-700" : "bg-emerald-50 text-emerald-700"
-          }`}>
-            {isRealE2E ? "真实模型 E2E" : "安全健康自测"}
-          </span>
-          <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
-            suite.data_policy === "persistent" ? "bg-rose-50 text-rose-700" : "bg-zinc-100 text-zinc-600"
-          }`}>
-            {suite.data_policy === "persistent" ? "永久保留数据" : "测试数据回滚"}
-          </span>
-        </div>
-
-        <div className="mt-3 flex items-start justify-between gap-2">
-          <div className="flex flex-col gap-1 min-w-0">
-            <span className="text-[10px] text-zinc-400 font-mono select-all truncate block" title={suite.file}>
-              {suite.file}
-            </span>
-            {durations[suite.id] && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 mt-1 rounded-md text-[10px] font-bold font-mono bg-indigo-50/70 text-indigo-700 border border-indigo-100/40 w-fit">
-                耗时 <span className="text-indigo-600 font-black ml-0.5">{durations[suite.id]}</span>
-              </span>
-            )}
-          </div>
-
-          <button
-            onClick={(event) => {
-              event.stopPropagation();
-              runSingleTest(suite);
-            }}
-            disabled={!!currentRunningId || runningAll}
-            className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition shrink-0 ${
-              !!currentRunningId || runningAll
-                ? "bg-zinc-50 border-zinc-200 text-zinc-400 cursor-not-allowed"
-                : isRealE2E
-                  ? "bg-amber-600 hover:bg-amber-700 border-amber-600 text-white active:scale-95"
-                  : "bg-white hover:bg-zinc-100 border-zinc-200 hover:border-zinc-300 text-zinc-700 active:scale-95"
-            }`}
-          >
-            {status === "running" ? "运行中..." : isRealE2E ? "确认后运行" : "启动测试"}
-          </button>
-        </div>
-      </div>
-    );
-  };
+  const latestDiagnostic = summary.diagnostic_costs?.latest;
+  const formattedLastRun =
+    typeof lastRunTime === "number" || (!Number.isNaN(Number(lastRunTime)) && lastRunTime !== "尚未运行")
+      ? new Date(Number(lastRunTime) * 1000).toLocaleString("zh-CN", { hour12: false })
+      : String(lastRunTime);
 
   return (
-    <div className="space-y-8 pb-12">
-      {/* 顶部标题与返回导航 */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 pb-12">
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <Link 
-              href="/dashboard" 
-              className="text-zinc-500 hover:text-zinc-800 transition text-sm font-medium flex items-center gap-1"
-            >
-              ← 返回看板
-            </Link>
-            <span className="text-zinc-300">|</span>
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-semibold border border-indigo-200/50">
-              开发者专用诊断中心
-            </span>
-          </div>
-          <h1 className="text-2xl font-bold text-zinc-900 mt-2 flex items-center gap-2">
-            ⚡ 系统健康与自测诊断控制台
-          </h1>
-          <p className="text-sm text-zinc-500 mt-1">
-            快速健康自测与真实模型 E2E 已隔离，运行时会明确显示当前套件、耗时和数据影响。
-          </p>
+          <Link href="/dashboard" className="inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-900">
+            <ArrowLeft size={15} /> 返回数据看板
+          </Link>
+          <h1 className="mt-3 text-2xl font-bold text-zinc-950">系统诊断控制台</h1>
+          <p className="mt-1 text-sm text-zinc-500">健康检查验证稳定性，真实旅程验证内容质量；两类测试均不污染客户数据。</p>
         </div>
-
         <button
-          onClick={runAllTests}
-          disabled={!!currentRunningId || runningAll}
-          className={`px-5 py-2.5 rounded-xl text-white font-semibold text-sm transition shadow-lg flex items-center gap-2 ${
-            !!currentRunningId || runningAll
-              ? "bg-zinc-400 cursor-not-allowed"
-              : "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/20 active:translate-y-0.5"
-          }`}
+          onClick={runHealthChecks}
+          disabled={busy}
+          className="inline-flex h-10 items-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
         >
-          {runningAll
-            ? `正在执行 ${currentHealthSuite ? `套件 ${currentHealthSuite.display_id}` : "健康自测"}...`
-            : "一键安全健康自测"}
+          {runningAll ? <LoaderCircle size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+          {runningAll ? "正在检查" : "运行安全健康检查"}
+        </button>
+      </header>
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard
+          icon={<Database size={18} />}
+          label="数据库"
+          value={summary.database.status === "connected" ? "连接正常" : summaryLoading ? "检测中" : "连接异常"}
+          detail={summary.database.message}
+          tone={summary.database.status === "connected" ? "green" : "red"}
+        />
+        <SummaryCard
+          icon={<BrainCircuit size={18} />}
+          label="AI 连通"
+          value={
+            typeof summary.ai_probe.latency_ms === "number"
+              ? `${(summary.ai_probe.latency_ms / 1000).toFixed(2)} 秒`
+              : summaryLoading
+                ? "检测中"
+                : "不可用"
+          }
+          detail={summary.ai_probe.model || summary.ai_probe.message}
+          tone={summary.ai_probe.status === "connected" ? "blue" : "red"}
+        />
+        <SummaryCard
+          icon={<Coins size={18} />}
+          label="最近真实 E2E"
+          value={`¥${(latestDiagnostic?.estimated_cost_yuan || 0).toFixed(2)}`}
+          detail={`${latestDiagnostic?.calls || 0} 次调用 · ${(latestDiagnostic?.tokens || 0).toLocaleString()} tokens`}
+          tone="violet"
+        />
+        <SummaryCard
+          icon={<Clock3 size={18} />}
+          label="最近运行"
+          value={formattedLastRun}
+          detail={`${healthSuites.length} 个健康套件 · ${realE2ESuite ? "1 个真实旅程套件" : "未配置真实旅程"}`}
+          tone="amber"
+        />
+      </section>
+
+      <section className="rounded-lg border border-zinc-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 px-5 py-4">
+          <div>
+            <h2 className="font-semibold text-zinc-950">安全健康检查</h2>
+            <p className="mt-0.5 text-xs text-zinc-500">Mock AI 与 Mock 通道，重点检查接口、状态流转、数据契约和回归稳定性。</p>
+          </div>
+          <span className="rounded bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">业务数据回滚</span>
+        </div>
+        <div className="grid gap-px bg-zinc-100 md:grid-cols-2 xl:grid-cols-4">
+          {healthSuites.map((suite) => (
+            <SuiteCard
+              key={suite.id}
+              suite={suite}
+              status={statuses[suite.id] || "idle"}
+              duration={durations[suite.id]}
+              selected={selectedSuiteId === suite.id}
+              disabled={busy}
+              onSelect={() => setSelectedSuiteId(suite.id)}
+              onRun={() => void runSuite(suite)}
+            />
+          ))}
+        </div>
+      </section>
+
+      {realE2ESuite && (
+        <section className="grid gap-5 rounded-lg border border-indigo-200 bg-indigo-50/40 p-5 xl:grid-cols-[1fr_auto]">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-indigo-950">
+              <FlaskConical size={17} /> 真实模型旅程验证
+              <StatusBadge status={statuses[realE2ESuite.id] || "idle"} />
+            </div>
+            <h2 className="mt-3 text-xl font-bold text-zinc-950">10 类用户，从入营问卷走到第 28 天</h2>
+            <p className="mt-2 max-w-4xl text-sm leading-6 text-zinc-600">
+              覆盖积极配合、焦虑、沉默不打卡、轮班、咖啡因敏感、平台期质疑、退款、慢病用药、续营和低落恢复。
+              每类用户都会验证画像与文档一致性、聊天回复、风控、提醒、成效提取，并由模型评审内容是否自然合理。
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+              <InfoPill icon={<Users size={13} />} text="10 类用户画像" />
+              <InfoPill icon={<Clock3 size={13} />} text="逐日推进 28 天" />
+              <InfoPill icon={<ShieldCheck size={13} />} text="业务数据全部回滚" />
+              <InfoPill icon={<Coins size={13} />} text="诊断费用单独保留" />
+            </div>
+          </div>
+          <button
+            onClick={() => void runSuite(realE2ESuite)}
+            disabled={busy}
+            className="inline-flex h-10 items-center justify-center gap-2 self-center rounded-md bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-zinc-400"
+          >
+            {currentRunningId === realE2ESuite.id ? <LoaderCircle size={16} className="animate-spin" /> : <Play size={16} />}
+            {currentRunningId === realE2ESuite.id ? "真实旅程运行中" : "运行真实旅程验证"}
+          </button>
+        </section>
+      )}
+
+      <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
+          <div className="flex flex-wrap gap-1">
+            <LogTab active={selectedSuiteId === "all"} label="健康检查汇总" onClick={() => setSelectedSuiteId("all")} />
+            {testSuites.map((suite) => (
+              <LogTab
+                key={suite.id}
+                active={selectedSuiteId === suite.id}
+                label={suite.display_id}
+                onClick={() => setSelectedSuiteId(suite.id)}
+              />
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
+            <label className="mr-2 flex items-center gap-1.5 text-xs text-zinc-500">
+              <input type="checkbox" checked={autoScroll} onChange={(event) => setAutoScroll(event.target.checked)} />
+              自动滚动
+            </label>
+            <IconButton label="复制日志" onClick={() => void navigator.clipboard.writeText(activeLogs.join("\n"))}>
+              <Copy size={15} />
+            </IconButton>
+            <IconButton label="刷新摘要" onClick={() => void loadSummary()}>
+              <RotateCcw size={15} />
+            </IconButton>
+            <IconButton label="清空历史" onClick={() => void clearHistory()}>
+              <Trash2 size={15} />
+            </IconButton>
+          </div>
+        </div>
+        <div className="h-[440px] overflow-y-auto bg-zinc-950 px-5 py-4 font-mono text-xs leading-6 text-zinc-300">
+          {activeLogs.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-zinc-600">选择测试套件并开始运行，日志会在这里实时出现。</div>
+          ) : (
+            activeLogs.map((line, index) => <LogLine key={`${index}-${line}`} line={line} />)
+          )}
+          <div ref={terminalEndRef} />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SuiteCard({
+  suite,
+  status,
+  duration,
+  selected,
+  disabled,
+  onSelect,
+  onRun,
+}: {
+  suite: TestSuite;
+  status: TestStatus;
+  duration?: string;
+  selected: boolean;
+  disabled: boolean;
+  onSelect: () => void;
+  onRun: () => void;
+}) {
+  return (
+    <div onClick={onSelect} className={`min-h-40 bg-white p-4 transition ${selected ? "ring-2 ring-inset ring-zinc-900" : ""}`}>
+      <div className="flex items-start justify-between gap-3">
+        <span className="font-mono text-xs font-bold text-zinc-400">{suite.display_id}</span>
+        <StatusBadge status={status} />
+      </div>
+      <h3 className="mt-3 text-sm font-semibold text-zinc-950">{suite.name.replace(/^test_\d+_/, "")}</h3>
+      <p className="mt-1.5 line-clamp-3 text-xs leading-5 text-zinc-500">{suite.description}</p>
+      <div className="mt-4 flex items-center justify-between">
+        <span className="text-xs text-zinc-400">{duration || "尚未运行"}</span>
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onRun();
+          }}
+          disabled={disabled}
+          title={`运行 ${suite.display_id}`}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
+        >
+          {status === "running" ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}
         </button>
       </div>
-
-      {/* 第一板块：系统健康度元指标 */}
-      <div className="grid gap-6 md:grid-cols-4">
-        <MetricCard
-          title="数据库状态"
-          value={dbStatusValue}
-          description={summaryLoading ? "数据库探针检测中" : summary.database.message}
-          color={summary.database.status === "connected" ? "green" : summary.database.status === "checking" ? "yellow" : "red"}
-          icon="🛡️"
-        />
-        <MetricCard
-          title="AI 接口探针延迟"
-          value={aiLatencyValue}
-          description={
-            summaryLoading
-              ? "AI 探针检测中"
-              : summary.ai_probe.status === "connected"
-                ? `${summary.ai_probe.model || "AI"} 单次连通探针`
-                : summary.ai_probe.message
-          }
-          color={
-            summary.ai_probe.status === "connected"
-              ? "indigo"
-              : summary.ai_probe.status === "checking"
-                ? "yellow"
-                : summary.ai_probe.status === "not_configured"
-                  ? "blue"
-                  : "red"
-          }
-          icon="🧠"
-        />
-        <MetricCard
-          title="测试套件总数"
-          value={`${healthSuites.length} + ${realE2ESuites.length}`}
-          description="安全健康套件 + 真实模型 E2E"
-          color="blue"
-          icon="📋"
-        />
-        <MetricCard
-          title="最近一次诊断"
-          value={formattedLastRunTime}
-          description="测试执行完毕的最新统计时间"
-          color="yellow"
-          icon="⏳"
-        />
-      </div>
-
-      <div className="grid gap-8 xl:grid-cols-2">
-        {/* 左侧：测试套件列表 */}
-        <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-zinc-200/80 p-5 shadow-sm">
-            <h2 className="text-base font-bold text-zinc-900 mb-1">安全健康自测</h2>
-            <p className="text-xs text-zinc-500 mb-4">一键自测只运行以下套件，使用 Mock AI/通道并回滚测试数据。</p>
-
-            <div className="grid gap-3.5 sm:grid-cols-2">
-              {healthSuites.map(renderSuiteCard)}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-amber-200 p-5 shadow-sm">
-            <h2 className="text-base font-bold text-zinc-900 mb-1">真实模型验证</h2>
-            <p className="text-xs text-zinc-500 mb-4">
-              不包含在一键健康自测中。会产生模型费用、耗时较长，并永久保留测试数据。
-            </p>
-            <div className="grid gap-3.5">{realE2ESuites.map(renderSuiteCard)}</div>
-          </div>
-        </div>
-
-        {/* 右侧：深邃终端控制台 */}
-        <div>
-          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-xl overflow-hidden flex flex-col h-[650px] relative">
-            
-            {/* 终端头部 */}
-            <div className="bg-zinc-900 px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between select-none">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-rose-500 opacity-80"></span>
-                <span className="w-3 h-3 rounded-full bg-amber-500 opacity-80"></span>
-                <span className="w-3 h-3 rounded-full bg-emerald-500 opacity-80"></span>
-                <span className="text-xs font-semibold font-mono text-zinc-400 ml-2 tracking-wide">
-                  SYSTEM DIAGNOSTICS CONSOLE {selectedSuiteId === "all" ? "— 安全健康自测" : `— 用例 ${selectedSuite?.display_id || selectedSuiteId}`}
-                </span>
-              </div>
-
-              {/* 终端顶部操作按钮组 */}
-              <div className="flex items-center gap-4 text-xs font-mono">
-                {/* 自动滚屏开关 */}
-                <label className="flex items-center gap-1.5 text-zinc-400 cursor-pointer hover:text-zinc-200 transition">
-                  <input
-                    type="checkbox"
-                    checked={autoScroll}
-                    onChange={(e) => setAutoScroll(e.target.checked)}
-                    className="w-3 h-3 accent-indigo-500 cursor-pointer rounded"
-                  />
-                  自动滚动
-                </label>
-
-                <button
-                  onClick={copyLogs}
-                  disabled={activeLogs.length === 0}
-                  className={`text-zinc-400 hover:text-zinc-200 transition ${
-                    activeLogs.length === 0 ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                >
-                  📋 复制
-                </button>
-
-                <button
-                  onClick={clearLogs}
-                  disabled={Object.keys(consoleLogs).length === 0}
-                  className={`text-zinc-400 hover:text-rose-400 transition ${
-                    Object.keys(consoleLogs).length === 0 ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                >
-                  🗑️ 清空
-                </button>
-              </div>
-            </div>
-
-            {/* 终端 Tabs 切换条 */}
-            <div className="bg-zinc-900/40 px-5 py-2 border-b border-zinc-800/80 flex items-center gap-2 overflow-x-auto select-none custom-scrollbar shrink-0">
-              <button
-                onClick={() => setSelectedSuiteId("all")}
-                className={`px-3 py-1 rounded-md text-[10px] font-bold font-mono transition tracking-wider shrink-0 select-none ${
-                  selectedSuiteId === "all"
-                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
-                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-                }`}
-              >
-                📦 安全健康自测
-              </button>
-              {testSuites.map((suite) => (
-                <button
-                  key={suite.id}
-                  onClick={() => setSelectedSuiteId(suite.id)}
-                  className={`px-2.5 py-1 rounded-md text-[10px] font-bold font-mono transition shrink-0 select-none ${
-                    selectedSuiteId === suite.id
-                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
-                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-                  }`}
-                >
-                  ⚡ {suite.display_id} ({suite.name.replace("test_", "")})
-                </button>
-              ))}
-            </div>
-
-            {/* 终端主体日志内容 */}
-            <div className="flex-1 p-6 overflow-y-auto font-mono text-xs select-text space-y-0.5 custom-scrollbar bg-zinc-950">
-              {activeLogs.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-zinc-500 font-mono space-y-3 select-none">
-                  <div className="text-4xl">⚡</div>
-                  <div className="text-zinc-500">
-                    {selectedSuiteId === "all"
-                      ? "健康自测终端就绪。真实模型 E2E 需要在左侧单独确认运行。"
-                      : `[用例 ${selectedSuiteId}] 终端就绪。目前无上一次的历史运行日志。`}
-                  </div>
-                  <div className="text-[10px] text-zinc-600 bg-zinc-900 border border-zinc-800 px-3 py-1 rounded-md">
-                    admin@ranren-ai:~$ pytest {selectedSuiteId === "all" ? "-v" : testSuites.find(s => s.id === selectedSuiteId)?.file || ""}
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {activeLogs.map((line, index) => formatLogLine(line, index))}
-                  
-                  {/* 正在运行中的动态闪烁光标 */}
-                  {currentRunningId && currentRunningId === selectedSuiteId && (
-                    <div className="flex items-center gap-1 py-1 font-mono text-indigo-400 font-bold select-none">
-                      <span>⚡ pytest is executing...</span>
-                      <span className="w-1.5 h-4 bg-indigo-400 animate-pulse"></span>
-                    </div>
-                  )}
-                  {runningAll && selectedSuiteId === "all" && (
-                    <div className="flex items-center gap-1 py-1 font-mono text-indigo-400 font-bold select-none">
-                      <span>
-                        pytest 正在执行{currentAllSuiteId ? `套件 ${currentAllSuiteId}` : "安全健康自测"}...
-                      </span>
-                      <span className="w-1.5 h-4 bg-indigo-400 animate-pulse"></span>
-                    </div>
-                  )}
-                </>
-              )}
-              <div ref={terminalEndRef} />
-            </div>
-
-            {/* 终端底部状态条 */}
-            <div className="bg-zinc-900 border-t border-zinc-800 px-5 py-2 flex items-center justify-between text-[10px] text-zinc-500 font-mono select-none">
-              <span>Lines: {activeLogs.length}</span>
-              <span>Status: {currentRunningId === selectedSuiteId || (runningAll && selectedSuiteId === "all") ? "RUNNING" : "IDLE"}</span>
-            </div>
-
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
 
-// 1. 系统指标卡片组件
-function MetricCard({
-  title,
-  value,
-  description,
-  color,
+function StatusBadge({ status }: { status: TestStatus }) {
+  const styles = {
+    idle: "bg-zinc-100 text-zinc-500",
+    running: "bg-blue-50 text-blue-700",
+    passed: "bg-emerald-50 text-emerald-700",
+    failed: "bg-rose-50 text-rose-700",
+  };
+  const labels = { idle: "待运行", running: "运行中", passed: "通过", failed: "失败" };
+  return <span className={`rounded px-2 py-0.5 text-[11px] font-medium ${styles[status]}`}>{labels[status]}</span>;
+}
+
+function SummaryCard({
   icon,
+  label,
+  value,
+  detail,
+  tone,
 }: {
-  title: string;
+  icon: React.ReactNode;
+  label: string;
   value: string;
-  description: string;
-  color: "green" | "indigo" | "blue" | "yellow" | "red";
-  icon: string;
+  detail: string;
+  tone: "green" | "blue" | "violet" | "amber" | "red";
 }) {
-  const colorClasses = {
-    green: "bg-emerald-50/50 border-emerald-200/60 text-emerald-700",
-    indigo: "bg-indigo-50/50 border-indigo-200/60 text-indigo-700",
-    blue: "bg-blue-50/50 border-blue-200/60 text-blue-700",
-    yellow: "bg-amber-50/50 border-amber-200/60 text-amber-700",
-    red: "bg-rose-50/50 border-rose-200/60 text-rose-700",
+  const tones = {
+    green: "bg-emerald-50 text-emerald-700",
+    blue: "bg-sky-50 text-sky-700",
+    violet: "bg-violet-50 text-violet-700",
+    amber: "bg-amber-50 text-amber-700",
+    red: "bg-rose-50 text-rose-700",
   };
-
   return (
-    <div className={`rounded-xl border p-5 transition hover:shadow-sm ${colorClasses[color]}`}>
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium opacity-75">{title}</span>
-        <span className="text-xl">{icon}</span>
+    <div className="rounded-lg border border-zinc-200 bg-white p-4">
+      <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
+        <span className={`rounded-md p-1.5 ${tones[tone]}`}>{icon}</span>
+        {label}
       </div>
-      <div className="mt-2.5 text-lg font-bold text-zinc-900">{value}</div>
-      <p className="mt-1 text-xs text-zinc-600">{description}</p>
+      <div className="mt-3 truncate text-lg font-bold text-zinc-950" title={value}>{value}</div>
+      <p className="mt-1 truncate text-xs text-zinc-500" title={detail}>{detail}</p>
     </div>
   );
 }
 
-// 2. 测试状态 Bulb 指示灯
-function StatusBulb({ status }: { status: TestStatus }) {
-  const statusConfig = {
-    idle: {
-      color: "bg-zinc-300",
-      glow: "",
-      text: "Ready",
-      textColor: "text-zinc-400",
-    },
-    running: {
-      color: "bg-blue-500 animate-pulse",
-      glow: "shadow-[0_0_8px_rgba(59,130,246,0.6)]",
-      text: "Running",
-      textColor: "text-blue-500",
-    },
-    passed: {
-      color: "bg-emerald-500 animate-pulse",
-      glow: "shadow-[0_0_8px_rgba(16,185,129,0.6)]",
-      text: "Passed",
-      textColor: "text-emerald-500",
-    },
-    failed: {
-      color: "bg-rose-500 animate-pulse",
-      glow: "shadow-[0_0_8px_rgba(244,63,94,0.6)]",
-      text: "Failed",
-      textColor: "text-rose-500",
-    },
-  };
+function InfoPill({ icon, text }: { icon: React.ReactNode; text: string }) {
+  return <span className="inline-flex items-center gap-1.5 rounded bg-white px-2.5 py-1 text-indigo-700 ring-1 ring-indigo-100">{icon}{text}</span>;
+}
 
-  const conf = statusConfig[status];
-
+function LogTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
-    <div className="flex items-center gap-1.5 select-none bg-white border border-zinc-100 shadow-sm/50 px-2 py-0.5 rounded-full">
-      <span className={`w-2 h-2 rounded-full ${conf.color} ${conf.glow}`}></span>
-      <span className={`text-[10px] font-bold tracking-wider uppercase font-mono ${conf.textColor}`}>
-        {conf.text}
-      </span>
+    <button onClick={onClick} className={`rounded px-2.5 py-1 text-xs font-medium ${active ? "bg-zinc-950 text-white" : "text-zinc-500 hover:bg-zinc-100"}`}>
+      {label}
+    </button>
+  );
+}
+
+function IconButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button title={label} onClick={onClick} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900">
+      {children}
+    </button>
+  );
+}
+
+function LogLine({ line }: { line: string }) {
+  const failed = /FAILED|ERROR|测试失败|运行异常/.test(line);
+  const passed = /PASSED|测试成功|SUCCESS/.test(line);
+  return (
+    <div className={`break-all ${failed ? "text-rose-400" : passed ? "text-emerald-400" : ""}`}>
+      {failed ? <XCircle size={12} className="mr-1 inline" /> : passed ? <CheckCircle2 size={12} className="mr-1 inline" /> : null}
+      {line}
     </div>
   );
 }

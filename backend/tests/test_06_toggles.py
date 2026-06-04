@@ -5,10 +5,48 @@ import secrets
 import pytest
 from sqlalchemy import select
 
+from app.models.ai_usage import AIUsageLog
 from app.models.service_case import ServiceCase
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_delivery_mode
-from app.services.ranren_ai.engine import RanrenAIEngine
+from app.services.ranren_ai.engine import RanrenAIEngine, _requires_fixed_safety_reply
+
+
+@pytest.mark.asyncio
+async def test_dashboard_cost_excludes_diagnostic_usage(admin_client, db_session):
+    before = (await admin_client.get("/dashboard/summary")).json()["ai_cost_summary"]
+    db_session.add_all(
+        [
+            AIUsageLog(
+                scenario="ai_reply",
+                model="test-model",
+                total_tokens=100,
+                prompt_tokens=60,
+                completion_tokens=40,
+                estimated_cost_yuan=0.1,
+                success=True,
+                is_diagnostic=False,
+            ),
+            AIUsageLog(
+                scenario="diagnostics_e2e_quality_judge",
+                model="test-model",
+                total_tokens=900,
+                prompt_tokens=500,
+                completion_tokens=400,
+                estimated_cost_yuan=0.9,
+                success=True,
+                is_diagnostic=True,
+                diagnostic_run_id="test-run",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    response = await admin_client.get("/dashboard/summary")
+    assert response.status_code == 200, response.text
+    summary = response.json()["ai_cost_summary"]
+    assert summary["total_calls"] == before["total_calls"] + 1
+    assert summary["total_tokens"] == before["total_tokens"] + 100
 
 
 @pytest.mark.asyncio
@@ -124,6 +162,55 @@ async def test_qiwe_ai_reply_respects_global_manual_review_policy(admin_client, 
         assert should_send is True
     finally:
         await set_ai_reply_delivery_mode("manual_review", db_session)
+
+
+def test_current_physical_risk_uses_fixed_safety_reply():
+    service_case = ServiceCase(
+        case_no="TEST-SAFETY-REPLY",
+        group_id="test-safety-reply",
+        questionnaire_token="test-safety-reply-token",
+        risk_level="medium",
+        needs_human_intervention=True,
+        risk_flags=[{"code": "palpitation", "level": "medium"}],
+    )
+
+    assert _requires_fixed_safety_reply(service_case, {"risk_flags": []}) is False
+    assert _requires_fixed_safety_reply(
+        service_case,
+        {"risk_flags": [{"code": "palpitation", "level": "medium"}]},
+    ) is True
+    assert _requires_fixed_safety_reply(
+        service_case,
+        {
+            "requires_immediate_safety_reply": False,
+            "risk_flags": [{"code": "palpitation", "level": "medium"}],
+        },
+    ) is False
+    assert _requires_fixed_safety_reply(
+        None,
+        {"requires_immediate_safety_reply": True, "risk_flags": []},
+    ) is True
+
+
+def test_fixed_safety_reply_distinguishes_health_risk_from_service_handoff():
+    service_case = ServiceCase(
+        case_no="TEST-SERVICE-HANDOFF",
+        group_id="test-service-handoff",
+        questionnaire_token="test-service-handoff-token",
+        risk_level="normal",
+        needs_human_intervention=True,
+        risk_flags=None,
+        refund_intent_flags=[{"detected": True, "evidence": "我要退款"}],
+    )
+
+    assert _requires_fixed_safety_reply(service_case, {"risk_flags": []}) is False
+    assert _requires_fixed_safety_reply(
+        None,
+        {"risk_flags": [{"code": "medical_boundary", "level": "high"}]},
+    ) is True
+
+    service_case.risk_level = "high"
+    assert _requires_fixed_safety_reply(service_case, {"risk_flags": []}) is False
 
 
 @pytest.mark.asyncio

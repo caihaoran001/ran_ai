@@ -4,7 +4,6 @@ import secrets
 from datetime import datetime, timezone
 
 import pytest
-import pytest_asyncio
 from sqlalchemy import select
 
 from app.models.message import (
@@ -19,14 +18,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ranren_ai.engine import RanrenAIEngine
-from app.services.intervention_service import merge_case_insight
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def _cleanup_engine():
-    from app.db.session import engine
-    yield
-    await engine.dispose()
+from app.services.intervention_service import merge_case_insight, normalize_insight
 
 
 async def _setup_case_with_intake(db_session, cai_haoran_answers):
@@ -64,6 +56,7 @@ async def _ingest_and_analyze(db_session, case_id, group_id, content, mock_ai):
         source="chat_message",
         content=content,
     )
+    insight = normalize_insight(insight, source="chat_message", content=content)
     case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
     assert case is not None
     merge_case_insight(case, insight)
@@ -135,6 +128,8 @@ async def test_refund_intent(db_session, mock_ai, cai_haoran_answers):
     case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
     assert case.refund_intent_flags is not None
     assert len(case.refund_intent_flags) > 0
+    assert case.needs_human_intervention is True
+    assert any(item.get("code") == "refund_request" for item in (case.intervention_reasons or []))
 
 
 @pytest.mark.asyncio
