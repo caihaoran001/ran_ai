@@ -286,8 +286,17 @@ async def test_followup_time_context_late_night_allows_sleep_not_product_schedul
     )
 
     assert context["local_hour"] == 23
-    assert "sleep_change" in context["allowed_field_keys"]
-    assert "energy_change" in context["allowed_field_keys"]
+    # 深夜时段 allowed_by_time 全量 8 字段
+    expected_late_night = {
+        "energy_change", "sleep_change", "bowel_change",
+        "habit_stability", "next_stage_intent",
+        "self_management", "lifestyle_habit", "long_term_weight_stability",
+    }
+    # day7 missing 只包含 energy_change, sleep_change, bowel_change 落在深夜窗口
+    assert set(context["allowed_field_keys"]).issubset(expected_late_night)
+    assert {"energy_change", "sleep_change", "bowel_change"}.issubset(
+        set(context["allowed_field_keys"])
+    )
     assert "product_schedule" not in context["allowed_field_keys"]
 
 
@@ -653,3 +662,230 @@ async def test_outcome_events_update_user_state_profile_evidence_chain(db_sessio
     body_feedback = state_profile.state_json["domains"]["body_feedback"]
     assert body_feedback["current"]["value"]["energy_change"]["value"] == "用户反馈白天精神状态有改善"
     assert body_feedback["history"][0]["evidence"] == "今天下午没那么困了，整体精神稳一点"
+
+
+@pytest.mark.asyncio
+async def test_followup_time_context_noon_allows_midday_fields(db_session):
+    case = await _setup_outcome_case(db_session, days=3)
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session,
+        service_case=case,
+        spec=spec,
+        state=state,
+        now=datetime(2026, 6, 3, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["local_hour"] == 12
+    expected_noon = {
+        "plan_understood", "started_execution", "product_schedule",
+        "rhythm_understood", "documents_received", "profile_completed",
+        "bowel_change", "energy_change",
+    }
+    assert set(context["allowed_field_keys"]).issubset(expected_noon)
+    assert "started_execution" in context["allowed_field_keys"]
+    assert "product_schedule" in context["allowed_field_keys"]
+    assert "rhythm_understood" in context["allowed_field_keys"]
+    assert "sleep_change" not in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_followup_time_context_boundary_hour_10_is_noon(db_session):
+    case = await _setup_outcome_case(db_session, days=3)
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session,
+        service_case=case,
+        spec=spec,
+        state=state,
+        now=datetime(2026, 6, 3, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["local_hour"] == 10
+    assert "rhythm_understood" in context["allowed_field_keys"]
+    assert "sleep_change" not in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_followup_time_context_boundary_hour_14_is_afternoon(db_session):
+    case = await _setup_outcome_case(db_session, days=14)
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session,
+        service_case=case,
+        spec=spec,
+        state=state,
+        now=datetime(2026, 6, 3, 14, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["local_hour"] == 14
+    assert "execution_rate_signal" in context["allowed_field_keys"]
+    assert "sleep_change" not in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_followup_time_context_boundary_hour_18_is_evening(db_session):
+    case = await _setup_outcome_case(db_session, days=28)
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session,
+        service_case=case,
+        spec=spec,
+        state=state,
+        now=datetime(2026, 6, 3, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["local_hour"] == 18
+    assert "habit_stability" in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_followup_time_context_boundary_hour_22_is_late_night(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session,
+        service_case=case,
+        spec=spec,
+        state=state,
+        now=datetime(2026, 6, 3, 22, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["local_hour"] == 22
+    assert "sleep_change" in context["allowed_field_keys"]
+    assert "product_schedule" not in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_answered_field_keys_maps_weight_to_three_fields(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    today = datetime(2026, 6, 3, 8, 0, tzinfo=ZoneInfo("Asia/Shanghai")).date()
+    db_session.add(Checkin(
+        service_case_id=case.id, group_id=case.group_id, user_id=case.user_id,
+        checkin_date=today, content="晨间打卡", parsed_json={"weight": "70.1"},
+    ))
+    await db_session.flush()
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session, service_case=case, spec=spec, state=state,
+        now=datetime(2026, 6, 3, 8, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["answered_today"]["weight"] is True
+    assert "weight_change" not in context["allowed_field_keys"]
+    assert "weight_result" not in context["allowed_field_keys"]
+    assert "challenge_goal_result" not in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_answered_field_keys_maps_body_feedback_to_energy_and_positive(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    today = datetime(2026, 6, 3, 14, 0, tzinfo=ZoneInfo("Asia/Shanghai")).date()
+    db_session.add(Checkin(
+        service_case_id=case.id, group_id=case.group_id, user_id=case.user_id,
+        checkin_date=today, content="午间打卡", parsed_json={"sensation": "有点累", "mood": "还行"},
+    ))
+    await db_session.flush()
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session, service_case=case, spec=spec, state=state,
+        now=datetime(2026, 6, 3, 14, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["answered_today"]["body_feedback"] is True
+    assert "energy_change" not in context["allowed_field_keys"]
+    assert "positive_body_signal" not in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_answered_field_keys_maps_waist_to_waist_fields(db_session):
+    case = await _setup_outcome_case(db_session, days=14)
+    today = datetime(2026, 6, 3, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai")).date()
+    db_session.add(Checkin(
+        service_case_id=case.id, group_id=case.group_id, user_id=case.user_id,
+        checkin_date=today, content="晚间打卡", parsed_json={"waist": "80"},
+    ))
+    await db_session.flush()
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session, service_case=case, spec=spec, state=state,
+        now=datetime(2026, 6, 3, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["answered_today"]["waist"] is True
+    assert "waist_or_body_change" not in context["allowed_field_keys"]
+    assert "waist_result" not in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_followup_time_context_afternoon_checkin_blocks_evening_fields(db_session):
+    case = await _setup_outcome_case(db_session, days=14)
+    today = datetime(2026, 6, 3, 14, 0, tzinfo=ZoneInfo("Asia/Shanghai")).date()
+    db_session.add(Checkin(
+        service_case_id=case.id, group_id=case.group_id, user_id=case.user_id,
+        checkin_date=today, content="下午打卡",
+        parsed_json={"weight": "69.5", "product_schedule": {"morning_c": "已喝", "noon_b": "已喝"}},
+    ))
+    await db_session.flush()
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session, service_case=case, spec=spec, state=state,
+        now=datetime(2026, 6, 3, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["answered_today"]["weight"] is True
+    assert context["answered_today"]["product_schedule"] is True
+    assert "weight_change" not in context["allowed_field_keys"]
+    assert "product_schedule" not in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_followup_time_context_deep_night_checkin_blocks_morning_fields(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    today = datetime(2026, 6, 3, 0, 30, tzinfo=ZoneInfo("Asia/Shanghai")).date()
+    db_session.add(Checkin(
+        service_case_id=case.id, group_id=case.group_id, user_id=case.user_id,
+        checkin_date=today, content="深夜打卡",
+        parsed_json={"weight": "70.2", "sleep": "凌晨1点才睡，质量差"},
+    ))
+    await db_session.flush()
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session, service_case=case, spec=spec, state=state,
+        now=datetime(2026, 6, 3, 8, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["answered_today"]["weight"] is True
+    assert context["answered_today"]["sleep"] is True
+    assert "weight_change" not in context["allowed_field_keys"]
+    assert "sleep_change" not in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_followup_time_context_hour_5_is_late_night(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session, service_case=case, spec=spec, state=state,
+        now=datetime(2026, 6, 3, 5, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["local_hour"] == 5
+    assert "sleep_change" in context["allowed_field_keys"]
+    assert "energy_change" in context["allowed_field_keys"]
+    assert "weight_change" not in context["allowed_field_keys"]
+
+
+@pytest.mark.asyncio
+async def test_followup_time_context_hour_6_is_morning(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+    context = await _build_followup_time_context(
+        db_session, service_case=case, spec=spec, state=state,
+        now=datetime(2026, 6, 3, 6, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    assert context["local_hour"] == 6
+    assert "weight_change" in context["allowed_field_keys"]
+    assert "sleep_change" in context["allowed_field_keys"]
+    assert "lifestyle_habit" not in context["allowed_field_keys"]

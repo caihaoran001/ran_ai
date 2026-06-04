@@ -59,6 +59,18 @@ TEST_SUITES = [
         "description": "真实大模型全链路 E2E 冒烟测试（含 24 轮真实多期陪伴对话、RAG 自进化闭环与案例反哺）",
         "file": "tests/test_07_real_llm_e2e.py",
     },
+    {
+        "id": "08",
+        "name": "test_08_qiwe_channel",
+        "description": "QiWe 通道代码逻辑测试：消息聚合、去重、异常处理（使用 mock 对象，不测试真实通道）",
+        "file": "tests/test_08_qiwe_channel.py",
+    },
+    {
+        "id": "09",
+        "name": "test_09_outcome_engine",
+        "description": "成效引擎测试：LLM 提取 + 阶段状态更新 + 行动焦点评分 + 时间感知",
+        "file": "tests/test_09_outcome_engine.py",
+    },
 ]
 
 @router.get("/test-suites")
