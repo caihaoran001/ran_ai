@@ -3,7 +3,6 @@ import type { ComponentType, ReactNode } from "react";
 import { api } from "@/lib/api";
 import {
   AlertTriangle,
-  BarChart3,
   Brain,
   CheckCircle2,
   ClipboardList,
@@ -241,31 +240,6 @@ export default async function DashboardPage() {
       </div>
 
       <OutcomeSummaryPanel summary={summary.outcome_summary} />
-
-      {/* 开发者系统健康自测试 Banner 引导 */}
-      <div className="mt-8 flex flex-col gap-4 rounded-xl border border-cyan-200 bg-cyan-50/60 p-6 shadow-sm md:flex-row md:items-center md:justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-cyan-700 shadow-sm">
-              <BarChart3 className="h-4 w-4" />
-            </span>
-            <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-950">
-              自动化链路自我进化与诊断中心
-            </h3>
-          </div>
-          <p className="max-w-3xl text-xs leading-6 text-slate-600">
-            系统集成了 7 项核心功能自动化链路测试（包含真实大模型多轮对话、处方 Word 编译、24小时群聊 FAQ 沉淀、服务阶段案例沉淀）。测试执行支持全自动数据库物理回滚清理，对线上生产数据零污染。
-          </p>
-        </div>
-        <div>
-          <Link
-            href="/system-diagnostics"
-            className="inline-flex min-h-10 items-center justify-center rounded-md bg-cyan-700 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cyan-800"
-          >
-            进入诊断控制台
-          </Link>
-        </div>
-      </div>
     </div>
   );
 }

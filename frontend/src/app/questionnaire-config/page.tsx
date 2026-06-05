@@ -18,17 +18,17 @@ type Config = {
 export default async function QuestionnaireConfigPage() {
   const config = await api<Config>("/questionnaire-template/config");
   return (
-    <div className="space-y-8">
+    <div className="page-stack">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-900">运营规则配置</h1>
-        <p className="mt-1.5 text-sm text-zinc-500">
+        <h1 className="page-heading">运营规则配置</h1>
+        <p className="page-subtitle">
           管理群内自动发卷策略、定时发送文案、跳过日期规则以及高风险安全拦截话术。
         </p>
       </div>
       
       <QuestionnaireConfigEditor config={config} />
       
-      <div className="border-t border-zinc-200/80 pt-8">
+      <div className="border-t border-slate-200 pt-7">
         <RiskReplyConfig />
       </div>
     </div>

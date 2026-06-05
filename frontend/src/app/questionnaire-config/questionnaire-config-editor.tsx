@@ -5,7 +5,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { API_BASE } from "@/lib/api";
-import { Loader2, CheckCircle2, AlertCircle, Plus, Trash2, Check, RefreshCw, RotateCcw } from "lucide-react";
+import {
+  AlertCircle,
+  CalendarClock,
+  Check,
+  CheckCircle2,
+  FileQuestion,
+  Loader2,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Trash2,
+} from "lucide-react";
 
 type Template = {
   template_key: string;
@@ -198,25 +210,30 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
   }
 
   if (!activeTemplate) {
-    return <section className="rounded-lg border border-zinc-200 bg-white p-4">暂无问卷配置</section>;
+    return <section className="panel p-6 text-sm text-slate-500">暂无问卷配置</section>;
   }
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <h2 className="font-semibold">发送计划</h2>
-            <p className="mt-1 text-sm text-zinc-500">
+    <div className="space-y-6">
+      <section className="panel overflow-hidden">
+        <div className="panel-header flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-50 text-cyan-700">
+              <CalendarClock className="h-5 w-5" />
+            </span>
+            <div>
+              <h2 className="panel-title">发送计划</h2>
+              <p className="panel-subtitle">
               文案支持 {"{questionnaire_link}"}、{"{day}"}、{"{user_name}"}、{"{case_no}"}、{"{group_id}"}、{"{template_key}"}。
-            </p>
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button
               type="button"
               disabled={resetting}
               onClick={() => resetTemplates()}
-              className="border border-zinc-200 bg-white text-zinc-600 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50/50 px-3 py-1.5 text-xs rounded-md"
+              className="border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
             >
               <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
               一键还原全部
@@ -225,12 +242,12 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
               type="button"
               onClick={save}
               disabled={saveStatus === "saving"}
-              className={`transition-all duration-300 active:scale-95 ${
+              className={`transition-colors duration-200 ${
                 saveStatus === "success"
-                  ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
                   : saveStatus === "error"
-                  ? "bg-rose-600 hover:bg-rose-500 text-white"
-                  : "bg-blue-600 hover:bg-blue-500 text-white"
+                  ? "bg-rose-600 hover:bg-rose-700 text-white"
+                  : "bg-cyan-700 hover:bg-cyan-800 text-white"
               }`}
             >
               {saveStatus === "saving" ? (
@@ -246,45 +263,55 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
               ) : saveStatus === "error" ? (
                 <>保存失败</>
               ) : (
-                <>保存全部配置</>
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  保存全部配置
+                </>
               )}
             </Button>
           </div>
         </div>
-        <ScheduleEditor
-          schedule={schedule}
-          templates={templates}
-          onChange={setSchedule}
-        />
+        <div className="p-5">
+          <ScheduleEditor
+            schedule={schedule}
+            templates={templates}
+            onChange={setSchedule}
+          />
+        </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white">
-        <div className="border-b border-zinc-200 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="font-semibold">问卷内容</h2>
-              <p className="mt-1 text-sm text-zinc-500">每份问卷单独维护，不再把所有题目混在一个编辑框里。</p>
+      <section className="panel overflow-hidden">
+        <div className="panel-header">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                <FileQuestion className="h-5 w-5" />
+              </span>
+              <div>
+                <h2 className="panel-title">问卷内容</h2>
+                <p className="panel-subtitle">每份问卷单独维护，不再把所有题目混在一个编辑框里。</p>
+              </div>
             </div>
             <Button
               type="button"
               disabled={resetting}
               onClick={() => resetTemplates(activeTemplate.template_key)}
-              className="border border-zinc-200 bg-white text-zinc-600 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50/50 px-3 py-1.5 text-xs rounded-md shrink-0"
+              className="shrink-0 border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
             >
               <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
               还原此问卷
             </Button>
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-5 flex flex-wrap gap-2">
             {templates.map((template) => (
               <button
                 key={template.template_key}
                 type="button"
                 onClick={() => setActiveKey(template.template_key)}
-                className={`rounded-md border px-3 py-2 text-sm transition-all duration-200 ${
+                className={`rounded-md border px-3 py-2 text-sm font-semibold transition-colors duration-200 ${
                   activeKey === template.template_key
-                    ? "border-blue-600 bg-blue-600 text-white font-medium shadow-sm shadow-blue-500/10"
-                    : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 hover:border-zinc-300"
+                    ? "border-cyan-700 bg-cyan-700 text-white shadow-sm"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-cyan-200 hover:bg-cyan-50/40"
                 }`}
               >
                 {templateLabel(template)}
@@ -294,17 +321,17 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
           </div>
         </div>
 
-        <div className="space-y-4 p-4">
+        <div className="space-y-4 p-5">
           <div className="grid gap-4 md:grid-cols-2">
             <label className="block">
-              <div className="mb-2 text-sm font-medium">配置名</div>
+              <div className="mb-2 text-sm font-semibold text-slate-700">配置名</div>
               <Input
                 value={activeTemplate.name}
                 onChange={(event) => updateTemplate(activeTemplate.template_key, { name: event.target.value })}
               />
             </label>
             <label className="block">
-              <div className="mb-2 text-sm font-medium">页面标题</div>
+              <div className="mb-2 text-sm font-semibold text-slate-700">页面标题</div>
               <Input
                 value={activeTemplate.title ?? ""}
                 onChange={(event) => updateTemplate(activeTemplate.template_key, { title: event.target.value })}
@@ -312,7 +339,7 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
             </label>
           </div>
           <label className="block">
-            <div className="mb-2 text-sm font-medium">页面说明</div>
+            <div className="mb-2 text-sm font-semibold text-slate-700">页面说明</div>
             <Input
               value={activeTemplate.description ?? ""}
               onChange={(event) => updateTemplate(activeTemplate.template_key, { description: event.target.value })}
@@ -320,8 +347,10 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
           </label>
           <label className="block">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <span className="text-sm font-medium">题目 JSON</span>
-              <span className="text-xs text-zinc-500">template_key: {activeTemplate.template_key}</span>
+              <span className="text-sm font-semibold text-slate-700">题目 JSON</span>
+              <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-mono text-slate-500">
+                {activeTemplate.template_key}
+              </span>
             </div>
             <Textarea
               className="min-h-[520px] font-mono text-xs"
@@ -386,8 +415,8 @@ function Switch({
       onClick={() => {
         if (!disabled) onChange(!checked);
       }}
-      className={`relative inline-flex shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${trackClass} ${
-        checked ? "bg-blue-600 hover:bg-blue-500" : "bg-zinc-200 hover:bg-zinc-300"
+      className={`relative inline-flex shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 ${trackClass} ${
+        checked ? "bg-cyan-700 hover:bg-cyan-800" : "bg-slate-200 hover:bg-slate-300"
       } ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
     >
       <span
@@ -453,11 +482,11 @@ function ScheduleEditor({
   return (
     <div className="space-y-5">
       {/* 一、全局总控 Banner 开关 */}
-      <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4.5 shadow-sm transition-all duration-300">
+      <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-5 shadow-sm transition-colors duration-200">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-1">
-            <h3 className="text-base font-semibold text-zinc-900">自动发送问卷计划总开关</h3>
-            <p className="text-xs leading-relaxed text-zinc-500 max-w-2xl">
+            <h3 className="text-base font-semibold text-slate-950">自动发送问卷计划总开关</h3>
+            <p className="max-w-2xl text-xs leading-6 text-slate-600">
               控制整个运营系统的自动发卷服务。关闭后，下方所有的定点规则、回执确认等逻辑都将彻底挂起，不会向当前消息通道发送任何消息。
             </p>
           </div>
@@ -471,7 +500,7 @@ function ScheduleEditor({
 
       {/* 当总开关关闭时的视觉提醒 */}
       {!schedule.enabled && (
-        <div className="rounded-lg border border-amber-100 bg-amber-50/50 px-4 py-3 text-xs text-amber-700 flex items-center gap-2 animate-fade-in">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 flex items-center gap-2 animate-fade-in">
           <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
           <span><strong>自动发卷服务当前未激活</strong>。下方所有计划配置与时间规则目前均处于挂起置灰状态，不会触发群聊推送。</span>
         </div>
@@ -485,11 +514,11 @@ function ScheduleEditor({
       }`}>
         
         {/* 全局发送时间和时区 */}
-        <div className="grid gap-4 md:grid-cols-2 rounded-xl border border-zinc-200 bg-white p-4 shadow-2xs">
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-2">
           <div className="block">
-            <div className="mb-2 text-sm font-semibold text-zinc-700">统一发送时间</div>
+            <div className="mb-2 text-sm font-semibold text-slate-700">统一发送时间</div>
             <select
-              className="flex h-9 w-full rounded-md border border-zinc-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-950"
+              className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus:border-cyan-700 focus-visible:outline-none"
               value={schedule.send_at}
               disabled={!schedule.enabled}
               onChange={(event) => onChange({ ...schedule, send_at: event.target.value })}
@@ -506,28 +535,28 @@ function ScheduleEditor({
                 );
               })}
             </select>
-            <p className="mt-1.5 text-2xs text-zinc-400">系统定时轮询并自动发卷的时间点。</p>
+            <p className="mt-1.5 text-xs text-slate-400">系统定时轮询并自动发卷的时间点。</p>
           </div>
           <div className="block">
-            <div className="mb-2 text-sm font-semibold text-zinc-700">系统时区</div>
+            <div className="mb-2 text-sm font-semibold text-slate-700">系统时区</div>
             <select
-              className="flex h-9 w-full rounded-md border border-zinc-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-950"
+              className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus:border-cyan-700 focus-visible:outline-none"
               value={schedule.timezone}
               disabled={!schedule.enabled}
               onChange={(event) => onChange({ ...schedule, timezone: event.target.value })}
             >
               <option value="Asia/Shanghai">北京时间 (Asia/Shanghai)</option>
             </select>
-            <p className="mt-1.5 text-2xs text-zinc-400">定时推送时间所采用的时区计算标准。</p>
+            <p className="mt-1.5 text-xs text-slate-400">定时推送时间所采用的时区计算标准。</p>
           </div>
         </div>
 
         {/* 入营问卷提交后群内回执 */}
-        <div className="rounded-xl border border-zinc-200 bg-white shadow-2xs overflow-hidden">
-          <div className="mb-4 flex items-center justify-between gap-3 border-b border-zinc-100 bg-zinc-50/10 px-4 py-3">
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="mb-4 flex items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3">
             <div>
-              <h3 className="font-semibold text-zinc-900">入营问卷提交后群内回执</h3>
-              <p className="mt-1 text-2xs text-zinc-500">用户提交首份入营问卷后，机器人在群内自动回复一条确认与指引文案。</p>
+              <h3 className="font-semibold text-slate-950">入营问卷提交后群内回执</h3>
+              <p className="mt-1 text-xs text-slate-500">用户提交首份入营问卷后，机器人在群内自动回复一条确认与指引文案。</p>
             </div>
             <Switch
               checked={schedule.intake_submit_reply.enabled}
@@ -549,10 +578,10 @@ function ScheduleEditor({
               : "opacity-45 pointer-events-none select-none filter grayscale-[30%]"
           }`}>
             <div className="block">
-              <div className="mb-2 flex items-center justify-between text-xs font-medium text-zinc-500">
+              <div className="mb-2 flex items-center justify-between gap-3 text-xs font-medium text-slate-500">
                 <span>回执话术</span>
-                <div className="flex items-center gap-1">
-                  <span className="mr-1.5 text-2xs text-zinc-400">点击追加变量:</span>
+                <div className="flex flex-wrap items-center justify-end gap-1">
+                  <span className="mr-1.5 text-xs text-slate-400">点击追加变量:</span>
                   {["{user_name}", "{case_no}", "{group_id}"].map((varName) => (
                     <button
                       key={varName}
@@ -567,7 +596,7 @@ function ScheduleEditor({
                           },
                         })
                       }
-                      className="inline-flex items-center rounded bg-blue-50 px-2 py-0.5 font-mono text-2xs font-semibold text-blue-600 ring-1 ring-blue-500/10 transition-all duration-150 hover:bg-blue-100/70 hover:scale-105 active:scale-95 disabled:opacity-40"
+                      className="inline-flex items-center rounded-md border border-cyan-100 bg-cyan-50 px-2 py-0.5 font-mono text-xs font-semibold text-cyan-800 transition-colors hover:bg-cyan-100 disabled:opacity-40"
                     >
                       {varName}
                     </button>
@@ -593,11 +622,11 @@ function ScheduleEditor({
         </div>
 
         {/* 长时间无互动后的温和唤醒 */}
-        <div className="rounded-xl border border-zinc-200 bg-white shadow-2xs overflow-hidden">
-          <div className="mb-4 flex items-center justify-between gap-3 border-b border-zinc-100 bg-zinc-50/10 px-4 py-3">
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="mb-4 flex items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3">
             <div>
-              <h3 className="font-semibold text-zinc-900">无互动自动唤醒</h3>
-              <p className="mt-1 text-2xs text-zinc-500">
+              <h3 className="font-semibold text-slate-950">无互动自动唤醒</h3>
+              <p className="mt-1 text-xs text-slate-500">
                 服务中的用户超过指定小时数没有在群内发言时，每天最多由机器人温和提醒一次。
               </p>
             </div>
@@ -621,7 +650,7 @@ function ScheduleEditor({
               : "opacity-45 pointer-events-none select-none filter grayscale-[30%]"
           }`}>
             <label className="block max-w-xs">
-              <div className="mb-2 text-sm font-semibold text-zinc-700">超过多少小时无互动后提醒</div>
+              <div className="mb-2 text-sm font-semibold text-slate-700">超过多少小时无互动后提醒</div>
               <Input
                 type="number"
                 min={1}
@@ -639,10 +668,10 @@ function ScheduleEditor({
               />
             </label>
             <label className="block">
-              <div className="mb-2 flex items-center justify-between text-xs font-medium text-zinc-500">
+              <div className="mb-2 flex items-center justify-between gap-3 text-xs font-medium text-slate-500">
                 <span>唤醒话术</span>
-                <div className="flex items-center gap-1">
-                  <span className="mr-1.5 text-2xs text-zinc-400">点击追加变量:</span>
+                <div className="flex flex-wrap items-center justify-end gap-1">
+                  <span className="mr-1.5 text-xs text-slate-400">点击追加变量:</span>
                   {["{user_name}", "{case_no}", "{group_id}", "{hours}"].map((varName) => (
                     <button
                       key={varName}
@@ -657,7 +686,7 @@ function ScheduleEditor({
                           },
                         })
                       }
-                      className="inline-flex items-center rounded bg-blue-50 px-2 py-0.5 font-mono text-2xs font-semibold text-blue-600 ring-1 ring-blue-500/10 transition-all duration-150 hover:bg-blue-100/70 hover:scale-105 active:scale-95 disabled:opacity-40"
+                      className="inline-flex items-center rounded-md border border-cyan-100 bg-cyan-50 px-2 py-0.5 font-mono text-xs font-semibold text-cyan-800 transition-colors hover:bg-cyan-100 disabled:opacity-40"
                     >
                       {varName}
                     </button>
@@ -683,11 +712,11 @@ function ScheduleEditor({
         </div>
 
         {/* 二、指定服务日发送（带独立开关） */}
-        <div className="rounded-xl border border-zinc-200 bg-white shadow-2xs overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 bg-zinc-50/20">
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 bg-slate-50/60">
             <div>
-              <h3 className="font-semibold text-zinc-900">指定服务日发送</h3>
-              <p className="mt-1 text-2xs text-zinc-500">在指定的具体服务日（第几天），向群组自动推送特定的打卡/复盘问卷。</p>
+              <h3 className="font-semibold text-slate-950">指定服务日发送</h3>
+              <p className="mt-1 text-xs text-slate-500">在指定的具体服务日（第几天），向群组自动推送特定的打卡/复盘问卷。</p>
             </div>
             
             <div className="flex items-center gap-3">
@@ -695,7 +724,7 @@ function ScheduleEditor({
               <Button
                 type="button"
                 disabled={!schedule.enabled || !schedule.rules_enabled}
-                className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-100 hover:bg-blue-100 hover:text-blue-700 rounded-md transition-all duration-200 active:scale-95 shadow-sm disabled:opacity-50 disabled:pointer-events-none"
+                className="flex min-h-9 items-center gap-1 rounded-md border border-cyan-100 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 shadow-sm transition-colors duration-200 hover:bg-cyan-100 disabled:pointer-events-none disabled:opacity-50"
                 onClick={() =>
                   onChange({
                     ...schedule,
@@ -741,13 +770,13 @@ function ScheduleEditor({
                 key={`${rule.day}-${index}`}
                 className={`rounded-lg border p-3.5 transition-all duration-300 ${
                   index === schedule.rules.length - 1 && index === highlightedIndex
-                    ? "border-blue-400 bg-blue-50/10 shadow-sm animate-slide-in animate-highlight-pulse"
-                    : "border-zinc-200 hover:border-zinc-300 bg-white"
+                    ? "border-cyan-400 bg-cyan-50/40 shadow-sm animate-slide-in animate-highlight-pulse"
+                    : "border-slate-200 hover:border-cyan-200 bg-white"
                 }`}
               >
                 <div className="grid gap-4.5 md:grid-cols-[110px_200px_1fr_auto]">
                   <div className="block">
-                    <div className="mb-2 text-xs font-semibold text-zinc-700">第几天</div>
+                    <div className="mb-2 text-xs font-semibold text-slate-700">第几天</div>
                     <Input
                       type="number"
                       min={1}
@@ -757,9 +786,9 @@ function ScheduleEditor({
                     />
                   </div>
                   <div className="block">
-                    <div className="mb-2 text-xs font-semibold text-zinc-700">发送问卷</div>
+                    <div className="mb-2 text-xs font-semibold text-slate-700">发送问卷</div>
                     <select
-                      className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-950 disabled:opacity-50"
+                      className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm focus:border-cyan-700 focus:outline-none disabled:opacity-50"
                       value={rule.template_key}
                       disabled={!schedule.rules_enabled}
                       onChange={(event) => updateRule(index, { template_key: event.target.value })}
@@ -772,7 +801,7 @@ function ScheduleEditor({
                     </select>
                   </div>
                   <div className="block">
-                    <div className="mb-2 text-xs font-semibold text-zinc-700 flex items-center justify-between">
+                    <div className="mb-2 flex items-center justify-between gap-3 text-xs font-semibold text-slate-700">
                       <span>发送话术</span>
                       {/* 五、变量 Tag Panel */}
                       <div className="flex items-center gap-1">
@@ -784,7 +813,7 @@ function ScheduleEditor({
                             onClick={() => {
                               updateRule(index, { message: rule.message + varName });
                             }}
-                            className="inline-flex items-center gap-1 rounded bg-blue-50 px-1.5 py-0.5 text-3xs font-mono font-semibold text-blue-600 ring-1 ring-blue-500/10 hover:bg-blue-100 hover:scale-105 active:scale-95 transition-all shadow-2xs cursor-pointer"
+                          className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-cyan-100 bg-cyan-50 px-1.5 py-0.5 font-mono text-xs font-semibold text-cyan-800 shadow-2xs transition-colors hover:bg-cyan-100"
                           >
                             {varName}
                           </button>
@@ -803,7 +832,7 @@ function ScheduleEditor({
                     <Button
                       type="button"
                       disabled={!schedule.rules_enabled}
-                      className="flex items-center gap-1 border border-zinc-200 bg-white text-zinc-500 hover:text-rose-600 hover:bg-rose-50/50 hover:border-rose-100 shadow-2xs transition-all duration-200 active:scale-[0.97] text-xs px-2.5 py-1.5 rounded-md disabled:opacity-50"
+                      className="flex min-h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-500 shadow-2xs transition-colors duration-200 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
                       onClick={() => removeRule(index)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -814,7 +843,7 @@ function ScheduleEditor({
               </div>
             ))}
             {schedule.rules.length === 0 && (
-              <div className="text-center py-6 text-sm text-zinc-400 border border-dashed border-zinc-200 rounded-lg">
+              <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400">
                 暂无指定推送规则，点击右上角 “增加规则” 按钮以创建。
               </div>
             )}
@@ -822,11 +851,11 @@ function ScheduleEditor({
         </div>
 
         {/* 其他服务日默认发送 */}
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-2xs transition-all duration-300">
-          <div className="mb-4 flex items-center justify-between gap-3 border-b border-zinc-100 pb-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors duration-200">
+          <div className="mb-4 flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
             <div>
-              <h3 className="font-semibold text-zinc-900">其他服务日默认发送</h3>
-              <p className="mt-1 text-2xs text-zinc-500">避开上方已指定的特定日期外，其余普通运营服务日默认派发的日常打卡问卷。</p>
+              <h3 className="font-semibold text-slate-950">其他服务日默认发送</h3>
+              <p className="mt-1 text-xs text-slate-500">避开上方已指定的特定日期外，其余普通运营服务日默认派发的日常打卡问卷。</p>
             </div>
             <Switch
               checked={schedule.daily_rule.enabled}
@@ -847,9 +876,9 @@ function ScheduleEditor({
           }`}>
             <div className="grid gap-4 md:grid-cols-[200px_1fr]">
               <div className="block">
-                <div className="mb-2 text-xs font-semibold text-zinc-700">默认问卷</div>
+                <div className="mb-2 text-xs font-semibold text-slate-700">默认问卷</div>
                 <select
-                  className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-950 disabled:opacity-50"
+                  className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm focus:border-cyan-700 focus:outline-none disabled:opacity-50"
                   value={schedule.daily_rule.template_key}
                   disabled={!schedule.daily_rule.enabled}
                   onChange={(event) =>
@@ -867,7 +896,7 @@ function ScheduleEditor({
                 </select>
               </div>
               <div className="block">
-                <div className="mb-2 text-xs font-semibold text-zinc-700 flex items-center justify-between">
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs font-semibold text-slate-700">
                   <span>默认发送话术</span>
                   {/* 五、变量 Tag Panel */}
                   <div className="flex items-center gap-1">
@@ -885,7 +914,7 @@ function ScheduleEditor({
                             }
                           });
                         }}
-                        className="inline-flex items-center gap-1 rounded bg-blue-50 px-1.5 py-0.5 text-2xs font-mono font-semibold text-blue-600 ring-1 ring-blue-500/10 hover:bg-blue-100 hover:scale-105 active:scale-95 transition-all shadow-2xs cursor-pointer disabled:opacity-40"
+                        className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-cyan-100 bg-cyan-50 px-1.5 py-0.5 font-mono text-xs font-semibold text-cyan-800 shadow-2xs transition-colors hover:bg-cyan-100 disabled:opacity-40"
                       >
                         {varName}
                       </button>
@@ -907,13 +936,13 @@ function ScheduleEditor({
             </div>
 
             {/* 四、跳过日期的 28天极简微型网格选择器 */}
-            <div className="block border-t border-zinc-100 pt-3">
-              <div className="mb-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-zinc-700">
+            <div className="block border-t border-slate-100 pt-3">
+              <div className="mb-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-slate-700">
                 <span>跳过日期（在选中的天数将不会发送默认打卡问卷）</span>
                 <button
                   type="button"
                   disabled={!schedule.daily_rule.enabled}
-                  className="text-2xs font-bold text-blue-600 hover:text-blue-700 hover:underline transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none group"
+                  className="group flex items-center gap-1.5 text-xs font-bold text-cyan-700 transition-colors hover:text-cyan-800 hover:underline disabled:pointer-events-none disabled:opacity-50"
                   onClick={() => {
                     const ruleDays = schedule.rules.map(r => r.day).filter(d => d >= 1 && d <= 28);
                     onChange({
@@ -930,7 +959,7 @@ function ScheduleEditor({
                 </button>
               </div>
               
-              <div className="flex flex-wrap gap-1.5 p-3 rounded-lg border border-zinc-200/60 bg-zinc-50/20">
+              <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-200 bg-slate-50/40 p-3">
                 {Array.from({ length: 28 }).map((_, i) => {
                   const dayNum = i + 1;
                   const isSkipped = schedule.daily_rule.skip_days.includes(dayNum);
@@ -952,10 +981,10 @@ function ScheduleEditor({
                           }
                         });
                       }}
-                      className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-all duration-200 active:scale-90 ${
+                      className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors duration-200 ${
                         isSkipped
-                          ? "bg-blue-600 text-white shadow-sm ring-2 ring-blue-500/20 scale-102 font-bold"
-                          : "bg-white text-zinc-500 border border-zinc-200 hover:bg-zinc-100 hover:border-zinc-300 hover:text-zinc-700 disabled:opacity-30"
+                          ? "bg-cyan-700 text-white shadow-sm ring-2 ring-cyan-500/20 font-bold"
+                          : "bg-white text-slate-500 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 hover:text-slate-700 disabled:opacity-30"
                       }`}
                     >
                       {dayNum}
@@ -963,8 +992,8 @@ function ScheduleEditor({
                   );
                 })}
               </div>
-              <p className="mt-2 text-2xs text-zinc-400">
-                高亮蓝色数字代表对应服务日将被自动跳过（适用于已在上方设置了专项复盘/标准打卡的特殊日期）。
+              <p className="mt-2 text-xs text-slate-400">
+                高亮数字代表对应服务日将被自动跳过（适用于已在上方设置了专项复盘/标准打卡的特殊日期）。
               </p>
             </div>
           </div>
