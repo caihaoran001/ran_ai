@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   AlertTriangle,
   BrainCircuit,
+  ChevronDown,
   CheckCircle2,
   Clock3,
   Coins,
@@ -39,6 +40,30 @@ type TestSuite = {
 
 type TestStatus = "idle" | "running" | "passed" | "failed";
 
+type ActiveRun = {
+  mode?: string;
+  suite_id?: string;
+  suite_name?: string;
+  started_at?: number;
+} | null;
+
+type E2EProgressEntry = {
+  key: string;
+  name: string;
+  status: "running" | "reviewed" | "passed" | "failed" | string;
+  scores_text?: string;
+};
+
+type E2EProgress = {
+  total?: number;
+  completed?: E2EProgressEntry[];
+  current_persona?: string;
+  current_persona_name?: string;
+  current_day?: number | null;
+  passed?: number;
+  failed?: number;
+};
+
 const EMPTY_SUMMARY: DiagnosticsSummary = {
   database: { status: "checking", message: "数据库探针检测中" },
   ai_probe: { status: "checking", message: "AI 探针检测中", latency_ms: null, model: null },
@@ -57,7 +82,10 @@ export default function SystemDiagnosticsPage() {
   const [summary, setSummary] = useState<DiagnosticsSummary>(EMPTY_SUMMARY);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [activeRun, setActiveRun] = useState<ActiveRun>(null);
+  const [e2eProgress, setE2EProgress] = useState<E2EProgress | null>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<HTMLDivElement>(null);
 
   const healthSuites = testSuites.filter((suite) => suite.included_in_health_check);
   const realE2ESuite = testSuites.find((suite) => suite.tier === "real_e2e");
@@ -71,13 +99,36 @@ export default function SystemDiagnosticsPage() {
 
   useEffect(() => {
     if (!busy) return;
-    const timer = window.setInterval(() => void syncHistory(), 2000);
+    const startedAt = Date.now();
+    const maxRunningMs = 2 * 60 * 60 * 1000;
+    const timer = window.setInterval(() => {
+      if (Date.now() - startedAt > maxRunningMs) {
+        window.clearInterval(timer);
+        setRunningAll(false);
+        setCurrentRunningId(null);
+        return;
+      }
+      void syncHistory();
+    }, 2000);
     return () => window.clearInterval(timer);
   }, [busy]);
 
   useEffect(() => {
     if (autoScroll) terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeLogs, autoScroll]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    const onScroll = () => {
+      const distanceFromBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight;
+      if (autoScroll && distanceFromBottom > 80) {
+        setAutoScroll(false);
+      }
+    };
+    terminal.addEventListener("scroll", onScroll);
+    return () => terminal.removeEventListener("scroll", onScroll);
+  }, [autoScroll]);
 
   async function loadInitialData() {
     try {
@@ -106,9 +157,11 @@ export default function SystemDiagnosticsPage() {
     const logs = history.console_logs;
     setConsoleLogs(Array.isArray(logs) ? { all: logs as string[] } : ((logs || {}) as Record<string, string[]>));
     setLastRunTime((history.last_run_time as string | number) || "尚未运行");
-    const activeRun = history.active_run as { mode?: string; suite_id?: string } | null;
-    setRunningAll(activeRun?.mode === "health");
-    setCurrentRunningId(activeRun?.mode && activeRun.mode !== "health" ? activeRun.suite_id || null : null);
+    const nextActiveRun = history.active_run as ActiveRun;
+    setActiveRun(nextActiveRun);
+    setE2EProgress((history.e2e_progress || null) as E2EProgress | null);
+    setRunningAll(nextActiveRun?.mode === "health");
+    setCurrentRunningId(nextActiveRun?.mode && nextActiveRun.mode !== "health" ? nextActiveRun.suite_id || null : null);
   }
 
   async function loadSummary() {
@@ -185,9 +238,17 @@ export default function SystemDiagnosticsPage() {
     setDurations({});
     setLastRunTime("尚未运行");
     setSelectedSuiteId("all");
+    setActiveRun(null);
+    setE2EProgress(null);
+  }
+
+  async function resetActiveRun() {
+    await fetch("/api/backend/diagnostics/reset-active-run", { method: "POST" });
+    await syncHistory();
   }
 
   const latestDiagnostic = summary.diagnostic_costs?.latest;
+  const lifetimeDiagnostic = summary.diagnostic_costs?.lifetime;
   const passedHealthCount = healthSuites.filter((suite) => statuses[suite.id] === "passed").length;
   const failedHealthCount = healthSuites.filter((suite) => statuses[suite.id] === "failed").length;
   const runningHealthCount = healthSuites.filter((suite) => statuses[suite.id] === "running").length;
@@ -241,7 +302,7 @@ export default function SystemDiagnosticsPage() {
         </div>
       </header>
 
-      <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <SummaryCard
           icon={<Database size={18} />}
           label="数据库状态"
@@ -268,6 +329,13 @@ export default function SystemDiagnosticsPage() {
           value={`¥${(latestDiagnostic?.estimated_cost_yuan || 0).toFixed(2)}`}
           detail={`${latestDiagnostic?.calls || 0} 次调用 · ${(latestDiagnostic?.tokens || 0).toLocaleString()} tokens`}
           tone="violet"
+        />
+        <SummaryCard
+          icon={<Coins size={18} />}
+          label="累计 E2E 成本"
+          value={`¥${(lifetimeDiagnostic?.estimated_cost_yuan || 0).toFixed(2)}`}
+          detail={`${lifetimeDiagnostic?.calls || 0} 次调用 · ${(lifetimeDiagnostic?.tokens || 0).toLocaleString()} tokens`}
+          tone="amber"
         />
         <SummaryCard
           icon={<Clock3 size={18} />}
@@ -364,6 +432,10 @@ export default function SystemDiagnosticsPage() {
               </div>
             </section>
           )}
+
+          {realE2ESuite && e2eProgress && (
+            <E2EProgressPanel progress={e2eProgress} running={currentRunningId === realE2ESuite.id} />
+          )}
         </div>
 
         <aside className="space-y-5">
@@ -375,7 +447,7 @@ export default function SystemDiagnosticsPage() {
             <div className="mt-4 space-y-3">
               <SideRow label="当前状态" value={busy ? "运行中" : failedHealthCount ? "存在失败" : "空闲"} />
               <SideRow label="选中日志" value={selectedSuite ? selectedSuite.display_id : "汇总"} />
-              <SideRow label="真实 E2E 成本" value={`¥${(latestDiagnostic?.estimated_cost_yuan || 0).toFixed(2)}`} />
+              <SideRow label="累计 E2E 成本" value={`¥${(lifetimeDiagnostic?.estimated_cost_yuan || 0).toFixed(2)}`} />
               <SideRow label="最近运行" value={formattedLastRun} />
             </div>
           </section>
@@ -414,6 +486,25 @@ export default function SystemDiagnosticsPage() {
               />
               自动滚动
             </label>
+            {!autoScroll && (
+              <button
+                onClick={() => {
+                  setAutoScroll(true);
+                  terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                }}
+                className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-md border border-cyan-200 bg-cyan-50 px-2.5 text-xs font-medium text-cyan-800 transition-colors hover:bg-cyan-100"
+              >
+                <ChevronDown size={14} /> 跳到底部
+              </button>
+            )}
+            {activeRun && (
+              <button
+                onClick={() => void resetActiveRun()}
+                className="inline-flex h-8 cursor-pointer items-center rounded-md border border-amber-200 bg-amber-50 px-2.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100"
+              >
+                重置卡住状态
+              </button>
+            )}
             <IconButton label="复制日志" onClick={() => void navigator.clipboard.writeText(activeLogs.join("\n"))}>
               <Copy size={15} />
             </IconButton>
@@ -438,7 +529,12 @@ export default function SystemDiagnosticsPage() {
             ))}
           </div>
         </div>
-        <div className="h-[520px] overflow-y-auto bg-[#071417] px-5 py-4 font-mono text-xs leading-6 text-cyan-50">
+        {activeRun && selectedSuiteId === "all" && (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-900">
+            当前正在运行 {activeRun.suite_id || "诊断套件"}（{activeRun.suite_name || activeRun.mode}）。汇总会同步追加运行日志，也可切换到对应标签查看。
+          </div>
+        )}
+        <div ref={terminalRef} className="h-[520px] overflow-y-auto bg-[#071417] px-5 py-4 font-mono text-xs leading-6 text-cyan-50">
           {activeLogs.length === 0 ? (
             <div className="flex h-full items-center justify-center text-cyan-200/50">选择测试套件并开始运行，日志会在这里实时出现。</div>
           ) : (
@@ -501,6 +597,72 @@ function SuiteCard({
         </button>
       </div>
     </article>
+  );
+}
+
+function E2EProgressPanel({ progress, running }: { progress: E2EProgress; running: boolean }) {
+  const completed = progress.completed || [];
+  const total = progress.total || 10;
+  const passed = progress.passed ?? completed.filter((item) => item.status === "passed").length;
+  const failed = progress.failed ?? completed.filter((item) => item.status === "failed").length;
+  const done = Math.min(total, passed + failed);
+  const donePercent = total ? Math.round((done / total) * 100) : 0;
+  const passedPercent = total ? (passed / total) * 100 : 0;
+  const failedPercent = total ? (failed / total) * 100 : 0;
+  return (
+    <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-zinc-950">E2E-01 用户旅程进度</div>
+          <p className="mt-1 text-xs leading-5 text-zinc-500">
+            从诊断日志中提取，刷新页面后仍可查看最近一次真实旅程的用户级状态。
+          </p>
+        </div>
+        <div className="text-right text-xs text-zinc-500">
+          <div className="font-semibold text-zinc-900">{done}/{total} 完成 · {passed} 通过 / {failed} 失败</div>
+          {running && progress.current_persona_name && (
+            <div className="mt-1">
+              当前：{progress.current_persona_name}
+              {progress.current_day ? ` · Day ${progress.current_day}` : ""}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-zinc-100" title={`${donePercent}%`}>
+        <div className="flex h-full">
+          <div className="bg-emerald-500 transition-all" style={{ width: `${passedPercent}%` }} />
+          <div className="bg-rose-500 transition-all" style={{ width: `${failedPercent}%` }} />
+        </div>
+      </div>
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {completed.length === 0 ? (
+          <div className="rounded-md border border-dashed border-zinc-200 px-3 py-3 text-xs text-zinc-500">
+            暂无已完成用户。E2E-01 开始输出用户结果后会在这里显示。
+          </div>
+        ) : (
+          completed.map((item) => (
+            <div
+              key={item.key}
+              className={`rounded-md border px-3 py-3 ${
+                item.status === "failed"
+                  ? "border-rose-200 bg-rose-50 text-rose-900"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-900"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold">{item.name}</span>
+                <span className="text-xs font-semibold">{item.status === "failed" ? "失败" : "通过"}</span>
+              </div>
+              {item.scores_text && (
+                <p className="mt-2 line-clamp-3 text-xs leading-5 opacity-80" title={item.scores_text}>
+                  {item.scores_text}
+                </p>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </section>
   );
 }
 

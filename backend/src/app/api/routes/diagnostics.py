@@ -4,6 +4,7 @@ import asyncio
 import os
 import time
 import json
+import re
 import secrets
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,9 @@ from app.models.ai_usage import AIUsageLog
 
 router = APIRouter()
 _DIAGNOSTICS_RUN_LOCK = asyncio.Lock()
+HEALTH_ACTIVE_RUN_TIMEOUT_SECONDS = 30 * 60
+REAL_E2E_ACTIVE_RUN_TIMEOUT_SECONDS = 2 * 60 * 60
+MAX_CONSOLE_LOG_LINES = 2000
 
 TEST_SUITES = [
     {
@@ -87,17 +91,6 @@ TEST_SUITES = [
         "requires_confirmation": False,
     },
     {
-        "id": "e2e_01",
-        "display_id": "E2E-01",
-        "name": "test_e2e_01_real_llm",
-        "description": "真实大模型 E2E：10 类用户从入营问卷到 28 天陪跑，并校验内容质量、提醒、风控与成效提取",
-        "file": "tests/test_e2e_01_real_llm.py",
-        "tier": "real_e2e",
-        "included_in_health_check": False,
-        "data_policy": "rollback",
-        "requires_confirmation": True,
-    },
-    {
         "id": "07",
         "display_id": "07",
         "name": "test_07_qiwe_channel",
@@ -118,6 +111,17 @@ TEST_SUITES = [
         "included_in_health_check": True,
         "data_policy": "rollback",
         "requires_confirmation": False,
+    },
+    {
+        "id": "e2e_01",
+        "display_id": "E2E-01",
+        "name": "test_e2e_01_real_llm",
+        "description": "真实大模型 E2E：10 类用户从入营问卷到 28 天陪跑，并校验内容质量、提醒、风控与成效提取",
+        "file": "tests/test_e2e_01_real_llm.py",
+        "tier": "real_e2e",
+        "included_in_health_check": False,
+        "data_policy": "rollback",
+        "requires_confirmation": True,
     },
 ]
 
@@ -253,27 +257,173 @@ def _load_history() -> dict:
         try:
             with open(history_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # 兼容旧版本列表格式，平滑迁移
-                if not isinstance(data.get("console_logs"), dict):
-                    if isinstance(data.get("console_logs"), list):
-                        data["console_logs"] = {"all": data["console_logs"]}
-                    else:
-                        data["console_logs"] = {}
+                data = _normalize_history(data)
+                changed = _clear_stale_active_run(data)
+                if changed:
+                    _save_history(data)
                 return data
         except Exception:
             pass
+    return _normalize_history({})
+
+
+def _normalize_history(data: dict) -> dict:
+    if not isinstance(data, dict):
+        data = {}
+    if not isinstance(data.get("statuses"), dict):
+        data["statuses"] = {}
+    if not isinstance(data.get("durations"), dict):
+        data["durations"] = {}
+    if not data.get("last_run_time"):
+        data["last_run_time"] = "尚未运行"
+    if not isinstance(data.get("console_logs"), dict):
+        if isinstance(data.get("console_logs"), list):
+            data["console_logs"] = {"all": data["console_logs"]}
+        else:
+            data["console_logs"] = {}
+    data.setdefault("active_run", None)
+    data["e2e_progress"] = _extract_e2e_progress(data.get("console_logs", {}))
+    return data
+
+
+def _clear_stale_active_run(history: dict) -> bool:
+    active_run = history.get("active_run")
+    if not isinstance(active_run, dict):
+        return False
+    suite_id = str(active_run.get("suite_id") or "")
+    started_at = _int_or_none(active_run.get("started_at")) or 0
+    mode = str(active_run.get("mode") or "")
+    timeout = REAL_E2E_ACTIVE_RUN_TIMEOUT_SECONDS if mode == "real_e2e" else HEALTH_ACTIVE_RUN_TIMEOUT_SECONDS
+    stale_after_restart = not _DIAGNOSTICS_RUN_LOCK.locked()
+    stale_by_timeout = bool(started_at and time.time() - started_at > timeout)
+    if not stale_after_restart and not stale_by_timeout:
+        return False
+    history["active_run"] = None
+    if suite_id and history.get("statuses", {}).get(suite_id) == "running":
+        history["statuses"][suite_id] = "failed"
+    if suite_id == "all":
+        for item in HEALTH_TEST_SUITES:
+            if history.get("statuses", {}).get(item["id"]) == "running":
+                history["statuses"][item["id"]] = "failed"
+    message = (
+        f"⚠️ 检测到陈旧诊断运行状态，已自动重置 active_run"
+        f"（suite={suite_id or 'unknown'}，reason={'timeout' if stale_by_timeout else 'backend_restart'}）。"
+    )
+    _append_console_log(history, "all", message)
+    if suite_id:
+        _append_console_log(history, suite_id, message)
+    return True
+
+
+def _empty_history() -> dict:
     return {
         "statuses": {},
         "durations": {},
         "last_run_time": "尚未运行",
         "console_logs": {},
         "active_run": None,
+        "e2e_progress": _extract_e2e_progress({}),
     }
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _append_console_log(history: dict, key: str, line: str) -> None:
+    logs = history.setdefault("console_logs", {}).setdefault(key, [])
+    logs.append(line.rstrip("\r\n"))
+    if len(logs) > MAX_CONSOLE_LOG_LINES:
+        del logs[:-MAX_CONSOLE_LOG_LINES]
+
+
+def _append_suite_log(history: dict, *, run_key: str, suite_id: str, line: str, mirror_to_all: bool = False) -> None:
+    _append_console_log(history, run_key, line)
+    if run_key == "all":
+        _append_console_log(history, suite_id, line)
+    elif mirror_to_all:
+        _append_console_log(history, "all", line)
+
+
+def _extract_e2e_progress(console_logs: dict) -> dict:
+    logs = list(console_logs.get("e2e_01") or console_logs.get("all") or [])
+    started_by_key: dict[str, dict] = {}
+    key_by_name: dict[str, str] = {}
+    completed_by_key: dict[str, dict] = {}
+    current_key = ""
+    current_day = None
+    for raw_line in logs:
+        line = str(raw_line)
+        match = re.search(r"启动人设旅程:\s*(?P<name>[^/]+?)\s*/\s*(?P<key>[^，,\s]+)", line)
+        if match:
+            name = match.group("name").strip()
+            key = match.group("key").strip()
+            current_key = key
+            entry = started_by_key.setdefault(key, {"key": key, "name": name, "status": "running"})
+            entry["name"] = name
+            key_by_name[name] = key
+            continue
+        match = re.search(r"\[E2E-01\]\s*(?P<name>.+?)\s*推进到 Day\s*(?P<day>\d+)", line)
+        if match:
+            name = match.group("name").strip()
+            current_day = _int_or_none(match.group("day"))
+            current_key = key_by_name.get(name, current_key)
+            continue
+        match = re.search(r"\[内容质量综合评审\]\s*(?P<name>[^:：]+)[:：]\s*(?P<scores>.+)", line)
+        if match:
+            name = match.group("name").strip()
+            key = key_by_name.get(name, name)
+            entry = started_by_key.setdefault(key, {"key": key, "name": name})
+            entry["status"] = "reviewed"
+            entry["scores_text"] = match.group("scores").strip()
+            continue
+        match = re.search(r"test_real_llm_persona_journey\[(?P<key>[^\]]+)\]\s+(?P<status>PASSED|FAILED)", line)
+        if match:
+            key = match.group("key").strip()
+            status = "passed" if match.group("status") == "PASSED" else "failed"
+            entry = dict(started_by_key.get(key, {"key": key, "name": key}))
+            entry["status"] = status
+            completed_by_key[key] = entry
+            if current_key == key:
+                current_key = ""
+            continue
+    completed = list(completed_by_key.values())
+    current = started_by_key.get(current_key) if current_key else None
+    return {
+        "total": len(REAL_E2E_PERSONA_KEYS),
+        "completed": completed,
+        "current_persona": current.get("key") if current else "",
+        "current_persona_name": current.get("name") if current else "",
+        "current_day": current_day,
+        "passed": sum(1 for item in completed if item.get("status") == "passed"),
+        "failed": sum(1 for item in completed if item.get("status") == "failed"),
+    }
+
+
+REAL_E2E_PERSONA_KEYS = (
+    "sunny_cooperator",
+    "anxious_questioner",
+    "quiet_noncompliant",
+    "shift_worker",
+    "caffeine_sensitive",
+    "plateau_frustrated",
+    "refund_complaint",
+    "medical_caution",
+    "positive_renewal",
+    "low_mood_recovery",
+)
 
 
 def _save_history(history: dict):
     history_path = _backend_dir() / HISTORY_FILE
     try:
+        for key, logs in list(history.get("console_logs", {}).items()):
+            if isinstance(logs, list) and len(logs) > MAX_CONSOLE_LOG_LINES:
+                history["console_logs"][key] = logs[-MAX_CONSOLE_LOG_LINES:]
+        history["e2e_progress"] = _extract_e2e_progress(history.get("console_logs", {}))
         with open(history_path, "w", encoding="utf-8") as f:
             json.dump(history, f, ensure_ascii=False, indent=2)
     except Exception:
@@ -289,15 +439,22 @@ async def get_diagnostics_history():
 @router.post("/clear-history")
 async def clear_diagnostics_history():
     """清空持久化的测试历史记录并重置测试状态"""
-    history = {
-        "statuses": {},
-        "durations": {},
-        "last_run_time": "尚未运行",
-        "console_logs": {},
-        "active_run": None,
-    }
+    history = _empty_history()
     _save_history(history)
     return {"status": "ok"}
+
+
+@router.post("/reset-active-run")
+async def reset_active_run():
+    """Manually clear a stale diagnostics active run without deleting history."""
+    history = _load_history()
+    history["active_run"] = None
+    for suite_id, status in list(history.get("statuses", {}).items()):
+        if status == "running":
+            history["statuses"][suite_id] = "failed"
+    _append_console_log(history, "all", "⚠️ 已手动重置卡住的 active_run。")
+    _save_history(history)
+    return {"status": "reset"}
 
 
 @router.get("/run/{test_id}")
@@ -378,6 +535,8 @@ async def run_diagnostics(
         if test_id == "all":
             for suite in suites_to_run:
                 history["console_logs"][suite["id"]].append(start_banner.rstrip("\n"))
+        elif suites_to_run and suites_to_run[0]["tier"] == "real_e2e":
+            _append_console_log(history, "all", start_banner)
 
         backend_dir = _backend_dir()
         has_overall_error = False
@@ -394,6 +553,8 @@ async def run_diagnostics(
             history["console_logs"][test_id].append(active_msg.rstrip("\n"))
             if test_id == "all":
                 history["console_logs"][suite["id"]].append(active_msg.rstrip("\n"))
+            elif suite["tier"] == "real_e2e":
+                _append_console_log(history, "all", active_msg)
             _save_history(history)
 
             test_file = suite["file"]
@@ -403,6 +564,8 @@ async def run_diagnostics(
             history["console_logs"][test_id].append(cmd_msg.rstrip("\n"))
             if test_id == "all":
                 history["console_logs"][suite["id"]].append(cmd_msg.rstrip("\n"))
+            elif suite["tier"] == "real_e2e":
+                _append_console_log(history, "all", cmd_msg)
 
             divider = "--------------------------------------------------\n"
             yield divider
@@ -410,6 +573,8 @@ async def run_diagnostics(
             history["console_logs"][test_id].append(divider.rstrip("\n"))
             if test_id == "all":
                 history["console_logs"][suite["id"]].append(divider.rstrip("\n"))
+            elif suite["tier"] == "real_e2e":
+                _append_console_log(history, "all", divider)
 
             test_path = backend_dir / test_file
             if not test_path.exists():
@@ -419,6 +584,8 @@ async def run_diagnostics(
                 history["console_logs"][test_id].append(err_msg.rstrip("\n"))
                 if test_id == "all":
                     history["console_logs"][suite["id"]].append(err_msg.rstrip("\n"))
+                elif suite["tier"] == "real_e2e":
+                    _append_console_log(history, "all", err_msg)
 
                 fail_msg = "🔴 测试失败: 诊断清单与当前仓库测试文件不一致\n"
                 yield fail_msg
@@ -426,6 +593,8 @@ async def run_diagnostics(
                 history["console_logs"][test_id].append(fail_msg.rstrip("\n"))
                 if test_id == "all":
                     history["console_logs"][suite["id"]].append(fail_msg.rstrip("\n"))
+                elif suite["tier"] == "real_e2e":
+                    _append_console_log(history, "all", fail_msg)
 
                 history["statuses"][suite["id"]] = "failed"
                 has_overall_error = True
@@ -471,6 +640,8 @@ async def run_diagnostics(
                             history["console_logs"][test_id].append(heartbeat.rstrip("\r\n"))
                             if test_id == "all":
                                 history["console_logs"][suite["id"]].append(heartbeat.rstrip("\r\n"))
+                            elif suite["tier"] == "real_e2e":
+                                _append_console_log(history, "all", heartbeat)
                             _save_history(history)
                             continue
                         break
@@ -482,6 +653,8 @@ async def run_diagnostics(
                     history["console_logs"][test_id].append(line_str.rstrip("\r\n"))
                     if test_id == "all":
                         history["console_logs"][suite["id"]].append(line_str.rstrip("\r\n"))
+                    elif suite["tier"] == "real_e2e":
+                        _append_console_log(history, "all", line_str)
 
                 await process.wait()
                 
@@ -500,6 +673,8 @@ async def run_diagnostics(
                     history["console_logs"][test_id].append(success_msg.rstrip("\n"))
                     if test_id == "all":
                         history["console_logs"][suite["id"]].append(success_msg.rstrip("\n"))
+                    elif suite["tier"] == "real_e2e":
+                        _append_console_log(history, "all", success_msg)
                     history["statuses"][suite["id"]] = "passed"
                 else:
                     fail_msg = (
@@ -514,6 +689,8 @@ async def run_diagnostics(
                     history["console_logs"][test_id].append(fail_msg.rstrip("\n"))
                     if test_id == "all":
                         history["console_logs"][suite["id"]].append(fail_msg.rstrip("\n"))
+                    elif suite["tier"] == "real_e2e":
+                        _append_console_log(history, "all", fail_msg)
                     history["statuses"][suite["id"]] = "failed"
                     has_overall_error = True
             except asyncio.CancelledError:
@@ -528,6 +705,8 @@ async def run_diagnostics(
                 history["console_logs"][test_id].append(err_msg.rstrip("\n"))
                 if test_id == "all":
                     history["console_logs"][suite["id"]].append(err_msg.rstrip("\n"))
+                elif suite["tier"] == "real_e2e":
+                    _append_console_log(history, "all", err_msg)
                 history["statuses"][suite["id"]] = "failed"
                 has_overall_error = True
             except Exception as e:
@@ -537,6 +716,8 @@ async def run_diagnostics(
                 history["console_logs"][test_id].append(err_msg.rstrip("\n"))
                 if test_id == "all":
                     history["console_logs"][suite["id"]].append(err_msg.rstrip("\n"))
+                elif suite["tier"] == "real_e2e":
+                    _append_console_log(history, "all", err_msg)
                 history["statuses"][suite["id"]] = "failed"
                 has_overall_error = True
 
@@ -550,6 +731,8 @@ async def run_diagnostics(
         if test_id == "all":
             for s in suites_to_run:
                 history["console_logs"][s["id"]].append(end_banner.strip())
+        elif suites_to_run and suites_to_run[0]["tier"] == "real_e2e":
+            _append_console_log(history, "all", end_banner)
         
         # 追加最终整体总结日志
         summary_divider = "======================================================================\n"
@@ -557,6 +740,8 @@ async def run_diagnostics(
         if test_id == "all":
             for s in suites_to_run:
                 history["console_logs"][s["id"]].append(summary_divider.strip())
+        elif suites_to_run and suites_to_run[0]["tier"] == "real_e2e":
+            _append_console_log(history, "all", summary_divider)
         
         if test_id == "all":
             overall_msg = (
@@ -574,11 +759,15 @@ async def run_diagnostics(
         if test_id == "all":
             for s in suites_to_run:
                 history["console_logs"][s["id"]].append(overall_msg.strip())
+        elif suites_to_run and suites_to_run[0]["tier"] == "real_e2e":
+            _append_console_log(history, "all", overall_msg)
         
         history["console_logs"][test_id].append(summary_divider.strip())
         if test_id == "all":
             for s in suites_to_run:
                 history["console_logs"][s["id"]].append(summary_divider.strip())
+        elif suites_to_run and suites_to_run[0]["tier"] == "real_e2e":
+            _append_console_log(history, "all", summary_divider)
         
         _save_history(history)
 

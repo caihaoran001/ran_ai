@@ -665,19 +665,19 @@ def _daily_checkin_text(value: Any) -> str:
     if isinstance(value, list):
         cleaned_items = []
         for idx, item in enumerate(value, 1):
-            cleaned = _normalize_vegetable_checkin(_clean_text(item))
+            cleaned = _clean_text(item)
             if cleaned:
                 cleaned_items.append(f"{idx}. {cleaned}")
         if cleaned_items:
             return "\n".join(cleaned_items)
             
-    text_val = _normalize_vegetable_checkin(_clean_text(value))
+    text_val = _clean_text(value)
     lines = []
     import re
     parts = re.split(r'[;\n；\n]+', text_val)
     idx = 1
     for part in parts:
-        cleaned = _normalize_vegetable_checkin(part.strip().lstrip("-•* ").strip())
+        cleaned = part.strip().lstrip("-•* ").strip()
         cleaned = re.sub(r'^\d+[\.、\)\）]\s*', '', cleaned)
         if cleaned:
             lines.append(f"{idx}. {cleaned}")
@@ -686,18 +686,6 @@ def _daily_checkin_text(value: Any) -> str:
     if lines:
         return "\n".join(lines)
     return text_val
-
-
-def _normalize_vegetable_checkin(text: str) -> str:
-    replacements = (
-        ("每餐蔬菜至少2拳", "今天是否至少吃到2拳蔬菜"),
-        ("每餐蔬菜至少 2 拳", "今天是否至少吃到2拳蔬菜"),
-        ("每餐至少2拳蔬菜", "今天是否至少吃到2拳蔬菜"),
-        ("每餐至少 2 拳蔬菜", "今天是否至少吃到2拳蔬菜"),
-    )
-    for old, new in replacements:
-        text = text.replace(old, new)
-    return text
 
 
 def _personal_reminder(value: Any) -> str:
