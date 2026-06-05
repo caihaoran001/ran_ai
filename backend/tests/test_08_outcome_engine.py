@@ -152,6 +152,45 @@ async def test_outcome_followup_suppressed_while_case_still_needs_human_interven
 
 
 @pytest.mark.asyncio
+async def test_outcome_followup_suppressed_when_user_is_dissatisfied(db_session, mock_ai):
+    case = await _setup_outcome_case(db_session, days=7)
+    message = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="这个跟我想象的不太一样，我不满意",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+
+    result = await analyze_and_update_outcomes(
+        db_session,
+        service_case=case,
+        message=message,
+        intervention_analysis={
+            "requires_human_intervention": True,
+            "intervention_reasons": [
+                {
+                    "code": "complaint",
+                    "level": "medium",
+                    "reason": "用户表达服务体验不满。",
+                    "evidence": "这个跟我想象的不太一样，我不满意",
+                    "source": "chat_message",
+                }
+            ],
+        },
+        recent_messages=[],
+    )
+
+    assert result["followup_plan"]["should_ask"] is False
+    assert "暂停成效追问" in result["followup_plan"]["reason"]
+
+
+@pytest.mark.asyncio
 async def test_outcome_followup_has_cooldown_to_avoid_reply_fatigue(db_session, mock_ai, monkeypatch):
     monkeypatch.setattr(
         "app.services.outcome_engine._local_now",

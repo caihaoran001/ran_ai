@@ -17,7 +17,7 @@ from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
-from app.services.ranren_ai.engine import RanrenAIEngine
+from app.services.ranren_ai.engine import RanrenAIEngine, _requires_human_handoff
 from app.services.intervention_service import merge_case_insight, normalize_insight
 
 
@@ -143,6 +143,30 @@ async def test_renewal_intent(db_session, mock_ai, cai_haoran_answers):
     case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
     assert case.renewal_intent_flags is not None
     assert len(case.renewal_intent_flags) > 0
+
+
+def test_explicit_robot_stop_becomes_human_handoff_analysis():
+    insight = normalize_insight(
+        {
+            "requires_human_intervention": True,
+            "requires_immediate_safety_reply": False,
+            "intervention_reasons": [
+                {
+                    "code": "robot_stop",
+                    "level": "medium",
+                    "reason": "用户明确要求停止机器人继续解释。",
+                    "evidence": "我不接受机器人继续解释",
+                    "source": "chat_message",
+                }
+            ],
+        },
+        source="chat_message",
+        content="我不接受机器人继续解释，别说了",
+    )
+
+    assert insight["requires_human_intervention"] is True
+    assert insight["requires_immediate_safety_reply"] is False
+    assert _requires_human_handoff(insight) is True
 
 
 @pytest.mark.asyncio

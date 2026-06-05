@@ -14,7 +14,7 @@ VALID_RISK_CODES = frozenset({
     "hormone_medication", "liver_kidney", "stone", "severe_insomnia",
     "chest_pain", "palpitation", "allergy", "medical_claim", "other_risk",
     "emotional_distress", "risk_classifier_unavailable",
-    "medication", "physical_discomfort", "complaint", "refund_request",
+    "medication", "physical_discomfort", "complaint", "robot_stop", "refund_request",
 })
 
 VALID_RISK_LEVELS = frozenset({"low", "medium", "high"})

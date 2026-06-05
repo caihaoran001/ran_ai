@@ -1078,6 +1078,12 @@ def _must_suppress_followup(intervention_analysis: dict[str, Any] | None) -> boo
         return False
     if intervention_analysis.get("requires_human_intervention"):
         return True
+    reasons = intervention_analysis.get("intervention_reasons")
+    if isinstance(reasons, list) and any(
+        isinstance(item, dict) and item.get("code") in {"complaint", "robot_stop", "refund_request"}
+        for item in reasons
+    ):
+        return True
     refund = intervention_analysis.get("refund_intent")
     if isinstance(refund, dict) and refund.get("detected"):
         return True

@@ -250,6 +250,9 @@ class AIService:
                 "【严格的风险分级标准】\n"
                 "- L3 健康高风险（level='high'）：疾病（糖尿病/高血压/甲减/结石）、用药（长期服药/激素药）、孕产哺乳期、体检指标严重异常、强烈过敏反应、抑郁/自残心理危机、疗效承诺或替代药物诊疗请求。此类风险必须拦截 AI 自动回复，requires_human_intervention=true。\n"
                 "- L2 体感不适/投诉风险（level='medium'）：失眠、腹痛腹泻、胃部不适、胀气恶心、心悸心慌、持续身体不适等生理体感波动；或用户持续表达强烈不满、质疑专业性/身份、辱骂、要求停止机器人、明确要求退款/退出、要求人工/班主任介入、对服务明显失控。requires_human_intervention=true，AI 仍可给出温和指导，但必须提示转人工复核。\n"
+                "  - 用户明确要求停止机器人、不要机器人继续解释、不要再听 AI 解释时，intervention_reasons 必须输出 code='robot_stop'，requires_human_intervention=true，requires_immediate_safety_reply=false。\n"
+                "  - 用户表达服务体验不满、质疑机器人专业性/身份、辱骂或冲突升级时，intervention_reasons 必须输出 code='complaint'。\n"
+                "  - 用户明确退款/退出时，refund_intent.detected=true，同时 intervention_reasons 输出 code='refund_request'。\n"
                 "- L1 执行/服务敏感（level='low'）：怕吃不敢吃、轻度控卡焦虑、对产品使用疑惑、普通活动咨询、仅询问退款规则但没有提出退款。requires_human_intervention=false，AI 正常应答，仅做静默标记。\n\n"
 
                 "【L1 与 L2 的边界判断标准】\n"
@@ -279,7 +282,7 @@ class AIService:
                 '      "source": "必须从以下值中选择：chat_message / questionnaire"\n'
                 "    }\n"
                 "  ],\n"
-                '  "intervention_reasons": [],  // 与risk_flags结构相同，记录需要人工介入的具体原因，无则为空数组\n'
+                '  "intervention_reasons": [],  // 与risk_flags结构相同，code 也可用 complaint / robot_stop / refund_request，记录需要人工介入的具体原因，无则为空数组\n'
                 '  "renewal_intent": {  // 续购意愿识别\n'
                 '    "detected": boolean,\n'
                 '    "reason": "判断依据",\n'

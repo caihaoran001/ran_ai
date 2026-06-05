@@ -105,6 +105,12 @@ DEFAULT_RISK_REPLY = (
     "由班主任为您进行 1 对 1 指导，我也将配合班主任为您全程守护。"
 )
 
+HUMAN_HANDOFF_REPLY = (
+    "收到，我先不继续用机器人解释了。\n\n"
+    "这条我已经转给真人班主任，后面由班主任接一下。"
+    "你不用重复说明，先按自己的节奏来。"
+)
+
 
 class RanrenAIEngine:
     """Channel-agnostic business engine for inbound customer messages."""
@@ -207,6 +213,16 @@ class RanrenAIEngine:
                 inbound_id=inbound_id,
                 analysis=analysis,
             )
+            if _requires_human_handoff(analysis) and not _requires_fixed_safety_reply(None, analysis):
+                await self._reply_human_handoff(message, service_case_id=service_case_id, trigger_id=inbound_id)
+                logger.info(
+                    "RanrenAI handed off complaint/robot-stop chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
+                    message.chat_id,
+                    inbound_id,
+                    service_case_id,
+                    (time.monotonic() - started_at) * 1000,
+                )
+                return
             outcome_result = await self._run_outcome_analysis(
                 service_case_id=service_case_id,
                 inbound_id=inbound_id,
@@ -229,6 +245,29 @@ class RanrenAIEngine:
             return
         if purpose == MessagePurpose.CHAT:
             await self._reply_with_ai(message, service_case_id=service_case_id, analysis=analysis, trigger_id=inbound_id)
+
+    async def _reply_human_handoff(
+        self,
+        message: ChannelMessage,
+        *,
+        service_case_id: int | None,
+        trigger_id: int | None,
+    ) -> None:
+        result = await self.channel.send_text(
+            message.chat_id,
+            HUMAN_HANDOFF_REPLY,
+            reply_to=message.message_id,
+            reply_context=message.raw_payload,
+        )
+        await self._record_outbound(
+            message=message,
+            service_case_id=service_case_id,
+            content=HUMAN_HANDOFF_REPLY,
+            message_id=result.message_id,
+            status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
+            error=result.error,
+            trigger_id=trigger_id,
+        )
 
     async def _store_intervention_analysis(
         self,
@@ -839,6 +878,18 @@ def _requires_fixed_safety_reply(_service_case: ServiceCase | None, analysis: di
             )
         )
         for item in (current_risk_flags or [])
+    )
+
+
+def _requires_human_handoff(analysis: dict | None) -> bool:
+    if not isinstance(analysis, dict) or not analysis.get("requires_human_intervention"):
+        return False
+    reasons = analysis.get("intervention_reasons")
+    if not isinstance(reasons, list):
+        return False
+    return any(
+        isinstance(item, dict) and item.get("code") in {"robot_stop", "complaint", "refund_request"}
+        for item in reasons
     )
 
 
