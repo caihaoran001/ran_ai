@@ -104,7 +104,7 @@ export function FAQEvolutionCenter({
         {showConfig && (
           <div className="border-t border-zinc-200/60 mt-4 pt-4 animate-slideDown">
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200/60 pb-3 mb-4">
-              <h3 className="text-xs font-bold text-zinc-700">⚙️ FAQ 自动生成提取参数</h3>
+              <h3 className="text-xs font-bold text-zinc-700">FAQ 自动生成提取参数</h3>
               <div className="flex items-center gap-3 bg-white py-1.5 px-3.5 rounded-lg border border-zinc-200 shadow-3xs">
                 <span className="text-xs font-bold text-zinc-700">启用每日自动生成 FAQ</span>
                 <button
@@ -346,14 +346,14 @@ export function ExcellentCaseEvolutionCenter({
   }
 
   return (
-    <section className="rounded-xl border border-purple-200 bg-white shadow-sm overflow-hidden animate-fadeIn">
+    <section className="rounded-xl border border-cyan-200 bg-white shadow-sm overflow-hidden animate-fadeIn">
       {/* Title block */}
-      <div className="border-b border-purple-100 px-6 py-5 bg-gradient-to-r from-purple-50/10 to-transparent">
+      <div className="border-b border-cyan-100 px-6 py-5 bg-cyan-50/30">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-start gap-2.5">
-            <Award className="h-6 w-6 text-purple-600 shrink-0 mt-0.5" />
+            <Award className="h-6 w-6 text-cyan-700 shrink-0 mt-0.5" />
             <div>
-              <h2 className="text-lg font-bold text-zinc-900">🌟 优秀标杆案例库进化工作台</h2>
+              <h2 className="text-lg font-bold text-zinc-900">优秀标杆案例库进化工作台</h2>
               <p className="mt-1 text-sm text-zinc-500 leading-relaxed">
                 按照服务阶段（3/7/14/21/28天）自动提取群聊中的金牌沟通案例与客户坚持表现。
               </p>
@@ -363,9 +363,9 @@ export function ExcellentCaseEvolutionCenter({
             <button
               type="button"
               onClick={() => setShowConfig(!showConfig)}
-              className="text-xs font-semibold border border-purple-200 bg-white text-purple-750 hover:bg-purple-50 hover:text-purple-800 transition-all px-3 py-1.5 rounded-lg flex items-center gap-2 shadow-2xs outline-none"
+              className="text-xs font-semibold border border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50 transition-all px-3 py-1.5 rounded-lg flex items-center gap-2 shadow-2xs outline-none"
             >
-              <Settings2 className="h-3.5 w-3.5 text-purple-600" />
+              <Settings2 className="h-3.5 w-3.5 text-cyan-700" />
               <span>案例自动提取配置</span>
               <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold border ${
                 config.enabled ? "bg-emerald-50 text-emerald-700 border-emerald-100/60" : "bg-zinc-100 text-zinc-500 border-zinc-200/60"
@@ -379,16 +379,16 @@ export function ExcellentCaseEvolutionCenter({
 
         {/* Config Panel */}
         {showConfig && (
-          <div className="border-t border-purple-200/60 mt-4 pt-4 animate-slideDown">
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-purple-200/60 pb-3 mb-4">
-              <h3 className="text-xs font-bold text-purple-850">⚙️ 案例自动提取配置</h3>
+          <div className="border-t border-cyan-200/60 mt-4 pt-4 animate-slideDown">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-cyan-200/60 pb-3 mb-4">
+              <h3 className="text-xs font-bold text-cyan-900">案例自动提取配置</h3>
               <div className="flex items-center gap-3 bg-white py-1.5 px-3.5 rounded-lg border border-zinc-200 shadow-3xs">
                 <span className="text-xs font-bold text-zinc-700">启用每日自动生成案例</span>
                 <button
                   type="button"
                   onClick={() => setConfig({ ...config, enabled: !config.enabled })}
                   className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
-                    config.enabled ? "bg-purple-600" : "bg-zinc-200"
+                    config.enabled ? "bg-cyan-700" : "bg-zinc-200"
                   }`}
                 >
                   <span
@@ -401,21 +401,21 @@ export function ExcellentCaseEvolutionCenter({
             </div>
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 max-w-4xl">
               <div className="space-y-1">
-                <span className="block text-2xs font-bold text-purple-750 uppercase tracking-wider">阶段案例天数</span>
+                <span className="block text-2xs font-bold text-cyan-800 uppercase tracking-wider">阶段案例天数</span>
                 <input
-                  className="w-full rounded-lg border border-purple-200 bg-white px-3.5 py-2 text-sm text-zinc-700 focus:border-purple-500 focus:ring-4 focus:ring-purple-100 outline-none transition-all"
+                  className="w-full rounded-lg border border-cyan-200 bg-white px-3.5 py-2 text-sm text-zinc-700 focus:border-cyan-600 focus:ring-4 focus:ring-cyan-100 outline-none transition-all"
                   value={config.case_days}
                   placeholder="3,7,14,21,28"
                   onChange={(event) => setConfig({ ...config, case_days: event.target.value })}
                 />
               </div>
             </div>
-            <div className="mt-4 flex items-center gap-3 border-t border-purple-200/60 pt-3">
+            <div className="mt-4 flex items-center gap-3 border-t border-cyan-200/60 pt-3">
               <Button
                 type="button"
                 onClick={saveConfig}
                 disabled={saveBusy}
-                className="bg-purple-600 hover:bg-purple-500 text-white font-semibold transition-all duration-200 active:scale-[0.97] px-4 shadow-2xs h-8.5 flex items-center gap-1.5"
+                className="bg-cyan-700 hover:bg-cyan-800 text-white font-semibold transition-colors duration-200 px-4 shadow-2xs h-8.5 flex items-center gap-1.5"
               >
                 {saveBusy ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                 <span>保存配置</span>
@@ -430,12 +430,12 @@ export function ExcellentCaseEvolutionCenter({
       </div>
 
       {/* Stats block */}
-      <div className="border-b border-purple-100 bg-purple-50/5 px-6 py-4">
+      <div className="border-b border-cyan-100 bg-cyan-50/20 px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="grid gap-6 sm:grid-cols-3">
             <div>
               <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">已入库优秀案例</div>
-              <div className="mt-1 text-xl font-bold text-purple-700">{caseApproved.length} 个</div>
+              <div className="mt-1 text-xl font-bold text-cyan-800">{caseApproved.length} 个</div>
             </div>
             <div>
               <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">覆盖服务阶段</div>
@@ -448,8 +448,8 @@ export function ExcellentCaseEvolutionCenter({
               </div>
             </div>
           </div>
-          <div className="text-xs text-purple-650 bg-purple-50/50 border border-purple-100/50 px-3 py-2 rounded-lg font-medium max-w-lg leading-relaxed">
-            💡 <strong>智能检索机制：</strong>当群聊中出现用户消极、质疑或身体不适时，AI 引擎会自动在下方已入库案例中进行语义匹配，并提取最贴切的真实成功案例，用于情感承接与共鸣鼓励！
+          <div className="text-xs text-cyan-900 bg-cyan-50/70 border border-cyan-100 px-3 py-2 rounded-lg font-medium max-w-lg leading-relaxed">
+            <strong>智能检索机制：</strong>当群聊中出现用户消极、质疑或身体不适时，AI 引擎会自动在下方已入库案例中进行语义匹配，并提取最贴切的真实成功案例，用于情感承接与共鸣鼓励。
           </div>
         </div>
       </div>
@@ -464,7 +464,7 @@ export function ExcellentCaseEvolutionCenter({
               onClick={() => setActiveTab("pending")}
               className={`pb-3 text-sm font-semibold transition-all relative px-2 mr-8 outline-none ${
                 activeTab === "pending"
-                  ? "text-purple-600 font-bold"
+                  ? "text-cyan-700 font-bold"
                   : "text-zinc-400 hover:text-zinc-600"
               }`}
             >
@@ -503,8 +503,8 @@ export function ExcellentCaseEvolutionCenter({
                     <div key={draft.id} className="rounded-xl border border-zinc-200/80 p-5 bg-zinc-50/20 shadow-2xs hover:border-zinc-300 transition-all">
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-md bg-purple-50 text-purple-700 border border-purple-100 px-2 py-0.5 text-xs font-semibold">
-                            🌟 优秀案例
+                          <span className="rounded-md bg-cyan-50 text-cyan-800 border border-cyan-100 px-2 py-0.5 text-xs font-semibold">
+                            优秀案例
                           </span>
                           {draft.category && (
                             <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 border border-zinc-200/50">
@@ -542,7 +542,7 @@ export function ExcellentCaseEvolutionCenter({
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed border-zinc-200 py-16 text-center text-zinc-400 animate-fadeIn">
-                  <span className="text-3xl block mb-2">✨</span>
+                  <Award className="mx-auto mb-3 h-9 w-9 text-cyan-700" />
                   <p className="text-sm font-medium">暂无待审核优秀案例</p>
                   <p className="text-xs text-zinc-400 mt-1">系统未自动生成新的候选金牌案例</p>
                 </div>
@@ -608,12 +608,12 @@ export function ExcellentCaseEvolutionCenter({
 function ExcellentCaseCard({ draft }: { draft: KnowledgeDraft }) {
   const [isOpen, setIsOpen] = useState(false);
   return (
-    <div className="rounded-xl border border-purple-100 bg-purple-50/5 p-4 shadow-3xs hover:border-purple-200 hover:bg-purple-50/10 transition-all duration-200">
+    <div className="rounded-xl border border-cyan-100 bg-cyan-50/10 p-4 shadow-3xs hover:border-cyan-200 hover:bg-cyan-50/20 transition-all duration-200">
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="rounded-md bg-purple-100 text-purple-700 px-1.5 py-0.5 text-2xs font-bold border border-purple-250/25">
-              🌟 标杆案例
+            <span className="rounded-md bg-cyan-100 text-cyan-800 px-1.5 py-0.5 text-2xs font-bold border border-cyan-200/60">
+              标杆案例
             </span>
             {draft.category && (
               <span className="rounded-md bg-zinc-100 text-zinc-650 px-1.5 py-0.5 text-2xs font-semibold border border-zinc-200/50">

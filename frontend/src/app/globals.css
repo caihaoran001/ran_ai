@@ -6,25 +6,77 @@
   --background: 0 0% 98%;
   --foreground: 240 10% 4%;
   --border: 240 6% 88%;
+  --brand: 190 91% 33%;
+  --brand-strong: 187 100% 24%;
+  --success: 160 84% 32%;
 }
 
 body {
   background: hsl(var(--background));
   color: hsl(var(--foreground));
+  font-family: Inter, "Fira Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-rendering: optimizeLegibility;
 }
 
 a {
   text-decoration: none;
 }
 
+@layer components {
+  .page-stack {
+    @apply space-y-7;
+  }
+
+  .page-heading {
+    @apply text-2xl font-bold tracking-tight text-slate-950;
+  }
+
+  .page-subtitle {
+    @apply mt-1 text-sm leading-6 text-slate-500;
+  }
+
+  .panel {
+    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+  }
+
+  .panel-header {
+    @apply border-b border-slate-100 px-6 py-4;
+  }
+
+  .panel-title {
+    @apply font-semibold text-slate-950;
+  }
+
+  .panel-subtitle {
+    @apply mt-1 text-sm leading-6 text-slate-500;
+  }
+
+  .status-pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold;
+  }
+
+  .metric-card {
+    @apply rounded-xl border bg-white p-5 shadow-sm transition-colors duration-200;
+  }
+
+  .metric-card:hover {
+    @apply border-cyan-300 bg-cyan-50/30;
+  }
+}
+
+*:focus-visible {
+  outline: 3px solid rgb(34 211 238 / 0.55);
+  outline-offset: 2px;
+}
+
 @keyframes slideIn {
   from {
     opacity: 0;
-    transform: translateY(12px) scale(0.98);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
@@ -41,11 +93,11 @@ a {
 
 @keyframes highlightPulse {
   0% {
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
-    background-color: rgba(59, 130, 246, 0.05);
+    box-shadow: 0 0 0 2px rgba(8, 145, 178, 0.45);
+    background-color: rgba(236, 254, 255, 0.7);
   }
   100% {
-    box-shadow: 0 0 0 0px rgba(59, 130, 246, 0);
+    box-shadow: 0 0 0 0px rgba(8, 145, 178, 0);
     background-color: transparent;
   }
 }
@@ -62,3 +114,13 @@ a {
   animation: highlightPulse 2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+}

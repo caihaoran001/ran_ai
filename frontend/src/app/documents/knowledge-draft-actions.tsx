@@ -95,7 +95,7 @@ export function KnowledgeDraftActions({
         <div className="group rounded-xl bg-zinc-50 border border-zinc-200/60 p-3.5 shadow-3xs hover:bg-zinc-50/80 hover:border-zinc-300 transition-all duration-200">
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">
             <Compass className="h-3.5 w-3.5 text-blue-500" />
-            <span>{draftType === "case" ? "💬 案例背景与适用场景：" : "💬 用户常见提问方式 (标准问法)："}</span>
+            <span>{draftType === "case" ? "案例背景与适用场景" : "用户常见提问方式"}</span>
           </div>
           <p className="text-sm text-zinc-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-zinc-200">
             {question}
@@ -106,7 +106,7 @@ export function KnowledgeDraftActions({
         <div className="group rounded-xl bg-blue-50/10 border border-blue-100/60 p-3.5 shadow-3xs hover:bg-blue-50/20 hover:border-blue-200 transition-all duration-200">
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-blue-700/60 uppercase tracking-wider mb-2">
             <Sparkles className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
-            <span>{draftType === "case" ? "🌟 金牌服务过程与改善结果：" : "💡 推荐业务标准回复："}</span>
+            <span>{draftType === "case" ? "金牌服务过程与改善结果" : "推荐业务标准回复"}</span>
           </div>
           <p className="text-sm text-zinc-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-blue-200">
             {answer}
@@ -486,7 +486,7 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
         <div className="rounded-xl border border-blue-150 bg-blue-50/5 p-4.5 space-y-4 shadow-xs animate-fadeIn">
           <div className="flex items-center gap-2 border-b border-blue-100/50 pb-2">
             <Sparkles className="h-4 w-4 text-blue-600 shrink-0" />
-            <h4 className="text-xs font-bold text-blue-900 uppercase tracking-wider">🌟 新增结构化 FAQ</h4>
+            <h4 className="text-xs font-bold text-cyan-900">新增结构化 FAQ</h4>
           </div>
           <div className="space-y-4">
             <div className="space-y-1.5">

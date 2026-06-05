@@ -452,7 +452,7 @@ function ScheduleEditor({
 
   return (
     <div className="space-y-5">
-      {/* 🚀 一、全局总控 Banner 开关 */}
+      {/* 一、全局总控 Banner 开关 */}
       <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-4.5 shadow-sm transition-all duration-300">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-1">
@@ -469,7 +469,7 @@ function ScheduleEditor({
         </div>
       </div>
 
-      {/* ⚠️ 当总开关关闭时的视觉提醒 */}
+      {/* 当总开关关闭时的视觉提醒 */}
       {!schedule.enabled && (
         <div className="rounded-lg border border-amber-100 bg-amber-50/50 px-4 py-3 text-xs text-amber-700 flex items-center gap-2 animate-fade-in">
           <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
@@ -682,7 +682,7 @@ function ScheduleEditor({
           </div>
         </div>
 
-        {/* 🚀 二、指定服务日发送（带独立开关） */}
+        {/* 二、指定服务日发送（带独立开关） */}
         <div className="rounded-xl border border-zinc-200 bg-white shadow-2xs overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 bg-zinc-50/20">
             <div>
@@ -691,7 +691,7 @@ function ScheduleEditor({
             </div>
             
             <div className="flex items-center gap-3">
-              {/* 🚀 三、增加规则（带高雅蓝底色） */}
+              {/* 三、增加规则 */}
               <Button
                 type="button"
                 disabled={!schedule.enabled || !schedule.rules_enabled}
@@ -774,7 +774,7 @@ function ScheduleEditor({
                   <div className="block">
                     <div className="mb-2 text-xs font-semibold text-zinc-700 flex items-center justify-between">
                       <span>发送话术</span>
-                      {/* 🚀 五、蓝底变量 Tag Panel */}
+                      {/* 五、变量 Tag Panel */}
                       <div className="flex items-center gap-1">
                         {["{day}", "{questionnaire_link}", "{user_name}"].map((varName) => (
                           <button
@@ -869,7 +869,7 @@ function ScheduleEditor({
               <div className="block">
                 <div className="mb-2 text-xs font-semibold text-zinc-700 flex items-center justify-between">
                   <span>默认发送话术</span>
-                  {/* 🚀 五、蓝底变量 Tag Panel */}
+                  {/* 五、变量 Tag Panel */}
                   <div className="flex items-center gap-1">
                     {["{day}", "{questionnaire_link}", "{user_name}"].map((varName) => (
                       <button
@@ -906,7 +906,7 @@ function ScheduleEditor({
               </div>
             </div>
 
-            {/* 🚀 四、跳过日期的 28天极简微型网格选择器 */}
+            {/* 四、跳过日期的 28天极简微型网格选择器 */}
             <div className="block border-t border-zinc-100 pt-3">
               <div className="mb-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-zinc-700">
                 <span>跳过日期（在选中的天数将不会发送默认打卡问卷）</span>

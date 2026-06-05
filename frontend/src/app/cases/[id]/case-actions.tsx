@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE } from "@/lib/api";
+import { Timer } from "lucide-react";
 
 export function CaseActions({
   caseId,
@@ -91,9 +92,10 @@ export function CaseActions({
         setDays(String(getCurrentDays()));
         setEditing(true);
       }}
-      className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-sm hover:bg-zinc-50 font-medium text-zinc-700 gap-1.5 shadow-sm transition-all hover:border-zinc-400"
+      className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-cyan-300 hover:bg-cyan-50/40"
     >
-      ⏱️ 调整服务天数
+      <Timer className="h-4 w-4 text-cyan-700" />
+      调整服务天数
     </button>
   );
 }

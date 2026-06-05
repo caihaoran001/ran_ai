@@ -14,6 +14,7 @@ import { PendingMessageActions } from "./pending-message-actions";
 import { FAQEvolutionCenter, ExcellentCaseEvolutionCenter } from "./knowledge-draft-group";
 import { DocumentSearchList } from "./document-search-list";
 import { ReviewConsoleLiveRefresh } from "./review-console-live-refresh";
+import { Bot, CheckCircle2, MessageCircle } from "lucide-react";
 
 export default async function DocumentsListPage() {
   const serviceCases = await api<ServiceCase[]>("/service-cases").catch(() => []);
@@ -40,11 +41,11 @@ export default async function DocumentsListPage() {
   const casesById = new Map(serviceCases.map((item) => [item.id, item]));
 
   return (
-    <div className="space-y-8">
+    <div className="page-stack">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900">审核控制台</h1>
-          <p className="mt-1 text-sm text-zinc-500">集中管理交付文件与 AI 聊天回复，确保输出安全、准确。</p>
+          <h1 className="page-heading">审核控制台</h1>
+          <p className="page-subtitle">集中管理交付文件与 AI 聊天回复，确保输出安全、准确。</p>
         </div>
         <ReviewConsoleLiveRefresh />
       </div>
@@ -88,15 +89,15 @@ function PendingMessageGroup({
   casesById: Map<number, ServiceCase>;
 }) {
   return (
-    <section className="rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
-      <div className="border-b border-zinc-100 px-6 py-4">
+    <section className="panel overflow-hidden">
+      <div className="panel-header">
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-zinc-900">AI 回复待审核</h2>
-          <span className="text-xs font-semibold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full border border-amber-100/60">
+          <h2 className="panel-title">AI 回复待审核</h2>
+          <span className="status-pill border-amber-200 bg-amber-50 text-amber-700">
             {messages.length} 条待处理
           </span>
         </div>
-        <p className="mt-1 text-sm text-zinc-500">高风险、人工介入或手动审核模式下生成的机器人回复，确认后才发送到群。</p>
+        <p className="panel-subtitle">高风险、人工介入或手动审核模式下生成的机器人回复，确认后才发送到群。</p>
       </div>
       <div className="p-5">
         {messages.length > 0 ? (
@@ -104,29 +105,35 @@ function PendingMessageGroup({
             {messages.map((message) => {
               const serviceCase = message.service_case_id ? casesById.get(message.service_case_id) : null;
               return (
-                <div key={message.id} className="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50/20 shadow-2xs hover:border-zinc-300 transition-all">
-                  <div className="border-b border-zinc-100 bg-zinc-50/60 px-5 py-2.5 text-xs text-zinc-500 flex justify-between items-center">
+                <div key={message.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition-colors hover:border-cyan-200">
+                  <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-5 py-2.5 text-xs text-slate-500">
                     <span>
                       服务单：
                       {serviceCase ? (
-                        <Link className="font-bold text-blue-600 hover:underline" href={`/cases/${serviceCase.id}`}>
+                        <Link className="font-bold text-cyan-700 hover:underline" href={`/cases/${serviceCase.id}`}>
                           {serviceCase.case_no}
                         </Link>
                       ) : (
-                        <span className="font-medium text-zinc-400">未绑定</span>
+                        <span className="font-medium text-slate-400">未绑定</span>
                       )}
                     </span>
-                    <span className="text-zinc-400 font-medium">{message.created_at}</span>
+                    <span className="font-medium text-slate-400">{message.created_at}</span>
                   </div>
-                  <div className="grid divide-y divide-zinc-250 lg:grid-cols-2 lg:divide-y-0 lg:divide-x">
-                    <div className="bg-zinc-50/40 p-5">
-                      <div className="mb-2 text-2xs font-bold uppercase tracking-wider text-zinc-400">💬 客户说：</div>
-                      <div className="text-sm leading-relaxed text-zinc-700 font-medium">
-                        {message.trigger?.content || <span className="italic text-zinc-400">（未能关联到原始消息）</span>}
+                  <div className="grid divide-y divide-slate-100 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+                    <div className="bg-slate-50/60 p-5">
+                      <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-slate-400">
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        客户说
+                      </div>
+                      <div className="text-sm font-medium leading-relaxed text-slate-700">
+                        {message.trigger?.content || <span className="italic text-slate-400">（未能关联到原始消息）</span>}
                       </div>
                     </div>
-                    <div className="p-5 bg-white">
-                      <div className="mb-2 text-2xs font-bold uppercase tracking-wider text-zinc-400">🤖 AI 拟回复：</div>
+                    <div className="bg-white p-5">
+                      <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-slate-400">
+                        <Bot className="h-3.5 w-3.5" />
+                        AI 拟回复
+                      </div>
                       <PendingMessageActions
                         messageId={message.id}
                         serviceCaseId={message.service_case_id}
@@ -139,8 +146,8 @@ function PendingMessageGroup({
             })}
           </div>
         ) : (
-          <div className="py-16 text-center text-zinc-400 border border-dashed border-zinc-200 rounded-xl">
-            <span className="text-3xl block mb-2">🎉</span>
+          <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-slate-400">
+            <CheckCircle2 className="mx-auto mb-3 h-9 w-9 text-emerald-500" />
             <p className="text-sm font-medium">暂无待审核 AI 回复</p>
           </div>
         )}

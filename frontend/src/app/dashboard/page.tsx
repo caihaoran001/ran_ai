@@ -1,6 +1,24 @@
 import Link from "next/link";
-import { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { api } from "@/lib/api";
+import {
+  AlertTriangle,
+  BarChart3,
+  Brain,
+  CheckCircle2,
+  ClipboardList,
+  Clock3,
+  FileText,
+  HeartHandshake,
+  LifeBuoy,
+  MessageCircle,
+  Plus,
+  RefreshCcw,
+  ShoppingCart,
+  ShieldAlert,
+  TrendingDown,
+  UserCheck,
+} from "lucide-react";
 
 type Summary = {
   service_cases_total: number;
@@ -84,17 +102,17 @@ export default async function DashboardPage() {
   const renewalFollowupUsers = summary.renewal_followup_users ?? summary.repurchase_soon_users;
 
   return (
-    <div className="space-y-8">
+    <div className="page-stack">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-900">数据看板</h1>
-        <p className="mt-1 text-sm text-zinc-500">服务概览与关键指标</p>
+        <h1 className="page-heading">数据看板</h1>
+        <p className="page-subtitle">服务概览与关键指标</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label="今日新增用户"
           value={summary.new_users_today}
-          icon="➕"
+          icon={Plus}
           color="blue"
           href="/users?filter=new_today"
           description="今天新创建且未删除的服务单。"
@@ -102,7 +120,7 @@ export default async function DashboardPage() {
         <StatCard
           label="风险用户"
           value={summary.risk_users}
-          icon="⚠️"
+          icon={AlertTriangle}
           color="red"
           href="/users?filter=risk"
           description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险词，需要人工关注。"
@@ -110,7 +128,7 @@ export default async function DashboardPage() {
         <StatCard
           label="待人工介入"
           value={summary.human_intervention_users ?? 0}
-          icon="🚨"
+          icon={ShieldAlert}
           color="red"
           href="/users?filter=human_intervention"
           description="LLM 识别到健康红线、客诉退款、医疗边界、强续购等需要真人处理的服务单。"
@@ -118,7 +136,7 @@ export default async function DashboardPage() {
         <StatCard
           label="未跟进（2-7天）"
           value={summary.unfollowed_users}
-          icon="⏳"
+          icon={Clock3}
           color="yellow"
           href="/users?filter=unfollowed"
           description="服务中，且最近 2-7 天没有用户入站消息的服务单；与流失用户互斥。"
@@ -126,7 +144,7 @@ export default async function DashboardPage() {
         <StatCard
           label="续购跟进窗口"
           value={renewalFollowupUsers}
-          icon="🛒"
+          icon={ShoppingCart}
           color="green"
           href="/users?filter=renewal_followup"
           description="按服务天数推算：已服务 18-28 天，适合人工做续购沟通，不代表用户已表达购买意愿。"
@@ -134,7 +152,7 @@ export default async function DashboardPage() {
         <StatCard
           label="明确续购意向"
           value={summary.renewal_intent_users ?? 0}
-          icon="💚"
+          icon={HeartHandshake}
           color="green"
           href="/users?filter=renewal_intent"
           description="用户聊天中出现续费、复购、再买、继续购买等表达。"
@@ -142,7 +160,7 @@ export default async function DashboardPage() {
         <StatCard
           label="退款/退出意向"
           value={summary.refund_intent_users ?? 0}
-          icon="↩"
+          icon={RefreshCcw}
           color="red"
           href="/users?filter=refund_intent"
           description="用户聊天中出现退款、退费、不继续、退出、退群等表达。"
@@ -150,7 +168,7 @@ export default async function DashboardPage() {
         <StatCard
           label="流失用户"
           value={summary.lost_users}
-          icon="📉"
+          icon={TrendingDown}
           color="orange"
           href="/users?filter=lost"
           description="服务中，且超过 7 天没有用户入站消息的服务单；不再计入未跟进。"
@@ -158,7 +176,7 @@ export default async function DashboardPage() {
         <StatCard
           label="服务单总数"
           value={summary.service_cases_total}
-          icon="📋"
+          icon={ClipboardList}
           color="blue"
           href="/users"
           description="当前未删除服务单总数。"
@@ -166,7 +184,7 @@ export default async function DashboardPage() {
         <StatCard
           label="服务中"
           value={summary.service_cases_in_service}
-          icon="🟢"
+          icon={UserCheck}
           color="green"
           href="/users?filter=in_service"
           description="状态为服务中的服务单。"
@@ -174,7 +192,7 @@ export default async function DashboardPage() {
         <StatCard
           label="今日打卡"
           value={summary.checkins_today}
-          icon="✅"
+          icon={CheckCircle2}
           color="yellow"
           href="/checkins"
           description="今天提交的打卡记录数。"
@@ -182,21 +200,21 @@ export default async function DashboardPage() {
         <StatCard
           label="今日用户消息"
           value={summary.messages_today}
-          icon="💬"
-          color="purple"
+          icon={MessageCircle}
+          color="cyan"
           href="/users?filter=messaged_today"
           description={
             <>
               今天收到的用户入站消息数。今日社群双向消息共{" "}
-              <span className="mx-0.5 px-1.5 py-0.5 rounded-md bg-purple-100/90 text-purple-700 font-semibold border border-purple-200/60 text-[11px]">
+              <span className="mx-0.5 rounded-md border border-cyan-200 bg-cyan-50 px-1.5 py-0.5 text-[11px] font-semibold text-cyan-800">
                 {summary.messages_today + (summary.messages_outbound_today ?? 0)}
               </span>{" "}
               条（其中用户发送{" "}
-              <span className="mx-0.5 px-1.5 py-0.5 rounded-md bg-blue-100/90 text-blue-700 font-semibold border border-blue-200/60 text-[11px]">
+              <span className="mx-0.5 rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-800">
                 {summary.messages_today}
               </span>{" "}
               条，班主任/机器人回复{" "}
-              <span className="mx-0.5 px-1.5 py-0.5 rounded-md bg-zinc-100/90 text-zinc-700 font-semibold border border-zinc-200/60 text-[11px]">
+              <span className="mx-0.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">
                 {summary.messages_outbound_today ?? 0}
               </span>{" "}
               条）。
@@ -206,7 +224,7 @@ export default async function DashboardPage() {
         <StatCard
           label="今日情绪预警"
           value={summary.emotional_users_today ?? 0}
-          icon="🌧️"
+          icon={LifeBuoy}
           color="red"
           href="/users?filter=human_intervention"
           description="今天入站消息中，经语义识别出现明显负面情绪、执行挫败或心理风险线索的用户数。"
@@ -214,7 +232,7 @@ export default async function DashboardPage() {
         <StatCard
           label="待审核文件"
           value={summary.pending_documents}
-          icon="📄"
+          icon={FileText}
           color="orange"
           href="/documents"
           description="每个服务单当前有效的最新文档里，状态为草稿或待审核的文件数。历史版本不计入。"
@@ -225,24 +243,26 @@ export default async function DashboardPage() {
       <OutcomeSummaryPanel summary={summary.outcome_summary} />
 
       {/* 开发者系统健康自测试 Banner 引导 */}
-      <div className="mt-8 p-6 rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50/80 via-white to-zinc-50/50 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="mt-8 flex flex-col gap-4 rounded-xl border border-cyan-200 bg-cyan-50/60 p-6 shadow-sm md:flex-row md:items-center md:justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
-            <h3 className="text-sm font-bold text-zinc-900 flex items-center gap-1.5">
-              ⚡ 自动化链路自我进化与诊断中心
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-cyan-700 shadow-sm">
+              <BarChart3 className="h-4 w-4" />
+            </span>
+            <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-950">
+              自动化链路自我进化与诊断中心
             </h3>
           </div>
-          <p className="text-xs text-zinc-500 leading-relaxed max-w-3xl">
+          <p className="max-w-3xl text-xs leading-6 text-slate-600">
             系统集成了 7 项核心功能自动化链路测试（包含真实大模型多轮对话、处方 Word 编译、24小时群聊 FAQ 沉淀、服务阶段案例沉淀）。测试执行支持全自动数据库物理回滚清理，对线上生产数据零污染。
           </p>
         </div>
         <div>
           <Link
             href="/system-diagnostics"
-            className="inline-flex items-center justify-center px-4.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition active:translate-y-0.5 whitespace-nowrap"
+            className="inline-flex min-h-10 items-center justify-center rounded-md bg-cyan-700 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cyan-800"
           >
-            进入诊断控制台 →
+            进入诊断控制台
           </Link>
         </div>
       </div>
@@ -370,32 +390,36 @@ function StatCard({
 }: {
   label: string;
   value: number | string;
-  icon: string;
+  icon: ComponentType<{ className?: string }>;
   color: string;
   href: string;
   description: ReactNode;
 }) {
-  const colorClasses: Record<string, string> = {
-    blue: "bg-blue-50 border-blue-200",
-    green: "bg-green-50 border-green-200",
-    yellow: "bg-yellow-50 border-yellow-200",
-    purple: "bg-purple-50 border-purple-200",
-    orange: "bg-orange-50 border-orange-200",
-    red: "bg-red-50 border-red-200",
+  const Icon = icon;
+  const colorClasses: Record<string, { card: string; icon: string }> = {
+    blue: { card: "border-sky-200 bg-sky-50/70", icon: "bg-white text-sky-700" },
+    cyan: { card: "border-cyan-200 bg-cyan-50/70", icon: "bg-white text-cyan-700" },
+    green: { card: "border-emerald-200 bg-emerald-50/70", icon: "bg-white text-emerald-700" },
+    yellow: { card: "border-amber-200 bg-amber-50/70", icon: "bg-white text-amber-700" },
+    orange: { card: "border-orange-200 bg-orange-50/70", icon: "bg-white text-orange-700" },
+    red: { card: "border-rose-200 bg-rose-50/70", icon: "bg-white text-rose-700" },
   };
+  const tone = colorClasses[color] ?? { card: "border-slate-200 bg-white", icon: "bg-slate-50 text-slate-600" };
 
   return (
     <Link
       href={href}
       title={typeof description === "string" ? description : undefined}
-      className={`block rounded-xl border p-6 transition hover:-translate-y-0.5 hover:shadow-sm ${colorClasses[color] || "bg-zinc-50 border-zinc-200"}`}
+      className={`block rounded-xl border p-5 shadow-sm transition-colors duration-200 hover:border-cyan-300 hover:bg-white ${tone.card}`}
     >
       <div className="flex items-center justify-between">
-        <span className="text-2xl">{icon}</span>
-        <span className="text-3xl font-bold text-zinc-900">{value}</span>
+        <span className={`flex h-10 w-10 items-center justify-center rounded-lg shadow-sm ${tone.icon}`}>
+          <Icon className="h-5 w-5" />
+        </span>
+        <span className="text-3xl font-bold tracking-tight text-slate-950">{value}</span>
       </div>
-      <div className="mt-2 text-sm font-medium text-zinc-600">{label}</div>
-      <p className="mt-2 text-xs leading-5 text-zinc-500">{description}</p>
+      <div className="mt-4 text-sm font-semibold text-slate-700">{label}</div>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
     </Link>
   );
 }
@@ -410,36 +434,38 @@ function AICostCard({ summary }: { summary?: AICostSummary }) {
     <Link
       href="/dashboard/ai-costs"
       title="查看每个用户的 AI 调用成本明细"
-      className="block rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-md"
+      className="block rounded-xl border border-cyan-200 bg-cyan-50/70 p-5 shadow-sm transition-colors duration-200 hover:border-cyan-300 hover:bg-white"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2 text-sm font-semibold text-indigo-700">
-            <span>🧠</span>
+          <div className="flex items-center gap-2 text-sm font-semibold text-cyan-800">
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-cyan-700 shadow-sm">
+              <Brain className="h-5 w-5" />
+            </span>
             AI 调用成本
           </div>
-          <div className="mt-3 text-3xl font-bold tracking-tight text-zinc-950">
+          <div className="mt-4 text-3xl font-bold tracking-tight text-slate-950">
             {hasData ? `¥${cost.toFixed(2)}` : "暂无成本数据"}
           </div>
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-slate-500">
             按当前模型单价回算
           </p>
         </div>
-        <span className="rounded-full border border-indigo-100 bg-white/80 px-2.5 py-1 text-xs font-semibold text-indigo-600">
+        <span className="rounded-full border border-cyan-200 bg-white/80 px-2.5 py-1 text-xs font-semibold text-cyan-700">
           估算
         </span>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-lg border border-indigo-100 bg-white/75 px-3 py-2">
-          <div className="text-zinc-400">调用</div>
-          <div className="mt-1 font-semibold text-zinc-700">{calls.toLocaleString("zh-CN")} 次</div>
+        <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
+          <div className="text-slate-400">调用</div>
+          <div className="mt-1 font-semibold text-slate-700">{calls.toLocaleString("zh-CN")} 次</div>
         </div>
-        <div className="rounded-lg border border-indigo-100 bg-white/75 px-3 py-2">
-          <div className="text-zinc-400">Tokens</div>
-          <div className="mt-1 font-semibold text-zinc-700">{tokens.toLocaleString("zh-CN")}</div>
+        <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
+          <div className="text-slate-400">Tokens</div>
+          <div className="mt-1 font-semibold text-slate-700">{tokens.toLocaleString("zh-CN")}</div>
         </div>
       </div>
-      <p className="mt-3 text-xs leading-5 text-zinc-500">
+      <p className="mt-3 text-xs leading-5 text-slate-500">
         {hasData ? "点击查看用户明细。" : "产生新的 LLM 调用后会自动记录。"}
       </p>
     </Link>

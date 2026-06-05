@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ComponentType } from "react";
 import { api, FRONTEND_BASE, ServiceCase, ServiceCaseStats, UserDocument, Checkin, Message, OutcomeBundle } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
 import { CaseActions } from "./case-actions";
@@ -9,6 +10,24 @@ import { QuestionnaireSection } from "./questionnaire-section";
 import { RetryGenerateDocuments } from "./retry-generate-documents";
 import { StageReportActions } from "./stage-report-actions";
 import { OutcomeSection } from "./outcome-section";
+import {
+  AlertTriangle,
+  BarChart3,
+  Brain,
+  CheckCircle2,
+  ClipboardList,
+  Clock3,
+  FileText,
+  HeartHandshake,
+  Link as LinkIcon,
+  LoaderCircle,
+  MessageCircle,
+  PencilLine,
+  RefreshCcw,
+  Timer,
+  UserRound,
+  Zap,
+} from "lucide-react";
 
 type Questionnaire = {
   fields: {
@@ -53,21 +72,22 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
       : null;
 
   return (
-    <div className="space-y-8">
+    <div className="page-stack">
       {isGenerating && <CaseGeneratingPoller />}
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-zinc-900">{serviceCase.case_no}</h1>
+            <h1 className="page-heading">{serviceCase.case_no}</h1>
             <StatusBadge status={serviceCase.status} />
           </div>
-          <p className="mt-2 text-sm text-zinc-500">
+          <p className="mt-2 text-sm text-slate-500">
             {serviceCase.user ? (
               <Link
                 href={`/users/${serviceCase.user.id}`}
-                className="font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+                className="inline-flex items-center gap-1 font-semibold text-cyan-700 hover:text-cyan-800 hover:underline"
               >
-                👤 {serviceCase.user.name} (查看完整用户画像与打卡历史)
+                <UserRound className="h-4 w-4" />
+                {serviceCase.user.name}（查看完整用户画像与打卡历史）
               </Link>
             ) : (
               "待填写问卷用户"
@@ -81,16 +101,18 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           )}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {serviceCase.risk_level === "high" && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
-                ⚠️ 高风险
+              <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                高风险
                 {serviceCase.risk_flags?.[0] && (
                   <span className="opacity-70">· {riskLabel(serviceCase.risk_flags[0])}</span>
                 )}
               </span>
             )}
             {serviceCase.needs_human_intervention && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-3 py-1 text-xs font-medium text-orange-700">
-                🙋 待人工介入
+              <span className="status-pill border-orange-200 bg-orange-50 text-orange-700">
+                <UserRound className="h-3.5 w-3.5" />
+                待人工介入
               </span>
             )}
             {(serviceCase.risk_level === "high" || serviceCase.needs_human_intervention) && (
@@ -106,8 +128,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
       </div>
 
       {generationError && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-          <p className="font-medium">⚠️ 文件自动生成失败</p>
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">
+          <p className="flex items-center gap-2 font-semibold">
+            <AlertTriangle className="h-4 w-4" />
+            文件自动生成失败
+          </p>
           <p className="mt-1 break-words">{generationError}</p>
           {!serviceCase.deleted_at && (
             <RetryGenerateDocuments caseId={serviceCase.id} autoSend={serviceCase.auto_send_documents} />
@@ -116,8 +141,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
       )}
 
       {isGenerating && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-blue-700">
-          <p className="font-medium">⏳ 文件生成中</p>
+        <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-5 py-4 text-sm text-cyan-800">
+          <p className="flex items-center gap-2 font-semibold">
+            <LoaderCircle className="h-4 w-4 animate-spin" />
+            文件生成中
+          </p>
           <p className="mt-1">正在生成您的专属文件，预计 10-30 秒。页面会每 3 秒自动刷新一次，您现在离开页面也不会中断。</p>
         </div>
       )}
@@ -126,22 +154,22 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         <InfoCard
           title="问卷链接"
           value={questionnaireUrl}
-          icon="🔗"
+          icon={LinkIcon}
           className="xl:col-span-6"
           valueClassName="text-base sm:text-lg"
         />
-        <InfoCard title="交付文件" value={`${documents.length} 份`} icon="📄" className="xl:col-span-2" />
-        <InfoCard title="打卡记录" value={`${checkins.length} 条`} icon="✅" className="xl:col-span-2" />
-        <InfoCard title="聊天记录" value={`${messages.length} 条`} icon="💬" className="xl:col-span-2" />
+        <InfoCard title="交付文件" value={`${documents.length} 份`} icon={FileText} className="xl:col-span-2" />
+        <InfoCard title="打卡记录" value={`${checkins.length} 条`} icon={CheckCircle2} className="xl:col-span-2" />
+        <InfoCard title="聊天记录" value={`${messages.length} 条`} icon={MessageCircle} className="xl:col-span-2" />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-        <InfoCard title="已服务时长" value={formatServiceDuration(serviceCase.started_at)} icon="⏱️" />
-        <InfoCard title="内容生成耗时" value={formatGenerationDuration(serviceCase.questionnaire_to_llm_output_ms)} icon="⚡" />
-        <InfoCard title="群最后活跃" value={formatDateTime(stats?.last_message_at)} icon="🕐" />
-        <InfoCard title="用户最后发言" value={formatDateTime(stats?.last_user_message_at)} icon="👤" />
-        <InfoCard title="用户发言数" value={`${stats?.inbound_message_count ?? 0} 条`} icon="📝" />
-        <InfoCard title="日均发言" value={`${stats?.avg_daily_inbound_messages ?? 0} 条/天`} icon="📊" />
+        <InfoCard title="已服务时长" value={formatServiceDuration(serviceCase.started_at)} icon={Timer} />
+        <InfoCard title="内容生成耗时" value={formatGenerationDuration(serviceCase.questionnaire_to_llm_output_ms)} icon={Zap} />
+        <InfoCard title="群最后活跃" value={formatDateTime(stats?.last_message_at)} icon={Clock3} />
+        <InfoCard title="用户最后发言" value={formatDateTime(stats?.last_user_message_at)} icon={UserRound} />
+        <InfoCard title="用户发言数" value={`${stats?.inbound_message_count ?? 0} 条`} icon={PencilLine} />
+        <InfoCard title="日均发言" value={`${stats?.avg_daily_inbound_messages ?? 0} 条/天`} icon={BarChart3} />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -151,8 +179,8 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           calls={stats?.ai_total_calls}
           className="xl:col-span-2"
         />
-        <InfoCard title="续购意向" value={formatIntentFlags(serviceCase.renewal_intent_flags)} icon="💚" />
-        <InfoCard title="退款/退出意向" value={formatIntentFlags(serviceCase.refund_intent_flags)} icon="↩" />
+        <InfoCard title="续购意向" value={formatIntentFlags(serviceCase.renewal_intent_flags)} icon={HeartHandshake} />
+        <InfoCard title="退款/退出意向" value={formatIntentFlags(serviceCase.refund_intent_flags)} icon={RefreshCcw} />
       </div>
 
       <OutcomeSection bundle={outcomes} />
@@ -160,16 +188,16 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
       <div className="grid gap-6 md:grid-cols-2">
         <QuestionnaireSection questionnaire={questionnaire} />
         
-        <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-          <div className="border-b border-zinc-100 px-6 py-4">
-            <h2 className="font-semibold text-zinc-900">交付文件</h2>
+        <div className="panel">
+          <div className="panel-header">
+            <h2 className="panel-title">交付文件</h2>
           </div>
           <div className="p-6">
             {documents.length > 0 ? (
               <div className="space-y-3">
                 {documents.map((document) => (
-                  <div key={document.id} className="flex items-center justify-between rounded-lg border border-zinc-200 p-4 transition-colors hover:border-blue-300">
-                    <Link className="font-medium text-zinc-900 hover:text-blue-600" href={`/documents/${document.id}`}>
+                  <div key={document.id} className="flex items-center justify-between rounded-lg border border-slate-200 p-4 transition-colors hover:border-cyan-300 hover:bg-cyan-50/30">
+                    <Link className="font-medium text-slate-950 hover:text-cyan-700" href={`/documents/${document.id}`}>
                       {document.title}
                     </Link>
                     <div className="flex items-center gap-3">
@@ -177,7 +205,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                       {document.file_path && (
                         <a
                           suppressHydrationWarning
-                          className="text-sm text-blue-600 hover:text-blue-700"
+                          className="text-sm font-semibold text-cyan-700 hover:text-cyan-800"
                           href={`/api/backend/documents/${document.id}/download`}
                         >
                           下载
@@ -188,34 +216,36 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                 ))}
               </div>
             ) : (
-              <div className="py-8 text-center text-zinc-400">
-                <div className="mb-2 text-4xl">📄</div>
+              <div className="py-8 text-center text-slate-400">
+                <FileText className="mx-auto mb-2 h-9 w-9" />
                 <p>还没有生成交付文件</p>
               </div>
             )}
           </div>
         </div>
 
-        <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-          <div className="border-b border-zinc-100 px-6 py-4">
-            <h2 className="font-semibold text-zinc-900">阶段报告</h2>
-            <p className="mt-1 text-sm text-zinc-500">生成后会进入文档审核，可编辑、下载或发送。</p>
+        <div className="panel">
+          <div className="panel-header">
+            <h2 className="panel-title">阶段报告</h2>
+            <p className="panel-subtitle">生成后会进入文档审核，可编辑、下载或发送。</p>
           </div>
           <div className="p-6">
             <StageReportActions serviceCaseId={serviceCase.id} documents={documentHistory} />
           </div>
         </div>
 
-        <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-          <div className="border-b border-zinc-100 px-6 py-4">
-            <h2 className="font-semibold text-zinc-900">最近打卡</h2>
+        <div className="panel">
+          <div className="panel-header">
+            <h2 className="panel-title">最近打卡</h2>
           </div>
           <div className="p-6">
             {checkins.length > 0 ? (
               <div className="space-y-3">
                 {checkins.slice(0, 5).map((checkin) => (
-                  <div key={checkin.id} className="flex items-center gap-3 rounded-lg border border-zinc-100 p-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-100 text-green-700">✓</div>
+                  <div key={checkin.id} className="flex items-center gap-3 rounded-lg border border-slate-100 p-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                      <CheckCircle2 className="h-4 w-4" />
+                    </div>
                     <div className="flex-1">
                       <StructuredCheckin checkin={checkin} />
                       <div className="text-xs text-zinc-400">{formatDateTime(checkin.created_at)}</div>
@@ -224,8 +254,8 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                 ))}
               </div>
             ) : (
-              <div className="py-8 text-center text-zinc-400">
-                <div className="mb-2 text-4xl">📋</div>
+              <div className="py-8 text-center text-slate-400">
+                <ClipboardList className="mx-auto mb-2 h-9 w-9" />
                 <p>暂无打卡记录</p>
               </div>
             )}
@@ -266,21 +296,21 @@ function StructuredCheckin({ checkin }: { checkin: Checkin }) {
 
 function StatusBadge({ status }: { status: string }) {
   const statusConfig: Record<string, { label: string; className: string }> = {
-    created: { label: "已创建", className: "bg-zinc-100 text-zinc-700" },
-    questionnaire_submitted: { label: "已提交问卷", className: "bg-yellow-50 text-yellow-700" },
-    generating: { label: "文件生成中", className: "bg-blue-50 text-blue-700" },
-    documents_generated: { label: "已生成文档", className: "bg-blue-50 text-blue-700" },
-    reviewing: { label: "审核中", className: "bg-purple-50 text-purple-700" },
-    approved: { label: "已批准", className: "bg-green-50 text-green-700" },
-    in_service: { label: "服务中", className: "bg-emerald-50 text-emerald-700" },
-    completed: { label: "已完成", className: "bg-gray-50 text-gray-600" },
-    sent: { label: "已发送", className: "bg-green-50 text-green-700" },
+    created: { label: "已创建", className: "border-slate-200 bg-slate-50 text-slate-700" },
+    questionnaire_submitted: { label: "已提交问卷", className: "border-amber-200 bg-amber-50 text-amber-700" },
+    generating: { label: "文件生成中", className: "border-cyan-200 bg-cyan-50 text-cyan-700" },
+    documents_generated: { label: "已生成文档", className: "border-cyan-200 bg-cyan-50 text-cyan-700" },
+    reviewing: { label: "审核中", className: "border-violet-200 bg-violet-50 text-violet-700" },
+    approved: { label: "已批准", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
+    in_service: { label: "服务中", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
+    completed: { label: "已完成", className: "border-slate-200 bg-slate-50 text-slate-600" },
+    sent: { label: "已发送", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
   };
 
-  const config = statusConfig[status] || { label: status, className: "bg-zinc-100 text-zinc-700" };
+  const config = statusConfig[status] || { label: status, className: "border-slate-200 bg-slate-50 text-slate-700" };
 
   return (
-    <span className={`rounded-full px-3 py-1 text-xs font-medium ${config.className}`}>
+    <span className={`status-pill ${config.className}`}>
       {config.label}
     </span>
   );
@@ -295,17 +325,18 @@ function InfoCard({
 }: {
   title: string;
   value: string;
-  icon: string;
+  icon: ComponentType<{ className?: string }>;
   className?: string;
   valueClassName?: string;
 }) {
+  const Icon = icon;
   return (
-    <div className={`rounded-xl border border-zinc-200 bg-white p-5 shadow-sm ${className}`}>
-      <div className="flex items-center gap-2 text-sm text-zinc-500">
-        <span>{icon}</span>
+    <div className={`rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-colors hover:border-cyan-200 ${className}`}>
+      <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+        <Icon className="h-4 w-4 text-cyan-700" />
         {title}
       </div>
-      <div className={`mt-2 break-all text-lg font-semibold text-zinc-900 ${valueClassName}`}>{value}</div>
+      <div className={`mt-2 break-words text-lg font-semibold text-slate-950 ${valueClassName}`}>{value}</div>
     </div>
   );
 }
@@ -325,27 +356,27 @@ function AICostInfoCard({
   const tokenCount = tokens ?? 0;
   const callCount = calls ?? 0;
   return (
-    <div className={`rounded-xl border border-indigo-100 bg-indigo-50/70 p-5 shadow-sm ${className}`}>
+    <div className={`rounded-xl border border-cyan-200 bg-cyan-50/70 p-5 shadow-sm ${className}`}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="flex items-center gap-2 text-sm font-medium text-indigo-700">
-            <span>🧠</span>
+          <div className="flex items-center gap-2 text-sm font-semibold text-cyan-800">
+            <Brain className="h-4 w-4" />
             AI调用成本
-            <span className="rounded-full border border-indigo-100 bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-indigo-600">
+            <span className="rounded-full border border-cyan-200 bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-cyan-700">
               估算
             </span>
           </div>
-          <div className="mt-2 text-2xl font-bold tracking-tight text-zinc-950">¥{costValue.toFixed(2)}</div>
-          <p className="mt-1 text-xs text-zinc-500">按当前模型单价回算</p>
+          <div className="mt-2 text-2xl font-bold tracking-tight text-slate-950">¥{costValue.toFixed(2)}</div>
+          <p className="mt-1 text-xs text-slate-500">按当前模型单价回算</p>
         </div>
         <div className="grid min-w-56 grid-cols-2 gap-2 text-xs">
-          <div className="rounded-lg border border-indigo-100 bg-white/80 px-3 py-2">
-            <div className="text-zinc-400">Tokens</div>
-            <div className="mt-1 font-semibold text-zinc-800">{tokenCount.toLocaleString("zh-CN")}</div>
+          <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
+            <div className="text-slate-400">Tokens</div>
+            <div className="mt-1 font-semibold text-slate-800">{tokenCount.toLocaleString("zh-CN")}</div>
           </div>
-          <div className="rounded-lg border border-indigo-100 bg-white/80 px-3 py-2">
-            <div className="text-zinc-400">调用</div>
-            <div className="mt-1 font-semibold text-zinc-800">{callCount.toLocaleString("zh-CN")} 次</div>
+          <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
+            <div className="text-slate-400">调用</div>
+            <div className="mt-1 font-semibold text-slate-800">{callCount.toLocaleString("zh-CN")} 次</div>
           </div>
         </div>
       </div>

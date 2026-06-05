@@ -6,7 +6,7 @@ export function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       className={cn(
-        "inline-flex h-9 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-blue-500 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none disabled:active:scale-100",
+        "inline-flex min-h-10 items-center justify-center rounded-md bg-cyan-700 px-4 text-sm font-semibold text-white shadow-sm transition-colors duration-200 hover:bg-cyan-800 disabled:pointer-events-none disabled:opacity-50",
         className,
       )}
       {...rest}
