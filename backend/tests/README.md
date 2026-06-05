@@ -21,9 +21,9 @@ tests/
 ├── test_04_stage_reports.py # 阶段报告自动生成：3→7→14→21→28天 + 毕业
 ├── test_05_evolution.py     # 知识进化：配置校验、种子数据模式、草稿列表
 ├── test_06_toggles.py       # 开关验证：发送策略、AI回复、服务单开关、软删除
-├── test_07_real_llm_e2e.py  # 真实 LLM：十类用户 28 天旅程 + 内容质量评审 + RAG 自进化
-├── test_08_qiwe_channel.py  # QiWe 通道：聚合去重 + 失败兜底 + 问卷指令
-└── test_09_outcome_engine.py # 成效引擎：LLM 提取 + 阶段状态更新 + 行动焦点评分
+├── test_e2e_01_real_llm.py  # 真实 LLM：十类用户 28 天旅程 + 内容质量评审 + RAG 自进化
+├── test_07_qiwe_channel.py  # QiWe 通道：聚合去重 + 失败兜底 + 问卷指令
+└── test_08_outcome_engine.py # 成效引擎：LLM 提取 + 阶段状态更新 + 行动焦点评分
 ```
 
 ## 测试架构

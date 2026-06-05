@@ -87,33 +87,33 @@ TEST_SUITES = [
         "requires_confirmation": False,
     },
     {
-        "id": "07",
+        "id": "e2e_01",
         "display_id": "E2E-01",
-        "name": "test_07_real_llm_e2e",
+        "name": "test_e2e_01_real_llm",
         "description": "真实大模型 E2E：10 类用户从入营问卷到 28 天陪跑，并校验内容质量、提醒、风控与成效提取",
-        "file": "tests/test_07_real_llm_e2e.py",
+        "file": "tests/test_e2e_01_real_llm.py",
         "tier": "real_e2e",
         "included_in_health_check": False,
         "data_policy": "rollback",
         "requires_confirmation": True,
     },
     {
-        "id": "08",
+        "id": "07",
         "display_id": "07",
-        "name": "test_08_qiwe_channel",
+        "name": "test_07_qiwe_channel",
         "description": "QiWe 通道代码逻辑测试：消息聚合、去重、异常处理（使用 mock 对象，不测试真实通道）",
-        "file": "tests/test_08_qiwe_channel.py",
+        "file": "tests/test_07_qiwe_channel.py",
         "tier": "health",
         "included_in_health_check": True,
         "data_policy": "rollback",
         "requires_confirmation": False,
     },
     {
-        "id": "09",
+        "id": "08",
         "display_id": "08",
-        "name": "test_09_outcome_engine",
+        "name": "test_08_outcome_engine",
         "description": "成效引擎测试：LLM 提取 + 阶段状态更新 + 行动焦点评分 + 时间感知",
-        "file": "tests/test_09_outcome_engine.py",
+        "file": "tests/test_08_outcome_engine.py",
         "tier": "health",
         "included_in_health_check": True,
         "data_policy": "rollback",
@@ -453,8 +453,27 @@ async def run_diagnostics(
                     env=process_env,
                 )
 
+                heartbeat_interval = 20 if suite["tier"] == "real_e2e" else 60
                 while True:
-                    line_bytes = await process.stdout.readline()
+                    try:
+                        line_bytes = await asyncio.wait_for(
+                            process.stdout.readline(),
+                            timeout=heartbeat_interval,
+                        )
+                    except asyncio.TimeoutError:
+                        if process.returncode is None:
+                            heartbeat = (
+                                f"⏳ {suite['display_id']} 仍在运行，"
+                                f"已等待 {time.perf_counter() - start_time:.0f}s；"
+                                "真实模型调用可能需要较长时间，请勿重复点击。\n"
+                            )
+                            yield heartbeat
+                            history["console_logs"][test_id].append(heartbeat.rstrip("\r\n"))
+                            if test_id == "all":
+                                history["console_logs"][suite["id"]].append(heartbeat.rstrip("\r\n"))
+                            _save_history(history)
+                            continue
+                        break
                     if not line_bytes:
                         break
                     line_str = line_bytes.decode("utf-8")

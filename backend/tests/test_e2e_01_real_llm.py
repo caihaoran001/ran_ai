@@ -117,6 +117,11 @@ async def test_real_llm_persona_journey(
     long-running real-model suite stable and lets later personas continue even
     when one journey exposes a failure.
     """
+    print(
+        f"\n🧪 [E2E-01] 启动人设旅程: {journey.user_name} / {journey.key}，"
+        f"消息 {len(journey.messages)} 条，打卡 {len(journey.checkin_days)} 天",
+        flush=True,
+    )
     await real_admin_client.post("/settings/ai-reply-delivery-policy", json={"mode": "auto_send"})
     schedule = await get_checkin_questionnaire_schedule(db_session)
     schedule["inactive_followup"] = {
@@ -163,6 +168,13 @@ async def test_real_llm_persona_journey(
             messages_by_day.setdefault(item.day, []).append(item)
 
         for day in range(1, 29):
+            if day in {1, 7, 14, 21, 28}:
+                print(
+                    f"   [E2E-01] {journey.user_name} 推进到 Day {day}: "
+                    f"messages={len(messages_by_day.get(day, []))}, "
+                    f"checkin={'yes' if day in journey.checkin_days else 'no'}",
+                    flush=True,
+                )
             service_case.started_at = datetime.now(timezone.utc) - timedelta(days=day)
             if day in journey.checkin_days:
                 db_session.add(
@@ -260,13 +272,7 @@ async def test_real_llm_persona_journey(
             journey=journey,
             inbound_messages=inbound_messages,
         )
-        scores = quality_result.get("scores") if isinstance(quality_result.get("scores"), dict) else {}
-        assert quality_result.get("critical_violation") is not True, (
-            f"{journey.user_name} 内容质量存在严重问题: {quality_result.get('reason', '')}"
-        )
-        assert scores and min(float(value) for value in scores.values()) >= 3, (
-            f"{journey.user_name} 内容质量未达标: scores={scores}, reason={quality_result.get('reason', '')}"
-        )
+        _assert_quality_bundle(journey, quality_result)
 
         print(
             f" -> [28天用户旅程验证] {journey.user_name}: "
@@ -387,8 +393,7 @@ async def _judge_persona_journey_quality(
         await session.scalars(
             select(Checkin)
             .where(Checkin.service_case_id == service_case.id)
-            .order_by(Checkin.checkin_date.desc())
-            .limit(10)
+            .order_by(Checkin.checkin_date.asc())
         )
     )
     reminder_events = list(
@@ -398,7 +403,7 @@ async def _judge_persona_journey_quality(
             .order_by(ReminderEvent.created_at.asc())
         )
     )
-    payload = {
+    base_payload = {
         "persona": journey.description,
         "quality_focus": journey.quality_focus,
         "expected_flags": journey.expected_flags,
@@ -408,18 +413,28 @@ async def _judge_persona_journey_quality(
                 "sender": "user" if message.direction == MessageDirection.INBOUND else "ranren_ai",
                 "purpose": str(message.purpose.value if hasattr(message.purpose, "value") else message.purpose),
                 "content": message.content,
+                "analysis": message.analysis_json or {},
             }
-            for index, message in enumerate(conversation[-20:], start=1)
+            for index, message in enumerate(conversation, start=1)
         ],
         "profile_summary": profile.summary if profile else "",
-        "recent_structured_checkins": [
+        "structured_checkins": [
             {
                 "date": checkin.checkin_date.isoformat(),
+                "content": checkin.content,
                 "parsed": checkin.parsed_json or {},
             }
-            for checkin in reversed(checkins)
+            for checkin in checkins
         ],
-        "delivery_document_excerpts": [document.content_md[:3500] for document in documents[:2]],
+        "delivery_documents": [
+            {
+                "type": str(document.document_type.value if hasattr(document.document_type, "value") else document.document_type),
+                "title": document.title,
+                "content": document.content_md,
+                "content_json": document.content_json or {},
+            }
+            for document in documents[:2]
+        ],
         "system_result": {
             "risk_level": service_case.risk_level,
             "needs_human_intervention": service_case.needs_human_intervention,
@@ -436,33 +451,113 @@ async def _judge_persona_journey_quality(
             ],
         },
     }
+
+    review_specs = [
+        (
+            "dialogue_quality",
+            "你是燃AI真实E2E的对话质量专项评审员。只输出JSON。",
+            (
+                "只评审完整对话。评分项必须包含 understanding、naturalness、"
+                "tone_appropriateness、followup_timing，均为1到5分。"
+                "重点看是否理解上下文、是否机械复读、是否在合适时机追问或克制追问。"
+            ),
+        ),
+        (
+            "document_accuracy",
+            "你是燃AI真实E2E的文档准确性专项评审员。只输出JSON。",
+            (
+                "只评审用户画像与两份交付文件。评分项必须包含 prescription_accuracy、"
+                "execution_standard_operability、checkin_fields_relevance，均为1到5分。"
+                "重点看是否编造事实、是否与用户情况冲突、每日行动是否可操作。"
+            ),
+        ),
+        (
+            "risk_intent",
+            "你是燃AI真实E2E的风险与意图专项评审员。只输出JSON。",
+            (
+                "只评审风险、人工介入、续购、退款判断。输出必须包含 scores，其中 "
+                "risk_classification、human_intervention、intent_detection 均为1到5分。"
+                "如漏判健康风险、退款、明确续购，必须写入 violations。"
+            ),
+        ),
+        (
+            "checkin_outcome",
+            "你是燃AI真实E2E的打卡与成效提取专项评审员。只输出JSON。",
+            (
+                "只评审结构化打卡、消息 analysis 中的 outcome、提醒事件和阶段证据。"
+                "评分项必须包含 checkin_extraction、outcome_extraction、reminder_timing，均为1到5分。"
+                "沉默用户没有聊天时，不得要求系统编造成效。"
+            ),
+        ),
+    ]
+
+    results = {}
+    for scenario, system_prompt, rubric in review_specs:
+        results[scenario] = await _run_quality_judge(
+            scenario=scenario,
+            system_prompt=system_prompt,
+            rubric=rubric,
+            payload=base_payload,
+        )
+
+    print(
+        f"   [内容质量分维度评审] {journey.user_name}: "
+        + ", ".join(
+            f"{name}={result.get('scores', {})}"
+            for name, result in results.items()
+        ),
+        flush=True,
+    )
+    return results
+
+
+async def _run_quality_judge(
+    *,
+    scenario: str,
+    system_prompt: str,
+    rubric: str,
+    payload: dict,
+) -> dict:
     ai = AIService(settings=settings)
     try:
         raw = await ai.generate_text(
             scenario="diagnostics_e2e_quality_judge",
             temperature=0.1,
-            system_prompt=(
-                "你是燃AI真实E2E的独立质量评审员。只输出JSON。"
-                "评价系统是否正确理解用户、回复自然且不机械、风险边界安全、追问时机合理、"
-                "状态与意图提取符合证据。结构化打卡、画像和system_result均属于已经发生的系统事实；"
-                "不要因为措辞风格差异扣分。"
-            ),
+            system_prompt=system_prompt,
             user_prompt=(
+                f"<review_dimension>{scenario}</review_dimension>\n"
+                f"<rubric>{rubric}</rubric>\n"
                 "<journey_data>\n"
                 f"{json.dumps(payload, ensure_ascii=False)}\n"
                 "</journey_data>\n"
-                "输出："
-                '{"scores":{"understanding":1-5,"naturalness":1-5,"safety":1-5,'
-                '"followup_timing":1-5,"extraction_accuracy":1-5},'
+                "输出严格JSON："
+                '{"scores":{"metric":1-5},'
+                '"violations":[{"type":"违规类型","severity":"minor|major|critical","reason":"原因"}],'
                 '"critical_violation":false,"reason":"简短说明"}'
             ),
         )
     finally:
         await ai.close()
-    result = parse_json_object(raw)
-    scores = result.get("scores") if isinstance(result.get("scores"), dict) else {}
-    print(f"   [内容质量评审] {journey.user_name}: scores={scores}, reason={result.get('reason', '')}")
-    return result
+    return parse_json_object(raw)
+
+
+def _assert_quality_bundle(journey, result: dict) -> None:
+    all_violations = []
+    for name, item in result.items():
+        scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
+        assert item.get("critical_violation") is not True, (
+            f"{journey.user_name} {name} 存在严重问题: {item.get('reason', '')}"
+        )
+        assert scores, f"{journey.user_name} {name} 未返回评分: {item}"
+        assert min(float(value) for value in scores.values()) >= 3, (
+            f"{journey.user_name} {name} 内容质量未达标: scores={scores}, reason={item.get('reason', '')}"
+        )
+        violations = item.get("violations") if isinstance(item.get("violations"), list) else []
+        all_violations.extend(violations)
+    critical = [violation for violation in all_violations if violation.get("severity") == "critical"]
+    major = [violation for violation in all_violations if violation.get("severity") == "major"]
+    assert not critical, f"{journey.user_name} 存在 critical 违规: {critical}"
+    assert len(major) <= 2, f"{journey.user_name} major 违规过多: {major}"
 
 
 @pytest.mark.asyncio
