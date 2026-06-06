@@ -301,10 +301,10 @@ def _clear_stale_active_run(history: dict) -> bool:
     history["active_run"] = None
     if suite_id and history.get("statuses", {}).get(suite_id) == "running":
         history["statuses"][suite_id] = "failed"
-    if suite_id == "all":
-        for item in HEALTH_TEST_SUITES:
-            if history.get("statuses", {}).get(item["id"]) == "running":
-                history["statuses"][item["id"]] = "failed"
+    if mode == "health":
+        for key, status in list(history.get("statuses", {}).items()):
+            if status == "running":
+                history["statuses"][key] = "failed"
     message = (
         f"⚠️ 检测到陈旧诊断运行状态，已自动重置 active_run"
         f"（suite={suite_id or 'unknown'}，reason={'timeout' if stale_by_timeout else 'backend_restart'}）。"

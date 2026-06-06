@@ -5,6 +5,7 @@ import secrets
 import pytest
 from sqlalchemy import select
 
+from app.api.routes import diagnostics as diagnostics_mod
 from app.models.ai_usage import AIUsageLog
 from app.models.service_case import ServiceCase
 from app.services.channels.base import ChannelMessage
@@ -190,6 +191,71 @@ def test_current_physical_risk_uses_fixed_safety_reply():
         None,
         {"requires_immediate_safety_reply": True, "risk_flags": []},
     ) is True
+
+
+def test_diagnostics_suites_keep_real_e2e_last():
+    ids = [suite["id"] for suite in diagnostics_mod.TEST_SUITES]
+
+    assert ids[:8] == ["01", "02", "03", "04", "05", "06", "07", "08"]
+    assert ids[-1] == "e2e_01"
+
+
+def test_diagnostics_extracts_e2e_progress_from_console_logs():
+    progress = diagnostics_mod._extract_e2e_progress(
+        {
+            "e2e_01": [
+                "🧪 [E2E-01] 启动人设旅程: 林晴 / sunny_cooperator，消息 12 条，打卡 7 天",
+                "   [E2E-01] 林晴 推进到 Day 7: messages=1, checkin=yes",
+                "   [内容质量综合评审] 林晴: dialogue_quality={'understanding': 5}",
+                "tests/test_e2e_01_real_llm.py::test_real_llm_persona_journey[sunny_cooperator] PASSED",
+            ]
+        }
+    )
+
+    assert progress["total"] == 10
+    assert progress["passed"] == 1
+    assert progress["failed"] == 0
+    assert progress["current_day"] == 7
+    assert progress["completed"][0]["key"] == "sunny_cooperator"
+    assert progress["completed"][0]["name"] == "林晴"
+    assert progress["completed"][0]["scores_text"] == "dialogue_quality={'understanding': 5}"
+
+
+def test_diagnostics_stale_health_run_marks_all_running_failed(monkeypatch):
+    monkeypatch.setattr(diagnostics_mod.time, "time", lambda: 10_000)
+    history = {
+        "active_run": {"mode": "health", "suite_id": "03", "started_at": 1},
+        "statuses": {"01": "running", "02": "passed", "03": "running", "04": "running"},
+        "console_logs": {},
+    }
+
+    changed = diagnostics_mod._clear_stale_active_run(history)
+
+    assert changed is True
+    assert history["active_run"] is None
+    assert history["statuses"] == {"01": "failed", "02": "passed", "03": "failed", "04": "failed"}
+    assert any("已自动重置 active_run" in line for line in history["console_logs"]["all"])
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_reset_active_run_preserves_history(tmp_path, monkeypatch):
+    monkeypatch.setattr(diagnostics_mod, "_backend_dir", lambda: tmp_path)
+    diagnostics_mod._save_history(
+        {
+            "active_run": {"mode": "real_e2e", "suite_id": "e2e_01", "started_at": 10},
+            "statuses": {"e2e_01": "running", "01": "passed"},
+            "console_logs": {"e2e_01": ["old log"]},
+        }
+    )
+
+    result = await diagnostics_mod.reset_active_run()
+    history = diagnostics_mod._load_history()
+
+    assert result == {"status": "reset"}
+    assert history["active_run"] is None
+    assert history["statuses"]["e2e_01"] == "failed"
+    assert history["statuses"]["01"] == "passed"
+    assert history["console_logs"]["e2e_01"][0] == "old log"
 
 
 def test_fixed_safety_reply_distinguishes_health_risk_from_service_handoff():
