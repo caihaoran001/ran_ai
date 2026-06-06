@@ -3,6 +3,7 @@
 ## 2026-06-06 - 测试自动化入口与诊断历史持久化
 
 - 新增固定测试用例入口 `docs/testing/TEST_CASES.md`，OpenCode/Agent 执行自动化测试时可直接按该文件逐项测试，不再依赖临场口头提示。
+- `TEST_CASES.md` 明确拆分三层自动化：命令/repo spec、OpenCode Playwright MCP 页面自动化、授权后的真实 LLM E2E，避免把页面测试误解为人工手测。
 - `AGENTS.md` 与 `docs/testing/README.md` 明确要求测试前同时阅读 `docs/testing/README.md` 和 `docs/testing/TEST_CASES.md`。
 - `docs/reviews/test-cases-2026-06-03.md` 改为历史路径指针，避免 reviews 目录中的日期文件与正式测试用例清单发生内容漂移。
 - 诊断历史文件支持通过 `DIAGNOSTICS_HISTORY_PATH` 配置；Docker Compose 后端默认写入宿主机 `./diagnostics/diagnostics_history.json`，避免容器重建后丢失 E2E-01 详细终端日志和用户级评审进度。
