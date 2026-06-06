@@ -207,6 +207,7 @@ def test_diagnostics_extracts_e2e_progress_from_console_logs():
                 "🧪 [E2E-01] 启动人设旅程: 林晴 / sunny_cooperator，消息 12 条，打卡 7 天",
                 "   [E2E-01] 林晴 推进到 Day 7: messages=1, checkin=yes",
                 "   [内容质量综合评审] 林晴: dialogue_quality={'understanding': 5}",
+                " -> [28天用户旅程验证] 林晴: risk=normal, human=False, refund=False, renewal=True",
                 "tests/test_e2e_01_real_llm.py::test_real_llm_persona_journey[sunny_cooperator] PASSED",
             ]
         }
@@ -215,10 +216,31 @@ def test_diagnostics_extracts_e2e_progress_from_console_logs():
     assert progress["total"] == 10
     assert progress["passed"] == 1
     assert progress["failed"] == 0
+    assert progress["reviewed"] == 0
     assert progress["current_day"] == 7
     assert progress["completed"][0]["key"] == "sunny_cooperator"
     assert progress["completed"][0]["name"] == "林晴"
     assert progress["completed"][0]["scores_text"] == "dialogue_quality={'understanding': 5}"
+    assert progress["completed"][0]["summary_text"] == "risk=normal, human=False, refund=False, renewal=True"
+
+
+def test_diagnostics_counts_reviewed_e2e_progress_before_pytest_status():
+    progress = diagnostics_mod._extract_e2e_progress(
+        {
+            "e2e_01": [
+                "🧪 [E2E-01] 启动人设旅程: 顾安 / anxious_questioner，消息 16 条，打卡 5 天",
+                "   [E2E-01] 顾安 推进到 Day 28: messages=1, checkin=yes",
+                "   [内容质量综合评审] 顾安: dialogue_quality={'understanding': 4}",
+                " -> [28天用户旅程验证] 顾安: risk=normal, human=False, refund=False, renewal=False",
+            ]
+        }
+    )
+
+    assert progress["reviewed"] == 1
+    assert progress["passed"] == 0
+    assert progress["failed"] == 0
+    assert progress["completed"][0]["status"] == "reviewed"
+    assert progress["completed"][0]["name"] == "顾安"
 
 
 def test_diagnostics_history_path_can_be_configured(tmp_path, monkeypatch):

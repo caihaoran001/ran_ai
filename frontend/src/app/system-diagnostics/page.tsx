@@ -52,6 +52,7 @@ type E2EProgressEntry = {
   name: string;
   status: "running" | "reviewed" | "passed" | "failed" | string;
   scores_text?: string;
+  summary_text?: string;
 };
 
 type E2EProgress = {
@@ -62,6 +63,7 @@ type E2EProgress = {
   current_day?: number | null;
   passed?: number;
   failed?: number;
+  reviewed?: number;
 };
 
 const EMPTY_SUMMARY: DiagnosticsSummary = {
@@ -69,6 +71,85 @@ const EMPTY_SUMMARY: DiagnosticsSummary = {
   ai_probe: { status: "checking", message: "AI 探针检测中", latency_ms: null, model: null },
   checked_at: 0,
 };
+
+function extractE2EProgress(logs: string[]): E2EProgress {
+  const startedByKey = new Map<string, E2EProgressEntry>();
+  const keyByName = new Map<string, string>();
+  const reviewedByKey = new Map<string, E2EProgressEntry>();
+  const completedByKey = new Map<string, E2EProgressEntry>();
+  let currentKey = "";
+  let currentDay: number | null = null;
+
+  for (const rawLine of logs) {
+    const line = String(rawLine);
+    let match = line.match(/启动人设旅程:\s*([^/]+?)\s*\/\s*([^，,\s]+)/);
+    if (match) {
+      const name = match[1].trim();
+      const key = match[2].trim();
+      currentKey = key;
+      const entry = startedByKey.get(key) || { key, name, status: "running" };
+      entry.name = name;
+      entry.status = entry.status || "running";
+      startedByKey.set(key, entry);
+      keyByName.set(name, key);
+      continue;
+    }
+
+    match = line.match(/\[E2E-01\]\s*(.+?)\s*推进到 Day\s*(\d+)/);
+    if (match) {
+      const name = match[1].trim();
+      currentDay = Number(match[2]);
+      currentKey = keyByName.get(name) || currentKey;
+      continue;
+    }
+
+    match = line.match(/\[内容质量综合评审\]\s*([^:：]+)[:：]\s*(.+)/);
+    if (match) {
+      const name = match[1].trim();
+      const key = keyByName.get(name) || name;
+      const entry = { ...(startedByKey.get(key) || { key, name, status: "reviewed" }) };
+      entry.status = "reviewed";
+      entry.scores_text = match[2].trim();
+      startedByKey.set(key, entry);
+      reviewedByKey.set(key, entry);
+      continue;
+    }
+
+    match = line.match(/\[28天用户旅程验证\]\s*([^:：]+)[:：]\s*(.+)/);
+    if (match) {
+      const name = match[1].trim();
+      const key = keyByName.get(name) || name;
+      const entry = { ...(startedByKey.get(key) || { key, name, status: "reviewed" }) };
+      entry.status = "reviewed";
+      entry.summary_text = match[2].trim();
+      startedByKey.set(key, entry);
+      reviewedByKey.set(key, entry);
+      continue;
+    }
+
+    match = line.match(/test_real_llm_persona_journey\[([^\]]+)\]\s+(PASSED|FAILED)/);
+    if (match) {
+      const key = match[1].trim();
+      const entry = { ...(startedByKey.get(key) || { key, name: key, status: "running" }) };
+      entry.status = match[2] === "PASSED" ? "passed" : "failed";
+      completedByKey.set(key, entry);
+      if (currentKey === key) currentKey = "";
+    }
+  }
+
+  const completed = [...new Map([...reviewedByKey, ...completedByKey]).values()];
+  const current = currentKey ? startedByKey.get(currentKey) : undefined;
+  return {
+    total: 10,
+    completed,
+    current_persona: current?.key || "",
+    current_persona_name: current?.name || "",
+    current_day: currentDay,
+    passed: completed.filter((item) => item.status === "passed").length,
+    failed: completed.filter((item) => item.status === "failed").length,
+    reviewed: completed.filter((item) => item.status === "reviewed").length,
+  };
+}
 
 export default function SystemDiagnosticsPage() {
   const [testSuites, setTestSuites] = useState<TestSuite[]>([]);
@@ -155,11 +236,12 @@ export default function SystemDiagnosticsPage() {
     setStatuses(Object.fromEntries(suites.map((suite) => [suite.id, historyStatuses[suite.id] || "idle"])));
     setDurations((history.durations || {}) as Record<string, string>);
     const logs = history.console_logs;
-    setConsoleLogs(Array.isArray(logs) ? { all: logs as string[] } : ((logs || {}) as Record<string, string[]>));
+    const nextLogs = Array.isArray(logs) ? { all: logs as string[] } : ((logs || {}) as Record<string, string[]>);
+    setConsoleLogs(nextLogs);
     setLastRunTime((history.last_run_time as string | number) || "尚未运行");
     const nextActiveRun = history.active_run as ActiveRun;
     setActiveRun(nextActiveRun);
-    setE2EProgress((history.e2e_progress || null) as E2EProgress | null);
+    setE2EProgress((history.e2e_progress as E2EProgress | undefined) || extractE2EProgress(nextLogs.e2e_01 || nextLogs.all || []));
     setRunningAll(nextActiveRun?.mode === "health");
     setCurrentRunningId(nextActiveRun?.mode && nextActiveRun.mode !== "health" ? nextActiveRun.suite_id || null : null);
   }
@@ -194,6 +276,9 @@ export default function SystemDiagnosticsPage() {
     setCurrentRunningId(suite.id);
     setStatuses((current) => ({ ...current, [suite.id]: "running" }));
     setConsoleLogs((current) => ({ ...current, [suite.id]: [`开始运行 ${suite.display_id} ${suite.name}`] }));
+    if (suite.tier === "real_e2e") {
+      setE2EProgress(extractE2EProgress([]));
+    }
     await consumeRun(`/api/backend/diagnostics/run/${suite.id}${suite.requires_confirmation ? "?confirm_real_e2e=true" : ""}`, suite.id);
     setCurrentRunningId(null);
   }
@@ -221,7 +306,13 @@ export default function SystemDiagnosticsPage() {
         const { value, done } = await reader.read();
         if (done) break;
         const lines = decoder.decode(value, { stream: true }).split("\n").filter(Boolean);
-        setConsoleLogs((current) => ({ ...current, [logKey]: [...(current[logKey] || []), ...lines] }));
+        setConsoleLogs((current) => {
+          const nextSuiteLogs = [...(current[logKey] || []), ...lines];
+          if (logKey === "e2e_01") {
+            setE2EProgress(extractE2EProgress(nextSuiteLogs));
+          }
+          return { ...current, [logKey]: nextSuiteLogs };
+        });
       }
       await syncHistory();
       await loadSummary();
@@ -500,9 +591,10 @@ export default function SystemDiagnosticsPage() {
             {activeRun && (
               <button
                 onClick={() => void resetActiveRun()}
+                title="仅在后端进程中断、页面一直显示运行中时使用。不会删除历史日志。"
                 className="inline-flex h-8 cursor-pointer items-center rounded-md border border-amber-200 bg-amber-50 px-2.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100"
               >
-                重置卡住状态
+                清除异常运行锁
               </button>
             )}
             <IconButton label="复制日志" onClick={() => void navigator.clipboard.writeText(activeLogs.join("\n"))}>
@@ -605,21 +697,25 @@ function E2EProgressPanel({ progress, running }: { progress: E2EProgress; runnin
   const total = progress.total || 10;
   const passed = progress.passed ?? completed.filter((item) => item.status === "passed").length;
   const failed = progress.failed ?? completed.filter((item) => item.status === "failed").length;
-  const done = Math.min(total, passed + failed);
+  const reviewed = progress.reviewed ?? completed.filter((item) => item.status === "reviewed").length;
+  const done = Math.min(total, passed + failed + reviewed);
   const donePercent = total ? Math.round((done / total) * 100) : 0;
   const passedPercent = total ? (passed / total) * 100 : 0;
   const failedPercent = total ? (failed / total) * 100 : 0;
+  const reviewedPercent = total ? (reviewed / total) * 100 : 0;
   return (
     <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="text-sm font-semibold text-zinc-950">E2E-01 用户旅程进度</div>
           <p className="mt-1 text-xs leading-5 text-zinc-500">
-            从诊断日志中提取，刷新页面后仍可查看最近一次真实旅程的用户级状态。
+            从实时日志中提取。已评审表示该用户业务链路已跑到质量评审，最终通过/失败以 pytest 状态行为准。
           </p>
         </div>
         <div className="text-right text-xs text-zinc-500">
-          <div className="font-semibold text-zinc-900">{done}/{total} 完成 · {passed} 通过 / {failed} 失败</div>
+          <div className="font-semibold text-zinc-900">
+            {done}/{total} 完成 · {passed} 通过 / {reviewed} 已评审 / {failed} 失败
+          </div>
           {running && progress.current_persona_name && (
             <div className="mt-1">
               当前：{progress.current_persona_name}
@@ -631,6 +727,7 @@ function E2EProgressPanel({ progress, running }: { progress: E2EProgress; runnin
       <div className="mt-4 h-2 overflow-hidden rounded-full bg-zinc-100" title={`${donePercent}%`}>
         <div className="flex h-full">
           <div className="bg-emerald-500 transition-all" style={{ width: `${passedPercent}%` }} />
+          <div className="bg-cyan-500 transition-all" style={{ width: `${reviewedPercent}%` }} />
           <div className="bg-rose-500 transition-all" style={{ width: `${failedPercent}%` }} />
         </div>
       </div>
@@ -643,19 +740,20 @@ function E2EProgressPanel({ progress, running }: { progress: E2EProgress; runnin
           completed.map((item) => (
             <div
               key={item.key}
-              className={`rounded-md border px-3 py-3 ${
-                item.status === "failed"
-                  ? "border-rose-200 bg-rose-50 text-rose-900"
-                  : "border-emerald-200 bg-emerald-50 text-emerald-900"
-              }`}
+              className={`rounded-md border px-3 py-3 ${e2eEntryTone(item.status)}`}
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-semibold">{item.name}</span>
-                <span className="text-xs font-semibold">{item.status === "failed" ? "失败" : "通过"}</span>
+                <span className="text-xs font-semibold">{e2eEntryLabel(item.status)}</span>
               </div>
               {item.scores_text && (
                 <p className="mt-2 line-clamp-3 text-xs leading-5 opacity-80" title={item.scores_text}>
                   {item.scores_text}
+                </p>
+              )}
+              {item.summary_text && (
+                <p className="mt-2 line-clamp-2 text-xs leading-5 opacity-80" title={item.summary_text}>
+                  {item.summary_text}
                 </p>
               )}
             </div>
@@ -664,6 +762,20 @@ function E2EProgressPanel({ progress, running }: { progress: E2EProgress; runnin
       </div>
     </section>
   );
+}
+
+function e2eEntryLabel(status: string) {
+  if (status === "failed") return "失败";
+  if (status === "passed") return "通过";
+  if (status === "reviewed") return "已评审";
+  return "运行中";
+}
+
+function e2eEntryTone(status: string) {
+  if (status === "failed") return "border-rose-200 bg-rose-50 text-rose-900";
+  if (status === "passed") return "border-emerald-200 bg-emerald-50 text-emerald-900";
+  if (status === "reviewed") return "border-cyan-200 bg-cyan-50 text-cyan-900";
+  return "border-zinc-200 bg-zinc-50 text-zinc-700";
 }
 
 function StatusBadge({ status }: { status: TestStatus }) {

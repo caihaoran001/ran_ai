@@ -11,6 +11,7 @@ from app.models.outcome import OutcomeEvent, OutcomeStageState
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
+from app.services.document_service import _apply_intake_facts_to_document_payloads
 from app.services.intake_facts import build_intake_fact_summary
 from app.services.questionnaire_template import default_questionnaire_template
 
@@ -412,6 +413,47 @@ async def test_intake_facts_bmi_calculation(cai_haoran_answers):
     assert facts["weight_loss_band"] == "维持优化带（A带）", (
         f"Expected A带, got '{facts['weight_loss_band']}'"
     )
+
+
+def test_document_payload_bmi_is_overwritten_by_intake_facts():
+    payloads = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "overview": {
+                "bmi": "BMI 23.7（维持优化带）",
+                "height_weight": "170cm / 68kg",
+            },
+            "judgement_points": [
+                "BMI 23.7 → 当前已在健康体重范围",
+                "白班作息 → 节律可继续优化",
+            ],
+            "current_state": "30岁男性，BMI 23.7，身高175cm，体重65kg。",
+            "success_path": {"weight_band": "LLM自写带"},
+        },
+        DocumentType.DAY28_EXECUTION_STANDARD.value: {
+            "weight_band": "LLM自写带",
+            "day28_goal": "BMI 23.7 下不以减重为核心。",
+        },
+    }
+    facts = {
+        "bmi": "21.2",
+        "weight_loss_band": "维持优化带（A带）",
+        "height_cm": "175",
+        "weight_kg": "65",
+        "waist": "未提供",
+        "bodyfat": "未提供",
+    }
+
+    _apply_intake_facts_to_document_payloads(payloads, facts)
+
+    energy = payloads[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
+    execution = payloads[DocumentType.DAY28_EXECUTION_STANDARD.value]
+    assert energy["overview"]["bmi"] == "21.2"
+    assert energy["overview"]["height_weight"] == "175cm / 65kg"
+    assert "BMI 21.2" in energy["judgement_points"][0]
+    assert "BMI 21.2" in energy["current_state"]
+    assert energy["success_path"]["weight_band"] == "维持优化带（A带）"
+    assert execution["weight_band"] == "维持优化带（A带）"
+    assert "BMI 21.2" in execution["day28_goal"]
 
 
 @pytest.mark.asyncio

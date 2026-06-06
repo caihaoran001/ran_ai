@@ -360,6 +360,7 @@ def _extract_e2e_progress(console_logs: dict) -> dict:
     started_by_key: dict[str, dict] = {}
     key_by_name: dict[str, str] = {}
     completed_by_key: dict[str, dict] = {}
+    reviewed_by_key: dict[str, dict] = {}
     current_key = ""
     current_day = None
     for raw_line in logs:
@@ -386,6 +387,16 @@ def _extract_e2e_progress(console_logs: dict) -> dict:
             entry = started_by_key.setdefault(key, {"key": key, "name": name})
             entry["status"] = "reviewed"
             entry["scores_text"] = match.group("scores").strip()
+            reviewed_by_key[key] = dict(entry)
+            continue
+        match = re.search(r"\[28天用户旅程验证\]\s*(?P<name>[^:：]+)[:：]\s*(?P<summary>.+)", line)
+        if match:
+            name = match.group("name").strip()
+            key = key_by_name.get(name, name)
+            entry = started_by_key.setdefault(key, {"key": key, "name": name})
+            entry["status"] = "reviewed"
+            entry["summary_text"] = match.group("summary").strip()
+            reviewed_by_key[key] = dict(entry)
             continue
         match = re.search(r"test_real_llm_persona_journey\[(?P<key>[^\]]+)\]\s+(?P<status>PASSED|FAILED)", line)
         if match:
@@ -397,7 +408,7 @@ def _extract_e2e_progress(console_logs: dict) -> dict:
             if current_key == key:
                 current_key = ""
             continue
-    completed = list(completed_by_key.values())
+    completed = list({**reviewed_by_key, **completed_by_key}.values())
     current = started_by_key.get(current_key) if current_key else None
     return {
         "total": len(REAL_E2E_PERSONA_KEYS),
@@ -407,6 +418,7 @@ def _extract_e2e_progress(console_logs: dict) -> dict:
         "current_day": current_day,
         "passed": sum(1 for item in completed if item.get("status") == "passed"),
         "failed": sum(1 for item in completed if item.get("status") == "failed"),
+        "reviewed": sum(1 for item in completed if item.get("status") == "reviewed"),
     }
 
 

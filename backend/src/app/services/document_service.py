@@ -995,6 +995,9 @@ def _apply_intake_facts_to_single_payload(
     facts: dict[str, object],
 ) -> None:
     weight_band = str(facts.get("weight_loss_band") or "").strip()
+    bmi = str(facts.get("bmi") or "").strip()
+    if bmi and bmi != "暂无数据":
+        _replace_bmi_mentions(payload, bmi)
     if not weight_band:
         return
     if document_type == DocumentType.ENERGY_RESTART_PRESCRIPTION:
@@ -1005,7 +1008,7 @@ def _apply_intake_facts_to_single_payload(
         success_path["weight_band"] = weight_band
         overview = payload.get("overview")
         if isinstance(overview, dict):
-            overview["bmi"] = str(facts.get("bmi") or overview.get("bmi") or "暂无数据")
+            overview["bmi"] = bmi or str(overview.get("bmi") or "暂无数据")
             overview["height_weight"] = _join_fact_values(
                 _with_unit(facts.get("height_cm"), "cm"),
                 _with_unit(facts.get("weight_kg"), "kg"),
@@ -1016,6 +1019,27 @@ def _apply_intake_facts_to_single_payload(
             ) or overview.get("waist_bodyfat")
     elif document_type == DocumentType.DAY28_EXECUTION_STANDARD:
         payload["weight_band"] = weight_band
+
+
+def _replace_bmi_mentions(value: object, bmi: str) -> None:
+    """Keep generated document text aligned with deterministic intake facts."""
+
+    if isinstance(value, dict):
+        for key, item in list(value.items()):
+            if isinstance(item, str):
+                value[key] = _replace_bmi_text(item, bmi)
+            else:
+                _replace_bmi_mentions(item, bmi)
+    elif isinstance(value, list):
+        for index, item in enumerate(list(value)):
+            if isinstance(item, str):
+                value[index] = _replace_bmi_text(item, bmi)
+            else:
+                _replace_bmi_mentions(item, bmi)
+
+
+def _replace_bmi_text(text: str, bmi: str) -> str:
+    return re.sub(r"BMI\s*[:：]?\s*\d+(?:\.\d+)?", f"BMI {bmi}", text)
 
 
 def _join_fact_values(*values: object) -> str:
