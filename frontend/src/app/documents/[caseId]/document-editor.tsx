@@ -76,15 +76,13 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
           >
             {busy ? "发送中..." : sent ? "已发送" : "确认发送"}
           </Button>
-          {document.file_path && (
-            <a
-              suppressHydrationWarning
-              className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm hover:bg-zinc-50"
-              href={`${API_BASE}/documents/${document.id}/download`}
-            >
-              下载 docx
-            </a>
-          )}
+          <a
+            suppressHydrationWarning
+            className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm hover:bg-zinc-50"
+            href={`${API_BASE}/documents/${document.id}/download`}
+          >
+            下载 docx
+          </a>
         </div>
       </div>
 

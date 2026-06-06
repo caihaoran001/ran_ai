@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## 2026-06-06 - 生产部署配置与临时 DOCX 渲染
+
+- 新增生产部署配置：
+  - `backend/Dockerfile.prod`
+  - `frontend/Dockerfile.prod`
+  - `docker-compose.prod.yml`
+  - `deploy/Caddyfile`
+  - `.env.production.example`
+- 新增 `docs/deployment.md`，说明本地开发、本地生产模拟、公有云部署、`.env` 密钥管理、QiWe callback、备份和上线检查。
+- README 增加生产部署入口，保留本地开发 compose 不变。
+- 交付文件改为以 `content_json/content_md` 为持久化可信源，不再在生成或编辑阶段长期写入 `generated_documents`。
+- 下载 docx 时即时从数据库内容渲染临时文件，响应结束后自动清理。
+- 发送 docx 到 QiWe 时即时渲染临时文件，上传发送后自动清理。
+- 前端下载按钮不再依赖 `file_path`，只要文档记录存在即可下载。
+
 ## 2026-06-06 - 测试自动化入口与诊断历史持久化
 
 - 新增固定测试用例入口 `docs/testing/TEST_CASES.md`，OpenCode/Agent 执行自动化测试时可直接按该文件逐项测试，不再依赖临场口头提示。

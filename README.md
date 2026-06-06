@@ -17,7 +17,9 @@
 backend/      FastAPI、SQLAlchemy、Alembic、AI 服务、QiWe 消息通道
 frontend/     Next.js 后台和 H5 问卷
 docker-compose.yml
+docker-compose.prod.yml
 .env.example
+.env.production.example
 ```
 
 ## 快速开始
@@ -76,7 +78,16 @@ npm run dev
 
 如果用 Docker Compose，前端容器内部仍然监听 3000，但宿主机映射到 `FRONTEND_PORT`，`.env.example` 默认使用 `3002`。
 
-当前 Docker Compose 面向本地/局域网试验环境：后端容器默认使用 `BACKEND_ENVIRONMENT=docker`，不启用 Uvicorn reload，避免 SSE 长连接阻塞自动重载；修改后端代码后请重启 `ran-ai-backend`。前端仍使用 `next dev`。正式部署前应切换生产镜像、设置强后台密码和 `BACKEND_ADMIN_API_KEY`，并将 `BACKEND_ENVIRONMENT=production`。
+当前 `docker-compose.yml` 面向本地/局域网试验环境：后端容器默认使用 `BACKEND_ENVIRONMENT=docker`，不启用 Uvicorn reload，避免 SSE 长连接阻塞自动重载；修改后端代码后请重启 `ran-ai-backend`。前端仍使用 `next dev`。
+
+公有云部署使用：
+
+```bash
+cp .env.production.example .env
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+生产部署说明见 [docs/deployment.md](docs/deployment.md)。
 
 后台页面通过前端同源代理访问后端 API。浏览器不会拿到 `BACKEND_ADMIN_API_KEY`；该密钥只在 Next 服务端和 FastAPI 后端之间使用。直接访问后端 `/api/*` 管理接口需要请求头 `X-Admin-API-Key`，公开问卷链接仍然通过 token 访问。
 
@@ -127,7 +138,7 @@ AI_MAX_TOKENS=4000
 - `个人能量重启处方单`
 - `28天执行标准与打卡要求`
 
-交付文件使用 `手动版提示词.md` 的提示词思路，让 LLM 先输出结构化 JSON 关键字段，再由后端模板渲染成后台可编辑正文，并用 `python-docx` 落盘为 `.docx`。文件默认写入 `generated_documents/`，后台页面支持查看、微调、下载和确认发送。
+交付文件使用 `手动版提示词.md` 的提示词思路，让 LLM 先输出结构化 JSON 关键字段，再由后端模板渲染成后台可编辑正文。系统持久化保存 `content_json/content_md`；下载或发送时才用 `python-docx` 临时渲染 `.docx`，响应或上传完成后删除临时文件。后台页面支持查看、微调、下载和确认发送。
 
 阶段报告也复用同一套模板化文档链路。服务单详情页可生成：
 

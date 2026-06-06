@@ -202,15 +202,13 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                     </Link>
                     <div className="flex items-center gap-3">
                       <StatusBadge status={document.status} />
-                      {document.file_path && (
-                        <a
-                          suppressHydrationWarning
-                          className="text-sm font-semibold text-cyan-700 hover:text-cyan-800"
-                          href={`/api/backend/documents/${document.id}/download`}
-                        >
-                          下载
-                        </a>
-                      )}
+                      <a
+                        suppressHydrationWarning
+                        className="text-sm font-semibold text-cyan-700 hover:text-cyan-800"
+                        href={`/api/backend/documents/${document.id}/download`}
+                      >
+                        下载
+                      </a>
                     </div>
                   </div>
                 ))}

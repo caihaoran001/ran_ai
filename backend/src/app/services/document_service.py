@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -116,21 +119,13 @@ async def generate_profile_and_documents(
         content = render_document_content(content_json)
         if not _document_content_is_sufficient(content):
             raise RuntimeError(f"{title} generated empty content")
-        file_path = await _write_document_file(
-            service_case=service_case,
-            user_name=legal_name,
-            document_type=document_type,
-            title=title,
-            content=content,
-            content_json=content_json,
-        )
         document = UserDocument(
             service_case_id=service_case.id,
             document_type=document_type,
             title=title,
             content_md=content,
             content_json=content_json,
-            file_path=str(file_path),
+            file_path=None,
             status=DocumentStatus.REVIEWING,
             generated_by_model=ai.settings.ai_model,
         )
@@ -209,21 +204,13 @@ async def generate_stage_report(
         if stage == "graduation"
         else DocumentType.STAGE_REPORT
     )
-    file_path = await _write_document_file(
-        service_case=service_case,
-        user_name=user_name,
-        document_type=document_type,
-        title=title,
-        content=content,
-        content_json=content_json,
-    )
     document = UserDocument(
         service_case_id=service_case.id,
         document_type=document_type,
         title=title,
         content_md=content,
         content_json=content_json,
-        file_path=str(file_path),
+        file_path=None,
         status=DocumentStatus.REVIEWING,
         generated_by_model=ai.settings.ai_model,
     )
@@ -239,20 +226,10 @@ async def rewrite_document_file(session: AsyncSession, document: UserDocument) -
     service_case = await get_active_service_case(session, document.service_case_id)
     if not service_case:
         raise RuntimeError("service case not found")
-    user_name = await _user_name(session, service_case)
     if document.content_json:
         document.content_json = normalize_content_json(document.content_json)
         document.content_md = render_template_markdown(document.content_json)
-    document.file_path = str(
-        await _write_document_file(
-            service_case=service_case,
-            user_name=user_name,
-            document_type=document.document_type,
-            title=document.title,
-            content=document.content_md,
-            content_json=document.content_json,
-        )
-    )
+    document.file_path = None
     await session.commit()
     await session.refresh(document)
     return document
@@ -279,9 +256,6 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
     ]
     if not documents:
         raise RuntimeError("documents are required before sending")
-    if any(not document.file_path for document in documents):
-        raise RuntimeError("document file is missing")
-
     documents_to_send = [document for document in documents if document.status != DocumentStatus.SENT]
     if not documents_to_send:
         return documents
@@ -311,11 +285,15 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
             raise RuntimeError(intro_result.error or "failed to send document intro")
 
     for document in documents_to_send:
-        result = await send_channel_document(
-            service_case.group_id,
-            document.file_path or "",
-            caption=f"{document.title}.docx",
-        )
+        file_path, cleanup = await create_temporary_document_file(session, document)
+        try:
+            result = await send_channel_document(
+                service_case.group_id,
+                str(file_path),
+                caption=f"{document.title}.docx",
+            )
+        finally:
+            cleanup()
         if not result.success:
             _record_document_delivery(
                 session,
@@ -341,13 +319,15 @@ async def send_one_document(session: AsyncSession, document: UserDocument) -> Us
     service_case = await get_active_service_case(session, document.service_case_id)
     if not service_case:
         raise RuntimeError("service case not found")
-    if not document.file_path:
-        raise RuntimeError("document file is missing")
-    result = await send_channel_document(
-        service_case.group_id,
-        document.file_path,
-        caption=f"{document.title}.docx",
-    )
+    file_path, cleanup = await create_temporary_document_file(session, document)
+    try:
+        result = await send_channel_document(
+            service_case.group_id,
+            str(file_path),
+            caption=f"{document.title}.docx",
+        )
+    finally:
+        cleanup()
     if not result.success:
         _record_document_delivery(
             session,
@@ -366,6 +346,33 @@ async def send_one_document(session: AsyncSession, document: UserDocument) -> Us
     await session.commit()
     await session.refresh(document)
     return document
+
+
+async def create_temporary_document_file(
+    session: AsyncSession,
+    document: UserDocument,
+) -> tuple[Path, Callable[[], None]]:
+    service_case = await session.get(ServiceCase, document.service_case_id)
+    if not service_case:
+        raise RuntimeError("service case not found")
+    user_name = await _user_name(session, service_case)
+    temp_dir = Path(tempfile.mkdtemp(prefix="ran-ai-docx-"))
+    output_path = temp_dir / _document_filename(
+        user_name=user_name,
+        document_type=document.document_type,
+        title=document.title,
+        content=document.content_md,
+    )
+    await _render_document_file(
+        output_path=output_path,
+        content=document.content_md,
+        content_json=document.content_json,
+    )
+
+    def cleanup() -> None:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return output_path, cleanup
 
 
 def _record_document_delivery(
@@ -1210,45 +1217,42 @@ def _stage_title(stage: str) -> str:
     return labels[stage]
 
 
-async def _write_document_file(
+async def _render_document_file(
     *,
-    service_case: ServiceCase,
-    user_name: str,
-    document_type: DocumentType,
-    title: str,
+    output_path: Path,
     content: str,
     content_json: dict | None = None,
-) -> Path:
+) -> None:
     return await asyncio.to_thread(
-        _write_document_file_sync,
-        service_case=service_case,
-        user_name=user_name,
-        document_type=document_type,
-        title=title,
+        _render_document_file_sync,
+        output_path=output_path,
         content=content,
         content_json=content_json,
     )
 
 
-def _write_document_file_sync(
+def _render_document_file_sync(
     *,
-    service_case: ServiceCase,
-    user_name: str,
-    document_type: DocumentType,
-    title: str,
+    output_path: Path,
     content: str,
     content_json: dict | None = None,
-) -> Path:
-    settings = get_settings()
-    suffix = "女士" if _is_female_guess(content) else "先生"
-    version = datetime.now().strftime("%Y%m%d%H%M%S")
-    filename = safe_filename(f"{user_name} {title} {user_name}{suffix} {version}.docx")
-    output_path = Path(settings.document_output_dir) / service_case.case_no / document_type.value / filename
+) -> None:
     if content_json:
         write_template_docx(content_json, output_path)
     else:
         write_markdown_docx(content, output_path)
-    return output_path
+
+
+def _document_filename(
+    *,
+    user_name: str,
+    document_type: DocumentType,
+    title: str,
+    content: str,
+) -> str:
+    suffix = "女士" if _is_female_guess(content) else "先生"
+    version = datetime.now().strftime("%Y%m%d%H%M%S")
+    return safe_filename(f"{user_name} {title} {user_name}{suffix} {document_type.value} {version}.docx")
 
 
 def _readable_answers(fields: list[dict], answers: dict) -> str:

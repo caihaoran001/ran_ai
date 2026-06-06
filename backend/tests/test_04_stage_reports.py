@@ -206,6 +206,14 @@ async def test_stage_report_content_has_checkin_data(admin_client, db_session):
     assert "打卡" in content_md or "打卡" in block_contents or "checkin" in content_md.lower()
 
     assert content_json.get("stage") == "day7"
+    assert doc.get("file_path") is None
+
+    download_resp = await admin_client.get(f"/documents/{doc['id']}/download")
+    assert download_resp.status_code == 200, download_resp.text
+    assert download_resp.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert len(download_resp.content) > 1000
 
 
 @pytest.mark.asyncio

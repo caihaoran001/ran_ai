@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from app.core.config import get_settings
 from app.db.session import get_session
@@ -15,6 +15,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, UserDocument
 from app.schemas.document import DocumentUpdate, UserDocumentRead, UserProfileRead
 from app.services.document_service import (
+    create_temporary_document_file,
     generate_documents,
     generate_profile,
     generate_stage_report,
@@ -192,15 +193,17 @@ async def download_document(
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
     document = await session.get(UserDocument, document_id)
-    if not document or not document.file_path:
-        raise HTTPException(status_code=404, detail="document file not found")
-    path = Path(document.file_path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="document file not found")
+    if not document:
+        raise HTTPException(status_code=404, detail="document not found")
+    try:
+        path, cleanup = await create_temporary_document_file(session, document)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(
         path,
         filename=path.name,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        background=BackgroundTask(cleanup),
     )
 
 

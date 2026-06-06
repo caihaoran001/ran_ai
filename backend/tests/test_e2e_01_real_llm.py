@@ -317,7 +317,7 @@ async def _assert_intake_content_contract(
         )[:2]
     assert profile is not None
     assert len(documents) == 2
-    assert all(document.file_path and Path(document.file_path).exists() for document in documents)
+    assert all(document.content_json and document.content_md for document in documents)
     assert expected_name in "\n".join(document.content_md for document in documents)
 
     execution = next(document for document in documents if document.document_type == DocumentType.DAY28_EXECUTION_STANDARD)
@@ -573,16 +573,16 @@ async def test_real_llm_full_saga_end_to_end(
     print(" -> 真实大模型推理与文档生成处理完成！")
 
     # ==========================================
-    # 步骤 3: 校验真实生成的物理 Word 处方文件
+    # 步骤 3: 校验真实生成的结构化交付文件内容
     # ==========================================
     docs = list(await db_session.scalars(
         select(UserDocument).where(UserDocument.service_case_id == case_id)
     ))
     assert len(docs) == 2
     for doc in docs:
-        file_path = Path(doc.file_path)
-        assert file_path.exists()
-        print(f"   - 校验物理文档成功: {doc.title} (文件大小: {file_path.stat().st_size} 字节)")
+        assert doc.content_json
+        assert doc.content_md
+        print(f"   - 校验结构化文档成功: {doc.title} (content_json + content_md 已保存)")
 
     # ==========================================
     # 步骤 4: 启动 28 天逐日时光推移大模型人机互动深度模拟
@@ -672,9 +672,9 @@ async def test_real_llm_full_saga_end_to_end(
         stage="graduation",
         session=db_session,
     )
-    grad_file = Path(grad_doc.file_path)
-    assert grad_file.exists()
-    print(f" -> 步骤 5 完成: 成功跨越 28 天，成功真实生成结营毕业 Word 文件 (大小: {grad_file.stat().st_size} 字节)")
+    assert grad_doc.content_json
+    assert grad_doc.content_md
+    print(" -> 步骤 5 完成: 成功跨越 28 天，成功生成结营毕业报告结构化内容")
 
     # ==========================================
     # 步骤 6: 真实测试 FAQ/案例草稿的审核入库、向量化同步、RAG 相似度召回与案例反哺

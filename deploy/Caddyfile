@@ -1,0 +1,15 @@
+{$PUBLIC_SITE_ADDRESS} {
+	encode zstd gzip
+
+	handle /health {
+		reverse_proxy backend:8000
+	}
+
+	handle /api/channels/qiwe/* {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

@@ -1,0 +1,101 @@
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg15}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ran_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-ran_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ran_ai} -d ${POSTGRES_DB:-ran_ai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ran_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ran_ai}
+      FRONTEND_PUBLIC_BASE_URL: ${FRONTEND_PUBLIC_BASE_URL:?FRONTEND_PUBLIC_BASE_URL is required}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
+      BACKEND_ADMIN_API_KEY: ${BACKEND_ADMIN_API_KEY:?BACKEND_ADMIN_API_KEY is required}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+      AI_API_KEY: ${AI_API_KEY:?AI_API_KEY is required}
+      AI_MODEL: ${AI_MODEL:-deepseek-v4-flash}
+      AI_TEMPERATURE: ${AI_TEMPERATURE:-0.3}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-8000}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-60}
+      AI_MAX_CONCURRENT_REQUESTS: ${AI_MAX_CONCURRENT_REQUESTS:-10}
+      AI_PROMPT_COST_PER_1M_TOKENS: ${AI_PROMPT_COST_PER_1M_TOKENS:-0}
+      AI_COMPLETION_COST_PER_1M_TOKENS: ${AI_COMPLETION_COST_PER_1M_TOKENS:-0}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v4}
+      FAQ_VECTOR_DISTANCE_THRESHOLD: ${FAQ_VECTOR_DISTANCE_THRESHOLD:-0.35}
+      CASE_VECTOR_DISTANCE_THRESHOLD: ${CASE_VECTOR_DISTANCE_THRESHOLD:-0.45}
+      QIWEI_ENABLED: ${QIWEI_ENABLED:-true}
+      QIWEI_TOKEN: ${QIWEI_TOKEN:?QIWEI_TOKEN is required}
+      QIWEI_GUID: ${QIWEI_GUID:?QIWEI_GUID is required}
+      QIWEI_CALLBACK_SECRET: ${QIWEI_CALLBACK_SECRET:?QIWEI_CALLBACK_SECRET is required}
+      QIWEI_BASE_URL: ${QIWEI_BASE_URL:-http://manager.qiweapi.com/qiwe}
+      QIWEI_BATCH_WINDOW_SECONDS: ${QIWEI_BATCH_WINDOW_SECONDS:-8}
+      REMINDER_ENABLED: ${REMINDER_ENABLED:-true}
+      REMINDER_CHECK_INTERVAL_SECONDS: ${REMINDER_CHECK_INTERVAL_SECONDS:-30}
+      REMINDER_AT: ${REMINDER_AT:-12:00}
+      REMINDER_TIMEZONE: ${REMINDER_TIMEZONE:-Asia/Shanghai}
+      REMINDER_WEEKDAYS: ${REMINDER_WEEKDAYS:-1,2,3,4,5}
+      INACTIVE_FOLLOWUP_ENABLED: ${INACTIVE_FOLLOWUP_ENABLED:-true}
+      INACTIVE_FOLLOWUP_HOURS: ${INACTIVE_FOLLOWUP_HOURS:-24}
+      OUTCOME_SNAPSHOTS_ENABLED: ${OUTCOME_SNAPSHOTS_ENABLED:-true}
+      KNOWLEDGE_EVOLUTION_ENABLED: ${KNOWLEDGE_EVOLUTION_ENABLED:-false}
+      KNOWLEDGE_EVOLUTION_INTERVAL_SECONDS: ${KNOWLEDGE_EVOLUTION_INTERVAL_SECONDS:-3600}
+      KNOWLEDGE_EVOLUTION_LOOKBACK_HOURS: ${KNOWLEDGE_EVOLUTION_LOOKBACK_HOURS:-24}
+      KNOWLEDGE_EVOLUTION_QA_AT: ${KNOWLEDGE_EVOLUTION_QA_AT:-00:00}
+      KNOWLEDGE_EVOLUTION_CASE_DAYS: ${KNOWLEDGE_EVOLUTION_CASE_DAYS:-3,7,14,21,28}
+      DIAGNOSTICS_HISTORY_PATH: /app/diagnostics/diagnostics_history.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./diagnostics:/app/diagnostics
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    environment:
+      SERVER_API_BASE_URL: http://backend:8000/api
+      BACKEND_ADMIN_API_KEY: ${BACKEND_ADMIN_API_KEY:?BACKEND_ADMIN_API_KEY is required}
+      FRONTEND_PUBLIC_BASE_URL: ${FRONTEND_PUBLIC_BASE_URL:?FRONTEND_PUBLIC_BASE_URL is required}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_SITE_ADDRESS: ${PUBLIC_SITE_ADDRESS:?PUBLIC_SITE_ADDRESS is required}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    depends_on:
+      - frontend
+      - backend
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
