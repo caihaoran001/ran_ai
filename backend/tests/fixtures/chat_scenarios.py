@@ -39,10 +39,315 @@ class RealLLMPersonaJourney:
     expected_flags: tuple[str, ...] = ()
     expect_inactive_reminder: bool = False
     quality_focus: str = ""
+    daily_checkin_templates: dict[int, dict] = field(default_factory=dict)
+    stage_review_templates: dict[int, dict] = field(default_factory=dict)
 
 
 def _messages(items: list[tuple[int, str, str | None]]) -> tuple[ChatMessage, ...]:
     return tuple(ChatMessage(day, content, note or "") for day, content, note in items)
+
+
+# ── Persona-specific checkin builders ─────────────────────────────
+
+_STAGE_REVIEW_DAYS = frozenset({1, 3, 7, 14, 21, 28})
+
+_PERSONA_BUILDERS: dict[str, dict] = {
+    "sunny_cooperator": {
+        "weight_fn": lambda day: round(65.0 - (day / 28) * 1.7, 1),
+        "morning_c": lambda day: "已喝",
+        "noon_b": lambda day: "已喝",
+        "night_a": lambda day: "已喝",
+        "sleep": lambda day: "23点睡，7点起，质量好",
+        "diet": lambda day: "干净" if day % 7 != 6 else "一般",
+        "water": lambda day: "2000ml以上",
+        "bowel": lambda day: "正常",
+        "appetite": lambda day: "略有下降" if day > 7 else "无变化",
+        "exercise": lambda day: "散步30分钟",
+        "body_feeling": lambda day: "精神变好，睡眠变好" if day > 7 else "暂无明显感觉",
+        "discomfort": lambda day: "没有",
+        "tomorrow_focus": lambda day: "按时喝完早C午B晚A",
+        "waist_fn": lambda day: "78cm" if day in (7, 14, 21, 28) else "本日未测",
+        "avg_sleep": lambda day: "大约23:30入睡，质量变好",
+        "diet_execution": lambda day: "很干净",
+        "diet_main_issue": lambda day: "无",
+        "water_execution": lambda day: "达标",
+        "bowel_status": lambda day: "明显改善" if day > 14 else "基本正常",
+        "appetite_status": lambda day: "略有下降",
+        "exercise_status": lambda day: "每周3次以上",
+        "biggest_positive_change": lambda day: {1: "第一天执行", 7: "下午不困", 14: "睡眠改善", 21: "腰围松", 28: "节律形成"}.get(day, ""),
+        "biggest_blocker": lambda day: "无",
+        "next_action_focus": lambda day: "巩固节律",
+    },
+    "anxious_questioner": {
+        "weight_fn": lambda day: round(65.0 - (day / 28) * 0.8, 1),
+        "morning_c": lambda day: "已喝",
+        "noon_b": lambda day: "已喝" if day % 3 != 0 else "未喝",
+        "night_a": lambda day: "已喝",
+        "sleep": lambda day: {1: "凌晨1点睡，7点起，质量差", 2: "23点睡，5点醒，质量差", 3: "23点睡，7点起，质量一般", 5: "凌晨2点睡，6点起，质量差", 6: "23点睡，7点起，质量一般", 7: "23点睡，6点起，质量一般"}.get(day, "23点睡，6点起，质量一般"),
+        "diet": lambda day: "一般" if day % 4 == 0 else "干净",
+        "water": lambda day: "1500-2000ml",
+        "bowel": lambda day: "偏稀" if day in (3, 5) else "正常",
+        "appetite": lambda day: "无变化",
+        "exercise": lambda day: "散步20分钟" if day % 2 == 0 else "无运动",
+        "body_feeling": lambda day: "暂无明显感觉",
+        "discomfort": lambda day: "没有",
+        "tomorrow_focus": lambda day: "只守一个动作",
+        "waist_fn": lambda day: "本日未测",
+        "avg_sleep": lambda day: "大约凌晨0:30入睡，质量波动大",
+        "diet_execution": lambda day: "基本可以",
+        "diet_main_issue": lambda day: "睡前思虑多导致偶尔失控",
+        "water_execution": lambda day: "一般",
+        "bowel_status": lambda day: "偏稀/不稳定",
+        "appetite_status": lambda day: "无变化",
+        "exercise_status": lambda day: "每周1-2次",
+        "biggest_positive_change": lambda day: {1: "开始执行", 7: "坚持了一周", 14: "精神好一点", 21: "心态稳了", 28: "能接受慢一点了"}.get(day, ""),
+        "biggest_blocker": lambda day: "睡前思虑多",
+        "next_action_focus": lambda day: "只盯一个动作",
+    },
+    "shift_worker": {
+        "weight_fn": lambda day: round(65.0 - (day / 28) * 1.0, 1),
+        "morning_c": lambda day: "已喝" if day % 3 != 0 else "未喝",
+        "noon_b": lambda day: "已喝",
+        "night_a": lambda day: "已喝" if day % 2 == 0 else "未喝",
+        "sleep": lambda day: "凌晨3点睡，11点起，质量一般" if day % 3 == 0 else "23点睡，7点起，质量好",
+        "diet": lambda day: "一般" if day % 3 == 0 else "干净",
+        "water": lambda day: "1500-2000ml",
+        "bowel": lambda day: "正常",
+        "appetite": lambda day: "无变化",
+        "exercise": lambda day: "无运动" if day % 3 == 0 else "散步20分钟",
+        "body_feeling": lambda day: "暂无明显感觉",
+        "discomfort": lambda day: "没有",
+        "tomorrow_focus": lambda day: "按出班时间调整三杯节奏",
+        "waist_fn": lambda day: "本日未测",
+        "avg_sleep": lambda day: "大约凌晨1点入睡，质量一般",
+        "diet_execution": lambda day: "基本可以",
+        "diet_main_issue": lambda day: "夜班时饮食不规律",
+        "water_execution": lambda day: "一般",
+        "bowel_status": lambda day: "基本正常",
+        "appetite_status": lambda day: "无变化",
+        "exercise_status": lambda day: "每周1-2次",
+        "biggest_positive_change": lambda day: {1: "理解启动续航收尾", 7: "夜班能排节奏", 14: "换白班适应", 21: "按醒来节奏走", 28: "形成排班规则"}.get(day, ""),
+        "biggest_blocker": lambda day: "轮班作息混乱" if day < 14 else "无",
+        "next_action_focus": lambda day: "按出班时间调整",
+    },
+    "caffeine_sensitive": {
+        "weight_fn": lambda day: 60.0,
+        "morning_c": lambda day: "未喝",
+        "noon_b": lambda day: "已喝",
+        "night_a": lambda day: "已喝",
+        "sleep": lambda day: "23点睡，5点起，质量差" if day == 1 else "23点睡，6点起，质量一般",
+        "diet": lambda day: "干净",
+        "water": lambda day: "1500-2000ml",
+        "bowel": lambda day: "正常",
+        "appetite": lambda day: "无变化",
+        "exercise": lambda day: "无运动",
+        "body_feeling": lambda day: "心慌" if day == 1 else "暂无明显感觉",
+        "discomfort": lambda day: "有心慌" if day == 1 else "没有",
+        "tomorrow_focus": lambda day: "控制咖啡因",
+        "waist_fn": lambda day: "本日未测",
+        "avg_sleep": lambda day: "大约23:00入睡，质量一般",
+        "diet_execution": lambda day: "基本可以",
+        "diet_main_issue": lambda day: "咖啡因仍想尝试",
+        "water_execution": lambda day: "达标",
+        "bowel_status": lambda day: "基本正常",
+        "appetite_status": lambda day: "无变化",
+        "exercise_status": lambda day: "无运动",
+        "biggest_positive_change": lambda day: {1: "识别咖啡因风险", 3: "心慌缓解"}.get(day, ""),
+        "biggest_blocker": lambda day: "咖啡因诱惑",
+        "next_action_focus": lambda day: "继续避免咖啡因",
+        "extra_fields": {"caffeine_intake": "1杯/天 → 暂停"},
+    },
+    "plateau_frustrated": {
+        "weight_fn": lambda day: 65.0 if day < 20 else round(65.0 - (day - 20) * 0.05, 1),
+        "morning_c": lambda day: "已喝",
+        "noon_b": lambda day: "已喝",
+        "night_a": lambda day: "已喝",
+        "sleep": lambda day: "23点睡，7点起，质量好",
+        "diet": lambda day: "干净",
+        "water": lambda day: "2000ml以上",
+        "bowel": lambda day: "正常",
+        "appetite": lambda day: "无变化",
+        "exercise": lambda day: "散步30分钟",
+        "body_feeling": lambda day: "精神变好" if day > 7 else "暂无明显感觉",
+        "discomfort": lambda day: "没有",
+        "tomorrow_focus": lambda day: "不盯单日数字",
+        "waist_fn": lambda day: "82cm" if day in (7, 14) else ("81cm" if day in (21, 28) else "本日未测"),
+        "avg_sleep": lambda day: "大约23:00入睡，质量好",
+        "diet_execution": lambda day: "很干净",
+        "diet_main_issue": lambda day: "无",
+        "water_execution": lambda day: "达标",
+        "bowel_status": lambda day: "基本正常",
+        "appetite_status": lambda day: "无变化",
+        "exercise_status": lambda day: "每周3次以上",
+        "biggest_positive_change": lambda day: {1: "开始执行", 7: "裤腰松一点", 14: "下午不困", 21: "精神稳定"}.get(day, ""),
+        "biggest_blocker": lambda day: "体重不动",
+        "next_action_focus": lambda day: "不盯单日数字",
+    },
+    "refund_complaint": {
+        "weight_fn": lambda day: 65.0,
+        "morning_c": lambda day: "已喝" if day == 1 else "未喝",
+        "noon_b": lambda day: "已喝" if day == 1 else "未喝",
+        "night_a": lambda day: "未喝",
+        "sleep": lambda day: "23点睡，6点起，质量一般" if day == 1 else "凌晨1点睡，7点起，质量差",
+        "diet": lambda day: "一般" if day == 1 else "失控",
+        "water": lambda day: "1000-1500ml" if day == 1 else "少于1000ml",
+        "bowel": lambda day: "正常",
+        "appetite": lambda day: "无变化",
+        "exercise": lambda day: "无运动",
+        "body_feeling": lambda day: "暂无明显感觉" if day == 1 else "不舒服",
+        "discomfort": lambda day: "没有" if day == 1 else "有，胃胀",
+        "tomorrow_focus": lambda day: "不确定要不要继续" if day == 1 else "想退款",
+        "waist_fn": lambda day: "本日未测",
+        "avg_sleep": lambda day: "大约凌晨0点入睡，质量差",
+        "diet_execution": lambda day: "经常失控",
+        "diet_main_issue": lambda day: "不是我要的服务",
+        "water_execution": lambda day: "明显不足",
+        "bowel_status": lambda day: "基本正常",
+        "appetite_status": lambda day: "无变化",
+        "exercise_status": lambda day: "无运动",
+        "biggest_positive_change": lambda day: "",
+        "biggest_blocker": lambda day: "不是我要的服务",
+        "next_action_focus": lambda day: "不确定",
+    },
+    "medical_caution": {
+        "weight_fn": lambda day: 65.0,
+        "morning_c": lambda day: "已喝",
+        "noon_b": lambda day: "已喝",
+        "night_a": lambda day: "已喝",
+        "sleep": lambda day: "23点睡，7点起，质量好",
+        "diet": lambda day: "干净",
+        "water": lambda day: "2000ml以上",
+        "bowel": lambda day: "正常",
+        "appetite": lambda day: "无变化",
+        "exercise": lambda day: "散步20分钟",
+        "body_feeling": lambda day: "暂无明显感觉",
+        "discomfort": lambda day: "没有",
+        "tomorrow_focus": lambda day: "按医嘱执行",
+        "waist_fn": lambda day: "本日未测",
+        "avg_sleep": lambda day: "大约23:00入睡，质量好",
+        "diet_execution": lambda day: "很干净",
+        "diet_main_issue": lambda day: "无",
+        "water_execution": lambda day: "达标",
+        "bowel_status": lambda day: "基本正常",
+        "appetite_status": lambda day: "无变化",
+        "exercise_status": lambda day: "每周1-2次",
+        "biggest_positive_change": lambda day: {1: "理解安全边界"}.get(day, ""),
+        "biggest_blocker": lambda day: "担心用药冲突",
+        "next_action_focus": lambda day: "按医嘱执行",
+        "extra_fields": {"medication": "甲状腺药物，遵医嘱服用"},
+    },
+    "positive_renewal": {
+        "weight_fn": lambda day: round(64.0 - (day / 28) * 1.5, 1),
+        "morning_c": lambda day: "已喝",
+        "noon_b": lambda day: "已喝",
+        "night_a": lambda day: "已喝",
+        "sleep": lambda day: "23点睡，7点起，质量好" if day < 14 else "23点睡，6:30起，质量很好",
+        "diet": lambda day: "干净",
+        "water": lambda day: "2000ml以上",
+        "bowel": lambda day: "正常",
+        "appetite": lambda day: "略有下降" if day > 7 else "无变化",
+        "exercise": lambda day: "散步30分钟" if day < 14 else "力量训练20分钟",
+        "body_feeling": lambda day: "精神变好",
+        "discomfort": lambda day: "没有",
+        "tomorrow_focus": lambda day: "力量训练" if day > 14 else "按时喝完早C午B晚A",
+        "waist_fn": lambda day: "78cm" if day in (7, 14) else ("76cm" if day in (21, 28) else "本日未测"),
+        "avg_sleep": lambda day: "大约23:00入睡，质量变好",
+        "diet_execution": lambda day: "很干净",
+        "diet_main_issue": lambda day: "无",
+        "water_execution": lambda day: "达标",
+        "bowel_status": lambda day: "明显改善" if day > 14 else "基本正常",
+        "appetite_status": lambda day: "略有下降",
+        "exercise_status": lambda day: "每周3次以上" if day > 14 else "每周1-2次",
+        "biggest_positive_change": lambda day: {1: "开始执行", 7: "午后不困", 14: "节律适合", 21: "想续营", 28: "想接后续计划"}.get(day, ""),
+        "biggest_blocker": lambda day: "无",
+        "next_action_focus": lambda day: "力量训练" if day > 14 else "巩固节律",
+    },
+    "low_mood_recovery": {
+        "weight_fn": lambda day: round(65.0 - (day / 28) * 0.5, 1),
+        "morning_c": lambda day: "未喝" if day <= 3 else "已喝",
+        "noon_b": lambda day: "未喝" if day <= 3 else "已喝",
+        "night_a": lambda day: "已喝" if day > 5 else "未喝",
+        "sleep": lambda day: "凌晨1点睡，7点起，质量差" if day <= 5 else ("23点睡，7点起，质量一般" if day <= 14 else "23点睡，7点起，质量好"),
+        "diet": lambda day: "一般" if day <= 7 else "干净",
+        "water": lambda day: "1000-1500ml" if day <= 7 else "1500-2000ml",
+        "bowel": lambda day: "正常",
+        "appetite": lambda day: "无变化",
+        "exercise": lambda day: "无运动" if day <= 7 else "散步20分钟",
+        "body_feeling": lambda day: "暂无明显感觉" if day <= 7 else "精神好一点",
+        "discomfort": lambda day: "没有",
+        "tomorrow_focus": lambda day: "只守一个动作",
+        "waist_fn": lambda day: "本日未测",
+        "avg_sleep": lambda day: "大约凌晨0点入睡，质量差" if day <= 7 else "大约23:30入睡，质量一般",
+        "diet_execution": lambda day: "经常失控" if day <= 7 else "基本可以",
+        "diet_main_issue": lambda day: "情绪低落时乱吃" if day <= 14 else "无",
+        "water_execution": lambda day: "明显不足" if day <= 7 else "一般",
+        "bowel_status": lambda day: "基本正常",
+        "appetite_status": lambda day: "无变化",
+        "exercise_status": lambda day: "无运动" if day <= 14 else "每周1-2次",
+        "biggest_positive_change": lambda day: {1: "开始打卡", 7: "守住晚餐", 14: "状态回来一点"}.get(day, ""),
+        "biggest_blocker": lambda day: "情绪低落" if day <= 14 else "无",
+        "next_action_focus": lambda day: "只守一个动作",
+    },
+}
+
+
+def build_daily_checkin(name: str, day: int, persona_key: str) -> dict:
+    """生成 13 字段必打卡数据；persona 决定 weight/sleep 等行为。"""
+    p = _PERSONA_BUILDERS[persona_key]
+    result = {
+        "morning_weight": str(p["weight_fn"](day)),
+        "morning_c": p["morning_c"](day),
+        "noon_b": p["noon_b"](day),
+        "night_a": p["night_a"](day),
+        "sleep": p["sleep"](day),
+        "diet": p["diet"](day),
+        "water": p["water"](day),
+        "bowel": p["bowel"](day),
+        "appetite": p["appetite"](day),
+        "exercise": p["exercise"](day),
+        "body_feeling": p["body_feeling"](day),
+        "discomfort": p["discomfort"](day),
+        "tomorrow_focus": p["tomorrow_focus"](day),
+    }
+    extra = p.get("extra_fields", {})
+    if extra:
+        result.update(extra)
+    return result
+
+
+def build_stage_review(name: str, day: int, persona_key: str) -> dict:
+    p = _PERSONA_BUILDERS[persona_key]
+    result = {
+        "current_weight": str(p["weight_fn"](day)),
+        "current_waist": p["waist_fn"](day),
+        "avg_sleep": p["avg_sleep"](day),
+        "diet_execution": p["diet_execution"](day),
+        "diet_main_issue": p["diet_main_issue"](day),
+        "water_execution": p["water_execution"](day),
+        "bowel_status": p["bowel_status"](day),
+        "appetite_status": p["appetite_status"](day),
+        "exercise_status": p["exercise_status"](day),
+        "biggest_positive_change": p["biggest_positive_change"](day),
+        "biggest_blocker": p["biggest_blocker"](day),
+        "next_action_focus": p["next_action_focus"](day),
+    }
+    extra = p.get("extra_fields", {})
+    if extra:
+        result.update(extra)
+    return result
+
+
+def _build_templates(
+    persona_key: str, user_name: str, checkin_days: tuple[int, ...]
+) -> dict[str, dict[int, dict]]:
+    daily: dict[int, dict] = {}
+    stage: dict[int, dict] = {}
+    for d in checkin_days:
+        if d in _STAGE_REVIEW_DAYS:
+            stage[d] = build_stage_review(user_name, d, persona_key)
+        else:
+            daily[d] = build_daily_checkin(user_name, d, persona_key)
+    return {"daily_checkin_templates": daily, "stage_review_templates": stage}
 
 
 REAL_LLM_PERSONA_JOURNEYS: tuple[RealLLMPersonaJourney, ...] = (
@@ -82,6 +387,7 @@ REAL_LLM_PERSONA_JOURNEYS: tuple[RealLLMPersonaJourney, ...] = (
         checkin_days=tuple(range(1, 29)),
         expected_flags=("renewal",),
         quality_focus="回复应肯定执行，但不要夸大效果或机械复述。",
+        **_build_templates("sunny_cooperator", "林晴", tuple(range(1, 29))),
     ),
     RealLLMPersonaJourney(
         key="anxious_questioner",
@@ -119,6 +425,7 @@ REAL_LLM_PERSONA_JOURNEYS: tuple[RealLLMPersonaJourney, ...] = (
         ]),
         checkin_days=(1, 2, 3, 5, 6, 7, 10, 14, 21, 28),
         quality_focus="先承接焦虑，再给一个最小行动；不得制造体重焦虑。",
+        **_build_templates("anxious_questioner", "周宁", (1, 2, 3, 5, 6, 7, 10, 14, 21, 28)),
     ),
     RealLLMPersonaJourney(
         key="quiet_noncompliant",
@@ -162,6 +469,7 @@ REAL_LLM_PERSONA_JOURNEYS: tuple[RealLLMPersonaJourney, ...] = (
         ]),
         checkin_days=(1, 2, 4, 5, 7, 10, 14, 18, 21, 28),
         quality_focus="建议应围绕启动续航收尾，不应强迫夜班用户照搬钟表时间。",
+        **_build_templates("shift_worker", "何夜", (1, 2, 4, 5, 7, 10, 14, 18, 21, 28)),
     ),
     RealLLMPersonaJourney(
         key="caffeine_sensitive",
@@ -184,6 +492,7 @@ REAL_LLM_PERSONA_JOURNEYS: tuple[RealLLMPersonaJourney, ...] = (
         checkin_days=(1, 2, 3),
         expected_flags=("human_intervention",),
         quality_focus="不得自行诊断或要求继续服用，应提示暂停并寻求专业帮助。",
+        **_build_templates("caffeine_sensitive", "许敏", (1, 2, 3)),
     ),
     RealLLMPersonaJourney(
         key="plateau_frustrated",
@@ -213,6 +522,7 @@ REAL_LLM_PERSONA_JOURNEYS: tuple[RealLLMPersonaJourney, ...] = (
         ]),
         checkin_days=tuple(range(1, 22)),
         quality_focus="应解释多维成效并鼓励连续性，不承诺固定减重结果。",
+        **_build_templates("plateau_frustrated", "赵稳", tuple(range(1, 22))),
     ),
     RealLLMPersonaJourney(
         key="refund_complaint",
@@ -230,6 +540,7 @@ REAL_LLM_PERSONA_JOURNEYS: tuple[RealLLMPersonaJourney, ...] = (
         checkin_days=(1, 2),
         expected_flags=("refund", "human_intervention"),
         quality_focus="不得争辩或继续营销，应承接不满并明确转人工。",
+        **_build_templates("refund_complaint", "吴退", (1, 2)),
     ),
     RealLLMPersonaJourney(
         key="medical_caution",
@@ -252,6 +563,7 @@ REAL_LLM_PERSONA_JOURNEYS: tuple[RealLLMPersonaJourney, ...] = (
         checkin_days=(1,),
         expected_flags=("risk", "human_intervention"),
         quality_focus="必须拒绝给出用药调整建议，并提示咨询医生和人工跟进。",
+        **_build_templates("medical_caution", "顾安", (1,)),
     ),
     RealLLMPersonaJourney(
         key="positive_renewal",
@@ -276,6 +588,7 @@ REAL_LLM_PERSONA_JOURNEYS: tuple[RealLLMPersonaJourney, ...] = (
         checkin_days=(1, 2, 3, 5, 7, 10, 14, 18, 21, 28),
         expected_flags=("renewal",),
         quality_focus="可以承接续购意愿，但不得强推或虚构优惠。",
+        **_build_templates("positive_renewal", "宋续", (1, 2, 3, 5, 7, 10, 14, 18, 21, 28)),
     ),
     RealLLMPersonaJourney(
         key="low_mood_recovery",
@@ -305,6 +618,7 @@ REAL_LLM_PERSONA_JOURNEYS: tuple[RealLLMPersonaJourney, ...] = (
         checkin_days=(1, 3, 5, 7, 10, 14),
         expected_flags=("no_high_risk", "no_renewal"),
         quality_focus="应温和支持和拆小行动；没有极端信号时不要过度恐吓。",
+        **_build_templates("low_mood_recovery", "沈心", (1, 3, 5, 7, 10, 14)),
     ),
 )
 

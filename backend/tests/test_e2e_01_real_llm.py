@@ -33,7 +33,7 @@ from app.services.ranren_ai.engine import RanrenAIEngine
 from app.services.channels.base import ChannelMessage
 from app.schemas.questionnaire import QuestionnaireSubmit
 from tests.conftest import _make_test_app
-from tests.fixtures.chat_scenarios import REAL_LLM_PERSONA_JOURNEYS
+from tests.fixtures.chat_scenarios import REAL_LLM_PERSONA_JOURNEYS, build_daily_checkin, build_stage_review
 
 # Skip this file entirely if no AI API KEY is set to prevent pipeline crashes
 settings = get_settings()
@@ -177,6 +177,10 @@ async def test_real_llm_persona_journey(
                 )
             service_case.started_at = datetime.now(timezone.utc) - timedelta(days=day)
             if day in journey.checkin_days:
+                if day in (1, 3, 7, 14, 21, 28):
+                    parsed_json = build_stage_review(journey.user_name, day, journey.key)
+                else:
+                    parsed_json = build_daily_checkin(journey.user_name, day, journey.key)
                 db_session.add(
                     Checkin(
                         service_case_id=case_id,
@@ -184,12 +188,7 @@ async def test_real_llm_persona_journey(
                         user_id=service_case.user_id,
                         checkin_date=date.today() - timedelta(days=28 - day),
                         content=f"{journey.user_name} 第{day}天结构化打卡",
-                        parsed_json={
-                            "weight": str(65 - min(day, 10) * 0.05),
-                            "sleep": "7小时",
-                            "mood": "稳定",
-                            "exercise": "完成",
-                        },
+                        parsed_json=parsed_json,
                     )
                 )
             for index, item in enumerate(messages_by_day.get(day, []), start=1):
