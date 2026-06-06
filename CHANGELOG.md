@@ -2,6 +2,7 @@
 
 ## 2026-06-05 - 诊断控制台状态自愈与 E2E 可观测性
 
+- 整理 `docs/reviews/`：将旧的测试用例/执行/总结文件改为可复用模板，删除已修复的临时 review 工单，并新增 `open-testing-backlog.md` 汇总仍需补齐的测试与诊断事项。
 - 诊断 history 读取时会自动清理跨后端重启残留的 `active_run`，并按套件类型设置超时兜底：健康套件 30 分钟、真实 E2E 2 小时。
 - 修复健康套件 stale `active_run` 清理只标记当前套件失败的问题；现在会把本轮仍处于 `running` 的健康套件统一标记为失败，避免页面长期显示假运行中。
 - Docker Compose 后端容器默认关闭 Uvicorn reload，避免源码热重载时被 SSE 长连接卡在 shutdown，导致后台页面等待后端 API 超时。
