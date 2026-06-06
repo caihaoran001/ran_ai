@@ -13,36 +13,15 @@
 - E2E 进度解析、汇总日志、自动滚动、成本区分：已实现基础版本。
 - E2E 质量评审失败规则：已收敛为“任一评分子项 < 3 即失败”。
 - 蔬菜打卡硬替换：已移除，保留提示词约束。
+- 诊断 history 持久化：后端支持 `DIAGNOSTICS_HISTORY_PATH`，Docker 默认挂载到宿主机 `./diagnostics/diagnostics_history.json`。
+- Playwright 基线：已新增 `frontend/playwright.config.ts` 与 `frontend/e2e/admin-smoke.spec.ts`，覆盖后台核心页面和诊断台基础结构。
+- Mock Time 归属：成效追问时间感知已并入 `backend/tests/test_08_outcome_engine.py`，不再单独拆文件。
 
 ---
 
 ## 仍建议补齐
 
-### 1. Playwright 可重复 spec
-
-当前测试规范已经要求浏览器交互测试，但仓库里仍缺少稳定的 Playwright spec 基线。建议：
-
-- 先覆盖 `PW-01` 到 `PW-09` 的最小 happy path。
-- OpenCode 可以自主探索补充边界，但不能替代 spec。
-- spec 数据应可回滚或使用专用测试 token，避免污染生产看板。
-
-### 2. Mock Time 测试归属
-
-不建议单独为了 mock-time 起一个大文件。建议按功能归属补入现有套件：
-
-- 成效快照/时间感知：`test_08_outcome_engine.py`
-- 提醒和定时推送：现阶段可放 `test_06_toggles.py`；如果提醒用例超过 5 个，再拆 `test_09_reminders.py`
-
-### 3. 诊断 history 持久化
-
-当前 `diagnostics_history.json` 位于容器 `/app`，容器重建后会丢失 E2E 详细日志。数据库仍保留成本和调用分布，但无法还原每个人设的评审文本。
-
-建议二选一：
-
-- 将 `diagnostics_history.json` 挂载到宿主机或改存数据库。
-- 或让 E2E 结果结构化写入专用诊断结果表，只把终端文本当展示层。
-
-### 4. E2E 结果优化闭环
+### 1. E2E 结果优化闭环
 
 最近一次可恢复的 DB 证据：
 
@@ -52,9 +31,9 @@
 - 成本：¥2.5306
 - 时间：2026-06-05 17:17:19 到 18:33:55（北京时间）
 
-但由于容器重建导致 stdout history 丢失，目前无法从本地恢复每个人设通过/失败和 LLM-as-a-Judge 的具体扣分原因。后续若要做针对性优化，必须先保证 E2E 详细结果持久化。
+该轮详细 stdout 已在容器重建前丢失。后续新跑 E2E-01 时，终端日志会写入宿主机 `./diagnostics/diagnostics_history.json`，应基于新的持久化结果做针对性优化。
 
-### 5. E2E 质量评审稳定性
+### 2. E2E 质量评审稳定性
 
 当前采用 1 次综合 LLM 评审，优点是省 token、避免 4 次评审互相矛盾；缺点是单次输出较长，失败原因可能不够细。
 
@@ -63,3 +42,12 @@
 - 先 1 次综合评审；
 - 对低于 3 分的维度再追加专项复核；
 - 不默认 4 次全量评审。
+
+### 3. Playwright 深度交互覆盖
+
+当前仅有后台核心页面 smoke spec。后续可继续补：
+
+- 问卷填写、提交、已提交态。
+- 每日行动链接字段与执行文档 Block 7 一致性。
+- 审核控制台 SSE 自动刷新。
+- 删除用户、已删除服务单访问与软删除隔离。

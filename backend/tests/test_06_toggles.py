@@ -221,6 +221,26 @@ def test_diagnostics_extracts_e2e_progress_from_console_logs():
     assert progress["completed"][0]["scores_text"] == "dialogue_quality={'understanding': 5}"
 
 
+def test_diagnostics_history_path_can_be_configured(tmp_path, monkeypatch):
+    history_path = tmp_path / "diagnostics" / "history.json"
+    monkeypatch.setenv("DIAGNOSTICS_HISTORY_PATH", str(history_path))
+
+    diagnostics_mod._save_history(
+        {
+            "statuses": {"01": "passed"},
+            "durations": {"01": 1.2},
+            "last_run_time": 123,
+            "console_logs": {"01": ["ok"]},
+            "active_run": None,
+        }
+    )
+    loaded = diagnostics_mod._load_history()
+
+    assert history_path.exists()
+    assert loaded["statuses"]["01"] == "passed"
+    assert loaded["console_logs"]["01"] == ["ok"]
+
+
 def test_diagnostics_stale_health_run_marks_all_running_failed(monkeypatch):
     monkeypatch.setattr(diagnostics_mod.time, "time", lambda: 10_000)
     history = {

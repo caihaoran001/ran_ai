@@ -144,9 +144,22 @@ uv run pytest tests --ignore=tests/test_e2e_01_real_llm.py -q
 ```bash
 cd frontend
 npx tsc --noEmit --incremental false
+npm run test:e2e -- --list
 ```
 
-若项目已有可重复执行的 Playwright 测试，再执行对应脚本；若没有，必须在报告中明确写“仓库内无可重复执行的 Playwright 用例”，不得用旧人工记录代替。
+`npm run test:e2e -- --list` 用于确认仓库内 Playwright spec 可被发现。若前端服务已启动且浏览器依赖已安装，再执行：
+
+```bash
+cd frontend
+npm run test:e2e
+```
+
+默认 Playwright 配置读取：
+
+- `PLAYWRIGHT_BASE_URL`，默认 `http://127.0.0.1:3002`
+- `ADMIN_USERNAME` / `ADMIN_PASSWORD`，用于后台 Basic Auth
+
+若未安装浏览器或前端服务未启动，必须在报告中标记为“环境阻塞”，不得把 `--list` 写成完整浏览器交互通过。
 
 ### 4. 契约与内容准确性检查
 

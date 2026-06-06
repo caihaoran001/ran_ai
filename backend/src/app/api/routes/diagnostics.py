@@ -251,8 +251,15 @@ def _backend_dir() -> Path:
 HISTORY_FILE = "diagnostics_history.json"
 
 
+def _history_path() -> Path:
+    configured = os.getenv("DIAGNOSTICS_HISTORY_PATH", "").strip()
+    if configured:
+        return Path(configured)
+    return _backend_dir() / HISTORY_FILE
+
+
 def _load_history() -> dict:
-    history_path = _backend_dir() / HISTORY_FILE
+    history_path = _history_path()
     if history_path.exists():
         try:
             with open(history_path, "r", encoding="utf-8") as f:
@@ -418,8 +425,9 @@ REAL_E2E_PERSONA_KEYS = (
 
 
 def _save_history(history: dict):
-    history_path = _backend_dir() / HISTORY_FILE
+    history_path = _history_path()
     try:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
         for key, logs in list(history.get("console_logs", {}).items()):
             if isinstance(logs, list) and len(logs) > MAX_CONSOLE_LOG_LINES:
                 history["console_logs"][key] = logs[-MAX_CONSOLE_LOG_LINES:]

@@ -10,7 +10,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 generated_documents/
+diagnostics/
 .playwright-mcp/
+frontend/playwright-report/
+frontend/test-results/
 backend/pytest_output.log
 .sisyphus/
 .antigravitycli/

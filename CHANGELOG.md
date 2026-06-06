@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 2026-06-06 - 测试自动化入口与诊断历史持久化
+
+- 诊断历史文件支持通过 `DIAGNOSTICS_HISTORY_PATH` 配置；Docker Compose 后端默认写入宿主机 `./diagnostics/diagnostics_history.json`，避免容器重建后丢失 E2E-01 详细终端日志和用户级评审进度。
+- 新增诊断历史路径单测，覆盖配置路径写入、目录自动创建和历史读取。
+- 前端新增 Playwright 基线：
+  - `frontend/playwright.config.ts`
+  - `frontend/e2e/admin-smoke.spec.ts`
+  - `npm run test:e2e`
+- Playwright 基线覆盖后台核心页面可访问，以及诊断台中健康套件 `01-08` 与真实模型 `E2E-01` 分区展示。
+- 测试规范更新：默认完整测试需执行 `npm run test:e2e -- --list` 确认 spec 可发现；若前端服务和浏览器依赖可用，再运行完整 Playwright。
+- 更新 `docs/reviews/open-testing-backlog.md`，将已落地的诊断持久化、Playwright 基线和 mock-time 归属从待办中移除，保留后续深度交互覆盖与 E2E 结果优化闭环。
+
 ## 2026-06-05 - 诊断控制台状态自愈与 E2E 可观测性
 
 - 整理 `docs/reviews/`：将旧的测试用例/执行/总结文件改为可复用模板，删除已修复的临时 review 工单，并新增 `open-testing-backlog.md` 汇总仍需补齐的测试与诊断事项。
