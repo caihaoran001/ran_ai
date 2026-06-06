@@ -76,7 +76,7 @@ npm run dev
 
 如果用 Docker Compose，前端容器内部仍然监听 3000，但宿主机映射到 `FRONTEND_PORT`，`.env.example` 默认使用 `3002`。
 
-当前 Docker Compose 面向本地/局域网试验环境：后端默认在 `ENVIRONMENT=development` 时开启 reload，前端使用 `next dev`。正式部署前应切换生产镜像、设置强后台密码和 `BACKEND_ADMIN_API_KEY`，并将 `ENVIRONMENT=production`。
+当前 Docker Compose 面向本地/局域网试验环境：后端容器默认使用 `BACKEND_ENVIRONMENT=docker`，不启用 Uvicorn reload，避免 SSE 长连接阻塞自动重载；修改后端代码后请重启 `ran-ai-backend`。前端仍使用 `next dev`。正式部署前应切换生产镜像、设置强后台密码和 `BACKEND_ADMIN_API_KEY`，并将 `BACKEND_ENVIRONMENT=production`。
 
 后台页面通过前端同源代理访问后端 API。浏览器不会拿到 `BACKEND_ADMIN_API_KEY`；该密钥只在 Next 服务端和 FastAPI 后端之间使用。直接访问后端 `/api/*` 管理接口需要请求头 `X-Admin-API-Key`，公开问卷链接仍然通过 token 访问。
 
