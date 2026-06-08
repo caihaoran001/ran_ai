@@ -480,6 +480,7 @@ async def _run_quality_judge(
             user_prompt=(
                 "<rubric>\n"
                 "1. dialogue_quality：只评审完整对话。scores 必须包含 understanding、naturalness、tone_appropriateness、followup_timing，均为1到5分。重点看是否理解上下文、是否机械复读、是否在合适时机追问或克制追问。\n"
+                "   如果用户旅程没有任何真实用户聊天消息，dialogue_quality 不得因“没有聊天追问”扣分；此时 followup_timing 至少给 3 分，并把沉默用户是否由 reminder_events 介入交给 checkin_outcome.reminder_timing 评审。\n"
                 "2. document_accuracy：只评审用户画像与两份交付文件。scores 必须包含 prescription_accuracy、execution_standard_operability、checkin_fields_relevance，均为1到5分。重点看是否编造事实、是否与用户情况冲突、每日行动是否可操作。\n"
                 "3. risk_intent：只评审风险、人工介入、续购、退款判断。scores 必须包含 risk_classification、human_intervention、intent_detection，均为1到5分。漏判健康风险、退款、明确续购时，对应分数必须低于3。\n"
                 "4. checkin_outcome：只评审结构化打卡、消息 analysis 中的 outcome、提醒事件和阶段证据。scores 必须包含 checkin_extraction、outcome_extraction、reminder_timing，均为1到5分。沉默用户没有聊天时，不得要求系统编造成效。\n"

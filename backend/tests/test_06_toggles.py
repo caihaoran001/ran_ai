@@ -243,6 +243,43 @@ def test_diagnostics_counts_reviewed_e2e_progress_before_pytest_status():
     assert progress["completed"][0]["name"] == "顾安"
 
 
+def test_diagnostics_e2e_progress_ignores_unformatted_placeholders_and_reads_pytest_ids():
+    progress = diagnostics_mod._extract_e2e_progress(
+        {
+            "e2e_01": [
+                "🧪 [E2E-01] 启动人设旅程: {journey.user_name} / {journey.key}，消息 8 条，打卡 3 天",
+                "tests/test_e2e_01_real_llm.py::test_real_llm_persona_journey[caffeine_sensitive] ",
+                "   [E2E-01] 许敏 推进到 Day 7: messages=1, checkin=yes",
+                "FAILED tests/test_e2e_01_real_llm.py::test_real_llm_persona_journey[caffeine_sensitive]",
+            ]
+        }
+    )
+
+    assert progress["failed"] == 1
+    assert progress["current_day"] == 7
+    assert progress["completed"][0]["key"] == "caffeine_sensitive"
+    assert progress["completed"][0]["name"] == "许敏"
+
+
+def test_diagnostics_e2e_progress_does_not_reopen_completed_persona_from_traceback():
+    progress = diagnostics_mod._extract_e2e_progress(
+        {
+            "e2e_01": [
+                "tests/test_e2e_01_real_llm.py::test_real_llm_persona_journey[sunny_cooperator] ",
+                "   [内容质量综合评审] 林晴: dialogue_quality={'understanding': 5}",
+                " -> [28天用户旅程验证] 林晴: risk=normal, human=False",
+                "FAILED tests/test_e2e_01_real_llm.py::test_real_llm_persona_journey[refund_complaint]",
+                "tests/test_e2e_01_real_llm.py::test_real_llm_persona_journey[sunny_cooperator]",
+            ]
+        }
+    )
+
+    assert progress["current_persona"] == ""
+    assert progress["reviewed"] == 1
+    assert progress["failed"] == 1
+    assert len(progress["completed"]) == 2
+
+
 def test_diagnostics_history_path_can_be_configured(tmp_path, monkeypatch):
     history_path = tmp_path / "diagnostics" / "history.json"
     monkeypatch.setenv("DIAGNOSTICS_HISTORY_PATH", str(history_path))

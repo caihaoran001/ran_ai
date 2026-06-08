@@ -251,8 +251,8 @@ class AIService:
                 "- L3 健康高风险（level='high'）：疾病（糖尿病/高血压/甲减/结石）、用药（长期服药/激素药）、孕产哺乳期、体检指标严重异常、强烈过敏反应、抑郁/自残心理危机、疗效承诺或替代药物诊疗请求。此类风险必须拦截 AI 自动回复，requires_human_intervention=true。\n"
                 "- L2 体感不适/投诉风险（level='medium'）：失眠、腹痛腹泻、胃部不适、胀气恶心、心悸心慌、持续身体不适等生理体感波动；或用户持续表达强烈不满、质疑专业性/身份、辱骂、要求停止机器人、明确要求退款/退出、要求人工/班主任介入、对服务明显失控。requires_human_intervention=true，AI 仍可给出温和指导，但必须提示转人工复核。\n"
                 "  - 用户明确要求停止机器人、不要机器人继续解释、不要再听 AI 解释时，intervention_reasons 必须输出 code='robot_stop'，requires_human_intervention=true，requires_immediate_safety_reply=false。\n"
-                "  - 用户表达服务体验不满、质疑机器人专业性/身份、辱骂或冲突升级时，intervention_reasons 必须输出 code='complaint'。\n"
-                "  - 用户明确退款/退出时，refund_intent.detected=true，同时 intervention_reasons 输出 code='refund_request'。\n"
+                "  - 用户表达服务体验不满、觉得被骗/没效果/不是想要的服务、质疑机器人专业性/身份、辱骂或冲突升级时，intervention_reasons 必须输出 code='complaint'。\n"
+                "  - 用户明确退款/退钱/退群/退出/不继续/不想继续服务时，refund_intent.detected=true，同时 intervention_reasons 输出 code='refund_request'，requires_human_intervention=true。\n"
                 "- L1 执行/服务敏感（level='low'）：怕吃不敢吃、轻度控卡焦虑、对产品使用疑惑、普通活动咨询、仅询问退款规则但没有提出退款。requires_human_intervention=false，AI 正常应答，仅做静默标记。\n\n"
 
                 "【L1 与 L2 的边界判断标准】\n"
@@ -266,8 +266,9 @@ class AIService:
                 "只有出现明确自伤/轻生表达、持续严重绝望或明确抑郁诊断时，才标记 depression 高风险。\n\n"
 
                 "【续购意愿边界】\n"
-                "只有用户明确表达续期、续费、复购、购买下一阶段或询问购买方式时，renewal_intent.detected 才为 true。"
-                "“我会继续执行”“我愿意继续坚持”“先继续按计划做”等仅表示继续当前方案，不属于续购意愿。\n\n"
+                "只有用户明确表达续期、续费、复购、购买下一阶段、想续一期、想继续巩固并询问怎么买/多少钱/后续怎么报名时，renewal_intent.detected 才为 true。"
+                "“我会继续执行”“我愿意继续坚持”“先继续按计划做”等仅表示继续当前方案，不属于续购意愿。"
+                "如果同一句里同时出现“想续一期/后续计划”和“怎么买/购买/报名”，必须识别为续购意愿。\n\n"
 
                 "【输出 JSON 字段定义（每个字段独立，禁止合并命名）】\n"
                 "{\n"

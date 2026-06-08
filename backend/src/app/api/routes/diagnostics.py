@@ -369,10 +369,19 @@ def _extract_e2e_progress(console_logs: dict) -> dict:
         if match:
             name = match.group("name").strip()
             key = match.group("key").strip()
+            if "{" in name or "}" in name or "{" in key or "}" in key:
+                continue
             current_key = key
             entry = started_by_key.setdefault(key, {"key": key, "name": name, "status": "running"})
             entry["name"] = name
             key_by_name[name] = key
+            continue
+        match = re.search(r"^tests/test_e2e_01_real_llm\.py::test_real_llm_persona_journey\[(?P<key>[^\]]+)\]\s*$", line)
+        if match:
+            key = match.group("key").strip()
+            started_by_key.setdefault(key, {"key": key, "name": _persona_name(key), "status": "running"})
+            if key not in completed_by_key and key not in reviewed_by_key:
+                current_key = key
             continue
         match = re.search(r"\[E2E-01\]\s*(?P<name>.+?)\s*推进到 Day\s*(?P<day>\d+)", line)
         if match:
@@ -383,8 +392,9 @@ def _extract_e2e_progress(console_logs: dict) -> dict:
         match = re.search(r"\[内容质量综合评审\]\s*(?P<name>[^:：]+)[:：]\s*(?P<scores>.+)", line)
         if match:
             name = match.group("name").strip()
-            key = key_by_name.get(name, name)
+            key = key_by_name.get(name) or current_key or name
             entry = started_by_key.setdefault(key, {"key": key, "name": name})
+            entry["name"] = _persona_name(key, name)
             entry["status"] = "reviewed"
             entry["scores_text"] = match.group("scores").strip()
             reviewed_by_key[key] = dict(entry)
@@ -392,8 +402,9 @@ def _extract_e2e_progress(console_logs: dict) -> dict:
         match = re.search(r"\[28天用户旅程验证\]\s*(?P<name>[^:：]+)[:：]\s*(?P<summary>.+)", line)
         if match:
             name = match.group("name").strip()
-            key = key_by_name.get(name, name)
+            key = key_by_name.get(name) or current_key or name
             entry = started_by_key.setdefault(key, {"key": key, "name": name})
+            entry["name"] = _persona_name(key, name)
             entry["status"] = "reviewed"
             entry["summary_text"] = match.group("summary").strip()
             reviewed_by_key[key] = dict(entry)
@@ -402,14 +413,29 @@ def _extract_e2e_progress(console_logs: dict) -> dict:
         if match:
             key = match.group("key").strip()
             status = "passed" if match.group("status") == "PASSED" else "failed"
-            entry = dict(started_by_key.get(key, {"key": key, "name": key}))
+            entry = dict(started_by_key.get(key, {"key": key, "name": _persona_name(key)}))
+            entry["name"] = _persona_name(key, entry.get("name"))
             entry["status"] = status
             completed_by_key[key] = entry
             if current_key == key:
                 current_key = ""
             continue
+        match = re.search(r"FAILED\s+tests/test_e2e_01_real_llm\.py::test_real_llm_persona_journey\[(?P<key>[^\]]+)\]", line)
+        if match:
+            key = match.group("key").strip()
+            entry = dict(started_by_key.get(key, {"key": key, "name": _persona_name(key)}))
+            entry["name"] = _persona_name(key, entry.get("name"))
+            entry["status"] = "failed"
+            completed_by_key[key] = entry
+            if current_key == key:
+                current_key = ""
+            continue
     completed = list({**reviewed_by_key, **completed_by_key}.values())
-    current = started_by_key.get(current_key) if current_key else None
+    current = (
+        started_by_key.get(current_key)
+        if current_key and current_key not in completed_by_key and current_key not in reviewed_by_key
+        else None
+    )
     return {
         "total": len(REAL_E2E_PERSONA_KEYS),
         "completed": completed,
@@ -419,7 +445,25 @@ def _extract_e2e_progress(console_logs: dict) -> dict:
         "passed": sum(1 for item in completed if item.get("status") == "passed"),
         "failed": sum(1 for item in completed if item.get("status") == "failed"),
         "reviewed": sum(1 for item in completed if item.get("status") == "reviewed"),
-    }
+}
+
+
+PERSONA_DISPLAY_NAMES = {
+    "sunny_cooperator": "林晴",
+    "anxious_questioner": "周宁",
+    "quiet_noncompliant": "陈默",
+    "shift_worker": "何夜",
+    "caffeine_sensitive": "许敏",
+    "plateau_frustrated": "赵稳",
+    "refund_complaint": "吴退",
+    "medical_caution": "顾安",
+    "positive_renewal": "宋续",
+    "low_mood_recovery": "沈心",
+}
+
+
+def _persona_name(key: str, fallback: str | None = None) -> str:
+    return PERSONA_DISPLAY_NAMES.get(key, fallback or key)
 
 
 REAL_E2E_PERSONA_KEYS = (

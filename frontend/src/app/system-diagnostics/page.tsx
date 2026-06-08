@@ -72,6 +72,23 @@ const EMPTY_SUMMARY: DiagnosticsSummary = {
   checked_at: 0,
 };
 
+const PERSONA_DISPLAY_NAMES: Record<string, string> = {
+  sunny_cooperator: "林晴",
+  anxious_questioner: "周宁",
+  quiet_noncompliant: "陈默",
+  shift_worker: "何夜",
+  caffeine_sensitive: "许敏",
+  plateau_frustrated: "赵稳",
+  refund_complaint: "吴退",
+  medical_caution: "顾安",
+  positive_renewal: "宋续",
+  low_mood_recovery: "沈心",
+};
+
+function personaName(key: string, fallback?: string) {
+  return PERSONA_DISPLAY_NAMES[key] || fallback || key;
+}
+
 function extractE2EProgress(logs: string[]): E2EProgress {
   const startedByKey = new Map<string, E2EProgressEntry>();
   const keyByName = new Map<string, string>();
@@ -86,12 +103,27 @@ function extractE2EProgress(logs: string[]): E2EProgress {
     if (match) {
       const name = match[1].trim();
       const key = match[2].trim();
+      if (name.includes("{") || name.includes("}") || key.includes("{") || key.includes("}")) {
+        continue;
+      }
       currentKey = key;
       const entry = startedByKey.get(key) || { key, name, status: "running" };
       entry.name = name;
       entry.status = entry.status || "running";
       startedByKey.set(key, entry);
       keyByName.set(name, key);
+      continue;
+    }
+
+    match = line.match(/^tests\/test_e2e_01_real_llm\.py::test_real_llm_persona_journey\[([^\]]+)\]\s*$/);
+    if (match) {
+      const key = match[1].trim();
+      if (!startedByKey.has(key)) {
+        startedByKey.set(key, { key, name: personaName(key), status: "running" });
+      }
+      if (!completedByKey.has(key) && !reviewedByKey.has(key)) {
+        currentKey = key;
+      }
       continue;
     }
 
@@ -106,8 +138,9 @@ function extractE2EProgress(logs: string[]): E2EProgress {
     match = line.match(/\[内容质量综合评审\]\s*([^:：]+)[:：]\s*(.+)/);
     if (match) {
       const name = match[1].trim();
-      const key = keyByName.get(name) || name;
+      const key = keyByName.get(name) || currentKey || name;
       const entry = { ...(startedByKey.get(key) || { key, name, status: "reviewed" }) };
+      entry.name = personaName(key, name);
       entry.status = "reviewed";
       entry.scores_text = match[2].trim();
       startedByKey.set(key, entry);
@@ -118,8 +151,9 @@ function extractE2EProgress(logs: string[]): E2EProgress {
     match = line.match(/\[28天用户旅程验证\]\s*([^:：]+)[:：]\s*(.+)/);
     if (match) {
       const name = match[1].trim();
-      const key = keyByName.get(name) || name;
+      const key = keyByName.get(name) || currentKey || name;
       const entry = { ...(startedByKey.get(key) || { key, name, status: "reviewed" }) };
+      entry.name = personaName(key, name);
       entry.status = "reviewed";
       entry.summary_text = match[2].trim();
       startedByKey.set(key, entry);
@@ -130,15 +164,30 @@ function extractE2EProgress(logs: string[]): E2EProgress {
     match = line.match(/test_real_llm_persona_journey\[([^\]]+)\]\s+(PASSED|FAILED)/);
     if (match) {
       const key = match[1].trim();
-      const entry = { ...(startedByKey.get(key) || { key, name: key, status: "running" }) };
+      const entry = { ...(startedByKey.get(key) || { key, name: personaName(key), status: "running" }) };
+      entry.name = personaName(key, entry.name);
       entry.status = match[2] === "PASSED" ? "passed" : "failed";
+      completedByKey.set(key, entry);
+      if (currentKey === key) currentKey = "";
+      continue;
+    }
+
+    match = line.match(/FAILED\s+tests\/test_e2e_01_real_llm\.py::test_real_llm_persona_journey\[([^\]]+)\]/);
+    if (match) {
+      const key = match[1].trim();
+      const entry = { ...(startedByKey.get(key) || { key, name: personaName(key), status: "running" }) };
+      entry.name = personaName(key, entry.name);
+      entry.status = "failed";
       completedByKey.set(key, entry);
       if (currentKey === key) currentKey = "";
     }
   }
 
   const completed = [...new Map([...reviewedByKey, ...completedByKey]).values()];
-  const current = currentKey ? startedByKey.get(currentKey) : undefined;
+  const current =
+    currentKey && !completedByKey.has(currentKey) && !reviewedByKey.has(currentKey)
+      ? startedByKey.get(currentKey)
+      : undefined;
   return {
     total: 10,
     completed,
