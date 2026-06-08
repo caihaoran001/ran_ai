@@ -34,6 +34,8 @@ from app.services.service_case_queries import select_active_service_cases
 
 logger = logging.getLogger(__name__)
 SCHEDULER_ADVISORY_LOCK_KEY = 2026051901
+CHANNEL_SEND_MAX_ATTEMPTS = 3
+CHANNEL_SEND_RETRY_DELAY_SECONDS = 1.0
 
 
 class ReminderService:
@@ -173,14 +175,13 @@ class ReminderService:
                 )
                 session.add(message)
                 await session.flush()
-                result = await send_channel_text(service_case.group_id, content)
+                result = await _send_channel_text_with_retries(service_case.group_id, content)
                 if result.success:
                     message.status = MessageStatus.SENT
                     message.wecom_message_id = result.message_id
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error
-                    await session.delete(reminder_event)
             await session.commit()
 
     async def check_inactive_followups_once(self) -> None:
@@ -288,14 +289,13 @@ class ReminderService:
                 )
                 session.add(message)
                 await session.flush()
-                result = await send_channel_text(service_case.group_id, content)
+                result = await _send_channel_text_with_retries(service_case.group_id, content)
                 if result.success:
                     message.status = MessageStatus.SENT
                     message.wecom_message_id = result.message_id
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error
-                    await session.delete(reminder_event)
             await session.commit()
 
     async def check_questionnaire_sends_once(self) -> None:
@@ -385,14 +385,13 @@ class ReminderService:
                 )
                 session.add(message)
                 await session.flush()
-                result = await send_channel_text(service_case.group_id, content)
+                result = await _send_channel_text_with_retries(service_case.group_id, content)
                 if result.success:
                     message.status = MessageStatus.SENT
                     message.wecom_message_id = result.message_id
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error
-                    await session.delete(reminder_event)
             await session.commit()
 
     async def _generate_report_for_case_worker(self, case_id: int, stage: str) -> None:
@@ -588,6 +587,34 @@ async def mark_seen(service_case_id: int, event_date: date | None = None) -> Non
             )
         )
         await session.commit()
+
+
+async def _send_channel_text_with_retries(chat_id: str, content: str):
+    last_result = None
+    for attempt in range(1, CHANNEL_SEND_MAX_ATTEMPTS + 1):
+        result = await send_channel_text(chat_id, content)
+        if result.success:
+            return result
+        last_result = result
+        if not result.retryable or attempt >= CHANNEL_SEND_MAX_ATTEMPTS:
+            break
+        logger.warning(
+            "Reminder channel send failed, will retry: chat_id=%s attempt=%s/%s error=%s",
+            chat_id,
+            attempt,
+            CHANNEL_SEND_MAX_ATTEMPTS,
+            result.error,
+        )
+        await asyncio.sleep(CHANNEL_SEND_RETRY_DELAY_SECONDS)
+    if last_result is not None:
+        last_result.error = f"{last_result.error or 'channel send failed'} (attempts={attempt})"
+        logger.warning(
+            "Reminder channel send failed after retries: chat_id=%s attempts=%s error=%s",
+            chat_id,
+            attempt,
+            last_result.error,
+        )
+    return last_result
 
 
 @asynccontextmanager

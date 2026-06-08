@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -33,6 +33,11 @@ async def list_case_messages(
         .where(
             Message.group_id == service_case.group_id,
             Message.created_at >= service_case.created_at,
+            not_(
+                (Message.direction == MessageDirection.OUTBOUND)
+                & (Message.purpose == MessagePurpose.REMINDER)
+                & (Message.status == MessageStatus.FAILED)
+            ),
         )
         .order_by(Message.created_at.asc(), Message.id.asc())
     )
