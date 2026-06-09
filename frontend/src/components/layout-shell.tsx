@@ -15,12 +15,12 @@ const navItems = [
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isQuestionnaire = pathname?.startsWith("/q/");
+  const isNoShell = pathname?.startsWith("/q/") || pathname === "/login";
 
-  if (isQuestionnaire) {
+  if (isNoShell) {
     return (
       <div className="min-h-screen bg-slate-50">
-        <main className="py-8">
+        <main>
           {children}
         </main>
       </div>

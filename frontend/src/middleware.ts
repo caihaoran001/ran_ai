@@ -1,46 +1,41 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { verifySessionToken } from "./lib/auth";
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
-  // Allow access to public assets and questionnaire endpoints without auth.
+  
+  // Allow access to public assets, questionnaires, and auth endpoints without auth.
   if (
-    pathname.startsWith('/q/') ||
-    (pathname.startsWith('/api/questionnaires/') && pathname.endsWith('/submit')) ||
-    pathname.startsWith('/_next') ||
-    (!pathname.startsWith('/api/') && pathname.includes('.')) // public files like favicon.ico
+    pathname === "/login" ||
+    pathname === "/api/auth/login" ||
+    pathname === "/api/auth/logout" ||
+    pathname.startsWith("/q/") ||
+    (pathname.startsWith("/api/questionnaires/") && pathname.endsWith("/submit")) ||
+    pathname.startsWith("/_next") ||
+    (!pathname.startsWith("/api/") && pathname.includes(".")) // public files like favicon.ico
   ) {
     return NextResponse.next();
   }
 
-  const basicAuth = req.headers.get('authorization');
-  const expectedUser = process.env.ADMIN_USERNAME || 'admin';
-  const expectedPassword = process.env.ADMIN_PASSWORD || 'change-me';
-  
-  if (basicAuth) {
-    try {
-      const [scheme, authValue] = basicAuth.split(' ');
-      if (scheme !== 'Basic' || !authValue) {
-        throw new Error('invalid authorization header');
-      }
-      const [user, pwd] = atob(authValue).split(':');
+  const token = req.cookies.get("session_token")?.value;
+  const isAuthenticated = await verifySessionToken(token);
 
-      if (user === expectedUser && pwd === expectedPassword) {
-        return NextResponse.next();
-      }
-    } catch {
-      // Fall through to the same 401 response for malformed credentials.
-    }
+  if (isAuthenticated) {
+    return NextResponse.next();
   }
 
-  return new NextResponse('Authentication required', {
-    status: 401,
-    headers: {
-      'WWW-Authenticate': 'Basic realm="Secure Area"',
-    },
-  });
+  // Redirect to login for pages, return 401 JSON for APIs
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.json(
+      { detail: "unauthorized" },
+      { status: 401 }
+    );
+  }
+
+  return NextResponse.redirect(new URL("/login", req.url));
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
