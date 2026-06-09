@@ -72,6 +72,7 @@ def reverse_forward_loop(server_port, remote_host, remote_port, transport, remot
         thr.start()
 
 def main():
+    paramiko.util.log_to_file("paramiko.log")
     env = load_env()
     ip = env.get("TENCENT_SSH_IP")
     user = env.get("TENCENT_SSH_USER", "ubuntu")
