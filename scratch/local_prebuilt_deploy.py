@@ -112,13 +112,22 @@ def main():
     retry_interval = 1.0 # check every 1 second
     
     for attempt in range(max_retries):
-        # Check backend health inside container
-        stdin_b, stdout_b, stderr_b = client.exec_command("docker exec ran_ai-backend-1 python -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8000/health').getcode())\"")
-        b_status = stdout_b.read().decode().strip()
+        import urllib.request
+        # Check backend health publicly
+        try:
+            req_b = urllib.request.Request("https://admin.humanburning.com/health")
+            with urllib.request.urlopen(req_b, timeout=2) as response:
+                b_status = str(response.getcode())
+        except Exception as e:
+            b_status = str(e.code) if hasattr(e, "code") else "000"
         
-        # Check frontend health inside container
-        stdin_f, stdout_f, stderr_f = client.exec_command("docker exec ran_ai-frontend-1 node -e \"const http = require('http'); http.get('http://localhost:3000', (res) => console.log(res.statusCode))\"")
-        f_status = stdout_f.read().decode().strip()
+        # Check frontend health publicly
+        try:
+            req_f = urllib.request.Request("https://admin.humanburning.com/login")
+            with urllib.request.urlopen(req_f, timeout=2) as response:
+                f_status = str(response.getcode())
+        except Exception as e:
+            f_status = str(e.code) if hasattr(e, "code") else "000"
         
         print(f"  [Ping {attempt + 1}] Backend: {b_status}, Frontend: {f_status}")
         

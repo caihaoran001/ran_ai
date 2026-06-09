@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
+import random
+import time
 from typing import Any
 
 import httpx
 
 from app.core.config import Settings, get_settings
 from app.services.channels.base import ChannelSendResult
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class QiWeChannel:
@@ -23,6 +29,8 @@ class QiWeChannel:
         self.guid = self.settings.qiwei_guid
         self.base_url = self.settings.qiwei_base_url.rstrip("/")
         self._client = http_client
+        self._last_send_time = 0.0
+        self._send_lock = asyncio.Lock()
 
     async def send_text(
         self,
@@ -90,21 +98,40 @@ class QiWeChannel:
         return bool(self.token and self.guid)
 
     async def _post_json(self, path: str, payload: dict[str, Any]) -> ChannelSendResult:
-        try:
-            async with self._client_context() as client:
-                response = await client.post(
-                    f"{self.base_url}{path}",
-                    headers={
-                        "X-QIWEI-TOKEN": self.token,
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
+        if not self._ready:
+            return ChannelSendResult(success=False, error="QIWEI_TOKEN or QIWEI_GUID is missing")
+
+        async with self._send_lock:
+            now = time.monotonic()
+            elapsed = now - self._last_send_time
+            # 3.0s base delay + 0.5s to 1.5s random jitter
+            target_delay = 3.0 + random.uniform(0.5, 1.5)
+            if elapsed < target_delay:
+                sleep_time = target_delay - elapsed
+                logger.info(
+                    "QiWe rate limit: sleeping for %.2f seconds before sending to chat_id=%s",
+                    sleep_time,
+                    payload.get("params", {}).get("toId") or "unknown",
                 )
-                response.raise_for_status()
-                data = response.json()
-        except Exception as exc:
-            return ChannelSendResult(success=False, error=str(exc), retryable=True)
-        return _qiwe_result(data)
+                await asyncio.sleep(sleep_time)
+
+            self._last_send_time = time.monotonic()
+
+            try:
+                async with self._client_context() as client:
+                    response = await client.post(
+                        f"{self.base_url}{path}",
+                        headers={
+                            "X-QIWEI-TOKEN": self.token,
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+            except Exception as exc:
+                return ChannelSendResult(success=False, error=str(exc), retryable=True)
+            return _qiwe_result(data)
 
     async def _upload_file(self, file_path: Path) -> ChannelSendResult:
         try:

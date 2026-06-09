@@ -67,7 +67,7 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
   }
 
   if (done) {
-    return <div className="rounded-lg border border-zinc-200 bg-white p-6">问卷已提交，文件生成中，稍后可在服务单详情查看。</div>;
+    return <div className="rounded-lg border border-zinc-200 bg-white p-6">您的问卷已成功提交！专属助理正在为您整理资料，请在社群中耐心等待，或联系您的专属顾问查看后续进展。</div>;
   }
 
   function fillCaiHaoranSample() {
@@ -111,29 +111,7 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
           )}
         </div>
       )}
-      {questionnaire.template_key === "intake" && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-          <div className="text-sm text-amber-900">试验辅助：一键填入蔡浩然样例问卷。</div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              className="border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
-              onClick={fillCaiHaoranSample}
-              disabled={submitting}
-            >
-              一键选择蔡浩然版
-            </Button>
-            <Button
-              type="button"
-              className="bg-amber-700 hover:bg-amber-600"
-              onClick={submitCaiHaoranSample}
-              disabled={submitting}
-            >
-              一键提交蔡浩然版
-            </Button>
-          </div>
-        </div>
-      )}
+
       {questionnaire.fields.map((field) => (
         <FieldInput
           key={field.key}
