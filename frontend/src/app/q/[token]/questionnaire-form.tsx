@@ -211,91 +211,16 @@ function FieldInput({
   const label = field.title ?? field.label;
   const required = field.required ? <span className="ml-1 text-red-500">*</span> : null;
 
-  if (field.type === "RADIO") {
+  if (field.type === "RADIO" || field.type === "CHECKBOX") {
     return (
-      <fieldset className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <legend className="px-1 text-sm font-semibold text-slate-900">{label}{required}</legend>
-        {field.subtitle && <p className="mt-0.5 px-1 text-xs leading-5 text-slate-400">{field.subtitle}</p>}
-        <div className="mt-2 grid gap-2">
-          {(field.options ?? []).map((option) => {
-            const active = value === option;
-            return (
-              <label
-                key={option}
-                className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3.5 py-2.5 text-sm transition-colors ${
-                  active
-                    ? "border-cyan-600 bg-cyan-50 text-cyan-900"
-                    : "border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-                }`}
-              >
-                <input
-                  type="radio"
-                  className="sr-only"
-                  name={field.key}
-                  value={option}
-                  checked={active}
-                  onChange={() => onChange(option)}
-                />
-                <span
-                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
-                    active ? "border-cyan-600" : "border-slate-300"
-                  }`}
-                >
-                  {active && <span className="h-2.5 w-2.5 rounded-full bg-cyan-600" />}
-                </span>
-                <span className="leading-6">{option}</span>
-              </label>
-            );
-          })}
-        </div>
-      </fieldset>
-    );
-  }
-
-  if (field.type === "CHECKBOX") {
-    const selected = new Set((value ?? "").split("||").filter(Boolean));
-    return (
-      <fieldset className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <legend className="px-1 text-sm font-semibold text-slate-900">{label}{required}</legend>
-        {field.subtitle && <p className="mt-0.5 px-1 text-xs leading-5 text-slate-400">{field.subtitle}</p>}
-        <p className="mt-0.5 px-1 text-xs text-cyan-600">可多选</p>
-        <div className="mt-2 grid gap-2">
-          {(field.options ?? []).map((option) => {
-            const active = selected.has(option);
-            return (
-              <label
-                key={option}
-                className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3.5 py-2.5 text-sm transition-colors ${
-                  active
-                    ? "border-cyan-600 bg-cyan-50 text-cyan-900"
-                    : "border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  className="sr-only"
-                  value={option}
-                  checked={active}
-                  onChange={(event) => {
-                    const next = new Set(selected);
-                    if (event.target.checked) next.add(option);
-                    else next.delete(option);
-                    onChange(Array.from(next).join("||"));
-                  }}
-                />
-                <span
-                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
-                    active ? "border-cyan-600 bg-cyan-600" : "border-slate-300"
-                  }`}
-                >
-                  {active && <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />}
-                </span>
-                <span className="leading-6">{option}</span>
-              </label>
-            );
-          })}
-        </div>
-      </fieldset>
+      <ChoiceField
+        field={field}
+        value={value}
+        onChange={onChange}
+        multi={field.type === "CHECKBOX"}
+        label={label}
+        required={required}
+      />
     );
   }
 
@@ -324,5 +249,108 @@ function FieldInput({
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
+  );
+}
+
+const OTHER_OPTION = "其他";
+
+// 单选/多选选项组，选中"其他"时展开补充输入框；补充内容编码为「其他：xxx」存入答案
+function ChoiceField({
+  field,
+  value,
+  onChange,
+  multi,
+  label,
+  required,
+}: {
+  field: Questionnaire["fields"][number];
+  value?: string;
+  onChange: (value: string) => void;
+  multi: boolean;
+  label: string;
+  required: React.ReactNode;
+}) {
+  const selected = (value ?? "").split("||").filter(Boolean);
+  const isOtherEntry = (s: string) => s === OTHER_OPTION || s.startsWith(`${OTHER_OPTION}：`);
+  const otherEntry = selected.find(isOtherEntry);
+  const otherChosen = Boolean(otherEntry);
+  const [otherText, setOtherText] = useState(
+    otherEntry && otherEntry.startsWith(`${OTHER_OPTION}：`)
+      ? otherEntry.slice(OTHER_OPTION.length + 1)
+      : "",
+  );
+
+  const isOther = (opt: string) => opt === OTHER_OPTION;
+  const encodeOther = (text: string) => (text.trim() ? `${OTHER_OPTION}：${text.trim()}` : OTHER_OPTION);
+  const isActive = (opt: string) => (isOther(opt) ? otherChosen : selected.includes(opt));
+
+  function toggle(opt: string) {
+    if (!multi) {
+      onChange(isOther(opt) ? encodeOther(otherText) : opt);
+      return;
+    }
+    const wasActive = isActive(opt);
+    const next = selected.filter((s) => (isOther(opt) ? !isOtherEntry(s) : s !== opt));
+    if (!wasActive) next.push(isOther(opt) ? encodeOther(otherText) : opt);
+    onChange(next.join("||"));
+  }
+
+  function updateOtherText(text: string) {
+    setOtherText(text);
+    if (!otherChosen) return;
+    if (!multi) {
+      onChange(encodeOther(text));
+      return;
+    }
+    onChange(selected.map((s) => (isOtherEntry(s) ? encodeOther(text) : s)).join("||"));
+  }
+
+  return (
+    <fieldset className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <legend className="px-1 text-sm font-semibold text-slate-900">{label}{required}</legend>
+      {field.subtitle && <p className="mt-0.5 px-1 text-xs leading-5 text-slate-400">{field.subtitle}</p>}
+      {multi && <p className="mt-0.5 px-1 text-xs text-cyan-600">可多选</p>}
+      <div className="mt-2 grid gap-2">
+        {(field.options ?? []).map((option) => {
+          const active = isActive(option);
+          return (
+            <label
+              key={option}
+              className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3.5 py-2.5 text-sm transition-colors ${
+                active
+                  ? "border-cyan-600 bg-cyan-50 text-cyan-900"
+                  : "border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              <input
+                type={multi ? "checkbox" : "radio"}
+                className="sr-only"
+                name={field.key}
+                checked={active}
+                onChange={() => toggle(option)}
+              />
+              <span
+                className={`flex h-5 w-5 shrink-0 items-center justify-center border-2 ${multi ? "rounded-md" : "rounded-full"} ${
+                  active ? (multi ? "border-cyan-600 bg-cyan-600" : "border-cyan-600") : "border-slate-300"
+                }`}
+              >
+                {active && (multi
+                  ? <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />
+                  : <span className="h-2.5 w-2.5 rounded-full bg-cyan-600" />)}
+              </span>
+              <span className="leading-6">{option}</span>
+            </label>
+          );
+        })}
+      </div>
+      {otherChosen && (
+        <Input
+          className="mt-2"
+          placeholder="请补充说明…"
+          value={otherText}
+          onChange={(event) => updateOtherText(event.target.value)}
+        />
+      )}
+    </fieldset>
   );
 }
