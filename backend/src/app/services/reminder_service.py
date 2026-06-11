@@ -113,6 +113,8 @@ class ReminderService:
             return
 
         async with SessionLocal() as session:
+            schedule = await get_checkin_questionnaire_schedule(session)
+            timezone = ZoneInfo(self.settings.reminder_timezone)
             service_cases = list(
                 await session.scalars(
                     select_active_service_cases(
