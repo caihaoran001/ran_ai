@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     qiwei_token: str = Field(default="", validation_alias="QIWEI_TOKEN")
     qiwei_guid: str = Field(default="", validation_alias="QIWEI_GUID")
     qiwei_callback_secret: str = Field(default="", validation_alias="QIWEI_CALLBACK_SECRET")
+    qiwei_staff_senders: str = Field(default="", validation_alias="QIWEI_STAFF_SENDERS")
     qiwei_base_url: str = Field(
         default="http://manager.qiweapi.com/qiwe",
         validation_alias="QIWEI_BASE_URL",

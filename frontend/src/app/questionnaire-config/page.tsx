@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 import { QuestionnaireConfigEditor } from "./questionnaire-config-editor";
 import { RiskReplyConfig } from "./risk-reply-config";
+import { StaffFilterConfig } from "./staff-filter-config";
 
 type Template = {
   template_key: string;
@@ -28,8 +29,9 @@ export default async function QuestionnaireConfigPage() {
       
       <QuestionnaireConfigEditor config={config} />
       
-      <div className="border-t border-slate-200 pt-7">
+      <div className="border-t border-slate-200 pt-7 grid gap-6">
         <RiskReplyConfig />
+        <StaffFilterConfig />
       </div>
     </div>
   );

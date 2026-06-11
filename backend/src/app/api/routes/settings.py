@@ -112,3 +112,31 @@ async def update_knowledge_evolution_setting_api(
 ) -> KnowledgeEvolutionSetting:
     config = await set_knowledge_evolution_config(session, payload.model_dump())
     return KnowledgeEvolutionSetting(**config.__dict__)
+
+
+class StaffSenderRule(BaseModel):
+    type: str  # "equals" or "contains"
+    pattern: str
+
+
+class StaffSenderSettings(BaseModel):
+    rules: list[StaffSenderRule]
+
+
+@router.get("/settings/qiwei-staff-senders", response_model=StaffSenderSettings)
+async def get_qiwei_staff_senders_api(session: AsyncSession = Depends(get_session)) -> StaffSenderSettings:
+    from app.services.content_policy import get_qiwei_staff_senders
+    rules = await get_qiwei_staff_senders(session)
+    return StaffSenderSettings(rules=rules)
+
+
+@router.post("/settings/qiwei-staff-senders", response_model=StaffSenderSettings)
+async def update_qiwei_staff_senders_api(
+    payload: StaffSenderSettings,
+    session: AsyncSession = Depends(get_session),
+) -> StaffSenderSettings:
+    from app.services.content_policy import set_qiwei_staff_senders
+    rules = [rule.model_dump() for rule in payload.rules]
+    saved_rules = await set_qiwei_staff_senders(rules, session)
+    return StaffSenderSettings(rules=saved_rules)
+

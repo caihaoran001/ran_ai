@@ -228,7 +228,7 @@ def test_diagnostics_counts_reviewed_e2e_progress_before_pytest_status():
     progress = diagnostics_mod._extract_e2e_progress(
         {
             "e2e_01": [
-                "🧪 [E2E-01] 启动人设旅程: 顾安 / anxious_questioner，消息 16 条，打卡 5 天",
+                "🧪 [E2E-01] 启动人设旅程: 顾安 / medical_caution，消息 16 条，打卡 5 天",
                 "   [E2E-01] 顾安 推进到 Day 28: messages=1, checkin=yes",
                 "   [内容质量综合评审] 顾安: dialogue_quality={'understanding': 4}",
                 " -> [28天用户旅程验证] 顾安: risk=normal, human=False, refund=False, renewal=False",

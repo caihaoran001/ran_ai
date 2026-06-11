@@ -140,11 +140,34 @@ class RanrenAIEngine:
         inbound_id: int | None = None
         recent_user_messages: list[str] = []
 
-        staff_senders = [s.strip() for s in self.settings.qiwei_staff_senders.split(",") if s.strip()]
-        is_staff = (message.user_id in staff_senders) or (message.user_name in staff_senders)
-        sender_type = MessageSenderType.STAFF if is_staff else MessageSenderType.USER
+        is_staff = False
+        sender_type = MessageSenderType.USER
 
         async with SessionLocal() as session:
+            from app.services.content_policy import get_qiwei_staff_senders
+            rules = await get_qiwei_staff_senders(session)
+            
+            for rule in rules:
+                rule_type = rule.get("type")
+                pattern = rule.get("pattern", "").strip()
+                if not pattern:
+                    continue
+                for val in (message.user_id, message.user_name):
+                    if not val:
+                        continue
+                    if rule_type == "equals":
+                        if val == pattern:
+                            is_staff = True
+                            break
+                    elif rule_type == "contains":
+                        if pattern in val:
+                            is_staff = True
+                            break
+                if is_staff:
+                    break
+
+            sender_type = MessageSenderType.STAFF if is_staff else MessageSenderType.USER
+
             service_case = await self._latest_active_case(session, message.chat_id)
             if should_send_questionnaire and not service_case and not is_staff:
                 service_case = await self._create_case_for_message(session, message)

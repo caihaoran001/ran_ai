@@ -472,3 +472,106 @@ async def test_qiwe_questionnaire_command_skips_intervention_llm(monkeypatch):
     assert added_messages[0].analysis_json.get("_qiwe_meta", {}).get("sender_id") == "user-fast-path"
     assert len(reply_calls) == 1
     assert reply_calls[0][1] is fake_case
+
+
+@pytest.mark.asyncio
+async def test_qiwe_staff_sender_ignoring(monkeypatch):
+    from app.models.message import MessageSenderType
+    added_messages: list[Message] = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+        def add(self, obj):
+            if isinstance(obj, Message):
+                obj.id = len(added_messages) + 1
+                added_messages.append(obj)
+
+        async def commit(self):
+            return None
+
+        async def flush(self):
+            return None
+
+    async def fake_get_qiwei_staff_senders(*args, **kwargs):
+        return [
+            {"type": "equals", "pattern": "上海 Lucy"},
+            {"type": "contains", "pattern": "奢咖"},
+        ]
+
+    fake_case = SimpleNamespace(
+        id=42,
+        case_no="CASE-42",
+        group_id="room-staff",
+        questionnaire_token="token-42",
+    )
+
+    monkeypatch.setattr("app.services.ranren_ai.engine.SessionLocal", lambda *args, **kwargs: FakeSession())
+    monkeypatch.setattr("app.services.content_policy.get_qiwei_staff_senders", fake_get_qiwei_staff_senders)
+    monkeypatch.setattr(RanrenAIEngine, "_latest_active_case", lambda self, session, chat_id: asyncio.sleep(0, result=fake_case))
+    monkeypatch.setattr(RanrenAIEngine, "_recent_user_messages", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(RanrenAIEngine, "_store_intervention_analysis", lambda *args, **kwargs: asyncio.sleep(0, result=None))
+    monkeypatch.setattr(RanrenAIEngine, "_reply_with_ai", lambda *args, **kwargs: asyncio.sleep(0, result=None))
+    monkeypatch.setattr(RanrenAIEngine, "_run_outcome_analysis", lambda *args, **kwargs: asyncio.sleep(0, result=None))
+
+    engine = RanrenAIEngine(FakeChannel())
+
+    # Case 1: Match equals "上海 Lucy"
+    message1 = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-staff",
+        chat_type="group",
+        text="我是上海 Lucy",
+        message_id="m1",
+        user_id="user-1",
+        user_name="上海 Lucy",
+        timestamp=datetime.now(timezone.utc),
+    )
+    await engine.handle_message(message1)
+
+    # Case 2: Match contains "奢咖"
+    message2 = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-staff",
+        chat_type="group",
+        text="我是奢咖运营",
+        message_id="m2",
+        user_id="user-2",
+        user_name="小奢咖助教",
+        timestamp=datetime.now(timezone.utc),
+    )
+    await engine.handle_message(message2)
+
+    # Case 3: Does not match
+    message3 = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-staff",
+        chat_type="group",
+        text="我是普通用户",
+        message_id="m3",
+        user_id="user-3",
+        user_name="普通用户",
+        timestamp=datetime.now(timezone.utc),
+    )
+    
+    called_analyze = False
+    async def fake_analyze_intervention(*args, **kwargs):
+        nonlocal called_analyze
+        called_analyze = True
+        return {}
+    monkeypatch.setattr("app.services.ranren_ai.engine.analyze_intervention", fake_analyze_intervention)
+
+    await engine.handle_message(message3)
+
+    assert len(added_messages) == 3
+    # Message 1 should be MessageSenderType.STAFF
+    assert added_messages[0].sender_type == MessageSenderType.STAFF
+    # Message 2 should be MessageSenderType.STAFF
+    assert added_messages[1].sender_type == MessageSenderType.STAFF
+    # Message 3 should be MessageSenderType.USER
+    assert added_messages[2].sender_type == MessageSenderType.USER
+    assert called_analyze is True

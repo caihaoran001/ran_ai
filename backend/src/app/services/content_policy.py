@@ -76,3 +76,32 @@ async def set_risk_fixed_reply(content: str, session: AsyncSession | None = None
             session.add(AppSetting(key=RISK_REPLY_SETTING_KEY, value_json={"content": content}))
         await session.commit()
     return content
+
+STAFF_SENDERS_SETTING_KEY = "qiwei_staff_senders"
+
+async def get_qiwei_staff_senders(session: AsyncSession | None = None) -> list[dict[str, str]]:
+    if session is not None and hasattr(session, "get"):
+        setting = await session.get(AppSetting, STAFF_SENDERS_SETTING_KEY)
+        if setting:
+            return setting.value_json.get("rules", [])
+    
+    # Fallback to env variable
+    from app.core.config import get_settings
+    env_senders = get_settings().qiwei_staff_senders
+    if env_senders:
+        return [
+            {"type": "equals", "pattern": name.strip()}
+            for name in env_senders.split(",")
+            if name.strip()
+        ]
+    return []
+
+async def set_qiwei_staff_senders(rules: list[dict[str, str]], session: AsyncSession | None = None) -> list[dict[str, str]]:
+    if session is not None and hasattr(session, "get"):
+        setting = await session.get(AppSetting, STAFF_SENDERS_SETTING_KEY)
+        if setting:
+            setting.value_json = {"rules": rules}
+        else:
+            session.add(AppSetting(key=STAFF_SENDERS_SETTING_KEY, value_json={"rules": rules}))
+        await session.commit()
+    return rules
