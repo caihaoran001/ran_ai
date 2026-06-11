@@ -18,6 +18,10 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const energyDocument = documents.find((item) => item.document_type === "energy_restart_prescription");
   const executionDocument = documents.find((item) => item.document_type === "day28_execution_standard");
   const overview = recordValue(profile?.profile_json?.overview);
+  const refreshedFrom = recordValue(profile?.profile_json?.refreshed_from);
+  const profileSource = text(refreshedFrom.stage)
+    ? `来源：阶段刷新（${stageLabel(text(refreshedFrom.stage))}）`
+    : "来源：问卷自动生成";
 
   return (
     <div className="space-y-6">
@@ -47,7 +51,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
       <section className="rounded-lg border border-zinc-200 bg-white p-4">
         <div className="flex items-center justify-between">
           <h2 className="font-medium">用户画像</h2>
-          <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-600">来源：问卷自动生成</span>
+          <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-600">{profileSource}</span>
         </div>
         {profile ? (
           <ProfileView profile={profile.profile_json} fallback={profile.summary} serviceCase={serviceCase} />
@@ -406,6 +410,13 @@ function profileText(profile: Record<string, unknown> | undefined, key: string) 
     return text((overview as Record<string, unknown>)[key]);
   }
   return text(profile[key]);
+}
+
+function stageLabel(stage: string) {
+  const map: Record<string, string> = {
+    day3: "第3天", day7: "第7天", day14: "第14天", day21: "第21天", day28: "第28天",
+  };
+  return map[stage] ?? stage;
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
