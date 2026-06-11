@@ -139,16 +139,21 @@ class RanrenAIEngine:
         analysis: dict | None = None
         inbound_id: int | None = None
         recent_user_messages: list[str] = []
+
+        staff_senders = [s.strip() for s in self.settings.qiwei_staff_senders.split(",") if s.strip()]
+        is_staff = (message.user_id in staff_senders) or (message.user_name in staff_senders)
+        sender_type = MessageSenderType.STAFF if is_staff else MessageSenderType.USER
+
         async with SessionLocal() as session:
             service_case = await self._latest_active_case(session, message.chat_id)
-            if should_send_questionnaire and not service_case:
+            if should_send_questionnaire and not service_case and not is_staff:
                 service_case = await self._create_case_for_message(session, message)
 
             if service_case:
                 service_case_id = service_case.id
                 service_case_for_command = service_case
 
-            if service_case and not should_send_questionnaire:
+            if service_case and not should_send_questionnaire and not is_staff:
                 recent_user_messages = await self._recent_user_messages(session, service_case.id)
 
             purpose = MessagePurpose.CHAT
@@ -168,7 +173,7 @@ class RanrenAIEngine:
                 group_id=message.chat_id,
                 wecom_message_id=message.message_id,
                 direction=MessageDirection.INBOUND,
-                sender_type=MessageSenderType.USER,
+                sender_type=sender_type,
                 message_type=message.message_type,
                 content=message.text,
                 purpose=purpose,
@@ -180,15 +185,25 @@ class RanrenAIEngine:
             inbound_id = db_inbound.id
             await session.commit()
             logger.info(
-                "RanrenAI inbound stored channel=%s chat_id=%s message_id=%s db_message_id=%s service_case_id=%s command=%s elapsed_ms=%.1f",
+                "RanrenAI inbound stored channel=%s chat_id=%s sender_type=%s message_id=%s db_message_id=%s service_case_id=%s command=%s elapsed_ms=%.1f",
                 message.channel,
                 message.chat_id,
+                sender_type,
                 message.message_id,
                 inbound_id,
                 service_case_id,
                 should_send_questionnaire,
                 (time.monotonic() - started_at) * 1000,
             )
+
+        if is_staff:
+            logger.info(
+                "RanrenAI staff message ignored from triggering AI reply channel=%s chat_id=%s message_id=%s",
+                message.channel,
+                message.chat_id,
+                message.message_id,
+            )
+            return
 
         if should_send_questionnaire:
             await self._reply_questionnaire_link(message, service_case_for_command, trigger_id=inbound_id)
@@ -642,7 +657,7 @@ class RanrenAIEngine:
             or_(
                 and_(
                     Message.direction == MessageDirection.INBOUND,
-                    Message.sender_type == MessageSenderType.USER,
+                    Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
                     Message.purpose == MessagePurpose.CHAT,
                     Message.status == MessageStatus.RECEIVED,
                 ),
@@ -744,13 +759,12 @@ class RanrenAIEngine:
                     hunger = pj.get("hunger") or "未记录"
                     sensation = pj.get("sensation") or "未记录"
                     discomfort = pj.get("discomfort") or "无"
-                    tomorrow_focus = pj.get("tomorrow_focus") or "未记录"
 
                     detail = (
                         f"体重：{weight} ｜ 腰围：{waist} ｜ {cba} ｜ "
                         f"睡眠：{sleep} ｜ 饮食：{diet} ｜ 饮水：{water} ｜ "
                         f"排便：{bowel} ｜ 食欲/饥饿感：{hunger} ｜ "
-                        f"体感：{sensation} ｜ 不适：{discomfort} ｜ 明日重点：{tomorrow_focus}"
+                        f"体感：{sensation} ｜ 不适：{discomfort}"
                     )
                     checkin_texts.append(f"- [{date_str}] {detail}")
                 else:

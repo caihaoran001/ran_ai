@@ -311,7 +311,6 @@ def _standard_fields() -> list[dict[str, Any]]:
         _field("discomfort", "今日是否有不适", "RADIO", required=True, options=["没有", "有"]),
         _field("discomfort_detail", "如有不适，请具体描述", "TEXT", subtitle="如有心慌、明显失眠、持续腹痛、严重腹泻、头晕等，请立即说明。"),
         _field("today_feedback", "今日一句话反馈", "TEXT"),
-        _field("tomorrow_focus", "明天最重要的一件事", "RADIO", options=["早睡", "控制晚餐", "多喝水", "按时喝完早C午B晚A", "增加运动", "不吃夜宵", "其他"]),
     ]
 
 
@@ -330,7 +329,6 @@ def _simple_fields() -> list[dict[str, Any]]:
         _field("exercise", "运动", "SIMPLE", subtitle="例如：无 / 有，30分钟。"),
         _field("body_feeling", "今日体感"),
         _field("discomfort", "今日是否不适", "SIMPLE", subtitle="无 / 有，请说明。"),
-        _field("tomorrow_focus", "明天重点"),
     ]
 
 
