@@ -115,7 +115,12 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         <div className="mt-3 max-h-48 overflow-y-auto space-y-2 pr-1 text-sm">
           {messages.slice(-5).map((message) => (
             <div key={message.id} className="rounded-md border border-zinc-100 p-2">
-              <span className="text-zinc-500">{message.sender_type === "user" ? "用户" : "机器人"}：</span>
+              <span className="text-zinc-500">{
+                message.sender_type === "bot" ? "燃人.AI"
+                  : message.sender_type === "staff" ? (message.display_sender_name || "班主任")
+                  : message.direction === "outbound" ? "运营"
+                  : (message.display_sender_name || "客户")
+              }：</span>
               {message.content}
             </div>
           ))}

@@ -43,6 +43,8 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
                   ? "bg-blue-50 text-blue-900"
                   : msg.sender_type === "bot"
                   ? "bg-green-50 text-green-900"
+                  : msg.sender_type === "staff"
+                  ? "bg-purple-50 text-purple-900"
                   : "bg-zinc-100 text-zinc-900"
               }`}
             >
@@ -52,7 +54,12 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
                     ? msg.sender_type === "bot"
                       ? "燃人.AI"
                       : "运营"
-                    : msg.display_sender_name || userName || "用户"}
+                    : msg.sender_type === "staff"
+                    ? msg.display_sender_name || "班主任"
+                    : msg.display_sender_name || userName || "客户"}
+                  {msg.direction === "inbound" && msg.sender_type === "staff" && (
+                    <span className="ml-1 rounded bg-purple-100 px-1 text-[10px] text-purple-700">班主任</span>
+                  )}
                   {msg.direction === "inbound" &&
                     msg.analysis_json &&
                     typeof msg.analysis_json === "object" &&
