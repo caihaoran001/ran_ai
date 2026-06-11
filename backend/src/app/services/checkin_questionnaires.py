@@ -28,7 +28,7 @@ def default_checkin_questionnaire_templates() -> list[dict[str, Any]]:
         },
         {
             "template_key": "stage_review",
-            "name": "7天阶段复盘",
+            "name": "阶段复盘",
             "title": "HB.AI 阶段复盘",
             "description": "第 7/14/21/28 天使用，用于总结周期变化和制定下阶段目标。",
             "fields": _stage_review_fields(),
@@ -305,7 +305,7 @@ def _standard_fields() -> list[dict[str, Any]]:
         _field("diet_risk_detail", "如有，请具体说明"),
         _field("water", "今日饮水量", "RADIO", options=["少于1000ml", "1000-1500ml", "1500-2000ml", "2000ml以上"]),
         _field("bowel", "今日排便情况", "RADIO", options=["正常", "未排便", "偏稀", "便秘/排便困难"]),
-        _field("appetite", "今日饥饿感/食欲", "RADIO", options=["明显下降", "略有下降", "无变化", "食欲很旺", "想吃甜食/碳水明显"]),
+        _field("appetite", "今日饥饿感/食欲", "RADIO", options=["明显下降", "略有下降", "无变化", "更旺"]),
         _field("exercise", "今日运动/活动量", "SIMPLE", subtitle="例如：无运动 / 散步30分钟 / 有氧20分钟 / 力量训练20分钟。"),
         _field("body_feeling", "今日身体体感", "CHECKBOX", options=["身体发热", "精神变好", "水肿下降", "肚子更轻松", "睡眠变好", "暂无明显感觉", "其他"]),
         _field("discomfort", "今日是否有不适", "RADIO", required=True, options=["没有", "有"]),
@@ -317,15 +317,15 @@ def _standard_fields() -> list[dict[str, Any]]:
 def _simple_fields() -> list[dict[str, Any]]:
     return [
         _segment("simple_intro", "HB.AI 每日打卡｜简版", "适合群内高频执行，班主任每 3 天补一次详细版。"),
-        _field("morning_weight", "晨起体重（kg）"),
+        _field("morning_weight", "晨起体重（kg）", required=True),
         _field("morning_c", "早C", "RADIO", options=["已喝", "未喝"]),
         _field("noon_b", "午B", "RADIO", options=["已喝", "未喝"]),
         _field("night_a", "晚A", "RADIO", options=["已喝", "未喝"]),
         _field("sleep", "昨晚睡眠", "SIMPLE", subtitle="例如：23点睡，7点起，质量好/一般/差。"),
         _field("diet", "今日饮食", "RADIO", options=["干净", "一般", "失控"]),
-        _field("water", "饮水量（ml）"),
-        _field("bowel", "排便", "RADIO", options=["正常", "未排", "偏稀", "便秘"]),
-        _field("appetite", "食欲", "RADIO", options=["下降", "无变化", "更旺"]),
+        _field("water", "今日饮水量", "RADIO", options=["少于1000ml", "1000-1500ml", "1500-2000ml", "2000ml以上"]),
+        _field("bowel", "排便", "RADIO", options=["正常", "未排便", "偏稀", "便秘/排便困难"]),
+        _field("appetite", "食欲", "RADIO", options=["明显下降", "略有下降", "无变化", "更旺"]),
         _field("exercise", "运动", "SIMPLE", subtitle="例如：无 / 有，30分钟。"),
         _field("body_feeling", "今日体感"),
         _field("discomfort", "今日是否不适", "SIMPLE", subtitle="无 / 有，请说明。"),
@@ -335,8 +335,8 @@ def _simple_fields() -> list[dict[str, Any]]:
 def _stage_review_fields() -> list[dict[str, Any]]:
     return [
         _segment("stage_intro", "HB.AI 阶段复盘", "第 7/14/21/28 天使用，用于总结周期变化、判断执行质量，并制定下一个 7 天目标。"),
-        _field("current_weight", "当前体重（kg）"),
-        _field("current_waist", "当前腰围/肚围（cm）"),
+        _field("current_weight", "当前体重（kg）", required=True),
+        _field("current_waist", "当前腰围/肚围（cm）", required=True),
         _field("avg_sleep", "过去7天平均睡眠", "SIMPLE", subtitle="例如：大约23:30入睡，质量变好/无变化/变差。"),
         _field("diet_execution", "饮食执行情况", "RADIO", options=["很干净", "基本可以", "经常失控"]),
         _field("diet_main_issue", "饮食主要问题"),
