@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select, text
@@ -27,7 +27,11 @@ from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.channels import send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
-from app.services.document_service import generate_stage_report, refresh_profile_for_case
+from app.services.document_service import (
+    generate_profile_and_documents,
+    generate_stage_report,
+    refresh_profile_for_case,
+)
 from app.services.knowledge_evolution import KnowledgeEvolutionService
 from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
 from app.services.outcome_engine import generate_outcome_snapshot
@@ -96,6 +100,7 @@ class ReminderService:
                             await self.check_outcome_snapshots_once()
                         await self.check_knowledge_evolution_once()
                         await self.check_profile_refresh_once()
+                        await self.check_stuck_document_generation_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -302,6 +307,36 @@ class ReminderService:
                     message.status = MessageStatus.FAILED
                     message.error = result.error
             await session.commit()
+
+    async def check_stuck_document_generation_once(self) -> None:
+        """补跑卡在 generating 的文档生成（多为部署/重启时后台任务被中断）。"""
+        if not self.settings.ai_api_key:
+            return
+        threshold = datetime.now(timezone.utc) - timedelta(minutes=10)
+        async with SessionLocal() as session:
+            cases = list(
+                await session.scalars(
+                    select_active_service_cases(
+                        ServiceCase.status == ServiceCaseStatus.GENERATING,
+                        ServiceCase.updated_at < threshold,
+                    )
+                )
+            )
+            for service_case in cases:
+                logger.warning(
+                    "Recovering stuck document generation service_case_id=%s case_no=%s",
+                    service_case.id,
+                    service_case.case_no,
+                )
+                try:
+                    await generate_profile_and_documents(
+                        session, service_case, auto_send=self.settings.auto_send_documents
+                    )
+                except Exception:
+                    logger.exception(
+                        "Retry stuck document generation failed service_case_id=%s", service_case.id
+                    )
+                    await session.rollback()
 
     async def check_profile_refresh_once(self) -> None:
         """每天刷新『自上次画像更新后有新聊天/打卡』的在服务用户主画像（无新活动跳过）。"""
