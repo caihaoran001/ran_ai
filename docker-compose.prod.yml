@@ -1,19 +1,4 @@
 services:
-  postgres:
-    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg15}
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-ran_ai}
-      POSTGRES_USER: ${POSTGRES_USER:-ran_ai}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ran_ai} -d ${POSTGRES_DB:-ran_ai}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   backend:
     build:
       context: ./backend
@@ -21,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       ENVIRONMENT: production
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ran_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ran_ai}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL for Aliyun RDS PostgreSQL is required}
       FRONTEND_PUBLIC_BASE_URL: ${FRONTEND_PUBLIC_BASE_URL:?FRONTEND_PUBLIC_BASE_URL is required}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
       BACKEND_ADMIN_API_KEY: ${BACKEND_ADMIN_API_KEY:?BACKEND_ADMIN_API_KEY is required}
@@ -59,9 +44,6 @@ services:
       KNOWLEDGE_EVOLUTION_QA_AT: ${KNOWLEDGE_EVOLUTION_QA_AT:-00:00}
       KNOWLEDGE_EVOLUTION_CASE_DAYS: ${KNOWLEDGE_EVOLUTION_CASE_DAYS:-3,7,14,21,28}
       DIAGNOSTICS_HISTORY_PATH: /app/diagnostics/diagnostics_history.json
-    depends_on:
-      postgres:
-        condition: service_healthy
     volumes:
       - ./diagnostics:/app/diagnostics
 
@@ -96,6 +78,5 @@ services:
       - caddy_config:/config
 
 volumes:
-  postgres_data:
   caddy_data:
   caddy_config:

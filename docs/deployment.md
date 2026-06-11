@@ -38,10 +38,17 @@
 
 生产 compose 包含：
 
-- `postgres`：PostgreSQL + pgvector 镜像。
 - `backend`：FastAPI 后端，启动时自动执行 Alembic migration。
 - `frontend`：Next.js standalone 生产服务。
 - `caddy`：公网 HTTP/HTTPS 入口。
+
+数据库使用阿里云 RDS PostgreSQL 15，不在 ECS 的 Docker Compose 中启动 PostgreSQL。后端通过 `.env` 中的 `DATABASE_URL` 连接 RDS：
+
+```env
+DATABASE_URL=postgresql+asyncpg://用户名:密码@RDS内网地址:5432/数据库名
+```
+
+推荐优先使用 RDS 内网地址，并确保 ECS 与 RDS 在同一 VPC/可达网络内。
 
 Caddy 路由规则：
 
@@ -68,14 +75,35 @@ Caddy 路由规则：
 
 这样即使容器重建或磁盘清理，历史文档仍可以从数据库重新生成。
 
-## 5. 云服务器首次部署
+## 5. RDS 准备
 
-推荐先用单台云服务器：
+当前生产数据库使用阿里云 RDS PostgreSQL 15，并已安装 `vector` 插件。上线前仍建议确认以下事项：
+
+1. RDS 白名单 / 安全组允许 ECS 访问。
+2. 数据库、用户、密码已创建。
+3. `vector` 插件可用。
+4. `pg_trgm` 插件可用。项目会在 migration 中执行 `CREATE EXTENSION IF NOT EXISTS pg_trgm`，用于中文关键词 fallback 检索的 GIN 索引。
+
+可以在 RDS 上执行：
+
+```sql
+SELECT version();
+SELECT name, installed_version
+FROM pg_available_extensions
+WHERE name IN ('vector', 'pg_trgm');
+```
+
+如果 `pg_available_extensions` 能查到但 `installed_version` 为空，说明扩展可用但尚未安装；后端启动时 Alembic 会尝试安装。若 RDS 权限不足，需要在 RDS 控制台或用高权限账号预先安装。
+
+## 6. 云服务器首次部署
+
+推荐先用单台云服务器跑应用容器：
 
 - Ubuntu 22.04/24.04
 - Docker + Docker Compose
 - 2C4G 起步，4C8G 更稳
 - 域名解析到服务器公网 IP
+- 阿里云 RDS PostgreSQL 15 作为数据库
 
 步骤：
 
@@ -101,7 +129,13 @@ curl https://your-domain.com/health
 {"status":"ok"}
 ```
 
-## 6. QiWe callback 配置
+确认数据库 migration 状态：
+
+```bash
+docker compose -f docker-compose.prod.yml exec backend uv run alembic current
+```
+
+## 7. QiWe callback 配置
 
 生产环境 callback 地址：
 
@@ -115,7 +149,7 @@ https://your-domain.com/api/channels/qiwe/callback?secret=你的_QIWEI_CALLBACK_
 X-QIWEI-CALLBACK-SECRET: 你的_QIWEI_CALLBACK_SECRET
 ```
 
-## 7. 上线前检查
+## 8. 上线前检查
 
 部署后执行：
 
@@ -131,11 +165,11 @@ docker compose -f docker-compose.prod.yml logs --tail 100 backend
 
 默认先跑非真实 E2E。真实 `E2E-01` 只在明确授权后执行。
 
-## 8. 备份与运维底线
+## 9. 备份与运维底线
 
 至少要做：
 
-- 定期备份 PostgreSQL。
+- 定期备份 RDS PostgreSQL，并确认备份可恢复。
 - 保存 `.env` 到安全位置，不放 git。
 - 监控磁盘、内存、CPU。
 - 查看 AI 调用成本看板。
@@ -145,4 +179,4 @@ docker compose -f docker-compose.prod.yml logs --tail 100 backend
   docker compose -f docker-compose.prod.yml logs -f backend
   ```
 
-MVP 阶段可以先用 Docker volume 保存数据库；真实客户数据增长后，建议迁移到云厂商托管 PostgreSQL。
+不要在 ECS 上再运行第二套生产 PostgreSQL，避免线上数据分裂。开发环境仍可继续使用本地 `docker-compose.yml` 内置的 PostgreSQL。

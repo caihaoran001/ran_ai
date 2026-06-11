@@ -87,6 +87,12 @@ cp .env.production.example .env
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
+生产部署默认使用阿里云 RDS PostgreSQL 15，不在 ECS Compose 中启动数据库。请在 `.env` 中配置 RDS 连接串：
+
+```bash
+DATABASE_URL=postgresql+asyncpg://用户名:密码@RDS内网地址:5432/数据库名
+```
+
 生产部署说明见 [docs/deployment.md](docs/deployment.md)。
 
 后台页面通过前端同源代理访问后端 API。浏览器不会拿到 `BACKEND_ADMIN_API_KEY`；该密钥只在 Next 服务端和 FastAPI 后端之间使用。直接访问后端 `/api/*` 管理接口需要请求头 `X-Admin-API-Key`，公开问卷链接仍然通过 token 访问。
@@ -246,13 +252,7 @@ curl -X POST http://localhost:8000/api/knowledge-base/index/sync \
   -d '{"embed": true}'
 ```
 
-当前向量先存在 `knowledge_chunks.embedding` JSON 字段，并在应用层做余弦相似度检索，便于在不替换现有 Postgres 镜像的情况下先跑通中期 RAG。长期 pgvector 迁移已经预留：如果数据库镜像提供 `vector` 扩展，迁移会自动创建 `knowledge_chunks.embedding_vector vector(1024)` 和 HNSW cosine 索引。
-
-当前默认 `postgres:15-alpine` 镜像不包含 pgvector。要启用 pgvector，可先备份数据，再在 `.env` 中切换：
-
-```bash
-POSTGRES_IMAGE=pgvector/pgvector:pg15
-```
+当前生产数据库使用阿里云 RDS PostgreSQL 15，并已启用 `vector` 插件。迁移会在可用时自动创建 `knowledge_chunks.embedding_vector vector(1024)` 和 HNSW cosine 索引；同时保留 `knowledge_chunks.embedding` JSON 字段作为应用层兼容路径。
 
 长期知识自我进化已和数据库索引打通：FAQ 草稿批准后会创建结构化 FAQ，并同步到 `knowledge_chunks`，如果已配置 embedding 会同步向量化。
 
