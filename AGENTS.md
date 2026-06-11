@@ -25,6 +25,7 @@
 ## DEBUGGING & DIAGNOSTICS (调试与排查指南)
 - **查看实时运行日志**：在排查消息收发、大模型调用、企微回调等问题时，**必须**在项目根目录运行 `docker logs -f --tail 100 ran-ai-backend` 查看最新日志。
 - **查询数据库真实记录**：若需核实最新入库的聊天数据与时间戳，请进入 `backend/` 目录下运行 `uv run python ../scratch/query_latest_messages.py`，它会直接打印最新的 10 条真实对话记录。其他 AI Agent 接手时，遇到消息收发问题应主动使用这些工具进行排查，而不需用户手动复制日志。
+- **企微接口调试指南**：关于如何与 QiWe API 网关交互（包括拉取群成员、获取用户昵称等）、排查 `QIWEI_GUID` 等凭证问题、以及连接远程数据库运行诊断脚本的详细指引，请参考文档 [docs/qiwe_debugging_guide.md](file:///home/chr/桌面/ran_ai/docs/qiwe_debugging_guide.md)。
 - **修改后端代码后必须重启**：修改 `backend/src/` 下的 Python 文件后，**必须**运行 `docker restart ran-ai-backend` 重启后端服务，否则改动不会生效。这是最容易忘记的步骤，每次修改后端代码后都要检查是否需要重启。
 
 ## DEPLOYMENT & PRODUCTION UPDATES (部署与发布规范)

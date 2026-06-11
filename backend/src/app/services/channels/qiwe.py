@@ -17,6 +17,7 @@ logger = logging.getLogger("uvicorn.error")
 
 class QiWeChannel:
     name = "qiwe"
+    _nickname_cache: dict[str, str] = {}
 
     def __init__(
         self,
@@ -92,6 +93,41 @@ class QiWeChannel:
         if caption and result.success:
             await self.send_text(chat_id, caption, reply_to=reply_to, reply_context=reply_context)
         return result
+
+    async def get_contact_nickname(self, user_id: str) -> str:
+        if not user_id:
+            return ""
+        user_id_str = str(user_id)
+        if user_id_str in self._nickname_cache:
+            return self._nickname_cache[user_id_str]
+
+        if not self._ready:
+            return ""
+
+        payload = {
+            "method": "/contact/batchGetUserinfo",
+            "params": {
+                "guid": self.guid,
+                "userIdList": [user_id_str],
+            },
+        }
+        try:
+            logger.info("QiWe fetching nickname for user_id=%s from API", user_id_str)
+            res = await self._post_json("/api/qw/doApi", payload)
+            if res.success and isinstance(res.raw_response, dict):
+                data = res.raw_response.get("data") or {}
+                contact_list = data.get("contactList") or []
+                for contact in contact_list:
+                    c_id = str(contact.get("userId") or "")
+                    c_name = str(contact.get("nickname") or "").strip()
+                    if c_id and c_name:
+                        self._nickname_cache[c_id] = c_name
+            nickname = self._nickname_cache.get(user_id_str, "")
+            logger.info("QiWe resolved nickname for user_id=%s: '%s'", user_id_str, nickname)
+            return nickname
+        except Exception as exc:
+            logger.error("QiWe failed to fetch nickname for user_id=%s: %s", user_id_str, exc)
+            return ""
 
     @property
     def _ready(self) -> bool:

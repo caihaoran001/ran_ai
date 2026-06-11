@@ -53,6 +53,14 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
                       ? "燃人.AI"
                       : "运营"
                     : msg.display_sender_name || userName || "用户"}
+                  {msg.direction === "inbound" &&
+                    msg.analysis_json &&
+                    typeof msg.analysis_json === "object" &&
+                    (msg.analysis_json as any)._qiwe_meta?.sender_id && (
+                      <span className="text-[10px] text-zinc-400 select-all ml-1">
+                        (ID: {(msg.analysis_json as any)._qiwe_meta.sender_id})
+                      </span>
+                    )}
                 </span>
                 <span>{formatTime(msg.display_at ?? msg.created_at)}</span>
                 {msg.purpose === "checkin" && (

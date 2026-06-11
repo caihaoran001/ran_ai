@@ -28,6 +28,8 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
         raise HTTPException(status_code=403, detail="invalid qiwe callback secret")
 
     payload = await request.json()
+    import json
+    logger.info("QiWe callback raw payload: %s", json.dumps(payload, ensure_ascii=False))
     if payload.get("code") != 0:
         return ""
 

@@ -140,6 +140,16 @@ class RanrenAIEngine:
         inbound_id: int | None = None
         recent_user_messages: list[str] = []
 
+        # Resolve nickname if it's empty, user_id is present, and channel supports get_contact_nickname
+        if message.channel == "qiwe" and not message.user_name and message.user_id:
+            if hasattr(self.channel, "get_contact_nickname"):
+                try:
+                    resolved = await self.channel.get_contact_nickname(message.user_id)
+                    if resolved:
+                        message.user_name = resolved
+                except Exception as e:
+                    logger.error("Error fetching contact nickname in engine: %s", e)
+
         is_staff = False
         sender_type = MessageSenderType.USER
 
@@ -147,36 +157,43 @@ class RanrenAIEngine:
             from app.services.content_policy import get_qiwei_staff_senders
             rules = await get_qiwei_staff_senders(session)
             
-            for rule in rules:
-                rule_type = rule.get("type")
-                pattern = rule.get("pattern", "").strip()
-                if not pattern:
-                    continue
-                pattern_lower = pattern.lower()
-                for val in (message.user_id, message.user_name):
-                    if not val:
-                        continue
-                    val_lower = val.strip().lower()
-                    if rule_type == "equals":
-                        if val_lower == pattern_lower:
-                            is_staff = True
-                            break
-                    elif rule_type == "contains":
-                        if pattern_lower in val_lower:
-                            is_staff = True
-                            break
-                if is_staff:
-                    break
-
+            is_staff = self._check_is_staff_by_rules(message.user_id, message.user_name, rules)
             sender_type = MessageSenderType.STAFF if is_staff else MessageSenderType.USER
 
             service_case = await self._latest_active_case(session, message.chat_id)
-            if should_send_questionnaire and not service_case and not is_staff:
-                service_case = await self._create_case_for_message(session, message)
+            if should_send_questionnaire and not service_case:
+                service_case = await self._create_case_for_message(session, message, is_staff=is_staff)
 
             if service_case:
                 service_case_id = service_case.id
                 service_case_for_command = service_case
+
+                # Self-healing and dynamic binding for real customer messages
+                if not is_staff and message.channel in ("wecom", "qiwe") and message.user_id:
+                    case_user = None
+                    if hasattr(session, "get"):
+                        case_user = await session.get(User, service_case.user_id)
+                    if case_user:
+                        needs_binding = False
+                        if not case_user.wecom_user_id:
+                            needs_binding = True
+                        else:
+                            is_bound_staff = self._check_is_staff_by_rules(case_user.wecom_user_id, None, rules)
+                            if is_bound_staff:
+                                needs_binding = True
+                        
+                        if needs_binding:
+                            logger.info(
+                                "Binding real customer WeCom User ID %s to case user_id=%s (previous was %s)",
+                                message.user_id,
+                                case_user.id,
+                                case_user.wecom_user_id,
+                            )
+                            case_user.wecom_user_id = message.user_id
+                            if message.user_name and case_user.name == "待填写问卷用户":
+                                case_user.name = message.user_name
+                            session.add(case_user)
+                            await session.flush()
 
             if service_case and not should_send_questionnaire and not is_staff:
                 recent_user_messages = await self._recent_user_messages(session, service_case.id)
@@ -221,7 +238,7 @@ class RanrenAIEngine:
                 (time.monotonic() - started_at) * 1000,
             )
 
-        if is_staff:
+        if is_staff and not should_send_questionnaire:
             logger.info(
                 "RanrenAI staff message ignored from triggering AI reply channel=%s chat_id=%s message_id=%s",
                 message.channel,
@@ -387,11 +404,11 @@ class RanrenAIEngine:
             await session.commit()
 
     async def _create_case_for_message(
-        self, session, message: ChannelMessage
+        self, session, message: ChannelMessage, is_staff: bool = False
     ) -> ServiceCase:
         user = User(
             name="待填写问卷用户",
-            wecom_user_id=message.user_id if message.channel in ("wecom", "qiwe") else None,
+            wecom_user_id=None if is_staff else (message.user_id if message.channel in ("wecom", "qiwe") else None),
             notes=f"由 {message.channel} 入营问卷指令自动创建",
         )
         session.add(user)
@@ -661,6 +678,29 @@ class RanrenAIEngine:
                 .limit(1)
             )
             return newer_id is not None
+
+    def _check_is_staff_by_rules(
+        self, user_id: str | None, user_name: str | None, rules: list[dict]
+    ) -> bool:
+        if not user_id and not user_name:
+            return False
+        for rule in rules:
+            rule_type = rule.get("type")
+            pattern = rule.get("pattern", "").strip()
+            if not pattern:
+                continue
+            pattern_lower = pattern.lower()
+            for val in (user_id, user_name):
+                if not val:
+                    continue
+                val_lower = val.strip().lower()
+                if rule_type == "equals":
+                    if val_lower == pattern_lower:
+                        return True
+                elif rule_type == "contains":
+                    if pattern_lower in val_lower:
+                        return True
+        return False
 
     async def _latest_active_case(self, session, group_id: str) -> ServiceCase | None:
         return await session.scalar(
