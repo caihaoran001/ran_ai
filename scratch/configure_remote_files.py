@@ -134,7 +134,6 @@ QIWEI_ENABLED=true
 QIWEI_TOKEN=de3851af-60ae-455b-9eb5-38fb7e71d8c8
 QIWEI_GUID=b0b20ec6-7b6b-409b-9733-a5e0f9e8a6be
 QIWEI_CALLBACK_SECRET=de3851af-60ae-455b-9eb5-38fb7e71d8c8
-QIWEI_STAFF_SENDERS=蔡浩然,助教,班主任
 """
 
     with sftp.file('/root/ran_ai/.env', 'w') as f:
