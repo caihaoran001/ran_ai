@@ -453,255 +453,11 @@
       ]
     },
     {
-      "id": "SEGMENTATION1774106479180mn0h6wcs",
-      "key": "SEGMENTATION1774106479180mn0h6wcs",
-      "type": "SEGMENTATION",
-      "title": "模块 6｜能量、压力与白天状态",
-      "label": "模块 6｜能量、压力与白天状态",
-      "subtitle": "本段用于判断您是否存在能量不足、波动、硬撑或透支的问题。",
-      "required": false,
-      "options": []
-    },
-    {
-      "id": "RADIO1774106601945mn0h9j2z",
-      "key": "RADIO1774106601945mn0h9j2z",
-      "type": "RADIO",
-      "title": "请给自己最近 2 周的整体精力状态打分",
-      "label": "请给自己最近 2 周的整体精力状态打分",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "状态很差",
-        "状态较差，提不起劲儿",
-        "状态一般，勉强够用",
-        "状态不错，还希望提高",
-        "状态满满"
-      ]
-    },
-    {
-      "id": "CHECKBOX1774106739991mn0hchln",
-      "key": "CHECKBOX1774106739991mn0hchln",
-      "type": "CHECKBOX",
-      "title": "您白天最常见的状态是（如有）？",
-      "label": "您白天最常见的状态是（如有）？",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "早上起不来，很难进入工作/学习状态",
-        "上午还行，下午精力明显下滑",
-        "精力忽高忽低，需要靠咖啡或意志力硬撑",
-        "容易脑雾、反应慢",
-        "一忙就上头，一停下来就跨",
-        "白天总觉得累",
-        "还算稳定"
-      ]
-    },
-    {
-      "id": "RADIO1774106869788mn0hf9r2",
-      "key": "RADIO1774106869788mn0hf9r2",
-      "type": "RADIO",
-      "title": "您最近的压力水平更接近几分？",
-      "label": "您最近的压力水平更接近几分？",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "基本没压力",
-        "可以轻松应对",
-        "压力有点明显了，但还在应对能力范围内",
-        "压力大，觉得很辛苦",
-        "压力爆棚，感觉随时会崩"
-      ]
-    },
-    {
-      "id": "CHECKBOX1774107036716mn0hiujy",
-      "key": "CHECKBOX1774107036716mn0hiujy",
-      "type": "CHECKBOX",
-      "title": "压力大时您更容易出现什么反应？",
-      "label": "压力大时您更容易出现什么反应？",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "焦虑、脑子停不下来、睡不好",
-        "急躁、没耐心、容易发脾气",
-        "想吃东西缓冲",
-        "身体很累但停不下来",
-        "情绪低落",
-        "大脑麻木、做事拖延",
-        "没什么太大变化，能扛过"
-      ]
-    },
-    {
-      "id": "SEGMENTATION1774107178536mn0hlvzc",
-      "key": "SEGMENTATION1774107178536mn0hlvzc",
-      "type": "SEGMENTATION",
-      "title": "模块 7｜睡眠与恢复",
-      "label": "模块 7｜睡眠与恢复",
-      "subtitle": "本段用于判断您是否存在入睡困难、浅睡易醒、节律紊乱或睡眠恢复能力差的问题。",
-      "required": false,
-      "options": []
-    },
-    {
-      "id": "RADIO1774107228737mn0hmypv",
-      "key": "RADIO1774107228737mn0hmypv",
-      "type": "RADIO",
-      "title": "您对最近睡眠质量的主观评价是？",
-      "label": "您对最近睡眠质量的主观评价是？",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "很好",
-        "还可以",
-        "一般",
-        "不太好",
-        "很差"
-      ]
-    },
-    {
-      "id": "CHECKBOX1774107333066mn0hp77x",
-      "key": "CHECKBOX1774107333066mn0hp77x",
-      "type": "CHECKBOX",
-      "title": "您更常见的睡眠问题是？",
-      "label": "您更常见的睡眠问题是？",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "很难入睡",
-        "睡着后容易醒",
-        "不管几点睡都醒得早",
-        "做梦多",
-        "睡很久也不解乏",
-        "起床困难",
-        "白天容易犯困",
-        "睡眠时间很不固定",
-        "暂无明显问题"
-      ]
-    },
-    {
-      "id": "RADIO1774107460930mn0hrxvo",
-      "key": "RADIO1774107460930mn0hrxvo",
-      "type": "RADIO",
-      "title": "您夜间入睡之后是否会醒？",
-      "label": "您夜间入睡之后是否会醒？",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "基本不会夜醒",
-        "偶尔会夜醒",
-        "经常会夜醒（1次）",
-        "几乎每天都会夜醒（2次甚至更多次）"
-      ]
-    },
-    {
-      "id": "RADIO1774107574262mn0hudbt",
-      "key": "RADIO1774107574262mn0hudbt",
-      "type": "RADIO",
-      "title": "您睡完醒来后的第一感觉更接近哪种？",
-      "label": "您睡完醒来后的第一感觉更接近哪种？",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "可以很快清醒",
-        "还行，但要缓一会儿才能动起来",
-        "身体和脑袋感觉很沉、很难启动",
-        "明明睡了却还是累"
-      ]
-    },
-    {
-      "id": "SEGMENTATION1774107682414mn0hwory",
-      "key": "SEGMENTATION1774107682414mn0hwory",
-      "type": "SEGMENTATION",
-      "title": "模块 8｜运动与执行能力",
-      "label": "模块 8｜运动与执行能力",
-      "subtitle": "这一段帮助我们更好理解您的身体代谢驱动状态。",
-      "required": false,
-      "options": []
-    },
-    {
-      "id": "RADIO1774107759627mn0hycct",
-      "key": "RADIO1774107759627mn0hycct",
-      "type": "RADIO",
-      "title": "您每周的运动频次是？",
-      "label": "您每周的运动频次是？",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "0次",
-        "1–2次",
-        "3–4次",
-        "5次及以上"
-      ]
-    },
-    {
-      "id": "CHECKBOX1774107823025mn0hzp9v",
-      "key": "CHECKBOX1774107823025mn0hzp9v",
-      "type": "CHECKBOX",
-      "title": "您通常的运动类型是？",
-      "label": "您通常的运动类型是？",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "散步/快走",
-        "跑步/有氧",
-        "力量训练",
-        "瑜伽或拉伸",
-        "游泳",
-        "球类",
-        "无固定运动",
-        "其他"
-      ]
-    },
-    {
-      "id": "CHECKBOX1774107925408mn0i1w9u",
-      "key": "CHECKBOX1774107925408mn0i1w9u",
-      "type": "CHECKBOX",
-      "title": "您更能接受哪种方式开始改变？",
-      "label": "您更能接受哪种方式开始改变？",
-      "subtitle": "",
-      "required": true,
-      "options": [
-        "从饮食先改",
-        "从睡眠先改",
-        "从能量和白天状态先改",
-        "从轻运动开始",
-        "需要有人带着一步步来"
-      ]
-    },
-    {
-      "id": "SEGMENTATION1774108003942mn0i3kva",
-      "key": "SEGMENTATION1774108003942mn0i3kva",
-      "type": "SEGMENTATION",
-      "title": "模块 9｜健康情况与补充说明",
-      "label": "模块 9｜健康情况与补充说明",
-      "subtitle": "",
-      "required": false,
-      "options": []
-    },
-    {
-      "id": "SIMPLE1774108071693mn0i515a",
-      "key": "SIMPLE1774108071693mn0i515a",
-      "type": "SIMPLE",
-      "title": "过敏 / 特殊饮食限制 / 伤痛限制/正在用药 / 既往病史补充（强烈建议详细填写，没有则填“无”）",
-      "label": "过敏 / 特殊饮食限制 / 伤痛限制/正在用药 / 既往病史补充（强烈建议详细填写，没有则填“无”）",
-      "subtitle": "",
-      "required": true,
-      "options": []
-    },
-    {
-      "id": "FILE1774108153106mn0i6ryq",
-      "key": "FILE1774108153106mn0i6ryq",
-      "type": "FILE",
-      "title": "是否愿意上传近期体检报告 / 指标图片（如有）",
-      "label": "是否愿意上传近期体检报告 / 指标图片（如有）",
-      "subtitle": "",
-      "required": false,
-      "options": []
-    },
-    {
       "id": "SEGMENTATION1774171370170mn1jtqka",
       "key": "SEGMENTATION1774171370170mn1jtqka",
       "type": "SEGMENTATION",
-      "title": "模块 5-2 | 饮食结构现状（进阶筛选）",
-      "label": "模块 5-2 | 饮食结构现状（进阶筛选）",
+      "title": "模块 6｜饮食结构现状（进阶筛选）",
+      "label": "模块 6｜饮食结构现状（进阶筛选）",
       "subtitle": "本段用于判断您当前长期饮食模式处在什么结构区，以帮助您逐步调优进阶至“瘦素优先”的饮食方式。",
       "required": false,
       "options": []
@@ -778,8 +534,8 @@
       "id": "RADIO1774172399733mn1kfszi",
       "key": "RADIO1774172399733mn1kfszi",
       "type": "RADIO",
-      "title": "你吃深加工食品的频率是？",
-      "label": "你吃深加工食品的频率是？",
+      "title": "您吃深加工食品的频率是？",
+      "label": "您吃深加工食品的频率是？",
       "subtitle": "",
       "required": true,
       "options": [
@@ -795,8 +551,8 @@
       "id": "RADIO1774172399734mn1kfszr",
       "key": "RADIO1774172399734mn1kfszr",
       "type": "RADIO",
-      "title": "你的加餐 / 嘴馋通常吃什么？",
-      "label": "你的加餐 / 嘴馋通常吃什么？",
+      "title": "您的加餐 / 嘴馋通常吃什么？",
+      "label": "您的加餐 / 嘴馋通常吃什么？",
       "subtitle": "",
       "required": true,
       "options": [
@@ -827,12 +583,256 @@
       ]
     },
     {
+      "id": "SEGMENTATION1774106479180mn0h6wcs",
+      "key": "SEGMENTATION1774106479180mn0h6wcs",
+      "type": "SEGMENTATION",
+      "title": "模块 7｜能量、压力与白天状态",
+      "label": "模块 7｜能量、压力与白天状态",
+      "subtitle": "本段用于判断您是否存在能量不足、波动、硬撑或透支的问题。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774106601945mn0h9j2z",
+      "key": "RADIO1774106601945mn0h9j2z",
+      "type": "RADIO",
+      "title": "请给自己最近 2 周的整体精力状态打分",
+      "label": "请给自己最近 2 周的整体精力状态打分",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "状态很差",
+        "状态较差，提不起劲儿",
+        "状态一般，勉强够用",
+        "状态不错，还希望提高",
+        "状态满满"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774106739991mn0hchln",
+      "key": "CHECKBOX1774106739991mn0hchln",
+      "type": "CHECKBOX",
+      "title": "您白天最常见的状态是（如有）？",
+      "label": "您白天最常见的状态是（如有）？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "早上起不来，很难进入工作/学习状态",
+        "上午还行，下午精力明显下滑",
+        "精力忽高忽低，需要靠咖啡或意志力硬撑",
+        "容易脑雾、反应慢",
+        "一忙就上头，一停下来就垮",
+        "白天总觉得累",
+        "还算稳定"
+      ]
+    },
+    {
+      "id": "RADIO1774106869788mn0hf9r2",
+      "key": "RADIO1774106869788mn0hf9r2",
+      "type": "RADIO",
+      "title": "您最近的压力水平更接近几分？",
+      "label": "您最近的压力水平更接近几分？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "基本没压力",
+        "可以轻松应对",
+        "压力有点明显了，但还在应对能力范围内",
+        "压力大，觉得很辛苦",
+        "压力爆棚，感觉随时会崩"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107036716mn0hiujy",
+      "key": "CHECKBOX1774107036716mn0hiujy",
+      "type": "CHECKBOX",
+      "title": "压力大时您更容易出现什么反应？",
+      "label": "压力大时您更容易出现什么反应？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "焦虑、脑子停不下来、睡不好",
+        "急躁、没耐心、容易发脾气",
+        "想吃东西缓冲",
+        "身体很累但停不下来",
+        "情绪低落",
+        "大脑麻木、做事拖延",
+        "没什么太大变化，能扛过"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774107178536mn0hlvzc",
+      "key": "SEGMENTATION1774107178536mn0hlvzc",
+      "type": "SEGMENTATION",
+      "title": "模块 8｜睡眠与恢复",
+      "label": "模块 8｜睡眠与恢复",
+      "subtitle": "本段用于判断您是否存在入睡困难、浅睡易醒、节律紊乱或睡眠恢复能力差的问题。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774107228737mn0hmypv",
+      "key": "RADIO1774107228737mn0hmypv",
+      "type": "RADIO",
+      "title": "您对最近睡眠质量的主观评价是？",
+      "label": "您对最近睡眠质量的主观评价是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "很好",
+        "还可以",
+        "一般",
+        "不太好",
+        "很差"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107333066mn0hp77x",
+      "key": "CHECKBOX1774107333066mn0hp77x",
+      "type": "CHECKBOX",
+      "title": "您更常见的睡眠问题是？",
+      "label": "您更常见的睡眠问题是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "很难入睡",
+        "睡着后容易醒",
+        "不管几点睡都醒得早",
+        "做梦多",
+        "睡很久也不解乏",
+        "起床困难",
+        "白天容易犯困",
+        "睡眠时间很不固定",
+        "暂无明显问题"
+      ]
+    },
+    {
+      "id": "RADIO1774107460930mn0hrxvo",
+      "key": "RADIO1774107460930mn0hrxvo",
+      "type": "RADIO",
+      "title": "您夜间入睡之后是否会醒？",
+      "label": "您夜间入睡之后是否会醒？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "基本不会夜醒",
+        "偶尔会夜醒",
+        "经常会夜醒（1次）",
+        "几乎每天都会夜醒（2次甚至更多次）"
+      ]
+    },
+    {
+      "id": "RADIO1774107574262mn0hudbt",
+      "key": "RADIO1774107574262mn0hudbt",
+      "type": "RADIO",
+      "title": "您睡完醒来后的第一感觉更接近哪种？",
+      "label": "您睡完醒来后的第一感觉更接近哪种？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "可以很快清醒",
+        "还行，但要缓一会儿才能动起来",
+        "身体和脑袋感觉很沉、很难启动",
+        "明明睡了却还是累"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774107682414mn0hwory",
+      "key": "SEGMENTATION1774107682414mn0hwory",
+      "type": "SEGMENTATION",
+      "title": "模块 9｜运动与执行能力",
+      "label": "模块 9｜运动与执行能力",
+      "subtitle": "这一段帮助我们更好理解您的身体代谢驱动状态。",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774107759627mn0hycct",
+      "key": "RADIO1774107759627mn0hycct",
+      "type": "RADIO",
+      "title": "您每周的运动频次是？",
+      "label": "您每周的运动频次是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "0次",
+        "1–2次",
+        "3–4次",
+        "5次及以上"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107823025mn0hzp9v",
+      "key": "CHECKBOX1774107823025mn0hzp9v",
+      "type": "CHECKBOX",
+      "title": "您通常的运动类型是？",
+      "label": "您通常的运动类型是？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "散步/快走",
+        "跑步/有氧",
+        "力量训练",
+        "瑜伽或拉伸",
+        "游泳",
+        "球类",
+        "无固定运动",
+        "其他"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107925408mn0i1w9u",
+      "key": "CHECKBOX1774107925408mn0i1w9u",
+      "type": "CHECKBOX",
+      "title": "您更能接受哪种方式开始改变？",
+      "label": "您更能接受哪种方式开始改变？",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "从饮食先改",
+        "从睡眠先改",
+        "从能量和白天状态先改",
+        "从轻运动开始",
+        "需要有人带着一步步来"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774108003942mn0i3kva",
+      "key": "SEGMENTATION1774108003942mn0i3kva",
+      "type": "SEGMENTATION",
+      "title": "模块 10｜健康情况与补充说明",
+      "label": "模块 10｜健康情况与补充说明",
+      "subtitle": "",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774108071693mn0i515a",
+      "key": "SIMPLE1774108071693mn0i515a",
+      "type": "SIMPLE",
+      "title": "过敏 / 特殊饮食限制 / 伤痛限制/正在用药 / 既往病史补充（强烈建议详细填写，没有则填“无”）",
+      "label": "过敏 / 特殊饮食限制 / 伤痛限制/正在用药 / 既往病史补充（强烈建议详细填写，没有则填“无”）",
+      "subtitle": "",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "FILE1774108153106mn0i6ryq",
+      "key": "FILE1774108153106mn0i6ryq",
+      "type": "FILE",
+      "title": "是否愿意上传近期体检报告 / 指标图片（如有）",
+      "label": "是否愿意上传近期体检报告 / 指标图片（如有）",
+      "subtitle": "",
+      "required": false,
+      "options": []
+    },
+    {
       "id": "SEGMENTATION1774172753810mn1kne6q",
       "key": "SEGMENTATION1774172753810mn1kne6q",
       "type": "SEGMENTATION",
-      "title": "模块 10 | 如果您愿意，我们可以快速为您做个长期体质和当前失衡状态评估",
-      "label": "模块 10 | 如果您愿意，我们可以快速为您做个长期体质和当前失衡状态评估",
-      "subtitle": "非必填项，但如果开始填写，需要完整填写12道单选题。",
+      "title": "模块 11｜长期体质与失衡状态评估",
+      "label": "模块 11｜长期体质与失衡状态评估",
+      "subtitle": "如果您愿意，我们可以快速为您做个长期体质与当前失衡状态评估。非必填；如开始填写，建议完整填完 12 道单选题。",
       "required": false,
       "options": []
     },
@@ -1025,20 +1025,6 @@
       "subtitle": "我们尤其希望了解您在哪里看到了什么内容（因此购买了产品并且进群接受我们的服务）、我们的内容对您的以往在执行的健康计划有何种影响？您对我们的视频/直播/产品讲解&呈现有无意见和建议？",
       "required": false,
       "options": []
-    },
-    {
-      "id": "RADIO1774108047588mn0i4ijq",
-      "key": "RADIO1774108047588mn0i4ijq",
-      "type": "RADIO",
-      "title": "您目前是否有正在关注或需要提醒我们的身体健康情况？",
-      "label": "您目前是否有正在关注或需要提醒我们的身体健康情况？",
-      "subtitle": "您可以特别提醒我们您当前存在的健康问题。",
-      "required": true,
-      "options": [
-        "没有",
-        "其他",
-        "有，后面补充说明"
-      ]
     }
   ]
 }
