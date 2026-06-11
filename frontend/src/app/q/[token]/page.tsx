@@ -39,19 +39,28 @@ export default async function QuestionnairePage({
   const isReadonly = Boolean(questionnaire.latest_submission && !questionnaire.allow_repeat);
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">{questionnaire.title ?? "燃AI服务问卷"}</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          {questionnaire.user_name ?? "用户"}，
-          {isReadonly ? "以下是已提交的问卷内容。" : (questionnaire.description ?? "请完成以下信息。")}
-        </p>
+    <div className="min-h-screen bg-slate-50">
+      <div className="mx-auto max-w-2xl px-4 py-6 sm:py-8">
+        <header className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="bg-gradient-to-r from-cyan-700 to-cyan-600 px-5 py-5 text-white">
+            <div className="text-xs font-semibold uppercase tracking-wider text-cyan-100">
+              燃AI · 高燃人生
+            </div>
+            <h1 className="mt-1.5 text-xl font-bold leading-snug sm:text-2xl">
+              {questionnaire.title ?? "燃AI服务问卷"}
+            </h1>
+          </div>
+          <p className="px-5 py-3.5 text-sm leading-6 text-slate-500">
+            {questionnaire.user_name ? `${questionnaire.user_name}，` : ""}
+            {isReadonly ? "以下是您已提交的问卷内容。" : (questionnaire.description ?? "请完成以下信息。")}
+          </p>
+        </header>
+        {isReadonly ? (
+          <QuestionnaireReadonly questionnaire={questionnaire} />
+        ) : (
+          <QuestionnaireForm questionnaire={questionnaire} />
+        )}
       </div>
-      {isReadonly ? (
-        <QuestionnaireReadonly questionnaire={questionnaire} />
-      ) : (
-        <QuestionnaireForm questionnaire={questionnaire} />
-      )}
     </div>
   );
 }
@@ -60,15 +69,15 @@ function QuestionnaireReadonly({ questionnaire }: { questionnaire: Questionnaire
   const answers = questionnaire.latest_submission?.answers_json ?? {};
   const answeredFields = answerItems(questionnaire.fields, answers);
   return (
-    <section className="space-y-4 rounded-lg border border-zinc-200 bg-white p-4">
-      <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+    <section className="space-y-3">
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
         已于 {formatDateTime(questionnaire.latest_submission?.created_at)} 提交。该链接现在仅用于查看，不支持修改或重复提交。
       </div>
       {answeredFields.map((field) => (
-        <div key={field.key} className="rounded-md border border-zinc-200 p-3">
-          <div className="text-sm font-medium">{field.label}</div>
-          {field.subtitle && <div className="mt-1 text-xs text-zinc-500">{field.subtitle}</div>}
-          <div className="mt-2 whitespace-pre-wrap text-sm leading-6">
+        <div key={field.key} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-sm font-semibold text-slate-900">{field.label}</div>
+          {field.subtitle && <div className="mt-1 text-xs text-slate-400">{field.subtitle}</div>}
+          <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
             {field.value}
           </div>
         </div>
