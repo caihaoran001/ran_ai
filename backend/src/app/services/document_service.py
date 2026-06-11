@@ -269,6 +269,43 @@ async def _refresh_profile_from_progress(
         await session.rollback()
 
 
+async def refresh_profile_for_case(
+    session: AsyncSession,
+    service_case: ServiceCase,
+    *,
+    stage: str,
+) -> None:
+    """查取最新画像/打卡/聊天并刷新主画像，供阶段报告与每日定时刷新复用。"""
+    latest_profile = await session.scalar(
+        select(UserProfile)
+        .where(UserProfile.service_case_id == service_case.id)
+        .order_by(UserProfile.created_at.desc())
+        .limit(1)
+    )
+    checkins = list(
+        await session.scalars(
+            select(Checkin)
+            .where(Checkin.service_case_id == service_case.id)
+            .order_by(Checkin.checkin_date.asc(), Checkin.created_at.asc())
+        )
+    )
+    messages = list(
+        await session.scalars(
+            select(Message)
+            .where(Message.service_case_id == service_case.id)
+            .order_by(Message.created_at.asc())
+        )
+    )
+    await _refresh_profile_from_progress(
+        session,
+        service_case_id=service_case.id,
+        base_profile_json=latest_profile.profile_json if latest_profile else None,
+        checkins=checkins,
+        messages=messages,
+        stage=stage,
+    )
+
+
 async def generate_stage_report(
     session: AsyncSession,
     service_case: ServiceCase,

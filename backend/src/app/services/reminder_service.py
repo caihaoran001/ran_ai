@@ -18,14 +18,16 @@ from app.models.message import (
     MessageSenderType,
     MessageStatus,
 )
+from app.models.checkin import Checkin
 from app.models.outcome import OutcomeSnapshot, OutcomeStageState
 from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentType, UserDocument
+from app.models.user_profile import UserProfile
 from app.services.channels import send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
-from app.services.document_service import generate_stage_report
+from app.services.document_service import generate_stage_report, refresh_profile_for_case
 from app.services.knowledge_evolution import KnowledgeEvolutionService
 from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
 from app.services.outcome_engine import generate_outcome_snapshot
@@ -93,6 +95,7 @@ class ReminderService:
                         if self.settings.outcome_snapshots_enabled:
                             await self.check_outcome_snapshots_once()
                         await self.check_knowledge_evolution_once()
+                        await self.check_profile_refresh_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -298,6 +301,76 @@ class ReminderService:
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error
+            await session.commit()
+
+    async def check_profile_refresh_once(self) -> None:
+        """每天刷新『自上次画像更新后有新聊天/打卡』的在服务用户主画像（无新活动跳过）。"""
+        if not self.settings.ai_api_key:
+            return
+        timezone = ZoneInfo(self.settings.reminder_timezone)
+        now = datetime.now(timezone)
+        if now.time() < _parse_time(self.settings.reminder_at):
+            return
+        today = now.date()
+        async with SessionLocal() as session:
+            service_cases = list(
+                await session.scalars(
+                    select_active_service_cases(
+                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                        ServiceCase.started_at.is_not(None),
+                    )
+                )
+            )
+            for service_case in service_cases:
+                existing = await session.scalar(
+                    select(ReminderEvent).where(
+                        ReminderEvent.service_case_id == service_case.id,
+                        ReminderEvent.rule_id == "profile_refresh",
+                        ReminderEvent.event_date == today,
+                        ReminderEvent.event_type == ReminderEventType.REMINDED,
+                    )
+                )
+                if existing:
+                    continue
+                latest_profile = await session.scalar(
+                    select(UserProfile)
+                    .where(UserProfile.service_case_id == service_case.id)
+                    .order_by(UserProfile.created_at.desc())
+                    .limit(1)
+                )
+                if not latest_profile:
+                    continue
+                since = latest_profile.created_at
+                new_message = await session.scalar(
+                    select(Message.id)
+                    .where(
+                        Message.service_case_id == service_case.id,
+                        Message.direction == MessageDirection.INBOUND,
+                        Message.created_at > since,
+                    )
+                    .limit(1)
+                )
+                new_checkin = await session.scalar(
+                    select(Checkin.id)
+                    .where(
+                        Checkin.service_case_id == service_case.id,
+                        Checkin.created_at > since,
+                    )
+                    .limit(1)
+                )
+                if not new_message and not new_checkin:
+                    continue
+                reserved = await _reserve_reminder_event(
+                    session,
+                    service_case.id,
+                    rule_id="profile_refresh",
+                    event_date=today,
+                    event_type=ReminderEventType.REMINDED,
+                )
+                if not reserved:
+                    continue
+                day = _service_day(service_case.started_at, now, timezone)
+                await refresh_profile_for_case(session, service_case, stage=f"day{day}")
             await session.commit()
 
     async def check_questionnaire_sends_once(self) -> None:

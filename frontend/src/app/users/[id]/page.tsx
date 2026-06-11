@@ -20,7 +20,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const overview = recordValue(profile?.profile_json?.overview);
   const refreshedFrom = recordValue(profile?.profile_json?.refreshed_from);
   const profileSource = text(refreshedFrom.stage)
-    ? `来源：阶段刷新（${stageLabel(text(refreshedFrom.stage))}）`
+    ? `来源：进展刷新（${stageLabel(text(refreshedFrom.stage))}）`
     : "来源：问卷自动生成";
 
   return (
@@ -416,7 +416,9 @@ function stageLabel(stage: string) {
   const map: Record<string, string> = {
     day3: "第3天", day7: "第7天", day14: "第14天", day21: "第21天", day28: "第28天",
   };
-  return map[stage] ?? stage;
+  if (map[stage]) return map[stage];
+  const m = stage.match(/^day(\d+)$/);
+  return m ? `第${m[1]}天` : stage;
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
