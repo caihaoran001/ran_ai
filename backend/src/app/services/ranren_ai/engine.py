@@ -152,15 +152,17 @@ class RanrenAIEngine:
                 pattern = rule.get("pattern", "").strip()
                 if not pattern:
                     continue
+                pattern_lower = pattern.lower()
                 for val in (message.user_id, message.user_name):
                     if not val:
                         continue
+                    val_lower = val.strip().lower()
                     if rule_type == "equals":
-                        if val == pattern:
+                        if val_lower == pattern_lower:
                             is_staff = True
                             break
                     elif rule_type == "contains":
-                        if pattern in val:
+                        if pattern_lower in val_lower:
                             is_staff = True
                             break
                 if is_staff:

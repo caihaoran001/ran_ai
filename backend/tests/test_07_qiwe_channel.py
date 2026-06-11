@@ -528,7 +528,7 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
         text="我是上海 Lucy",
         message_id="m1",
         user_id="user-1",
-        user_name="上海 Lucy",
+        user_name="  上海 lucy  ",
         timestamp=datetime.now(timezone.utc),
     )
     await engine.handle_message(message1)
