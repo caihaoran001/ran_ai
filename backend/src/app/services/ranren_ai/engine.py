@@ -140,23 +140,31 @@ class RanrenAIEngine:
         inbound_id: int | None = None
         recent_user_messages: list[str] = []
 
-        # Resolve nickname if it's empty, user_id is present, and channel supports get_contact_nickname
-        if message.channel == "qiwe" and not message.user_name and message.user_id:
-            if hasattr(self.channel, "get_contact_nickname"):
-                try:
-                    resolved = await self.channel.get_contact_nickname(message.user_id)
-                    if resolved:
-                        message.user_name = resolved
-                except Exception as e:
-                    logger.error("Error fetching contact nickname in engine: %s", e)
-
         is_staff = False
         sender_type = MessageSenderType.USER
 
         async with SessionLocal() as session:
-            from app.services.content_policy import get_qiwei_staff_senders
+            from app.services.content_policy import (
+                get_qiwei_staff_senders,
+                get_qiwe_nickname,
+                remember_qiwe_nickname,
+            )
+            # 解析发送者昵称：持久缓存优先；缓存未命中才调用一次 API 并落库，避免重复调用
+            if message.channel == "qiwe" and not message.user_name and message.user_id:
+                cached = await get_qiwe_nickname(session, message.user_id)
+                if cached:
+                    message.user_name = cached
+                elif hasattr(self.channel, "get_contact_nickname"):
+                    try:
+                        resolved = await self.channel.get_contact_nickname(message.user_id)
+                        if resolved:
+                            message.user_name = resolved
+                            await remember_qiwe_nickname(session, message.user_id, resolved)
+                    except Exception as e:
+                        logger.error("Error fetching contact nickname in engine: %s", e)
+
             rules = await get_qiwei_staff_senders(session)
-            
+
             is_staff = self._check_is_staff_by_rules(message.user_id, message.user_name, rules)
             sender_type = MessageSenderType.STAFF if is_staff else MessageSenderType.USER
 

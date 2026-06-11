@@ -105,3 +105,32 @@ async def set_qiwei_staff_senders(rules: list[dict[str, str]], session: AsyncSes
             session.add(AppSetting(key=STAFF_SENDERS_SETTING_KEY, value_json={"rules": rules}))
         await session.commit()
     return rules
+
+
+QIWE_NICKNAME_SETTING_KEY = "qiwe_nickname_map"
+
+
+async def get_qiwe_nickname(session: AsyncSession | None, user_id: str | None) -> str:
+    """持久昵称缓存：返回 user_id 已知的微信昵称，没有返回空。"""
+    if not user_id or session is None or not hasattr(session, "get"):
+        return ""
+    setting = await session.get(AppSetting, QIWE_NICKNAME_SETTING_KEY)
+    if setting and isinstance(setting.value_json, dict):
+        return str(setting.value_json.get(str(user_id)) or "")
+    return ""
+
+
+async def remember_qiwe_nickname(session: AsyncSession | None, user_id: str | None, nickname: str) -> None:
+    """把解析到的昵称写入持久缓存，避免重启后重复调用 API。"""
+    if not user_id or not nickname or session is None or not hasattr(session, "get"):
+        return
+    setting = await session.get(AppSetting, QIWE_NICKNAME_SETTING_KEY)
+    if setting and isinstance(setting.value_json, dict):
+        if setting.value_json.get(str(user_id)) == nickname:
+            return
+        data = dict(setting.value_json)
+        data[str(user_id)] = nickname
+        setting.value_json = data
+    else:
+        session.add(AppSetting(key=QIWE_NICKNAME_SETTING_KEY, value_json={str(user_id): nickname}))
+    await session.commit()
