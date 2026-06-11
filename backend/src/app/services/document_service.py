@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import shutil
 import tempfile
@@ -21,6 +22,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
+from app.models.user_state_profile import UserStateProfile
 from app.services.ai_service import AIService, parse_json_object
 from app.services.docx_service import (
     render_template_markdown,
@@ -45,6 +47,8 @@ from app.services.service_case_queries import get_active_service_case
 from app.services.user_state_profile import initialize_user_state_from_intake
 from app.services.channels import send_channel_document, send_channel_text
 from app.services.risk_service import is_high_risk
+
+logger = logging.getLogger(__name__)
 
 
 DOCUMENT_DEFINITIONS = {
@@ -147,6 +151,124 @@ async def generate_profile_and_documents(
     return profile, documents
 
 
+_PROFILE_REFRESH_SYSTEM_PROMPT = (
+    "你是燃AI训练营的营养师班主任。下面给你一位用户的【入营建档画像-可更新字段】，以及他在服务过程中的"
+    "【动态状态记忆】【近期打卡】【近期群聊原话】。请基于真实进展，更新这位用户的画像，"
+    "让它反映用户当前的真实状态，而不是入营那天的快照。\n\n"
+    "硬规则：\n"
+    "1. 只依据给定材料，绝不编造数据、症状或进展。没有新信息的字段沿用建档原值。\n"
+    "2. 你只能更新这些会随服务进展变化的字段：summary、state、main_problem、day28_goal、risks、need_analysis、notes。\n"
+    "3. summary 控制在 200 字内、自然语言、写给运营看：点出『相比入营有什么变化、当前卡在哪、下一步重点』。\n"
+    "4. need_analysis 为对象，含 surface_needs / deep_needs / priority_need / system_outputs / next_actions。\n"
+    "5. 输出严格 JSON，只包含你更新的字段，键名与输入字段一致。\n"
+    "如果材料显示用户基本无进展或无新信息，summary 写明『暂无明显变化』，其余字段沿用原值。"
+)
+
+
+def _state_evidence_summary(state_json: object) -> str:
+    if not isinstance(state_json, dict):
+        return "暂无动态状态"
+    domains = state_json.get("domains")
+    if not isinstance(domains, dict):
+        return "暂无动态状态"
+    lines: list[str] = []
+    for key, domain in domains.items():
+        if not isinstance(domain, dict):
+            continue
+        current = domain.get("current")
+        if not isinstance(current, dict):
+            continue
+        evidence = current.get("evidence")
+        if evidence:
+            lines.append(f"{domain.get('label') or key}：{evidence}")
+    return "\n".join(lines) if lines else "暂无动态状态"
+
+
+async def _refresh_profile_from_progress(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    base_profile_json: dict | None,
+    checkins: list[Checkin],
+    messages: list[Message],
+    stage: str,
+) -> None:
+    """阶段节点用动态记忆+近期聊天/打卡刷新主画像，写入一版新的 UserProfile。
+
+    复用传入 session；失败仅记日志并回滚，绝不影响阶段报告主流程（文档已先行 commit）。
+    只更新动态字段，保留 overview(建档基础信息) 与 personalized_checkin_fields(打卡表单依赖)。
+    """
+    try:
+        if not isinstance(base_profile_json, dict) or not base_profile_json:
+            return
+        base = base_profile_json
+        checkin_lines = [
+            f"- {c.checkin_date.isoformat()}: {(c.content or '').strip()[:80]}"
+            for c in checkins[-10:]
+        ]
+        checkin_text = "\n".join(checkin_lines) or "暂无打卡"
+        inbound = [
+            (m.content or "").strip()
+            for m in messages
+            if m.direction == MessageDirection.INBOUND and (m.content or "").strip()
+        ][-15:]
+        inbound_text = "\n".join(f"- {t[:120]}" for t in inbound) or "暂无群聊"
+        editable = {
+            key: base.get(key)
+            for key in ("summary", "state", "main_problem", "day28_goal", "risks", "need_analysis", "notes")
+        }
+        state_profile = await session.scalar(
+            select(UserStateProfile)
+            .where(UserStateProfile.service_case_id == service_case_id)
+            .order_by(UserStateProfile.updated_at.desc())
+            .limit(1)
+        )
+        state_summary = _state_evidence_summary(state_profile.state_json if state_profile else None)
+        ai = AIService()
+        text = await ai.generate_text(
+            scenario="profile_refresh",
+            temperature=0.3,
+            service_case_id=service_case_id,
+            system_prompt=_PROFILE_REFRESH_SYSTEM_PROMPT,
+            user_prompt=(
+                f"阶段：{stage}\n\n"
+                f"【入营建档画像-可更新字段】\n{json.dumps(editable, ensure_ascii=False, indent=2)}\n\n"
+                f"【动态状态记忆】\n{state_summary}\n\n"
+                f"【近期打卡】\n{checkin_text}\n\n"
+                f"【近期群聊原话】\n{inbound_text}"
+            ),
+        )
+        updates = parse_json_object(text)
+        if not isinstance(updates, dict) or not updates:
+            return
+        new_profile = dict(base)
+        for key in ("summary", "state", "main_problem", "day28_goal", "risks", "need_analysis", "notes"):
+            value = updates.get(key)
+            if value not in (None, "", [], {}):
+                new_profile[key] = value
+        if "overview" in base:
+            new_profile["overview"] = base.get("overview")
+        if "personalized_checkin_fields" in base:
+            new_profile["personalized_checkin_fields"] = base.get("personalized_checkin_fields")
+        new_profile["refreshed_from"] = {"stage": stage, "source": "stage_progress"}
+        summary = str(new_profile.get("summary") or base.get("summary") or "")[:2000]
+        session.add(
+            UserProfile(
+                service_case_id=service_case_id,
+                profile_json=new_profile,
+                summary=summary,
+                generated_by_model=f"{ai.settings.ai_model} · 阶段刷新({stage})",
+            )
+        )
+        await session.commit()
+        logger.info("Profile refreshed from progress service_case_id=%s stage=%s", service_case_id, stage)
+    except Exception:
+        logger.exception(
+            "Refresh profile from progress failed service_case_id=%s stage=%s", service_case_id, stage
+        )
+        await session.rollback()
+
+
 async def generate_stage_report(
     session: AsyncSession,
     service_case: ServiceCase,
@@ -219,6 +341,15 @@ async def generate_stage_report(
     await session.refresh(document)
     if await _should_auto_send(session, service_case):
         await send_one_document(session, document)
+    if stage != "graduation":
+        await _refresh_profile_from_progress(
+            session,
+            service_case_id=service_case.id,
+            base_profile_json=latest_profile.profile_json if latest_profile else None,
+            checkins=checkins,
+            messages=messages,
+            stage=stage,
+        )
     return document
 
 
