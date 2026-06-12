@@ -909,6 +909,15 @@ def _parse_daily_checkin_items(value: object) -> list[str]:
     else:
         text = _text_from_payload(value)
         candidates = re.split(r"[\n；;]+", text) if text else []
+        # LLM 有时把多项写在同一行、用 ①②③ 圈号或 1.2.3. 编号分隔，换行拆不开时按序号再拆
+        if len([c for c in candidates if str(c).strip()]) <= 1 and text:
+            circled = [p for p in re.split(r"(?=[①②③④⑤⑥⑦⑧⑨⑩⑪⑫])", text) if p.strip()]
+            if len(circled) > 1:
+                candidates = circled
+            else:
+                numbered = [p for p in re.split(r"(?=\d+\s*[\.、\)）])", text) if p.strip()]
+                if len(numbered) > 1:
+                    candidates = numbered
 
     items: list[str] = []
     for candidate in candidates:
@@ -927,6 +936,7 @@ def _clean_checkin_item_text(value: object) -> str:
     if not text:
         return ""
     text = re.sub(r"^\s*[-•*]\s*", "", text)
+    text = re.sub(r"^\s*[①②③④⑤⑥⑦⑧⑨⑩⑪⑫]\s*", "", text)
     text = re.sub(r"^\s*\d+\s*[\.、\)\）]\s*", "", text)
     text = re.sub(r"（\s*(正向动作|限制动作)\s*）", "", text)
     text = re.sub(r"\(\s*(正向动作|限制动作)\s*\)", "", text)
