@@ -29,6 +29,7 @@
 - **修改后端代码后必须重启**：修改 `backend/src/` 下的 Python 文件后，**必须**运行 `docker restart ran-ai-backend` 重启后端服务，否则改动不会生效。这是最容易忘记的步骤，每次修改后端代码后都要检查是否需要重启。
 
 ## DEPLOYMENT & PRODUCTION UPDATES (部署与发布规范)
+- **代码部署 vs 配置变更（必须分开）**：部署代码跑 `scratch/local_prebuilt_deploy.py`，它**只更新代码、不碰生产 `.env` 与 `docker-compose.prod.yml`**（打包已排除，解压不覆盖）；要改生产配置（密钥/数据库/QiWe guid 等）才单独跑 `scratch/configure_remote_files.py`（先改其内置模板再跑）。**严禁**在部署脚本里加回"覆盖 `.env`/`docker-compose.prod.yml`"的步骤，否则服务器上的手改配置会被覆盖、可能搞坏线上。详见 `docs/deployment.md` 1.5 节。
 - **生产数据库使用阿里云 RDS**：生产环境通过 `DATABASE_URL` 连接阿里云 RDS PostgreSQL 15 + vector 扩展，`docker-compose.prod.yml` 不应再启动内置 PostgreSQL，避免生产数据分裂。本地开发仍使用 `docker-compose.yml` 的本地 PostgreSQL。
 - **本地预构建上传（严禁在 ECS 编译）**：为防止 ECS 资源卡死与编译时长时间不可用，前端编译必须在本地运行 `npm run build` 生成 standalone 制品后再打包上传。
 - **保护生产依赖**：Next.js standalone 运行时所需的 node_modules 位于 `frontend/.next/standalone/node_modules/`。

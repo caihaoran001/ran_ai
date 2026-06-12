@@ -13,6 +13,21 @@
 
 生产化不会破坏本地开发方式。`docker-compose.yml` 继续用于本机开发，`docker-compose.prod.yml` 用于云端或本地模拟生产。
 
+## 1.5 实际部署流程：代码部署 vs 配置变更（重要，含 AI 接手须知）
+
+线上用 `scratch/local_prebuilt_deploy.py` 部署（本地编译前端 → 打包 → 上传 ECS → rebuild → 健康检查）。**代码和配置分开管，互不干扰：**
+
+| 你要做的 | 跑什么 | 会动什么 |
+|---|---|---|
+| **部署代码**（日常、高频） | `uv run --no-project --with paramiko python scratch/local_prebuilt_deploy.py` | 只更新代码（后端 `src`、前端 standalone）+ rebuild 容器。**不碰**服务器的 `.env` 和 `docker-compose.prod.yml`（打包已排除） |
+| **改生产配置**（少见） | `uv run --with paramiko python scratch/configure_remote_files.py` | 用脚本内置模板**整体覆盖**服务器的 `.env` 和 `docker-compose.prod.yml` |
+
+**为什么分开**：部署代码很频繁；如果每次部署都覆盖 `.env`，一旦有人在服务器上手改过配置（如换 QiWe `guid`），就会被模板覆盖回去、搞坏线上。所以**部署代码绝不动配置**；改配置是一个单独、显式的动作。
+
+**改生产配置的正确步骤**：① 先改 `scratch/configure_remote_files.py` 里的模板 → ② 跑 `configure_remote_files.py` 推到服务器 → ③ 按需重启容器。
+
+> ⚠️ 给后续接手者（含 AI 助手）：**不要在 `local_prebuilt_deploy.py` 里加回"覆盖 .env / docker-compose.prod.yml"的步骤**。任何生产配置变更都走 `configure_remote_files.py`，保持部署代码与改配置解耦。
+
 ## 2. `.env` 为什么不进 git，但部署还能用
 
 `.env` 里包含 AI Key、QiWe Token、数据库密码、后台密码等敏感信息，不能提交到 git。

@@ -100,6 +100,7 @@ This is strict — read `docs/testing/README.md` + `docs/testing/TEST_CASES.md` 
 
 ## Deployment notes
 
+- **Code deploy vs config change — keep separate.** Deploy code with `scratch/local_prebuilt_deploy.py` (builds frontend locally → packages → uploads → rebuilds on ECS). It **only ships code; it does NOT touch the prod `.env` or `docker-compose.prod.yml`** (both excluded from the tar). To change prod config (secrets/DB/QiWe guid, or compose structure) run `scratch/configure_remote_files.py` separately (edit its inline template first). **Never re-add an `.env`/`docker-compose.prod.yml` overwrite step to the deploy script** — it would clobber server-side hand edits. See `docs/deployment.md` §1.5.
 - **Build the frontend locally** (`npm run build`, standalone artifact) and upload — never compile on ECS (resource lock-up).
 - Next.js standalone needs `frontend/.next/standalone/node_modules/`. In `.dockerignore` use prefix-anchored `/node_modules` (not bare `node_modules`); in `tar` exclude `frontend/node_modules` specifically (not a global `--exclude='node_modules'`).
 - Alpine/slim prod images have no `curl` — health-check via the in-container runtime instead:
