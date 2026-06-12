@@ -1093,22 +1093,24 @@ function FieldsEditor({
   }
   return (
     <div className="space-y-3">
-      {fields.map((field, index) => (
-        <FieldCard
-          key={String(field.id || field.key || index)}
-          field={field}
-          index={index}
-          total={fields.length}
-          onUpdate={(patch) => updateField(index, patch)}
-          onRemove={() => onChange(fields.filter((_, i) => i !== index))}
-          onMove={(dir) => moveField(index, dir)}
-        />
-      ))}
-      {fields.length === 0 && (
-        <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400">
-          还没有题目，点击下方“添加题目”开始。
-        </div>
-      )}
+      <div className="max-h-[560px] space-y-2 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50/40 p-3">
+        {fields.map((field, index) => (
+          <FieldCard
+            key={String(field.id || field.key || index)}
+            field={field}
+            index={index}
+            total={fields.length}
+            onUpdate={(patch) => updateField(index, patch)}
+            onRemove={() => onChange(fields.filter((_, i) => i !== index))}
+            onMove={(dir) => moveField(index, dir)}
+          />
+        ))}
+        {fields.length === 0 && (
+          <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400">
+            还没有题目，点击下方“添加题目”开始。
+          </div>
+        )}
+      </div>
       <Button
         type="button"
         className="w-full justify-center border border-cyan-200 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
@@ -1135,6 +1137,7 @@ function FieldCard({
   onRemove: () => void;
   onMove: (dir: -1 | 1) => void;
 }) {
+  const [open, setOpen] = useState(false);
   const type = fieldStr(field, "type") || "SIMPLE";
   const isSegment = type === "SEGMENTATION";
   const hasOptions = type === "RADIO" || type === "CHECKBOX";
@@ -1142,17 +1145,17 @@ function FieldCard({
   const typeLabel = FIELD_TYPES.find((item) => item.value === type)?.label ?? type;
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-slate-100 px-1.5 text-xs font-semibold text-slate-500">
-            {index + 1}
-          </span>
-          <span className={`rounded px-2 py-0.5 text-xs font-medium ${isSegment ? "bg-amber-50 text-amber-700" : "bg-cyan-50 text-cyan-700"}`}>
-            {typeLabel}
-          </span>
-        </div>
-        <div className="flex items-center gap-1">
+    <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="flex cursor-pointer items-center gap-2 px-3 py-2.5" onClick={() => setOpen((value) => !value)}>
+        <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-slate-100 px-1.5 text-xs font-semibold text-slate-500">
+          {index + 1}
+        </span>
+        <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${isSegment ? "bg-amber-50 text-amber-700" : "bg-cyan-50 text-cyan-700"}`}>
+          {typeLabel}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{fieldStr(field, "title") || "（未命名）"}</span>
+        {!isSegment && field.required === true && <span className="shrink-0 text-xs text-rose-500">*必填</span>}
+        <div className="flex shrink-0 items-center gap-1" onClick={(event) => event.stopPropagation()}>
           <button type="button" title="上移" disabled={index === 0} onClick={() => onMove(-1)}
             className="rounded px-1.5 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30">↑</button>
           <button type="button" title="下移" disabled={index === total - 1} onClick={() => onMove(1)}
@@ -1162,59 +1165,64 @@ function FieldCard({
             <Trash2 className="h-4 w-4" />
           </button>
         </div>
+        <span className="shrink-0 text-xs text-slate-400">{open ? "收起 ▲" : "展开 ▼"}</span>
       </div>
-      <div className="mt-3 grid gap-3 md:grid-cols-[160px_1fr]">
-        <div>
-          <div className="mb-1 text-xs font-medium text-slate-500">题型</div>
-          <select
-            className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm focus:border-cyan-700 focus:outline-none"
-            value={type}
-            onChange={(event) => {
-              const nextType = event.target.value;
-              const patch: Record<string, unknown> = { type: nextType };
-              if (nextType !== "RADIO" && nextType !== "CHECKBOX") patch.options = [];
-              else if (options.length === 0) patch.options = ["选项1", "选项2"];
-              onUpdate(patch);
-            }}
-          >
-            {FIELD_TYPES.map((item) => (
-              <option key={item.value} value={item.value}>{item.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <div className="mb-1 text-xs font-medium text-slate-500">{isSegment ? "分段标题文字" : "题目"}</div>
-          <Input value={fieldStr(field, "title")} onChange={(event) => onUpdate({ title: event.target.value, label: event.target.value })} />
-        </div>
-      </div>
-      <div className="mt-3">
-        <div className="mb-1 text-xs font-medium text-slate-500">说明（选填）</div>
-        <Input value={fieldStr(field, "subtitle")} onChange={(event) => onUpdate({ subtitle: event.target.value })} />
-      </div>
-      {hasOptions && (
-        <div className="mt-3">
-          <div className="mb-1 text-xs font-medium text-slate-500">选项</div>
-          <div className="space-y-2">
-            {options.map((opt, optIndex) => (
-              <div key={optIndex} className="flex items-center gap-2">
-                <Input value={opt} onChange={(event) => onUpdate({ options: options.map((o, i) => (i === optIndex ? event.target.value : o)) })} />
-                <button type="button" title="删除选项"
-                  onClick={() => onUpdate({ options: options.filter((_, i) => i !== optIndex) })}
-                  className="shrink-0 rounded-md border border-slate-200 px-2 py-1.5 text-xs text-slate-500 hover:border-rose-300 hover:text-rose-600">删除</button>
-              </div>
-            ))}
-            <Button type="button"
-              className="border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
-              onClick={() => onUpdate({ options: [...options, `选项${options.length + 1}`] })}>
-              <Plus className="mr-1 h-3.5 w-3.5" /> 添加选项
-            </Button>
+      {open && (
+        <div className="border-t border-slate-100 p-4">
+          <div className="grid gap-3 md:grid-cols-[160px_1fr]">
+            <div>
+              <div className="mb-1 text-xs font-medium text-slate-500">题型</div>
+              <select
+                className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm focus:border-cyan-700 focus:outline-none"
+                value={type}
+                onChange={(event) => {
+                  const nextType = event.target.value;
+                  const patch: Record<string, unknown> = { type: nextType };
+                  if (nextType !== "RADIO" && nextType !== "CHECKBOX") patch.options = [];
+                  else if (options.length === 0) patch.options = ["选项1", "选项2"];
+                  onUpdate(patch);
+                }}
+              >
+                {FIELD_TYPES.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div className="mb-1 text-xs font-medium text-slate-500">{isSegment ? "分段标题文字" : "题目"}</div>
+              <Input value={fieldStr(field, "title")} onChange={(event) => onUpdate({ title: event.target.value, label: event.target.value })} />
+            </div>
           </div>
-        </div>
-      )}
-      {!isSegment && (
-        <div className="mt-3 flex items-center gap-2">
-          <Switch checked={field.required === true} onChange={(checked) => onUpdate({ required: checked })} />
-          <span className="text-sm text-slate-600">必填</span>
+          <div className="mt-3">
+            <div className="mb-1 text-xs font-medium text-slate-500">说明（选填）</div>
+            <Input value={fieldStr(field, "subtitle")} onChange={(event) => onUpdate({ subtitle: event.target.value })} />
+          </div>
+          {hasOptions && (
+            <div className="mt-3">
+              <div className="mb-1 text-xs font-medium text-slate-500">选项</div>
+              <div className="space-y-2">
+                {options.map((opt, optIndex) => (
+                  <div key={optIndex} className="flex items-center gap-2">
+                    <Input value={opt} onChange={(event) => onUpdate({ options: options.map((o, i) => (i === optIndex ? event.target.value : o)) })} />
+                    <button type="button" title="删除选项"
+                      onClick={() => onUpdate({ options: options.filter((_, i) => i !== optIndex) })}
+                      className="shrink-0 rounded-md border border-slate-200 px-2 py-1.5 text-xs text-slate-500 hover:border-rose-300 hover:text-rose-600">删除</button>
+                  </div>
+                ))}
+                <Button type="button"
+                  className="border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+                  onClick={() => onUpdate({ options: [...options, `选项${options.length + 1}`] })}>
+                  <Plus className="mr-1 h-3.5 w-3.5" /> 添加选项
+                </Button>
+              </div>
+            </div>
+          )}
+          {!isSegment && (
+            <div className="mt-3 flex items-center gap-2">
+              <Switch checked={field.required === true} onChange={(checked) => onUpdate({ required: checked })} />
+              <span className="text-sm text-slate-600">必填</span>
+            </div>
+          )}
         </div>
       )}
     </div>
