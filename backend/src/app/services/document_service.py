@@ -42,6 +42,7 @@ from app.services.content_policy import get_content_delivery_mode
 from app.services.intake_facts import build_intake_fact_summary
 from app.services.intake_facts import sanitize_profile_json
 from app.services.checkin_questionnaires import personalized_checkin_fields_with_weight
+from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.service_case_queries import get_active_service_case
 from app.services.user_state_profile import initialize_user_state_from_intake
@@ -351,12 +352,15 @@ async def generate_stage_report(
         checkins=checkins,
         messages=messages,
     )
+    degraded = bool(fields_payload.pop("__degraded__", False)) if isinstance(fields_payload, dict) else False
     content_json = build_stage_report_content_json(
         stage=stage,
         title=title,
         user_name=user_name,
         fields=fields_payload,
     )
+    if degraded and isinstance(content_json, dict):
+        content_json["degraded"] = True
     content = render_document_content(content_json)
     document_type = (
         DocumentType.GRADUATION_REPORT
@@ -376,7 +380,7 @@ async def generate_stage_report(
     session.add(document)
     await session.commit()
     await session.refresh(document)
-    if await _should_auto_send(session, service_case):
+    if not degraded and await _should_auto_send(session, service_case):
         await send_one_document(session, document)
     if stage != "graduation":
         await _refresh_profile_from_progress(
@@ -401,6 +405,37 @@ async def rewrite_document_file(session: AsyncSession, document: UserDocument) -
     await session.commit()
     await session.refresh(document)
     return document
+
+
+async def _send_document_reading_reminder(session: AsyncSession, service_case: ServiceCase) -> None:
+    """两份文件发送后，提醒用户先阅读、随时答疑，并预告次日开始发打卡链接。"""
+    try:
+        schedule = await get_checkin_questionnaire_schedule(session)
+        send_at = str(schedule.get("send_at") or "09:00")
+    except Exception:
+        send_at = "09:00"
+    content = (
+        "两份专属文件都发给您啦 📄\n\n"
+        "请先花几分钟仔细阅读《个人能量重启处方单》和《28天执行标准与打卡要求》，把今天的方案看明白；"
+        "任何有疑问的地方都可以随时在群里提出来，我和班主任都会帮您解答。\n\n"
+        f"今天先安心熟悉文件、不用急着执行；从明天 {send_at} 起，我会每天给您发送打卡链接，陪您一步步落地 🌟"
+    )
+    result = await send_channel_text(service_case.group_id, content)
+    session.add(
+        Message(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            wecom_message_id=result.message_id,
+            direction=MessageDirection.OUTBOUND,
+            sender_type=MessageSenderType.BOT,
+            message_type="markdown",
+            content=content,
+            purpose=MessagePurpose.DOCUMENT_DELIVERY,
+            status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
+            error=result.error,
+        )
+    )
+    await session.commit()
 
 
 async def send_case_documents(session: AsyncSession, service_case_id: int) -> list[UserDocument]:
@@ -478,6 +513,8 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
         _record_document_delivery(session, service_case, document, result.message_id)
         await _mark_case_in_service_if_documents_sent(session, service_case)
         await session.commit()
+    if should_send_intro:
+        await _send_document_reading_reminder(session, service_case)
     for document in documents:
         await session.refresh(document)
     return documents
@@ -1319,7 +1356,13 @@ async def _generate_stage_payload(
         )
         payload = parse_json_object(text)
     except Exception:
-        payload = {}
+        logger.exception(
+            "Stage report payload generation failed (LLM/parse); using degraded fallback stage=%s", stage
+        )
+        result = _fallback_stage_payload(stage, {}, checkins)
+        if isinstance(result, dict):
+            result["__degraded__"] = True
+        return result
     return _fallback_stage_payload(stage, payload, checkins)
 
 
