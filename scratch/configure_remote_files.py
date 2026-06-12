@@ -1,3 +1,15 @@
+"""【生产配置推送脚本】——单独手动运行，用于把生产配置覆盖到 ECS。
+
+写两个文件到服务器 /root/ran_ai/：
+  - docker-compose.prod.yml（生产编排：Dockerfile.prod + caddy 反代）
+  - .env（生产密钥 / 数据库 / QiWe guid 等真实配置）
+
+⚠️ 重要：日常部署代码的 local_prebuilt_deploy.py 已不再调用本脚本，也不会动这两个文件。
+只有在【改动生产配置】时才手动运行本脚本；运行前请确保下方模板已是最新配置，
+因为它会整体覆盖服务器上的 .env 与 docker-compose.prod.yml（服务器上的手改会被覆盖）。
+
+运行：uv run --with paramiko python scratch/configure_remote_files.py
+"""
 import paramiko
 import sys
 
@@ -104,9 +116,9 @@ volumes:
 
     print("Writing .env on ECS...")
     env_content = """# App config
-PUBLIC_SITE_ADDRESS=admin.humanburning.com
-FRONTEND_PUBLIC_BASE_URL=https://admin.humanburning.com
-CORS_ALLOWED_ORIGINS=https://admin.humanburning.com
+PUBLIC_SITE_ADDRESS=admin.humanburning.ai
+FRONTEND_PUBLIC_BASE_URL=https://admin.humanburning.ai
+CORS_ALLOWED_ORIGINS=https://admin.humanburning.ai
 HTTP_PORT=80
 HTTPS_PORT=443
 

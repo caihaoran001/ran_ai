@@ -1,3 +1,13 @@
+"""本地预构建部署脚本：本地编译前端 → 打包 → 上传 ECS → 远程 rebuild → 健康检查。
+
+⚠️ 本脚本只部署【代码】，绝不改动生产配置：
+  打包时已排除 .env 和 docker-compose.prod.yml，解压不会覆盖服务器上的生产配置与密钥。
+  因此可以放心频繁部署，不会误伤线上配置（即使有人在服务器上手改过 .env）。
+
+要修改【生产配置】（.env 里的数据库/密钥/QiWe guid，或 docker-compose.prod.yml 结构），
+请单独运行：  uv run --with paramiko python scratch/configure_remote_files.py
+（该脚本会用其内置模板覆盖服务器上的这两个文件——改配置时务必先同步好模板再跑它。）
+"""
 import paramiko
 import sys
 import time
@@ -25,6 +35,7 @@ def main():
         "tar --exclude='frontend/node_modules' --exclude='.venv' --exclude='*.log' --exclude='.git' "
         "--exclude='ran_ai_deploy.tar.gz' --exclude='.codex' --exclude='.antigravitycli' "
         "--exclude='.playwright-mcp' --exclude='.sisyphus' --exclude='.agents' "
+        "--exclude='./.env' --exclude='./docker-compose.prod.yml' "
         "--exclude='frontend/.next/cache' --exclude='diagnostics/diagnostics_history.json' "
         "--warning=no-file-changed -czf ran_ai_deploy.tar.gz ."
     )
@@ -78,15 +89,10 @@ def main():
             sys.exit(1)
     print("  ✅ Remote extraction and diagnostics clearing completed!")
 
-    # 6. Apply configuration (similar to configure_remote_files.py)
-    print("\n⚙️ Step 6: Overwriting remote docker-compose.prod.yml and .env...")
-    
-    # We execute our configuration python script locally which does SSH/SFTP writing
-    # Wait, we can just run the local script configure_remote_files.py or run command
-    run_local_command("uv run --with paramiko python scratch/configure_remote_files.py")
-    
-    # 7. Start container updates and measure downtime
-    print("\n🚀 Step 7: Rebuilding and reloading containers on ECS (Measuring Downtime)...")
+    # 6. Rebuild & reload containers on ECS.
+    #    生产 .env 与 docker-compose.prod.yml 不在本脚本覆盖范围（打包已排除，解压不覆盖），
+    #    要改生产配置请单独运行 scratch/configure_remote_files.py。
+    print("\n🚀 Step 6: Rebuilding and reloading containers on ECS (Measuring Downtime)...")
     
     # Start timer
     start_time = time.time()
