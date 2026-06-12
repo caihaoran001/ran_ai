@@ -77,14 +77,6 @@ function templateLabel(template: { template_key: string; name: string }) {
 export function QuestionnaireConfigEditor({ config }: { config: Config }) {
   const [templates, setTemplates] = useState(config.templates);
   const [activeKey, setActiveKey] = useState(config.templates[0]?.template_key ?? "intake");
-  const [fieldsText, setFieldsText] = useState(() =>
-    Object.fromEntries(
-      config.templates.map((template) => [
-        template.template_key,
-        JSON.stringify(template.fields, null, 2),
-      ]),
-    ),
-  );
   const [schedule, setSchedule] = useState<ScheduleConfig>(() => normalizeSchedule(config.schedule));
   const [message, setMessage] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "success" | "error">("idle");
@@ -116,29 +108,7 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
   async function save() {
     setMessage("");
     setSaveStatus("saving");
-    const nextTemplates: Template[] = [];
-    for (const template of templates) {
-      let fields: unknown;
-      try {
-        fields = JSON.parse(fieldsText[template.template_key] ?? "[]");
-      } catch {
-        const errMsg = `${templateLabel(template)} 的题目 JSON 格式不正确`;
-        setMessage(errMsg);
-        showToast("error", errMsg);
-        setSaveStatus("error");
-        setTimeout(() => setSaveStatus("idle"), 3000);
-        return;
-      }
-      if (!Array.isArray(fields)) {
-        const errMsg = `${templateLabel(template)} 的题目根节点必须是数组`;
-        setMessage(errMsg);
-        showToast("error", errMsg);
-        setSaveStatus("error");
-        setTimeout(() => setSaveStatus("idle"), 3000);
-        return;
-      }
-      nextTemplates.push({ ...template, fields: fields as Record<string, unknown>[] });
-    }
+    const nextTemplates: Template[] = templates;
 
     try {
       const response = await fetch(`${API_BASE}/questionnaire-template/config`, {
@@ -184,11 +154,6 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
         const data = await response.json();
         const newTemplates = data.templates as Template[];
         setTemplates(newTemplates);
-        setFieldsText(
-          Object.fromEntries(
-            newTemplates.map((t: Template) => [t.template_key, JSON.stringify(t.fields, null, 2)]),
-          ),
-        );
         if (data.schedule) setSchedule(normalizeSchedule(data.schedule));
         showToast("success", templateKey ? "该问卷已还原为默认内容" : "全部问卷已还原为默认内容");
       } else {
@@ -345,24 +310,18 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
               onChange={(event) => updateTemplate(activeTemplate.template_key, { description: event.target.value })}
             />
           </label>
-          <label className="block">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <span className="text-sm font-semibold text-slate-700">题目 JSON</span>
+          <div className="block">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <span className="text-sm font-semibold text-slate-700">题目列表（共 {activeTemplate.fields.length} 题）</span>
               <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-mono text-slate-500">
                 {activeTemplate.template_key}
               </span>
             </div>
-            <Textarea
-              className="min-h-[520px] font-mono text-xs"
-              value={fieldsText[activeTemplate.template_key] ?? "[]"}
-              onChange={(event) =>
-                setFieldsText((current) => ({
-                  ...current,
-                  [activeTemplate.template_key]: event.target.value,
-                }))
-              }
+            <FieldsEditor
+              fields={activeTemplate.fields}
+              onChange={(fields) => updateTemplate(activeTemplate.template_key, { fields })}
             />
-          </label>
+          </div>
         </div>
       </section>
       
@@ -1090,4 +1049,174 @@ function parseDayList(value: string) {
 
 function nextRuleDay(rules: ScheduleRule[]) {
   return Math.max(0, ...rules.map((rule) => Number(rule.day) || 0)) + 1;
+}
+
+const FIELD_TYPES: { value: string; label: string }[] = [
+  { value: "SEGMENTATION", label: "分段标题" },
+  { value: "SIMPLE", label: "单行文本" },
+  { value: "TEXT", label: "多行文本" },
+  { value: "RADIO", label: "单选" },
+  { value: "CHECKBOX", label: "多选" },
+  { value: "FILE", label: "文件上传" },
+];
+
+function fieldStr(field: Record<string, unknown>, key: string): string {
+  const value = field[key];
+  return typeof value === "string" ? value : "";
+}
+
+function fieldOptions(field: Record<string, unknown>): string[] {
+  return Array.isArray(field.options) ? field.options.map((option) => String(option)) : [];
+}
+
+function newField(): Record<string, unknown> {
+  const id = `FIELD${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
+  return { id, key: id, type: "SIMPLE", title: "新题目", label: "新题目", subtitle: "", required: false, options: [] };
+}
+
+function FieldsEditor({
+  fields,
+  onChange,
+}: {
+  fields: Record<string, unknown>[];
+  onChange: (fields: Record<string, unknown>[]) => void;
+}) {
+  function updateField(index: number, patch: Record<string, unknown>) {
+    onChange(fields.map((field, i) => (i === index ? { ...field, ...patch } : field)));
+  }
+  function moveField(index: number, dir: -1 | 1) {
+    const target = index + dir;
+    if (target < 0 || target >= fields.length) return;
+    const next = [...fields];
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next);
+  }
+  return (
+    <div className="space-y-3">
+      {fields.map((field, index) => (
+        <FieldCard
+          key={String(field.id || field.key || index)}
+          field={field}
+          index={index}
+          total={fields.length}
+          onUpdate={(patch) => updateField(index, patch)}
+          onRemove={() => onChange(fields.filter((_, i) => i !== index))}
+          onMove={(dir) => moveField(index, dir)}
+        />
+      ))}
+      {fields.length === 0 && (
+        <div className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400">
+          还没有题目，点击下方“添加题目”开始。
+        </div>
+      )}
+      <Button
+        type="button"
+        className="w-full justify-center border border-cyan-200 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
+        onClick={() => onChange([...fields, newField()])}
+      >
+        <Plus className="mr-1.5 h-4 w-4" /> 添加题目
+      </Button>
+    </div>
+  );
+}
+
+function FieldCard({
+  field,
+  index,
+  total,
+  onUpdate,
+  onRemove,
+  onMove,
+}: {
+  field: Record<string, unknown>;
+  index: number;
+  total: number;
+  onUpdate: (patch: Record<string, unknown>) => void;
+  onRemove: () => void;
+  onMove: (dir: -1 | 1) => void;
+}) {
+  const type = fieldStr(field, "type") || "SIMPLE";
+  const isSegment = type === "SEGMENTATION";
+  const hasOptions = type === "RADIO" || type === "CHECKBOX";
+  const options = fieldOptions(field);
+  const typeLabel = FIELD_TYPES.find((item) => item.value === type)?.label ?? type;
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-slate-100 px-1.5 text-xs font-semibold text-slate-500">
+            {index + 1}
+          </span>
+          <span className={`rounded px-2 py-0.5 text-xs font-medium ${isSegment ? "bg-amber-50 text-amber-700" : "bg-cyan-50 text-cyan-700"}`}>
+            {typeLabel}
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button type="button" title="上移" disabled={index === 0} onClick={() => onMove(-1)}
+            className="rounded px-1.5 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30">↑</button>
+          <button type="button" title="下移" disabled={index === total - 1} onClick={() => onMove(1)}
+            className="rounded px-1.5 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30">↓</button>
+          <button type="button" title="删除该题" onClick={onRemove}
+            className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-[160px_1fr]">
+        <div>
+          <div className="mb-1 text-xs font-medium text-slate-500">题型</div>
+          <select
+            className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm focus:border-cyan-700 focus:outline-none"
+            value={type}
+            onChange={(event) => {
+              const nextType = event.target.value;
+              const patch: Record<string, unknown> = { type: nextType };
+              if (nextType !== "RADIO" && nextType !== "CHECKBOX") patch.options = [];
+              else if (options.length === 0) patch.options = ["选项1", "选项2"];
+              onUpdate(patch);
+            }}
+          >
+            {FIELD_TYPES.map((item) => (
+              <option key={item.value} value={item.value}>{item.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <div className="mb-1 text-xs font-medium text-slate-500">{isSegment ? "分段标题文字" : "题目"}</div>
+          <Input value={fieldStr(field, "title")} onChange={(event) => onUpdate({ title: event.target.value, label: event.target.value })} />
+        </div>
+      </div>
+      <div className="mt-3">
+        <div className="mb-1 text-xs font-medium text-slate-500">说明（选填）</div>
+        <Input value={fieldStr(field, "subtitle")} onChange={(event) => onUpdate({ subtitle: event.target.value })} />
+      </div>
+      {hasOptions && (
+        <div className="mt-3">
+          <div className="mb-1 text-xs font-medium text-slate-500">选项</div>
+          <div className="space-y-2">
+            {options.map((opt, optIndex) => (
+              <div key={optIndex} className="flex items-center gap-2">
+                <Input value={opt} onChange={(event) => onUpdate({ options: options.map((o, i) => (i === optIndex ? event.target.value : o)) })} />
+                <button type="button" title="删除选项"
+                  onClick={() => onUpdate({ options: options.filter((_, i) => i !== optIndex) })}
+                  className="shrink-0 rounded-md border border-slate-200 px-2 py-1.5 text-xs text-slate-500 hover:border-rose-300 hover:text-rose-600">删除</button>
+              </div>
+            ))}
+            <Button type="button"
+              className="border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+              onClick={() => onUpdate({ options: [...options, `选项${options.length + 1}`] })}>
+              <Plus className="mr-1 h-3.5 w-3.5" /> 添加选项
+            </Button>
+          </div>
+        </div>
+      )}
+      {!isSegment && (
+        <div className="mt-3 flex items-center gap-2">
+          <Switch checked={field.required === true} onChange={(checked) => onUpdate({ required: checked })} />
+          <span className="text-sm text-slate-600">必填</span>
+        </div>
+      )}
+    </div>
+  );
 }
