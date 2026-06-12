@@ -77,11 +77,24 @@ export function StaffFilterConfig() {
 
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-      <div className="mb-4">
-        <h3 className="text-base font-semibold text-zinc-900">企微人工回复免打扰配置</h3>
-        <p className="mt-1 text-sm text-zinc-500 leading-relaxed">
-          在群内代表人工客服、助教、班主任或客户本人的昵称/ID规则。符合规则的发言将不会触发AI自动回复，并会被标记为“班主任”发出的聊天记录。
-        </p>
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-base font-semibold text-zinc-900">企微人工回复免打扰配置</h3>
+          <p className="mt-1 text-sm text-zinc-500 leading-relaxed">
+            在群内代表人工客服、助教、班主任或客户本人的昵称/ID规则。符合规则的发言将不会触发AI自动回复，并会被标记为“班主任”发出的聊天记录。
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {showSuccess && <span className="text-sm text-emerald-600 font-semibold animate-pulse">已保存！</span>}
+          <Button
+            type="button"
+            className="shrink-0 bg-cyan-700 hover:bg-cyan-800 text-white font-medium shadow-sm transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
+            onClick={save}
+            disabled={busy || !isDirty}
+          >
+            {busy ? "保存中..." : "保存配置"}
+          </Button>
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -158,18 +171,6 @@ export function StaffFilterConfig() {
           )}
         </div>
 
-        {/* Action button */}
-        <div className="flex items-center gap-3 border-t border-zinc-100 pt-4">
-          <Button
-            type="button"
-            className="bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-sm transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
-            onClick={save}
-            disabled={busy || !isDirty}
-          >
-            {busy ? "保存中..." : "保存规则配置"}
-          </Button>
-          {showSuccess && <span className="text-sm text-emerald-600 font-semibold animate-pulse">已保存！</span>}
-        </div>
       </div>
     </div>
   );

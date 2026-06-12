@@ -203,7 +203,7 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
               <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
               一键还原全部
             </Button>
-            <SaveButton saveStatus={saveStatus} onClick={save} label="保存全部配置" />
+            <SaveButton saveStatus={saveStatus} onClick={save} label="保存配置" />
           </div>
         </div>
         <div className="p-5">
@@ -925,7 +925,7 @@ function ScheduleEditor({
                   }}
                 >
                   <RefreshCw className="h-3 w-3 transition-transform duration-500 group-hover:rotate-180 shrink-0" />
-                  一键同步已配置的指定服务日 (同步后需点击右上角“保存全部配置”)
+                  一键同步已配置的指定服务日 (同步后需点击右上角“保存配置”)
                 </button>
               </div>
               
