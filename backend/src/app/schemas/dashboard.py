@@ -46,6 +46,21 @@ class AICostCaseItem(BaseModel):
     last_call_at: datetime | None = None
 
 
+class CaseHealthItem(BaseModel):
+    service_case_id: int
+    case_no: str
+    user_name: str | None = None
+    group_id: str
+    service_day: int
+    last_checkin_date: str | None = None
+    days_since_checkin: int | None = None
+    action_focus: str | None = None
+    risk_level: str | None = None
+    needs_human_intervention: bool = False
+    stage_reports: list[str] = Field(default_factory=list)
+    last_inbound_at: datetime | None = None
+
+
 class DashboardSummary(BaseModel):
     service_cases_total: int
     service_cases_in_service: int

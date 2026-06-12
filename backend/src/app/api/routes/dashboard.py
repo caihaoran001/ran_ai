@@ -19,7 +19,8 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
-from app.schemas.dashboard import AICostCaseItem, AICostSummary, DashboardMetric, DashboardSummary, OutcomeDashboardSummary
+from app.models.user_state_profile import UserStateProfile
+from app.schemas.dashboard import AICostCaseItem, AICostSummary, CaseHealthItem, DashboardMetric, DashboardSummary, OutcomeDashboardSummary
 from app.services.service_case_queries import active_service_case_condition
 
 router = APIRouter()
@@ -670,3 +671,110 @@ def _float_metric(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+@router.get("/case-health", response_model=list[CaseHealthItem])
+async def dashboard_case_health(session: AsyncSession = Depends(get_session)) -> list[CaseHealthItem]:
+    china_tz = ZoneInfo("Asia/Shanghai")
+    today = datetime.now(china_tz).date()
+    cases = list(
+        await session.scalars(
+            select(ServiceCase)
+            .where(active_service_case_condition(), ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
+            .order_by(ServiceCase.started_at.asc())
+        )
+    )
+    if not cases:
+        return []
+    case_ids = [case.id for case in cases]
+
+    users: dict[int, str] = {}
+    user_ids = [case.user_id for case in cases if case.user_id]
+    if user_ids:
+        for uid, name in await session.execute(select(User.id, User.name).where(User.id.in_(user_ids))):
+            users[uid] = name
+
+    last_checkin: dict[int, Any] = {}
+    for cid, checkin_date in await session.execute(
+        select(Checkin.service_case_id, func.max(Checkin.checkin_date))
+        .where(Checkin.service_case_id.in_(case_ids))
+        .group_by(Checkin.service_case_id)
+    ):
+        last_checkin[cid] = checkin_date
+
+    last_inbound: dict[int, datetime] = {}
+    for cid, created_at in await session.execute(
+        select(Message.service_case_id, func.max(Message.created_at))
+        .where(
+            Message.service_case_id.in_(case_ids),
+            Message.direction == MessageDirection.INBOUND,
+            Message.sender_type == MessageSenderType.USER,
+        )
+        .group_by(Message.service_case_id)
+    ):
+        last_inbound[cid] = created_at
+
+    state_by_case: dict[int, UserStateProfile] = {}
+    for state in await session.scalars(
+        select(UserStateProfile)
+        .where(UserStateProfile.service_case_id.in_(case_ids))
+        .order_by(UserStateProfile.updated_at.asc())
+    ):
+        state_by_case[state.service_case_id] = state  # 升序遍历，最后写入即最新
+
+    stages_by_case: dict[int, set[str]] = {}
+    for doc in await session.scalars(
+        select(UserDocument).where(
+            UserDocument.service_case_id.in_(case_ids),
+            UserDocument.document_type.in_([DocumentType.STAGE_REPORT, DocumentType.GRADUATION_REPORT]),
+        )
+    ):
+        if doc.document_type == DocumentType.GRADUATION_REPORT:
+            stage = "graduation"
+        else:
+            stage = (doc.content_json or {}).get("stage") if isinstance(doc.content_json, dict) else None
+        if stage:
+            stages_by_case.setdefault(doc.service_case_id, set()).add(str(stage))
+
+    items: list[CaseHealthItem] = []
+    for case in cases:
+        last = last_checkin.get(case.id)
+        items.append(
+            CaseHealthItem(
+                service_case_id=case.id,
+                case_no=case.case_no,
+                user_name=users.get(case.user_id) if case.user_id else None,
+                group_id=case.group_id,
+                service_day=_case_service_day(case.started_at, today, china_tz),
+                last_checkin_date=last.isoformat() if last else None,
+                days_since_checkin=(today - last).days if last else None,
+                action_focus=_action_focus_label(state_by_case.get(case.id)),
+                risk_level=case.risk_level,
+                needs_human_intervention=bool(case.needs_human_intervention),
+                stage_reports=sorted(stages_by_case.get(case.id, set())),
+                last_inbound_at=last_inbound.get(case.id),
+            )
+        )
+    return items
+
+
+def _case_service_day(started_at: datetime | None, today, tz: ZoneInfo) -> int:
+    if started_at is None:
+        return 0
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    return max((today - started_at.astimezone(tz).date()).days + 1, 1)
+
+
+def _action_focus_label(state_profile: UserStateProfile | None) -> str | None:
+    if not state_profile or not isinstance(state_profile.state_json, dict):
+        return None
+    domains = state_profile.state_json.get("domains")
+    if not isinstance(domains, dict):
+        return None
+    action = domains.get("action_focus")
+    current = action.get("current") if isinstance(action, dict) else None
+    value = current.get("value") if isinstance(current, dict) else None
+    focus = value.get("current_focus") if isinstance(value, dict) else None
+    label = focus.get("label") if isinstance(focus, dict) else None
+    return str(label) if label else None

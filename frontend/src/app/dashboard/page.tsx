@@ -40,6 +40,21 @@ type Summary = {
   ai_cost_summary?: AICostSummary;
 };
 
+type CaseHealthItem = {
+  service_case_id: number;
+  case_no: string;
+  user_name?: string | null;
+  group_id: string;
+  service_day: number;
+  last_checkin_date?: string | null;
+  days_since_checkin?: number | null;
+  action_focus?: string | null;
+  risk_level?: string | null;
+  needs_human_intervention: boolean;
+  stage_reports: string[];
+  last_inbound_at?: string | null;
+};
+
 type AICostSummary = {
   total_calls: number;
   total_tokens: number;
@@ -99,6 +114,7 @@ export default async function DashboardPage() {
     },
   }));
   const renewalFollowupUsers = summary.renewal_followup_users ?? summary.repurchase_soon_users;
+  const caseHealth = await api<CaseHealthItem[]>("/dashboard/case-health").catch(() => [] as CaseHealthItem[]);
 
   return (
     <div className="page-stack">
@@ -240,7 +256,97 @@ export default async function DashboardPage() {
       </div>
 
       <OutcomeSummaryPanel summary={summary.outcome_summary} />
+      <CaseHealthTable items={caseHealth} />
     </div>
+  );
+}
+
+function CaseHealthTable({ items }: { items: CaseHealthItem[] }) {
+  return (
+    <section className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
+      <div className="border-b border-zinc-100 px-6 py-5">
+        <h2 className="text-lg font-bold text-zinc-900">在服务用户巡检</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          每个服务中群的服务天数、最近打卡、当前重点、风险与阶段报告进度；点击进入服务单。
+        </p>
+      </div>
+      {items.length === 0 ? (
+        <div className="p-8 text-center text-sm text-zinc-400">暂无服务中的用户。</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px] text-sm">
+            <thead>
+              <tr className="border-b border-zinc-100 text-left text-xs text-zinc-500">
+                <th className="px-4 py-3 font-medium">用户 / 群</th>
+                <th className="px-4 py-3 font-medium">服务天数</th>
+                <th className="px-4 py-3 font-medium">最近打卡</th>
+                <th className="px-4 py-3 font-medium">当前行动重点</th>
+                <th className="px-4 py-3 font-medium">风险</th>
+                <th className="px-4 py-3 font-medium">阶段报告</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <CaseHealthRow key={item.service_case_id} item={item} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CaseHealthRow({ item }: { item: CaseHealthItem }) {
+  const checkinText =
+    item.last_checkin_date == null
+      ? "未打卡"
+      : item.days_since_checkin === 0
+      ? "今天"
+      : `${item.days_since_checkin} 天前`;
+  const checkinStale = item.last_checkin_date == null || (item.days_since_checkin ?? 0) >= 2;
+  const stageOrder = ["day3", "day7", "day14", "day21", "day28"];
+  const stageNum: Record<string, string> = { day3: "3", day7: "7", day14: "14", day21: "21", day28: "28" };
+
+  return (
+    <tr className="border-b border-zinc-50 hover:bg-zinc-50/60">
+      <td className="px-4 py-3">
+        <Link href={`/cases/${item.service_case_id}`} className="font-medium text-cyan-700 hover:underline">
+          {item.user_name || "未命名"}
+        </Link>
+        <div className="text-xs text-zinc-400">{item.group_id}</div>
+      </td>
+      <td className="px-4 py-3 text-zinc-700">第 {item.service_day} 天</td>
+      <td className={`px-4 py-3 ${checkinStale ? "font-medium text-rose-600" : "text-zinc-700"}`}>{checkinText}</td>
+      <td className="px-4 py-3 text-zinc-600">{item.action_focus || "—"}</td>
+      <td className="px-4 py-3">
+        {item.risk_level === "high" ? (
+          <span className="rounded bg-rose-50 px-2 py-0.5 text-xs text-rose-700">高风险</span>
+        ) : item.needs_human_intervention ? (
+          <span className="rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700">待人工</span>
+        ) : (
+          <span className="text-xs text-zinc-400">正常</span>
+        )}
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-1">
+          {stageOrder.map((stage) => (
+            <span
+              key={stage}
+              title={`${stageNum[stage]}天报告`}
+              className={`inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-[11px] ${
+                item.stage_reports.includes(stage) ? "bg-cyan-600 text-white" : "bg-zinc-100 text-zinc-300"
+              }`}
+            >
+              {stageNum[stage]}
+            </span>
+          ))}
+          {item.stage_reports.includes("graduation") && (
+            <span className="ml-1 rounded bg-emerald-600 px-1.5 text-[11px] text-white">毕业</span>
+          )}
+        </div>
+      </td>
+    </tr>
   );
 }
 
