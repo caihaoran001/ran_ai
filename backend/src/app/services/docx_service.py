@@ -287,11 +287,33 @@ def _add_inline_paragraph(doc: Document, title: str, content: str, *, compact: b
     content_run.font.size = Pt(9 if compact else 10)
 
 
+def _apply_execution_table_widths(table: Any, rows: list, *, compact: bool) -> None:
+    """28天逐周执行标准表：周次窄、执行标准列加宽（仅对含「执行标准」表头的表生效）。"""
+    header = rows[0] if rows else []
+    header_texts = [str((c.get("value") if isinstance(c, dict) else c) or "").strip() for c in header]
+    if "执行标准" not in header_texts:
+        return
+    avail_cm = 18.0 if compact else 17.0
+    weight_map = {"周次": 1.1, "重点": 2.2, "执行标准": 3.7}
+    weights = [weight_map.get(text, 2.0) for text in header_texts]
+    total = sum(weights) or 1
+    widths = [Cm(round(avail_cm * weight / total, 2)) for weight in weights]
+    table.autofit = False
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), "fixed")
+    table._tbl.tblPr.append(layout)
+    for row in table.rows:
+        for index, width in enumerate(widths):
+            if index < len(row.cells):
+                row.cells[index].width = width
+
+
 def _add_table(doc: Document, rows: list[list[dict[str, Any]]], *, compact: bool = False) -> None:
     if not rows:
         return
     table = doc.add_table(rows=len(rows), cols=max(len(row) for row in rows))
     table.style = "Table Grid"
+    _apply_execution_table_widths(table, rows, compact=compact)
     for row_index, row in enumerate(rows):
         for cell_index, cell in enumerate(row):
             value = cell.get("value") if isinstance(cell, dict) else cell

@@ -139,14 +139,21 @@ function StructuredEditor({
     <div className="space-y-5">
       <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
         <div className="text-sm text-zinc-500">模板标题</div>
-        <div className="mt-1 font-semibold text-zinc-900">{value.title}</div>
+        <div className="mt-1 text-center font-semibold text-zinc-900">{value.title}</div>
       </div>
       {value.blocks.map((block, blockIndex) => (
         <section key={block.key || blockIndex} className="rounded-lg border border-zinc-200 p-4">
           <h3 className="font-semibold text-zinc-900">{block.title}</h3>
           {block.kind === "table" ? (
             <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[640px] border-collapse text-sm">
+              <table className={`w-full min-w-[640px] border-collapse text-sm${execColWidths(block.rows) ? " table-fixed" : ""}`}>
+                {execColWidths(block.rows) && (
+                  <colgroup>
+                    {execColWidths(block.rows)!.map((w, i) => (
+                      <col key={i} style={{ width: w }} />
+                    ))}
+                  </colgroup>
+                )}
                 <tbody>
                   {(block.rows ?? []).map((row, rowIndex) => (
                     <tr key={rowIndex}>
@@ -184,19 +191,33 @@ function StructuredEditor({
           ) : block.kind === "list" ? (
             <div className="mt-3 space-y-2">
               {(block.items ?? []).map((item, itemIndex) => (
-                <Textarea
-                  key={itemIndex}
-                  className="min-h-16"
-                  value={item}
-                  onChange={(event) =>
-                    updateBlock(blockIndex, (current) => ({
-                      ...current,
-                      items: (current.items ?? []).map((currentItem, currentItemIndex) =>
-                        currentItemIndex === itemIndex ? event.target.value : currentItem,
-                      ),
-                    }))
-                  }
-                />
+                <div key={itemIndex} className="flex items-start gap-2">
+                  <Textarea
+                    className="min-h-16 flex-1"
+                    value={item}
+                    onChange={(event) =>
+                      updateBlock(blockIndex, (current) => ({
+                        ...current,
+                        items: (current.items ?? []).map((currentItem, currentItemIndex) =>
+                          currentItemIndex === itemIndex ? event.target.value : currentItem,
+                        ),
+                      }))
+                    }
+                  />
+                  <button
+                    type="button"
+                    title="删除这一条"
+                    className="mt-1 shrink-0 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-500 hover:border-red-300 hover:text-red-600"
+                    onClick={() =>
+                      updateBlock(blockIndex, (current) => ({
+                        ...current,
+                        items: (current.items ?? []).filter((_, i) => i !== itemIndex),
+                      }))
+                    }
+                  >
+                    删除
+                  </button>
+                </div>
               ))}
               <Button
                 type="button"
@@ -228,6 +249,17 @@ function StructuredEditor({
       <div className="text-center text-xs text-zinc-400">内容会自动保存并重新生成 docx；标题和表格框架保持固定</div>
     </div>
   );
+}
+
+function execColWidths(rows?: Array<Array<{ value?: string | null }>>): string[] | null {
+  const header = rows?.[0];
+  if (!header) return null;
+  const texts = header.map((cell) => String(cell?.value ?? "").trim());
+  if (!texts.includes("执行标准")) return null;
+  const weightMap: Record<string, number> = { 周次: 1.1, 重点: 2.2, 执行标准: 3.7 };
+  const weights = texts.map((text) => weightMap[text] ?? 2.0);
+  const total = weights.reduce((sum, weight) => sum + weight, 0) || 1;
+  return weights.map((weight) => `${((weight / total) * 100).toFixed(1)}%`);
 }
 
 function renderPreviewText(value: DocumentContentJson) {
