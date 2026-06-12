@@ -35,6 +35,13 @@ export function PendingMessageActions({
     router.refresh();
   }
 
+  async function discard() {
+    setBusy(true);
+    await fetch(`${API_BASE}/messages/${messageId}/discard`, { method: "POST" });
+    setBusy(false);
+    router.refresh();
+  }
+
   async function markIntervention() {
     if (!serviceCaseId) return;
     setBusy(true);
@@ -52,7 +59,15 @@ export function PendingMessageActions({
       <Textarea className="min-h-32 text-sm" value={content} onChange={(event) => setContent(event.target.value)} />
       <div className="flex flex-wrap gap-2">
         <Button type="button" className="bg-emerald-700 hover:bg-emerald-600" onClick={send} disabled={busy}>
-          {busy ? "发送中..." : "确认发送"}
+          {busy ? "处理中..." : "确认发送"}
+        </Button>
+        <Button
+          type="button"
+          className="border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+          onClick={discard}
+          disabled={busy}
+        >
+          不发送
         </Button>
       </div>
     </div>

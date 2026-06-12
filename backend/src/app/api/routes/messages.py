@@ -132,6 +132,25 @@ async def send_pending_message(
     return message
 
 
+@router.post("/messages/{message_id}/discard", response_model=MessageRead)
+async def discard_pending_message(
+    message_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> Message:
+    message = await session.scalar(
+        select(Message).where(Message.id == message_id).options(selectinload(Message.trigger))
+    )
+    if not message:
+        raise HTTPException(status_code=404, detail="message not found")
+    if message.status != MessageStatus.PENDING:
+        raise HTTPException(status_code=400, detail="message is not pending")
+    message.status = MessageStatus.FAILED
+    message.error = "已人工驳回，未发送"
+    await session.commit()
+    await session.refresh(message)
+    return message
+
+
 @router.patch("/messages/{message_id}", response_model=MessageRead)
 async def update_message(
     message_id: int,
