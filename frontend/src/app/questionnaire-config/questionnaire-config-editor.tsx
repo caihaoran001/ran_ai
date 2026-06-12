@@ -203,37 +203,7 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
               <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
               一键还原全部
             </Button>
-            <Button
-              type="button"
-              onClick={save}
-              disabled={saveStatus === "saving"}
-              className={`transition-colors duration-200 ${
-                saveStatus === "success"
-                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                  : saveStatus === "error"
-                  ? "bg-rose-600 hover:bg-rose-700 text-white"
-                  : "bg-cyan-700 hover:bg-cyan-800 text-white"
-              }`}
-            >
-              {saveStatus === "saving" ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  保存中...
-                </>
-              ) : saveStatus === "success" ? (
-                <>
-                  <Check className="mr-2 h-4 w-4 animate-pulse" />
-                  已保存
-                </>
-              ) : saveStatus === "error" ? (
-                <>保存失败</>
-              ) : (
-                <>
-                  <Save className="mr-2 h-4 w-4" />
-                  保存全部配置
-                </>
-              )}
-            </Button>
+            <SaveButton saveStatus={saveStatus} onClick={save} label="保存全部配置" />
           </div>
         </div>
         <div className="p-5">
@@ -257,15 +227,18 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
                 <p className="panel-subtitle">每份问卷单独维护，不再把所有题目混在一个编辑框里。</p>
               </div>
             </div>
-            <Button
-              type="button"
-              disabled={resetting}
-              onClick={() => resetTemplates(activeTemplate.template_key)}
-              className="shrink-0 border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
-            >
-              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-              还原此问卷
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              <SaveButton saveStatus={saveStatus} onClick={save} label="保存配置" />
+              <Button
+                type="button"
+                disabled={resetting}
+                onClick={() => resetTemplates(activeTemplate.template_key)}
+                className="border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+              >
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                还原此问卷
+              </Button>
+            </div>
           </div>
           <div className="mt-5 flex flex-wrap gap-2">
             {templates.map((template) => (
@@ -344,6 +317,44 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
         </div>
       )}
     </div>
+  );
+}
+
+type SaveStatus = "idle" | "saving" | "success" | "error";
+
+function SaveButton({ saveStatus, onClick, label }: { saveStatus: SaveStatus; onClick: () => void; label: string }) {
+  return (
+    <Button
+      type="button"
+      onClick={onClick}
+      disabled={saveStatus === "saving"}
+      className={`shrink-0 transition-colors duration-200 ${
+        saveStatus === "success"
+          ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+          : saveStatus === "error"
+          ? "bg-rose-600 hover:bg-rose-700 text-white"
+          : "bg-cyan-700 hover:bg-cyan-800 text-white"
+      }`}
+    >
+      {saveStatus === "saving" ? (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          保存中...
+        </>
+      ) : saveStatus === "success" ? (
+        <>
+          <Check className="mr-2 h-4 w-4 animate-pulse" />
+          已保存
+        </>
+      ) : saveStatus === "error" ? (
+        <>保存失败</>
+      ) : (
+        <>
+          <Save className="mr-2 h-4 w-4" />
+          {label}
+        </>
+      )}
+    </Button>
   );
 }
 
