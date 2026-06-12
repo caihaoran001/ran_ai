@@ -394,6 +394,75 @@ async def generate_stage_report(
     return document
 
 
+async def retry_degraded_stage_report(session: AsyncSession, document: UserDocument) -> bool:
+    """重试一份降级(degraded)的阶段报告：LLM 恢复后用真内容替换并去掉降级标记。
+
+    成功返回 True（document 已更新为正式内容）；仍失败返回 False 并把 degraded_retry_count +1。
+    """
+    service_case = await get_active_service_case(session, document.service_case_id)
+    if not service_case:
+        return False
+    base = document.content_json if isinstance(document.content_json, dict) else {}
+    if document.document_type == DocumentType.GRADUATION_REPORT:
+        stage = "graduation"
+    else:
+        stage = str(base.get("stage") or "")
+    if stage not in {"day3", "day7", "day14", "day21", "day28", "graduation"}:
+        return False
+
+    user_name = await _user_name(session, service_case)
+    latest_profile = await session.scalar(
+        select(UserProfile)
+        .where(UserProfile.service_case_id == service_case.id)
+        .order_by(UserProfile.created_at.desc())
+        .limit(1)
+    )
+    checkins = list(
+        await session.scalars(
+            select(Checkin)
+            .where(Checkin.service_case_id == service_case.id)
+            .order_by(Checkin.checkin_date.asc(), Checkin.created_at.asc())
+        )
+    )
+    messages = list(
+        await session.scalars(
+            select(Message)
+            .where(Message.service_case_id == service_case.id)
+            .order_by(Message.created_at.asc())
+        )
+    )
+    title = _stage_title(stage)
+    ai = AIService()
+    fields_payload = await _generate_stage_payload(
+        ai=ai,
+        service_case=service_case,
+        user_name=user_name,
+        stage=stage,
+        title=title,
+        latest_profile=latest_profile,
+        checkins=checkins,
+        messages=messages,
+    )
+    still_degraded = isinstance(fields_payload, dict) and bool(fields_payload.pop("__degraded__", False))
+    if still_degraded:
+        retry_count = int(base.get("degraded_retry_count", 0)) + 1
+        new_cj = dict(base)
+        new_cj["degraded_retry_count"] = retry_count
+        document.content_json = new_cj
+        await session.commit()
+        logger.info("Stage report retry still degraded doc_id=%s stage=%s count=%s", document.id, stage, retry_count)
+        return False
+
+    content_json = build_stage_report_content_json(stage=stage, title=title, user_name=user_name, fields=fields_payload)
+    document.content_json = content_json  # 不含 degraded / degraded_retry_count
+    document.content_md = render_document_content(content_json)
+    document.file_path = None
+    document.generated_by_model = ai.settings.ai_model
+    await session.commit()
+    logger.info("Stage report degraded -> recovered doc_id=%s stage=%s", document.id, stage)
+    return True
+
+
 async def rewrite_document_file(session: AsyncSession, document: UserDocument) -> UserDocument:
     service_case = await get_active_service_case(session, document.service_case_id)
     if not service_case:

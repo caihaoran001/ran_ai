@@ -31,11 +31,12 @@ from app.services.document_service import (
     generate_profile_and_documents,
     generate_stage_report,
     refresh_profile_for_case,
+    retry_degraded_stage_report,
 )
 from app.services.knowledge_evolution import KnowledgeEvolutionService
 from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
 from app.services.outcome_engine import generate_outcome_snapshot
-from app.services.service_case_queries import select_active_service_cases
+from app.services.service_case_queries import active_service_case_condition, select_active_service_cases
 
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,7 @@ class ReminderService:
                         await self.check_knowledge_evolution_once()
                         await self.check_profile_refresh_once()
                         await self.check_stuck_document_generation_once()
+                        await self.check_retry_degraded_reports_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -339,6 +341,37 @@ class ReminderService:
                     logger.exception(
                         "Retry stuck document generation failed service_case_id=%s", service_case.id
                     )
+                    await session.rollback()
+
+    async def check_retry_degraded_reports_once(self) -> None:
+        """LLM 恢复后自动重试降级(degraded)的阶段报告，用真内容替换套话（带重试上限）。"""
+        if not self.settings.ai_api_key:
+            return
+        threshold = datetime.now(timezone.utc) - timedelta(minutes=15)
+        async with SessionLocal() as session:
+            documents = list(
+                await session.scalars(
+                    select(UserDocument)
+                    .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
+                    .where(
+                        active_service_case_condition(),
+                        UserDocument.document_type.in_(
+                            [DocumentType.STAGE_REPORT, DocumentType.GRADUATION_REPORT]
+                        ),
+                        UserDocument.updated_at < threshold,
+                    )
+                )
+            )
+            for document in documents:
+                cj = document.content_json if isinstance(document.content_json, dict) else {}
+                if not cj.get("degraded"):
+                    continue
+                if int(cj.get("degraded_retry_count", 0)) >= 5:
+                    continue
+                try:
+                    await retry_degraded_stage_report(session, document)
+                except Exception:
+                    logger.exception("Retry degraded stage report failed doc_id=%s", document.id)
                     await session.rollback()
 
     async def check_profile_refresh_once(self) -> None:
