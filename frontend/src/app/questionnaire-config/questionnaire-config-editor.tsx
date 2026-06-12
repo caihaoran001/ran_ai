@@ -180,8 +180,8 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
 
   return (
     <div className="space-y-6">
-      <section className="panel overflow-hidden">
-        <div className="panel-header flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <section className="panel">
+        <div className="panel-header sticky top-0 z-20 rounded-t-xl bg-white/95 backdrop-blur flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-50 text-cyan-700">
               <CalendarClock className="h-5 w-5" />
