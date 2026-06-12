@@ -153,9 +153,12 @@ class ReminderService:
                 reminded = service_case.id in reminded_set
                 if seen or reminded:
                     continue
+                raw_day = _service_day(service_case.started_at, now, timezone)
+                # 入群当天算第 0 天：当天只看文件、不催打卡
+                if raw_day <= 1:
+                    continue
                 if schedule.get("enabled", True):
-                    day = _service_day(service_case.started_at, now, timezone)
-                    rule = _questionnaire_rule_for_day(schedule, day)
+                    rule = _questionnaire_rule_for_day(schedule, raw_day - 1)
                     if rule:
                         continue
                 reminder_event = await _reserve_reminder_event(
@@ -442,7 +445,11 @@ class ReminderService:
             reminded_questionnaires = {(e.service_case_id, e.rule_id) for e in reminder_events}
 
             for service_case in service_cases:
-                day = _service_day(service_case.started_at, now, timezone)
+                raw_day = _service_day(service_case.started_at, now, timezone)
+                # 入群当天算第 0 天：当天只看文件、不发打卡链接；次日起才是第 1 天
+                if raw_day <= 1:
+                    continue
+                day = raw_day - 1
                 rule = _questionnaire_rule_for_day(schedule, day)
                 if not rule:
                     continue
