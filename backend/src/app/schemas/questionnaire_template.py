@@ -14,7 +14,7 @@ class QuestionnaireTemplateRead(BaseModel):
 
 
 class QuestionnaireTemplateUpdate(BaseModel):
-    name: str = "燃AI 1.0 问卷"
+    name: str = "燃人AI 1.0 问卷"
     template_key: str = "intake"
     title: str | None = None
     description: str | None = None

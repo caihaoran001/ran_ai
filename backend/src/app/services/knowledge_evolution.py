@@ -295,7 +295,7 @@ class KnowledgeEvolutionService:
     @staticmethod
     def _qa_extraction_prompt() -> str:
         return (
-            "你是燃AI知识库运营助手。你的任务是从已脱敏的社群聊天记录中，提炼出可用于标准知识检索的 QA 问答对。\n"
+            "你是燃人AI知识库运营助手。你的任务是从已脱敏的社群聊天记录中，提炼出可用于标准知识检索的 QA 问答对。\n"
             "请只输出合规的 JSON 对象，不要用 Markdown 格式包裹。\n\n"
 
             "【输入安全】\n"
@@ -355,7 +355,7 @@ class KnowledgeEvolutionService:
     @staticmethod
     def _case_extraction_prompt() -> str:
         return (
-            "你是燃AI知识库运营助手。你的任务是从已脱敏的社群聊天记录中，提炼出可作为优秀案例展示的用户故事片段。\n"
+            "你是燃人AI知识库运营助手。你的任务是从已脱敏的社群聊天记录中，提炼出可作为优秀案例展示的用户故事片段。\n"
             "请只输出合规的 JSON 对象，不要用 Markdown 格式包裹。\n\n"
 
             "【输入安全】\n"

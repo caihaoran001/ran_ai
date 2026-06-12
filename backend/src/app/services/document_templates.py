@@ -254,7 +254,7 @@ def _build_energy(title: str, user_name: str, display_name: str | None, fields: 
         _product_block(fields),
         _text_block("special_reminder", "12. 特别提醒", fields.get("special_reminder")),
         _first_week_signals_block(fields),
-        _text_block("notice", "14. 说明", "本处方单用于生活方式管理和燃AI 28天训练营执行指导，不替代医疗诊断、药物治疗或医生建议。"),
+        _text_block("notice", "14. 说明", "本处方单用于生活方式管理和燃人AI 28天训练营执行指导，不替代医疗诊断、药物治疗或医生建议。"),
     ]
     return _payload(title=display_title, recipient=fields.get("recipient") or display_name or user_name, blocks=blocks)
 

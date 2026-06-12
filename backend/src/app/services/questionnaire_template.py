@@ -31,8 +31,8 @@ def default_questionnaire_template(template_key: str = INTAKE_TEMPLATE_KEY) -> d
         template = get_questionnaire_template()
         return {
             "template_key": INTAKE_TEMPLATE_KEY,
-            "name": str(template.get("name") or "燃AI 1.0 问卷"),
-            "title": str(template.get("title") or "燃AI服务问卷"),
+            "name": str(template.get("name") or "燃人AI 1.0 问卷"),
+            "title": str(template.get("title") or "燃人AI服务问卷"),
             "description": str(template.get("description") or "请完成以下信息。"),
             "fields": get_questionnaire_fields(),
         }
@@ -101,7 +101,7 @@ async def save_active_questionnaire_fields(
     session: AsyncSession,
     fields: list[dict[str, Any]],
     *,
-    name: str = "燃AI 1.0 问卷",
+    name: str = "燃人AI 1.0 问卷",
     template_key: str = INTAKE_TEMPLATE_KEY,
     title: str | None = None,
     description: str | None = None,

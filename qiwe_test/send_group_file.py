@@ -40,7 +40,7 @@ def main():
     if not os.path.exists(file_path) and file_path == "qiwe_test/test_doc.txt":
         os.makedirs("qiwe_test", exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as f:
-            f.write("你好！这是一份来自燃AI大模型测试的测试文档，用于验证 QiWe 平台发送文件功能是否完全通畅！")
+            f.write("你好！这是一份来自燃人AI大模型测试的测试文档，用于验证 QiWe 平台发送文件功能是否完全通畅！")
         print(f"📝 自动创建了测试文档: {file_path}")
 
     if not os.path.exists(file_path):

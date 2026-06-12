@@ -36,7 +36,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
               R
             </span>
             <span>
-              燃AI <span className="text-cyan-700">1.0</span>
+              燃人AI <span className="text-cyan-700">1.0</span>
             </span>
           </div>
         </div>
@@ -76,7 +76,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
         <div className="absolute bottom-0 left-0 right-0 border-t border-slate-100 bg-white p-4">
           <div className="flex items-center gap-2 text-xs font-semibold text-slate-400">
             <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            燃AI 内部运营系统 v1.0.0
+            燃人AI 内部运营系统 v1.0.0
           </div>
         </div>
       </aside>

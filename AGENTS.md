@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-燃AI 1.0 - 社群运营系统 (FastAPI + Next.js + PostgreSQL)
+燃人AI 1.0 - 社群运营系统 (FastAPI + Next.js + PostgreSQL)
 
 ## CONVENTIONS
 - **后端**: Python 3.11+, FastAPI, SQLAlchemy 2.0 async, Pydantic v2, uv 包管理

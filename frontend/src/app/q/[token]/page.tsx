@@ -44,10 +44,10 @@ export default async function QuestionnairePage({
         <header className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="bg-gradient-to-r from-cyan-700 to-cyan-600 px-5 py-5 text-white">
             <div className="text-xs font-semibold uppercase tracking-wider text-cyan-100">
-              燃AI · 高燃人生
+              燃人AI · 高燃人生
             </div>
             <h1 className="mt-1.5 text-xl font-bold leading-snug sm:text-2xl">
-              {questionnaire.title ?? "燃AI服务问卷"}
+              {questionnaire.title ?? "燃人AI服务问卷"}
             </h1>
           </div>
           <p className="px-5 py-3.5 text-sm leading-6 text-slate-500">

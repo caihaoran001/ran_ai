@@ -474,7 +474,7 @@ async def _run_quality_judge(
             scenario="diagnostics_e2e_quality_judge",
             temperature=0.1,
             system_prompt=(
-                "你是燃AI真实E2E的综合质量评审员。你会一次性读取完整用户旅程数据，"
+                "你是燃人AI真实E2E的综合质量评审员。你会一次性读取完整用户旅程数据，"
                 "并同时评审对话、文档、风险意图、打卡成效四个维度。只输出严格 JSON。"
             ),
             user_prompt=(

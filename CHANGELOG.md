@@ -347,9 +347,9 @@
 - 新增 QiWe 消息通道，支持通过 `QIWEI_TOKEN` / `QIWEI_GUID` 发送群文本与文件。
 - 新增 `POST /api/channels/qiwe/callback`，接收 QiWe 文本回调并转成统一 `ChannelMessage`。
 - 新增 `QIWEI_CALLBACK_SECRET`，QiWe 回调可通过 `?secret=` 或 `X-Qiwei-Callback-Secret` 校验来源。
-- 新增 QiWe 群消息聚合器，同一群同一用户 8 秒内连续文本会合并后再交给燃AI处理。
+- 新增 QiWe 群消息聚合器，同一群同一用户 8 秒内连续文本会合并后再交给燃人AI处理。
 - QiWe 聚合器改为固定窗口：第一条消息启动计时，窗口内后续消息只追加不重置计时，避免持续输入导致 AI 无限延后。
-- “发送本群入营问卷”等系统指令绕过聚合窗口，直接进入燃AI业务引擎，并复用 message_id 去重。
+- “发送本群入营问卷”等系统指令绕过聚合窗口，直接进入燃人AI业务引擎，并复用 message_id 去重。
 - QiWe 普通消息在已有关联服务单时默认自动发送 AI 回复；未关联服务单的群只记录消息，不触发普通 AI 回复。
 - 高风险、人工介入仍沿用现有风控拦截逻辑。
 - 后端启动时优先注册 QiWe 为当前消息通道，不再启动企微官方 worker；文档和示例配置同步切换到 QiWe。

@@ -28,7 +28,7 @@ def main():
     chat_id = sys.argv[1]
     
     # Custom message content if provided
-    content = "【燃AI自动回复】收到群聊消息，API 联通测试成功！"
+    content = "【燃人AI自动回复】收到群聊消息，API 联通测试成功！"
     if len(sys.argv) > 2:
         content = sys.argv[2]
 

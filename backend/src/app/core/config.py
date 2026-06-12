@@ -13,7 +13,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "燃AI 1.0"
+    app_name: str = "燃人AI 1.0"
     api_prefix: str = "/api"
     environment: str = "development"
     frontend_public_base_url: str = Field(

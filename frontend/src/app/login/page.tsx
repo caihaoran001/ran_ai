@@ -56,7 +56,7 @@ export default function LoginPage() {
           <h2 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
             欢迎登录{" "}
             <span className="bg-gradient-to-r from-cyan-400 via-teal-400 to-indigo-400 bg-clip-text text-transparent">
-              燃AI 1.0
+              燃人AI 1.0
             </span>
           </h2>
           <p className="mt-2 text-sm text-slate-400">内部智能社群运营系统</p>
@@ -142,7 +142,7 @@ export default function LoginPage() {
         
         {/* Footer */}
         <p className="mt-8 text-center text-xs text-slate-600">
-          燃AI 内部系统 &middot; 安全受控访问
+          燃人AI 内部系统 &middot; 安全受控访问
         </p>
       </div>
     </div>

@@ -4,8 +4,8 @@ import "./globals.css";
 import { LayoutShell } from "@/components/layout-shell";
 
 export const metadata: Metadata = {
-  title: "燃AI 1.0",
-  description: "燃AI内部运营系统",
+  title: "燃人AI 1.0",
+  description: "燃人AI内部运营系统",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

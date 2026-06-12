@@ -69,7 +69,7 @@ def main():
 
     # 3. 发送消息测试 (/msg/sendText)
     print(f"\n🚀 步骤 2: 正在调用 [/msg/sendText] 向自身账户 ({target_user_id}) 发送测试消息...")
-    message_content = "【燃AI 1.0 测试】您好！这是一条来自 Antigravity 智能助手的 QiWe API 独立功能测试消息。收到此消息说明您的接口连接完全正常！"
+    message_content = "【燃人AI 1.0 测试】您好！这是一条来自 Antigravity 智能助手的 QiWe API 独立功能测试消息。收到此消息说明您的接口连接完全正常！"
     send_res = call_api("/msg/sendText", {
         "guid": guid,
         "told": target_user_id,
