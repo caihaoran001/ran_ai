@@ -14,7 +14,7 @@ type Questionnaire = {
   } | null;
 };
 
-export function QuestionnaireSection({ questionnaire }: { questionnaire: Questionnaire | null }) {
+export function QuestionnaireSection({ questionnaire, editUrl }: { questionnaire: Questionnaire | null; editUrl?: string }) {
   const items = questionnaire?.latest_submission
     ? answerItems(questionnaire.fields, questionnaire.latest_submission.answers_json)
     : [];
@@ -23,11 +23,23 @@ export function QuestionnaireSection({ questionnaire }: { questionnaire: Questio
     <section className="rounded-lg border border-zinc-200 bg-white p-4">
       <div className="flex items-center justify-between">
         <h2 className="font-medium">问卷结果</h2>
-        {questionnaire?.latest_submission && (
-          <span className="text-xs text-zinc-400">
-            {formatDateTime(questionnaire.latest_submission.created_at)}
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {questionnaire?.latest_submission && (
+            <span className="text-xs text-zinc-400">
+              {formatDateTime(questionnaire.latest_submission.created_at)}
+            </span>
+          )}
+          {questionnaire?.latest_submission && editUrl && (
+            <a
+              href={editUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 rounded-md border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+            >
+              编辑并重新生成
+            </a>
+          )}
+        </div>
       </div>
 
       {items.length > 0 ? (

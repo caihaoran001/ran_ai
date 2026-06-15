@@ -186,7 +186,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
       <OutcomeSection bundle={outcomes} />
 
       <div className="grid gap-6 md:grid-cols-2">
-        <QuestionnaireSection questionnaire={questionnaire} />
+        <QuestionnaireSection questionnaire={questionnaire} editUrl={`${questionnaireUrl}?edit=1`} />
         
         <div className="panel">
           <div className="panel-header">

@@ -22,9 +22,17 @@ type Questionnaire = {
   default_values?: Record<string, string>;
 };
 
-export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionnaire }) {
+export function QuestionnaireForm({
+  questionnaire,
+  initialAnswers,
+  editMode = false,
+}: {
+  questionnaire: Questionnaire;
+  initialAnswers?: Record<string, string>;
+  editMode?: boolean;
+}) {
   const defaults = questionnaire.default_values ?? {};
-  const [answers, setAnswers] = useState<Record<string, string>>(defaults);
+  const [answers, setAnswers] = useState<Record<string, string>>(initialAnswers ?? defaults);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -82,7 +90,7 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
     const url = `/api/questionnaires/${questionnaire.token}/submit?template=${encodeURIComponent(questionnaire.template_key)}`;
     try {
       const response = await fetch(url, {
-        method: "POST",
+        method: editMode ? "PATCH" : "POST",
         headers: {"content-type": "application/json"},
         body: JSON.stringify({ answers: nextAnswers }),
       });
@@ -112,9 +120,11 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
           <CheckCircle2 className="h-9 w-9 text-emerald-500" />
         </div>
-        <h2 className="text-lg font-bold text-slate-900">问卷已成功提交</h2>
+        <h2 className="text-lg font-bold text-slate-900">{editMode ? "问卷已更新" : "问卷已成功提交"}</h2>
         <p className="max-w-sm text-sm leading-6 text-slate-500">
-          专属助理正在为您整理资料，请在社群中耐心等待，或联系您的专属顾问查看后续进展。
+          {editMode
+            ? "答案已保存，系统正在用新答案重新生成画像与报告，稍后可在文档列表查看待审核的新版本。"
+            : "专属助理正在为您整理资料，请在社群中耐心等待，或联系您的专属顾问查看后续进展。"}
         </p>
       </div>
     );

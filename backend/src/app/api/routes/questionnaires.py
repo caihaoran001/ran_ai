@@ -145,6 +145,39 @@ async def submit_questionnaire(
     return submission
 
 
+@router.patch(
+    "/{token}/submit",
+    response_model=QuestionnaireSubmissionRead,
+)
+async def edit_intake_submission(
+    token: str,
+    payload: QuestionnaireSubmit,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> QuestionnaireSubmission:
+    """运营编辑已提交的入营问卷答案，并重新生成画像+文档。
+
+    已发送的旧文档保留在库（发送时自动跳过），重新生成的新文档进入待审核。
+    """
+    service_case = await _case_by_token(session, token, include_deleted=False)
+    fields = await get_active_questionnaire_fields(session, "intake")
+    submission = await _latest_submission(session, service_case.id, "intake")
+    if not submission:
+        raise HTTPException(status_code=404, detail="no intake submission to edit")
+    body_errors = validate_body_measurements(fields, payload.answers)
+    if body_errors:
+        raise HTTPException(status_code=400, detail="；".join(body_errors))
+    submission.answers_json = payload.answers
+    await _sync_user_from_answers(session, service_case, fields, payload.answers)
+    if get_settings().ai_api_key:
+        service_case.status = ServiceCaseStatus.GENERATING
+    await session.commit()
+    await session.refresh(submission)
+    if get_settings().ai_api_key:
+        background_tasks.add_task(_generate_profile_and_documents, service_case.id)
+    return submission
+
+
 async def _case_by_token(
     session: AsyncSession,
     token: str,

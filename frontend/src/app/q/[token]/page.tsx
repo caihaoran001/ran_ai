@@ -30,13 +30,21 @@ export default async function QuestionnairePage({
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams?: Promise<{ template?: string }>;
+  searchParams?: Promise<{ template?: string; edit?: string }>;
 }) {
   const { token } = await params;
-  const template = (await searchParams)?.template;
+  const sp = await searchParams;
+  const template = sp?.template;
   const suffix = template ? `?template=${encodeURIComponent(template)}` : "";
   const questionnaire = await api<Questionnaire>(`/questionnaires/${token}${suffix}`);
-  const isReadonly = Boolean(questionnaire.latest_submission && !questionnaire.allow_repeat);
+  const editMode = sp?.edit === "1" && Boolean(questionnaire.latest_submission);
+  const isReadonly = Boolean(questionnaire.latest_submission && !questionnaire.allow_repeat) && !editMode;
+  const initialAnswers: Record<string, string> = {};
+  if (editMode && questionnaire.latest_submission) {
+    for (const [k, v] of Object.entries(questionnaire.latest_submission.answers_json)) {
+      initialAnswers[k] = Array.isArray(v) ? v.join("||") : v == null ? "" : String(v);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -52,13 +60,17 @@ export default async function QuestionnairePage({
           </div>
           <p className="px-5 py-3.5 text-sm leading-6 text-slate-500">
             {questionnaire.user_name ? `${questionnaire.user_name}，` : ""}
-            {isReadonly ? "以下是您已提交的问卷内容。" : (questionnaire.description ?? "请完成以下信息。")}
+            {editMode ? "编辑模式：修改答案后点击提交，系统会用新答案重新生成画像与报告。" : isReadonly ? "以下是您已提交的问卷内容。" : (questionnaire.description ?? "请完成以下信息。")}
           </p>
         </header>
         {isReadonly ? (
           <QuestionnaireReadonly questionnaire={questionnaire} />
         ) : (
-          <QuestionnaireForm questionnaire={questionnaire} />
+          <QuestionnaireForm
+            questionnaire={questionnaire}
+            editMode={editMode}
+            initialAnswers={editMode ? initialAnswers : undefined}
+          />
         )}
       </div>
     </div>

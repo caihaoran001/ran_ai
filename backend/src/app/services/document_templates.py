@@ -65,7 +65,7 @@ ENERGY_FIELD_SPEC = {
 
 EXECUTION_FIELD_SPEC = {
     "weight_band": "当前所属减重带，格式为「{带名}：{通俗描述}」，例如「A带：0-2斤维持优化带」「D带：20斤及以上带」。禁止「维持优化带（A带）」这种括号反转写法。",
-    "path_goal": "更适合的总路径目标，必须包含具体数字锚点（斤数范围或目标体重），例如「维持63-65kg，同时提升精力、情绪稳定度和下午续航」或「12-16斤，先把BMI和腰腹维度拉回更安全区间」。",
+    "path_goal": "更适合的总路径目标（= 12 周累计目标，不是逐段相加）。必须包含具体数字锚点，且数字必须与所属减重带的 12 周累计目标一致、不得超出：A带维持(0-3斤) / B带约5斤 / C带10-12斤 / D带16-20斤。例如 C带「10-12斤，先把BMI和腰腹维度拉回更安全区间」、A带「维持63-65kg，重点提升精力、情绪稳定度和下午续航」。",
     "day28_goal": "第一个 28 天目标（必须 1-2 句完整描述，至少 25 字）。"
                    "必须以数字范围开头、再用分号接解释；数字范围必须与所属减重带匹配（A带 0-2斤 / B带 3-5斤 / C带 6-8斤 / D带 8-12斤），例如「6-8斤；C带超重阶段，重点是减脂同时稳住节律」。"
                    "禁止以否定句开头（如「不以减重数字为核心目标」），数字范围必须在最前面。"
@@ -165,7 +165,7 @@ def build_stage_report_content_json(
             _text_block("stage_summary", "1. 阶段总结", fields.get("stage_summary")),
             _text_block("risk_reminder", "2. 风险提醒", fields.get("risk_reminder")),
             _text_block("adjustment_advice", "3. 微调建议", fields.get("adjustment_advice")),
-            _text_block("repurchase_advice", "4. 复购建议", fields.get("repurchase_advice")),
+            _text_block("repurchase_advice", "4. 后续建议", fields.get("repurchase_advice")),
         ]
     payload = _payload(title=title, recipient=user_name, blocks=blocks)
     payload["stage"] = stage
