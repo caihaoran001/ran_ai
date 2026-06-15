@@ -56,7 +56,7 @@ export function CaseRiskReset({ caseId }: { caseId: number }) {
             : "text-zinc-500 hover:text-zinc-900"
         }`}
       >
-        {busy ? "处理中..." : confirmReset ? "确认解除标记？" : "解除标记"}
+        {busy ? "处理中..." : confirmReset ? "确认清除？" : "清除风险标记"}
       </button>
     </div>
   );

@@ -80,7 +80,7 @@ export default async function UsersPage({
 const SERVICE_CASE_FILTER_LABELS: Record<string, string> = {
   new_today: "今日新增用户",
   risk: "风险用户",
-  human_intervention: "待人工介入",
+  human_intervention: "需关注",
   unfollowed: "未跟进（2-7天）",
   renewal_followup: "续购跟进窗口",
   renewal_intent: "明确续购意向",
@@ -218,7 +218,7 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
           </span>
         </span>
         {serviceCase.needs_human_intervention && (
-          <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">待人工介入</span>
+          <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">需关注</span>
         )}
         {serviceCase.risk_level === "high" && (
           <span className="status-pill border-orange-200 bg-orange-50 text-orange-700">高风险</span>

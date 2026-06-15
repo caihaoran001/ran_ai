@@ -112,7 +112,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
             {serviceCase.needs_human_intervention && (
               <span className="status-pill border-orange-200 bg-orange-50 text-orange-700">
                 <UserRound className="h-3.5 w-3.5" />
-                待人工介入
+                需关注
               </span>
             )}
             {(serviceCase.risk_level === "high" || serviceCase.needs_human_intervention) && (

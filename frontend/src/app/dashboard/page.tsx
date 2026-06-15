@@ -141,7 +141,7 @@ export default async function DashboardPage() {
           description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险词，需要人工关注。"
         />
         <StatCard
-          label="待人工介入"
+          label="需关注用户"
           value={summary.human_intervention_users ?? 0}
           icon={ShieldAlert}
           color="red"
@@ -323,7 +323,7 @@ function CaseHealthRow({ item }: { item: CaseHealthItem }) {
         {item.risk_level === "high" ? (
           <span className="rounded bg-rose-50 px-2 py-0.5 text-xs text-rose-700">高风险</span>
         ) : item.needs_human_intervention ? (
-          <span className="rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700">待人工</span>
+          <span className="rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700">需关注</span>
         ) : (
           <span className="text-xs text-zinc-400">正常</span>
         )}

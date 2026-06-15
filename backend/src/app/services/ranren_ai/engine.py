@@ -148,6 +148,10 @@ class RanrenAIEngine:
         self.channel = channel
         self.settings = settings or get_settings()
         self.has_pending_newer_message = has_pending_newer_message
+        # 转人工@班主任的短期防刷屏：记录每个 service_case 上次@的单调时钟时间，
+        # 30 分钟内不重复@（替代旧的 needs_human_intervention 永久标记——旧逻辑会在第一次@后
+        # 永久不再@后续风险，导致班主任漏消息；新逻辑每个新风险事件都会@、只在短期内防刷屏）。
+        self._last_handoff_at: dict[int, float] = {}
 
     async def handle_message(self, message: ChannelMessage) -> None:
         started_at = time.monotonic()
@@ -304,7 +308,10 @@ class RanrenAIEngine:
                 inbound_id=inbound_id,
                 analysis=analysis,
             )
-            if _requires_human_handoff(analysis) and not _requires_fixed_safety_reply(None, analysis) and not was_already_in_intervention:
+            now_mono = time.monotonic()
+            recently_handed_off = (now_mono - self._last_handoff_at.get(service_case_id, 0.0)) < 1800
+            if _requires_human_handoff(analysis) and not _requires_fixed_safety_reply(None, analysis) and not recently_handed_off:
+                self._last_handoff_at[service_case_id] = now_mono
                 await self._reply_human_handoff(message, service_case_id=service_case_id, trigger_id=inbound_id)
                 logger.info(
                     "RanrenAI handed off complaint/robot-stop chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
