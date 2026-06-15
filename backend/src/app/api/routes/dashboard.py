@@ -21,7 +21,7 @@ from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.schemas.dashboard import AICostCaseItem, AICostSummary, CaseHealthItem, DashboardMetric, DashboardSummary, OutcomeDashboardSummary
-from app.services.service_case_queries import active_service_case_condition
+from app.services.service_case_queries import active_service_case_condition, pending_review_case_ids_subquery
 
 router = APIRouter()
 
@@ -112,7 +112,7 @@ async def dashboard_summary(
     human_intervention_users = await session.scalar(
         select(func.count(ServiceCase.id)).where(
             active_service_case_condition(),
-            ServiceCase.needs_human_intervention.is_(True),
+            ServiceCase.id.in_(pending_review_case_ids_subquery()),
         )
     )
     now = datetime.now(timezone.utc)
@@ -736,6 +736,15 @@ async def dashboard_case_health(session: AsyncSession = Depends(get_session)) ->
         if stage:
             stages_by_case.setdefault(doc.service_case_id, set()).add(str(stage))
 
+    # 『需关注』事件级：有待审核 AI 回复(PENDING)的 case
+    pending_review_ids: set[int] = set(
+        (
+            await session.scalars(
+                pending_review_case_ids_subquery().where(Message.service_case_id.in_(case_ids))
+            )
+        ).all()
+    )
+
     items: list[CaseHealthItem] = []
     for case in cases:
         last = last_checkin.get(case.id)
@@ -750,7 +759,7 @@ async def dashboard_case_health(session: AsyncSession = Depends(get_session)) ->
                 days_since_checkin=(today - last).days if last else None,
                 action_focus=_action_focus_label(state_by_case.get(case.id)),
                 risk_level=case.risk_level,
-                needs_human_intervention=bool(case.needs_human_intervention),
+                needs_human_intervention=case.id in pending_review_ids,
                 stage_reports=sorted(stages_by_case.get(case.id, set())),
                 last_inbound_at=last_inbound.get(case.id),
             )

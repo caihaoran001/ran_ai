@@ -99,7 +99,6 @@ async def test_high_risk_chronic_disease(db_session, mock_ai, cai_haoran_answers
     )
     case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
     assert case.risk_level == "high"
-    assert case.needs_human_intervention is True
     risk_codes = [rf["code"] for rf in (case.risk_flags or [])]
     assert "chronic_disease" in risk_codes
 
@@ -114,8 +113,6 @@ async def test_emotional_crisis(db_session, mock_ai, cai_haoran_answers):
     )
     case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
     assert case.risk_level == "high"
-    assert case.needs_human_intervention is True
-
 
 @pytest.mark.asyncio
 async def test_refund_intent(db_session, mock_ai, cai_haoran_answers):
@@ -128,7 +125,6 @@ async def test_refund_intent(db_session, mock_ai, cai_haoran_answers):
     case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
     assert case.refund_intent_flags is not None
     assert len(case.refund_intent_flags) > 0
-    assert case.needs_human_intervention is True
     assert any(item.get("code") == "refund_request" for item in (case.intervention_reasons or []))
 
 

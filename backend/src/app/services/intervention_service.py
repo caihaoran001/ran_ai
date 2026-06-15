@@ -137,9 +137,9 @@ def merge_case_insight(service_case: ServiceCase, insight: dict[str, Any]) -> No
         service_case.risk_flags = _merge_lists(service_case.risk_flags, risks)
 
     reasons = _normalize_items(insight.get("intervention_reasons"), source="")
-    has_high_reasons = any(r.get("level") in {"high", "medium"} for r in reasons)
-    if insight.get("requires_human_intervention") or has_high_reasons:
-        service_case.needs_human_intervention = True
+    # 不再置位 needs_human_intervention：已事件化——『需关注』由『是否有待审核 AI 回复』实时计算
+    # (pending_review_case_ids_subquery)，处理完自动消失，无需持久标记+手动清除。
+    # 仍累积 intervention_reasons 作历史，供画像/LLM 上下文参考。
     service_case.intervention_reasons = _merge_lists(service_case.intervention_reasons, reasons)
 
     renewal = insight.get("renewal_intent")

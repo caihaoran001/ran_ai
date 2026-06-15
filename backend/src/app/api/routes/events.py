@@ -12,7 +12,7 @@ from app.models.knowledge_draft import KnowledgeDraft
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase
 from app.models.user_document import DocumentStatus, UserDocument
-from app.services.service_case_queries import active_service_case_condition
+from app.services.service_case_queries import active_service_case_condition, pending_review_case_ids_subquery
 
 router = APIRouter()
 
@@ -51,7 +51,7 @@ async def _review_counts() -> dict[str, int]:
         intervention_count = await session.scalar(
             select(func.count(ServiceCase.id)).where(
                 active_service_case_condition(),
-                ServiceCase.needs_human_intervention.is_(True),
+                ServiceCase.id.in_(pending_review_case_ids_subquery()),
             )
         ) or 0
 

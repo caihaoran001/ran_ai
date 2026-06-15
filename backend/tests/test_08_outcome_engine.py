@@ -123,9 +123,9 @@ async def test_outcome_followup_suppressed_when_human_intervention_needed(db_ses
 
 
 @pytest.mark.asyncio
-async def test_outcome_followup_suppressed_while_case_still_needs_human_intervention(db_session, mock_ai):
+async def test_outcome_followup_suppressed_while_case_high_risk(db_session, mock_ai):
     case = await _setup_outcome_case(db_session, days=7)
-    case.needs_human_intervention = True
+    case.risk_level = "high"
     message = Message(
         service_case_id=case.id,
         group_id=case.group_id,

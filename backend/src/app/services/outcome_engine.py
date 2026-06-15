@@ -454,8 +454,7 @@ async def apply_outcome_analysis(
 
     followup_plan = _normalize_followup(raw.get("followup_plan"), missing, allowed_followup_fields)
     if (
-        service_case.needs_human_intervention
-        or service_case.risk_level == "high"
+        service_case.risk_level == "high"
         or _must_suppress_followup(intervention_analysis)
     ):
         followup_plan = {"should_ask": False, "field_key": "", "question": "", "reason": "风险或人工介入场景，暂停成效追问。"}
@@ -779,8 +778,7 @@ def _analysis_context(
         },
         "safety_context": {
             "requires_human_intervention": bool(
-                service_case.needs_human_intervention
-                or (intervention_analysis or {}).get("requires_human_intervention")
+                (intervention_analysis or {}).get("requires_human_intervention")
             ),
             "persistent_risk_level": service_case.risk_level,
             "risk_flags": (intervention_analysis or {}).get("risk_flags") or [],

@@ -161,7 +161,6 @@ class RanrenAIEngine:
         analysis: dict | None = None
         inbound_id: int | None = None
         recent_user_messages: list[str] = []
-        was_already_in_intervention = False
 
         is_staff = False
         sender_type = MessageSenderType.USER
@@ -198,7 +197,6 @@ class RanrenAIEngine:
             if service_case:
                 service_case_id = service_case.id
                 service_case_for_command = service_case
-                was_already_in_intervention = bool(getattr(service_case, "needs_human_intervention", False))
 
                 # Self-healing and dynamic binding for real customer messages
                 if not is_staff and message.channel in ("wecom", "qiwe") and message.user_id:
@@ -991,7 +989,6 @@ class RanrenAIEngine:
             return {}
         context: dict[str, object] = {
             "current_risk_level": service_case.risk_level,
-            "needs_human_intervention": service_case.needs_human_intervention,
             "intervention_reasons": service_case.intervention_reasons or [],
             "risk_flags": service_case.risk_flags or [],
         }

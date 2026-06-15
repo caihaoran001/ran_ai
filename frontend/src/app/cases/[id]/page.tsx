@@ -115,7 +115,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                 需关注
               </span>
             )}
-            {(serviceCase.risk_level === "high" || serviceCase.needs_human_intervention) && (
+            {serviceCase.risk_level === "high" && (
               <CaseRiskReset caseId={serviceCase.id} />
             )}
           </div>
