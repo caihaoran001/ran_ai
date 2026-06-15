@@ -690,10 +690,10 @@ class RanrenAIEngine:
     ) -> bool:
         if service_case and not service_case.ai_auto_reply_enabled:
             return False
-        if service_case and service_case.risk_level == "high":
-            return False
-        if service_case and service_case.needs_human_intervention:
-            return False
+        # 按客户要求改为「事件级介入」：不再因 risk_level=high 或 needs_human_intervention
+        # 持续锁定审核（旧逻辑会在前端手动解除风险标记前，把后续所有 AI 回复都卡成待审核）。
+        # 现在只对「当前这句话需要人工介入」转待审核 + @班主任，其余回复按正常发送模式处理。
+        # 注：高风险/红线句仍由 _requires_fixed_safety_reply 的固定安全话术兜底，安全提醒不受影响。
         if analysis and analysis.get("requires_human_intervention"):
             return False
         return await get_ai_reply_delivery_mode(session) == "auto_send"
