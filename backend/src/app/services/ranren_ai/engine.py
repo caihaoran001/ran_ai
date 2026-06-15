@@ -126,9 +126,9 @@ DEFAULT_RISK_REPLY = (
 )
 
 HUMAN_HANDOFF_REPLY = (
-    "收到，我先不继续用机器人解释，也不再追问你。\n\n"
-    "这条已经转给真人班主任，后面由班主任接一下。"
-    "你不用重复说明，先按自己的节奏来。"
+    "收到，我已经把您的情况反馈给班主任了，先按您的节奏来就好。\n\n"
+    "后面的调整建议由班主任直接微信联系您，您不用重复说明，安心哈～\n"
+    "@班主任 麻烦有空时接手跟进一下哈～"
 )
 
 
@@ -153,6 +153,7 @@ class RanrenAIEngine:
         analysis: dict | None = None
         inbound_id: int | None = None
         recent_user_messages: list[str] = []
+        was_already_in_intervention = False
 
         is_staff = False
         sender_type = MessageSenderType.USER
@@ -189,6 +190,7 @@ class RanrenAIEngine:
             if service_case:
                 service_case_id = service_case.id
                 service_case_for_command = service_case
+                was_already_in_intervention = bool(service_case.needs_human_intervention)
 
                 # Self-healing and dynamic binding for real customer messages
                 if not is_staff and message.channel in ("wecom", "qiwe") and message.user_id:
@@ -298,7 +300,7 @@ class RanrenAIEngine:
                 inbound_id=inbound_id,
                 analysis=analysis,
             )
-            if _requires_human_handoff(analysis) and not _requires_fixed_safety_reply(None, analysis):
+            if _requires_human_handoff(analysis) and not _requires_fixed_safety_reply(None, analysis) and not was_already_in_intervention:
                 await self._reply_human_handoff(message, service_case_id=service_case_id, trigger_id=inbound_id)
                 logger.info(
                     "RanrenAI handed off complaint/robot-stop chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
