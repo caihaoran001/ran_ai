@@ -121,7 +121,7 @@ def main():
         import urllib.request
         # Check backend health publicly
         try:
-            req_b = urllib.request.Request("https://admin.humanburning.com/health")
+            req_b = urllib.request.Request("https://admin.humanburning.ai/health")
             with urllib.request.urlopen(req_b, timeout=2) as response:
                 b_status = str(response.getcode())
         except Exception as e:
@@ -129,7 +129,7 @@ def main():
         
         # Check frontend health publicly
         try:
-            req_f = urllib.request.Request("https://admin.humanburning.com/login")
+            req_f = urllib.request.Request("https://admin.humanburning.ai/login")
             with urllib.request.urlopen(req_f, timeout=2) as response:
                 f_status = str(response.getcode())
         except Exception as e:
