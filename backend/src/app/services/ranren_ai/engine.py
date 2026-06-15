@@ -340,58 +340,30 @@ class RanrenAIEngine:
         service_case_id: int | None,
         trigger_id: int | None,
     ) -> None:
-        matched_user_ids = []
-        matched_names = []
+        settings = get_settings()
+        target_user_id = (settings.qiwei_handoff_at_user_id or "").strip()
 
-        # 1. Try dynamic staff lookup if channel supports it
-        if (
-            hasattr(self.channel, "get_room_detail")
-            and hasattr(self.channel, "batch_get_user_info")
-            and hasattr(self.channel, "send_hypertext")
-        ):
-            try:
-                room_detail = await self.channel.get_room_detail(message.chat_id)
-                if room_detail:
-                    room_list = room_detail.get("roomList") or []
-                    for room in room_list:
-                        member_list = room.get("memberList") or []
-                        user_ids = [m.get("userId") for m in member_list if m.get("userId")]
-                        if user_ids:
-                            contacts = await self.channel.batch_get_user_info(user_ids) or []
-                            contact_map = {c.get("userId"): c for c in contacts if c.get("userId")}
-                            for member in member_list:
-                                u_id = member.get("userId")
-                                if not u_id:
-                                    continue
-                                group_card = (member.get("name") or "").strip()
-                                c_info = contact_map.get(u_id, {})
-                                global_nickname = (c_info.get("nickname") or c_info.get("name") or "").strip()
-
-                                is_match = False
-                                if "班主任" in group_card or "班主任" in global_nickname:
-                                    is_match = True
-                                if "勇哥" in group_card or "勇哥" in global_nickname:
-                                    is_match = True
-
-                                if is_match and u_id not in matched_user_ids:
-                                    matched_user_ids.append(u_id)
-                                    name_to_use = group_card or global_nickname or "班主任"
-                                    matched_names.append(name_to_use)
-            except Exception as e:
-                logger.error("Failed to dynamically resolve room staff for chat_id=%s: %s", message.chat_id, e)
-
-        # 2. If matched staff is found, send hypertext with native @-mentions
-        if matched_user_ids:
+        # 1. If we have a target staff User ID and channel supports hypertext, send native mention
+        if target_user_id and hasattr(self.channel, "send_hypertext"):
             prefix_text = (
                 "收到，我已经把您的情况反馈给班主任了，先按您的节奏来就好。\n\n"
                 "后面的调整建议由班主任直接微信联系您，您不用重复说明，安心哈～\n"
             )
-            content_list = [{"subtype": 0, "text": prefix_text}]
-            for i, u_id in enumerate(matched_user_ids):
-                if i > 0:
-                    content_list.append({"subtype": 0, "text": " "})
-                content_list.append({"subtype": 1, "text": u_id})
-            content_list.append({"subtype": 0, "text": " 麻烦有空时接手跟进一下哈～"})
+            content_list = [
+                {"subtype": 0, "text": prefix_text},
+                {"subtype": 1, "text": target_user_id},
+                {"subtype": 0, "text": " 麻烦有空时接手跟进一下哈～"}
+            ]
+
+            # Resolve the nickname dynamically for database logging (using cached contact info)
+            nickname = "班主任"
+            if hasattr(self.channel, "get_contact_nickname"):
+                try:
+                    resolved = await self.channel.get_contact_nickname(target_user_id)
+                    if resolved:
+                        nickname = resolved
+                except Exception as e:
+                    logger.error("Failed to resolve nickname for at-mention ID %s: %s", target_user_id, e)
 
             result = await self.channel.send_hypertext(
                 message.chat_id,
@@ -400,7 +372,7 @@ class RanrenAIEngine:
                 reply_context=message.raw_payload,
             )
             # Reconstruct readable text for outbound message logging in DB
-            plain_text = prefix_text + " ".join(f"@{name}" for name in matched_names) + " 麻烦有空时接手跟进一下哈～"
+            plain_text = f"{prefix_text}@{nickname} 麻烦有空时接手跟进一下哈～"
         else:
             # Fallback to standard plain text send
             result = await self.channel.send_text(

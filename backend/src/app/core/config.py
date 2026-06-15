@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     qiwei_guid: str = Field(default="", validation_alias="QIWEI_GUID")
     qiwei_callback_secret: str = Field(default="", validation_alias="QIWEI_CALLBACK_SECRET")
     qiwei_staff_senders: str = Field(default="", validation_alias="QIWEI_STAFF_SENDERS")
+    qiwei_handoff_at_user_id: str = Field(
+        default="7881300647007710",
+        validation_alias="QIWEI_HANDOFF_AT_USER_ID",
+    )
     qiwei_base_url: str = Field(
         default="http://manager.qiweapi.com/qiwe",
         validation_alias="QIWEI_BASE_URL",
