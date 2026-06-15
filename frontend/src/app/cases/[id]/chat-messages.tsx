@@ -78,9 +78,12 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
                 )}
               </div>
               <div className="whitespace-pre-wrap">{msg.content}</div>
-              {msg.status === "failed" && (
-                <div className="mt-1 text-xs text-red-500">发送失败</div>
-              )}
+              {msg.status === "failed" &&
+                (msg.error?.includes("驳回") ? (
+                  <div className="mt-1 text-xs text-zinc-400">已驳回 · 未发送</div>
+                ) : (
+                  <div className="mt-1 text-xs text-red-500">发送失败</div>
+                ))}
             </div>
           </div>
         ))}

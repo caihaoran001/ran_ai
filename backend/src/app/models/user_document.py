@@ -26,6 +26,7 @@ class DocumentStatus(str, enum.Enum):
     REVIEWING = "reviewing"
     APPROVED = "approved"
     SENT = "sent"
+    ARCHIVED = "archived"  # 人工审核后决定不发送，归档留痕（前端显示「未发送」）
 
 
 class UserDocument(TimestampMixin, Base):

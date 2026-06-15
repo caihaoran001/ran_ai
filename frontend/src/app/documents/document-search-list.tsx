@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, type MouseEvent } from "react";
 import Link from "next/link";
-import { api, UserDocument } from "@/lib/api";
+import { api, UserDocument, API_BASE } from "@/lib/api";
 import { useSSE } from "@/hooks/use-sse";
 import { FileText, Search, RefreshCw, Eye, CheckCircle, ArrowRight, Clock, ShieldCheck } from "lucide-react";
 
@@ -76,6 +76,7 @@ export function DocumentSearchList() {
     approved: { label: "已批准", className: "bg-emerald-50 text-emerald-700 border-emerald-200/80" },
     sent: { label: "已发送", className: "bg-blue-50 text-blue-700 border-blue-200/80" },
     draft: { label: "草稿", className: "bg-zinc-100 text-zinc-600 border-zinc-200" },
+    archived: { label: "未发送", className: "bg-zinc-100 text-zinc-500 border-zinc-300" },
   };
 
   // Client-side fuzzy search and status filter
@@ -96,7 +97,7 @@ export function DocumentSearchList() {
         return doc.status === "reviewing" || doc.status === "draft";
       }
       if (statusFilter === "reviewed") {
-        return doc.status === "approved" || doc.status === "sent";
+        return doc.status === "approved" || doc.status === "sent" || doc.status === "archived";
       }
       return true;
     });
@@ -107,7 +108,7 @@ export function DocumentSearchList() {
   }, [documents]);
 
   const reviewedCount = useMemo(() => {
-    return documents.filter((doc) => doc.status === "approved" || doc.status === "sent").length;
+    return documents.filter((doc) => doc.status === "approved" || doc.status === "sent" || doc.status === "archived").length;
   }, [documents]);
 
   if (loading) {
@@ -137,7 +138,7 @@ export function DocumentSearchList() {
   }
 
   const pendingDocs = filteredDocuments.filter((doc) => doc.status === "reviewing" || doc.status === "draft");
-  const reviewedDocs = filteredDocuments.filter((doc) => doc.status === "approved" || doc.status === "sent");
+  const reviewedDocs = filteredDocuments.filter((doc) => doc.status === "approved" || doc.status === "sent" || doc.status === "archived");
 
   return (
     <div className="space-y-6">
@@ -232,7 +233,7 @@ export function DocumentSearchList() {
                 {pendingDocs.length > 0 ? (
                   <div className="max-h-[500px] overflow-y-auto space-y-3.5 pr-1.5 scrollbar-thin">
                     {pendingDocs.map((doc) => (
-                      <DocumentCard key={doc.id} doc={doc} statusConfig={statusConfig} />
+                      <DocumentCard key={doc.id} doc={doc} statusConfig={statusConfig} onDiscard={fetchDocuments} />
                     ))}
                   </div>
                 ) : (
@@ -285,16 +286,34 @@ export function DocumentSearchList() {
 function DocumentCard({
   doc,
   statusConfig,
+  onDiscard,
 }: {
   doc: MappedDocument;
   statusConfig: Record<string, { label: string; className: string }>;
+  onDiscard?: () => void;
 }) {
+  const [discarding, setDiscarding] = useState(false);
   const status = statusConfig[doc.status] || {
     label: doc.status,
     className: "bg-zinc-100 text-zinc-650 border-zinc-200",
   };
 
   const isPending = doc.status === "reviewing" || doc.status === "draft";
+
+  async function handleDiscard(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!onDiscard || discarding) return;
+    if (!window.confirm(`确认不发送《${doc.title}》？将移到「已审核」列并标记为「未发送」。`)) return;
+    setDiscarding(true);
+    try {
+      await fetch(`${API_BASE}/documents/${doc.id}/discard`, { method: "POST" });
+      onDiscard();
+    } catch (err) {
+      console.error("discard document failed", err);
+      setDiscarding(false);
+    }
+  }
 
   return (
     <Link
@@ -328,9 +347,21 @@ function DocumentCard({
           <Eye className="h-3 w-3" />
           <span>查看详情</span>
         </div>
-        <div className="text-2xs font-bold text-blue-600 group-hover:text-blue-500 flex items-center gap-0.5 transition-colors">
-          {isPending ? "编辑并审核" : "继续并审核"} 
-          <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+        <div className="flex items-center gap-3">
+          {isPending && onDiscard && (
+            <button
+              type="button"
+              onClick={handleDiscard}
+              disabled={discarding}
+              className="text-2xs font-bold text-zinc-400 hover:text-rose-600 transition-colors disabled:opacity-50"
+            >
+              {discarding ? "处理中…" : "不发送"}
+            </button>
+          )}
+          <div className="text-2xs font-bold text-blue-600 group-hover:text-blue-500 flex items-center gap-0.5 transition-colors">
+            {isPending ? "编辑并审核" : "继续并审核"}
+            <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+          </div>
         </div>
       </div>
     </Link>

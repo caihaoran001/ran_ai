@@ -173,6 +173,24 @@ async def approve_document(
     return document
 
 
+@router.post("/documents/{document_id}/discard", response_model=UserDocumentRead)
+async def discard_document(
+    document_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> UserDocument:
+    """人工审核后决定不发送：归档（移出待审核，标记未发送，留痕可查）。"""
+    document = await session.get(UserDocument, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="document not found")
+    if document.status == DocumentStatus.SENT:
+        raise HTTPException(status_code=400, detail="已发送的文件不能再标记为未发送")
+    document.status = DocumentStatus.ARCHIVED
+    document.reviewed_at = datetime.now(timezone.utc)
+    await session.commit()
+    await session.refresh(document)
+    return document
+
+
 @router.post("/documents/{document_id}/send", response_model=UserDocumentRead)
 async def mark_document_sent(
     document_id: int,
