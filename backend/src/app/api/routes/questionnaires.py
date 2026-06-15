@@ -32,6 +32,7 @@ from app.schemas.questionnaire import (
     QuestionnaireSubmit,
 )
 from app.services.document_service import generate_profile_and_documents, personalized_checkin_fields_from_document_payloads
+from app.services.intake_facts import validate_body_measurements
 from app.db.session import SessionLocal
 from app.services.channels import send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
@@ -109,6 +110,10 @@ async def submit_questionnaire(
 
     if not _allow_repeat(template) and await _latest_submission(session, service_case.id, template):
         raise HTTPException(status_code=409, detail="questionnaire already submitted")
+    if template == "intake":
+        body_errors = validate_body_measurements(fields, payload.answers)
+        if body_errors:
+            raise HTTPException(status_code=400, detail="；".join(body_errors))
     submission = QuestionnaireSubmission(
         service_case_id=service_case.id,
         template_key=template,

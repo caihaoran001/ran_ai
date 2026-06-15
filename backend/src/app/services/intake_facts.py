@@ -60,6 +60,31 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
     }
 
 
+def _field_value(fields: list[dict[str, Any]], answers: dict[str, Any], *title_parts: str) -> str:
+    """按字段 title 关键词匹配取答案值（与 build_intake_fact_summary 内的匹配口径一致）。"""
+    for field in fields:
+        key = str(field.get("key") or field.get("id") or "")
+        title = str(field.get("title") or field.get("label") or "")
+        if key in answers and all(part in title for part in title_parts):
+            return _answer_text(answers.get(key))
+    return ""
+
+
+def validate_body_measurements(fields: list[dict[str, Any]], answers: dict[str, Any]) -> list[str]:
+    """校验问卷身体数据合理性，拦截明显录入错误（不卡医学正常范围）。返回错误列表，空=通过。"""
+    errors: list[str] = []
+    height = _first_number(_field_value(fields, answers, "身高"))
+    weight = _first_number(_field_value(fields, answers, "当前体重") or _field_value(fields, answers, "体重"))
+    age = _first_number(_field_value(fields, answers, "年龄"))
+    if height is not None and not (140 <= height <= 230):
+        errors.append(f"身高填写为 {height:g}，超出合理范围（140-230cm），请检查是否填错或单位有误")
+    if weight is not None and not (25 <= weight <= 300):
+        errors.append(f"体重填写为 {weight:g}，超出合理范围（25-300kg），请检查是否填错")
+    if age is not None and not (15 <= age <= 100):
+        errors.append(f"年龄填写为 {age:g}，超出合理范围（15-100岁），请检查是否填错")
+    return errors
+
+
 def sanitize_profile_json(profile: dict[str, Any], facts: dict[str, Any] | None) -> dict[str, Any]:
     if not facts:
         return profile

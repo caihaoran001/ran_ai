@@ -40,6 +40,29 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
     ? Math.round((answeredCount / answerableFields.length) * 100)
     : 0;
 
+  function validateBodyMeasurements(
+    fields: typeof questionnaire.fields,
+    vals: Record<string, string>,
+  ): string | null {
+    const findNum = (...parts: string[]): number | null => {
+      for (const f of fields) {
+        const title = String(f.title ?? f.label ?? "");
+        if (parts.every((p) => title.includes(p))) {
+          const m = String(vals[f.key] ?? "").match(/\d+(?:\.\d+)?/);
+          if (m) return parseFloat(m[0]);
+        }
+      }
+      return null;
+    };
+    const h = findNum("身高");
+    const w = findNum("当前体重") ?? findNum("体重");
+    const a = findNum("年龄");
+    if (h !== null && (h < 140 || h > 230)) return `身高填写为 ${h}，超出合理范围（140-230cm），请检查是否填错或单位有误`;
+    if (w !== null && (w < 25 || w > 300)) return `体重填写为 ${w}，超出合理范围（25-300kg），请检查是否填错`;
+    if (a !== null && (a < 15 || a > 100)) return `年龄填写为 ${a}，超出合理范围（15-100岁），请检查是否填错`;
+    return null;
+  }
+
   async function submitAnswers(nextAnswers: Record<string, string>) {
     const missing = questionnaire.fields.find((field) => {
       if (!field.required || field.type === "SEGMENTATION") return false;
@@ -47,6 +70,11 @@ export function QuestionnaireForm({ questionnaire }: { questionnaire: Questionna
     });
     if (missing) {
       setError(`请填写：${missing.title ?? missing.label}`);
+      return;
+    }
+    const bodyError = validateBodyMeasurements(questionnaire.fields, nextAnswers);
+    if (bodyError) {
+      setError(bodyError);
       return;
     }
     setSubmitting(true);
