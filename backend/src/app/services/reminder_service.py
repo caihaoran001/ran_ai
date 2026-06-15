@@ -25,7 +25,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
-from app.services.channels import send_channel_text
+from app.services.channels import get_current_channel, send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
 from app.services.document_service import (
     generate_profile_and_documents,
@@ -103,6 +103,7 @@ class ReminderService:
                         await self.check_profile_refresh_once()
                         await self.check_stuck_document_generation_once()
                         await self.check_retry_degraded_reports_once()
+                        await self.check_unsent_channel_messages_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -373,6 +374,44 @@ class ReminderService:
                 except Exception:
                     logger.exception("Retry degraded stage report failed doc_id=%s", document.id)
                     await session.rollback()
+
+    async def check_unsent_channel_messages_once(self) -> None:
+        """通道恢复后，自动补发此前因『通道未连』失败的主动消息，兜住部署重启窗口丢消息。
+
+        只补发 error 含 message channel 的失败消息（不碰人工驳回等其它失败），且限近 2 小时内。
+        """
+        if get_current_channel() is None:
+            return
+        threshold = datetime.now(timezone.utc) - timedelta(hours=2)
+        async with SessionLocal() as session:
+            messages = list(
+                await session.scalars(
+                    select(Message)
+                    .where(
+                        Message.direction == MessageDirection.OUTBOUND,
+                        Message.sender_type == MessageSenderType.BOT,
+                        Message.status == MessageStatus.FAILED,
+                        Message.error.ilike("%message channel%"),
+                        Message.created_at > threshold,
+                    )
+                    .order_by(Message.created_at)
+                )
+            )
+            changed = False
+            for message in messages:
+                try:
+                    result = await send_channel_text(message.group_id, message.content)
+                except Exception:
+                    logger.exception("Resend unsent channel message failed id=%s", message.id)
+                    continue
+                if result.success:
+                    message.status = MessageStatus.SENT
+                    message.error = None
+                    if result.message_id:
+                        message.wecom_message_id = result.message_id
+                    changed = True
+            if changed:
+                await session.commit()
 
     async def check_profile_refresh_once(self) -> None:
         """每天刷新『自上次画像更新后有新聊天/打卡』的在服务用户主画像（无新活动跳过）。"""
