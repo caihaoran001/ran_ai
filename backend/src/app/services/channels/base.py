@@ -51,3 +51,14 @@ class MessageChannel(Protocol):
         reply_context: Any = None,
     ) -> ChannelSendResult:
         ...
+
+    async def send_hypertext(
+        self,
+        chat_id: str,
+        content: list[dict[str, Any]],
+        *,
+        reply_to: str | None = None,
+        reply_context: Any = None,
+    ) -> ChannelSendResult:
+        ...
+

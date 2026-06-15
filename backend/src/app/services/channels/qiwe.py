@@ -113,7 +113,7 @@ class QiWeChannel:
         }
         try:
             logger.info("QiWe fetching nickname for user_id=%s from API", user_id_str)
-            res = await self._post_json("/api/qw/doApi", payload)
+            res = await self._post_json("/api/qw/doApi", payload, rate_limit=False)
             if res.success and isinstance(res.raw_response, dict):
                 data = res.raw_response.get("data") or {}
                 contact_list = data.get("contactList") or []
@@ -129,13 +129,90 @@ class QiWeChannel:
             logger.error("QiWe failed to fetch nickname for user_id=%s: %s", user_id_str, exc)
             return ""
 
+    async def get_room_detail(self, room_id: str) -> dict[str, Any] | None:
+        if not self._ready:
+            return None
+        payload = {
+            "method": "/room/batchGetRoomDetail",
+            "params": {
+                "guid": self.guid,
+                "roomIdList": [str(room_id)],
+            },
+        }
+        res = await self._post_json("/api/qw/doApi", payload, rate_limit=False)
+        if res.success and isinstance(res.raw_response, dict):
+            return res.raw_response.get("data")
+        return None
+
+    async def batch_get_user_info(self, user_ids: list[str]) -> list[dict[str, Any]] | None:
+        if not self._ready or not user_ids:
+            return None
+        payload = {
+            "method": "/contact/batchGetUserinfo",
+            "params": {
+                "guid": self.guid,
+                "userIdList": [str(uid) for uid in user_ids],
+            },
+        }
+        res = await self._post_json("/api/qw/doApi", payload, rate_limit=False)
+        if res.success and isinstance(res.raw_response, dict):
+            data = res.raw_response.get("data") or {}
+            return data.get("contactList")
+        return None
+
+    async def send_hypertext(
+        self,
+        chat_id: str,
+        content: list[dict[str, Any]],
+        *,
+        reply_to: str | None = None,
+        reply_context: Any = None,
+    ) -> ChannelSendResult:
+        if not self._ready:
+            return ChannelSendResult(success=False, error="QIWEI_TOKEN or QIWEI_GUID is missing")
+
+        params = {
+            "guid": self.guid,
+            "toId": str(chat_id),
+            "content": content,
+        }
+        reply_payload = _reply_payload_from_context(reply_context, reply_to)
+        if reply_payload:
+            params["reply"] = reply_payload
+
+        payload = {
+            "method": "/msg/sendHyperText",
+            "params": params,
+        }
+        return await self._post_json("/api/qw/doApi", payload, rate_limit=True)
+
     @property
     def _ready(self) -> bool:
         return bool(self.token and self.guid)
 
-    async def _post_json(self, path: str, payload: dict[str, Any]) -> ChannelSendResult:
+    async def _execute_post_json(self, path: str, payload: dict[str, Any]) -> ChannelSendResult:
+        try:
+            async with self._client_context() as client:
+                response = await client.post(
+                    f"{self.base_url}{path}",
+                    headers={
+                        "X-QIWEI-TOKEN": self.token,
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+        except Exception as exc:
+            return ChannelSendResult(success=False, error=str(exc), retryable=True)
+        return _qiwe_result(data)
+
+    async def _post_json(self, path: str, payload: dict[str, Any], *, rate_limit: bool = True) -> ChannelSendResult:
         if not self._ready:
             return ChannelSendResult(success=False, error="QIWEI_TOKEN or QIWEI_GUID is missing")
+
+        if not rate_limit:
+            return await self._execute_post_json(path, payload)
 
         async with self._send_lock:
             now = time.monotonic()
@@ -152,22 +229,8 @@ class QiWeChannel:
                 await asyncio.sleep(sleep_time)
 
             self._last_send_time = time.monotonic()
+            return await self._execute_post_json(path, payload)
 
-            try:
-                async with self._client_context() as client:
-                    response = await client.post(
-                        f"{self.base_url}{path}",
-                        headers={
-                            "X-QIWEI-TOKEN": self.token,
-                            "Content-Type": "application/json",
-                        },
-                        json=payload,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-            except Exception as exc:
-                return ChannelSendResult(success=False, error=str(exc), retryable=True)
-            return _qiwe_result(data)
 
     async def _upload_file(self, file_path: Path) -> ChannelSendResult:
         try:

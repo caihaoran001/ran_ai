@@ -190,7 +190,7 @@ class RanrenAIEngine:
             if service_case:
                 service_case_id = service_case.id
                 service_case_for_command = service_case
-                was_already_in_intervention = bool(service_case.needs_human_intervention)
+                was_already_in_intervention = bool(getattr(service_case, "needs_human_intervention", False))
 
                 # Self-healing and dynamic binding for real customer messages
                 if not is_staff and message.channel in ("wecom", "qiwe") and message.user_id:
@@ -340,16 +340,82 @@ class RanrenAIEngine:
         service_case_id: int | None,
         trigger_id: int | None,
     ) -> None:
-        result = await self.channel.send_text(
-            message.chat_id,
-            HUMAN_HANDOFF_REPLY,
-            reply_to=message.message_id,
-            reply_context=message.raw_payload,
-        )
+        matched_user_ids = []
+        matched_names = []
+
+        # 1. Try dynamic staff lookup if channel supports it
+        if (
+            hasattr(self.channel, "get_room_detail")
+            and hasattr(self.channel, "batch_get_user_info")
+            and hasattr(self.channel, "send_hypertext")
+        ):
+            try:
+                room_detail = await self.channel.get_room_detail(message.chat_id)
+                if room_detail:
+                    room_list = room_detail.get("roomList") or []
+                    for room in room_list:
+                        member_list = room.get("memberList") or []
+                        user_ids = [m.get("userId") for m in member_list if m.get("userId")]
+                        if user_ids:
+                            contacts = await self.channel.batch_get_user_info(user_ids) or []
+                            contact_map = {c.get("userId"): c for c in contacts if c.get("userId")}
+                            for member in member_list:
+                                u_id = member.get("userId")
+                                if not u_id:
+                                    continue
+                                group_card = (member.get("name") or "").strip()
+                                c_info = contact_map.get(u_id, {})
+                                global_nickname = (c_info.get("nickname") or c_info.get("name") or "").strip()
+
+                                is_match = False
+                                if "班主任" in group_card or "班主任" in global_nickname:
+                                    is_match = True
+                                if "勇哥" in group_card or "勇哥" in global_nickname:
+                                    is_match = True
+
+                                if is_match and u_id not in matched_user_ids:
+                                    matched_user_ids.append(u_id)
+                                    name_to_use = group_card or global_nickname or "班主任"
+                                    matched_names.append(name_to_use)
+            except Exception as e:
+                logger.error("Failed to dynamically resolve room staff for chat_id=%s: %s", message.chat_id, e)
+
+        # 2. If matched staff is found, send hypertext with native @-mentions
+        if matched_user_ids:
+            prefix_text = (
+                "收到，我已经把您的情况反馈给班主任了，先按您的节奏来就好。\n\n"
+                "后面的调整建议由班主任直接微信联系您，您不用重复说明，安心哈～\n"
+            )
+            content_list = [{"subtype": 0, "text": prefix_text}]
+            for i, u_id in enumerate(matched_user_ids):
+                if i > 0:
+                    content_list.append({"subtype": 0, "text": " "})
+                content_list.append({"subtype": 1, "text": u_id})
+            content_list.append({"subtype": 0, "text": " 麻烦有空时接手跟进一下哈～"})
+
+            result = await self.channel.send_hypertext(
+                message.chat_id,
+                content_list,
+                reply_to=message.message_id,
+                reply_context=message.raw_payload,
+            )
+            # Reconstruct readable text for outbound message logging in DB
+            plain_text = prefix_text + " ".join(f"@{name}" for name in matched_names) + " 麻烦有空时接手跟进一下哈～"
+        else:
+            # Fallback to standard plain text send
+            result = await self.channel.send_text(
+                message.chat_id,
+                HUMAN_HANDOFF_REPLY,
+                reply_to=message.message_id,
+                reply_context=message.raw_payload,
+            )
+            plain_text = HUMAN_HANDOFF_REPLY
+
+        # 3. Record outbound to DB
         await self._record_outbound(
             message=message,
             service_case_id=service_case_id,
-            content=HUMAN_HANDOFF_REPLY,
+            content=plain_text,
             message_id=result.message_id,
             status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
             error=result.error,

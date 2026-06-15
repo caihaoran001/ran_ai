@@ -45,6 +45,32 @@ class WeComChannel:
             )
         )
 
+    async def send_hypertext(
+        self,
+        chat_id: str,
+        content: list[dict[str, Any]],
+        *,
+        reply_to: str | None = None,
+        reply_context: object | None = None,
+    ) -> ChannelSendResult:
+        # Fallback to plain text by joining the parts
+        text_parts = []
+        for item in content:
+            if item.get("subtype") == 0:
+                text_parts.append(item.get("text") or "")
+            elif item.get("subtype") == 1:
+                # Subtype 1 represents an @-mention in WeCom hypertext. 
+                # Since WeComBotBridge only supports standard text, fallback to a textual mention.
+                text_parts.append(f" @班主任 ")
+        plain_text = "".join(text_parts)
+        return await self.send_text(
+            chat_id=chat_id,
+            content=plain_text,
+            reply_to=reply_to,
+            reply_context=reply_context,
+        )
+
+
 
 def from_wecom_message(message: WeComMessage) -> ChannelMessage:
     return ChannelMessage(
