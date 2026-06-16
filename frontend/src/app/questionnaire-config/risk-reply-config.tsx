@@ -81,6 +81,9 @@ export function RiskReplyConfig() {
         placeholder="请输入拦截话术内容..."
         disabled={busy}
       />
+      <p className="mt-2 text-xs text-zinc-400 leading-relaxed">
+        * 发送时系统会自动在此话术末尾换行并追加强提醒（例如：<code>@班主任 麻烦有空时接手跟进一下哈～</code>），无需在配置中手动填写艾特标记。
+      </p>
     </div>
   );
 }

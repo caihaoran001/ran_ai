@@ -54,10 +54,7 @@ async def set_ai_reply_delivery_mode(value: str, session: AsyncSession | None = 
     return mode
 
 RISK_REPLY_SETTING_KEY = "risk_fixed_reply"
-DEFAULT_RISK_REPLY = (
-    "收到您的咨询。为了确保给您提供最安全、精准的方案，本项内容建议您联系群内的班主任，"
-    "由班主任为您进行 1 对 1 指导，我也将配合班主任为您全程守护。"
-)
+DEFAULT_RISK_REPLY = "收到，已呼叫营养师班主任，稍后为您解答哈～"
 
 async def get_risk_fixed_reply(session: AsyncSession | None = None) -> str:
     if session is not None:
