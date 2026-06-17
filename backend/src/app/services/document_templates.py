@@ -22,11 +22,15 @@ ENERGY_FIELD_SPEC = {
     },
     "one_sentence": "一句话结论",
     "goal_response": {
-        "user_goal": "复述用户原始目标，例如 28 天想减多少、想改善什么",
-        "judgement": "直接回应目标是否适合当前阶段：可行 / 可冲刺 / 当前不建议 / 需先安全复核",
-        "base_goal": "基础目标：更高确定性的目标，不承诺结果",
-        "challenge_goal": "挑战目标：在产品节律、饮食、运动、睡眠达标时才冲刺",
-        "conditions": "冲刺条件或下调条件，必须具体",
+        "goal_type": "specific 或 general。specific=用户写了明确数字/明确结果；general=用户只勾选了期待变化或泛化诉求",
+        "judgement_type": "reasonable 或 needs_adjustment。needs_adjustment=目标过激、当前不建议或需先安全复核",
+        "title": "固定写「3. 对您目标的直接回应」",
+        "content": "直接面向用户的一段完整回应。需要包含用户目标/期待、判断、基础目标、挑战目标或当前更适合方向、冲刺/下调条件；不要空泛，不承诺结果。",
+        "user_goal": "兼容字段：复述用户原始目标或期待变化",
+        "judgement": "兼容字段：直接回应目标是否适合当前阶段",
+        "base_goal": "兼容字段：基础目标",
+        "challenge_goal": "兼容字段：挑战目标",
+        "conditions": "兼容字段：冲刺条件或下调条件",
     },
     "judgement_points": ["为什么这样判断，5条以内"],
     "current_state": "当前身体状态真正该关注什么",
@@ -434,14 +438,34 @@ def _non_negotiable_block(fields: dict[str, Any]) -> dict[str, Any]:
 
 def _goal_response_block(fields: dict[str, Any]) -> dict[str, Any]:
     value = _dict(fields.get("goal_response"))
+    title = _text(value.get("title")) or "3. 对您目标的直接回应"
+    if not title.startswith("3."):
+        title = f"3. {title}"
+
+    content = _text(value.get("content"))
+    if content:
+        block = _text_block("goal_response", title, content)
+        block["title_editable"] = True
+        return block
+
+    goal_type = _text(value.get("goal_type"))
+    judgement_type = _text(value.get("judgement_type"))
+    meta = []
+    if goal_type in {"specific", "general"}:
+        meta.append(f"目标类型：{'具体目标' if goal_type == 'specific' else '泛化期待'}")
+    if judgement_type in {"reasonable", "needs_adjustment"}:
+        meta.append(f"判断：{'需要调整' if judgement_type == 'needs_adjustment' else '当前合理'}")
     lines = [
+        *meta,
         f"用户目标：{_text(value.get('user_goal'))}",
-        f"直接回应：{_text(value.get('judgement'))}",
+        f"直接回应：{_text(value.get('judgement')) or ('当前需要调整' if judgement_type == 'needs_adjustment' else '')}",
         f"基础目标：{_text(value.get('base_goal'))}",
         f"挑战目标：{_text(value.get('challenge_goal'))}",
         f"冲刺条件：{_text(value.get('conditions'))}",
     ]
-    return _text_block("goal_response", "3. 对您目标的直接回应", "\n".join(line for line in lines if not line.endswith("：")))
+    block = _text_block("goal_response", title, "\n".join(line for line in lines if not line.endswith("：")))
+    block["title_editable"] = True
+    return block
 
 
 def _first_week_signals_block(fields: dict[str, Any]) -> dict[str, Any]:
