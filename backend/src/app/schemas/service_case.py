@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -50,6 +50,7 @@ class ServiceCaseRead(Timestamped):
     questionnaire_token: str
     status: ServiceCaseStatus
     started_at: datetime | None
+    service_plan_start_date: date | None = None
     ended_at: datetime | None
     content_generated_at: datetime | None
     questionnaire_to_llm_output_ms: int | None
