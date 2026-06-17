@@ -15,6 +15,7 @@ VALID_RISK_CODES = frozenset({
     "chest_pain", "palpitation", "allergy", "medical_claim", "other_risk",
     "emotional_distress", "risk_classifier_unavailable",
     "medication", "physical_discomfort", "complaint", "robot_stop", "refund_request",
+    "elderly_age",
 })
 
 VALID_RISK_LEVELS = frozenset({"low", "medium", "high"})
@@ -122,6 +123,7 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
     }
     if "requires_immediate_safety_reply" in insight:
         normalized["requires_immediate_safety_reply"] = bool(insight.get("requires_immediate_safety_reply"))
+    normalized["health_consultation"] = bool(insight.get("health_consultation"))
     return normalized
 
 
@@ -149,6 +151,30 @@ def merge_case_insight(service_case: ServiceCase, insight: dict[str, Any]) -> No
     refund = insight.get("refund_intent")
     if isinstance(refund, dict) and refund.get("detected"):
         service_case.refund_intent_flags = _merge_lists(service_case.refund_intent_flags, [refund])
+
+
+def mark_intake_age_risk(service_case: ServiceCase, fields: list[dict], answers: dict[str, Any]) -> None:
+    """入营问卷高龄客户标记高风险：age>=70 需个案评估/线下把关。
+
+    标记后 is_high_risk() 为真 → 文档不自动发、强制人工审核（与慢病一致）。
+    阈值 70 覆盖前端 70-85 二次确认区间；>85 前端已拦截，此处兜底防绕过。
+    年龄取值口径与 build_intake_fact_summary 一致（按字段 title 含「年龄」）。
+    """
+    from app.services.intake_facts import _first_number, build_intake_fact_summary
+
+    age_raw = build_intake_fact_summary(fields, answers).get("age") or ""
+    age = _first_number(str(age_raw))
+    if age is None or age < 70:
+        return
+    flag = {
+        "code": "elderly_age",
+        "level": "high",
+        "reason": f"高龄用户（{int(age)}岁），需个案评估/线下把关",
+        "evidence": f"问卷年龄：{age_raw}",
+        "source": "questionnaire",
+    }
+    service_case.risk_flags = _merge_lists(service_case.risk_flags, [flag])
+    service_case.risk_level = "high"
 
 
 def questionnaire_content(fields: list[dict], answers: dict[str, Any]) -> str:

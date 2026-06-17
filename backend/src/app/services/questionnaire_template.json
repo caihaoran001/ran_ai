@@ -42,6 +42,16 @@
       "options": []
     },
     {
+      "id": "DATEPLANSTART0001",
+      "key": "DATEPLANSTART0001",
+      "type": "DATE",
+      "title": "计划开始日期",
+      "label": "计划开始日期",
+      "subtitle": "您希望从哪天正式开始？我们会按这个日期为您安排打卡和服务节奏（不影响您先收到方案文件）。",
+      "required": true,
+      "options": []
+    },
+    {
       "id": "RADIO1774103553031mn0fg6ix",
       "key": "RADIO1774103553031mn0fg6ix",
       "type": "RADIO",

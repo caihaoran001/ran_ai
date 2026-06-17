@@ -48,7 +48,8 @@ def default_checkin_schedule() -> dict[str, Any]:
                 "我们会基于你的填写结果生成：\n"
                 "1.《个人能量重启处方单》\n"
                 "2.《28天执行标准与打卡要求》\n\n"
-                "生成完成后会第一时间发送给你，请稍等。"
+                "生成完成后会第一时间发送给你，请稍等。\n\n"
+                "{plan_start_line}"
             ),
         },
         "inactive_followup": {

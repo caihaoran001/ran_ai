@@ -58,6 +58,12 @@ class AIService:
             timeout=_normalized_timeout(self.settings.ai_timeout_seconds),
         )
 
+    def _model_for(self, scenario: str) -> str:
+        """风险/意图判断用 AI_RISK_MODEL(若配置)，其余场景用 AI_MODEL。"""
+        if scenario == "intervention_risk" and (self.settings.ai_risk_model or "").strip():
+            return self.settings.ai_risk_model.strip()
+        return self.settings.ai_model
+
     async def generate_text(
         self,
         *,
@@ -70,6 +76,7 @@ class AIService:
     ) -> str:
         if not self.settings.ai_api_key:
             raise RuntimeError("AI_API_KEY is required")
+        model = self._model_for(scenario)
         started_at = time.monotonic()
         finish = None
         usage = None
@@ -79,6 +86,7 @@ class AIService:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 temperature=temperature,
+                model=model,
             )
             finish = response.choices[0].finish_reason if response.choices else None
             usage = getattr(response, "usage", None)
@@ -91,7 +99,7 @@ class AIService:
             logger.info(
                 "llm_call scenario=%s model=%s elapsed_ms=%.1f finish_reason=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s attempts=%s success=%s",
                 scenario,
-                self.settings.ai_model,
+                model,
                 (time.monotonic() - started_at) * 1000,
                 finish,
                 getattr(usage, "prompt_tokens", None),
@@ -102,6 +110,7 @@ class AIService:
             )
             await self._record_usage(
                 scenario=scenario,
+                model=model,
                 elapsed_ms=int((time.monotonic() - started_at) * 1000),
                 finish_reason=finish,
                 usage=usage,
@@ -116,7 +125,7 @@ class AIService:
             logger.info(
                 "llm_call scenario=%s model=%s elapsed_ms=%.1f finish_reason=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s attempts=%s success=%s error_type=%s",
                 scenario,
-                self.settings.ai_model,
+                model,
                 (time.monotonic() - started_at) * 1000,
                 finish,
                 getattr(usage, "prompt_tokens", None),
@@ -128,6 +137,7 @@ class AIService:
             )
             await self._record_usage(
                 scenario=scenario,
+                model=model,
                 elapsed_ms=int((time.monotonic() - started_at) * 1000),
                 finish_reason=finish,
                 usage=usage,
@@ -143,6 +153,7 @@ class AIService:
         self,
         *,
         scenario: str,
+        model: str,
         elapsed_ms: int,
         finish_reason: str | None,
         usage: Any,
@@ -172,7 +183,7 @@ class AIService:
                         service_case_id=None if is_diagnostic else service_case_id,
                         message_id=None if is_diagnostic else message_id,
                         scenario=scenario,
-                        model=self.settings.ai_model,
+                        model=model,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         total_tokens=total_tokens,
@@ -196,6 +207,7 @@ class AIService:
         system_prompt: str,
         user_prompt: str,
         temperature: float | None,
+        model: str,
     ):
         retryable_status_codes = {408, 409, 425, 429, 500, 502, 503, 504}
         max_attempts = 3
@@ -204,7 +216,7 @@ class AIService:
             try:
                 async with _get_limiter(self.settings.ai_max_concurrent_requests):
                     response = await self._client.chat.completions.create(
-                        model=self.settings.ai_model,
+                        model=model,
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
@@ -303,6 +315,7 @@ class AIService:
                 '    "evidence": "用户原话证据",\n'
                 '    "source": "来源"\n'
                 "  },\n"
+                '  "health_consultation": boolean,  // 当前消息是否在咨询需专业健康判断的建议(饮食方案/份量、运动建议、用药、产品能否用/用量、体感如何处理等);纯打卡数据上报/闲聊/感谢/确认/非健康群务为false。只看当前消息话题本身,与风险等级和 requires_human_intervention 相互独立\n'
                 '  "confidence": number,  // 0.0-1.0，对本次判断的置信度\n'
                 '  "notes": "补充说明"\n'
                 "}\n\n"
@@ -315,7 +328,15 @@ class AIService:
                 "5. requires_immediate_safety_reply 只判断当前消息：当前首次/再次报告正在发生、加重的身体异常，"
                 "明确心理危机，或询问诊断、治疗、用药调整时为 true；如果当前消息只是在汇报症状已经减轻/消失、"
                 "确认已暂停相关产品、感谢或普通后续沟通，则保持风险与人工介入标记，但该字段必须为 false，"
-                "让系统生成贴合当前进展的安全回复，禁止机械重复固定话术。"
+                "让系统生成贴合当前进展的安全回复，禁止机械重复固定话术。\n"
+                "6. 风险归属当前消息（重要）：risk_flags 与 requires_human_intervention 必须针对【当前消息本身】"
+                "新引入、正在发生或正在追问的风险，每条 risk_flag 的 evidence 必须摘自当前消息原话。"
+                "对话历史只用于理解当前消息的语境（指代、延续），绝不要把历史里已知的持久状态"
+                "（如孕期、哺乳、慢病——这些已由系统长期风控持续记录）或过去已报告并处理过、当前不再提及的体感事件"
+                "（如几轮前说过的心悸/胸闷），当作当前消息的新风险重复标记。"
+                "若当前消息只是普通咨询/打卡/闲聊/确认/感谢（即便该用户属于高风险人群、即便话题与饮食运动相关），"
+                "requires_human_intervention 应为 false、risk_flags 为空——其健康背景由用户画像与持久风险等级保证安全，无需每句话都转人工；"
+                "仅当当前消息本身明确出现新的急性体感、用药问题、诊疗请求，或针对自身孕期/疾病的具体医学咨询时，才按等级标记并转人工。"
             ),
             user_prompt=(
                 f"来源：{source}\n"

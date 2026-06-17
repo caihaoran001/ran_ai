@@ -21,7 +21,7 @@ from app.services.ai_service import AIService, parse_json_object
 from app.services.knowledge_faq_service import create_faq
 from app.services.knowledge_index import upsert_text_chunk
 from app.services.knowledge_base import get_knowledge_base
-from app.services.service_case_queries import select_active_service_cases
+from app.services.service_case_queries import effective_start_at, select_active_service_cases
 
 
 DAILY_QA_SCAN_SETTING_KEY = "knowledge_evolution_daily_qa_scans"
@@ -155,7 +155,7 @@ class KnowledgeEvolutionService:
         for service_case in service_cases:
             if not service_case.started_at:
                 continue
-            service_day = _service_day(service_case.started_at, now, timezone_info)
+            service_day = _service_day(effective_start_at(service_case), now, timezone_info)
             existing_case_summaries = await _existing_case_summaries(
                 session,
                 service_case_id=service_case.id,

@@ -10,7 +10,7 @@ from app.models.ai_usage import AIUsageLog
 from app.models.service_case import ServiceCase
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_delivery_mode
-from app.services.ranren_ai.engine import RanrenAIEngine, _requires_fixed_safety_reply
+from app.services.ranren_ai.engine import RanrenAIEngine, _requires_immediate_handoff
 
 
 @pytest.mark.asyncio
@@ -165,32 +165,24 @@ async def test_qiwe_ai_reply_respects_global_manual_review_policy(admin_client, 
         await set_ai_reply_delivery_mode("manual_review", db_session)
 
 
-def test_current_physical_risk_uses_fixed_safety_reply():
-    service_case = ServiceCase(
-        case_no="TEST-SAFETY-REPLY",
-        group_id="test-safety-reply",
-        questionnaire_token="test-safety-reply-token",
-        risk_level="medium",
-        needs_human_intervention=True,
-        risk_flags=[{"code": "palpitation", "level": "medium"}],
-    )
-
-    assert _requires_fixed_safety_reply(service_case, {"risk_flags": []}) is False
-    assert _requires_fixed_safety_reply(
-        service_case,
-        {"risk_flags": [{"code": "palpitation", "level": "medium"}]},
+def test_acute_physical_risk_triggers_immediate_handoff():
+    # 急性体感(心悸等)+需人工介入 → ①层直接@班主任(无论 requires_immediate_safety_reply)
+    base = {"requires_human_intervention": True}
+    assert _requires_immediate_handoff({**base, "risk_flags": []}) is False
+    assert _requires_immediate_handoff(
+        {**base, "risk_flags": [{"code": "palpitation", "level": "medium"}]},
     ) is True
-    assert _requires_fixed_safety_reply(
-        service_case,
-        {
-            "requires_immediate_safety_reply": False,
-            "risk_flags": [{"code": "palpitation", "level": "medium"}],
-        },
+    # 新设计:急性体感即使 safety_reply=false 也归①层(健康风险直接转人工)
+    assert _requires_immediate_handoff(
+        {**base, "requires_immediate_safety_reply": False, "risk_flags": [{"code": "palpitation", "level": "medium"}]},
+    ) is True
+    assert _requires_immediate_handoff(
+        {**base, "requires_immediate_safety_reply": True, "risk_flags": []},
+    ) is True
+    # 不需人工介入 → 不@
+    assert _requires_immediate_handoff(
+        {"requires_human_intervention": False, "risk_flags": [{"code": "palpitation", "level": "medium"}]},
     ) is False
-    assert _requires_fixed_safety_reply(
-        None,
-        {"requires_immediate_safety_reply": True, "risk_flags": []},
-    ) is True
 
 
 def test_diagnostics_suites_keep_real_e2e_last():
@@ -337,25 +329,15 @@ async def test_diagnostics_reset_active_run_preserves_history(tmp_path, monkeypa
     assert history["console_logs"]["e2e_01"][0] == "old log"
 
 
-def test_fixed_safety_reply_distinguishes_health_risk_from_service_handoff():
-    service_case = ServiceCase(
-        case_no="TEST-SERVICE-HANDOFF",
-        group_id="test-service-handoff",
-        questionnaire_token="test-service-handoff-token",
-        risk_level="normal",
-        needs_human_intervention=True,
-        risk_flags=None,
-        refund_intent_flags=[{"detected": True, "evidence": "我要退款"}],
-    )
-
-    assert _requires_fixed_safety_reply(service_case, {"risk_flags": []}) is False
-    assert _requires_fixed_safety_reply(
-        None,
-        {"risk_flags": [{"code": "medical_boundary", "level": "high"}]},
+def test_high_risk_triggers_immediate_handoff():
+    # 健康红线 level=high + 需人工介入 → ①层@班主任;只看本次 analysis,不看持久 risk_level
+    base = {"requires_human_intervention": True}
+    assert _requires_immediate_handoff({**base, "risk_flags": []}) is False
+    assert _requires_immediate_handoff(
+        {**base, "risk_flags": [{"code": "medical_boundary", "level": "high"}]},
     ) is True
-
-    service_case.risk_level = "high"
-    assert _requires_fixed_safety_reply(service_case, {"risk_flags": []}) is False
+    # 仅有持久高风险但本次 analysis 无风险信号 → 不强制@(避免每句都@)
+    assert _requires_immediate_handoff({**base, "risk_flags": []}) is False
 
 
 @pytest.mark.asyncio

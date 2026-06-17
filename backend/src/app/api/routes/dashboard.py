@@ -13,7 +13,7 @@ from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
-from app.models.message import Message, MessageDirection, MessageSenderType
+from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
@@ -21,7 +21,7 @@ from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.schemas.dashboard import AICostCaseItem, AICostSummary, CaseHealthItem, DashboardMetric, DashboardSummary, OutcomeDashboardSummary
-from app.services.service_case_queries import active_service_case_condition, pending_review_case_ids_subquery
+from app.services.service_case_queries import active_service_case_condition, effective_start_at, pending_review_case_ids_subquery
 
 router = APIRouter()
 
@@ -109,10 +109,17 @@ async def dashboard_summary(
             ServiceCase.risk_level == "high",
         )
     )
+    # 『需关注事件』数：待审核 AI 回复(OUTBOUND+BOT+CHAT+PENDING)的条数（事件级，
+    # 同一用户多次触发算多条），不是有待审核回复的服务单个数。
     human_intervention_users = await session.scalar(
-        select(func.count(ServiceCase.id)).where(
+        select(func.count(Message.id))
+        .join(ServiceCase, Message.service_case_id == ServiceCase.id)
+        .where(
             active_service_case_condition(),
-            ServiceCase.id.in_(pending_review_case_ids_subquery()),
+            Message.direction == MessageDirection.OUTBOUND,
+            Message.sender_type == MessageSenderType.BOT,
+            Message.purpose == MessagePurpose.CHAT,
+            Message.status == MessageStatus.PENDING,
         )
     )
     now = datetime.now(timezone.utc)
@@ -754,7 +761,7 @@ async def dashboard_case_health(session: AsyncSession = Depends(get_session)) ->
                 case_no=case.case_no,
                 user_name=users.get(case.user_id) if case.user_id else None,
                 group_id=case.group_id,
-                service_day=_case_service_day(case.started_at, today, china_tz),
+                service_day=_case_service_day(case, today, china_tz),
                 last_checkin_date=last.isoformat() if last else None,
                 days_since_checkin=(today - last).days if last else None,
                 action_focus=_action_focus_label(state_by_case.get(case.id)),
@@ -767,12 +774,14 @@ async def dashboard_case_health(session: AsyncSession = Depends(get_session)) ->
     return items
 
 
-def _case_service_day(started_at: datetime | None, today, tz: ZoneInfo) -> int:
-    if started_at is None:
+def _case_service_day(service_case, today, tz: ZoneInfo) -> int:
+    """看板服务天数：计划开始当天=第1天；计划日未到返回 <=0(前端显示『未开始』)；无起点返回 0。"""
+    start = effective_start_at(service_case)
+    if start is None:
         return 0
-    if started_at.tzinfo is None:
-        started_at = started_at.replace(tzinfo=timezone.utc)
-    return max((today - started_at.astimezone(tz).date()).days + 1, 1)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return (today - start.astimezone(tz).date()).days + 1
 
 
 def _action_focus_label(state_profile: UserStateProfile | None) -> str | None:

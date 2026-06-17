@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     )
     ai_api_key: str = Field(default="", validation_alias="AI_API_KEY")
     ai_model: str = Field(default="deepseek-v4-flash", validation_alias="AI_MODEL")
+    # 风险/意图判断(intervention_risk)专用模型；留空则回退 ai_model。判断准确度最关键，可单独配更强模型。
+    ai_risk_model: str = Field(default="", validation_alias="AI_RISK_MODEL")
     ai_temperature: float = Field(default=0.3, validation_alias="AI_TEMPERATURE")
     ai_max_tokens: int = Field(default=8000, validation_alias="AI_MAX_TOKENS")
     ai_timeout_seconds: float = Field(default=60.0, validation_alias="AI_TIMEOUT_SECONDS")

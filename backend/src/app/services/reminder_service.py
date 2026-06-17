@@ -36,7 +36,7 @@ from app.services.document_service import (
 from app.services.knowledge_evolution import KnowledgeEvolutionService
 from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
 from app.services.outcome_engine import generate_outcome_snapshot
-from app.services.service_case_queries import active_service_case_condition, select_active_service_cases
+from app.services.service_case_queries import active_service_case_condition, checkin_day, effective_service_day, effective_start_at, select_active_service_cases
 
 
 logger = logging.getLogger(__name__)
@@ -156,12 +156,12 @@ class ReminderService:
                 reminded = service_case.id in reminded_set
                 if seen or reminded:
                     continue
-                raw_day = _service_day(service_case.started_at, now, timezone)
-                # 入群当天算第 0 天：当天只看文件、不催打卡
-                if raw_day <= 1:
+                day = checkin_day(service_case, now, timezone)
+                # 第1天日期未到(存量沿用次日语义)则不催打卡
+                if day is None:
                     continue
                 if schedule.get("enabled", True):
-                    rule = _questionnaire_rule_for_day(schedule, raw_day - 1)
+                    rule = _questionnaire_rule_for_day(schedule, day)
                     if rule:
                         continue
                 reminder_event = await _reserve_reminder_event(
@@ -479,7 +479,9 @@ class ReminderService:
                 )
                 if not reserved:
                     continue
-                day = _service_day(service_case.started_at, now, timezone)
+                day = effective_service_day(service_case, now, timezone)
+                if day < 1:  # 计划开始日未到，不刷新画像
+                    continue
                 await refresh_profile_for_case(session, service_case, stage=f"day{day}")
             await session.commit()
 
@@ -517,11 +519,10 @@ class ReminderService:
             reminded_questionnaires = {(e.service_case_id, e.rule_id) for e in reminder_events}
 
             for service_case in service_cases:
-                raw_day = _service_day(service_case.started_at, now, timezone)
-                # 入群当天算第 0 天：当天只看文件、不发打卡链接；次日起才是第 1 天
-                if raw_day <= 1:
+                day = checkin_day(service_case, now, timezone)
+                # 第1天日期当天发；存量未填计划日→沿用旧"次日=第1天"，天数号不变、不会重发；未到则不发
+                if day is None:
                     continue
-                day = raw_day - 1
                 rule = _questionnaire_rule_for_day(schedule, day)
                 if not rule:
                     continue
@@ -627,7 +628,7 @@ class ReminderService:
         # Define the task list for parallel execution using distinct sessions
         tasks = []
         for service_case in service_cases:
-            started_at = service_case.started_at
+            started_at = effective_start_at(service_case)  # 计划开始日优先，否则文件发送时刻
             if not started_at:
                 continue
             if started_at.tzinfo is None:

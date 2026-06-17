@@ -32,13 +32,13 @@ from app.schemas.questionnaire import (
     QuestionnaireSubmit,
 )
 from app.services.document_service import generate_profile_and_documents, personalized_checkin_fields_from_document_payloads
-from app.services.intake_facts import validate_body_measurements
 from app.db.session import SessionLocal
 from app.services.channels import send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
 from app.services.checkin_questionnaires import DEFAULT_PERSONALIZED_CHECKIN_FIELDS
 from app.services.intervention_service import (
     analyze_intervention,
+    mark_intake_age_risk,
     merge_case_insight,
     questionnaire_content,
 )
@@ -110,10 +110,6 @@ async def submit_questionnaire(
 
     if not _allow_repeat(template) and await _latest_submission(session, service_case.id, template):
         raise HTTPException(status_code=409, detail="questionnaire already submitted")
-    if template == "intake":
-        body_errors = validate_body_measurements(fields, payload.answers)
-        if body_errors:
-            raise HTTPException(status_code=400, detail="；".join(body_errors))
     submission = QuestionnaireSubmission(
         service_case_id=service_case.id,
         template_key=template,
@@ -136,6 +132,8 @@ async def submit_questionnaire(
         },
     )
     merge_case_insight(service_case, analysis)
+    if template == "intake":
+        mark_intake_age_risk(service_case, fields, payload.answers)
     session.add(submission)
     await session.commit()
     await session.refresh(submission)
@@ -164,11 +162,9 @@ async def edit_intake_submission(
     submission = await _latest_submission(session, service_case.id, "intake")
     if not submission:
         raise HTTPException(status_code=404, detail="no intake submission to edit")
-    body_errors = validate_body_measurements(fields, payload.answers)
-    if body_errors:
-        raise HTTPException(status_code=400, detail="；".join(body_errors))
     submission.answers_json = payload.answers
     await _sync_user_from_answers(session, service_case, fields, payload.answers)
+    mark_intake_age_risk(service_case, fields, payload.answers)
     if get_settings().ai_api_key:
         service_case.status = ServiceCaseStatus.GENERATING
     await session.commit()
@@ -497,12 +493,24 @@ async def _send_intake_submit_reply(service_case_id: int) -> None:
         if not isinstance(reply, dict) or reply.get("enabled", True) is False:
             return
         user = await session.get(User, service_case.user_id) if service_case.user_id else None
+        plan = service_case.service_plan_start_date
+        if plan:
+            plan_start_date = plan.strftime("%Y年%m月%d日")
+            plan_start_line = (
+                f"你的服务计划于 {plan_start_date} 正式开始（打卡也从那天开始）。"
+                "在那之前，建议先把这两份专属文件好好看一遍、提前熟悉，到时候就能顺利开跑～"
+            )
+        else:
+            plan_start_date = ""
+            plan_start_line = "收到文件后先好好看看内容，提前熟悉，有任何问题随时在群里问我们～"
         content = _format_template(
             str(reply.get("message") or ""),
             {
                 "user_name": user.name if user else "",
                 "case_no": service_case.case_no,
                 "group_id": service_case.group_id,
+                "plan_start_date": plan_start_date,
+                "plan_start_line": plan_start_line,
             },
         ).strip()
         if not content:
@@ -563,6 +571,26 @@ async def _sync_user_from_answers(
         user.name = name[:100]
     if phone and not user.phone:
         user.phone = phone[:32]
+
+    # 「计划开始日期」控制服务计时起点(打卡/阶段报告/看板服务天数都跟它)；未填/解析失败则留空，回退 started_at
+    plan_start = _parse_plan_start_date(
+        _answer_by_label(fields, answers, ("计划开始日期", "计划开始", "开始日期"))
+    )
+    if plan_start:
+        service_case.service_plan_start_date = plan_start
+
+
+def _parse_plan_start_date(raw: str | None):
+    """解析问卷『计划开始日期』答案(input type=date 为 YYYY-MM-DD)，返回 date 或 None。"""
+    if not raw or not isinstance(raw, str):
+        return None
+    text = raw.strip()[:10]
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _answer_by_label(fields: list[dict], answers: dict, keywords: tuple[str, ...]) -> str | None:
