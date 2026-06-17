@@ -1069,6 +1069,7 @@ const FIELD_TYPES: { value: string; label: string }[] = [
   { value: "RADIO", label: "单选" },
   { value: "CHECKBOX", label: "多选" },
   { value: "FILE", label: "文件上传" },
+  { value: "DATE", label: "日期选择" },
 ];
 
 function fieldStr(field: Record<string, unknown>, key: string): string {

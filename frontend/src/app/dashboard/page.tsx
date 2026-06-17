@@ -141,12 +141,12 @@ export default async function DashboardPage() {
           description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险词，需要人工关注。"
         />
         <StatCard
-          label="需关注用户"
+          label="需关注事件"
           value={summary.human_intervention_users ?? 0}
           icon={ShieldAlert}
           color="red"
-          href="/users?filter=human_intervention"
-          description="LLM 识别到健康红线、客诉退款、医疗边界、强续购等需要真人处理的服务单。"
+          href="/documents#pending-reviews"
+          description="触发转人工、@班主任后待复核的 AI 回复事件数，点击进入审核控制台逐条处理。"
         />
         <StatCard
           label="未跟进（2-7天）"
@@ -316,7 +316,7 @@ function CaseHealthRow({ item }: { item: CaseHealthItem }) {
         </Link>
         <div className="text-xs text-zinc-400">{item.group_id}</div>
       </td>
-      <td className="px-4 py-3 text-zinc-700">第 {item.service_day} 天</td>
+      <td className="px-4 py-3 text-zinc-700">{item.service_day < 1 ? "未开始" : `第 ${item.service_day} 天`}</td>
       <td className={`px-4 py-3 ${checkinStale ? "font-medium text-rose-600" : "text-zinc-700"}`}>{checkinText}</td>
       <td className="px-4 py-3 text-zinc-600">{item.action_focus || "—"}</td>
       <td className="px-4 py-3">

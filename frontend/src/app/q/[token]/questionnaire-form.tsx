@@ -22,6 +22,95 @@ type Questionnaire = {
   default_values?: Record<string, string>;
 };
 
+type BodyIssue = { key: string; level: "hard" | "soft"; msg: string };
+type Band = { hardLow: number; softLow: number; softHigh: number; hardHigh: number };
+
+// 体征合理性分级阈值（标准档，已与业务确认）
+const BANDS: Record<"height" | "weight" | "age" | "bmi", Band> = {
+  height: { hardLow: 120, softLow: 140, softHigh: 200, hardHigh: 220 },
+  weight: { hardLow: 35, softLow: 40, softHigh: 100, hardHigh: 120 },
+  age: { hardLow: 12, softLow: 16, softHigh: 70, hardHigh: 85 },
+  bmi: { hardLow: 12, softLow: 15, softHigh: 50, hardHigh: 60 },
+};
+
+function classifyBand(v: number, b: Band): "hard" | "soft" | null {
+  if (v < b.hardLow || v > b.hardHigh) return "hard";
+  if (v < b.softLow || v > b.softHigh) return "soft";
+  return null;
+}
+
+// 劝退类（超大/超小体重、超龄）：建议线下/医疗评估，不可强行提交
+const DISSUADE = (label: string, v: number, unit: string) =>
+  `${label}为 ${v}${unit}，本服务更适合常规减脂人群；您的情况建议先线下或专业医疗评估，请联系您的专属顾问`;
+
+// 体征数据分级校验：返回所有问题（hard=拦截，soft=二次确认）。
+function checkBodyMeasurements(
+  fields: Questionnaire["fields"],
+  vals: Record<string, string>,
+): BodyIssue[] {
+  const find = (...parts: string[]): { key: string; num: number } | null => {
+    for (const f of fields) {
+      const title = String(f.title ?? f.label ?? "");
+      if (parts.every((p) => title.includes(p))) {
+        const m = String(vals[f.key] ?? "").match(/\d+(?:\.\d+)?/);
+        if (m) return { key: f.key, num: parseFloat(m[0]) };
+      }
+    }
+    return null;
+  };
+  const issues: BodyIssue[] = [];
+  const h = find("身高");
+  const w = find("当前体重") ?? find("体重");
+  const a = find("年龄");
+
+  if (h) {
+    if (h.num >= 1.2 && h.num <= 2.5) {
+      issues.push({ key: h.key, level: "hard", msg: `身高填写为 ${h.num}，疑似填成了"米"，请改用厘米（如 1.7 米应填 170）` });
+    } else {
+      const lv = classifyBand(h.num, BANDS.height);
+      if (lv === "hard") issues.push({ key: h.key, level: "hard", msg: `身高填写为 ${h.num} cm，明显超出常规范围，请检查是否填错或单位有误` });
+      else if (lv === "soft") issues.push({ key: h.key, level: "soft", msg: `身高 ${h.num} cm 偏离常见范围，请确认填写无误` });
+    }
+  }
+  if (w) {
+    const lv = classifyBand(w.num, BANDS.weight);
+    if (lv === "hard") issues.push({ key: w.key, level: "hard", msg: DISSUADE("体重", w.num, " kg") });
+    else if (lv === "soft") issues.push({ key: w.key, level: "soft", msg: `体重 ${w.num} kg 偏离常见范围，请确认填写无误` });
+  }
+  if (a) {
+    const lv = classifyBand(a.num, BANDS.age);
+    if (lv === "hard") issues.push({ key: a.key, level: "hard", msg: DISSUADE("年龄", a.num, " 岁") });
+    else if (lv === "soft") issues.push({ key: a.key, level: "soft", msg: `年龄 ${a.num} 岁需重点关注，请确认填写无误` });
+  }
+  // BMI 交叉：身高体重都填了且各自都不是 hard 时才算，抓"单看正常、组合矛盾"
+  if (h && w && h.num > 0) {
+    const hHard = issues.some((i) => i.key === h.key && i.level === "hard");
+    const wHard = issues.some((i) => i.key === w.key && i.level === "hard");
+    if (!hHard && !wHard) {
+      const hm = h.num / 100;
+      const bmi = w.num / (hm * hm);
+      const lv = classifyBand(bmi, BANDS.bmi);
+      if (lv) {
+        const msg = lv === "hard"
+          ? `身高体重组合 BMI≈${bmi.toFixed(1)}，明显矛盾，请检查身高或体重是否填错`
+          : `身高体重组合 BMI≈${bmi.toFixed(1)}，偏离常见范围，请确认填写无误`;
+        issues.push({ key: h.key, level: lv, msg });
+        issues.push({ key: w.key, level: lv, msg });
+      }
+    }
+  }
+  return issues;
+}
+
+// 按字段归并（同字段 hard 优先），用于字段级高亮
+function issuesByKey(issues: BodyIssue[]): Record<string, BodyIssue> {
+  const m: Record<string, BodyIssue> = {};
+  for (const it of issues) {
+    if (!m[it.key] || (m[it.key].level === "soft" && it.level === "hard")) m[it.key] = it;
+  }
+  return m;
+}
+
 export function QuestionnaireForm({
   questionnaire,
   initialAnswers,
@@ -36,6 +125,9 @@ export function QuestionnaireForm({
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [fieldIssues, setFieldIssues] = useState<Record<string, BodyIssue>>({});
+  const [softIssues, setSoftIssues] = useState<BodyIssue[]>([]);
+  const [showSoftConfirm, setShowSoftConfirm] = useState(false);
 
   const answerableFields = useMemo(
     () => questionnaire.fields.filter((field) => field.type !== "SEGMENTATION"),
@@ -48,45 +140,43 @@ export function QuestionnaireForm({
     ? Math.round((answeredCount / answerableFields.length) * 100)
     : 0;
 
-  function validateBodyMeasurements(
-    fields: typeof questionnaire.fields,
-    vals: Record<string, string>,
-  ): string | null {
-    const findNum = (...parts: string[]): number | null => {
-      for (const f of fields) {
-        const title = String(f.title ?? f.label ?? "");
-        if (parts.every((p) => title.includes(p))) {
-          const m = String(vals[f.key] ?? "").match(/\d+(?:\.\d+)?/);
-          if (m) return parseFloat(m[0]);
-        }
-      }
-      return null;
-    };
-    const h = findNum("身高");
-    const w = findNum("当前体重") ?? findNum("体重");
-    const a = findNum("年龄");
-    if (h !== null && (h < 140 || h > 230)) return `身高填写为 ${h}，超出合理范围（140-230cm），请检查是否填错或单位有误`;
-    if (w !== null && (w < 25 || w > 300)) return `体重填写为 ${w}，超出合理范围（25-300kg），请检查是否填错`;
-    if (a !== null && (a < 15 || a > 100)) return `年龄填写为 ${a}，超出合理范围（15-100岁），请检查是否填错`;
-    return null;
+  function scrollToField(key: string) {
+    if (typeof document === "undefined") return;
+    document.getElementById(`q-field-${key}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  async function submitAnswers(nextAnswers: Record<string, string>) {
+  async function submitAnswers(nextAnswers: Record<string, string>, confirmed = false) {
     const missing = questionnaire.fields.find((field) => {
       if (!field.required || field.type === "SEGMENTATION") return false;
       return !String(nextAnswers[field.key] ?? "").trim();
     });
     if (missing) {
+      setShowSoftConfirm(false);
       setError(`请填写：${missing.title ?? missing.label}`);
+      scrollToField(missing.key);
       return;
     }
-    const bodyError = validateBodyMeasurements(questionnaire.fields, nextAnswers);
-    if (bodyError) {
-      setError(bodyError);
+    const issues = checkBodyMeasurements(questionnaire.fields, nextAnswers);
+    setFieldIssues(issuesByKey(issues));
+    const hard = issues.filter((i) => i.level === "hard");
+    if (hard.length) {
+      setShowSoftConfirm(false);
+      const count = new Set(hard.map((i) => i.key)).size;
+      setError(`有 ${count} 处填写需要修正，请按下方提示检查后再提交`);
+      scrollToField(hard[0].key);
+      return;
+    }
+    const soft = issues.filter((i) => i.level === "soft");
+    if (soft.length && !confirmed) {
+      setError(null);
+      setSoftIssues(Object.values(issuesByKey(soft)));
+      setShowSoftConfirm(true);
+      scrollToField(soft[0].key);
       return;
     }
     setSubmitting(true);
     setError(null);
+    setShowSoftConfirm(false);
     const url = `/api/questionnaires/${questionnaire.token}/submit?template=${encodeURIComponent(questionnaire.template_key)}`;
     try {
       const response = await fetch(url, {
@@ -180,13 +270,58 @@ export function QuestionnaireForm({
           key={field.key}
           field={field}
           value={answers[field.key]}
-          onChange={(value) => setAnswers({...answers, [field.key]: value})}
+          issue={fieldIssues[field.key]}
+          onChange={(value) => {
+            setAnswers({...answers, [field.key]: value});
+            if (fieldIssues[field.key]) {
+              setFieldIssues((prev) => {
+                const next = {...prev};
+                delete next[field.key];
+                return next;
+              });
+            }
+            if (showSoftConfirm) setShowSoftConfirm(false);
+          }}
         />
       ))}
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-700">
           {error}
+        </div>
+      )}
+
+      {showSoftConfirm && softIssues.length > 0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3.5">
+          <div className="text-sm font-semibold text-amber-900">以下填写偏离常见范围，请再确认一下：</div>
+          <ul className="mt-2 space-y-1.5">
+            {softIssues.map((it, idx) => (
+              <li key={idx} className="flex gap-1.5 text-sm leading-6 text-amber-800">
+                <span className="text-amber-500">•</span>
+                <span>{it.msg}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex flex-wrap gap-2.5">
+            <Button
+              type="button"
+              className="h-10 bg-amber-600 px-5 hover:bg-amber-700"
+              disabled={submitting}
+              onClick={() => submitAnswers(answers, true)}
+            >
+              确认无误，继续提交
+            </Button>
+            <Button
+              type="button"
+              className="h-10 border border-slate-300 bg-white px-5 text-slate-700 shadow-none hover:bg-slate-50"
+              onClick={() => {
+                setShowSoftConfirm(false);
+                if (softIssues[0]) scrollToField(softIssues[0].key);
+              }}
+            >
+              返回检查
+            </Button>
+          </div>
         </div>
       )}
 
@@ -225,14 +360,17 @@ function FieldInput({
   field,
   value,
   onChange,
+  issue,
 }: {
   field: Questionnaire["fields"][number];
   value?: string;
   onChange: (value: string) => void;
+  issue?: BodyIssue;
 }) {
+  const id = `q-field-${field.key}`;
   if (field.type === "SEGMENTATION") {
     return (
-      <section className="pt-3">
+      <section id={id} className="pt-3">
         <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-cyan-50 to-white px-4 py-3.5">
           <h2 className="flex items-center gap-2 text-base font-bold text-slate-900">
             <span className="h-4 w-1 rounded-full bg-cyan-600" />
@@ -249,8 +387,9 @@ function FieldInput({
   const label = field.title ?? field.label;
   const required = field.required ? <span className="ml-1 text-red-500">*</span> : null;
 
+  let control: React.ReactNode;
   if (field.type === "RADIO" || field.type === "CHECKBOX") {
-    return (
+    control = (
       <ChoiceField
         field={field}
         value={value}
@@ -260,10 +399,24 @@ function FieldInput({
         required={required}
       />
     );
-  }
-
-  if (field.type === "SIMPLE" || field.type === "FILE") {
-    return (
+  } else if (field.type === "DATE") {
+    control = (
+      <label className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-2 text-sm font-semibold text-slate-900">{label}{required}</div>
+        {field.subtitle && <div className="mb-2 text-xs leading-5 text-slate-400">{field.subtitle}</div>}
+        <input
+          type="date"
+          required={field.required}
+          value={value ?? ""}
+          min={(() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toLocaleDateString("en-CA"); })()}
+          max={(() => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toLocaleDateString("en-CA"); })()}
+          onChange={(event) => onChange(event.target.value)}
+          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-100"
+        />
+      </label>
+    );
+  } else if (field.type === "SIMPLE" || field.type === "FILE") {
+    control = (
       <label className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-2 text-sm font-semibold text-slate-900">{label}{required}</div>
         {field.subtitle && <div className="mb-2 text-xs leading-5 text-slate-400">{field.subtitle}</div>}
@@ -275,18 +428,35 @@ function FieldInput({
         />
       </label>
     );
+  } else {
+    control = (
+      <label className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-2 text-sm font-semibold text-slate-900">{label}{required}</div>
+        {field.subtitle && <div className="mb-2 text-xs leading-5 text-slate-400">{field.subtitle}</div>}
+        <Textarea
+          required={field.required}
+          value={value ?? ""}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </label>
+    );
   }
 
+  const ring = issue
+    ? issue.level === "hard"
+      ? "rounded-xl ring-2 ring-red-400"
+      : "rounded-xl ring-2 ring-amber-400"
+    : "";
+
   return (
-    <label className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-2 text-sm font-semibold text-slate-900">{label}{required}</div>
-      {field.subtitle && <div className="mb-2 text-xs leading-5 text-slate-400">{field.subtitle}</div>}
-      <Textarea
-        required={field.required}
-        value={value ?? ""}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </label>
+    <div id={id} className={`scroll-mt-6 ${ring}`}>
+      {control}
+      {issue && (
+        <p className={`mt-1.5 px-1 text-sm leading-6 ${issue.level === "hard" ? "text-red-600" : "text-amber-700"}`}>
+          {issue.msg}
+        </p>
+      )}
+    </div>
   );
 }
 

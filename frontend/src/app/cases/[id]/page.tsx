@@ -164,7 +164,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-        <InfoCard title="已服务时长" value={formatServiceDuration(serviceCase.started_at)} icon={Timer} />
+        <InfoCard title="已服务时长" value={formatServiceDuration(serviceCase.started_at, serviceCase.service_plan_start_date)} icon={Timer} />
         <InfoCard title="内容生成耗时" value={formatGenerationDuration(serviceCase.questionnaire_to_llm_output_ms)} icon={Zap} />
         <InfoCard title="群最后活跃" value={formatDateTime(stats?.last_message_at)} icon={Clock3} />
         <InfoCard title="用户最后发言" value={formatDateTime(stats?.last_user_message_at)} icon={UserRound} />
@@ -303,6 +303,8 @@ function StatusBadge({ status }: { status: string }) {
     in_service: { label: "服务中", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
     completed: { label: "已完成", className: "border-slate-200 bg-slate-50 text-slate-600" },
     sent: { label: "已发送", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
+    draft: { label: "草稿", className: "border-slate-200 bg-slate-50 text-slate-600" },
+    archived: { label: "已归档·未发送", className: "border-slate-200 bg-slate-100 text-slate-500" },
   };
 
   const config = statusConfig[status] || { label: status, className: "border-slate-200 bg-slate-50 text-slate-700" };
@@ -387,7 +389,19 @@ function formatDateTime(value?: string | null) {
   return formatChinaDateTime(value, "暂无");
 }
 
-function formatServiceDuration(startedAt?: string | null) {
+function formatServiceDuration(startedAt?: string | null, planStartDate?: string | null) {
+  // 填了计划开始日期：按计划日算——未到则"待开始"，当天=第1天
+  if (planStartDate) {
+    const plan = new Date(`${planStartDate}T00:00:00`);
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (todayMidnight < plan) {
+      return `待开始（计划 ${planStartDate} 起）`;
+    }
+    const days = Math.floor((todayMidnight.getTime() - plan.getTime()) / 86_400_000) + 1;
+    return `第 ${days} 天`;
+  }
+  // 未填计划日：沿用文件发送时刻算时长（存量行为不变）
   if (!startedAt) return "未开始";
   const started = new Date(startedAt).getTime();
   const diffMs = Date.now() - started;

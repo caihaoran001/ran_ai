@@ -8,11 +8,9 @@ import { API_BASE } from "@/lib/api";
 
 export function PendingMessageActions({
   messageId,
-  serviceCaseId,
   initialContent,
 }: {
   messageId: number;
-  serviceCaseId?: number | null;
   initialContent: string;
 }) {
   const router = useRouter();
@@ -38,18 +36,6 @@ export function PendingMessageActions({
   async function discard() {
     setBusy(true);
     await fetch(`${API_BASE}/messages/${messageId}/discard`, { method: "POST" });
-    setBusy(false);
-    router.refresh();
-  }
-
-  async function markIntervention() {
-    if (!serviceCaseId) return;
-    setBusy(true);
-    await fetch(`${API_BASE}/service-cases/${serviceCaseId}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ needs_human_intervention: true, ai_auto_reply_enabled: false }),
-    });
     setBusy(false);
     router.refresh();
   }

@@ -59,7 +59,7 @@ export function RiskReplyConfig() {
         <div>
           <h3 className="text-base font-semibold text-zinc-900">高风险拦截固定话术配置</h3>
           <p className="mt-1 text-sm text-zinc-500 leading-relaxed">
-            当识别到高风险用户或涉及医疗/红线词汇时，AI 将自动停止发散回复，统一使用以下固定安全话术引导用户。
+            当用户触发转人工（健康红线、急性体感不适、投诉退款，或高风险用户咨询饮食/用药等需专业判断的问题）时，AI 不再自行回复，改为发送以下安抚话术并 @班主任接手处理。
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
