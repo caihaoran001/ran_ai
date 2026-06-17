@@ -135,8 +135,10 @@ uv run alembic upgrade head
 ```bash
 AI_BASE_URL=https://api.deepseek.com
 AI_API_KEY=your-ai-api-key
-AI_MODEL=deepseek-chat
-AI_MAX_TOKENS=4000
+AI_MODEL=deepseek-v4-flash
+# 交付文档/阶段报告专用模型，留空则回退 AI_MODEL。
+AI_DOCUMENT_MODEL=deepseek-v4-pro
+AI_MAX_TOKENS=8000
 ```
 
 用户提交问卷后，系统会生成用户画像。服务单详情页可以再次手动生成画像，也可以点击生成两份交付文件：

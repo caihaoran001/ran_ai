@@ -95,6 +95,7 @@ async def generate_profile_and_documents(
         submission=submission,
     )
     llm_output_at = datetime.now(timezone.utc)
+    intake_model = ai._model_for("intake_doc")
     intake_facts = package.get("intake_facts") if isinstance(package.get("intake_facts"), dict) else {}
     legal_name = str(intake_facts.get("legal_name") or user_name or "未提供").strip()
     display_name = str(intake_facts.get("recipient_name") or user_name or "未提供").strip()
@@ -102,7 +103,7 @@ async def generate_profile_and_documents(
         service_case_id=service_case.id,
         profile_json=package["profile_json"],
         summary=package["summary"],
-        generated_by_model=ai.settings.ai_model,
+        generated_by_model=intake_model,
     )
     session.add(profile)
     await initialize_user_state_from_intake(
@@ -132,7 +133,7 @@ async def generate_profile_and_documents(
             content_json=content_json,
             file_path=None,
             status=DocumentStatus.REVIEWING,
-            generated_by_model=ai.settings.ai_model,
+            generated_by_model=intake_model,
         )
         session.add(document)
         documents.append(document)
@@ -367,6 +368,7 @@ async def generate_stage_report(
         if stage == "graduation"
         else DocumentType.STAGE_REPORT
     )
+    stage_model = ai._model_for("graduation_report" if stage == "graduation" else "stage_report")
     document = UserDocument(
         service_case_id=service_case.id,
         document_type=document_type,
@@ -375,7 +377,7 @@ async def generate_stage_report(
         content_json=content_json,
         file_path=None,
         status=DocumentStatus.REVIEWING,
-        generated_by_model=ai.settings.ai_model,
+        generated_by_model=stage_model,
     )
     session.add(document)
     await session.commit()
@@ -457,7 +459,7 @@ async def retry_degraded_stage_report(session: AsyncSession, document: UserDocum
     document.content_json = content_json  # 不含 degraded / degraded_retry_count
     document.content_md = render_document_content(content_json)
     document.file_path = None
-    document.generated_by_model = ai.settings.ai_model
+    document.generated_by_model = ai._model_for("graduation_report" if stage == "graduation" else "stage_report")
     await session.commit()
     logger.info("Stage report degraded -> recovered doc_id=%s stage=%s", document.id, stage)
     return True
@@ -1046,8 +1048,10 @@ def _intake_generation_system_prompt() -> str:
         "同一个意思只说一次，不要在一句话结论、当前状态、成功路径、提醒里反复换说法。"
         "\n\n"
         "profile、energy_restart_prescription、day28_execution_standard 必须共享同一套判断："
-        "减重带、核心问题、总路径目标、第一个28天目标、当前阶段目标、执行总原则、风险提醒不能各说各话。"
+        "减重带、核心问题、基础目标、挑战目标、总路径目标、第一个28天目标、当前阶段目标、执行总原则、风险提醒不能各说各话。"
         "profile 是后台摘要视图，不要另起一套判断；只能从 shared_analysis 和两份文件填充值中提炼。"
+        "处方单必须正面回应用户目标：复述用户原始目标，判断这个目标在当前28天是否可行/可冲刺/不建议，"
+        "再给出基础目标、挑战目标和冲刺条件；禁止只给一个单一数字，禁止承诺一定达成。"
         "\n\n"
         "必须额外生成 profile.need_analysis，作为「健康需求识别引擎」的初始结果。"
         "它要把用户表面说的「我想瘦、我想有精神、我想不便秘、我想睡好、我想不焦虑、我想长期健康、我想被鼓励」"
@@ -1091,13 +1095,13 @@ def _intake_generation_system_prompt() -> str:
         "若用户存在明确红旗项（持续不适、基础病、孕期、非主动消瘦、恢复状态很差），优先下调当前28天目标强度，先抓恢复和安全边界。"
         "若用户目标过激或不适合当前阶段，必须指出「不建议把这个作为当前28天推荐目标」，并给出更适合的目标。"
         "\n\n"
-        "以下判断必须出现在处方单中，分两层写：事实层直接判断，机制层写「提示存在……倾向」：\n"
-        "1. 胰岛素抵抗倾向判断：基于腰围、腹部脂肪、晚间饥饿、饭后困、碳水偏好等行为信号推断，避免诊断语气。\n"
-        "2. 瘦素敏感状态判断：基于晚间失控、食欲边界、饱腹感持续性推断，避免诊断语气。\n"
-        "3. 激素/年龄阶段影响判断："
-        "男性关注睾酮状态变化风险、腹部脂肪增加倾向、恢复能力下降、睡眠质量下滑、压力负荷后的代谢波动、肌肉量流失风险。"
+        "以下生活方式信号必须出现在处方单中，但只能作为观察信号，不得写成医学诊断或医学分型：\n"
+        "1. 食欲边界与饭后困相关信号：基于腰围、腹部脂肪、晚间饥饿、饭后困、碳水偏好等行为信号描述执行含义，禁止写「胰岛素抵抗判断」。\n"
+        "2. 饱腹感与晚间失控相关信号：基于晚间失控、食欲边界、饱腹感持续性描述执行含义，禁止写「瘦素抵抗/瘦素敏感判断」。\n"
+        "3. 年龄、睡眠与恢复能力相关影响："
+        "男性关注腹部脂肪增加倾向、恢复能力下降、睡眠质量下滑、压力负荷后的状态波动、肌肉量流失风险。"
         "禁止写「男性不考虑围绝经期」等无效表达。"
-        "女性关注围绝经期、激素波动、恢复能力下降对体重管理的影响。\n"
+        "女性可关注围绝经期、周期波动、恢复能力下降对执行节律的影响，但不得写成内分泌诊断。\n"
         "如果信息不足以做出有意义的判断，写「当前信息不足，建议补充____」。"
         "\n\n"
         "判断依据（judgement_points / shared_analysis.evidence_notes）必须写 3-5 条短句，每条格式固定为："
@@ -1130,7 +1134,7 @@ def _intake_generation_system_prompt() -> str:
         "两份文件中必须至少出现一次："
         "「高燃人生早C / 午B / 晚A，不只是喝产品，而是在连续28天里，反复给身体建立'启动—续航—收口'的稳定节律信号。"
         "这个信号先帮助白天更好启动、午后更稳、晚间更容易收口；再帮助减少下午崩盘、晚间失控和节律混乱；"
-        "最终更有利于食欲控制、睡眠边界、代谢稳定，以及瘦素敏感和胰岛素状态的长期修复。」"
+        "最终更有利于食欲控制、睡眠边界和日常状态稳定。」"
         "这段只出现一次即可，禁止在其他模块重复解释同样机制。\n"
         "产品排班（product_schedule）：默认早C 随早餐、午B 随午餐、晚A 随晚餐或睡前1-2小时。"
         "咖啡因敏感者：早C/午B 从半份起，午B 前移。睡眠问题明显：午B 减量、前移，必要时不强写完整午B。"
@@ -1138,7 +1142,7 @@ def _intake_generation_system_prompt() -> str:
         "「这28天最不能打折的一件事」必须来自用户最特异的个人风险信号或成败卡点，例如咖啡因敏感、晚睡、情绪化进食、夜班作息；"
         "禁止写成「坚持产品节律」「按时喝三杯」这类所有人都适用的通用答案。"
         "字段格式：title 写一个 2-12 字的短动作标签（例如「23:30 前闭眼」），content 写完整动作+一句原因（例如「23:30 前关灯放下手机，23:30 后入睡几乎每晚是节律不稳的核心」）。"
-        "后端会统一用「9. 您这28天最不能打折的一件事」作为章节标题，content 渲染为正文，title 短标签会合并到正文开头。\n"
+        "后端会统一用「10. 您这28天最不能打折的一件事」作为章节标题，content 渲染为正文，title 短标签会合并到正文开头。\n"
         "\n\n"
         "【逻辑链一致性硬约束（必读）】\n"
         "「当前最该先抓的方向」（priority_direction）、「这28天最不能打折的一件事」（non_negotiable）、"
@@ -1190,18 +1194,18 @@ def _intake_generation_system_prompt() -> str:
         "4 个信号至少 2 个要直接呼应 priority_direction（例如方向=先抓节律，则「晚间是否准点收口」必须出现）。\n"
         "\n"
         "【处方单章节顺序硬约束】\n"
-        "处方单章节顺序固定为：1 用户信息概览表 → 2 一句话结论 → 3 为什么这样判断 → 4 当前身体状态 → 5 减重带与成功路径 → "
-        "6 长期体质和失衡判断 → 7 模块诊断 → 8 这 28 天您更可能看到的变化 → 9 最不能打折的一件事 → 10 本周直接执行 → "
-        "11 产品排班 → 12 特别提醒 → 13 前 7 天重点看 4 个信号 → 14 说明。\n"
-        "special_reminder 即使有内容，也必须作为独立第 12 节，禁止把「特别提醒」内容塞到第 10 节末尾或第 13 节开头。"
-        "如果 LLM 漏写第 12 节，会导致结构编号 11→13 跳跃，必须补回。\n"
+        "处方单章节顺序固定为：1 用户信息概览表 → 2 一句话结论 → 3 对目标的直接回应 → 4 为什么这样判断 → 5 当前身体状态 → 6 减重带与成功路径 → "
+        "7 长期体质和失衡判断 → 8 模块诊断 → 9 这 28 天您更可能看到的变化 → 10 最不能打折的一件事 → 11 本周直接执行 → "
+        "12 产品排班 → 13 特别提醒 → 14 前 7 天重点看 4 个信号 → 15 说明。\n"
+        "special_reminder 即使有内容，也必须作为独立第 13 节，禁止把「特别提醒」内容塞到第 11 节末尾或第 14 节开头。"
+        "如果 LLM 漏写第 13 节，会导致结构编号 12→14 跳跃，必须补回。\n"
         "\n\n"
-        "处方单（energy_restart_prescription）需覆盖：用户信息概览表、一句话结论、判断依据、当前身体状态真正该关注什么、"
-        "胰岛素抵抗/瘦素敏感/激素阶段判断、成功路径、长期体质与失衡判断、节律/饮食/睡眠/压力/身体活动五项模块诊断、"
+        "处方单（energy_restart_prescription）需覆盖：用户信息概览表、一句话结论、对目标的直接回应、判断依据、当前身体状态真正该关注什么、"
+        "食欲边界/饱腹感/恢复能力相关生活方式信号、成功路径、长期体质与失衡判断、节律/饮食/睡眠/压力/身体活动五项模块诊断、"
         "预期变化、最不能打折的一件事、本周执行动作、产品排班、特别提醒、前7天重点看4个信号、说明。\n"
         "执行单（day28_execution_standard）必须写成运营交付用的 1 页执行纸，不是解释文章。"
         "结构只允许是：顶部5项定调（减重带、总路径目标、28天目标、当前阶段目标、执行总原则）→"
-        "产品底盘固定句 → 28天逐周执行标准 → 每日固定打卡5项 → 第5-12周提前说明 → 每周通过标准 → 提醒。"
+        "产品底盘固定句 → 28天逐周执行标准 → 每日固定打卡5项 → 第5-12周提前说明 → 每周通过标准 → 调整与停止条件 → 提醒。"
         "4周逐周执行计划只输出 week / focus / required_actions；不要把 pass_standard 写进每一周，统一放到 weekly_standard 字段。"
         "每周 required_actions 必须是一个短句，最多 3 个动作，用分号连接，像「醒后早C、工作中段午B、晚间晚A；晚餐主食≤1拳；每天7000步。」"
         "不要写为什么，不要写机制解释，不要写鼓励语。"
@@ -1213,6 +1217,7 @@ def _intake_generation_system_prompt() -> str:
         "每一项必须天然适合转成问卷字段：要么是含「是否」的判断题，要么是需要用户直接填写数值/描述的填空题。"
         "至少 2 项打卡要设计成正向动作（做到什么），其次才是禁止动作（不做什么）。"
         "每周通过标准写成 1 句，必须包含 1 次体重 / 围度 / 体感记录作为基础门槛。"
+        "adjust_stop_conditions 必须写清什么情况减半、前移、暂停、联系班主任、及时就医；只写生活方式执行边界，不写医疗方案。"
         "reminder 必须个性化，结合用户作息/睡眠/运动/不适/夜班等信息；第一句必须是一句定心丸，例如「结果看连续性，不看单日完美」。"
         "提醒总共控制在 2 句内，不要写成一整段说明书；必要时提醒就医。"
         "执行单整体必须像参考版：句子短、信息密、动作多、解释少；禁止为了完整而扩写。\n"
@@ -1430,8 +1435,9 @@ async def _generate_stage_payload(
             "必须使用生活方式管理表达，严禁医疗诊断、治疗建议、用药建议或疗效承诺。"
         )
     try:
+        stage_scenario = "graduation_report" if stage == "graduation" else "stage_report"
         text = await ai.generate_text(
-            scenario="stage_report",
+            scenario=stage_scenario,
             temperature=0.3,
             service_case_id=service_case.id,
             system_prompt=prompt,

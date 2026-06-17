@@ -59,9 +59,13 @@ class AIService:
         )
 
     def _model_for(self, scenario: str) -> str:
-        """风险/意图判断用 AI_RISK_MODEL(若配置)，其余场景用 AI_MODEL。"""
+        """按场景选择模型：风控和文档生成可独立于默认聊天模型。"""
         if scenario == "intervention_risk" and (self.settings.ai_risk_model or "").strip():
             return self.settings.ai_risk_model.strip()
+        if scenario in {"intake_doc", "stage_report", "graduation_report"} and (
+            self.settings.ai_document_model or ""
+        ).strip():
+            return self.settings.ai_document_model.strip()
         return self.settings.ai_model
 
     async def generate_text(

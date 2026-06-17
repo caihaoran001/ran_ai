@@ -21,11 +21,18 @@ ENERGY_FIELD_SPEC = {
         "current_focus": "当前主线",
     },
     "one_sentence": "一句话结论",
+    "goal_response": {
+        "user_goal": "复述用户原始目标，例如 28 天想减多少、想改善什么",
+        "judgement": "直接回应目标是否适合当前阶段：可行 / 可冲刺 / 当前不建议 / 需先安全复核",
+        "base_goal": "基础目标：更高确定性的目标，不承诺结果",
+        "challenge_goal": "挑战目标：在产品节律、饮食、运动、睡眠达标时才冲刺",
+        "conditions": "冲刺条件或下调条件，必须具体",
+    },
     "judgement_points": ["为什么这样判断，5条以内"],
     "current_state": "当前身体状态真正该关注什么",
-    "insulin_resistance": "胰岛素抵抗倾向判断，避免诊断语气",
-    "leptin_sensitivity": "瘦素敏感倾向判断，避免诊断语气",
-    "hormone_stage": "激素/年龄阶段影响判断，避免医疗诊断",
+    "insulin_resistance": "食欲边界、饭后困、腰腹堆积等生活方式信号。保留兼容字段名，但用户可见内容不得写成胰岛素抵抗诊断。",
+    "leptin_sensitivity": "饱腹感、晚间失控、食欲边界等生活方式信号。保留兼容字段名，但用户可见内容不得写成瘦素抵抗诊断。",
+    "hormone_stage": "年龄、睡眠、压力、恢复能力相关影响。保留兼容字段名，但用户可见内容不得写成内分泌或激素诊断。",
     "priority_direction": "当前最该先抓的方向",
     "success_path": {
         "intro": "成功路径总述",
@@ -88,6 +95,7 @@ EXECUTION_FIELD_SPEC = {
                      "禁止在每项后加括号注释（如「正向动作」「限制动作」）。",
     "week5_12": "第5-8周和第9-12周提前说明，保持一句连贯叙述，描述前28天建立底盘后的自然延伸预期，不拆分时间段。",
     "weekly_standard": "每周通过标准，1句，必须包含4要素：三杯完成≥5天 + 关键饮食动作≥5天 + 运动/步数达标 + 至少1次体重/围度/体感记录。",
+    "adjust_stop_conditions": "调整与停止条件，1-3句。必须说明什么情况减半、前移、暂停、联系班主任、及时就医。不要写成医疗方案。",
     "reminder": "个性化提醒，总共控制在2句内。"
                 "第一句必须是定心丸（如「结果看连续性，不看单日完美」）。"
                 "第二句是不适处理指引（如「出现持续不适、明显心慌，先停下异常动作并及时咨询专业人士」），结合用户作息/运动/睡眠/不适/夜班等信息。"
@@ -229,32 +237,33 @@ def _build_energy(title: str, user_name: str, display_name: str | None, fields: 
             ],
         },
         _text_block("one_sentence", "2. 一句话结论", fields.get("one_sentence")),
-        _list_block("judgement_points", "3. 为什么我会这样判断", fields.get("judgement_points")),
+        _goal_response_block(fields),
+        _list_block("judgement_points", "4. 为什么我会这样判断", fields.get("judgement_points")),
         _text_block(
             "current_state",
-            "4. 您现在的身体状态，真正该关注什么",
+            "5. 您现在的身体状态，真正该关注什么",
             "\n".join(
                 item
                 for item in [
                     _text(fields.get("current_state")),
-                    f"胰岛素抵抗判断：{_text(fields.get('insulin_resistance'))}",
-                    f"瘦素敏感判断：{_text(fields.get('leptin_sensitivity'))}",
-                    f"激素阶段影响判断：{_text(fields.get('hormone_stage'))}",
+                    f"食欲边界与饭后困相关信号：{_text(fields.get('insulin_resistance'))}",
+                    f"饱腹感与晚间失控相关信号：{_text(fields.get('leptin_sensitivity'))}",
+                    f"年龄、睡眠与恢复能力相关影响：{_text(fields.get('hormone_stage'))}",
                     f"当前最该先抓的方向：{_text(fields.get('priority_direction'))}",
                 ]
                 if item and not item.endswith("：")
             ),
         ),
         _success_path_block(fields),
-        _text_block("constitution", "6. 长期体质和当前失衡初步判断", fields.get("constitution")),
+        _text_block("constitution", "7. 长期体质和当前失衡初步判断", fields.get("constitution")),
         _module_block(fields),
         _expected_block(fields),
         _non_negotiable_block(fields),
-        _list_block("week_actions", "10. 本周直接执行：不要等想明白再开始", fields.get("week_actions"), limit=3),
+        _list_block("week_actions", "11. 本周直接执行：不要等想明白再开始", fields.get("week_actions"), limit=3),
         _product_block(fields),
-        _text_block("special_reminder", "12. 特别提醒", fields.get("special_reminder")),
+        _text_block("special_reminder", "13. 特别提醒", fields.get("special_reminder")),
         _first_week_signals_block(fields),
-        _text_block("notice", "14. 说明", "本处方单用于生活方式管理和燃人AI 28天训练营执行指导，不替代医疗诊断、药物治疗或医生建议。"),
+        _text_block("notice", "15. 说明", "本处方单用于生活方式管理和燃人AI 28天训练营执行指导，不替代医疗诊断、药物治疗或医生建议。"),
     ]
     return _payload(title=display_title, recipient=fields.get("recipient") or display_name or user_name, blocks=blocks)
 
@@ -318,6 +327,7 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
         ),
         _text_block("week5_12", "第5–8周和第9–12周提前说明", _execution_sentence(fields.get("week5_12") or "第5–8周继续放大已经稳定的动作，第9–12周再根据体重、腰围、睡眠和排便反馈微调目标；不要在第一个28天里一次性加太多动作。", max_parts=2, max_len=92)),
         _text_block("weekly_standard", "每周通过标准", _weekly_standard_text(fields.get("weekly_standard"))),
+        _text_block("adjust_stop_conditions", "调整与停止条件", _adjust_stop_conditions_text(fields.get("adjust_stop_conditions"))),
         _text_block("reminder", "提醒", _reminder_text(fields.get("reminder"))),
     ]
     payload = _payload(title=f"{display_name or user_name}｜{title}（1页版）", recipient="", blocks=blocks)
@@ -390,10 +400,10 @@ def _list_block(key: str, title: str, items: Any, *, limit: int | None = None) -
 
 
 def _non_negotiable_block(fields: dict[str, Any]) -> dict[str, Any]:
-    """生成第 9 节「您这 28 天最不能打折的一件事」。
+    """生成第 10 节「您这 28 天最不能打折的一件事」。
 
     旧版（已废弃）会把 LLM 给的具体动作拼到 title 末尾、再把 content 清空，
-    导致 block.title = "9. 您这28天最不能打折的一件事是：<答案>"，content 为空，
+    导致 block.title = "10. 您这28天最不能打折的一件事是：<答案>"，content 为空，
     前端 StructuredEditor 把 title 当作 h3 渲染，content 渲染为空 Textarea，
     用户详情页 blockText() 只读 content 也会显示为空。
 
@@ -417,21 +427,33 @@ def _non_negotiable_block(fields: dict[str, Any]) -> dict[str, Any]:
 
     return _text_block(
         "non_negotiable",
-        "9. 您这28天最不能打折的一件事",
+        "10. 您这28天最不能打折的一件事",
         body,
     )
+
+
+def _goal_response_block(fields: dict[str, Any]) -> dict[str, Any]:
+    value = _dict(fields.get("goal_response"))
+    lines = [
+        f"用户目标：{_text(value.get('user_goal'))}",
+        f"直接回应：{_text(value.get('judgement'))}",
+        f"基础目标：{_text(value.get('base_goal'))}",
+        f"挑战目标：{_text(value.get('challenge_goal'))}",
+        f"冲刺条件：{_text(value.get('conditions'))}",
+    ]
+    return _text_block("goal_response", "3. 对您目标的直接回应", "\n".join(line for line in lines if not line.endswith("：")))
 
 
 def _first_week_signals_block(fields: dict[str, Any]) -> dict[str, Any]:
     value = fields.get("first_week_signals")
     if isinstance(value, list):
         lines = [_clean_text(item) for item in value if _clean_text(item)]
-        return _list_block("first_week_signals", "13. 前7天重点看4个信号", lines, limit=4)
+        return _list_block("first_week_signals", "14. 前7天重点看4个信号", lines, limit=4)
     text_val = _clean_text(value)
     if not text_val:
-        return _list_block("first_week_signals", "13. 前7天重点看4个信号", [], limit=4)
+        return _list_block("first_week_signals", "14. 前7天重点看4个信号", [], limit=4)
     lines = [part.strip() for part in re_split_standard(text_val) if part.strip()]
-    return _list_block("first_week_signals", "13. 前7天重点看4个信号", lines or [text_val], limit=4)
+    return _list_block("first_week_signals", "14. 前7天重点看4个信号", lines or [text_val], limit=4)
 
 
 def _success_path_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -471,7 +493,7 @@ def _success_path_block(fields: dict[str, Any]) -> dict[str, Any]:
         bullets.append(w9_12)
         
     lines = [intro] + bullets
-    return _text_block("success_path", "5. 您当前所属减重带与成功路径", "\n".join(line for line in lines if line))
+    return _text_block("success_path", "6. 您当前所属减重带与成功路径", "\n".join(line for line in lines if line))
 
 
 def _module_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -483,7 +505,7 @@ def _module_block(fields: dict[str, Any]) -> dict[str, Any]:
         f"压力：{_text(value.get('pressure'))}",
         f"身体活动：{_text(value.get('activity'))}",
     ]
-    return _text_block("module_diagnosis", "7. 模块诊断：节律 / 饮食 / 睡眠 / 压力 / 身体活动", "\n".join(line for line in lines if not line.endswith("：")))
+    return _text_block("module_diagnosis", "8. 模块诊断：节律 / 饮食 / 睡眠 / 压力 / 身体活动", "\n".join(line for line in lines if not line.endswith("：")))
 
 
 def _expected_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -492,7 +514,7 @@ def _expected_block(fields: dict[str, Any]) -> dict[str, Any]:
         _text(value.get("day7")),
         _text(value.get("day14_28")),
     ]
-    return _text_block("expected_changes", "8. 这28天您更可能看到的变化", "\n".join(line for line in lines if line))
+    return _text_block("expected_changes", "9. 这28天您更可能看到的变化", "\n".join(line for line in lines if line))
 
 
 def _product_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -521,7 +543,7 @@ def _product_block(fields: dict[str, Any]) -> dict[str, Any]:
         lines.append(summary)
     lines.extend(bullets)
     
-    return _text_block("product_schedule", "11. 产品排班：早C / 午B / 晚A", "\n".join(line for line in lines if line))
+    return _text_block("product_schedule", "12. 产品排班：早C / 午B / 晚A", "\n".join(line for line in lines if line))
 
 
 def _normalize_rows(rows: Any) -> list[list[dict[str, Any]]]:
@@ -627,6 +649,13 @@ def _weekly_standard_text(value: Any) -> str:
     if "体重" not in text_val and "围度" not in text_val and "体感" not in text_val:
         text_val = text_val.rstrip("。") + "；至少记录1次体重或围度/体感。"
     return text_val
+
+
+def _adjust_stop_conditions_text(value: Any) -> str:
+    text_val = _execution_sentence(value, max_parts=3, max_len=120)
+    if text_val:
+        return text_val
+    return "心慌、睡眠明显变差或胃部不适时，早C/午B先减半并前移；持续不适、胸痛、呼吸困难、明显心悸或异常疼痛时，暂停执行并及时就医。"
 
 
 def _reminder_text(value: Any) -> str:

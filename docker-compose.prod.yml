@@ -13,6 +13,7 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
       AI_API_KEY: ${AI_API_KEY:?AI_API_KEY is required}
       AI_MODEL: ${AI_MODEL:-deepseek-v4-flash}
+      AI_DOCUMENT_MODEL: ${AI_DOCUMENT_MODEL:-}
       AI_TEMPERATURE: ${AI_TEMPERATURE:-0.3}
       AI_MAX_TOKENS: ${AI_MAX_TOKENS:-8000}
       AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-60}

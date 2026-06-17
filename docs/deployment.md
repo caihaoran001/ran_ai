@@ -90,6 +90,15 @@ Caddy 路由规则：
 
 这样即使容器重建或磁盘清理，历史文档仍可以从数据库重新生成。
 
+交付文件/阶段报告可使用独立模型：
+
+```env
+AI_MODEL=deepseek-v4-flash
+AI_DOCUMENT_MODEL=deepseek-v4-pro
+```
+
+`AI_DOCUMENT_MODEL` 只影响入营交付文件、阶段报告和毕业报告；聊天回复、风控识别等仍按 `AI_MODEL` / `AI_RISK_MODEL` 走，避免把群聊回复一起切到更慢模型。
+
 ## 5. RDS 准备
 
 当前生产数据库使用阿里云 RDS PostgreSQL 15，并已安装 `vector` 插件。上线前仍建议确认以下事项：
