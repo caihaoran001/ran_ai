@@ -121,7 +121,6 @@ export type DocumentTableCell = {
 export type DocumentContentBlock = {
   key: string;
   title: string;
-  title_editable?: boolean;
   kind: "text" | "list" | "table";
   display?: "inline";
   content?: string;

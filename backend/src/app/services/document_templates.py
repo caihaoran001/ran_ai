@@ -24,7 +24,7 @@ ENERGY_FIELD_SPEC = {
     "goal_response": {
         "goal_type": "specific 或 general。specific=用户写了明确数字/明确结果；general=用户只勾选了期待变化或泛化诉求",
         "judgement_type": "reasonable 或 needs_adjustment。needs_adjustment=目标过激、当前不建议或需先安全复核",
-        "title": "固定写「3. 对您目标的直接回应」",
+        "title": "固定写「3. 对您目标的直接回应」。这是固定章节标题，不要改成「本次优先改善方向」等其他标题。",
         "content": "直接面向用户的一段完整回应。需要包含用户目标/期待、判断、基础目标、挑战目标或当前更适合方向、冲刺/下调条件；不要空泛，不承诺结果。",
         "user_goal": "兼容字段：复述用户原始目标或期待变化",
         "judgement": "兼容字段：直接回应目标是否适合当前阶段",
@@ -438,15 +438,11 @@ def _non_negotiable_block(fields: dict[str, Any]) -> dict[str, Any]:
 
 def _goal_response_block(fields: dict[str, Any]) -> dict[str, Any]:
     value = _dict(fields.get("goal_response"))
-    title = _text(value.get("title")) or "3. 对您目标的直接回应"
-    if not title.startswith("3."):
-        title = f"3. {title}"
+    title = "3. 对您目标的直接回应"
 
     content = _text(value.get("content"))
     if content:
-        block = _text_block("goal_response", title, content)
-        block["title_editable"] = True
-        return block
+        return _text_block("goal_response", title, content)
 
     goal_type = _text(value.get("goal_type"))
     judgement_type = _text(value.get("judgement_type"))
@@ -463,9 +459,7 @@ def _goal_response_block(fields: dict[str, Any]) -> dict[str, Any]:
         f"挑战目标：{_text(value.get('challenge_goal'))}",
         f"冲刺条件：{_text(value.get('conditions'))}",
     ]
-    block = _text_block("goal_response", title, "\n".join(line for line in lines if not line.endswith("：")))
-    block["title_editable"] = True
-    return block
+    return _text_block("goal_response", title, "\n".join(line for line in lines if not line.endswith("：")))
 
 
 def _first_week_signals_block(fields: dict[str, Any]) -> dict[str, Any]:

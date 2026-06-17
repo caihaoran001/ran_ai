@@ -143,23 +143,7 @@ function StructuredEditor({
       </div>
       {value.blocks.map((block, blockIndex) => (
         <section key={block.key || blockIndex} className="rounded-lg border border-zinc-200 p-4">
-          {block.title_editable ? (
-            <div>
-              <label className="text-xs font-medium text-zinc-500">章节标题</label>
-              <input
-                className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm font-semibold text-zinc-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                value={block.title}
-                onChange={(event) =>
-                  updateBlock(blockIndex, (current) => ({
-                    ...current,
-                    title: event.target.value,
-                  }))
-                }
-              />
-            </div>
-          ) : (
-            <h3 className="font-semibold text-zinc-900">{block.title}</h3>
-          )}
+          <h3 className="font-semibold text-zinc-900">{block.title}</h3>
           {block.kind === "table" ? (
             <div className="mt-3 overflow-x-auto">
               <table className={`w-full min-w-[640px] border-collapse text-sm${execColWidths(block.rows) ? " table-fixed" : ""}`}>
