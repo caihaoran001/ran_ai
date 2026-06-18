@@ -190,6 +190,16 @@ class MockAIService:
         self._responses = responses or {}
         self.settings = get_settings()
 
+    def _model_for(self, scenario: str) -> str:
+        # 与真实 AIService 接口对齐：按场景返回模型名（mock 不区分，回退默认）
+        if scenario == "intervention_risk" and (getattr(self.settings, "ai_risk_model", "") or "").strip():
+            return self.settings.ai_risk_model.strip()
+        if scenario in {"intake_doc", "stage_report", "graduation_report"} and (
+            getattr(self.settings, "ai_document_model", "") or ""
+        ).strip():
+            return self.settings.ai_document_model.strip()
+        return self.settings.ai_model
+
     def _match(self, system_prompt):
         for prefix, response in self._responses.items():
             if system_prompt.startswith(prefix):
