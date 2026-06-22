@@ -272,6 +272,7 @@ class RanrenAIEngine:
                     db_msg.analysis_json = analysis
                     session.add(db_msg)
                     await session.commit()
+                    message.text = description
                     logger.info("Successfully updated message_id=%s content with description: '%s'", message_id, description)
         except Exception as exc:
             logger.exception("Error processing inbound image for message_id=%s", message_id)
@@ -395,15 +396,17 @@ class RanrenAIEngine:
             # 如果是图片消息，触发后台下载、解密与大模型翻译
             if message.message_type == "image" and inbound_id is not None:
                 await self._process_inbound_image(inbound_id, message, service_case_id)
-
-            logger.info(
-                "RanrenAI non-text message stored without AI reply channel=%s chat_id=%s message_id=%s type=%s",
-                message.channel,
-                message.chat_id,
-                message.message_id,
-                message.message_type,
-            )
-            return
+                # 图片消息翻译完成后，其在内存中的 text 属性已被更新为描述，继续向下执行流程以触发自动回复、成效提取和风险评估
+            else:
+                # 其他非文本消息（如语音、文件等）仍直接入库留痕，不触发 AI 回复
+                logger.info(
+                    "RanrenAI non-text message stored without AI reply channel=%s chat_id=%s message_id=%s type=%s",
+                    message.channel,
+                    message.chat_id,
+                    message.message_id,
+                    message.message_type,
+                )
+                return
 
         if is_staff and not should_send_questionnaire:
             logger.info(
