@@ -101,15 +101,27 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
     if item.get("cmd") != 15000:
         return None
 
-    is_text = item.get("msgType") in (0, 2)
+    msg_type = item.get("msgType")
+    is_text = msg_type in (0, 2)
     msg_data = item.get("msgData") or {}
     content = str(msg_data.get("content") or "").strip()
     if is_text:
         if not content:
             return None
+        message_type = "text"
     else:
-        # 非文本(表情包/图片/语音/动图等)：仅入库留痕，不触发 AI 回复(见 engine.handle_message 分流)
-        content = content or "[表情/图片等非文本消息]"
+        if msg_type in (7, 14, 101):
+            message_type = "image"
+            content = content or "[图片]"
+        elif msg_type in (15, 20, 102):
+            message_type = "file"
+            content = content or "[文件]"
+        elif msg_type == 16:
+            message_type = "voice"
+            content = content or "[语音]"
+        else:
+            message_type = "non_text"
+            content = content or "[表情/图片等非文本消息]"
 
     bot_user_id = _as_str(item.get("userId"))
     sender_id = _as_str(item.get("senderId") or msg_data.get("sender_id"))
@@ -131,7 +143,7 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
         message_id=_as_str(item.get("msgUniqueIdentifier")),
         user_id=sender_id,
         user_name=str(item.get("senderName") or msg_data.get("sender_name") or ""),
-        message_type="text" if is_text else "non_text",
+        message_type=message_type,
         raw_payload=item,
         timestamp=_timestamp(item.get("timestamp")),
     )

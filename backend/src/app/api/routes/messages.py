@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
+from pathlib import Path
 from sqlalchemy import not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -170,3 +172,23 @@ async def update_message(
     await session.commit()
     await session.refresh(message)
     return message
+
+
+@router.get("/messages/{message_id}/image")
+async def get_message_image(
+    message_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    message = await session.get(Message, message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="message not found")
+    analysis = message.analysis_json or {}
+    image_info = analysis.get("image_info")
+    if not image_info or "local_path" not in image_info:
+        raise HTTPException(status_code=400, detail="message is not an image message")
+    local_path = Path(image_info["local_path"])
+    if not local_path.exists():
+        raise HTTPException(status_code=404, detail="image file not found on disk")
+    media_type = image_info.get("content_type") or "image/jpeg"
+    return FileResponse(local_path, media_type=media_type)
+

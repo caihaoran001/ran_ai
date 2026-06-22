@@ -57,6 +57,90 @@ class AIService:
             base_url=self.settings.ai_base_url,
             timeout=_normalized_timeout(self.settings.ai_timeout_seconds),
         )
+        self._qwen_client = AsyncOpenAI(
+            api_key=self.settings.qwen_api_key or "missing",
+            base_url=self.settings.qwen_base_url,
+            timeout=_normalized_timeout(self.settings.ai_timeout_seconds),
+        )
+
+    async def translate_image(
+        self,
+        *,
+        base64_image: str,
+        mime_type: str = "image/jpeg",
+        service_case_id: int | None = None,
+        message_id: int | None = None,
+    ) -> str:
+        if not self.settings.qwen_api_key:
+            logger.warning("QWEN_API_KEY is not configured. Falling back to default placeholder description.")
+            return "用户上传了一张图片。"
+
+        model = self.settings.qwen_model or "qwen-vl-plus"
+        started_at = time.monotonic()
+        system_prompt = (
+            "你是一个专业助手。请用一句话极其简练、准确地描述这张图片里包含的主体事物、数据或状态"
+            "（例如：用户上传了一张显示体重为 72.5 公斤的体重秤照片；用户上传了一张包含西兰花和鸡胸肉的午餐照片），"
+            "以便文本大模型理解。请只输出这一句描述，不要包含任何多余的问候语、废话或解释。"
+        )
+
+        try:
+            async with _get_limiter(self.settings.ai_max_concurrent_requests):
+                response = await self._qwen_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{mime_type};base64,{base64_image}"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    max_tokens=200,
+                )
+            
+            content = response.choices[0].message.content if response.choices else ""
+            description = (content or "").strip()
+            logger.info(
+                "qwen_vl_call model=%s elapsed_ms=%.1f description=%s",
+                model,
+                (time.monotonic() - started_at) * 1000,
+                description
+            )
+            usage = getattr(response, "usage", None)
+            await self._record_usage(
+                scenario="qwen_vl_translate",
+                model=model,
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                finish_reason=response.choices[0].finish_reason if response.choices else None,
+                usage=usage,
+                attempts=1,
+                success=True,
+                error_type=None,
+                service_case_id=service_case_id,
+                message_id=message_id,
+            )
+            return description
+        except Exception as exc:
+            logger.exception("Qwen VL image translation failed")
+            await self._record_usage(
+                scenario="qwen_vl_translate",
+                model=model,
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                finish_reason=None,
+                usage=None,
+                attempts=1,
+                success=False,
+                error_type=type(exc).__name__,
+                service_case_id=service_case_id,
+                message_id=message_id,
+            )
+            return "用户上传了一张图片，但解析描述失败。"
 
     def _model_for(self, scenario: str) -> str:
         """按场景选择模型：风控和文档生成可独立于默认聊天模型。"""

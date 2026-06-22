@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     ai_risk_model: str = Field(default="", validation_alias="AI_RISK_MODEL")
     ai_temperature: float = Field(default=0.3, validation_alias="AI_TEMPERATURE")
     ai_max_tokens: int = Field(default=8000, validation_alias="AI_MAX_TOKENS")
+
+    # 通义千问多模态模型设置
+    qwen_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        validation_alias="QWEN_BASE_URL",
+    )
+    qwen_api_key: str = Field(default="", validation_alias="QWEN_API_KEY")
+    qwen_model: str = Field(default="qwen-vl-plus", validation_alias="QWEN_MODEL")
     ai_timeout_seconds: float = Field(default=60.0, validation_alias="AI_TIMEOUT_SECONDS")
     ai_max_concurrent_requests: int = Field(
         default=10,

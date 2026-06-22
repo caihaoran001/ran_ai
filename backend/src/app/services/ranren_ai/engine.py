@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import base64
 from html import escape
+import httpx
 import logging
+from pathlib import Path
 import re
 import secrets
 import time
+import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Awaitable, Callable
 from urllib.parse import urlparse
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import selectinload
@@ -137,6 +142,38 @@ RANREN_AI_SYSTEM_PROMPT = (
 # Unified and concise risk replies are imported from content_policy.py
 
 
+def _decrypt_image_bytes(encrypted_data: bytes, aes_key_str: str) -> bytes:
+    if not encrypted_data:
+        raise ValueError("encrypted_data is empty")
+    if not aes_key_str:
+        raise ValueError("aes_key is required")
+
+    # If it is a 32-character hex string (16 bytes AES key)
+    if len(aes_key_str) == 32 and all(c in "0123456789abcdefABCDEF" for c in aes_key_str):
+        key = bytes.fromhex(aes_key_str)
+        iv = key
+    else:
+        # Fallback to base64 decode (AES-256-CBC)
+        padded_key = aes_key_str + "=" * ((4 - len(aes_key_str) % 4) % 4)
+        key = base64.b64decode(padded_key)
+        iv = key[:16]
+
+    if len(key) not in (16, 24, 32):
+        raise ValueError(f"Invalid AES key length: {len(key)} bytes")
+
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+    decryptor = cipher.decryptor()
+    decrypted = decryptor.update(encrypted_data) + decryptor.finalize()
+
+    # PKCS#7 unpadding
+    pad_len = decrypted[-1]
+    if pad_len < 1 or pad_len > 32 or pad_len > len(decrypted):
+        raise ValueError(f"Invalid PKCS#7 padding value: {pad_len}")
+    if any(byte != pad_len for byte in decrypted[-pad_len:]):
+        raise ValueError("Invalid PKCS#7 padding: padding bytes mismatch")
+    return decrypted[:-pad_len]
+
+
 class RanrenAIEngine:
     """Channel-agnostic business engine for inbound customer messages."""
 
@@ -153,6 +190,91 @@ class RanrenAIEngine:
         # 30 分钟内不重复@（替代旧的 needs_human_intervention 永久标记——旧逻辑会在第一次@后
         # 永久不再@后续风险，导致班主任漏消息；新逻辑每个新风险事件都会@、只在短期内防刷屏）。
         self._last_handoff_at: dict[int, float] = {}
+
+    async def _process_inbound_image(self, message_id: int, message: ChannelMessage, service_case_id: int | None) -> None:
+        try:
+            raw_payload = message.raw_payload or {}
+            data_list = raw_payload.get("data") or [raw_payload]
+            item = data_list[0] if data_list else {}
+            msg_data = item.get("msgData") or {}
+
+            file_url = msg_data.get("fileMiddleHttpUrl") or msg_data.get("fileBigHttpUrl") or msg_data.get("cdnUrl") or msg_data.get("cloudUrl")
+            file_aes_key = msg_data.get("fileAesKey") or msg_data.get("aesKey")
+
+            if not file_url:
+                logger.warning("No image file URL found in raw payload for message_id=%s", message_id)
+                return
+
+            logger.info("Downloading inbound image for message_id=%s from: %s", message_id, file_url)
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                response = await client.get(
+                    file_url,
+                    headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.38(0x1800262c)"}
+                )
+                response.raise_for_status()
+                encrypted_bytes = response.content
+
+            if file_aes_key:
+                logger.info("Decrypting inbound image for message_id=%s", message_id)
+                decrypted_bytes = _decrypt_image_bytes(encrypted_bytes, file_aes_key)
+            else:
+                decrypted_bytes = encrypted_bytes
+
+            # Detect file extension or default to .jpg
+            ext = ".jpg"
+            if decrypted_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                ext = ".png"
+            elif decrypted_bytes.startswith(b"GIF8"):
+                ext = ".gif"
+            elif decrypted_bytes.startswith(b"RIFF") and decrypted_bytes[8:12] == b"WEBP":
+                ext = ".webp"
+
+            cache_dir = Path(".wecom_cache/images")
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"img_{uuid.uuid4().hex[:16]}{ext}"
+            file_path = cache_dir / filename
+            file_path.write_bytes(decrypted_bytes)
+            
+            logger.info("Saved decrypted image to: %s", file_path)
+
+            # Convert to Base64 for Qwen translation
+            base64_str = base64.b64encode(decrypted_bytes).decode("utf-8")
+            mime_type = "image/png" if ext == ".png" else "image/jpeg"
+            if ext == ".gif":
+                mime_type = "image/gif"
+            elif ext == ".webp":
+                mime_type = "image/webp"
+
+            # Call Qwen Multimodal for image translation
+            ai = AIService(self.settings)
+            description = await ai.translate_image(
+                base64_image=base64_str,
+                mime_type=mime_type,
+                service_case_id=service_case_id,
+                message_id=message_id,
+            )
+
+            # Update Message in Database
+            async with SessionLocal() as session:
+                db_msg = await session.get(Message, message_id)
+                if db_msg:
+                    db_msg.content = description
+                    
+                    analysis = db_msg.analysis_json or {}
+                    analysis["image_info"] = {
+                        "local_path": str(file_path.resolve()),
+                        "filename": filename,
+                        "width": msg_data.get("width"),
+                        "height": msg_data.get("height"),
+                        "file_size": len(decrypted_bytes),
+                        "content_type": mime_type,
+                    }
+                    db_msg.analysis_json = analysis
+                    session.add(db_msg)
+                    await session.commit()
+                    logger.info("Successfully updated message_id=%s content with description: '%s'", message_id, description)
+        except Exception as exc:
+            logger.exception("Error processing inbound image for message_id=%s", message_id)
 
     async def handle_message(self, message: ChannelMessage) -> None:
         started_at = time.monotonic()
@@ -270,7 +392,10 @@ class RanrenAIEngine:
             )
 
         if message.message_type != "text":
-            # 非文本(表情包/图片等)：已入库留痕，但不做风险分析、不触发 AI 回复
+            # 如果是图片消息，触发后台下载、解密与大模型翻译
+            if message.message_type == "image" and inbound_id is not None:
+                await self._process_inbound_image(inbound_id, message, service_case_id)
+
             logger.info(
                 "RanrenAI non-text message stored without AI reply channel=%s chat_id=%s message_id=%s type=%s",
                 message.channel,

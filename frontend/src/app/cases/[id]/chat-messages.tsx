@@ -77,7 +77,28 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
                   <span className="rounded bg-blue-100 px-1 text-blue-700">文件</span>
                 )}
               </div>
-              <div className="whitespace-pre-wrap">{msg.content}</div>
+              {msg.message_type === "image" ? (
+                <div className="mt-2 space-y-2">
+                  <div className="relative overflow-hidden rounded border border-zinc-200 bg-zinc-50 max-w-sm">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`/api/backend/messages/${msg.id}/image`}
+                      alt={msg.content || "用户上传的图片"}
+                      className="max-h-60 max-w-full object-contain cursor-zoom-in rounded hover:opacity-90 transition-opacity"
+                      onClick={() => {
+                        window.open(`/api/backend/messages/${msg.id}/image`, "_blank");
+                      }}
+                    />
+                  </div>
+                  {msg.content && msg.content !== "[图片]" && (
+                    <p className="text-xs text-zinc-500 italic bg-zinc-50/50 p-2 rounded border-l-2 border-zinc-300">
+                      AI描述: {msg.content}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+              )}
               {msg.status === "failed" &&
                 (msg.error?.includes("驳回") ? (
                   <div className="mt-1 text-xs text-zinc-400">已驳回 · 未发送</div>
