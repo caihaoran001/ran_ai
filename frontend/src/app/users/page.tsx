@@ -2,20 +2,23 @@ import Link from "next/link";
 import { api, User, ServiceCase } from "@/lib/api";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { DeleteServiceCaseButton } from "./user-actions";
+import { CaseSearchBox } from "./case-search-box";
 import { ArrowRight, Clock, LoaderCircle, MessageSquare, Phone } from "lucide-react";
 
 export default async function UsersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ deleted?: string; filter?: string }>;
+  searchParams: Promise<{ deleted?: string; filter?: string; q?: string }>;
 }) {
-  const { deleted, filter } = await searchParams;
+  const { deleted, filter, q } = await searchParams;
   const showDeleted = deleted === "1";
   const activeFilter = showDeleted ? undefined : filter;
+  const searchQuery = showDeleted ? undefined : q?.trim();
   const users = await api<User[]>(`/users${showDeleted ? "?deleted=true" : ""}`).catch(() => []);
-  const serviceCasePath = activeFilter
-    ? `/service-cases?filter=${encodeURIComponent(activeFilter)}`
-    : "/service-cases";
+  const caseParams = new URLSearchParams();
+  if (activeFilter) caseParams.set("filter", activeFilter);
+  if (searchQuery) caseParams.set("q", searchQuery);
+  const serviceCasePath = `/service-cases${caseParams.toString() ? `?${caseParams.toString()}` : ""}`;
   const serviceCases = showDeleted ? [] : await api<ServiceCase[]>(serviceCasePath).catch(() => []);
   const filterLabel = activeFilter ? SERVICE_CASE_FILTER_LABELS[activeFilter] : undefined;
 
@@ -54,6 +57,8 @@ export default async function UsersPage({
         </div>
       </div>
 
+      {!showDeleted && <CaseSearchBox />}
+
       {filterLabel && (
         <div className="flex items-center justify-between rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm">
           <span className="text-cyan-900">已按“{filterLabel}”筛选服务单。</span>
@@ -69,7 +74,7 @@ export default async function UsersPage({
           : serviceCases.map((serviceCase) => <ServiceCaseCard key={serviceCase.id} serviceCase={serviceCase} />)}
         {(showDeleted ? users.length : serviceCases.length) === 0 && (
           <div className="panel p-12 text-center text-slate-500">
-            {showDeleted ? "暂无已删除用户" : "暂无用户"}
+            {showDeleted ? "暂无已删除用户" : searchQuery ? `未找到匹配「${searchQuery}」的服务单` : "暂无用户"}
           </div>
         )}
       </div>
@@ -225,7 +230,7 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
         )}
       </div>
       <div className="flex shrink-0 items-center gap-4 text-sm text-slate-500">
-        <span className="hidden max-w-52 truncate lg:inline">群: {serviceCase.group_id}</span>
+        <span className="hidden max-w-52 truncate lg:inline">群: {serviceCase.group_name || serviceCase.group_id}</span>
         <span>{formatChinaShortDateTime(serviceCase.created_at)}</span>
         <span className="inline-flex items-center gap-1 font-semibold text-cyan-700">
           查看详情 <ArrowRight className="h-3.5 w-3.5" />

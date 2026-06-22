@@ -47,6 +47,7 @@ class ServiceCaseRead(Timestamped):
     case_no: str
     user_id: int | None
     group_id: str
+    group_name: str | None = None
     questionnaire_token: str
     status: ServiceCaseStatus
     started_at: datetime | None

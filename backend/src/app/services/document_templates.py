@@ -97,7 +97,7 @@ EXECUTION_FIELD_SPEC = {
                      "每项必须天然适合转成问卷字段：要么是含「是否」的判断题，要么是需要用户填写数值/描述的填空题。"
                      "情绪稳定度和饭后困必须合并为1项综合观察，不要输出硬编码的通用套话。"
                      "禁止在每项后加括号注释（如「正向动作」「限制动作」）。",
-    "week5_12": "第5-8周和第9-12周提前说明，保持一句连贯叙述，描述前28天建立底盘后的自然延伸预期，不拆分时间段。",
+    "week5_12": "第5-8周和第9-12周提前说明：必须分别写到『第5-8周』和『第9-12周』两段的预期（前28天建立底盘后的自然延伸），用连贯的一两句话自然表达、不要做成生硬的列表分段；整体简洁，总长控制在约120字以内。",
     "weekly_standard": "每周通过标准，1句，必须包含4要素：三杯完成≥5天 + 关键饮食动作≥5天 + 运动/步数达标 + 至少1次体重/围度/体感记录。",
     "adjust_stop_conditions": "调整与停止条件，1-3句。必须说明什么情况减半、前移、暂停、联系班主任、及时就医。不要写成医疗方案。",
     "reminder": "个性化提醒，总共控制在2句内。"
@@ -329,7 +329,9 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
             "每日固定打卡（每天只打这5项）",
             _daily_checkin_text(fields.get("daily_checkin")),
         ),
-        _text_block("week5_12", "第5–8周和第9–12周提前说明", _execution_sentence(fields.get("week5_12") or "第5–8周继续放大已经稳定的动作，第9–12周再根据体重、腰围、睡眠和排便反馈微调目标；不要在第一个28天里一次性加太多动作。", max_parts=2, max_len=92)),
+        # 这节天然要装"第5-8周+第9-12周"两段，长度控制改由提示词(EXECUTION_FIELD_SPEC["week5_12"])约束 LLM 直接产出；
+        # 这里的截断只作宽松兜底防极端啰嗦(放宽到 3 段/200 字)，正常两段不会被砍掉 9-12 周。
+        _text_block("week5_12", "第5–8周和第9–12周提前说明", _execution_sentence(fields.get("week5_12") or "第5–8周继续放大已经稳定的动作，第9–12周再根据体重、腰围、睡眠和排便反馈微调目标；不要在第一个28天里一次性加太多动作。", max_parts=3, max_len=200)),
         _text_block("weekly_standard", "每周通过标准", _weekly_standard_text(fields.get("weekly_standard"))),
         _text_block("adjust_stop_conditions", "调整与停止条件", _adjust_stop_conditions_text(fields.get("adjust_stop_conditions"))),
         _text_block("reminder", "提醒", _reminder_text(fields.get("reminder"))),

@@ -5,7 +5,7 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -55,6 +55,7 @@ async def _annotate_pending_review(session: AsyncSession, cases: list[ServiceCas
 @router.get("", response_model=list[ServiceCaseRead])
 async def list_service_cases(
     filter: str | None = None,
+    q: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[ServiceCase]:
     statement = (
@@ -63,6 +64,16 @@ async def list_service_cases(
         .order_by(ServiceCase.created_at.desc())
     )
     statement = _apply_service_case_filter(statement, filter)
+    if q and q.strip():
+        # 按 用户名 / 手机号 / 群名 模糊搜索。outerjoin 保留未绑定用户但有群名的服务单。
+        like = f"%{q.strip()}%"
+        statement = statement.outerjoin(User, ServiceCase.user_id == User.id).where(
+            or_(
+                User.name.ilike(like),
+                User.phone.ilike(like),
+                ServiceCase.group_name.ilike(like),
+            )
+        )
     cases = list(await session.scalars(statement))
     await _annotate_pending_review(session, cases)
     return cases

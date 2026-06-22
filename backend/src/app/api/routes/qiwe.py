@@ -74,6 +74,9 @@ def _is_authorized_callback(request: Request, settings: Settings) -> bool:
 
 
 def _bypass_aggregator(message: ChannelMessage) -> bool:
+    # 非文本(表情/图片等)绕过聚合，直接走 engine：只入库留痕、不回复，且不与文本消息合并
+    if message.message_type != "text":
+        return True
     return "发送本群入营问卷" in message.text or "发送本群专属问卷" in message.text
 
 
@@ -97,13 +100,16 @@ def _get_aggregator(request: Request) -> QiWeMessageAggregator:
 def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
     if item.get("cmd") != 15000:
         return None
-    if item.get("msgType") not in (0, 2):
-        return None
 
+    is_text = item.get("msgType") in (0, 2)
     msg_data = item.get("msgData") or {}
     content = str(msg_data.get("content") or "").strip()
-    if not content:
-        return None
+    if is_text:
+        if not content:
+            return None
+    else:
+        # 非文本(表情包/图片/语音/动图等)：仅入库留痕，不触发 AI 回复(见 engine.handle_message 分流)
+        content = content or "[表情/图片等非文本消息]"
 
     bot_user_id = _as_str(item.get("userId"))
     sender_id = _as_str(item.get("senderId") or msg_data.get("sender_id"))
@@ -125,7 +131,7 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
         message_id=_as_str(item.get("msgUniqueIdentifier")),
         user_id=sender_id,
         user_name=str(item.get("senderName") or msg_data.get("sender_name") or ""),
-        message_type="text",
+        message_type="text" if is_text else "non_text",
         raw_payload=item,
         timestamp=_timestamp(item.get("timestamp")),
     )

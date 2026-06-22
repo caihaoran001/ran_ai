@@ -23,9 +23,14 @@ async def event_stream(request: Request) -> StreamingResponse:
         while True:
             if await request.is_disconnected():
                 break
-            payload = await _review_counts()
+            # asyncio.shield 保证「查询 + 连接归还(__aexit__)」整体不被客户端断开
+            # (CancelledError) 中途打断；否则 asyncpg 连接来不及 checkin 回池子，
+            # 会泄漏成 non-checked-in 连接并最终耗尽连接池(本次整站/机器人瘫痪的根因)。
+            payload = await asyncio.shield(_review_counts())
             yield f"event: pending_review\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
             yield f"event: intervention\ndata: {json.dumps({'count': payload['intervention_count']}, ensure_ascii=False)}\n\n"
+            # 心跳注释行(SSE 规范，前端 EventSource 自动忽略)：保活长连接、便于中间层及时感知存活
+            yield ": ping\n\n"
             await asyncio.sleep(5)
 
     return StreamingResponse(generate(), media_type="text/event-stream")

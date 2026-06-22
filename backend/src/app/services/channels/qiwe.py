@@ -144,6 +144,37 @@ class QiWeChannel:
             return res.raw_response.get("data")
         return None
 
+    async def batch_get_room_names(self, room_ids: list[str]) -> dict[str, str]:
+        """批量取群名：返回 {room_id: roomName}，仅含非空名。
+
+        取不到/空名的群（机器人已退/群解散）不出现在结果里，调用方据此保留旧值、不覆盖成空。
+        分批 ≤50 调 /room/batchGetRoomDetail。
+        """
+        result: dict[str, str] = {}
+        if not self._ready or not room_ids:
+            return result
+        unique_ids = [s for s in dict.fromkeys(str(r) for r in room_ids) if s]
+        for start in range(0, len(unique_ids), 50):
+            batch = unique_ids[start:start + 50]
+            payload = {
+                "method": "/room/batchGetRoomDetail",
+                "params": {"guid": self.guid, "roomIdList": batch},
+            }
+            try:
+                res = await self._post_json("/api/qw/doApi", payload, rate_limit=False)
+            except Exception as exc:
+                logger.error("QiWe batch_get_room_names failed for %d rooms: %s", len(batch), exc)
+                continue
+            if not (res.success and isinstance(res.raw_response, dict)):
+                continue
+            data = res.raw_response.get("data") or {}
+            for room in data.get("roomList") or []:
+                rid = str(room.get("roomId") or "")
+                name = str(room.get("roomName") or "").strip()
+                if rid and name:
+                    result[rid] = name
+        return result
+
     async def batch_get_user_info(self, user_ids: list[str]) -> list[dict[str, Any]] | None:
         if not self._ready or not user_ids:
             return None

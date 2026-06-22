@@ -152,8 +152,35 @@ export function QuestionnaireForm({
     });
     if (missing) {
       setShowSoftConfirm(false);
+      // 在该字段旁就地标红，否则滚动定位过去后用户看不到任何提示（体感像"点提交没反应"）
+      setFieldIssues((prev) => ({
+        ...prev,
+        [missing.key]: { key: missing.key, level: "hard", msg: `请填写：${missing.title ?? missing.label}` },
+      }));
       setError(`请填写：${missing.title ?? missing.label}`);
       scrollToField(missing.key);
+      return;
+    }
+    // DATE 字段（如计划开始日期）范围校验：最早次日。
+    // 微信内置浏览器(X5)不认 <input type=date> 的 min 属性，能选到过去日期，必须在提交逻辑里兜住。
+    const tomorrow = new Date();
+    tomorrow.setHours(0, 0, 0, 0);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const badDate = questionnaire.fields.find((field) => {
+      if (field.type !== "DATE") return false;
+      const v = String(nextAnswers[field.key] ?? "").trim();
+      if (!v) return false; // 空值由上面的必填校验处理
+      const picked = new Date(`${v}T00:00:00`);
+      return Number.isNaN(picked.getTime()) || picked < tomorrow;
+    });
+    if (badDate) {
+      setShowSoftConfirm(false);
+      setFieldIssues((prev) => ({
+        ...prev,
+        [badDate.key]: { key: badDate.key, level: "hard", msg: "开始日期最早为次日（明天）起，请重新选择" },
+      }));
+      setError(`「${badDate.title ?? badDate.label}」最早只能选次日（明天）起，请重新选择`);
+      scrollToField(badDate.key);
       return;
     }
     const issues = checkBodyMeasurements(questionnaire.fields, nextAnswers);
@@ -236,7 +263,7 @@ export function QuestionnaireForm({
   void submitCaiHaoranSample;
 
   return (
-    <form onSubmit={submit} className="space-y-5 pb-28">
+    <form onSubmit={submit} noValidate className="space-y-5 pb-28">
       {defaults.day_no && (
         <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-sm font-medium text-cyan-800">
           今天是第 {defaults.day_no} 天
@@ -413,6 +440,7 @@ function FieldInput({
           onChange={(event) => onChange(event.target.value)}
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-100"
         />
+        <div className="mt-2 text-xs leading-5 text-slate-400">开始日期最早为次日（明天）起；服务将从这一天起算第 1 天。</div>
       </label>
     );
   } else if (field.type === "SIMPLE" || field.type === "FILE") {

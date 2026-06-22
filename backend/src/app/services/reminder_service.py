@@ -36,7 +36,7 @@ from app.services.document_service import (
 from app.services.knowledge_evolution import KnowledgeEvolutionService
 from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
 from app.services.outcome_engine import generate_outcome_snapshot
-from app.services.service_case_queries import active_service_case_condition, checkin_day, effective_service_day, effective_start_at, select_active_service_cases
+from app.services.service_case_queries import active_service_case_condition, checkin_day, effective_service_day, select_active_service_cases
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,7 @@ class ReminderService:
         self._task: asyncio.Task | None = None
         self._stopped = asyncio.Event()
         self._last_knowledge_scan: datetime | None = None
+        self._last_room_name_full_refresh: datetime | None = None
 
     async def start(self) -> None:
         knowledge_enabled = self.settings.knowledge_evolution_enabled
@@ -104,6 +105,7 @@ class ReminderService:
                         await self.check_stuck_document_generation_once()
                         await self.check_retry_degraded_reports_once()
                         await self.check_unsent_channel_messages_once()
+                        await self.check_room_names_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -596,8 +598,58 @@ class ReminderService:
             except Exception:
                 logger.exception(f"Failed to generate stage report {stage} for case {case_id}")
 
-    async def check_stage_reports_once(self) -> None:
-        now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
+    async def check_room_names_once(self, now: datetime | None = None) -> None:
+        """回填/刷新服务单的 QiWe 群名(group_name)，用于按群名搜索服务单。
+
+        - 距上次全量刷新 >=24h：刷新所有 active 案例的群名(同步运营改名)；
+        - 否则只补 group_name 为空(IS NULL)的案例(新案例回填，每轮都跑，几十秒内补上)；
+        - 取得到名字才写真名；取不到(机器人已退/群解散)把 None 标记成 ""，避免补空分支每轮重复重试(全量刷新仍会重试)。
+        """
+        channel = get_current_channel()
+        if channel is None or not hasattr(channel, "batch_get_room_names"):
+            return
+        now = now or datetime.now(ZoneInfo(self.settings.reminder_timezone))
+        full_refresh = (
+            self._last_room_name_full_refresh is None
+            or (now - self._last_room_name_full_refresh).total_seconds() >= 24 * 3600
+        )
+        async with SessionLocal() as session:
+            statement = select_active_service_cases()
+            if not full_refresh:
+                statement = statement.where(ServiceCase.group_name.is_(None))
+            cases = list(await session.scalars(statement))
+            if not cases:
+                if full_refresh:
+                    self._last_room_name_full_refresh = now
+                return
+            room_ids = [c.group_id for c in cases if c.group_id]
+            names = await channel.batch_get_room_names(room_ids)
+            updated = 0
+            for case in cases:
+                name = names.get(str(case.group_id)) if case.group_id else None
+                if name:
+                    if name != case.group_name:
+                        case.group_name = name
+                        updated += 1
+                elif case.group_name is None:
+                    # 取不到群名：标记空串，补空分支(IS NULL)以后不再每轮重试它
+                    case.group_name = ""
+                    updated += 1
+            if updated:
+                await session.commit()
+            if full_refresh:
+                self._last_room_name_full_refresh = now
+        if updated:
+            logger.info("Refreshed %d service-case group names (full_refresh=%s)", updated, full_refresh)
+
+    async def check_stage_reports_once(self, now: datetime | None = None) -> None:
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        now = now or datetime.now(tz)
+        # 阶段报告固定在每天 23:00（北京时间）集中生成：运营当晚集中审核、用户次日早上看到。
+        # 调度每 30s 跑一次，这一小时会扫到约 120 次，靠下方 existing_reports 去重保证每个 stage 当晚只生成一次。
+        # 非 23 点直接返回（连 DB 都不查），白天不产出。
+        if now.hour != 23:
+            return
         async with SessionLocal() as session:
             service_cases = list(
                 await session.scalars(
@@ -628,19 +680,8 @@ class ReminderService:
         # Define the task list for parallel execution using distinct sessions
         tasks = []
         for service_case in service_cases:
-            started_at = effective_start_at(service_case)  # 计划开始日优先，否则文件发送时刻
-            if not started_at:
-                continue
-            if started_at.tzinfo is None:
-                started_at = started_at.replace(tzinfo=ZoneInfo("UTC"))
-            days = int((now - started_at.astimezone(ZoneInfo(self.settings.reminder_timezone))).total_seconds() // 86400)
-            for threshold, stage in ((3, "day3"), (7, "day7"), (14, "day14"), (21, "day21"), (28, "day28")):
-                if days >= threshold:
-                    if (service_case.id, stage) not in existing_reports:
-                        tasks.append(self._generate_report_for_case_worker(service_case.id, stage))
-            if days >= 28:
-                if (service_case.id, "graduation") not in existing_reports:
-                    tasks.append(self._generate_report_for_case_worker(service_case.id, "graduation"))
+            for stage in _due_stage_reports(service_case, now, tz, existing_reports):
+                tasks.append(self._generate_report_for_case_worker(service_case.id, stage))
 
         if tasks:
             logger.info(f"Concurrently generating {len(tasks)} stage reports via scheduler")
@@ -880,6 +921,33 @@ def _parse_weekdays(value: str) -> set[int]:
 
 def _parse_int_list(value: str) -> list[int]:
     return [int(item.strip()) for item in value.split(",") if item.strip().isdigit()]
+
+
+_STAGE_MILESTONES = ((3, "day3"), (7, "day7"), (14, "day14"), (21, "day21"), (28, "day28"))
+
+
+def _due_stage_reports(
+    service_case: ServiceCase,
+    now: datetime,
+    tz: ZoneInfo,
+    existing_reports: set[tuple[int, str]],
+) -> list[str]:
+    """该 case 在 now 时刻应生成、且尚未生成的阶段/毕业报告 stage 列表。
+
+    规则：仅在每天 23:00 集中产出（运营当晚集中审、用户次日早上看到）；「服务第几天」用
+    effective_service_day（计划开始日当天=第1天，与看板/AI 口径一致）；service_day >= 里程碑
+    且该 (case_id, stage) 未生成过才产出（用 >= 而非 == 提供漏扫/晚激活补偿，existing_reports 去重保证不重复）。
+    """
+    if now.hour != 23:
+        return []
+    service_day = effective_service_day(service_case, now, tz)
+    due: list[str] = []
+    for threshold, stage in _STAGE_MILESTONES:
+        if service_day >= threshold and (service_case.id, stage) not in existing_reports:
+            due.append(stage)
+    if service_day >= 28 and (service_case.id, "graduation") not in existing_reports:
+        due.append("graduation")
+    return due
 
 
 def _service_day(started_at: datetime | None, now: datetime, timezone: ZoneInfo) -> int:

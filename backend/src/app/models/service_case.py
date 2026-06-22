@@ -49,6 +49,8 @@ class ServiceCase(TimestampMixin, Base):
     case_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     group_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    # QiWe 群名(/room/batchGetRoomDetail 的 roomName)：定时回填，用于按群名搜索服务单；空表示取不到(机器人已退/群解散)
+    group_name: Mapped[str | None] = mapped_column(String(128))
     questionnaire_token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     status: Mapped[ServiceCaseStatus] = mapped_column(
         Enum(ServiceCaseStatus, name="service_case_status"),

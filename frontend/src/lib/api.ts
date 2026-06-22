@@ -30,6 +30,7 @@ export type ServiceCase = {
   id: number;
   case_no: string;
   group_id: string;
+  group_name?: string | null;
   questionnaire_token: string;
   status: string;
   notes?: string | null;
