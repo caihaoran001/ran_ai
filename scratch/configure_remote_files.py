@@ -46,6 +46,9 @@ def main():
       AI_MAX_CONCURRENT_REQUESTS: ${AI_MAX_CONCURRENT_REQUESTS:-10}
       AI_PROMPT_COST_PER_1M_TOKENS: ${AI_PROMPT_COST_PER_1M_TOKENS:-0}
       AI_COMPLETION_COST_PER_1M_TOKENS: ${AI_COMPLETION_COST_PER_1M_TOKENS:-0}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen3-vl-flash}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v4}
@@ -148,6 +151,9 @@ QIWEI_ENABLED=true
 QIWEI_TOKEN=de3851af-60ae-455b-9eb5-38fb7e71d8c8
 QIWEI_GUID=b0b20ec6-7b6b-409b-9733-a5e0f9e8a6be
 QIWEI_CALLBACK_SECRET=de3851af-60ae-455b-9eb5-38fb7e71d8c8
+
+# Qwen API config (for image multimodal analysis)
+QWEN_API_KEY=sk-6223d5336f004cec91ea032e473faab2
 """
 
     with sftp.file('/root/ran_ai/.env', 'w') as f:
