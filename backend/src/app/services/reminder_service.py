@@ -4,6 +4,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select, text
@@ -52,6 +53,7 @@ class ReminderService:
         self._stopped = asyncio.Event()
         self._last_knowledge_scan: datetime | None = None
         self._last_room_name_full_refresh: datetime | None = None
+        self._last_image_cache_cleanup: datetime | None = None
 
     async def start(self) -> None:
         knowledge_enabled = self.settings.knowledge_evolution_enabled
@@ -106,6 +108,7 @@ class ReminderService:
                         await self.check_retry_degraded_reports_once()
                         await self.check_unsent_channel_messages_once()
                         await self.check_room_names_once()
+                        await self.check_image_cache_cleanup_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -597,6 +600,32 @@ class ReminderService:
                 logger.info(f"Concurrently generated stage report {stage} for case {case_id}")
             except Exception:
                 logger.exception(f"Failed to generate stage report {stage} for case {case_id}")
+
+    async def check_image_cache_cleanup_once(self, now: datetime | None = None) -> None:
+        """清理过期的图片缓存(.wecom_cache/images)：保留最近 60 天，每天清理一次更老的文件。
+
+        聊天记录显示的就是这些文件，保留期(覆盖 28 天服务周期 + 回看余量)内的图都正常显示，
+        只清掉很久以前的；前端对已清理的图做"图片已过期"兜底。要调整保留期改 retention_days 即可。
+        """
+        now = now or datetime.now(ZoneInfo(self.settings.reminder_timezone))
+        if self._last_image_cache_cleanup and (now - self._last_image_cache_cleanup).total_seconds() < 24 * 3600:
+            return
+        self._last_image_cache_cleanup = now
+        retention_days = 60
+        cache_dir = Path(".wecom_cache/images")
+        if not cache_dir.exists():
+            return
+        cutoff = now.timestamp() - retention_days * 86400
+        removed = 0
+        for f in cache_dir.iterdir():
+            try:
+                if f.is_file() and f.stat().st_mtime < cutoff:
+                    f.unlink()
+                    removed += 1
+            except Exception:
+                logger.exception("Failed to remove cached image %s", f)
+        if removed:
+            logger.info("Image cache cleanup removed %d expired files (>%d days)", removed, retention_days)
 
     async def check_room_names_once(self, now: datetime | None = None) -> None:
         """回填/刷新服务单的 QiWe 群名(group_name)，用于按群名搜索服务单。

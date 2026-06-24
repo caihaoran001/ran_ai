@@ -4,6 +4,31 @@ import { useEffect, useRef, useState } from "react";
 import { Message } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
 
+function ChatImage({ messageId, alt }: { messageId: number; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  const url = `/api/backend/messages/${messageId}/image`;
+  if (failed) {
+    // 图片缓存被清理(超过保留期)或暂时取不到时的兜底，避免破图图标
+    return (
+      <div className="max-w-sm rounded border border-zinc-200 bg-zinc-50 px-3 py-4 text-center text-xs text-zinc-400">
+        图片已过期或无法加载
+      </div>
+    );
+  }
+  return (
+    <div className="relative overflow-hidden rounded border border-zinc-200 bg-zinc-50 max-w-sm">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={alt}
+        className="max-h-60 max-w-full object-contain cursor-zoom-in rounded hover:opacity-90 transition-opacity"
+        onClick={() => window.open(url, "_blank")}
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
+}
+
 export function ChatMessages({ messages, userName }: { messages: Message[]; userName?: string | null }) {
   const [expanded, setExpanded] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -79,17 +104,7 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
               </div>
               {msg.message_type === "image" ? (
                 <div className="mt-2 space-y-2">
-                  <div className="relative overflow-hidden rounded border border-zinc-200 bg-zinc-50 max-w-sm">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`/api/backend/messages/${msg.id}/image`}
-                      alt={msg.content || "用户上传的图片"}
-                      className="max-h-60 max-w-full object-contain cursor-zoom-in rounded hover:opacity-90 transition-opacity"
-                      onClick={() => {
-                        window.open(`/api/backend/messages/${msg.id}/image`, "_blank");
-                      }}
-                    />
-                  </div>
+                  <ChatImage messageId={msg.id} alt={msg.content || "用户上传的图片"} />
                   {msg.content && msg.content !== "[图片]" && (
                     <p className="text-xs text-zinc-500 italic bg-zinc-50/50 p-2 rounded border-l-2 border-zinc-300">
                       AI描述: {msg.content}

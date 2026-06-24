@@ -142,6 +142,11 @@ RANREN_AI_SYSTEM_PROMPT = (
 # Unified and concise risk replies are imported from content_policy.py
 
 
+# 入站图片下载大小上限：中图通常几十~一百多 KB；超过此值(极端情况/回退到原图)放弃识别，
+# 保护服务器带宽、内存与 Qwen token。如需调整，改这一处即可。
+_MAX_INBOUND_IMAGE_BYTES = 8 * 1024 * 1024
+
+
 def _decrypt_image_bytes(encrypted_data: bytes, aes_key_str: str) -> bytes:
     if not encrypted_data:
         raise ValueError("encrypted_data is empty")
@@ -241,6 +246,10 @@ class RanrenAIEngine:
                 response.raise_for_status()
                 encrypted_bytes = response.content
 
+            # 大图保护：超过上限放弃识别(走下方 except 的降级)，避免拖垮带宽/内存/token
+            if len(encrypted_bytes) > _MAX_INBOUND_IMAGE_BYTES:
+                raise ValueError(f"inbound image too large: {len(encrypted_bytes)} bytes")
+
             if file_aes_key:
                 logger.info("Decrypting inbound image for message_id=%s", message_id)
                 decrypted_bytes = _decrypt_image_bytes(encrypted_bytes, file_aes_key)
@@ -301,8 +310,21 @@ class RanrenAIEngine:
                     await session.commit()
                     message.text = description
                     logger.info("Successfully updated message_id=%s content with description: '%s'", message_id, description)
-        except Exception as exc:
+        except Exception:
             logger.exception("Error processing inbound image for message_id=%s", message_id)
+            # 兜底：下载/解密/识别任一步失败时，给一个有意义的占位描述，
+            # 避免 message.text 停留在 "[图片]" 而触发 AI 对空内容瞎回复。
+            fallback = "用户发来一张图片（暂未能识别其内容）。"
+            try:
+                async with SessionLocal() as session:
+                    db_msg = await session.get(Message, message_id)
+                    if db_msg and (not db_msg.content or db_msg.content in ("[图片]", "[表情/图片等非文本消息]")):
+                        db_msg.content = fallback
+                        session.add(db_msg)
+                        await session.commit()
+            except Exception:
+                logger.exception("Failed to set fallback content for message_id=%s", message_id)
+            message.text = fallback
 
     async def handle_message(self, message: ChannelMessage) -> None:
         started_at = time.monotonic()
