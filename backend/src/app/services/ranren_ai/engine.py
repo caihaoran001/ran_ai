@@ -148,30 +148,49 @@ def _decrypt_image_bytes(encrypted_data: bytes, aes_key_str: str) -> bytes:
     if not aes_key_str:
         raise ValueError("aes_key is required")
 
-    # If it is a 32-character hex string (16 bytes AES key)
+    # Hex-decode the key (16 bytes for AES-128)
     if len(aes_key_str) == 32 and all(c in "0123456789abcdefABCDEF" for c in aes_key_str):
         key = bytes.fromhex(aes_key_str)
-        iv = key
     else:
-        # Fallback to base64 decode (AES-256-CBC)
+        # Fallback to base64 decode
         padded_key = aes_key_str + "=" * ((4 - len(aes_key_str) % 4) % 4)
         key = base64.b64decode(padded_key)
-        iv = key[:16]
 
     if len(key) not in (16, 24, 32):
         raise ValueError(f"Invalid AES key length: {len(key)} bytes")
 
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+    # WeCom image message callbacks are encrypted using AES-ECB
+    cipher = Cipher(algorithms.AES(key), modes.ECB())
     decryptor = cipher.decryptor()
     decrypted = decryptor.update(encrypted_data) + decryptor.finalize()
 
-    # PKCS#7 unpadding
-    pad_len = decrypted[-1]
-    if pad_len < 1 or pad_len > 32 or pad_len > len(decrypted):
-        raise ValueError(f"Invalid PKCS#7 padding value: {pad_len}")
-    if any(byte != pad_len for byte in decrypted[-pad_len:]):
-        raise ValueError("Invalid PKCS#7 padding: padding bytes mismatch")
-    return decrypted[:-pad_len]
+    # Identify magic bytes and truncate based on image format to remove PKCS#7 padding and CDN trailing garbage
+    if decrypted.startswith(b"\xff\xd8\xff"):
+        # JPEG image
+        eof_idx = decrypted.rfind(b"\xff\xd9")
+        if eof_idx != -1:
+            return decrypted[:eof_idx + 2]
+    elif decrypted.startswith(b"\x89PNG\r\n\x1a\n"):
+        # PNG image
+        eof_idx = decrypted.rfind(b"IEND")
+        if eof_idx != -1:
+            return decrypted[:eof_idx + 8]
+    elif decrypted.startswith(b"GIF8"):
+        # GIF image
+        eof_idx = decrypted.rfind(b"\x3b")
+        if eof_idx != -1:
+            return decrypted[:eof_idx + 1]
+
+    # Fallback to PKCS#7 unpadding if none of the above matches
+    try:
+        pad_len = decrypted[-1]
+        if 1 <= pad_len <= 16:
+            if all(byte == pad_len for byte in decrypted[-pad_len:]):
+                return decrypted[:-pad_len]
+    except Exception:
+        pass
+
+    return decrypted
 
 
 class RanrenAIEngine:
@@ -200,17 +219,25 @@ class RanrenAIEngine:
 
             file_url = msg_data.get("fileMiddleHttpUrl") or msg_data.get("fileBigHttpUrl") or msg_data.get("cdnUrl") or msg_data.get("cloudUrl")
             file_aes_key = msg_data.get("fileAesKey") or msg_data.get("aesKey")
+            file_auth_key = msg_data.get("fileAuthKey")
 
             if not file_url:
                 logger.warning("No image file URL found in raw payload for message_id=%s", message_id)
                 return
 
+            # Clean URL
+            file_url = file_url.replace("\n", "").replace("\r", "").strip()
+
             logger.info("Downloading inbound image for message_id=%s from: %s", message_id, file_url)
+            
+            headers = {
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.38(0x1800262c)"
+            }
+            if file_auth_key:
+                headers["authkey"] = file_auth_key.replace("\n", "").replace("\r", "").strip()
+
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                response = await client.get(
-                    file_url,
-                    headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.38(0x1800262c)"}
-                )
+                response = await client.get(file_url, headers=headers)
                 response.raise_for_status()
                 encrypted_bytes = response.content
 
