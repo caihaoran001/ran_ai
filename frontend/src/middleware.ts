@@ -11,6 +11,7 @@ export async function middleware(req: NextRequest) {
     pathname === "/api/auth/login" ||
     pathname === "/api/auth/logout" ||
     pathname.startsWith("/q/") ||
+    pathname.startsWith("/s/") ||
     (pathname.startsWith("/api/questionnaires/") && pathname.endsWith("/submit")) ||
     pathname.startsWith("/_next") ||
     (!pathname.startsWith("/api/") && pathname.includes(".")) // public files like favicon.ico
