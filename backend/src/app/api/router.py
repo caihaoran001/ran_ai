@@ -17,6 +17,7 @@ from app.api.routes import (
     questionnaires,
     service_cases,
     settings,
+    short_links,
     users,
 )
 
@@ -36,3 +37,4 @@ api_router.include_router(diagnostics.router, prefix="/diagnostics", tags=["diag
 api_router.include_router(events.router, tags=["events"])
 api_router.include_router(qiwe.router, tags=["qiwe"])
 api_router.include_router(settings.router, tags=["settings"])
+api_router.include_router(short_links.router, tags=["short-links"])

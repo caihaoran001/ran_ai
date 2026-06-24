@@ -103,6 +103,9 @@ def _requires_admin_auth(request: Request) -> bool:
         return False
     if _is_public_questionnaire_path(path, request.method):
         return False
+    # 短链接解析是公开入口(用户点 /s/{code} 跳转用)，免 admin key
+    if path.startswith("/api/short-links/") and request.method == "GET":
+        return False
     if path.startswith("/api/"):
         return True
     if path in {"/docs", "/redoc", "/openapi.json"}:

@@ -36,6 +36,7 @@ from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ai_service import AIService
 from app.services.channels.base import ChannelMessage, MessageChannel
 from app.services.content_policy import get_ai_reply_delivery_mode
+from app.services.short_link import get_or_create_short_link
 from app.services.intervention_service import analyze_intervention, merge_case_insight
 from app.services.knowledge_index import retrieve_indexed_knowledge, retrieve_case_context_db
 from app.services.knowledge_base import _query_terms, retrieve_knowledge
@@ -702,7 +703,15 @@ class RanrenAIEngine:
             return
         started_at = time.monotonic()
         base_url = self.settings.frontend_public_base_url.rstrip("/")
-        link = f"{base_url}/q/{service_case.questionnaire_token}"
+        async with SessionLocal() as link_session:
+            code = await get_or_create_short_link(
+                link_session,
+                service_case_id=service_case.id,
+                template_key="intake",
+                target_path=f"/q/{service_case.questionnaire_token}",
+            )
+            await link_session.commit()
+        link = f"{base_url}/s/{code}"
         reply = (
             "收到，已为本群生成专属入营问卷。\n\n"
             "请点击下方链接完成测评：\n"

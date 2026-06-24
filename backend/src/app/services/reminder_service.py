@@ -26,6 +26,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
+from app.models.user_state_profile import UserStateProfile
 from app.services.channels import get_current_channel, send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
 from app.services.document_service import (
@@ -38,6 +39,7 @@ from app.services.knowledge_evolution import KnowledgeEvolutionService
 from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
 from app.services.outcome_engine import generate_outcome_snapshot
 from app.services.service_case_queries import active_service_case_condition, checkin_day, effective_service_day, select_active_service_cases
+from app.services.short_link import get_or_create_short_link
 
 
 logger = logging.getLogger(__name__)
@@ -99,6 +101,7 @@ class ReminderService:
                             await self.check_once()
                             await self.check_inactive_followups_once()
                             await self.check_stage_reports_once()
+                            await self.check_action_focus_push_once()
                         await self.check_questionnaire_sends_once()
                         if self.settings.outcome_snapshots_enabled:
                             await self.check_outcome_snapshots_once()
@@ -548,14 +551,21 @@ class ReminderService:
                     continue
 
                 user = await session.get(User, service_case.user_id) if service_case.user_id else None
-                questionnaire_link = (
-                    f"{self.settings.frontend_public_base_url.rstrip('/')}"
-                    f"/q/{service_case.questionnaire_token}?template={template_key}"
+                base = self.settings.frontend_public_base_url.rstrip("/")
+                q_code = await get_or_create_short_link(
+                    session,
+                    service_case_id=service_case.id,
+                    template_key=template_key,
+                    target_path=f"/q/{service_case.questionnaire_token}?template={template_key}",
                 )
-                personalized_link = (
-                    f"{self.settings.frontend_public_base_url.rstrip('/')}"
-                    f"/q/{service_case.questionnaire_token}?template=personalized_checkin"
+                questionnaire_link = f"{base}/s/{q_code}"
+                p_code = await get_or_create_short_link(
+                    session,
+                    service_case_id=service_case.id,
+                    template_key="personalized_checkin",
+                    target_path=f"/q/{service_case.questionnaire_token}?template=personalized_checkin",
                 )
+                personalized_link = f"{base}/s/{p_code}"
                 content = _format_template(
                     str(rule.get("message") or "请完成今日问卷：\n{questionnaire_link}"),
                     {
@@ -626,6 +636,81 @@ class ReminderService:
                 logger.exception("Failed to remove cached image %s", f)
         if removed:
             logger.info("Image cache cleanup removed %d expired files (>%d days)", removed, retention_days)
+
+    async def check_action_focus_push_once(self, now: datetime | None = None) -> None:
+        """早 9 点给在服务用户推送一句白话「今日执行重点」(基于动态 action_focus.current_focus)。
+
+        取 current_focus.key → _ACTION_FOCUS_STUDENT_MESSAGES 白话文案发到群里。
+        高风险(risk_level=high)跳过、交人工；无当前重点/未映射的不发；每人每天一次(ReminderEvent 去重)。
+        """
+        now = now or datetime.now(ZoneInfo(self.settings.reminder_timezone))
+        if now.hour != 9:
+            return
+        async with SessionLocal() as session:
+            service_cases = list(
+                await session.scalars(
+                    select_active_service_cases(ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
+                )
+            )
+            if not service_cases:
+                return
+            today = now.date()
+            case_ids = [c.id for c in service_cases]
+            sent_events = list(
+                await session.scalars(
+                    select(ReminderEvent).where(
+                        ReminderEvent.rule_id == "action_focus_push",
+                        ReminderEvent.event_date == today,
+                        ReminderEvent.event_type == ReminderEventType.REMINDED,
+                    )
+                )
+            )
+            sent_set = {e.service_case_id for e in sent_events}
+            profiles = {
+                p.service_case_id: p
+                for p in await session.scalars(
+                    select(UserStateProfile).where(UserStateProfile.service_case_id.in_(case_ids))
+                )
+            }
+            for service_case in service_cases:
+                if service_case.id in sent_set:
+                    continue
+                if (service_case.risk_level or "").lower() == "high":
+                    continue  # 高风险交班主任人工跟，不自动推送
+                profile = profiles.get(service_case.id)
+                key = _current_focus_key(profile.state_json if profile else None)
+                message_text = _ACTION_FOCUS_STUDENT_MESSAGES.get(key or "")
+                if not message_text:
+                    continue  # 无当前重点 / key 未映射 → 不发
+                reminder_event = await _reserve_reminder_event(
+                    session,
+                    service_case.id,
+                    rule_id="action_focus_push",
+                    event_date=today,
+                    event_type=ReminderEventType.REMINDED,
+                )
+                if not reminder_event:
+                    continue
+                db_message = Message(
+                    service_case_id=service_case.id,
+                    group_id=service_case.group_id,
+                    direction=MessageDirection.OUTBOUND,
+                    sender_type=MessageSenderType.SYSTEM,
+                    message_type="text",
+                    content=message_text,
+                    purpose=MessagePurpose.REMINDER,
+                    status=MessageStatus.PENDING,
+                )
+                session.add(db_message)
+                await session.flush()
+                result = await _send_channel_text_with_retries(service_case.group_id, message_text)
+                if result.success:
+                    db_message.status = MessageStatus.SENT
+                    db_message.wecom_message_id = result.message_id
+                else:
+                    db_message.status = MessageStatus.FAILED
+                    db_message.error = result.error
+            await session.commit()
 
     async def check_room_names_once(self, now: datetime | None = None) -> None:
         """回填/刷新服务单的 QiWe 群名(group_name)，用于按群名搜索服务单。
@@ -950,6 +1035,36 @@ def _parse_weekdays(value: str) -> set[int]:
 
 def _parse_int_list(value: str) -> list[int]:
     return [int(item.strip()) for item in value.split(",") if item.strip().isdigit()]
+
+
+# action_focus 的内部策略词(label/action 是给 AI/助教看的教研用语)→ 发给学员的白话晨间提醒。
+# 早 9 点按用户当前 current_focus.key 取对应这句发到群里。
+_ACTION_FOCUS_STUDENT_MESSAGES: dict[str, str] = {
+    "sleep_wind_down": "早上好呀！今天咱们把重点放在「睡前仪式」上，晚饭后让自己慢慢静下来，今晚试试 11 点前闭眼入睡，不额外加压力，加油！",
+    "evening_control": "早上好！今天主攻晚间这一关：晚餐吃饱后就不再加餐，晚A 记得随餐或饭后喝上。守住晚上的防线，今天就稳了！",
+    "product_timing": "早上好！今天微调一下产品时间：早C、午B、晚A 随餐或适当往前移一点，有不适应随时跟我说，咱们调到最舒服的节奏。",
+    "bowel_rhythm": "新的一天开始啦！今天给肠道减减负：多喝温水（目标 2L），午餐晚餐各加一拳绿叶菜，饭后散散步，保持肠道畅通！",
+    "meal_structure": "早上好！今天吃饭抓个小重点：主食控制在拳头大小，搭配充足的蛋白质和蔬菜，两餐之间不吃零食。吃得营养又踏实！",
+    "execution_simplify": "早上好！最近辛苦啦，今天给执行降降温：不用做太多复杂动作，挑最容易的一两个小动作做到就行。先放松心态，慢慢来！",
+    "safety_review": "早上好！身体舒服是第一位的，今天先不追求高强度执行。如果有任何不适，随时在群里跟我说，我来帮你微调方案。",
+    "motivation_support": "早上好呀！之前的每一步积累都很棒，今天放轻松，完成一个小小的打卡动作就是胜利，满分支持你！",
+}
+
+
+def _current_focus_key(state_json: object) -> str | None:
+    """从画像 state_json 取当前行动重点的 key(domains.action_focus.current.value.current_focus.key)。"""
+    if not isinstance(state_json, dict):
+        return None
+    domains = state_json.get("domains")
+    if not isinstance(domains, dict):
+        return None
+    af = domains.get("action_focus")
+    current = af.get("current") if isinstance(af, dict) else None
+    value = current.get("value") if isinstance(current, dict) else None
+    focus = value.get("current_focus") if isinstance(value, dict) else None
+    if isinstance(focus, dict) and focus.get("key"):
+        return str(focus.get("key"))
+    return None
 
 
 _STAGE_MILESTONES = ((3, "day3"), (7, "day7"), (14, "day14"), (21, "day21"), (28, "day28"))
