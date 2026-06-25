@@ -39,6 +39,10 @@ async def lifespan(app: FastAPI):
             await qiwe_aggregator.stop()
         if qiwe_should_start:
             set_current_channel(None)
+        # Gracefully dispose database connection pool to avoid shutdown hangs
+        from app.db.session import engine
+        await engine.dispose()
+
 
 
 def create_app() -> FastAPI:
