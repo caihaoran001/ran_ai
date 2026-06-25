@@ -404,6 +404,7 @@ class RanrenAIEngine:
         service_case_id: int | None = None
         service_case_for_command: ServiceCase | None = None
         service_case_silenced = False
+        resume_takeover_receipt = False
         analysis: dict | None = None
         inbound_id: int | None = None
         recent_user_messages: list[str] = []
@@ -455,24 +456,20 @@ class RanrenAIEngine:
                         message.message_id,
                     )
                 elif group_control_command == "resume":
+                    was_silenced = bool(getattr(service_case, "ai_silenced_by_group_command", False))
                     service_case.ai_silenced_by_group_command = False
                     session.add(service_case)
                     await session.flush()
                     logger.info(
-                        "RanrenAI group command resumed bot chat_id=%s service_case_id=%s message_id=%s",
+                        "RanrenAI group command resumed bot chat_id=%s service_case_id=%s message_id=%s was_silenced=%s",
                         message.chat_id,
                         service_case.id,
                         message.message_id,
+                        was_silenced,
                     )
-                    try:
-                        await self.channel.send_text(
-                            message.chat_id,
-                            "那我继续来跟进哈~",
-                            reply_to=message.message_id,
-                            reply_context=message.raw_payload,
-                        )
-                    except Exception as e:
-                        logger.error("Failed to send resume command receipt: %s", e)
+                    # 仅当之前确实处于静默、本次「回来」真正解除时才回执（避免本就在岗还冒一句）；
+                    # 实际发送放到入站消息入库后，确保回执能挂上 trigger_id。
+                    resume_takeover_receipt = was_silenced
                 service_case_silenced = bool(getattr(service_case, "ai_silenced_by_group_command", False))
 
                 # Self-healing and dynamic binding for real customer messages
@@ -546,6 +543,27 @@ class RanrenAIEngine:
             )
 
         if group_control_command:
+            # 「回来」真正解除静默时回执一句（入库留痕、挂 trigger_id）；「退下」保持安静、不回执
+            if resume_takeover_receipt:
+                receipt = "那我继续来跟进哈~"
+                try:
+                    result = await self.channel.send_text(
+                        message.chat_id,
+                        receipt,
+                        reply_to=message.message_id,
+                        reply_context=message.raw_payload,
+                    )
+                    await self._record_outbound(
+                        message=message,
+                        service_case_id=service_case_id,
+                        content=receipt,
+                        message_id=result.message_id if result else None,
+                        status=MessageStatus.SENT if (result and result.success) else MessageStatus.FAILED,
+                        error=(result.error if result else "send result was None"),
+                        trigger_id=inbound_id,
+                    )
+                except Exception as e:
+                    logger.error("Failed to send resume command receipt: %s", e)
             logger.info(
                 "RanrenAI group control command stored without reply chat_id=%s command=%s trigger_id=%s total_elapsed_ms=%.1f",
                 message.chat_id,

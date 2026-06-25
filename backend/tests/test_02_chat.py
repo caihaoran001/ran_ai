@@ -483,8 +483,45 @@ async def test_group_at_bot_silence_and_resume_commands(db_session, mock_message
     await db_session.refresh(case)
     assert case.ai_silenced_by_group_command is False
 
+    # 「回来」真正解除静默时，回执已发送并入库（走 _record_outbound）
+    receipt = await db_session.scalar(select(Message).where(
+        Message.service_case_id == case_id,
+        Message.direction == MessageDirection.OUTBOUND,
+        Message.content == "那我继续来跟进哈~",
+    ))
+    assert receipt is not None
+    assert receipt.trigger_id is not None
 
-def test_group_control_words_without_at_do_not_silence():
+
+@pytest.mark.asyncio
+async def test_group_resume_without_prior_silence_sends_no_receipt(db_session, mock_message_channel, cai_haoran_answers):
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
+    assert case is not None
+    case.status = ServiceCaseStatus.IN_SERVICE
+    await db_session.flush()
+
+    # 本就在岗(未静默)，有人@机器人说“回来” → 不应冒出回执
+    engine = RanrenAIEngine(mock_message_channel)
+    await engine.handle_message(ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="@HumanBurning.AI 回来",
+        user_id="staff-1",
+        user_name="运营",
+        message_type="text",
+        message_id="resume-no-prior-silence",
+        raw_payload=_bot_mentioned_payload(),
+    ))
+    await db_session.refresh(case)
+    assert case.ai_silenced_by_group_command is False
+
+    outbound_count = await db_session.scalar(select(func.count()).select_from(Message).where(
+        Message.service_case_id == case_id,
+        Message.direction == MessageDirection.OUTBOUND,
+    ))
+    assert outbound_count == 0
     message = ChannelMessage(
         channel="qiwe",
         chat_id="group-1",
