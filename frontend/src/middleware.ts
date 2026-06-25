@@ -12,7 +12,8 @@ export async function middleware(req: NextRequest) {
     pathname === "/api/auth/logout" ||
     pathname.startsWith("/q/") ||
     pathname.startsWith("/s/") ||
-    (pathname.startsWith("/api/questionnaires/") && pathname.endsWith("/submit")) ||
+    // 问卷提交:只有 POST(用户首次填写)公开免登录;PATCH(运营编辑重生成)走下方登录校验
+    (req.method === "POST" && pathname.startsWith("/api/questionnaires/") && pathname.endsWith("/submit")) ||
     pathname.startsWith("/_next") ||
     (!pathname.startsWith("/api/") && pathname.includes(".")) // public files like favicon.ico
   ) {

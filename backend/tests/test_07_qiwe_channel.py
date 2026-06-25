@@ -390,11 +390,12 @@ def test_qiwe_callback_ignores_self_message():
     assert message is None
 
 
-def test_qiwe_callback_secret_allows_when_unconfigured():
+def test_qiwe_callback_secret_rejects_when_unconfigured():
+    # fail-closed：未配置密钥时拒绝回调(防止线上漏配密钥时回调被任意伪造)
     request = SimpleNamespace(headers={}, query_params={})
     settings = SimpleNamespace(qiwei_callback_secret="")
 
-    assert _is_authorized_callback(request, settings) is True
+    assert _is_authorized_callback(request, settings) is False
 
 
 def test_qiwe_callback_secret_validates_header_or_query():

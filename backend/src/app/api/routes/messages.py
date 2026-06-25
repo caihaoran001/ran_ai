@@ -186,7 +186,11 @@ async def get_message_image(
     image_info = analysis.get("image_info")
     if not image_info or "local_path" not in image_info:
         raise HTTPException(status_code=400, detail="message is not an image message")
-    local_path = Path(image_info["local_path"])
+    local_path = Path(image_info["local_path"]).resolve()
+    # 路径前缀校验：只允许返回图片缓存目录内的文件，防止 analysis_json 被污染后读取任意文件
+    cache_root = Path(".wecom_cache/images").resolve()
+    if not local_path.is_relative_to(cache_root):
+        raise HTTPException(status_code=400, detail="invalid image path")
     if not local_path.exists():
         raise HTTPException(status_code=404, detail="image file not found on disk")
     media_type = image_info.get("content_type") or "image/jpeg"

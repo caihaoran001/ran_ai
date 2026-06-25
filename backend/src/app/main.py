@@ -123,8 +123,9 @@ def _is_public_questionnaire_path(path: str, method: str) -> bool:
     parts = rest.split("/")
     if len(parts) == 1 and method == "GET":
         return True
-    # POST=首次提交，PATCH=运营编辑已提交问卷并重新生成，均走 token 鉴权、免 admin key
-    if len(parts) == 2 and parts[1] == "submit" and method in {"POST", "PATCH"}:
+    # POST=用户首次提交，走 token 鉴权、免 admin key；
+    # PATCH=运营编辑已提交问卷并重新生成，属管理操作，不在此豁免——需带 admin key 走鉴权
+    if len(parts) == 2 and parts[1] == "submit" and method == "POST":
         return True
     return False
 

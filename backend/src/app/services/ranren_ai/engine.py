@@ -147,6 +147,28 @@ RANREN_AI_SYSTEM_PROMPT = (
 # 保护服务器带宽、内存与 Qwen token。如需调整，改这一处即可。
 _MAX_INBOUND_IMAGE_BYTES = 8 * 1024 * 1024
 
+# 入站图片下载的 SSRF 域名白名单：file_url 来自 QiWe 回调载荷(外部可构造)，
+# 只允许下载企微/微信图床域名，防止被诱导去请求内网或任意第三方地址。
+_INBOUND_IMAGE_ALLOWED_HOST_SUFFIXES = (
+    ".qpic.cn",
+    ".qlogo.cn",
+    ".weixin.qq.com",
+    ".qq.com",
+    ".myqcloud.com",
+)
+
+
+def _is_allowed_image_host(file_url: str) -> bool:
+    """校验图片下载 URL 的 host 是否落在企微/微信图床白名单内。"""
+    parsed = urlparse(file_url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    return any(host == s.lstrip(".") or host.endswith(s) for s in _INBOUND_IMAGE_ALLOWED_HOST_SUFFIXES)
+
+
 
 def _decrypt_image_bytes(encrypted_data: bytes, aes_key_str: str) -> bytes:
     if not encrypted_data:
@@ -233,6 +255,11 @@ class RanrenAIEngine:
 
             # Clean URL
             file_url = file_url.replace("\n", "").replace("\r", "").strip()
+
+            # SSRF 防护：file_url 来自外部回调，仅允许企微/微信图床域名；
+            # 不合法直接 raise，落入下方 except 走占位降级(不去请求该地址)。
+            if not _is_allowed_image_host(file_url):
+                raise ValueError(f"inbound image host not allowed: {file_url}")
 
             logger.info("Downloading inbound image for message_id=%s from: %s", message_id, file_url)
             

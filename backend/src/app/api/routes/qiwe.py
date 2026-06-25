@@ -63,8 +63,11 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
 
 def _is_authorized_callback(request: Request, settings: Settings) -> bool:
     secret = settings.qiwei_callback_secret.strip()
+    # fail-closed：未配置回调密钥时拒绝所有回调，而非放行。
+    # 线上 compose 用 ${QIWEI_CALLBACK_SECRET:?required} 强制注入，密钥必非空，
+    # 故此分支只在本地/测试未配密钥时触发，不影响线上(线上回调 URL 内嵌 ?secret=)。
     if not secret:
-        return True
+        return False
     supplied = (
         request.headers.get("x-qiwei-callback-secret")
         or request.query_params.get("secret")
