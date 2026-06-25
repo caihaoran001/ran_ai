@@ -621,19 +621,30 @@ class RanrenAIEngine:
             )
             now_mono = time.monotonic()
             recently_handed_off = (now_mono - self._last_handoff_at.get(service_case_id, 0.0)) < 1800
-            # ①层@班主任 = 当前句本身的急性/高风险/诉求(_requires_immediate_handoff)，
-            # 外加：持久高风险用户(risk_level=high)问需专业判断的健康/方案问题(health_consultation)——AI 答不了，直接转人工。
+            # 转人工 @班主任 = 当前句需要任何人工介入(requires_human_intervention，含急性/高风险/诉求/中风险)，
+            # 外加：持久高风险用户(risk_level=high)问需专业判断的健康/方案问题(health_consultation)。
+            # 注：暂不使用「AI 生成回复进待审核」机制——凡需介入一律 @班主任转人工，AI 不再生成待审核回复。
             health_handoff = _requires_health_handoff(analysis, case_risk_level)
-            if (_requires_immediate_handoff(analysis) or health_handoff) and not recently_handed_off:
-                self._last_handoff_at[service_case_id] = now_mono
-                await self._reply_human_handoff(message, service_case_id=service_case_id, trigger_id=inbound_id)
-                logger.info(
-                    "RanrenAI handed off high-risk/complaint/robot-stop chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
-                    message.chat_id,
-                    inbound_id,
-                    service_case_id,
-                    (time.monotonic() - started_at) * 1000,
-                )
+            needs_handoff = bool(analysis.get("requires_human_intervention")) or health_handoff
+            if needs_handoff:
+                if not recently_handed_off:
+                    self._last_handoff_at[service_case_id] = now_mono
+                    await self._reply_human_handoff(message, service_case_id=service_case_id, trigger_id=inbound_id)
+                    logger.info(
+                        "RanrenAI handed off to staff chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
+                        message.chat_id,
+                        inbound_id,
+                        service_case_id,
+                        (time.monotonic() - started_at) * 1000,
+                    )
+                else:
+                    # 30 分钟内已 @ 过班主任，不重复 @ 刷屏；同样不生成 AI 回复，仅留痕返回。
+                    logger.info(
+                        "RanrenAI skip duplicate handoff within 30min chat_id=%s trigger_id=%s service_case_id=%s",
+                        message.chat_id,
+                        inbound_id,
+                        service_case_id,
+                    )
                 return
             outcome_result = await self._run_outcome_analysis(
                 service_case_id=service_case_id,
@@ -1033,11 +1044,8 @@ class RanrenAIEngine:
     ) -> bool:
         if service_case and not service_case.ai_auto_reply_enabled:
             return False
-        # 按客户要求改为「事件级介入」：不再因 risk_level=high 或 needs_human_intervention
-        # 持续锁定审核（旧逻辑会在前端手动解除风险标记前，把后续所有 AI 回复都卡成待审核）。
-        # 现在只对「当前这句话需要人工介入」转待审核 + @班主任，其余回复按正常发送模式处理。
-        # 注：高风险/急性体感/停机投诉退款已在主流程①层 _requires_immediate_handoff 直接@班主任并 return，
-        # 根本走不到这里；此处的 requires_human_intervention 只剩②层中风险，生成回复后进待审核。
+        # 兜底：凡需人工介入(requires_human_intervention)的消息，主流程已提前 @班主任转人工并 return，
+        # 正常走不到这里；保留此判断作为防御性兜底，绝不让需介入的消息自动发 AI 回复。
         if analysis and analysis.get("requires_human_intervention"):
             return False
         return await get_ai_reply_delivery_mode(session) == "auto_send"
