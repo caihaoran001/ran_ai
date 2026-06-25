@@ -38,6 +38,7 @@ class ServiceCaseUpdate(BaseModel):
     notes: str | None = None
     auto_send_documents: bool | None = None
     ai_auto_reply_enabled: bool | None = None
+    ai_silenced_by_group_command: bool | None = None
     needs_human_intervention: bool | None = None
     reset_risk: bool | None = None  # 人工解除高风险标记
 
@@ -58,6 +59,7 @@ class ServiceCaseRead(Timestamped):
     notes: str | None
     auto_send_documents: bool = False
     ai_auto_reply_enabled: bool = True
+    ai_silenced_by_group_command: bool = False
     risk_level: str = "normal"
     risk_flags: list[dict] | None = None
     needs_human_intervention: bool = False

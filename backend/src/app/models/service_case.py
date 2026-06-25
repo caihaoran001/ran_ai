@@ -66,6 +66,8 @@ class ServiceCase(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(String(2000))
     auto_send_documents: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 群内@机器人说“退下”后置 True：只入库留痕，不进入风险/成效/LLM链路；@机器人说“回来”解除
+    ai_silenced_by_group_command: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=text("false"))
     risk_level: Mapped[str] = mapped_column(String(32), default="normal", index=True)
     risk_flags: Mapped[list[dict] | None] = mapped_column(JSON)
     needs_human_intervention: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

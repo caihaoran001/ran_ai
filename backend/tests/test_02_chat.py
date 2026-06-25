@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from app.services.service_case_queries import checkin_day, effective_service_day
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.message import (
     Message,
@@ -22,9 +22,11 @@ from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ranren_ai.engine import (
     RanrenAIEngine,
+    _group_bot_control_command,
     _requires_health_handoff,
     _requires_immediate_handoff,
 )
+from app.services.channels.base import ChannelMessage
 from app.services.intervention_service import (
     mark_intake_age_risk,
     merge_case_insight,
@@ -404,3 +406,95 @@ def test_checkin_day_plan_vs_legacy_nextday():
     # 存量文件发送当天(6-20)：次日才第1天，今天未到 → None(不发，等同旧"入群当天第0天")
     case.started_at = datetime(2026, 6, 20, 0, 0, tzinfo=timezone.utc)
     assert checkin_day(case, now, tz) is None
+
+
+def _bot_mentioned_payload(bot_user_id: str = "bot-1") -> dict:
+    return {
+        "userId": bot_user_id,
+        "msgData": {"atList": [{"userId": bot_user_id}]},
+    }
+
+
+@pytest.mark.asyncio
+async def test_group_at_bot_silence_and_resume_commands(db_session, mock_message_channel, cai_haoran_answers):
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
+    assert case is not None
+    case.status = ServiceCaseStatus.IN_SERVICE
+    await db_session.flush()
+
+    engine = RanrenAIEngine(mock_message_channel)
+    await engine.handle_message(ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="@HumanBurning.AI 退下",
+        user_id="staff-1",
+        user_name="运营",
+        message_type="text",
+        message_id="cmd-silence-1",
+        raw_payload=_bot_mentioned_payload(),
+    ))
+    await db_session.refresh(case)
+    assert case.ai_silenced_by_group_command is True
+
+    outbound_count = await db_session.scalar(select(func.count()).select_from(Message).where(
+        Message.service_case_id == case_id,
+        Message.direction == MessageDirection.OUTBOUND,
+    ))
+    assert outbound_count == 0
+
+    await engine.handle_message(ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="在？",
+        user_id="user-1",
+        user_name="用户",
+        message_type="text",
+        message_id="normal-while-silenced",
+        raw_payload={"userId": "bot-1", "msgData": {"atList": []}},
+    ))
+    await db_session.refresh(case)
+    assert case.ai_silenced_by_group_command is True
+
+    normal_msg = await db_session.scalar(select(Message).where(Message.wecom_message_id == "normal-while-silenced"))
+    assert normal_msg is not None
+    assert normal_msg.analysis_json is not None
+    assert set(normal_msg.analysis_json.keys()) == {"_qiwe_meta"}
+
+    outbound_count = await db_session.scalar(select(func.count()).select_from(Message).where(
+        Message.service_case_id == case_id,
+        Message.direction == MessageDirection.OUTBOUND,
+    ))
+    assert outbound_count == 0
+
+    await engine.handle_message(ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="@HumanBurning.AI 回来",
+        user_id="staff-1",
+        user_name="运营",
+        message_type="text",
+        message_id="cmd-resume-1",
+        raw_payload=_bot_mentioned_payload(),
+    ))
+    await db_session.refresh(case)
+    assert case.ai_silenced_by_group_command is False
+
+
+def test_group_control_words_without_at_do_not_silence():
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id="group-1",
+        chat_type="group",
+        text="退下",
+        user_id="user-1",
+        user_name="用户",
+        message_type="text",
+        message_id="not-at-command",
+        raw_payload={"userId": "bot-1", "msgData": {"atList": []}},
+    )
+
+    assert _group_bot_control_command(message) is None

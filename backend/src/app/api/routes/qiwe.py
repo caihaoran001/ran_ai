@@ -80,6 +80,11 @@ def _bypass_aggregator(message: ChannelMessage) -> bool:
     # 非文本(表情/图片等)绕过聚合，直接走 engine：只入库留痕、不回复，且不与文本消息合并
     if message.message_type != "text":
         return True
+    # 群内@机器人控制命令需要立即生效，不等待8秒聚合窗口
+    msg_data = (message.raw_payload or {}).get("msgData") if isinstance(message.raw_payload, dict) else None
+    at_list = msg_data.get("atList") if isinstance(msg_data, dict) else None
+    if at_list and ("退下" in message.text or "回来" in message.text):
+        return True
     return "发送本群入营问卷" in message.text or "发送本群专属问卷" in message.text
 
 

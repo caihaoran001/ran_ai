@@ -173,6 +173,45 @@ def _is_allowed_image_host(file_url: str) -> bool:
     return any(host == s.lstrip(".") or host.endswith(s) for s in _INBOUND_IMAGE_ALLOWED_HOST_SUFFIXES)
 
 
+def _group_bot_control_command(message: ChannelMessage) -> str | None:
+    """群内@机器人控制：@机器人说“退下”静默；@机器人说“回来”解除静默。"""
+    if message.chat_type != "group" or message.message_type != "text":
+        return None
+    if not _message_mentions_bot(message):
+        return None
+    text = re.sub(r"\s+", "", message.text or "")
+    if "退下" in text:
+        return "silence"
+    if "回来" in text:
+        return "resume"
+    return None
+
+
+def _message_mentions_bot(message: ChannelMessage) -> bool:
+    payload = message.raw_payload if isinstance(message.raw_payload, dict) else {}
+    msg_data = payload.get("msgData") if isinstance(payload.get("msgData"), dict) else {}
+    at_list = msg_data.get("atList") or []
+    if not isinstance(at_list, list) or not at_list:
+        return False
+
+    bot_user_id = str(payload.get("userId") or payload.get("receiverId") or "").strip()
+    if not bot_user_id:
+        return False
+
+    for item in at_list:
+        values: list[str] = []
+        if isinstance(item, dict):
+            for key in ("userId", "user_id", "wxid", "id", "uid"):
+                value = item.get(key)
+                if value is not None:
+                    values.append(str(value).strip())
+        elif item is not None:
+            values.append(str(item).strip())
+        if bot_user_id in values:
+            return True
+    return False
+
+
 
 def _decrypt_image_bytes(encrypted_data: bytes, aes_key_str: str) -> bytes:
     if not encrypted_data:
@@ -361,8 +400,10 @@ class RanrenAIEngine:
     async def handle_message(self, message: ChannelMessage) -> None:
         started_at = time.monotonic()
         should_send_questionnaire = "发送本群入营问卷" in message.text or "发送本群专属问卷" in message.text
+        group_control_command = _group_bot_control_command(message)
         service_case_id: int | None = None
         service_case_for_command: ServiceCase | None = None
+        service_case_silenced = False
         analysis: dict | None = None
         inbound_id: int | None = None
         recent_user_messages: list[str] = []
@@ -402,6 +443,28 @@ class RanrenAIEngine:
             if service_case:
                 service_case_id = service_case.id
                 service_case_for_command = service_case
+
+                if group_control_command == "silence":
+                    service_case.ai_silenced_by_group_command = True
+                    session.add(service_case)
+                    await session.flush()
+                    logger.info(
+                        "RanrenAI group command silenced bot chat_id=%s service_case_id=%s message_id=%s",
+                        message.chat_id,
+                        service_case.id,
+                        message.message_id,
+                    )
+                elif group_control_command == "resume":
+                    service_case.ai_silenced_by_group_command = False
+                    session.add(service_case)
+                    await session.flush()
+                    logger.info(
+                        "RanrenAI group command resumed bot chat_id=%s service_case_id=%s message_id=%s",
+                        message.chat_id,
+                        service_case.id,
+                        message.message_id,
+                    )
+                service_case_silenced = bool(getattr(service_case, "ai_silenced_by_group_command", False))
 
                 # Self-healing and dynamic binding for real customer messages
                 if not is_staff and message.channel in ("wecom", "qiwe") and message.user_id:
@@ -472,6 +535,26 @@ class RanrenAIEngine:
                 should_send_questionnaire,
                 (time.monotonic() - started_at) * 1000,
             )
+
+        if group_control_command:
+            logger.info(
+                "RanrenAI group control command stored without reply chat_id=%s command=%s trigger_id=%s total_elapsed_ms=%.1f",
+                message.chat_id,
+                group_control_command,
+                inbound_id,
+                (time.monotonic() - started_at) * 1000,
+            )
+            return
+
+        if service_case_silenced:
+            logger.info(
+                "RanrenAI silenced by group command; stored inbound only chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
+                message.chat_id,
+                inbound_id,
+                service_case_id,
+                (time.monotonic() - started_at) * 1000,
+            )
+            return
 
         if message.message_type != "text":
             # 如果是图片消息，触发后台下载、解密与大模型翻译
