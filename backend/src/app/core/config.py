@@ -36,7 +36,7 @@ class Settings(BaseSettings):
         validation_alias="AI_BASE_URL",
     )
     ai_api_key: str = Field(default="", validation_alias="AI_API_KEY")
-    ai_model: str = Field(default="deepseek-v4-flash", validation_alias="AI_MODEL")
+    ai_model: str = Field(default="deepseek-v4-pro", validation_alias="AI_MODEL")
     # 交付文档/阶段报告专用模型；留空则回退 ai_model，避免聊天回复和风控被一起切到更慢模型。
     ai_document_model: str = Field(default="", validation_alias="AI_DOCUMENT_MODEL")
     # 风险/意图判断(intervention_risk)专用模型；留空则回退 ai_model。判断准确度最关键，可单独配更强模型。

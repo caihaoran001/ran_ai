@@ -93,7 +93,7 @@ Caddy 路由规则：
 交付文件/阶段报告可使用独立模型：
 
 ```env
-AI_MODEL=deepseek-v4-flash
+AI_MODEL=deepseek-v4-pro
 AI_DOCUMENT_MODEL=deepseek-v4-pro
 ```
 

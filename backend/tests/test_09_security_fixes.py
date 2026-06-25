@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from app.main import _is_public_questionnaire_path
-from app.services.ranren_ai.engine import _is_allowed_image_host
+from app.services.ranren_ai.engine import _is_allowed_image_host, _violates_night_a_timing_rule
 from app.models.message import (
     Message,
     MessageDirection,
@@ -103,3 +103,29 @@ async def test_image_endpoint_rejects_traversal(admin_client, db_session):
     resp = await admin_client.get(f"/messages/{msg_id}/image")
     assert resp.status_code == 400
     assert "invalid image path" in resp.text
+
+
+# ---------- 晚A分时管理兜底：不得把晚A建议到午餐/中午 ----------
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "晚A跟着午餐一起喝，不用等到睡前。",
+        "中午把晚A补上就行，和午B一起喝。",
+        "晚A随午饭喝更稳。",
+    ],
+)
+def test_night_a_timing_rule_blocks_midday_advice(reply):
+    assert _violates_night_a_timing_rule(reply) is True
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "晚A按你的方案放在晚上/睡前喝，别和午B混到一起。",
+        "正常作息不要把晚A放到午餐，除非你中午才是睡前。",
+        "晚A睡前1-2小时喝就可以，按班主任刚刚说的来。",
+    ],
+)
+def test_night_a_timing_rule_allows_corrections_and_bedtime(reply):
+    assert _violates_night_a_timing_rule(reply) is False

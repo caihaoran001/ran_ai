@@ -45,7 +45,7 @@ ACTION_FOCUS_DEFINITIONS: dict[str, dict[str, str]] = {
     },
     "product_timing": {
         "label": "产品时机调优",
-        "action": "接下来先复核早C/午B/晚A的随餐、前移或减量安排。",
+        "action": "接下来先复核早C/午B/晚A的分时安排、随餐或减量安排；晚A默认仍是晚间/睡前，不前移到午餐。",
     },
     "bowel_rhythm": {
         "label": "排便与肠道节律",

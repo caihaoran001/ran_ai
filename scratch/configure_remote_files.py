@@ -38,7 +38,7 @@ def main():
       BACKEND_ADMIN_API_KEY: ${BACKEND_ADMIN_API_KEY:?BACKEND_ADMIN_API_KEY is required}
       AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
       AI_API_KEY: ${AI_API_KEY:?AI_API_KEY is required}
-      AI_MODEL: ${AI_MODEL:-deepseek-v4-flash}
+      AI_MODEL: ${AI_MODEL:-deepseek-v4-pro}
       AI_DOCUMENT_MODEL: ${AI_DOCUMENT_MODEL:-}
       AI_TEMPERATURE: ${AI_TEMPERATURE:-0.3}
       AI_MAX_TOKENS: ${AI_MAX_TOKENS:-8000}
@@ -136,7 +136,7 @@ BACKEND_ADMIN_API_KEY=9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c
 
 # AI Services
 AI_API_KEY=sk-fc40bfc4e3f346808eef042270dfd888
-AI_MODEL=deepseek-v4-flash
+AI_MODEL=deepseek-v4-pro
 AI_DOCUMENT_MODEL=deepseek-v4-pro
 AI_TEMPERATURE=0.3
 AI_MAX_TOKENS=16000
