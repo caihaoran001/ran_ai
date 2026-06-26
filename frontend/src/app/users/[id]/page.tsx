@@ -37,6 +37,18 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           </p>
         )}
       </div>
+
+      {serviceCase && (
+        <OperationsSummary
+          serviceCase={serviceCase}
+          profile={profile}
+          stateProfile={stateProfile || undefined}
+          checkins={checkins}
+          documents={documents}
+          uniqueCheckinDays={uniqueCheckinDays}
+        />
+      )}
+
       <section className="rounded-lg border border-zinc-200 bg-white p-4">
         <h2 className="font-medium">基本信息</h2>
         <div className="mt-3 grid gap-3 text-sm md:grid-cols-4">
@@ -157,6 +169,143 @@ function Info({ label, value, muted = false }: { label: string; value: string; m
   );
 }
 
+function OperationsSummary({
+  serviceCase,
+  profile,
+  stateProfile,
+  checkins,
+  documents,
+  uniqueCheckinDays,
+}: {
+  serviceCase: User["service_cases"][number];
+  profile?: UserProfile | null;
+  stateProfile?: UserStateProfile;
+  checkins: Checkin[];
+  documents: UserDocument[];
+  uniqueCheckinDays: number;
+}) {
+  const profileJson = profile?.profile_json || {};
+  const domains = recordValue(stateProfile?.state_json?.domains);
+  const focus = currentActionFocus(domains);
+  const riskText = serviceCase.needs_human_intervention
+    ? reasonText(serviceCase.intervention_reasons) || "存在待关注事项"
+    : serviceCase.risk_level === "high"
+      ? reasonText(serviceCase.risk_flags)
+      : "暂无高风险";
+  const latestChange = latestStateChange(domains) || latestCheckinSignal(checkins);
+  const nextAction =
+    text(focus.action)
+    || firstText(recordValue(profileJson.need_analysis).next_actions)
+    || text(profileJson.notes)
+    || "按当前方案继续观察，优先保持打卡与反馈连续。";
+  const sentDocs = documents.filter((document) => document.status === "sent").length;
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-cyan-200 bg-gradient-to-br from-cyan-50 via-white to-white">
+      <div className="border-b border-cyan-100 px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-950">运营摘要</h2>
+            <p className="mt-1 text-sm text-slate-500">给班主任和运营看的当前判断，不替代原始证据。</p>
+          </div>
+          <span className="rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs font-semibold text-cyan-800">
+            {serviceStageText(serviceCase)}
+          </span>
+        </div>
+      </div>
+      <div className="grid gap-3 p-5 lg:grid-cols-5">
+        <SummaryMetric label="当前重点" value={text(focus.label) || "暂无明确重点"} tone="cyan" />
+        <SummaryMetric label="关键风险" value={riskText} tone={riskText === "暂无高风险" ? "slate" : "rose"} />
+        <SummaryMetric label="最近变化" value={latestChange || "暂无新变化"} tone="emerald" />
+        <SummaryMetric label="交付/打卡" value={`${sentDocs}/${documents.length} 份已发 · 打卡 ${uniqueCheckinDays} 天`} tone="blue" />
+        <SummaryMetric label="下一步动作" value={nextAction} tone="amber" />
+      </div>
+    </section>
+  );
+}
+
+function SummaryMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "cyan" | "rose" | "emerald" | "blue" | "amber" | "slate";
+}) {
+  const toneClass: Record<"cyan" | "rose" | "emerald" | "blue" | "amber" | "slate", string> = {
+    cyan: "border-cyan-100 bg-cyan-50 text-cyan-950",
+    rose: "border-rose-100 bg-rose-50 text-rose-900",
+    emerald: "border-emerald-100 bg-emerald-50 text-emerald-950",
+    blue: "border-blue-100 bg-blue-50 text-blue-950",
+    amber: "border-amber-100 bg-amber-50 text-amber-950",
+    slate: "border-slate-100 bg-slate-50 text-slate-900",
+  };
+  return (
+    <div className={`rounded-lg border p-3 ${toneClass[tone]}`}>
+      <div className="text-xs font-medium opacity-70">{label}</div>
+      <div className="mt-1 line-clamp-4 text-sm font-semibold leading-6">{value}</div>
+    </div>
+  );
+}
+
+function serviceStageText(serviceCase: User["service_cases"][number]) {
+  const statusMap: Record<string, string> = {
+    created: "未建档",
+    questionnaire_submitted: "已提交问卷",
+    generating: "文件生成中",
+    documents_generated: "文件已生成",
+    reviewing: "待审核",
+    in_service: "服务中",
+    completed: "已完成",
+  };
+  const status = statusMap[serviceCase.status] || serviceCase.status;
+  const start = serviceCase.service_plan_start_date || serviceCase.started_at || serviceCase.created_at;
+  if (!start) return status;
+  const days = Math.floor((Date.now() - new Date(start).getTime()) / 86400000) + 1;
+  return days >= 1 ? `${status} · 第 ${days} 天` : `${status} · 计划未开始`;
+}
+
+function currentActionFocus(domains: Record<string, unknown>) {
+  const domain = recordValue(domains.action_focus);
+  const value = recordValue(recordValue(domain.current).value);
+  const focus = recordValue(value.current_focus);
+  return {
+    label: text(focus.label) || text(value.label),
+    action: text(focus.action) || text(value.action),
+    score: focus.score ?? value.score,
+  };
+}
+
+function latestStateChange(domains: Record<string, unknown>) {
+  for (const key of ["outcome_changes", "body_feedback", "product_usage", "risk_profile"]) {
+    const domain = recordValue(domains[key]);
+    const current = recordValue(domain.current);
+    const value = recordValue(current.value);
+    const formatted = formatStateValue(value);
+    if (formatted && formatted !== "暂无数据") return formatted;
+  }
+  return "";
+}
+
+function latestCheckinSignal(checkins: Checkin[]) {
+  const latest = checkins[0]?.parsed_json;
+  if (!latest) return "";
+  const parts = [
+    latest.weight ? `体重 ${latest.weight}` : "",
+    latest.sleep ? `睡眠 ${latest.sleep}` : "",
+    latest.mood ? `情绪 ${latest.mood}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function firstText(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).find(Boolean) || "";
+  }
+  return text(value);
+}
+
 function ProfileView({
   profile,
   fallback,
@@ -168,49 +317,44 @@ function ProfileView({
 }) {
   const summary = text(profile.summary) || fallback;
   const tags = Array.isArray(profile.tags) ? profile.tags.filter(Boolean) : [];
-  const items = [
-    ["风控风险", serviceCase?.risk_level === "high" ? reasonText(serviceCase.risk_flags) : "暂无明确风险"],
-    ["减重带判断", profileText(profile, "weight_loss_band") || text(profile.weight_loss_band) || "暂无数据"],
-    ["当前状态", text(profile.state) || "暂无数据"],
-    ["核心问题", text(profile.main_problem) || "暂无数据"],
-    ["28 天目标", text(profile.day28_goal) || "暂无数据"],
-    ["标签", arrayText(profile.tags) || text(profile.tags) || "暂无数据"],
-    ["AI陪跑建议", text(profile.notes) || "暂无数据"],
-  ];
-
   const needAnalysis = recordValue(profile.need_analysis);
   const hasNeedAnalysis = Object.keys(needAnalysis).length > 0;
+  const baseFacts = [
+    ["减重带", profileText(profile, "weight_loss_band") || text(profile.weight_loss_band) || "暂无数据"],
+    ["28天目标", text(profile.day28_goal) || "暂无数据"],
+    ["画像标签", tags.length ? tags.map(String).join("、") : arrayText(profile.tags) || "暂无数据"],
+  ];
+  const serviceJudgement = [
+    ["当前状态", text(profile.state) || "暂无数据"],
+    ["核心问题", text(profile.main_problem) || "暂无数据"],
+    ["风控风险", serviceCase?.risk_level === "high" ? reasonText(serviceCase.risk_flags) : "暂无明确风险"],
+  ];
+  const coachingFocus = [
+    ["优先需求", text(needAnalysis.priority_need) || "暂无数据"],
+    ["下一步动作", firstText(needAnalysis.next_actions) || text(profile.notes) || "暂无数据"],
+    ["陪跑建议", text(profile.notes) || "暂无数据"],
+  ];
 
   return (
     <div className="mt-3 space-y-4 text-sm leading-6">
-      <p>{summary}</p>
-      <div className="grid gap-3 md:grid-cols-2">
-        {items.map(([label, value]) => {
-          if (label === "标签") {
-            return (
-              <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                <div className="text-xs font-medium text-zinc-500">{label}</div>
-                {tags.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {tags.map((tag) => (
-                      <span key={String(tag)} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 ring-1 ring-inset ring-blue-700/10">
-                        {String(tag)}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="mt-1 text-zinc-400">暂无数据</div>
-                )}
-              </div>
-            );
-          }
-          return (
-            <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-              <div className="text-xs font-medium text-zinc-500">{label}</div>
-              <div className="mt-1">{value}</div>
-            </div>
-          );
-        })}
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <div className="text-xs font-medium text-slate-500">一句话画像</div>
+        <p className="mt-2 text-sm leading-7 text-slate-800">{summary}</p>
+        {tags.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {tags.map((tag) => (
+              <span key={String(tag)} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                {String(tag)}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-3">
+        <ProfileGroup title="基础事实" items={baseFacts} />
+        <ProfileGroup title="服务判断" items={serviceJudgement} />
+        <ProfileGroup title="陪跑重点" items={coachingFocus} />
       </div>
 
       {hasNeedAnalysis && (
@@ -235,6 +379,22 @@ function ProfileView({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ProfileGroup({ title, items }: { title: string; items: string[][] }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-3">
+      <div className="text-xs font-semibold text-zinc-500">{title}</div>
+      <div className="mt-2 space-y-2">
+        {items.map(([label, value]) => (
+          <div key={label}>
+            <div className="text-[11px] text-zinc-400">{label}</div>
+            <div className="mt-0.5 text-sm font-medium leading-6 text-zinc-900">{value}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
