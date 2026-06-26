@@ -36,6 +36,9 @@ export type ServiceCase = {
   notes?: string | null;
   auto_send_documents: boolean;
   ai_auto_reply_enabled: boolean;
+  checkin_link_enabled: boolean;
+  morning_push_enabled: boolean;
+  inactive_wake_enabled: boolean;
   deleted_at?: string | null;
   started_at?: string | null;
   service_plan_start_date?: string | null;

@@ -446,7 +446,7 @@ class RanrenAIEngine:
                 service_case_for_command = service_case
 
                 if group_control_command == "silence":
-                    service_case.ai_silenced_by_group_command = True
+                    service_case.ai_auto_reply_enabled = False
                     session.add(service_case)
                     await session.flush()
                     logger.info(
@@ -456,8 +456,8 @@ class RanrenAIEngine:
                         message.message_id,
                     )
                 elif group_control_command == "resume":
-                    was_silenced = bool(getattr(service_case, "ai_silenced_by_group_command", False))
-                    service_case.ai_silenced_by_group_command = False
+                    was_silenced = not bool(getattr(service_case, "ai_auto_reply_enabled", True))
+                    service_case.ai_auto_reply_enabled = True
                     session.add(service_case)
                     await session.flush()
                     logger.info(
@@ -470,7 +470,8 @@ class RanrenAIEngine:
                     # 仅当之前确实处于静默、本次「回来」真正解除时才回执（避免本就在岗还冒一句）；
                     # 实际发送放到入站消息入库后，确保回执能挂上 trigger_id。
                     resume_takeover_receipt = was_silenced
-                service_case_silenced = bool(getattr(service_case, "ai_silenced_by_group_command", False))
+                # 群内机器人总开关(=退下/回来)关闭时：完全安静，只入库留痕，不进入风险/成效/LLM链路、不@班主任
+                service_case_silenced = not bool(getattr(service_case, "ai_auto_reply_enabled", True))
 
                 # Self-healing and dynamic binding for real customer messages
                 if not is_staff and message.channel in ("wecom", "qiwe") and message.user_id:

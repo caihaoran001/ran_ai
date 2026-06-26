@@ -8,6 +8,7 @@ import { CaseGeneratingPoller } from "./case-generating-poller";
 import { ChatMessages } from "./chat-messages";
 import { QuestionnaireSection } from "./questionnaire-section";
 import { RetryGenerateDocuments } from "./retry-generate-documents";
+import { CaseAutomationToggles } from "./case-automation-toggles";
 import { StageReportActions } from "./stage-report-actions";
 import { OutcomeSection } from "./outcome-section";
 import {
@@ -148,6 +149,16 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           </p>
           <p className="mt-1">正在生成您的专属文件，预计 10-30 秒。页面会每 3 秒自动刷新一次，您现在离开页面也不会中断。</p>
         </div>
+      )}
+
+      {!serviceCase.deleted_at && (
+        <CaseAutomationToggles
+          serviceCaseId={serviceCase.id}
+          aiAutoReplyEnabled={serviceCase.ai_auto_reply_enabled}
+          checkinLinkEnabled={serviceCase.checkin_link_enabled}
+          morningPushEnabled={serviceCase.morning_push_enabled}
+          inactiveWakeEnabled={serviceCase.inactive_wake_enabled}
+        />
       )}
 
       <div className="grid gap-4 xl:grid-cols-12">

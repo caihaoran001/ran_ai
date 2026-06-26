@@ -75,3 +75,13 @@ async def test_push_skips_no_focus(db_session, mock_session_local):
     await db_session.flush()
     await ReminderService().check_action_focus_push_once(now=datetime(2026, 6, 25, 9, 0, tzinfo=TZ))
     assert len(await _msgs(db_session, sc.id)) == 0
+
+
+@pytest.mark.asyncio
+async def test_push_skips_when_case_toggle_off(db_session, mock_session_local):
+    # 单服务单关闭「个性化提醒」→ 即使有 focus、非高风险、正点，也不推送
+    sc = await _make_case(db_session, focus_key="bowel_rhythm", case_no="AF-off")
+    sc.morning_push_enabled = False
+    await db_session.flush()
+    await ReminderService().check_action_focus_push_once(now=datetime(2026, 6, 25, 9, 0, tzinfo=TZ))
+    assert len(await _msgs(db_session, sc.id)) == 0

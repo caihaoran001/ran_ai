@@ -275,6 +275,8 @@ class ReminderService:
             for service_case in service_cases:
                 if service_case.id in reminded_ids:
                     continue
+                if not service_case.inactive_wake_enabled:
+                    continue  # 单服务单关闭了无互动自动唤醒
                 latest_inbound_at = latest_by_case.get(service_case.id) or service_case.started_at
                 if not latest_inbound_at:
                     continue
@@ -527,6 +529,8 @@ class ReminderService:
             reminded_questionnaires = {(e.service_case_id, e.rule_id) for e in reminder_events}
 
             for service_case in service_cases:
+                if not service_case.checkin_link_enabled:
+                    continue  # 单服务单关闭了打卡链接推送
                 day = checkin_day(service_case, now, timezone)
                 # 第1天日期当天发；存量未填计划日→沿用旧"次日=第1天"，天数号不变、不会重发；未到则不发
                 if day is None:
@@ -675,6 +679,8 @@ class ReminderService:
             for service_case in service_cases:
                 if service_case.id in sent_set:
                     continue
+                if not service_case.morning_push_enabled:
+                    continue  # 单服务单关闭了早间个性化提醒
                 if (service_case.risk_level or "").lower() == "high":
                     continue  # 高风险交班主任人工跟，不自动推送
                 profile = profiles.get(service_case.id)

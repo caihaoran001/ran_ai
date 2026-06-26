@@ -436,7 +436,7 @@ async def test_group_at_bot_silence_and_resume_commands(db_session, mock_message
         raw_payload=_bot_mentioned_payload(),
     ))
     await db_session.refresh(case)
-    assert case.ai_silenced_by_group_command is True
+    assert case.ai_auto_reply_enabled is False
 
     outbound_count = await db_session.scalar(select(func.count()).select_from(Message).where(
         Message.service_case_id == case_id,
@@ -456,7 +456,7 @@ async def test_group_at_bot_silence_and_resume_commands(db_session, mock_message
         raw_payload={"userId": "bot-1", "msgData": {"atList": []}},
     ))
     await db_session.refresh(case)
-    assert case.ai_silenced_by_group_command is True
+    assert case.ai_auto_reply_enabled is False
 
     normal_msg = await db_session.scalar(select(Message).where(Message.wecom_message_id == "normal-while-silenced"))
     assert normal_msg is not None
@@ -481,7 +481,7 @@ async def test_group_at_bot_silence_and_resume_commands(db_session, mock_message
         raw_payload=_bot_mentioned_payload(),
     ))
     await db_session.refresh(case)
-    assert case.ai_silenced_by_group_command is False
+    assert case.ai_auto_reply_enabled is True
 
     # 「回来」真正解除静默时，回执已发送并入库（走 _record_outbound）
     receipt = await db_session.scalar(select(Message).where(
@@ -515,7 +515,7 @@ async def test_group_resume_without_prior_silence_sends_no_receipt(db_session, m
         raw_payload=_bot_mentioned_payload(),
     ))
     await db_session.refresh(case)
-    assert case.ai_silenced_by_group_command is False
+    assert case.ai_auto_reply_enabled is True
 
     outbound_count = await db_session.scalar(select(func.count()).select_from(Message).where(
         Message.service_case_id == case_id,
