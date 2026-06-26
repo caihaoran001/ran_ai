@@ -188,8 +188,7 @@ def test_acute_physical_risk_triggers_immediate_handoff():
 def test_diagnostics_suites_keep_real_e2e_last():
     ids = [suite["id"] for suite in diagnostics_mod.TEST_SUITES]
 
-    assert ids[:8] == ["01", "02", "03", "04", "05", "06", "07", "08"]
-    assert ids[-1] == "e2e_01"
+    assert ids == ["01", "02", "03", "04", "05", "06", "07", "08"]
 
 
 def test_diagnostics_extracts_e2e_progress_from_console_logs():

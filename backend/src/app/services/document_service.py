@@ -162,7 +162,8 @@ _PROFILE_REFRESH_SYSTEM_PROMPT = (
     "2. 你只能更新这些会随服务进展变化的字段：summary、state、main_problem、day28_goal、risks、need_analysis、notes。\n"
     "3. summary 控制在 200 字内、自然语言、写给运营看：点出『相比入营有什么变化、当前卡在哪、下一步重点』。\n"
     "4. need_analysis 为对象，含 surface_needs / deep_needs / priority_need / system_outputs / next_actions。\n"
-    "5. 输出严格 JSON，只包含你更新的字段，键名与输入字段一致。\n"
+    "5. 严禁在所有生成字段（如 summary, notes）中出现或提及用户的真实姓名/称呼，必须统一使用“用户”或“您”代称。\n"
+    "6. 输出严格 JSON，只包含你更新 of 字段，键名与输入字段一致。\n"
     "如果材料显示用户基本无进展或无新信息，summary 写明『暂无明显变化』，其余字段沿用原值。"
 )
 
@@ -252,6 +253,8 @@ async def _refresh_profile_from_progress(
             new_profile["overview"] = base.get("overview")
         if "personalized_checkin_fields" in base:
             new_profile["personalized_checkin_fields"] = base.get("personalized_checkin_fields")
+        if "tags" in base:
+            new_profile["tags"] = base.get("tags")
         new_profile["refreshed_from"] = {"stage": stage, "source": "stage_progress"}
         summary = str(new_profile.get("summary") or base.get("summary") or "")[:2000]
         session.add(
@@ -782,6 +785,7 @@ def _intake_package_schema() -> dict[str, object]:
         },
         "profile": {
             "summary": "后台自然语言画像摘要，200字以内",
+            "tags": ["用于高层特征识别的标签列表，包含2-4个短词，例如：B带、晚睡习惯、下午困倦、久坐人群"],
             "overview": {
                 "gender_age": "性别 / 年龄，必须与 intake_facts 一致",
                 "height_weight": "身高 / 体重，必须与 intake_facts 一致",
@@ -824,6 +828,8 @@ def _normalize_profile_from_package(
     profile.setdefault("risks", "暂无明确风险")
     profile["need_analysis"] = _normalize_need_analysis(profile.get("need_analysis"), intake_facts, shared)
     profile.setdefault("notes", "建议围绕问卷中明确的执行卡点进行轻量陪跑，避免一次性增加太多动作。")
+    tags = payload.get("profile", {}).get("tags") if isinstance(payload.get("profile"), dict) else None
+    profile["tags"] = _clean_list(tags) if isinstance(tags, list) else []
     profile["personalized_checkin_fields"] = (
         _personalized_checkin_fields_from_documents(document_payloads)
         or _fallback_personalized_checkin_fields(intake_facts)

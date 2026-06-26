@@ -39,6 +39,7 @@ def _make_intake_mock_response(*, weight_band: str = "维持优化带（A带）"
                     "情绪性进食和执行波动。当前体重健康，核心方向不是减重而是重建稳定节律"
                     "和减少晚间失控。"
                 ),
+                "tags": ["A带", "晚睡习惯", "下午犯困"],
                 "overview": {
                     "gender_age": "男 / 30",
                     "height_weight": "175cm / 65kg",
@@ -198,6 +199,8 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     assert profile is not None
     overview = (profile.profile_json or {}).get("overview") or {}
     assert overview.get("bmi") == "21.2"
+    tags = (profile.profile_json or {}).get("tags") or []
+    assert tags == ["A带", "晚睡习惯", "下午犯困"]
     personalized_fields = (profile.profile_json or {}).get("personalized_checkin_fields") or []
     assert len(personalized_fields) == 5
 

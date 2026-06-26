@@ -39,7 +39,7 @@ OpenCode 执行测试时必须覆盖三类自动化：
 | ID | 命令/入口 | 覆盖范围 | 最低验收 |
 |---|---|---|---|
 | SPEC-01 | `cd backend && PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache uv run python -m compileall src scripts` | 后端语法与导入 | 命令通过 |
-| SPEC-02 | `cd backend && uv run pytest tests --ignore=tests/test_e2e_01_real_llm.py -q` | 后端 01-08 非真实 E2E 套件 | 全部通过；失败时记录具体测试名和输出 |
+| SPEC-02 | `cd backend && uv run pytest tests -q` | 后端 01-08 套件 | 全部通过；失败时记录具体测试名和输出 |
 | SPEC-03 | `cd frontend && npx tsc --noEmit --incremental false` | 前端类型检查 | 命令通过 |
 | SPEC-04 | `cd frontend && npm run test:e2e -- --list` | repo Playwright spec 可发现 | 能列出 `frontend/e2e/admin-smoke.spec.ts` 中的测试 |
 | SPEC-05 | `cd frontend && npm run test:e2e` | repo Playwright 基线 | 若前端服务和浏览器依赖可用则运行；否则标记环境阻塞 |
@@ -107,7 +107,7 @@ OpenCode 执行测试时必须覆盖三类自动化：
 | PW-06 | opencode-mcp | 审核控制台 | 新待审核 AI 回复/文档/知识草稿出现后自动刷新；可审核通过/驳回/确认发送 |
 | PW-07 | opencode-mcp | 运营规则配置 | AI 回复策略、文件发送策略、问卷发送计划、入营提交回执、提醒配置可保存并回显 |
 | PW-08 | opencode-mcp | 数据看板 | 指标卡可点击 drill-down；诊断入口不干扰看板主信息 |
-| PW-09 | opencode-mcp | 系统诊断 | 01-08 布局清晰；E2E-01 独立；运行时有进度、日志、成本和失败信息 |
+| PW-09 | opencode-mcp | 系统诊断 | 01-08 布局清晰；运行时有进度、日志和失败信息 |
 
 执行要求：
 
@@ -117,22 +117,9 @@ OpenCode 执行测试时必须覆盖三类自动化：
 
 ---
 
-## E. 真实 LLM E2E（E2E-01，L3）
+## E. 真实 LLM E2E（E2E-01，L3） [已废弃]
 
-目标：验证真实模型下的全链路质量。只能在用户明确授权或诊断控制台二次确认后运行。
-
-当前覆盖：
-
-- 十类问卷起点用户：积极配合、焦虑、沉默不配合、轮班、咖啡因敏感、平台期、退款、慢病用药、续营、低落恢复。
-- 一条完整 28 天闭环：阶段报告、知识进化、FAQ/案例审核、向量召回、毕业报告。
-- 质量评审：一次 LLM-as-a-Judge 综合评审，对话质量、文档准确性、风险意图、打卡成效四维评分。
-
-最低验收：
-
-- 十类用户独立事务，某一类失败不得阻断其余人设执行。
-- 任一评分子项 < 3 即失败；违规等级只解释原因，不单独作为失败条件。
-- 业务测试数据回滚；真实 LLM token、成本、耗时作为诊断记录保留。
-- 报告必须记录 diagnostic_run_id、调用次数、token、成本、耗时、失败人设和失败维度。
+由于真实大模型端到端测试耗时长、API 开销大且结果容易受生成波动干扰，目前该全链路测试已全面废弃，已从项目及诊断控制台中移除。
 
 ---
 

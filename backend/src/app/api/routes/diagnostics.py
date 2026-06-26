@@ -112,17 +112,6 @@ TEST_SUITES = [
         "data_policy": "rollback",
         "requires_confirmation": False,
     },
-    {
-        "id": "e2e_01",
-        "display_id": "E2E-01",
-        "name": "test_e2e_01_real_llm",
-        "description": "真实大模型 E2E：10 类用户从入营问卷到 28 天陪跑，并校验内容质量、提醒、风控与成效提取",
-        "file": "tests/test_e2e_01_real_llm.py",
-        "tier": "real_e2e",
-        "included_in_health_check": False,
-        "data_policy": "rollback",
-        "requires_confirmation": True,
-    },
 ]
 
 HEALTH_TEST_SUITES = [suite for suite in TEST_SUITES if suite["included_in_health_check"]]

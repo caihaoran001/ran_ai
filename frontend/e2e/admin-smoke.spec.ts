@@ -9,6 +9,16 @@ const adminPages = [
 ];
 
 test.describe("admin console smoke", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/login");
+    if (await page.locator("#username").isVisible()) {
+      await page.fill("#username", process.env.ADMIN_USERNAME || "admin");
+      await page.fill("#password", process.env.ADMIN_PASSWORD || "change-me");
+      await page.click('button[type="submit"]');
+      await page.waitForURL((url) => !url.pathname.endsWith("/login"));
+    }
+  });
+
   for (const pageInfo of adminPages) {
     test(`${pageInfo.path} loads`, async ({ page }) => {
       await page.goto(pageInfo.path);
@@ -16,13 +26,12 @@ test.describe("admin console smoke", () => {
     });
   }
 
-  test("system diagnostics separates health suites and real E2E", async ({ page }) => {
+  test("system diagnostics renders health suites", async ({ page }) => {
     await page.goto("/system-diagnostics");
 
-    await expect(page.getByText("安全健康检查")).toBeVisible();
-    await expect(page.getByText("真实模型 E2E")).toBeVisible();
-    await expect(page.getByText("test_01_intake")).toBeVisible();
-    await expect(page.getByText("test_08_outcome_engine")).toBeVisible();
-    await expect(page.getByText("test_e2e_01_real_llm")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "安全健康检查" })).toBeVisible();
+    await expect(page.getByText("intake")).toBeVisible();
+    await expect(page.getByText("outcome_engine")).toBeVisible();
   });
 });
+
