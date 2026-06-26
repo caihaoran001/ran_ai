@@ -17,11 +17,13 @@ from app.models.message import Message, MessageDirection
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.schemas.service_case import (
+    ServiceCaseAIContextPreview,
     ServiceCaseCreate,
     ServiceCaseRead,
     ServiceCaseStats,
     ServiceCaseUpdate,
 )
+from app.services.ranren_ai.engine import build_ai_user_context
 from app.services.service_case_queries import (
     active_service_case_condition,
     get_active_service_case,
@@ -184,6 +186,17 @@ async def get_service_case_stats(
         ai_total_tokens=ai_tokens or 0,
         ai_estimated_cost_yuan=round(float(ai_cost or 0), 6),
     )
+
+
+@router.get("/{service_case_id}/ai-context-preview", response_model=ServiceCaseAIContextPreview)
+async def get_service_case_ai_context_preview(
+    service_case_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ServiceCaseAIContextPreview:
+    service_case = await get_service_case_any(session, service_case_id)
+    if not service_case:
+        raise HTTPException(status_code=404, detail="service case not found")
+    return ServiceCaseAIContextPreview(context=await build_ai_user_context(session, service_case))
 
 
 def _ai_cost_expr(*, prompt_cost_per_1m: float, completion_cost_per_1m: float):

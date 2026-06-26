@@ -13,6 +13,9 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const checkins = serviceCase ? await api<Checkin[]>(`/service-cases/${serviceCase.id}/checkins`).catch(() => []) : [];
   const messages = serviceCase ? await api<Message[]>(`/service-cases/${serviceCase.id}/messages`).catch(() => []) : [];
   const documents = serviceCase ? await api<UserDocument[]>(`/service-cases/${serviceCase.id}/documents`).catch(() => []) : [];
+  const aiContextPreview = serviceCase
+    ? await api<{ context: string }>(`/service-cases/${serviceCase.id}/ai-context-preview`).catch(() => null)
+    : null;
   const latestParsed = checkins[0]?.parsed_json;
   const uniqueCheckinDays = new Set(checkins.map(c => c.checkin_date).filter(Boolean)).size;
   const energyDocument = documents.find((item) => item.document_type === "energy_restart_prescription");
@@ -57,13 +60,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <>
             <ProfileView profile={profile.profile_json} fallback={profile.summary} serviceCase={serviceCase} />
             <AiContextPreview
-              user={user}
-              profile={profile}
-              stateProfile={stateProfile || undefined}
-              serviceCase={serviceCase}
-              checkins={checkins}
-              documents={documents}
-              messages={messages}
+              context={aiContextPreview?.context}
             />
           </>
         ) : (
@@ -260,171 +257,14 @@ function NeedList({ label, items }: { label: string; items: unknown }) {
   );
 }
 
-function AiContextPreview({
-  user,
-  profile,
-  stateProfile,
-  serviceCase,
-  checkins,
-  documents,
-  messages,
-}: {
-  user: User;
-  profile?: UserProfile;
-  stateProfile?: UserStateProfile;
-  serviceCase?: User["service_cases"][number];
-  checkins: Checkin[];
-  documents: UserDocument[];
-  messages: Message[];
-}) {
-  if (!serviceCase) return null;
-
-  // 1. Calculate days_text
-  let daysText = "服务准备中";
-  const startAt = serviceCase.started_at || serviceCase.created_at;
-  if (startAt) {
-    const start = new Date(startAt);
-    const now = new Date();
-    const days = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    daysText = days >= 1 ? `第 ${days} 天` : "服务尚未正式开始（计划开始日未到）";
-  }
-
-  // 2. Profile summary (we exclude real user names for privacy compliance, matching backend rules)
-  const profileSummary = profile?.summary || "暂无详细画像";
-
-  // 3. Compact state profile
-  let stateSummary = "暂无动态状态";
-  if (stateProfile?.state_json?.domains) {
-    const domains = recordValue(stateProfile.state_json.domains);
-    const parts: string[] = [];
-    
-    // We format action focus, diet, etc., like the backend does.
-    const actionFocus = recordValue(recordValue(domains.action_focus).current);
-    if (Object.keys(recordValue(actionFocus.value)).length) {
-      parts.push(`- [当前行动重点] ${formatStateValue(actionFocus.value)} (分数:${actionFocus.score ?? "暂无"})`);
-    }
-    const needAnalysis = recordValue(recordValue(domains.need_analysis).current);
-    if (Object.keys(recordValue(needAnalysis.value)).length) {
-      parts.push(`- [需求判定] ${formatStateValue(needAnalysis.value)}`);
-    }
-    const dietPattern = recordValue(recordValue(domains.diet_pattern).current);
-    if (Object.keys(recordValue(dietPattern.value)).length) {
-      parts.push(`- [饮食结构] ${formatStateValue(dietPattern.value)}`);
-    }
-    const productSchedule = recordValue(recordValue(domains.product_schedule).current);
-    if (Object.keys(recordValue(productSchedule.value)).length) {
-      parts.push(`- [产品执行] ${formatStateValue(productSchedule.value)}`);
-    }
-    const discomfortFeedback = recordValue(recordValue(domains.discomfort_feedback).current);
-    if (Object.keys(recordValue(discomfortFeedback.value)).length) {
-      parts.push(`- [不适反馈] ${formatStateValue(discomfortFeedback.value)}`);
-    }
-    const outcomeChanges = recordValue(recordValue(domains.outcome_changes).current);
-    if (Object.keys(recordValue(outcomeChanges.value)).length) {
-      parts.push(`- [成效变化] ${formatStateValue(outcomeChanges.value)}`);
-    }
-    stateSummary = parts.join("\n") || "暂无动态状态";
-  }
-
-  // 4. Recent check-ins (last 3 days)
-  const checkinTexts: string[] = [];
-  const sortedCheckins = [...checkins].sort((a, b) => Date.parse(b.checkin_date) - Date.parse(a.checkin_date)).slice(0, 3);
-  if (sortedCheckins.length > 0) {
-    for (const checkin of sortedCheckins) {
-      const dateStr = checkin.checkin_date;
-      if (checkin.parsed_json) {
-        const pj = checkin.parsed_json as Record<string, any>;
-        const ps = recordValue(pj.product_schedule);
-        const c_status = ps.morning_c || "未记录";
-        const b_status = ps.noon_b || "未记录";
-        const a_status = ps.night_a || "未记录";
-        const cba = `早C:${c_status}/午B:${b_status}/晚A:${a_status}`;
-
-        const weight = pj.weight || "未记录";
-        const waist = pj.waist || "未记录";
-        const sleep = pj.sleep || "未记录";
-        const diet = pj.diet || "未记录";
-        const water = pj.water || "未记录";
-        const bowel = pj.bowel || "未记录";
-        const hunger = pj.hunger || "未记录";
-        const sensation = pj.sensation || "未记录";
-        const discomfort = pj.discomfort || "无";
-
-        const detail = `体重：${weight} ｜ 腰围：${waist} ｜ ${cba} ｜ 睡眠：${sleep} ｜ 饮食：${diet} ｜ 饮水：${water} ｜ 排便：${bowel} ｜ 食欲/饥饿感：${hunger} ｜ 体感：${sensation} ｜ 不适：${discomfort}`;
-        checkinTexts.push(`- [${dateStr}] ${detail}`);
-      } else {
-        const shortContent = String(checkin.content || "").replace(/\n/g, " ").trim().slice(0, 60);
-        checkinTexts.push(`- [${dateStr}] ${shortContent}...`);
-      }
-    }
-  } else {
-    checkinTexts.push("- 暂无打卡记录。");
-  }
-
-  // 5. Document titles & status
-  const documentLines: string[] = [];
-  const docTitleLabels: Record<string, string> = {
-    energy_restart_prescription: "个人能量重启处方单",
-    day28_execution_standard: "28天执行标准与打卡要求",
-    stage_report: "阶段报告",
-    graduation_report: "毕业报告",
-  };
-  const docStatusLabels: Record<string, string> = {
-    draft: "草稿",
-    reviewing: "待审核",
-    sent: "已发送",
-  };
-
-  const sortedDocs = [...documents].sort((a, b) => b.id - a.id);
-  const latestByType: Record<string, UserDocument> = {};
-  for (const doc of sortedDocs) {
-    if (!latestByType[doc.document_type]) {
-      latestByType[doc.document_type] = doc;
-    }
-  }
-
-  for (const docType of ["energy_restart_prescription", "day28_execution_standard", "stage_report", "graduation_report"]) {
-    const doc = latestByType[docType];
-    if (doc) {
-      const status = docStatusLabels[doc.status] || doc.status;
-      const sentSuffix = doc.sent_at ? `（发送于 ${formatDateTime(doc.sent_at)}）` : "";
-      documentLines.push(`- ${docTitleLabels[docType]}：${status}${sentSuffix}`);
-    }
-  }
-
-  // 6. Latest delivery message
-  const deliveryMessages = messages
-    .filter((m) => m.purpose === "document_delivery" && m.direction === "outbound" && m.sender_type === "bot" && m.status === "sent")
-    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
-  const latestDelivery = deliveryMessages[0];
-  let latestDeliveryText = "暂无交付发送记录。";
-  if (latestDelivery) {
-    latestDeliveryText = `${latestDelivery.content} （${formatDateTime(latestDelivery.created_at)}）`;
-  }
-
-  // Reconstruct context text exactly mirroring engine.py build_user_context format (excluding user name for privacy)
-  const contextText = [
-    `### 👤 用户画像与体征信息 (${daysText})`,
-    `- 身体状况及方案总结：${profileSummary}`,
-    "",
-    `### 🧭 当前状态与真实需求`,
-    stateSummary,
-    "",
-    `### 📦 服务进度与交付状态`,
-    `- 当前服务单状态：${serviceCase.status}`,
-    documentLines.length > 0 ? documentLines.join("\n") : "- 暂无交付文件。",
-    `- 最近一次交付动作：${latestDeliveryText}`,
-    "",
-    `### 📈 最近打卡趋势 (近3次记录)`,
-    checkinTexts.join("\n")
-  ].join("\n");
-
+function AiContextPreview({ context }: { context?: string }) {
+  const contextText = context || "暂无 AI 上下文。";
   return (
     <details className="group mt-4 rounded-lg border border-slate-800 bg-[#0c1524] text-cyan-50">
       <summary className="flex cursor-pointer items-center justify-between px-4 py-3 select-none font-semibold focus:outline-none">
         <span className="flex items-center gap-2 text-sm text-cyan-400 font-mono">
           <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          AI 视角：提示词上下文预览 (De-identified Context)
+          AI 视角：真实提示词上下文预览
         </span>
         <span className="text-xs text-zinc-500 font-mono group-open:hidden">点击展开预览</span>
         <span className="text-xs text-zinc-500 font-mono hidden group-open:inline">点击收起</span>

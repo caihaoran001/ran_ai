@@ -86,3 +86,7 @@ class ServiceCaseStats(BaseModel):
     ai_total_calls: int = 0
     ai_total_tokens: int = 0
     ai_estimated_cost_yuan: float = 0.0
+
+
+class ServiceCaseAIContextPreview(BaseModel):
+    context: str
