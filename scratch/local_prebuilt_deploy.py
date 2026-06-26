@@ -24,9 +24,12 @@ def run_local_command(cmd, cwd=None):
     return res.stdout
 
 def main():
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    archive_path = os.path.join(project_root, "ran_ai_deploy.tar.gz")
+
     # 1. Compile Next.js locally
     print("🛠️ Step 1: Compiling Next.js frontend locally...")
-    frontend_dir = os.path.abspath("frontend")
+    frontend_dir = os.path.join(project_root, "frontend")
     run_local_command("npm run build", cwd=frontend_dir)
     
     # 2. Package codebase locally (include standalone output, exclude cache & diagnostics history)
@@ -39,9 +42,14 @@ def main():
         "--exclude='frontend/.next/cache' --exclude='diagnostics/diagnostics_history.json' "
         "--warning=no-file-changed -czf ran_ai_deploy.tar.gz ."
     )
-    res = subprocess.run(tar_cmd, shell=True, capture_output=True, text=True)
+    res = subprocess.run(tar_cmd, shell=True, cwd=project_root, capture_output=True, text=True)
     if res.returncode not in (0, 1):
         print(f"❌ Local tar failed (exit code {res.returncode}): {res.stderr}")
+        sys.exit(1)
+    if not os.path.exists(archive_path):
+        print(f"❌ Local tar did not create archive: {archive_path}")
+        if res.stderr:
+            print(res.stderr)
         sys.exit(1)
     print("  ✅ Success (warnings ignored)")
     
@@ -60,7 +68,7 @@ def main():
     print("\n📤 Step 4: Uploading archive...")
     sftp = client.open_sftp()
     
-    local_path = 'ran_ai_deploy.tar.gz'
+    local_path = archive_path
     remote_path = '/root/ran_ai_deploy.tar.gz'
     
     def progress_callback(transferred, total):
@@ -160,8 +168,8 @@ def main():
     client.close()
     
     # Clean up local tarball
-    if os.path.exists("ran_ai_deploy.tar.gz"):
-        os.remove("ran_ai_deploy.tar.gz")
+    if os.path.exists(archive_path):
+        os.remove(archive_path)
 
 if __name__ == '__main__':
     main()
