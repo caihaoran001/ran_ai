@@ -1354,7 +1354,6 @@ class RanrenAIEngine:
         # Combine everything into a beautiful Markdown context
         user_context = (
             f"### 👤 用户画像与体征信息 ({days_text})\n"
-            f"- 用户姓名：{user_name}\n"
             f"- 身体状况及方案总结：{profile_summary}\n\n"
             f"### 🧭 当前状态与真实需求\n"
             f"{state_summary}\n\n"

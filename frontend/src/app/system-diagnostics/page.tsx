@@ -465,14 +465,14 @@ export default function SystemDiagnosticsPage() {
         />
         <SummaryCard
           icon={<Coins size={18} />}
-          label="最近真实 E2E 成本"
+          label="最近诊断测试成本"
           value={`¥${(latestDiagnostic?.estimated_cost_yuan || 0).toFixed(2)}`}
           detail={`${latestDiagnostic?.calls || 0} 次调用 · ${(latestDiagnostic?.tokens || 0).toLocaleString()} tokens`}
           tone="violet"
         />
         <SummaryCard
           icon={<Coins size={18} />}
-          label="累计 E2E 成本"
+          label="累计诊断测试成本"
           value={`¥${(lifetimeDiagnostic?.estimated_cost_yuan || 0).toFixed(2)}`}
           detail={`${lifetimeDiagnostic?.calls || 0} 次调用 · ${(lifetimeDiagnostic?.tokens || 0).toLocaleString()} tokens`}
           tone="amber"
@@ -587,7 +587,7 @@ export default function SystemDiagnosticsPage() {
             <div className="mt-4 space-y-3">
               <SideRow label="当前状态" value={busy ? "运行中" : failedHealthCount ? "存在失败" : "空闲"} />
               <SideRow label="选中日志" value={selectedSuite ? selectedSuite.display_id : "汇总"} />
-              <SideRow label="累计 E2E 成本" value={`¥${(lifetimeDiagnostic?.estimated_cost_yuan || 0).toFixed(2)}`} />
+              <SideRow label="累计诊断测试成本" value={`¥${(lifetimeDiagnostic?.estimated_cost_yuan || 0).toFixed(2)}`} />
               <SideRow label="最近运行" value={formattedLastRun} />
             </div>
           </section>

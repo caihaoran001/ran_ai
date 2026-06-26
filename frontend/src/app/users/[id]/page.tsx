@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { api, Checkin, Message, User, UserDocument } from "@/lib/api";
+import { api, Checkin, Message, User, UserDocument, UserProfile, UserStateProfile } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
 
 export default async function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -54,7 +54,18 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-600">{profileSource}</span>
         </div>
         {profile ? (
-          <ProfileView profile={profile.profile_json} fallback={profile.summary} serviceCase={serviceCase} />
+          <>
+            <ProfileView profile={profile.profile_json} fallback={profile.summary} serviceCase={serviceCase} />
+            <AiContextPreview
+              user={user}
+              profile={profile}
+              stateProfile={stateProfile || undefined}
+              serviceCase={serviceCase}
+              checkins={checkins}
+              documents={documents}
+              messages={messages}
+            />
+          </>
         ) : (
           <p className="mt-3 text-sm text-zinc-500">尚未生成用户画像。用户提交入营问卷后，系统会自动生成画像和交付文件。</p>
         )}
@@ -159,6 +170,7 @@ function ProfileView({
   serviceCase?: User["service_cases"][number];
 }) {
   const summary = text(profile.summary) || fallback;
+  const tags = Array.isArray(profile.tags) ? profile.tags.filter(Boolean) : [];
   const items = [
     ["风控风险", serviceCase?.risk_level === "high" ? reasonText(serviceCase.risk_flags) : "暂无明确风险"],
     ["减重带判断", profileText(profile, "weight_loss_band") || text(profile.weight_loss_band) || "暂无数据"],
@@ -169,18 +181,258 @@ function ProfileView({
     ["AI陪跑建议", text(profile.notes) || "暂无数据"],
   ];
 
+  const needAnalysis = recordValue(profile.need_analysis);
+  const hasNeedAnalysis = Object.keys(needAnalysis).length > 0;
+
   return (
     <div className="mt-3 space-y-4 text-sm leading-6">
       <p>{summary}</p>
       <div className="grid gap-3 md:grid-cols-2">
-        {items.map(([label, value]) => (
-          <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-            <div className="text-xs font-medium text-zinc-500">{label}</div>
-            <div className="mt-1">{value}</div>
-          </div>
-        ))}
+        {items.map(([label, value]) => {
+          if (label === "标签") {
+            return (
+              <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                <div className="text-xs font-medium text-zinc-500">{label}</div>
+                {tags.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {tags.map((tag) => (
+                      <span key={String(tag)} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                        {String(tag)}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-1 text-zinc-400">暂无数据</div>
+                )}
+              </div>
+            );
+          }
+          return (
+            <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <div className="text-xs font-medium text-zinc-500">{label}</div>
+              <div className="mt-1">{value}</div>
+            </div>
+          );
+        })}
       </div>
+
+      {hasNeedAnalysis && (
+        <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+          <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">
+            健康需求识别 (Health Needs Analysis)
+          </h3>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-3">
+              <NeedList label="表层表达需求" items={needAnalysis.surface_needs} />
+              <NeedList label="深层服务需求" items={needAnalysis.deep_needs} />
+              <div className="rounded-md border border-zinc-200 bg-white p-3">
+                <div className="text-xs font-medium text-zinc-500">最优先满足需求</div>
+                <div className="mt-1 font-semibold text-cyan-900">{String(needAnalysis.priority_need || "暂无")}</div>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <NeedList label="系统交付方案/动作" items={needAnalysis.system_outputs} />
+              <NeedList label="接下来最该推进动作" items={needAnalysis.next_actions} />
+              <NeedList label="依据/判定证据" items={needAnalysis.evidence_notes} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function NeedList({ label, items }: { label: string; items: unknown }) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  return (
+    <div className="rounded-md border border-zinc-200 bg-white p-3">
+      <div className="text-xs font-medium text-zinc-500">{label}</div>
+      {list.length > 0 ? (
+        <ul className="mt-1 space-y-1 text-sm list-disc pl-4 text-zinc-700">
+          {list.map((item, idx) => (
+            <li key={idx}>{String(item)}</li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-1 text-zinc-400">暂无数据</div>
+      )}
+    </div>
+  );
+}
+
+function AiContextPreview({
+  user,
+  profile,
+  stateProfile,
+  serviceCase,
+  checkins,
+  documents,
+  messages,
+}: {
+  user: User;
+  profile?: UserProfile;
+  stateProfile?: UserStateProfile;
+  serviceCase?: User["service_cases"][number];
+  checkins: Checkin[];
+  documents: UserDocument[];
+  messages: Message[];
+}) {
+  if (!serviceCase) return null;
+
+  // 1. Calculate days_text
+  let daysText = "服务准备中";
+  const startAt = serviceCase.started_at || serviceCase.created_at;
+  if (startAt) {
+    const start = new Date(startAt);
+    const now = new Date();
+    const days = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    daysText = days >= 1 ? `第 ${days} 天` : "服务尚未正式开始（计划开始日未到）";
+  }
+
+  // 2. Profile summary (we exclude real user names for privacy compliance, matching backend rules)
+  const profileSummary = profile?.summary || "暂无详细画像";
+
+  // 3. Compact state profile
+  let stateSummary = "暂无动态状态";
+  if (stateProfile?.state_json?.domains) {
+    const domains = recordValue(stateProfile.state_json.domains);
+    const parts: string[] = [];
+    
+    // We format action focus, diet, etc., like the backend does.
+    const actionFocus = recordValue(recordValue(domains.action_focus).current);
+    if (Object.keys(recordValue(actionFocus.value)).length) {
+      parts.push(`- [当前行动重点] ${formatStateValue(actionFocus.value)} (分数:${actionFocus.score ?? "暂无"})`);
+    }
+    const needAnalysis = recordValue(recordValue(domains.need_analysis).current);
+    if (Object.keys(recordValue(needAnalysis.value)).length) {
+      parts.push(`- [需求判定] ${formatStateValue(needAnalysis.value)}`);
+    }
+    const dietPattern = recordValue(recordValue(domains.diet_pattern).current);
+    if (Object.keys(recordValue(dietPattern.value)).length) {
+      parts.push(`- [饮食结构] ${formatStateValue(dietPattern.value)}`);
+    }
+    const productSchedule = recordValue(recordValue(domains.product_schedule).current);
+    if (Object.keys(recordValue(productSchedule.value)).length) {
+      parts.push(`- [产品执行] ${formatStateValue(productSchedule.value)}`);
+    }
+    const discomfortFeedback = recordValue(recordValue(domains.discomfort_feedback).current);
+    if (Object.keys(recordValue(discomfortFeedback.value)).length) {
+      parts.push(`- [不适反馈] ${formatStateValue(discomfortFeedback.value)}`);
+    }
+    const outcomeChanges = recordValue(recordValue(domains.outcome_changes).current);
+    if (Object.keys(recordValue(outcomeChanges.value)).length) {
+      parts.push(`- [成效变化] ${formatStateValue(outcomeChanges.value)}`);
+    }
+    stateSummary = parts.join("\n") || "暂无动态状态";
+  }
+
+  // 4. Recent check-ins (last 3 days)
+  const checkinTexts: string[] = [];
+  const sortedCheckins = [...checkins].sort((a, b) => Date.parse(b.checkin_date) - Date.parse(a.checkin_date)).slice(0, 3);
+  if (sortedCheckins.length > 0) {
+    for (const checkin of sortedCheckins) {
+      const dateStr = checkin.checkin_date;
+      if (checkin.parsed_json) {
+        const pj = checkin.parsed_json as Record<string, any>;
+        const ps = recordValue(pj.product_schedule);
+        const c_status = ps.morning_c || "未记录";
+        const b_status = ps.noon_b || "未记录";
+        const a_status = ps.night_a || "未记录";
+        const cba = `早C:${c_status}/午B:${b_status}/晚A:${a_status}`;
+
+        const weight = pj.weight || "未记录";
+        const waist = pj.waist || "未记录";
+        const sleep = pj.sleep || "未记录";
+        const diet = pj.diet || "未记录";
+        const water = pj.water || "未记录";
+        const bowel = pj.bowel || "未记录";
+        const hunger = pj.hunger || "未记录";
+        const sensation = pj.sensation || "未记录";
+        const discomfort = pj.discomfort || "无";
+
+        const detail = `体重：${weight} ｜ 腰围：${waist} ｜ ${cba} ｜ 睡眠：${sleep} ｜ 饮食：${diet} ｜ 饮水：${water} ｜ 排便：${bowel} ｜ 食欲/饥饿感：${hunger} ｜ 体感：${sensation} ｜ 不适：${discomfort}`;
+        checkinTexts.push(`- [${dateStr}] ${detail}`);
+      } else {
+        const shortContent = String(checkin.content || "").replace(/\n/g, " ").trim().slice(0, 60);
+        checkinTexts.push(`- [${dateStr}] ${shortContent}...`);
+      }
+    }
+  } else {
+    checkinTexts.push("- 暂无打卡记录。");
+  }
+
+  // 5. Document titles & status
+  const documentLines: string[] = [];
+  const docTitleLabels: Record<string, string> = {
+    energy_restart_prescription: "个人能量重启处方单",
+    day28_execution_standard: "28天执行标准与打卡要求",
+    stage_report: "阶段报告",
+    graduation_report: "毕业报告",
+  };
+  const docStatusLabels: Record<string, string> = {
+    draft: "草稿",
+    reviewing: "待审核",
+    sent: "已发送",
+  };
+
+  const sortedDocs = [...documents].sort((a, b) => b.id - a.id);
+  const latestByType: Record<string, UserDocument> = {};
+  for (const doc of sortedDocs) {
+    if (!latestByType[doc.document_type]) {
+      latestByType[doc.document_type] = doc;
+    }
+  }
+
+  for (const docType of ["energy_restart_prescription", "day28_execution_standard", "stage_report", "graduation_report"]) {
+    const doc = latestByType[docType];
+    if (doc) {
+      const status = docStatusLabels[doc.status] || doc.status;
+      const sentSuffix = doc.sent_at ? `（发送于 ${formatDateTime(doc.sent_at)}）` : "";
+      documentLines.push(`- ${docTitleLabels[docType]}：${status}${sentSuffix}`);
+    }
+  }
+
+  // 6. Latest delivery message
+  const deliveryMessages = messages
+    .filter((m) => m.purpose === "document_delivery" && m.direction === "outbound" && m.sender_type === "bot" && m.status === "sent")
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const latestDelivery = deliveryMessages[0];
+  let latestDeliveryText = "暂无交付发送记录。";
+  if (latestDelivery) {
+    latestDeliveryText = `${latestDelivery.content} （${formatDateTime(latestDelivery.created_at)}）`;
+  }
+
+  // Reconstruct context text exactly mirroring engine.py build_user_context format (excluding user name for privacy)
+  const contextText = [
+    `### 👤 用户画像与体征信息 (${daysText})`,
+    `- 身体状况及方案总结：${profileSummary}`,
+    "",
+    `### 🧭 当前状态与真实需求`,
+    stateSummary,
+    "",
+    `### 📦 服务进度与交付状态`,
+    `- 当前服务单状态：${serviceCase.status}`,
+    documentLines.length > 0 ? documentLines.join("\n") : "- 暂无交付文件。",
+    `- 最近一次交付动作：${latestDeliveryText}`,
+    "",
+    `### 📈 最近打卡趋势 (近3次记录)`,
+    checkinTexts.join("\n")
+  ].join("\n");
+
+  return (
+    <details className="group mt-4 rounded-lg border border-slate-800 bg-[#0c1524] text-cyan-50">
+      <summary className="flex cursor-pointer items-center justify-between px-4 py-3 select-none font-semibold focus:outline-none">
+        <span className="flex items-center gap-2 text-sm text-cyan-400 font-mono">
+          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+          AI 视角：提示词上下文预览 (De-identified Context)
+        </span>
+        <span className="text-xs text-zinc-500 font-mono group-open:hidden">点击展开预览</span>
+        <span className="text-xs text-zinc-500 font-mono hidden group-open:inline">点击收起</span>
+      </summary>
+      <div className="border-t border-slate-800/80 px-4 py-4 font-mono text-xs leading-6 overflow-x-auto whitespace-pre-wrap select-all">
+        {contextText}
+      </div>
+    </details>
   );
 }
 
