@@ -83,7 +83,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         <section className="rounded-lg border border-zinc-200 bg-white p-4">
           <div className="flex items-center justify-between">
             <h2 className="font-medium">当前用户状态</h2>
-            <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">持续更新</span>
+            <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">证据驱动更新</span>
           </div>
           <StateProfileView state={stateProfile.state_json} updatedAt={stateProfile.updated_at} />
         </section>
@@ -206,7 +206,7 @@ function OperationsSummary({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-950">运营摘要</h2>
-            <p className="mt-1 text-sm text-slate-500">给班主任和运营看的当前判断，不替代原始证据。</p>
+            <p className="mt-1 text-sm text-slate-500">系统综合画像、打卡、聊天和文档后的运营视图，不是新的独立 AI 诊断。</p>
           </div>
           <span className="rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs font-semibold text-cyan-800">
             {serviceStageText(serviceCase)}
@@ -461,7 +461,7 @@ function StateProfileView({
   return (
     <div className="mt-3 space-y-4 text-sm">
       <p className="text-xs text-zinc-500">
-        当前状态由入营问卷、聊天反馈、打卡和阶段成效证据自动更新；旧证据会保留在证据链中。
+        当前状态会先由入营问卷建立基线，之后在用户聊天、打卡或阶段成效产生新证据时更新；旧证据会保留在证据链中。
         最近更新：{formatDateTime(updatedAt)}
       </p>
       <div className="grid gap-3 lg:grid-cols-2">

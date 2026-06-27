@@ -823,7 +823,6 @@ def _normalize_profile_from_package(
     if shared:
         profile.setdefault("main_problem", shared.get("core_problem"))
         profile.setdefault("day28_goal", shared.get("day28_goal"))
-        profile.setdefault("state", shared.get("execution_principle"))
     profile = sanitize_profile_json(dict(profile), intake_facts)
     profile.setdefault("risks", "暂无明确风险")
     profile["need_analysis"] = _normalize_need_analysis(profile.get("need_analysis"), intake_facts, shared)
