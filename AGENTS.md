@@ -1,6 +1,16 @@
 # PROJECT KNOWLEDGE BASE
 
-燃人AI 1.0 - 社群运营系统 (FastAPI + Next.js + PostgreSQL)
+燃人AI 1.0 — an internal community-operations system. Each WeChat-style group maps to one real user's 28-day服务 (service) window. The system handles service cases, an H5 questionnaire, LLM-generated user profiles and delivery documents, human review, check-in records, the **QiWe** experimental messaging channel, and a basic dashboard.
+
+Stack: **FastAPI + SQLAlchemy 2.0 (async) + Alembic + PostgreSQL** (backend), **Next.js 15 + React 19 + TypeScript + Tailwind** (frontend), **Docker Compose** runtime, OpenAI-compatible AI (default DeepSeek).
+
+## Companion docs — read these too
+
+This file is the primary knowledge base. Three detailed companion docs (in Chinese) hold additional context; read the relevant one before changing code:
+
+- `backend/AGENTS.md` — backend structure + a "WHERE TO LOOK" table mapping tasks to files.
+- `frontend/AGENTS.md` — frontend structure, API endpoints, conventions.
+- `docs/testing/README.md` + `docs/testing/TEST_CASES.md` — **the only entry point** when the user says "测试 / test". See Testing below.
 
 ## CONVENTIONS
 - **后端**: Python 3.11+, FastAPI, SQLAlchemy 2.0 async, Pydantic v2, uv 包管理
@@ -9,6 +19,63 @@
 - **AI**: OpenAI SDK 兼容 (默认 DeepSeek)
 - **消息渠道**: `MessageChannel` 协议抽象，支持多渠道扩展
 
+## Commands
+
+### Run everything (Docker — primary local/LAN workflow)
+```bash
+cp .env.example .env          # then set AI_API_KEY, QIWEI_*, ADMIN_*, BACKEND_ADMIN_API_KEY
+docker compose up -d --build
+# Frontend http://localhost:3002  ·  Backend http://localhost:8000  ·  Postgres :54322
+```
+The backend container runs **without uvicorn reload** (SSE long-connections would block it). **After editing any file under `backend/src/`, you must `docker restart ran-ai-backend`** or changes won't take effect — this is the most commonly forgotten step.
+
+### Backend (local, in `backend/`, uses `uv`)
+```bash
+uv sync
+uv run alembic upgrade head
+uv run ran-ai-api               # API server
+uv run ran-ai-scheduler         # reminder/knowledge-evolution/outcome scheduler
+uv run ran-ai-wecom-worker      # legacy WeCom worker (new channel is QiWe)
+uv run pytest tests/ -v         # full test suite (Mock LLM; real-LLM E2E is isolated)
+uv run pytest tests/test_02_chat.py -v          # single file
+uv run pytest tests/test_02_chat.py::test_name  # single test
+```
+
+### Frontend (in `frontend/`, uses `npm`)
+```bash
+npm install
+npm run dev          # next dev on 0.0.0.0
+npm run build        # MUST build locally before deploy — never compile on ECS
+npm run lint
+npm run test:e2e     # Playwright
+```
+
+## Architecture — the big picture
+
+### Messaging is layered (channel-agnostic core)
+Message handling is split into three layers so business logic never touches a specific channel's API:
+```
+app/services/channels/     MessageChannel protocol, channel registry, QiWe adapter
+app/services/ranren_ai/    RanrenAIEngine — channel-agnostic business engine
+app/services/qiwe_service/ QiWe group-message aggregation
+```
+A QiWe callback turns inbound text into a `ChannelMessage`, aggregates consecutive messages from the same user/group over an ~8s window, then hands it to `RanrenAIEngine` (engine.py). The engine handles the intake-questionnaire command, knowledge retrieval, LLM reply, and message persistence. **To send messages, always go through the `channels` abstraction — never call a channel API directly.**
+
+### Knowledge retrieval / RAG (two-tier with fallback)
+Bot replies first query the DB index `knowledge_chunks` (via `knowledge_index.py`), then pass hits to the LLM. The index ingests structured FAQs (`knowledge_faqs`), approved knowledge drafts, and Markdown/TXT chunks, with optional embedding (cosine in app layer; pgvector migration is pre-staged but the default `postgres:15-alpine` image lacks it). If the DB index misses, it **falls back** to local Markdown/LlamaIndex keyword search under `backend/src/app/services/knowledge_base/`. Keyword fallback is limited to the business whitelist `keyword_whitelist.json` — do not query the DB with every jieba token.
+
+### Documents & profiles
+Questionnaire submission → LLM generates a user profile. Service-case detail can generate two delivery docs (处方单, 28天执行单) and stage reports (3/7/14/21/28-day + graduation). Flow: LLM emits **structured JSON** for key fields → backend templates (`document_templates.py`) render editable Markdown → persisted as `content_json`/`content_md` → only at download/send time does `docx_service.py` render a temporary `.docx` (deleted after). **The authoritative system prompts live in `backend/src/app/services/document_service.py`; `手动版提示词.md` is reference only and must not be used at runtime.**
+
+### Outcome tracking
+`outcome_engine.py` extracts structured outcome evidence per chat message into `outcome_events` (deduped by `(service_case_id, message_id, field_key)`), maintains per-milestone `outcome_stage_states`, aggregates `outcome_snapshots` at milestones, and `user_state_profile.py` projects events into a JSONB `user_state_profiles` (action_focus / need_analysis / body_feedback / risk_profile). AI replies cite the current action focus as implicit background.
+
+### Risk control
+MVP risk is identified by **LLM intent/info extraction**, not hardcoded keywords. High-risk users never auto-receive AI content (forced human review); only the preset high-risk safety script may send immediately. Content policy (`content_policy.py`): `manual_review` (default — AI content goes to human review) vs `auto_send` (low-risk auto-sends, high-risk still reviewed).
+
+### Auth model
+Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY`); `/health` and public questionnaire (token-based) are exceptions. The admin key lives **only** between the Next server and FastAPI — never expose it to `NEXT_PUBLIC_*` or browser code. The frontend proxies backend API same-origin.
+
 ## ANTI-PATTERNS (CRITICAL RULES)
 - **禁用同步DB操作**：严禁在后端执行同步数据库操作，全部使用 async，保证高并发性能。
 - **保护 Alembic**：严禁直接手动修改已经生成并运行的 Alembic 迁移文件。
@@ -16,7 +83,7 @@
 - **渠道隔离**：严禁在核心业务逻辑中直接调用消息通道 API，必须通过 `channels` 抽象层进行代理。
 - **绝不物理硬删除**：严禁硬删除数据，必须使用软删除（设置 `deleted_at` 字段并结合条件唯一索引）。
 - **杜绝关键词硬编码规则**：参考文件应作为大模型输入与知识库素材，业务逻辑判断必须优先使用大模型结构化输出，而非硬编码关键词判断。
-- **QA 表四入库限制**：检索正文只放“问法/参考回复/回复结构”；分类、风险、转人工字段必须置于 metadata 中，防止污染检索文本。
+- **QA 表四入库限制**：检索正文只放"问法/参考回复/回复结构"；分类、风险、转人工字段必须置于 metadata 中，防止污染检索文本。
 - **关键词白名单局限**：Fallback 检索仅限使用 `keyword_whitelist.json` 的业务白名单。
 - **FAQ 与 Chunk 同步**：审核通过/人工维护的 FAQ 必须保存到 `knowledge_faqs` 并同步至 `knowledge_chunks`，严禁只追加到 Markdown 文件。
 - **打卡解析原则**：打卡结构化完全以问卷/表单提交的结构化字段为主，不再新增 `#打卡` 文本正则解析。
@@ -38,14 +105,15 @@
 - **容器内部健康检查**：Alpine/Slim 生产镜像中通常没有 `curl`。严禁在 `docker exec` 中直接执行 `curl` 进行健康状态探测，必须使用容器内已有的运行时引擎发起探测：
   - **后端（Python）**：`docker exec ran_ai-backend-1 python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"`
   - **前端（Node）**：`docker exec ran_ai-frontend-1 node -e "const http = require('http'); http.get('http://localhost:3000')"`
+- **生产启动命令**：`docker compose -f docker-compose.prod.yml up -d --build`。完整指南：`docs/deployment.md`。
 
-## TESTING PROTOCOL (用户只说“测试”时必须执行)
-- **唯一测试规范入口**：收到“测试”“完整测试”“检查项目测试”等请求时，必须先阅读并严格执行 `docs/testing/README.md` 和 `docs/testing/TEST_CASES.md`；用户无需重复提供测试命令、测试用例或报告要求。
+## TESTING PROTOCOL (用户只说"测试"时必须执行)
+- **唯一测试规范入口**：收到"测试""完整测试""检查项目测试"等请求时，必须先阅读并严格执行 `docs/testing/README.md` 和 `docs/testing/TEST_CASES.md`；用户无需重复提供测试命令、测试用例或报告要求。
 - **测试用例固定入口**：`docs/testing/TEST_CASES.md` 是可复用测试用例清单；不得把 `docs/reviews/` 里的历史执行记录当作测试用例来源。
 - **默认只测试，不改码**：测试任务中严禁修改业务代码、测试代码、测试数据生成逻辑或预期结果来让测试通过。发现问题后只记录证据与修复建议，等待用户明确要求修复。
-- **报告必须新建**：每次测试结束后，必须在 `docs/reviews/` 新建带当前日期时间的执行记录与总结报告；严禁直接把历史报告中的旧结果改成“通过”。
+- **报告必须新建**：每次测试结束后，必须在 `docs/reviews/` 新建带当前日期时间的执行记录与总结报告；严禁直接把历史报告中的旧结果改成"通过"。
 - **失败必须如实报告**：不得吞掉异常、跳过失败项或仅报告通过率。报告必须区分：通过、失败、跳过、未执行、环境阻塞，并记录对应命令与关键证据。
-- **真实测试需授权**：默认禁止运行会调用真实 LLM、产生费用、向真实群发送消息或永久入库的测试。只有用户明确要求“运行真实 E2E/真实模型测试”时，才可按 `docs/testing/README.md` 的真实测试流程执行。
+- **真实测试需授权**：默认禁止运行会调用真实 LLM、产生费用、向真实群发送消息或永久入库的测试。只有用户明确要求"运行真实 E2E/真实模型测试"时，才可按 `docs/testing/README.md` 的真实测试流程执行。
 
 ## ENGINEERING PRINCIPLES (工程化纪律)
 - **全局视野优先**：审查与修改代码时，必须先理清上下游调用链路与系统架构，先抓大再抓小。严禁只顾局部语法而导致破坏整体数据流向。
