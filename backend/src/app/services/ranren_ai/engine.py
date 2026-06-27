@@ -1570,7 +1570,17 @@ def _compact_state_profile_for_prompt(state_json: object) -> str:
     if not isinstance(domains, dict):
         return "暂无动态状态"
     lines: list[str] = []
-    for key in ("action_focus", "need_analysis", "goals", "body_feedback", "product_usage", "risk_profile", "outcome_changes"):
+    for key in (
+        "action_focus",
+        "need_analysis",
+        "personal_preferences",
+        "lifestyle_habits",
+        "goals",
+        "body_feedback",
+        "product_usage",
+        "risk_profile",
+        "outcome_changes",
+    ):
         domain = domains.get(key)
         if not isinstance(domain, dict):
             continue

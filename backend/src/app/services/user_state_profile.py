@@ -16,6 +16,8 @@ STATE_DOMAIN_LABELS: dict[str, str] = {
     "basic": "基础信息",
     "goals": "改善目标与关注点",
     "need_analysis": "健康需求识别",
+    "personal_preferences": "个人喜好与偏好",
+    "lifestyle_habits": "稳定习惯与生活约束",
     "action_focus": "当前行动重点",
     "diet_structure": "饮食结构",
     "rhythm_structure": "节律结构",
@@ -23,6 +25,11 @@ STATE_DOMAIN_LABELS: dict[str, str] = {
     "body_feedback": "体感反馈",
     "risk_profile": "风险信息",
     "outcome_changes": "成效变化",
+}
+
+PROFILE_SIGNAL_DOMAIN_LABELS = {
+    "personal_preferences": "个人喜好与偏好",
+    "lifestyle_habits": "稳定习惯与生活约束",
 }
 
 
@@ -139,6 +146,19 @@ async def initialize_user_state_from_intake(
         occurred_at=now,
         confidence=0.95,
     )
+    diet_pattern = intake_facts.get("diet_pattern")
+    if diet_pattern and str(diet_pattern) not in {"未提供", "暂无数据"}:
+        _set_domain_current(
+            state,
+            "lifestyle_habits",
+            {
+                "meal_pattern": diet_pattern,
+            },
+            source="intake",
+            evidence="入营问卷长期饮食模式",
+            occurred_at=now,
+            confidence=0.9,
+        )
     _set_domain_current(
         state,
         "risk_profile",
@@ -198,6 +218,56 @@ async def apply_outcome_events_to_user_state(
             confidence=_float(event.get("confidence")),
             message_id=message.id,
             milestone=milestone,
+        )
+
+    state_profile.state_json = state
+    flag_modified(state_profile, "state_json")
+    state_profile.summary = _state_summary(state)
+    state_profile.source = "dynamic"
+    return state_profile
+
+
+async def apply_profile_signals_to_user_state(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    message: Message,
+    profile_signals: list[dict[str, Any]],
+) -> UserStateProfile | None:
+    """Persist long-lived personal profile signals from chat evidence.
+
+    Outcome events describe service milestones. Profile signals describe stable
+    personal context such as hobbies, meal patterns, work constraints or food
+    preferences. Keeping them in separate domains prevents casual facts like
+    "喜欢漂流" from being lost inside generic outcome metrics.
+    """
+
+    if not profile_signals:
+        return None
+    state_profile = await get_or_create_user_state_profile(session, service_case.id)
+    state = _ensure_state_shape(state_profile.state_json)
+    occurred_at = _datetime_iso(message.created_at)
+
+    for signal in profile_signals:
+        domain = str(signal.get("domain") or "")
+        signal_type = str(signal.get("signal_type") or "other").strip() or "other"
+        value = str(signal.get("value") or "").strip()
+        evidence = str(signal.get("evidence_text") or "").strip()
+        confidence = _float(signal.get("confidence"))
+        if domain not in PROFILE_SIGNAL_DOMAIN_LABELS or not value or not evidence or confidence < 0.65:
+            continue
+        _update_domain_from_event(
+            state,
+            domain,
+            field_key=signal_type,
+            value=value,
+            event_type="profile_signal",
+            evidence=evidence,
+            source="chat_profile_signal",
+            occurred_at=occurred_at,
+            confidence=confidence,
+            message_id=message.id,
+            milestone="profile",
         )
 
     state_profile.state_json = state
@@ -352,7 +422,15 @@ def _append_history(domain: dict[str, Any], item: dict[str, Any]) -> None:
 def _state_summary(state: dict[str, Any]) -> str:
     domains = state.get("domains") if isinstance(state.get("domains"), dict) else {}
     snippets: list[str] = []
-    for key in ("goals", "product_usage", "body_feedback", "outcome_changes", "risk_profile"):
+    for key in (
+        "goals",
+        "personal_preferences",
+        "lifestyle_habits",
+        "product_usage",
+        "body_feedback",
+        "outcome_changes",
+        "risk_profile",
+    ):
         domain = domains.get(key) if isinstance(domains.get(key), dict) else {}
         current = domain.get("current") if isinstance(domain.get("current"), dict) else {}
         evidence = current.get("evidence")

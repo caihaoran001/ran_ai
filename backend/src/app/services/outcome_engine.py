@@ -17,7 +17,11 @@ from app.models.outcome import OutcomeEvent, OutcomeSnapshot, OutcomeStageState
 from app.models.service_case import ServiceCase
 from app.models.user_state_profile import UserStateProfile
 from app.services.ai_service import AIService
-from app.services.user_state_profile import apply_outcome_events_to_user_state, get_or_create_user_state_profile
+from app.services.user_state_profile import (
+    apply_outcome_events_to_user_state,
+    apply_profile_signals_to_user_state,
+    get_or_create_user_state_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -420,6 +424,7 @@ async def apply_outcome_analysis(
     valid_fields = {goal.key for goal in spec.goals}
     collected = dict(state.collected_fields or {})
     created_events: list[dict[str, Any]] = []
+    profile_signals = _normalize_profile_signals(raw.get("profile_signals"))
 
     for item in _normalize_events(raw.get("outcome_events"), valid_fields):
         if await _event_exists(session, service_case.id, message.id, item):
@@ -485,6 +490,12 @@ async def apply_outcome_analysis(
         milestone=spec.milestone,
         created_events=created_events,
     )
+    await apply_profile_signals_to_user_state(
+        session,
+        service_case=service_case,
+        message=message,
+        profile_signals=profile_signals,
+    )
     action_focus = await score_action_focus(
         session,
         service_case=service_case,
@@ -499,6 +510,7 @@ async def apply_outcome_analysis(
         "milestone_name": spec.name,
         "service_day": service_day(service_case),
         "created_events": created_events,
+        "profile_signals": profile_signals,
         "collected_fields": collected,
         "missing_fields": missing,
         "followup_plan": followup_plan,
@@ -1013,6 +1025,33 @@ def _normalize_events(value: Any, valid_fields: set[str]) -> list[dict[str, Any]
             }
         )
     return events
+
+
+def _normalize_profile_signals(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    allowed_domains = {"personal_preferences", "lifestyle_habits"}
+    signals: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        domain = _string(item.get("domain"))
+        signal_type = _string(item.get("signal_type")) or "other"
+        fact_value = _string(item.get("value"))
+        evidence_text = _string(item.get("evidence_text"))
+        confidence = _confidence(item.get("confidence"))
+        if domain not in allowed_domains or not fact_value or not evidence_text or confidence < 0.65:
+            continue
+        signals.append(
+            {
+                "domain": domain,
+                "signal_type": signal_type,
+                "value": fact_value,
+                "evidence_text": evidence_text,
+                "confidence": confidence,
+            }
+        )
+    return signals[:5]
 
 
 def _normalize_followup(

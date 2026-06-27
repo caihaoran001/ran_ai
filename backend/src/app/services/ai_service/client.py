@@ -463,6 +463,12 @@ class AIService:
                 "   - 如果 answered_today 已显示用户今天回答过相关内容，不要重复追问。\n"
                 "   - 根据 local_hour 使用合适措辞：早上优先问昨晚/今早，中午问早餐/早C，下午问午餐/午B，晚上问晚餐/晚A，深夜只问整体感受、昨晚/近期睡眠，或不问。\n"
                 "7. 问题必须像班主任顺口问一句，不能像问卷；不要问尚未发生的事情，例如早上不要问今天午餐/晚餐。\n\n"
+                "【长期画像信号】\n"
+                "除了阶段成效，你还要顺手识别可长期用于陪跑的个人侧写，但必须非常克制：\n"
+                "- personal_preferences：兴趣爱好、运动/活动偏好、食物偏好、沟通偏好、激励偏好。例如喜欢漂流、喜欢户外、不爱甜食。\n"
+                "- lifestyle_habits：稳定饮食习惯、作息习惯、工作/家庭约束、长期生活模式。例如长期不吃晚饭、经常夜班、出差多。\n"
+                "只有当用户明确表达且看起来长期有效时才提取；不要把一次性情绪、当天临时安排、普通寒暄或机器人自己的建议写进去。\n"
+                "profile_signals 不参与成效进度评分，只用于完善用户画像。\n\n"
                 "【只输出 JSON，字段如下】\n"
                 "{\n"
                 '  "outcome_events": [\n'
@@ -470,6 +476,15 @@ class AIService:
                 '      "field_key": "来自阶段目标的字段 key",\n'
                 '      "event_type": "必须从以下值中选择：improved / worsened / unchanged / completed / not_completed / feedback / discomfort",\n'
                 '      "value": "提取出的简短事实",\n'
+                '      "evidence_text": "用户原话证据",\n'
+                '      "confidence": 0.0\n'
+                "    }\n"
+                "  ],\n"
+                '  "profile_signals": [\n'
+                "    {\n"
+                '      "domain": "personal_preferences 或 lifestyle_habits",\n'
+                '      "signal_type": "hobby / activity_preference / food_preference / communication_preference / motivation_preference / meal_pattern / schedule_constraint / work_routine / exercise_habit / sleep_habit / social_context / other",\n'
+                '      "value": "简短长期事实",\n'
                 '      "evidence_text": "用户原话证据",\n'
                 '      "confidence": 0.0\n'
                 "    }\n"
