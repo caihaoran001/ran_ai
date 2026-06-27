@@ -463,6 +463,8 @@ async def mock_session_local(db_session):
         "app.api.routes.questionnaires",
         "app.api.routes.documents",
         "app.services.ranren_ai.engine",
+        "app.services.agent.tools.service_case_tools",
+        "app.services.agent.tools.knowledge_tools",
         "app.services.reminder_service",
     ]
     for mod_name in modules_to_patch:

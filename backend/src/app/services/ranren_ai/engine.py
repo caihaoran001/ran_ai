@@ -34,6 +34,7 @@ from app.models.user_state_profile import UserStateProfile
 from app.models.checkin import Checkin
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ai_service import AIService
+from app.services.agent import AgentDataUnavailableError, generate_agent_reply
 from app.services.channels.base import ChannelMessage, MessageChannel
 from app.services.content_policy import get_ai_reply_delivery_mode
 from app.services.short_link import get_or_create_short_link
@@ -914,7 +915,8 @@ class RanrenAIEngine:
         reply = ""
         should_send = False
         service_case: ServiceCase | None = None
-        ai_user_prompt = ""
+        outbound_analysis: dict | None = None
+        settings = get_settings()
         async with SessionLocal() as session:
             if service_case_id:
                 stmt = select_active_service_cases(ServiceCase.id == service_case_id).options(selectinload(ServiceCase.user))
@@ -925,8 +927,146 @@ class RanrenAIEngine:
             else:
                 service_case = None
 
-            # 高风险/急性体感/停机投诉退款已在主流程①层 @班主任并 return，不会走到这里。
-            # 这里只处理：②中风险(需人工介入)→生成后进待审核；③低风险→生成后按全局策略发送。
+            recent_user_messages = (
+                await self._recent_user_messages(
+                    session,
+                    service_case.id,
+                    exclude_message_id=trigger_id,
+                )
+                if service_case
+                else []
+            )
+
+        if service_case_id and settings.ai_agent_enabled:
+            try:
+                agent_result = await generate_agent_reply(
+                    service_case_id=service_case_id,
+                    trigger_id=trigger_id,
+                    user_query=message.text,
+                    recent_messages=recent_user_messages,
+                    settings=settings,
+                )
+                reply = agent_result.reply
+                outbound_analysis = {
+                    "agent": {
+                        "enabled": True,
+                        "tool_trace": agent_result.tool_trace,
+                        "data_tool_failed": agent_result.data_tool_failed,
+                    }
+                }
+            except AgentDataUnavailableError as exc:
+                logger.warning(
+                    "Agent data unavailable; using safe fixed reply service_case_id=%s trigger_id=%s",
+                    service_case_id,
+                    trigger_id,
+                )
+                reply = str(exc)
+                outbound_analysis = {"agent": {"enabled": True, "data_unavailable": True}}
+            except Exception:
+                logger.exception("Agent reply failed; falling back to legacy AI reply")
+                reply = await self._generate_legacy_ai_reply(
+                    message=message,
+                    service_case_id=service_case_id,
+                    analysis=analysis,
+                    trigger_id=trigger_id,
+                )
+                outbound_analysis = {"agent": {"enabled": True, "fallback": "legacy"}}
+        else:
+            reply = await self._generate_legacy_ai_reply(
+                message=message,
+                service_case_id=service_case_id,
+                analysis=analysis,
+                trigger_id=trigger_id,
+            )
+
+        if reply:
+            reply = _sanitize_ai_reply(reply, self.settings)
+            # 逻辑①不拆台：AI 生成期间班主任(真人)已就这条接话 → AI 不抢话，直接丢弃(不发、不入待审核)
+            if await self._staff_replied_after(service_case_id=service_case_id, trigger_id=trigger_id):
+                logger.info(
+                    "RanrenAI skip AI reply because staff already replied chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id,
+                    trigger_id,
+                    service_case_id,
+                )
+                return
+            async with SessionLocal() as session:
+                should_send = await self._should_send_ai_reply(session, service_case, analysis, message)
+
+        if should_send:
+            if await self._has_newer_inbound_message(service_case_id=service_case_id, trigger_id=trigger_id):
+                logger.info(
+                    "RanrenAI skip stale AI reply chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id,
+                    trigger_id,
+                    service_case_id,
+                )
+                return
+            if self.has_pending_newer_message and await self.has_pending_newer_message(message):
+                logger.info(
+                    "RanrenAI skip AI reply because newer raw messages are queued chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id,
+                    trigger_id,
+                    service_case_id,
+                )
+                return
+            send_started_at = time.monotonic()
+            result = await self.channel.send_text(
+                message.chat_id,
+                reply,
+                reply_to=message.message_id,
+                reply_context=message.raw_payload,
+            )
+            send_elapsed_ms = (time.monotonic() - send_started_at) * 1000
+            await self._record_outbound(
+                message=message,
+                service_case_id=service_case_id,
+                content=reply,
+                message_id=result.message_id,
+                status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
+                error=result.error,
+                trigger_id=trigger_id,
+                analysis_json=outbound_analysis,
+            )
+            logger.info(
+                "RanrenAI AI reply sent chat_id=%s trigger_id=%s success=%s channel_message_id=%s send_elapsed_ms=%.1f",
+                message.chat_id,
+                trigger_id,
+                result.success,
+                result.message_id,
+                send_elapsed_ms,
+            )
+            return
+
+        await self._record_outbound(
+            message=message,
+            service_case_id=service_case_id,
+            content=reply,
+            message_id=None,
+            status=MessageStatus.PENDING,
+            error="AI reply requires human review",
+            trigger_id=trigger_id,
+            analysis_json=outbound_analysis,
+        )
+
+    async def _generate_legacy_ai_reply(
+        self,
+        *,
+        message: ChannelMessage,
+        service_case_id: int | None,
+        analysis: dict | None,
+        trigger_id: int | None,
+    ) -> str:
+        ai_user_prompt = ""
+        async with SessionLocal() as session:
+            service_case: ServiceCase | None = None
+            if service_case_id:
+                stmt = select_active_service_cases(ServiceCase.id == service_case_id).options(selectinload(ServiceCase.user))
+                service_case = await session.scalar(stmt)
+                if service_case is None:
+                    logger.info("RanrenAI skip legacy reply because service case is inactive service_case_id=%s", service_case_id)
+                    return ""
+
             settings = get_settings()
             knowledge_context = await retrieve_indexed_knowledge(session, message.text, settings=settings)
             if not knowledge_context:
@@ -976,7 +1116,7 @@ class RanrenAIEngine:
         if ai_user_prompt:
             ai = AIService()
             try:
-                reply = await ai.generate_text(
+                return await ai.generate_text(
                     scenario="ai_reply",
                     system_prompt=RANREN_AI_SYSTEM_PROMPT,
                     user_prompt=ai_user_prompt,
@@ -985,74 +1125,8 @@ class RanrenAIEngine:
                 )
             except Exception:
                 logger.exception("AI reply failed")
-                reply = "抱歉，我刚才处理这条消息时出错了，请稍后再试。"
-
-            reply = _sanitize_ai_reply(reply, self.settings)
-            # 逻辑①不拆台：AI 生成期间班主任(真人)已就这条接话 → AI 不抢话，直接丢弃(不发、不入待审核)
-            if await self._staff_replied_after(service_case_id=service_case_id, trigger_id=trigger_id):
-                logger.info(
-                    "RanrenAI skip AI reply because staff already replied chat_id=%s trigger_id=%s service_case_id=%s",
-                    message.chat_id,
-                    trigger_id,
-                    service_case_id,
-                )
-                return
-            async with SessionLocal() as session:
-                should_send = await self._should_send_ai_reply(session, service_case, analysis, message)
-            
-        if should_send:
-            if await self._has_newer_inbound_message(service_case_id=service_case_id, trigger_id=trigger_id):
-                logger.info(
-                    "RanrenAI skip stale AI reply chat_id=%s trigger_id=%s service_case_id=%s",
-                    message.chat_id,
-                    trigger_id,
-                    service_case_id,
-                )
-                return
-            if self.has_pending_newer_message and await self.has_pending_newer_message(message):
-                logger.info(
-                    "RanrenAI skip AI reply because newer raw messages are queued chat_id=%s trigger_id=%s service_case_id=%s",
-                    message.chat_id,
-                    trigger_id,
-                    service_case_id,
-                )
-                return
-            send_started_at = time.monotonic()
-            result = await self.channel.send_text(
-                message.chat_id,
-                reply,
-                reply_to=message.message_id,
-                reply_context=message.raw_payload,
-            )
-            send_elapsed_ms = (time.monotonic() - send_started_at) * 1000
-            await self._record_outbound(
-                message=message,
-                service_case_id=service_case_id,
-                content=reply,
-                message_id=result.message_id,
-                status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
-                error=result.error,
-                trigger_id=trigger_id,
-            )
-            logger.info(
-                "RanrenAI AI reply sent chat_id=%s trigger_id=%s success=%s channel_message_id=%s send_elapsed_ms=%.1f",
-                message.chat_id,
-                trigger_id,
-                result.success,
-                result.message_id,
-                send_elapsed_ms,
-            )
-            return
-            
-        await self._record_outbound(
-            message=message,
-            service_case_id=service_case_id,
-            content=reply,
-            message_id=None,
-            status=MessageStatus.PENDING,
-            error="AI reply requires human review",
-            trigger_id=trigger_id,
-        )
+                return "抱歉，我刚才处理这条消息时出错了，请稍后再试。"
+        return ""
 
     async def _should_send_ai_reply(
         self,
@@ -1079,6 +1153,7 @@ class RanrenAIEngine:
         status: MessageStatus,
         error: str | None,
         trigger_id: int | None = None,
+        analysis_json: dict | None = None,
     ) -> None:
         async with SessionLocal() as session:
             session.add(
@@ -1094,6 +1169,7 @@ class RanrenAIEngine:
                     status=status,
                     error=error,
                     trigger_id=trigger_id,
+                    analysis_json=analysis_json,
                 )
             )
             await session.commit()

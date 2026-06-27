@@ -56,6 +56,15 @@ class Settings(BaseSettings):
         default=10,
         validation_alias="AI_MAX_CONCURRENT_REQUESTS",
     )
+    ai_agent_enabled: bool = Field(default=False, validation_alias="AI_AGENT_ENABLED")
+    agent_max_llm_calls: int = Field(default=5, validation_alias="AGENT_MAX_LLM_CALLS")
+    agent_max_tool_calls: int = Field(default=8, validation_alias="AGENT_MAX_TOOL_CALLS")
+    agent_timeout_seconds: float = Field(default=40.0, validation_alias="AGENT_TIMEOUT_SECONDS")
+    web_search_enabled: bool = Field(default=False, validation_alias="WEB_SEARCH_ENABLED")
+    web_search_provider: str = Field(default="tavily", validation_alias="WEB_SEARCH_PROVIDER")
+    tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")
+    web_search_timeout_seconds: float = Field(default=8.0, validation_alias="WEB_SEARCH_TIMEOUT_SECONDS")
+    web_search_max_results: int = Field(default=5, validation_alias="WEB_SEARCH_MAX_RESULTS")
     ai_prompt_cost_per_1m_tokens: float = Field(
         default=0.0,
         validation_alias="AI_PROMPT_COST_PER_1M_TOKENS",
