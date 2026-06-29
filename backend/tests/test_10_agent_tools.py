@@ -20,6 +20,7 @@ from app.services.agent.tools.service_case_tools import build_service_case_tools
 from app.services.agent.tools.web_search_tools import _normalize_current_query_year, build_web_search_tools
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_delivery_mode
+from app.services.profile_memory_service import load_profile_memory_context
 from app.services.ranren_ai.engine import RanrenAIEngine
 
 
@@ -228,7 +229,15 @@ async def test_agent_memory_context_compacts_profile_and_state(db_session):
                         }
                     },
                     "personal_preferences": {
-                        "current": {"value": {"hobby": "喜欢潮玩，最近聊到 LABUBU 后面的热门款"}}
+                        "current": {
+                            "value": {
+                                "hobby": {
+                                    "value": "喜欢潮玩，最近聊到 LABUBU 后面的热门款",
+                                    "event_type": "profile_signal",
+                                    "milestone": "profile",
+                                }
+                            }
+                        }
                     },
                     "lifestyle_habits": {
                         "current": {"value": {"work": "工作日晚间经常加班"}}
@@ -240,6 +249,11 @@ async def test_agent_memory_context_compacts_profile_and_state(db_session):
         )
     )
     await db_session.flush()
+
+    structured = await load_profile_memory_context(db_session, service_case_id=service_case.id)
+    assert structured.stable_facts
+    assert any("喜欢潮玩" in item for item in structured.preferences)
+    assert not any("profile_signal" in item for item in structured.preferences)
 
     memory = await build_agent_memory_context(db_session, service_case_id=service_case.id)
 
