@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { API_BASE } from "@/lib/api";
-import { Bot, CalendarCheck, Sunrise, BellRing, Workflow } from "lucide-react";
+import { Bot, CalendarCheck, Sunrise, BellRing, Send, Workflow } from "lucide-react";
 
 type ToggleKey =
   | "ai_auto_reply_enabled"
@@ -18,6 +18,7 @@ function Row({
   icon: Icon,
   title,
   desc,
+  onUpdated,
 }: {
   serviceCaseId: number;
   field: ToggleKey;
@@ -25,6 +26,7 @@ function Row({
   icon: typeof Bot;
   title: string;
   desc: string;
+  onUpdated?: (value: boolean) => void;
 }) {
   const [on, setOn] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -37,7 +39,10 @@ function Row({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ [field]: next }),
     });
-    if (res.ok) setOn(next);
+    if (res.ok) {
+      setOn(next);
+      onUpdated?.(next);
+    }
     setBusy(false);
   }
 
@@ -58,6 +63,63 @@ function Row({
   );
 }
 
+const AGENT_RECEIPT_TEXT =
+  "我这边已开启新的辅助回复模式，后面你问服务进度、近期打卡、体重趋势这类问题时，我会先查准确记录再回复。\n\n如果你问近期影视、音乐、展览、赛事、旅游这类公开信息，我也可以联网查一下再帮你整理。";
+
+function AgentReceiptButton({
+  serviceCaseId,
+  disabled,
+}: {
+  serviceCaseId: number;
+  disabled: boolean;
+}) {
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function sendReceipt() {
+    if (disabled || sending) return;
+    setSending(true);
+    setError(null);
+    setSent(false);
+    try {
+      const res = await fetch(`${API_BASE}/service-cases/${serviceCaseId}/messages/send`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: AGENT_RECEIPT_TEXT }),
+      });
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+      setSent(true);
+    } catch (err) {
+      console.error("send agent receipt failed", err);
+      setError("发送失败，请稍后重试");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 pl-7">
+      <p className="text-xs leading-5 text-slate-500">需要告知用户时，手动向群内发送一次轻提示。</p>
+      <div className="flex items-center gap-3">
+        {sent && <span className="text-xs text-emerald-600">已发送</span>}
+        {error && <span className="text-xs text-rose-600">{error}</span>}
+        <button
+          type="button"
+          onClick={sendReceipt}
+          disabled={disabled || sending}
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Send className="h-3.5 w-3.5" />
+          {sending ? "发送中…" : "发送群内提示"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function CaseAutomationToggles({
   serviceCaseId,
   aiAutoReplyEnabled,
@@ -73,6 +135,8 @@ export function CaseAutomationToggles({
   morningPushEnabled: boolean;
   inactiveWakeEnabled: boolean;
 }) {
+  const [aiAgentOn, setAiAgentOn] = useState(aiAgentEnabled);
+
   return (
     <div className="panel p-5">
       <h3 className="font-semibold text-slate-950">自动化设置（仅本服务单）</h3>
@@ -96,8 +160,10 @@ export function CaseAutomationToggles({
           initial={aiAgentEnabled}
           icon={Workflow}
           title="Agent 链路"
-          desc="默认关闭，走旧回复链路；开启后在全局 Agent 开关也开启时，本服务单可使用 LangGraph 工具链路。"
+          desc="默认关闭，走旧回复链路；开启后在全局 Agent 开关也开启时，本服务单可使用增强工具链路，按需查询当前服务记录或联网搜索公开信息。"
+          onUpdated={setAiAgentOn}
         />
+        <AgentReceiptButton serviceCaseId={serviceCaseId} disabled={!aiAgentOn} />
 
         <div className="pb-1 pt-3 text-xs font-medium text-slate-400">定时推送</div>
         <Row
