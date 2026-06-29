@@ -33,8 +33,10 @@ async def lifespan(app: FastAPI):
     app.state.qiwe_aggregator = qiwe_aggregator
     if qiwe_should_start and channel:
         import asyncio
+        from datetime import datetime, timezone
         from app.services.ranren_ai.engine import recover_stuck_inbound_messages
-        asyncio.create_task(recover_stuck_inbound_messages(channel))
+        startup_time = datetime.now(timezone.utc)
+        asyncio.create_task(recover_stuck_inbound_messages(channel, startup_time))
     try:
         yield
     finally:

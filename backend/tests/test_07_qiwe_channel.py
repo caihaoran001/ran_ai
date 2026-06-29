@@ -608,60 +608,107 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_qiwe_recovery_of_stuck_inbound_messages(monkeypatch):
+async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
+    from datetime import datetime, timedelta, timezone
     from app.services.ranren_ai.engine import recover_stuck_inbound_messages
-    from app.models.service_case import ServiceCaseStatus
-    from app.models.message import MessageSenderType, MessageDirection, MessagePurpose
+    from app.models.service_case import ServiceCase, ServiceCaseStatus
+    from app.models.message import Message, MessageSenderType, MessageDirection, MessagePurpose, MessageStatus
+    from app.models.user import User
     
-    fake_case = SimpleNamespace(
-        id=42,
-        case_no="CASE-42",
-        status=ServiceCaseStatus.IN_SERVICE,
-        ai_auto_reply_enabled=True,
-    )
+    # Seed User
+    user = User(name="测试用户")
+    db_session.add(user)
+    await db_session.flush()
     
-    fake_message = SimpleNamespace(
-        id=999,
-        service_case_id=42,
-        group_id="room-1",
-        wecom_message_id="msg-999",
-        content="娜塔莎什么价格。",
-        message_type="text",
-        direction=MessageDirection.INBOUND,
-        sender_type=MessageSenderType.USER,
-        purpose=MessagePurpose.CHAT,
-        analysis_json={"_qiwe_meta": {"sender_id": "user-1", "sender_name": "用户1"}},
-        created_at=datetime.now(timezone.utc),
+    now = datetime.now(timezone.utc)
+    
+    # Scenario A: Stuck message (should be recovered)
+    case_a = ServiceCase(
+        user_id=user.id, case_no="CASE-A", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-a", questionnaire_token="token-a",
     )
+    db_session.add(case_a)
+    await db_session.flush()
+    
+    msg_a = Message(
+        service_case_id=case_a.id, group_id="group-a", wecom_message_id="msg-a",
+        content="我需要补发这个回复。", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {}}, created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_a)
+    
+    # Scenario B: Message already replied to (should NOT be recovered)
+    case_b = ServiceCase(
+        user_id=user.id, case_no="CASE-B", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-b", questionnaire_token="token-b",
+    )
+    db_session.add(case_b)
+    await db_session.flush()
+    
+    msg_b = Message(
+        service_case_id=case_b.id, group_id="group-b", wecom_message_id="msg-b",
+        content="已经回复过的消息。", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {}}, created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_b)
+    await db_session.flush()
+    
+    reply_b = Message(
+        service_case_id=case_b.id, group_id="group-b", wecom_message_id="reply-b",
+        content="这是回复内容。", message_type="text",
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.SENT,
+        trigger_id=msg_b.id, created_at=now - timedelta(seconds=30),
+    )
+    db_session.add(reply_b)
+    
+    # Scenario C: Message is too new (within 15 seconds) (should NOT be recovered)
+    case_c = ServiceCase(
+        user_id=user.id, case_no="CASE-C", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-c", questionnaire_token="token-c",
+    )
+    db_session.add(case_c)
+    await db_session.flush()
+    
+    msg_c = Message(
+        service_case_id=case_c.id, group_id="group-c", wecom_message_id="msg-c",
+        content="刚发的消息。", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {}}, created_at=now - timedelta(seconds=5),
+    )
+    db_session.add(msg_c)
+    
+    # Scenario D: Silenced service case (should NOT be recovered)
+    case_d = ServiceCase(
+        user_id=user.id, case_no="CASE-D", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=False, group_id="group-d", questionnaire_token="token-d",
+    )
+    db_session.add(case_d)
+    await db_session.flush()
+    
+    msg_d = Message(
+        service_case_id=case_d.id, group_id="group-d", wecom_message_id="msg-d",
+        content="群静默时的消息。", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {}}, created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_d)
+    
+    await db_session.flush()
     
     reprocess_calls = []
-    
     async def fake_reprocess_message(self, message):
         reprocess_calls.append(message)
-        
     monkeypatch.setattr(RanrenAIEngine, "reprocess_message", fake_reprocess_message)
     
-    class FakeSession:
-        async def __aenter__(self):
-            return self
-            
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            return False
-            
-        async def scalars(self, query):
-            # For select(ServiceCase)
-            return [fake_case]
-            
-        async def scalar(self, query):
-            q_str = str(query)
-            if "messages.service_case_id" in q_str:
-                return fake_message
-            return None
-
-    monkeypatch.setattr("app.services.ranren_ai.engine.SessionLocal", lambda *args, **kwargs: FakeSession())
-    
-    await recover_stuck_inbound_messages(FakeChannel())
+    await recover_stuck_inbound_messages(FakeChannel(), now)
     
     assert len(reprocess_calls) == 1
-    assert reprocess_calls[0].id == 999
-    assert reprocess_calls[0].content == "娜塔莎什么价格。"
+    assert reprocess_calls[0].id == msg_a.id
+    assert reprocess_calls[0].content == "我需要补发这个回复。"

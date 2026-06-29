@@ -698,6 +698,56 @@ class RanrenAIEngine:
             logger.warning("reprocess_message: message %s has no service_case_id", inbound_id)
             return
 
+        # Double check with SELECT FOR UPDATE lock to prevent concurrent double processing
+        async with SessionLocal() as session:
+            stmt = select(Message).where(Message.id == inbound_id).with_for_update()
+            msg_row = await session.scalar(stmt)
+            if not msg_row:
+                logger.warning("reprocess_message: Message %s not found in lock", inbound_id)
+                return
+
+            # 1. Re-verify if any outbound message exists for this trigger_id
+            reply_exists = await session.scalar(
+                select(Message.id)
+                .where(
+                    Message.direction == MessageDirection.OUTBOUND,
+                    Message.trigger_id == inbound_id
+                )
+                .limit(1)
+            )
+            if reply_exists:
+                logger.info("reprocess_message: Skip message %s because outbound reply already exists in lock", inbound_id)
+                return
+
+            # 2. Check if there are newer inbound messages (both user and staff) in this case.
+            # If so, do not process this message to prevent out-of-order replies.
+            newer_msg_exists = await session.scalar(
+                select(Message.id)
+                .where(
+                    Message.service_case_id == service_case_id,
+                    Message.id > inbound_id,
+                    Message.direction == MessageDirection.INBOUND,
+                )
+                .limit(1)
+            )
+            if newer_msg_exists:
+                logger.info(
+                    "reprocess_message: Skip message %s because newer inbound message %s exists",
+                    inbound_id,
+                    newer_msg_exists
+                )
+                return
+
+            # 3. Double check case status and AI toggle
+            service_case = msg_row.service_case
+            if not service_case:
+                stmt_case = select(ServiceCase).where(ServiceCase.id == service_case_id)
+                service_case = await session.scalar(stmt_case)
+            
+            if not service_case or not service_case.ai_auto_reply_enabled or service_case.deleted_at is not None:
+                logger.info("reprocess_message: Skip message %s because case is inactive/silenced", inbound_id)
+                return
+
         # Reconstruct ChannelMessage
         meta = (message.analysis_json or {}).get("_qiwe_meta", {}) if message.analysis_json else {}
         channel_msg = ChannelMessage(
@@ -1862,15 +1912,16 @@ def _should_retrieve_case_context(analysis: dict | None) -> bool:
     )
 
 
-async def recover_stuck_inbound_messages(channel: MessageChannel) -> None:
+async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: datetime) -> None:
     """Scan and reprocess inbound user messages that were received but never processed (e.g. due to service restart).
     This function is run on application startup to recover any messages that were lost/interrupted during deployment restart.
     """
     from datetime import datetime, timedelta, timezone
-    from sqlalchemy.orm import selectinload
     from app.models.service_case import ServiceCaseStatus
     
-    threshold = datetime.now(timezone.utc) - timedelta(hours=2)
+    # Only scan messages received before startup_time - 15 seconds, and within the last 2 hours.
+    max_created_at = startup_time - timedelta(seconds=15)
+    min_created_at = startup_time - timedelta(hours=2)
     
     async with SessionLocal() as session:
         # Get active service cases
@@ -1880,6 +1931,7 @@ async def recover_stuck_inbound_messages(channel: MessageChannel) -> None:
                 .where(
                     ServiceCase.status.in_([ServiceCaseStatus.APPROVED, ServiceCaseStatus.IN_SERVICE]),
                     ServiceCase.ai_auto_reply_enabled == True,
+                    ServiceCase.deleted_at.is_(None),
                 )
             )
         )
@@ -1896,7 +1948,9 @@ async def recover_stuck_inbound_messages(channel: MessageChannel) -> None:
                     Message.direction == MessageDirection.INBOUND,
                     Message.sender_type == MessageSenderType.USER,
                     Message.purpose == MessagePurpose.CHAT,
-                    Message.created_at >= threshold,
+                    Message.message_type == "text",
+                    Message.created_at >= min_created_at,
+                    Message.created_at <= max_created_at,
                 )
                 .order_by(Message.id.desc())
                 .limit(1)
@@ -1904,12 +1958,16 @@ async def recover_stuck_inbound_messages(channel: MessageChannel) -> None:
             if not latest_inbound:
                 continue
 
-            # Check if there is already an outbound reply for this message
+            # Skip if it was already processed (has requires_human_intervention or other analysis keys)
+            aj = latest_inbound.analysis_json or {}
+            if "requires_human_intervention" in aj:
+                continue
+
+            # Check if there is already any outbound reply (sent/pending/failed) for this message
             reply_exists = await session.scalar(
                 select(Message.id)
                 .where(
                     Message.direction == MessageDirection.OUTBOUND,
-                    Message.sender_type == MessageSenderType.BOT,
                     Message.trigger_id == latest_inbound.id,
                 )
                 .limit(1)
@@ -1921,7 +1979,7 @@ async def recover_stuck_inbound_messages(channel: MessageChannel) -> None:
             return
 
         logger.info(
-            "recover_stuck_inbound_messages: found %d stuck inbound user messages to reprocess on startup: %s",
+            "recover_stuck_inbound_messages: found %d stuck inbound user messages to reprocess: %s",
             len(stuck_messages),
             [m.id for m in stuck_messages]
         )
