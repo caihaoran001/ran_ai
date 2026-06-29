@@ -699,6 +699,48 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         analysis_json={"_qiwe_meta": {}}, created_at=now - timedelta(minutes=1),
     )
     db_session.add(msg_d)
+
+    # Scenario E: Already processed by intervention analysis (should NOT be recovered)
+    case_e = ServiceCase(
+        user_id=user.id, case_no="CASE-E", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-e", questionnaire_token="token-e",
+    )
+    db_session.add(case_e)
+    await db_session.flush()
+
+    msg_e = Message(
+        service_case_id=case_e.id, group_id="group-e", wecom_message_id="msg-e",
+        content="已经走过风控但还没出站。", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {}, "requires_human_intervention": False},
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_e)
+
+    # Scenario F: Already claimed by another recovery task (should NOT be recovered)
+    case_f = ServiceCase(
+        user_id=user.id, case_no="CASE-F", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-f", questionnaire_token="token-f",
+    )
+    db_session.add(case_f)
+    await db_session.flush()
+
+    msg_f = Message(
+        service_case_id=case_f.id, group_id="group-f", wecom_message_id="msg-f",
+        content="已经被恢复任务认领。", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={
+            "_qiwe_meta": {},
+            "_recovery_claim": {
+                "claimed_at": now.isoformat(),
+                "reason": "startup_recovery",
+            },
+        },
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_f)
     
     await db_session.flush()
     

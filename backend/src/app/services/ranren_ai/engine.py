@@ -9,7 +9,7 @@ import re
 import secrets
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Awaitable, Callable
 from urllib.parse import urlparse
@@ -706,6 +706,11 @@ class RanrenAIEngine:
                 logger.warning("reprocess_message: Message %s not found in lock", inbound_id)
                 return
 
+            analysis_json = msg_row.analysis_json if isinstance(msg_row.analysis_json, dict) else {}
+            if _message_already_processed_or_claimed(analysis_json):
+                logger.info("reprocess_message: Skip message %s because it is already processed or claimed", inbound_id)
+                return
+
             # 1. Re-verify if any outbound message exists for this trigger_id
             reply_exists = await session.scalar(
                 select(Message.id)
@@ -739,14 +744,22 @@ class RanrenAIEngine:
                 return
 
             # 3. Double check case status and AI toggle
-            service_case = msg_row.service_case
-            if not service_case:
-                stmt_case = select(ServiceCase).where(ServiceCase.id == service_case_id)
-                service_case = await session.scalar(stmt_case)
+            service_case = await session.scalar(select_active_service_cases(ServiceCase.id == service_case_id))
             
-            if not service_case or not service_case.ai_auto_reply_enabled or service_case.deleted_at is not None:
+            if not service_case or not service_case.ai_auto_reply_enabled:
                 logger.info("reprocess_message: Skip message %s because case is inactive/silenced", inbound_id)
                 return
+
+            # 4. Claim the message before releasing the row lock. This keeps another
+            # startup recovery task from passing the same checks before this one
+            # writes analysis or records outbound.
+            claimed = dict(analysis_json)
+            claimed["_recovery_claim"] = {
+                "claimed_at": datetime.now(timezone.utc).isoformat(),
+                "reason": "startup_recovery",
+            }
+            msg_row.analysis_json = claimed
+            await session.commit()
 
         # Reconstruct ChannelMessage
         meta = (message.analysis_json or {}).get("_qiwe_meta", {}) if message.analysis_json else {}
@@ -1958,9 +1971,9 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
             if not latest_inbound:
                 continue
 
-            # Skip if it was already processed (has requires_human_intervention or other analysis keys)
+            # Skip if it was already processed or claimed by another recovery task.
             aj = latest_inbound.analysis_json or {}
-            if "requires_human_intervention" in aj:
+            if _message_already_processed_or_claimed(aj):
                 continue
 
             # Check if there is already any outbound reply (sent/pending/failed) for this message
@@ -1991,3 +2004,29 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
             await engine.reprocess_message(msg)
         except Exception:
             logger.exception("Failed to reprocess stuck message id=%s", msg.id)
+
+
+def _message_already_processed_or_claimed(analysis_json: dict | None) -> bool:
+    if not isinstance(analysis_json, dict):
+        return False
+    if any(key in analysis_json for key in ("requires_human_intervention", "outcome", "agent")):
+        return True
+    claim = analysis_json.get("_recovery_claim")
+    if not isinstance(claim, dict):
+        return False
+    claimed_at = _parse_datetime(claim.get("claimed_at"))
+    if claimed_at is None:
+        return True
+    return (datetime.now(timezone.utc) - claimed_at).total_seconds() < 600
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
