@@ -111,6 +111,8 @@ async def test_skill_registry_loads_skill_and_rejects_path_escape():
     product_skill = registry.read_skill("product_usage")
     assert "14:00 以后不要建议补喝午B" in product_skill
     assert "今天先跳过午B" in product_skill
+    assert "严禁建议午餐时喝晚A" in product_skill
+    assert "晚A别放午餐喝" in product_skill
 
     with pytest.raises(ValueError):
         registry.read_skill_file("checkin_analysis", "../product_usage/SKILL.md")
