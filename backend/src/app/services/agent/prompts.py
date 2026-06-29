@@ -32,10 +32,12 @@ def build_agent_user_prompt(
     user_query: str,
     recent_messages: list[str],
     skill_catalog: str,
+    current_time_context: str,
 ) -> str:
     recent = "\n".join(f"- {item}" for item in recent_messages) if recent_messages else "无"
     return (
         "以下是本轮群聊消息和可用 Skill。请根据需要自主调用工具，或直接回复。\n\n"
+        f"【当前时间】\n{current_time_context}\n\n"
         f"【用户本次问题】\n{user_query}\n\n"
         f"【最近对话】\n{recent}\n\n"
         f"【可用 Skill】\n{skill_catalog}\n"

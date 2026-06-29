@@ -14,7 +14,7 @@ from app.models.user import User
 from app.services.agent.graph import AgentReplyResult, AgentRunContext, RanrenAgentGraph
 from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.tools.service_case_tools import build_service_case_tools
-from app.services.agent.tools.web_search_tools import build_web_search_tools
+from app.services.agent.tools.web_search_tools import _normalize_current_query_year, build_web_search_tools
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_delivery_mode
 from app.services.ranren_ai.engine import RanrenAIEngine
@@ -171,6 +171,8 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "服务" in result.reply
     assert result.tool_trace[0]["name"] == "get_service_progress"
     assert len(model.calls) == 2
+    assert "【当前时间】" in model.calls[0][1].content
+    assert "现在、最近、最新、今年" in model.calls[0][1].content
 
 
 @pytest.mark.asyncio
@@ -190,6 +192,13 @@ async def test_web_search_rejects_health_queries_without_network():
 
     assert result["ok"] is False
     assert "不能联网搜索" in result["error"]
+
+
+def test_web_search_normalizes_stale_year_for_current_queries():
+    normalized = _normalize_current_query_year("2025年现在最火的动漫排行榜")
+
+    assert "2025年" not in normalized
+    assert "现在最火的动漫排行榜" in normalized
 
 
 @pytest.mark.asyncio

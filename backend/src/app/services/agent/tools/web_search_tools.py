@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from pydantic import BaseModel, Field
@@ -76,8 +78,29 @@ def build_web_search_tools(*, settings: Settings) -> list[BaseTool]:
 
 def _sanitize_query(query: str) -> str:
     clean = re.sub(r"\s+", " ", (query or "").strip())
+    clean = _normalize_current_query_year(clean)
     return clean[:120]
 
 
 def _is_disallowed(query: str) -> bool:
     return any(re.search(pattern, query, flags=re.IGNORECASE) for pattern in _DISALLOWED_PATTERNS)
+
+
+def _normalize_current_query_year(query: str) -> str:
+    """Guard against the model turning "现在/最新/今年" into a stale year."""
+    if not query:
+        return query
+    if not re.search(r"现在|当前|最近|最新|今年|热播|热门|排行榜", query):
+        return query
+    current_year = datetime.now(ZoneInfo("Asia/Shanghai")).year
+
+    def replace_year(match: re.Match[str]) -> str:
+        year = int(match.group(1))
+        if year < current_year:
+            return f"{current_year}年"
+        return match.group(0)
+
+    normalized = re.sub(r"(20\d{2})年", replace_year, query)
+    if not re.search(r"20\d{2}年", normalized):
+        normalized = f"{current_year}年 {normalized}"
+    return normalized

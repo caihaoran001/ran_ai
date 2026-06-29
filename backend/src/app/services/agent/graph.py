@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
@@ -63,6 +65,7 @@ class RanrenAgentGraph:
                     user_query=user_query,
                     recent_messages=recent_messages,
                     skill_catalog=self.skill_registry.catalog_text(),
+                    current_time_context=_current_time_context(),
                 )
             ),
         ]
@@ -272,3 +275,9 @@ def _is_data_tool(name: str) -> bool:
 
 def _looks_like_data_query(text: str) -> bool:
     return any(keyword in (text or "") for keyword in DATA_QUERY_KEYWORDS)
+
+
+def _current_time_context() -> str:
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    return f"现在是北京时间 {now:%Y-%m-%d %H:%M}（{weekdays[now.weekday()]}）。用户说“现在、最近、最新、今年”时，按这个日期理解。"
