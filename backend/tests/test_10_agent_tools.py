@@ -221,7 +221,11 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "短、直接、别演" in model.calls[0][0].content
     assert "让我想想" in model.calls[0][0].content
     assert "根据搜索结果" in model.calls[0][0].content
-    assert "普通闲聊、确认、纠正上一轮" in model.calls[0][0].content
+    assert "这是群聊接话，不是考试答题" in model.calls[0][0].content
+    assert "上下文不够时，优先追问一个关键点" in model.calls[0][0].content
+    assert "不确定时可以承认不知道" in model.calls[0][0].content
+    assert "多数时候只回对方当下这一下" in model.calls[0][0].content
+    assert "你说的是哪一款娜塔莎" in model.calls[0][0].content
     assert "咒术回战：节奏快" in model.calls[0][0].content
 
 
