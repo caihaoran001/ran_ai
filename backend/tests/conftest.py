@@ -270,6 +270,27 @@ class MockAIService:
         if isinstance(followup_context, dict) and isinstance(followup_context.get("allowed_field_keys"), list):
             allowed_followup = set(followup_context.get("allowed_field_keys") or [])
         events = []
+        profile_signals = []
+        if "漂流" in text or "户外" in text:
+            profile_signals.append(
+                {
+                    "domain": "personal_preferences",
+                    "signal_type": "activity_preference",
+                    "value": "喜欢户外和漂流",
+                    "evidence_text": text[:80],
+                    "confidence": 0.9,
+                }
+            )
+        if "长期不吃晚饭" in text or "平时基本不吃晚饭" in text:
+            profile_signals.append(
+                {
+                    "domain": "lifestyle_habits",
+                    "signal_type": "meal_pattern",
+                    "value": "长期不吃晚饭",
+                    "evidence_text": text[:80],
+                    "confidence": 0.9,
+                }
+            )
         if "没那么困" in text or "精神" in text:
             events.append(
                 {
@@ -299,6 +320,7 @@ class MockAIService:
         followup_field = next(iter(followup_candidates), "")
         return {
             "outcome_events": events,
+            "profile_signals": profile_signals,
             "followup_plan": {
                 "should_ask": bool(followup_field),
                 "field_key": followup_field,

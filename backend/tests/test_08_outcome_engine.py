@@ -752,6 +752,44 @@ async def test_outcome_events_update_user_state_profile_evidence_chain(db_sessio
 
 
 @pytest.mark.asyncio
+async def test_profile_signals_update_user_state_without_outcome_events(db_session, mock_ai):
+    case = await _setup_outcome_case(db_session, days=7)
+    message = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="我周末一般去漂流，挺喜欢户外的，平时基本不吃晚饭",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+
+    result = await analyze_and_update_outcomes(
+        db_session,
+        service_case=case,
+        message=message,
+        intervention_analysis={"requires_human_intervention": False},
+        recent_messages=[],
+    )
+
+    assert result["created_events"] == []
+    assert {item["domain"] for item in result["profile_signals"]} == {
+        "personal_preferences",
+        "lifestyle_habits",
+    }
+    state_profile = await db_session.scalar(
+        select(UserStateProfile).where(UserStateProfile.service_case_id == case.id)
+    )
+    assert state_profile is not None
+    domains = state_profile.state_json["domains"]
+    assert domains["personal_preferences"]["current"]["value"]["activity_preference"]["value"] == "喜欢户外和漂流"
+    assert domains["lifestyle_habits"]["current"]["value"]["meal_pattern"]["value"] == "长期不吃晚饭"
+
+
+@pytest.mark.asyncio
 async def test_followup_time_context_noon_allows_midday_fields(db_session):
     case = await _setup_outcome_case(db_session, days=3)
     spec = current_milestone_spec(case)
