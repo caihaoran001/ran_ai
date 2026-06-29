@@ -19,6 +19,7 @@ logger = logging.getLogger("uvicorn.error")
 
 DATA_QUERY_KEYWORDS = ("第几天", "服务进度", "打卡", "体重", "腰围", "文档", "问卷", "最近变化")
 DATA_UNAVAILABLE_REPLY = "我这边暂时没能查到准确记录，先不乱报数据。稍后再帮你确认一下。"
+WEB_SEARCH_CALL_LIMIT = 2
 
 
 class AgentDataUnavailableError(RuntimeError):
@@ -138,10 +139,10 @@ class RanrenAgentGraph:
         for idx, call in enumerate(runnable_calls):
             name = call.get("name") or ""
             if name == "web_search_lifestyle":
-                if web_search_seen >= 1:
+                if web_search_seen >= WEB_SEARCH_CALL_LIMIT:
                     rejected_results[idx] = self._reject_tool_call(
                         call,
-                        "TOOL_REJECTED: 每次 Agent 运行最多联网搜索一次。",
+                        f"TOOL_REJECTED: 每次 Agent 运行最多联网搜索 {WEB_SEARCH_CALL_LIMIT} 次。",
                     )
                     continue
                 web_search_seen += 1
@@ -157,7 +158,9 @@ class RanrenAgentGraph:
         ordered = [ordered_results[idx] for idx in range(len(runnable_calls))]
         tool_messages = [item[0] for item in ordered]
         traces = [item[1] for item in ordered]
-        web_search_count = int(state.get("web_search_count") or 0) + sum(1 for trace in traces if trace["name"] == "web_search_lifestyle")
+        web_search_count = int(state.get("web_search_count") or 0) + sum(
+            1 for trace in traces if trace["name"] == "web_search_lifestyle" and trace.get("ok")
+        )
         data_tool_failed = bool(state.get("data_tool_failed")) or any(trace.get("data_tool_failed") for trace in traces)
         loaded = set(state.get("loaded_skills") or [])
         for trace in traces:
@@ -179,8 +182,8 @@ class RanrenAgentGraph:
         args = call.get("args") or {}
         call_id = _tool_call_id(call)
         trace: dict[str, Any] = {"name": name, "args": args, "ok": False}
-        if name == "web_search_lifestyle" and int(state.get("web_search_count") or 0) >= 1:
-            content = "TOOL_REJECTED: 每次 Agent 运行最多联网搜索一次。"
+        if name == "web_search_lifestyle" and int(state.get("web_search_count") or 0) >= WEB_SEARCH_CALL_LIMIT:
+            content = f"TOOL_REJECTED: 每次 Agent 运行最多联网搜索 {WEB_SEARCH_CALL_LIMIT} 次。"
             trace["error"] = content
             return ToolMessage(content=content, tool_call_id=call_id), trace
         tool = self.tools_by_name.get(name)

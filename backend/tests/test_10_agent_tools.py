@@ -193,7 +193,7 @@ async def test_web_search_rejects_health_queries_without_network():
 
 
 @pytest.mark.asyncio
-async def test_graph_runs_only_one_web_search_per_agent_run(db_session):
+async def test_graph_allows_two_web_searches_and_rejects_extra(db_session):
     settings = get_settings()
     service_case = await _case(db_session)
     model = FakeToolCallingModel(
@@ -211,6 +211,11 @@ async def test_graph_runs_only_one_web_search_per_agent_run(db_session):
                         "args": {"query": "近期电视剧推荐"},
                         "id": "call-web-2",
                     },
+                    {
+                        "name": "web_search_lifestyle",
+                        "args": {"query": "近期综艺推荐"},
+                        "id": "call-web-3",
+                    },
                 ],
             ),
             AIMessage(content="最近可以先看一部电影和一部剧，挑你喜欢的类型就好。"),
@@ -226,14 +231,16 @@ async def test_graph_runs_only_one_web_search_per_agent_run(db_session):
 
     result = await graph.run(user_query="最近有什么好看的电影电视剧？", recent_messages=[])
 
-    assert len(fake_search.calls) == 1
+    assert len(fake_search.calls) == 2
     assert [trace["name"] for trace in result.tool_trace] == [
+        "web_search_lifestyle",
         "web_search_lifestyle",
         "web_search_lifestyle",
     ]
     assert result.tool_trace[0]["ok"] is True
-    assert result.tool_trace[1]["ok"] is False
-    assert "最多联网搜索一次" in result.tool_trace[1]["error"]
+    assert result.tool_trace[1]["ok"] is True
+    assert result.tool_trace[2]["ok"] is False
+    assert "最多联网搜索 2 次" in result.tool_trace[2]["error"]
 
 
 @pytest.mark.asyncio
