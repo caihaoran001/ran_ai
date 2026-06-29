@@ -605,3 +605,63 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
     # Message 3 should be MessageSenderType.USER
     assert added_messages[2].sender_type == MessageSenderType.USER
     assert called_analyze is True
+
+
+@pytest.mark.asyncio
+async def test_qiwe_recovery_of_stuck_inbound_messages(monkeypatch):
+    from app.services.ranren_ai.engine import recover_stuck_inbound_messages
+    from app.models.service_case import ServiceCaseStatus
+    from app.models.message import MessageSenderType, MessageDirection, MessagePurpose
+    
+    fake_case = SimpleNamespace(
+        id=42,
+        case_no="CASE-42",
+        status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True,
+    )
+    
+    fake_message = SimpleNamespace(
+        id=999,
+        service_case_id=42,
+        group_id="room-1",
+        wecom_message_id="msg-999",
+        content="娜塔莎什么价格。",
+        message_type="text",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT,
+        analysis_json={"_qiwe_meta": {"sender_id": "user-1", "sender_name": "用户1"}},
+        created_at=datetime.now(timezone.utc),
+    )
+    
+    reprocess_calls = []
+    
+    async def fake_reprocess_message(self, message):
+        reprocess_calls.append(message)
+        
+    monkeypatch.setattr(RanrenAIEngine, "reprocess_message", fake_reprocess_message)
+    
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+            
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return False
+            
+        async def scalars(self, query):
+            # For select(ServiceCase)
+            return [fake_case]
+            
+        async def scalar(self, query):
+            q_str = str(query)
+            if "messages.service_case_id" in q_str:
+                return fake_message
+            return None
+
+    monkeypatch.setattr("app.services.ranren_ai.engine.SessionLocal", lambda *args, **kwargs: FakeSession())
+    
+    await recover_stuck_inbound_messages(FakeChannel())
+    
+    assert len(reprocess_calls) == 1
+    assert reprocess_calls[0].id == 999
+    assert reprocess_calls[0].content == "娜塔莎什么价格。"

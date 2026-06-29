@@ -31,6 +31,10 @@ async def lifespan(app: FastAPI):
     await reminder_service.start()
     app.state.reminder_service = reminder_service
     app.state.qiwe_aggregator = qiwe_aggregator
+    if qiwe_should_start and channel:
+        import asyncio
+        from app.services.ranren_ai.engine import recover_stuck_inbound_messages
+        asyncio.create_task(recover_stuck_inbound_messages(channel))
     try:
         yield
     finally:

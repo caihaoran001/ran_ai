@@ -689,6 +689,88 @@ class RanrenAIEngine:
         if purpose == MessagePurpose.CHAT:
             await self._reply_with_ai(message, service_case_id=service_case_id, analysis=analysis, trigger_id=inbound_id)
 
+    async def reprocess_message(self, message: Message) -> None:
+        """Reprocess a stuck inbound USER message (e.g., interrupted by container restart)."""
+        started_at = time.monotonic()
+        inbound_id = message.id
+        service_case_id = message.service_case_id
+        if not service_case_id:
+            logger.warning("reprocess_message: message %s has no service_case_id", inbound_id)
+            return
+
+        # Reconstruct ChannelMessage
+        meta = (message.analysis_json or {}).get("_qiwe_meta", {}) if message.analysis_json else {}
+        channel_msg = ChannelMessage(
+            channel=self.channel.name,
+            chat_id=message.group_id,
+            chat_type="group",
+            text=message.content,
+            message_id=message.wecom_message_id,
+            user_id=meta.get("sender_id"),
+            user_name=meta.get("sender_name"),
+            message_type=message.message_type,
+            raw_payload=None,
+            timestamp=message.created_at
+        )
+
+        async with SessionLocal() as session:
+            recent_user_messages = await self._recent_user_messages(session, service_case_id, exclude_message_id=inbound_id)
+
+        analysis = await analyze_intervention(
+            source="chat_message",
+            content=channel_msg.text,
+            context={
+                "service_case_id": service_case_id,
+                "message_id": inbound_id,
+                "group_id": channel_msg.chat_id,
+                "current_message": channel_msg.text,
+                "recent_user_messages": recent_user_messages,
+            },
+        )
+        case_risk_level = await self._store_intervention_analysis(
+            service_case_id=service_case_id,
+            inbound_id=inbound_id,
+            analysis=analysis,
+        )
+
+        now_mono = time.monotonic()
+        recently_handed_off = (now_mono - self._last_handoff_at.get(service_case_id, 0.0)) < 1800
+        health_handoff = _requires_health_handoff(analysis, case_risk_level)
+        needs_handoff = bool(analysis.get("requires_human_intervention")) or health_handoff
+
+        if needs_handoff:
+            if not recently_handed_off:
+                self._last_handoff_at[service_case_id] = now_mono
+                await self._reply_human_handoff(channel_msg, service_case_id=service_case_id, trigger_id=inbound_id)
+                logger.info(
+                    "RanrenAI reprocess handed off to staff chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
+                    channel_msg.chat_id,
+                    inbound_id,
+                    service_case_id,
+                    (time.monotonic() - started_at) * 1000,
+                )
+            else:
+                logger.info(
+                    "RanrenAI reprocess skip duplicate handoff within 30min chat_id=%s trigger_id=%s service_case_id=%s",
+                    channel_msg.chat_id,
+                    inbound_id,
+                    service_case_id,
+                )
+            return
+
+        outcome_result = await self._run_outcome_analysis(
+            service_case_id=service_case_id,
+            inbound_id=inbound_id,
+            analysis=analysis,
+            recent_user_messages=recent_user_messages,
+        )
+        if outcome_result is not None:
+            analysis = {**analysis, "outcome": outcome_result}
+            await self._update_inbound_analysis(inbound_id, analysis)
+
+        if message.purpose == MessagePurpose.CHAT:
+            await self._reply_with_ai(channel_msg, service_case_id=service_case_id, analysis=analysis, trigger_id=inbound_id)
+
     async def _reply_human_handoff(
         self,
         message: ChannelMessage,
@@ -1778,3 +1860,76 @@ def _should_retrieve_case_context(analysis: dict | None) -> bool:
         isinstance(item, dict) and item.get("code") == "physical_discomfort"
         for item in risk_flags
     )
+
+
+async def recover_stuck_inbound_messages(channel: MessageChannel) -> None:
+    """Scan and reprocess inbound user messages that were received but never processed (e.g. due to service restart).
+    This function is run on application startup to recover any messages that were lost/interrupted during deployment restart.
+    """
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy.orm import selectinload
+    from app.models.service_case import ServiceCaseStatus
+    
+    threshold = datetime.now(timezone.utc) - timedelta(hours=2)
+    
+    async with SessionLocal() as session:
+        # Get active service cases
+        cases = list(
+            await session.scalars(
+                select(ServiceCase)
+                .where(
+                    ServiceCase.status.in_([ServiceCaseStatus.APPROVED, ServiceCaseStatus.IN_SERVICE]),
+                    ServiceCase.ai_auto_reply_enabled == True,
+                )
+            )
+        )
+        if not cases:
+            return
+
+        stuck_messages = []
+        for case in cases:
+            # Query the latest inbound user chat message in the last 2 hours for this case
+            latest_inbound = await session.scalar(
+                select(Message)
+                .where(
+                    Message.service_case_id == case.id,
+                    Message.direction == MessageDirection.INBOUND,
+                    Message.sender_type == MessageSenderType.USER,
+                    Message.purpose == MessagePurpose.CHAT,
+                    Message.created_at >= threshold,
+                )
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+            if not latest_inbound:
+                continue
+
+            # Check if there is already an outbound reply for this message
+            reply_exists = await session.scalar(
+                select(Message.id)
+                .where(
+                    Message.direction == MessageDirection.OUTBOUND,
+                    Message.sender_type == MessageSenderType.BOT,
+                    Message.trigger_id == latest_inbound.id,
+                )
+                .limit(1)
+            )
+            if not reply_exists:
+                stuck_messages.append(latest_inbound)
+
+        if not stuck_messages:
+            return
+
+        logger.info(
+            "recover_stuck_inbound_messages: found %d stuck inbound user messages to reprocess on startup: %s",
+            len(stuck_messages),
+            [m.id for m in stuck_messages]
+        )
+
+    # Process messages outside session block to avoid holding connections/locks
+    engine = RanrenAIEngine(channel)
+    for msg in stuck_messages:
+        try:
+            await engine.reprocess_message(msg)
+        except Exception:
+            logger.exception("Failed to reprocess stuck message id=%s", msg.id)
