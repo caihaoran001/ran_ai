@@ -937,7 +937,7 @@ class RanrenAIEngine:
                 else []
             )
 
-        if service_case_id and settings.ai_agent_enabled:
+        if service_case_id and settings.ai_agent_enabled and service_case and service_case.ai_agent_enabled:
             try:
                 agent_result = await generate_agent_reply(
                     service_case_id=service_case_id,

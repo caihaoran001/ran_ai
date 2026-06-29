@@ -8,12 +8,16 @@ from langchain_core.messages import AIMessage
 
 from app.core.config import get_settings
 from app.models.checkin import Checkin
+from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
-from app.services.agent.graph import AgentRunContext, RanrenAgentGraph
+from app.services.agent.graph import AgentReplyResult, AgentRunContext, RanrenAgentGraph
 from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.tools.service_case_tools import build_service_case_tools
 from app.services.agent.tools.web_search_tools import build_web_search_tools
+from app.services.channels.base import ChannelMessage
+from app.services.content_policy import set_ai_reply_delivery_mode
+from app.services.ranren_ai.engine import RanrenAIEngine
 
 
 class FakeToolCallingModel:
@@ -48,6 +52,22 @@ async def _case(db_session, *, started_at=None):
     db_session.add(service_case)
     await db_session.flush()
     return service_case
+
+
+async def _inbound(db_session, service_case: ServiceCase, content: str = "我现在第几天？") -> Message:
+    inbound = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content=content,
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(inbound)
+    await db_session.flush()
+    return inbound
 
 
 @pytest.mark.asyncio
@@ -160,3 +180,63 @@ async def test_web_search_rejects_health_queries_without_network():
 
     assert result["ok"] is False
     assert "不能联网搜索" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_engine_uses_agent_only_when_global_and_case_toggles_enabled(
+    db_session,
+    mock_message_channel,
+    monkeypatch,
+):
+    settings = get_settings()
+    original_agent_enabled = settings.ai_agent_enabled
+    settings.ai_agent_enabled = True
+    await set_ai_reply_delivery_mode("auto_send", db_session)
+    calls: list[int] = []
+
+    async def fake_generate_agent_reply(*, service_case_id, trigger_id, user_query, recent_messages, settings):
+        calls.append(service_case_id)
+        return AgentReplyResult(
+            reply="agent reply",
+            tool_trace=[{"name": "get_service_progress", "ok": True}],
+        )
+
+    async def fake_legacy_reply(self, *, message, service_case_id, analysis, trigger_id):
+        return "legacy reply"
+
+    monkeypatch.setattr("app.services.ranren_ai.engine.generate_agent_reply", fake_generate_agent_reply)
+    monkeypatch.setattr(RanrenAIEngine, "_generate_legacy_ai_reply", fake_legacy_reply)
+
+    try:
+        service_case = await _case(db_session)
+        inbound = await _inbound(db_session, service_case)
+        engine = RanrenAIEngine(mock_message_channel)
+        message = ChannelMessage(
+            channel="qiwe",
+            chat_id=service_case.group_id,
+            chat_type="group",
+            text="我现在第几天？",
+            message_id="agent-toggle-1",
+            user_id="user-1",
+        )
+
+        await engine._reply_with_ai(
+            message,
+            service_case_id=service_case.id,
+            analysis={"requires_human_intervention": False},
+            trigger_id=inbound.id,
+        )
+        assert calls == []
+
+        service_case.ai_agent_enabled = True
+        inbound2 = await _inbound(db_session, service_case, "我现在第几天？")
+        await engine._reply_with_ai(
+            message,
+            service_case_id=service_case.id,
+            analysis={"requires_human_intervention": False},
+            trigger_id=inbound2.id,
+        )
+        assert calls == [service_case.id]
+    finally:
+        settings.ai_agent_enabled = original_agent_enabled
+        await set_ai_reply_delivery_mode("manual_review", db_session)

@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { API_BASE } from "@/lib/api";
-import { Bot, CalendarCheck, Sunrise, BellRing } from "lucide-react";
+import { Bot, CalendarCheck, Sunrise, BellRing, Workflow } from "lucide-react";
 
 type ToggleKey =
   | "ai_auto_reply_enabled"
+  | "ai_agent_enabled"
   | "checkin_link_enabled"
   | "morning_push_enabled"
   | "inactive_wake_enabled";
@@ -60,12 +61,14 @@ function Row({
 export function CaseAutomationToggles({
   serviceCaseId,
   aiAutoReplyEnabled,
+  aiAgentEnabled,
   checkinLinkEnabled,
   morningPushEnabled,
   inactiveWakeEnabled,
 }: {
   serviceCaseId: number;
   aiAutoReplyEnabled: boolean;
+  aiAgentEnabled: boolean;
   checkinLinkEnabled: boolean;
   morningPushEnabled: boolean;
   inactiveWakeEnabled: boolean;
@@ -86,6 +89,14 @@ export function CaseAutomationToggles({
           icon={Bot}
           title="AI 自动回复"
           desc="关闭后机器人在群里完全不说话（等同群内「@机器人 退下」）；开启等同「回来」。"
+        />
+        <Row
+          serviceCaseId={serviceCaseId}
+          field="ai_agent_enabled"
+          initial={aiAgentEnabled}
+          icon={Workflow}
+          title="Agent 链路"
+          desc="默认关闭，走旧回复链路；开启后在全局 Agent 开关也开启时，本服务单可使用 LangGraph 工具链路。"
         />
 
         <div className="pb-1 pt-3 text-xs font-medium text-slate-400">定时推送</div>

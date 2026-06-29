@@ -38,6 +38,7 @@ class ServiceCaseUpdate(BaseModel):
     notes: str | None = None
     auto_send_documents: bool | None = None
     ai_auto_reply_enabled: bool | None = None
+    ai_agent_enabled: bool | None = None
     checkin_link_enabled: bool | None = None
     morning_push_enabled: bool | None = None
     inactive_wake_enabled: bool | None = None
@@ -61,6 +62,7 @@ class ServiceCaseRead(Timestamped):
     notes: str | None
     auto_send_documents: bool = False
     ai_auto_reply_enabled: bool = True
+    ai_agent_enabled: bool = False
     checkin_link_enabled: bool = True
     morning_push_enabled: bool = True
     inactive_wake_enabled: bool = True

@@ -132,6 +132,29 @@ async def test_service_case_ai_reply_toggle(admin_client):
 
 
 @pytest.mark.asyncio
+async def test_service_case_agent_toggle_defaults_off_and_updates(admin_client):
+    group_id = f"test-toggle-agent-{secrets.token_hex(6)}"
+    resp = await admin_client.post("/service-cases", json={
+        "group_id": group_id,
+        "user": {"name": "Agent开关测试"},
+    })
+    assert resp.status_code == 201, resp.text
+    case_id = resp.json()["id"]
+    assert resp.json()["ai_agent_enabled"] is False
+
+    resp = await admin_client.patch(
+        f"/service-cases/{case_id}",
+        json={"ai_agent_enabled": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ai_agent_enabled"] is True
+
+    resp = await admin_client.get(f"/service-cases/{case_id}")
+    assert resp.status_code == 200
+    assert resp.json()["ai_agent_enabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_qiwe_ai_reply_respects_global_manual_review_policy(admin_client, db_session):
     group_id = f"test-qiwe-ai-policy-{secrets.token_hex(6)}"
     resp = await admin_client.post("/service-cases", json={
