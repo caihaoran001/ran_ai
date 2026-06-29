@@ -320,8 +320,12 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "上下文不够时，优先追问一个关键点" in model.calls[0][0].content
     assert "不确定时可以承认不知道" in model.calls[0][0].content
     assert "多数时候只回对方当下这一下" in model.calls[0][0].content
+    assert "零称呼起头" in model.calls[0][0].content
+    assert "哥、姐、宝子、亲、阿姨" in model.calls[0][0].content
     assert "你说的是哪一款娜塔莎" in model.calls[0][0].content
     assert "咒术回战：节奏快" in model.calls[0][0].content
+    assert "今天没排便，体重还涨了" in model.calls[0][0].content
+    assert "昨晚睡得很差，今天很烦" in model.calls[0][0].content
 
 
 @pytest.mark.asyncio
