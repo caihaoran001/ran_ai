@@ -218,7 +218,10 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert len(model.calls) == 2
     assert "【当前时间】" in model.calls[0][1].content
     assert "现在、最近、最新、今年" in model.calls[0][1].content
-    assert "不要用表格" in model.calls[0][0].content
+    assert "短、直接、别演" in model.calls[0][0].content
+    assert "让我想想" in model.calls[0][0].content
+    assert "根据搜索结果" in model.calls[0][0].content
+    assert "普通闲聊、确认、纠正上一轮" in model.calls[0][0].content
     assert "咒术回战：节奏快" in model.calls[0][0].content
 
 
