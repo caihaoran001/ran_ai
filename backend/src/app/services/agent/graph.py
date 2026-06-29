@@ -11,6 +11,8 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langgraph.graph import END, START, StateGraph
 
 from app.core.config import Settings, get_settings
+from app.db import session as db_session_module
+from app.services.agent.context_builder import build_agent_memory_context
 from app.services.agent.model import create_agent_chat_model
 from app.services.agent.prompts import AGENT_SYSTEM_PROMPT, build_agent_user_prompt
 from app.services.agent.skill_registry import SkillRegistry
@@ -59,6 +61,7 @@ class RanrenAgentGraph:
         self.graph = self._compile()
 
     async def run(self, *, user_query: str, recent_messages: list[str]) -> AgentReplyResult:
+        memory_context = await self._build_memory_context()
         initial_messages: list[BaseMessage] = [
             SystemMessage(content=AGENT_SYSTEM_PROMPT),
             HumanMessage(
@@ -67,6 +70,7 @@ class RanrenAgentGraph:
                     recent_messages=recent_messages,
                     skill_catalog=self.skill_registry.catalog_text(),
                     current_time_context=_current_time_context(),
+                    memory_context=memory_context,
                 )
             ),
         ]
@@ -100,6 +104,17 @@ class RanrenAgentGraph:
             tool_trace=list(result.get("tool_trace") or []),
             data_tool_failed=bool(result.get("data_tool_failed")),
         )
+
+    async def _build_memory_context(self) -> str:
+        try:
+            async with db_session_module.SessionLocal() as session:
+                return await build_agent_memory_context(
+                    session,
+                    service_case_id=self.context.service_case_id,
+                )
+        except Exception:
+            logger.exception("Failed to build agent memory context service_case_id=%s", self.context.service_case_id)
+            return "暂无可用用户背景。"
 
     def _compile(self):
         builder = StateGraph(AgentState)

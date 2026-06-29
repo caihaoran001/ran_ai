@@ -12,6 +12,8 @@ from app.models.message import Message, MessageDirection, MessagePurpose, Messag
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_profile import UserProfile
+from app.models.user_state_profile import UserStateProfile
+from app.services.agent.context_builder import build_agent_memory_context
 from app.services.agent.graph import AgentReplyResult, AgentRunContext, RanrenAgentGraph
 from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.tools.service_case_tools import build_service_case_tools
@@ -188,9 +190,75 @@ async def test_weight_trend_tool_returns_initial_weight_when_no_checkins(db_sess
 
 
 @pytest.mark.asyncio
+async def test_agent_memory_context_compacts_profile_and_state(db_session):
+    service_case = await _case(db_session)
+    db_session.add(
+        UserProfile(
+            service_case_id=service_case.id,
+            profile_json={
+                "summary": "用户经常加班，晚餐容易吃得晚。",
+                "main_problem": "节律不稳定",
+                "day28_goal": "白天精力更稳",
+                "need_analysis": {"priority_need": "先稳住晚餐和睡前节律"},
+            },
+            summary="用户经常加班，晚餐容易吃得晚。",
+            generated_by_model="test",
+        )
+    )
+    db_session.add(
+        UserStateProfile(
+            service_case_id=service_case.id,
+            state_json={
+                "domains": {
+                    "action_focus": {
+                        "current": {
+                            "value": {
+                                "current_focus": {
+                                    "label": "晚餐节律",
+                                    "action": "先保证晚餐不拖太晚",
+                                    "reason": "近期加班影响执行",
+                                }
+                            }
+                        }
+                    },
+                    "personal_preferences": {
+                        "current": {"value": {"hobby": "喜欢潮玩，最近聊到 LABUBU 后面的热门款"}}
+                    },
+                    "lifestyle_habits": {
+                        "current": {"value": {"work": "工作日晚间经常加班"}}
+                    },
+                }
+            },
+            summary="动态状态",
+            source="test",
+        )
+    )
+    await db_session.flush()
+
+    memory = await build_agent_memory_context(db_session, service_case_id=service_case.id)
+
+    assert "画像摘要：用户经常加班" in memory
+    assert "当前行动重点：晚餐节律" in memory
+    assert "个人偏好：喜欢潮玩" in memory
+    assert "稳定习惯：工作日晚间经常加班" in memory
+
+
+@pytest.mark.asyncio
 async def test_graph_runs_agent_tools_loop(db_session):
     settings = get_settings()
     service_case = await _case(db_session)
+    db_session.add(
+        UserProfile(
+            service_case_id=service_case.id,
+            profile_json={
+                "summary": "用户晚餐容易拖晚，喜欢潮玩话题。",
+                "main_problem": "节律不稳定",
+            },
+            summary="用户晚餐容易拖晚，喜欢潮玩话题。",
+            generated_by_model="test",
+        )
+    )
+    await db_session.flush()
     model = FakeToolCallingModel(
         [
             AIMessage(
@@ -217,10 +285,14 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert result.tool_trace[0]["name"] == "get_service_progress"
     assert len(model.calls) == 2
     assert "【当前时间】" in model.calls[0][1].content
+    assert "【隐性用户背景】" in model.calls[0][1].content
+    assert "用户晚餐容易拖晚" in model.calls[0][1].content
     assert "现在、最近、最新、今年" in model.calls[0][1].content
     assert "短、直接、别演" in model.calls[0][0].content
     assert "让我想想" in model.calls[0][0].content
     assert "根据搜索结果" in model.calls[0][0].content
+    assert "不要说“根据你的画像/资料/系统记录”" in model.calls[0][0].content
+    assert "实时数据必须查工具" in model.calls[0][0].content
     assert "这是群聊接话，不是考试答题" in model.calls[0][0].content
     assert "上下文不够时，优先追问一个关键点" in model.calls[0][0].content
     assert "不确定时可以承认不知道" in model.calls[0][0].content

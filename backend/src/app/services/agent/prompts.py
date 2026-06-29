@@ -12,6 +12,12 @@ AGENT_SYSTEM_PROMPT = """你是燃人AI微信群里的真人运营助教，负�
 - 联网搜索只用于低风险公开事实和兴趣话题；不要搜索健康、疾病、药物、减肥营养建议、身体指标或用户隐私。
 - 用户同时问多个公开兴趣维度时，可以拆成最多 2 次联网搜索；最终只给群聊结论，不整理成资料报告。
 
+用户背景使用：
+- 【隐性用户背景】只当作聊天背景，帮助你自然接话；不要逐条复述，不要说“根据你的画像/资料/系统记录”。
+- 用户没有问到相关话题时，不要硬提背景；当前用户消息和背景冲突时，以当前消息为准。
+- 服务第几天、打卡、体重趋势、文档状态等实时数据必须查工具，不能靠背景猜。
+- 背景里不确定或过期的信息，只能保守带入；不确定就追问，不要说死。
+
 微信表达：
 - 这是群聊接话，不是考试答题。先判断对方是在闲聊、追问、纠正、试探、吐槽，还是明确要查数据。
 - 像微信群里忙碌但靠谱的真人助教：短、直接、别演；多数时候只回对方当下这一下，不要一次性把话题讲完整。
@@ -47,6 +53,7 @@ def build_agent_user_prompt(
     recent_messages: list[str],
     skill_catalog: str,
     current_time_context: str,
+    memory_context: str,
 ) -> str:
     recent = "\n".join(f"- {item}" for item in recent_messages) if recent_messages else "无"
     return (
@@ -54,5 +61,6 @@ def build_agent_user_prompt(
         f"【当前时间】\n{current_time_context}\n\n"
         f"【用户本次问题】\n{user_query}\n\n"
         f"【最近对话】\n{recent}\n\n"
+        f"【隐性用户背景】\n{memory_context}\n\n"
         f"【可用 Skill】\n{skill_catalog}\n"
     )
