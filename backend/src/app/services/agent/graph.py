@@ -132,12 +132,31 @@ class RanrenAgentGraph:
             }
 
         runnable_calls = tool_calls[:remaining]
+        allowed_calls: list[tuple[int, dict[str, Any]]] = []
+        rejected_results: dict[int, tuple[ToolMessage, dict[str, Any]]] = {}
+        web_search_seen = int(state.get("web_search_count") or 0)
+        for idx, call in enumerate(runnable_calls):
+            name = call.get("name") or ""
+            if name == "web_search_lifestyle":
+                if web_search_seen >= 1:
+                    rejected_results[idx] = self._reject_tool_call(
+                        call,
+                        "TOOL_REJECTED: 每次 Agent 运行最多联网搜索一次。",
+                    )
+                    continue
+                web_search_seen += 1
+            allowed_calls.append((idx, call))
+
         results = await asyncio.gather(
-            *(self._run_one_tool(call, state) for call in runnable_calls),
+            *(self._run_one_tool(call, state) for _, call in allowed_calls),
             return_exceptions=False,
         )
-        tool_messages = [item[0] for item in results]
-        traces = [item[1] for item in results]
+        ordered_results = dict(rejected_results)
+        for (idx, _), result in zip(allowed_calls, results, strict=True):
+            ordered_results[idx] = result
+        ordered = [ordered_results[idx] for idx in range(len(runnable_calls))]
+        tool_messages = [item[0] for item in ordered]
+        traces = [item[1] for item in ordered]
         web_search_count = int(state.get("web_search_count") or 0) + sum(1 for trace in traces if trace["name"] == "web_search_lifestyle")
         data_tool_failed = bool(state.get("data_tool_failed")) or any(trace.get("data_tool_failed") for trace in traces)
         loaded = set(state.get("loaded_skills") or [])
@@ -179,6 +198,15 @@ class RanrenAgentGraph:
             trace["data_tool_failed"] = _is_data_tool(name)
             content = f"TOOL_ERROR: {type(exc).__name__}: {exc}"
         return ToolMessage(content=content, tool_call_id=call_id), trace
+
+    def _reject_tool_call(self, call: dict[str, Any], content: str) -> tuple[ToolMessage, dict[str, Any]]:
+        trace: dict[str, Any] = {
+            "name": call.get("name") or "",
+            "args": call.get("args") or {},
+            "ok": False,
+            "error": content,
+        }
+        return ToolMessage(content=content, tool_call_id=_tool_call_id(call)), trace
 
     def _route_after_agent(self, state: AgentState) -> str:
         messages = state.get("messages") or []

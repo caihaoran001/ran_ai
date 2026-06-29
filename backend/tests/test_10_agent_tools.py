@@ -37,6 +37,16 @@ class FakeToolCallingModel:
         return self.responses.pop(0)
 
 
+class FakeAsyncTool:
+    def __init__(self, result):
+        self.calls = []
+        self.result = result
+
+    async def ainvoke(self, args):
+        self.calls.append(args)
+        return self.result
+
+
 async def _case(db_session, *, started_at=None):
     user = User(name="Agent测试用户")
     db_session.add(user)
@@ -180,6 +190,50 @@ async def test_web_search_rejects_health_queries_without_network():
 
     assert result["ok"] is False
     assert "不能联网搜索" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_graph_runs_only_one_web_search_per_agent_run(db_session):
+    settings = get_settings()
+    service_case = await _case(db_session)
+    model = FakeToolCallingModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "web_search_lifestyle",
+                        "args": {"query": "近期电影推荐"},
+                        "id": "call-web-1",
+                    },
+                    {
+                        "name": "web_search_lifestyle",
+                        "args": {"query": "近期电视剧推荐"},
+                        "id": "call-web-2",
+                    },
+                ],
+            ),
+            AIMessage(content="最近可以先看一部电影和一部剧，挑你喜欢的类型就好。"),
+        ]
+    )
+    graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=service_case.id, trigger_id=123),
+        settings=settings,
+        chat_model=model,
+    )
+    fake_search = FakeAsyncTool({"ok": True, "results": [{"title": "电影推荐"}]})
+    graph.tools_by_name["web_search_lifestyle"] = fake_search
+
+    result = await graph.run(user_query="最近有什么好看的电影电视剧？", recent_messages=[])
+
+    assert len(fake_search.calls) == 1
+    assert [trace["name"] for trace in result.tool_trace] == [
+        "web_search_lifestyle",
+        "web_search_lifestyle",
+    ]
+    assert result.tool_trace[0]["ok"] is True
+    assert result.tool_trace[1]["ok"] is False
+    assert "最多联网搜索一次" in result.tool_trace[1]["error"]
 
 
 @pytest.mark.asyncio
