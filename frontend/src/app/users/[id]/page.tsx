@@ -71,9 +71,6 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         {profile ? (
           <>
             <ProfileView profile={profile.profile_json} fallback={profile.summary} serviceCase={serviceCase} />
-            <AiContextPreview
-              context={aiContextPreview?.context}
-            />
           </>
         ) : (
           <p className="mt-3 text-sm text-zinc-500">尚未生成用户画像。用户提交入营问卷后，系统会自动生成画像和交付文件。</p>
@@ -85,6 +82,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
             <h2 className="font-medium">当前用户状态</h2>
             <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">证据驱动更新</span>
           </div>
+          <LongTermMemoryView state={stateProfile.state_json} />
           <StateProfileView state={stateProfile.state_json} updatedAt={stateProfile.updated_at} />
         </section>
       )}
@@ -156,6 +154,13 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           ))}
         </div>
       </section>
+      {profile && (
+        <section className="rounded-lg border border-zinc-200 bg-white p-4">
+          <h2 className="font-medium">调试信息</h2>
+          <p className="mt-1 text-xs text-zinc-500">供排查 AI 回复上下文使用，日常运营可忽略。</p>
+          <AiContextPreview context={aiContextPreview?.context} />
+        </section>
+      )}
     </div>
   );
 }
@@ -358,10 +363,12 @@ function ProfileView({
       </div>
 
       {hasNeedAnalysis && (
-        <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-          <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">
-            健康需求识别 (Health Needs Analysis)
-          </h3>
+        <details className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50">
+          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-zinc-700">
+            <span>完整健康需求识别</span>
+            <span className="text-xs font-normal text-zinc-400">展开查看表层需求、深层需求和证据</span>
+          </summary>
+          <div className="border-t border-zinc-200 p-4">
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-3">
               <NeedList label="表层表达需求" items={needAnalysis.surface_needs} />
@@ -377,7 +384,8 @@ function ProfileView({
               <NeedList label="依据/判定证据" items={needAnalysis.evidence_notes} />
             </div>
           </div>
-        </div>
+          </div>
+        </details>
       )}
     </div>
   );
@@ -420,19 +428,66 @@ function NeedList({ label, items }: { label: string; items: unknown }) {
 function AiContextPreview({ context }: { context?: string }) {
   const contextText = context || "暂无 AI 上下文。";
   return (
-    <details className="group mt-4 rounded-lg border border-slate-800 bg-[#0c1524] text-cyan-50">
+    <details className="group mt-3 rounded-lg border border-slate-200 bg-slate-50 text-slate-900">
       <summary className="flex cursor-pointer items-center justify-between px-4 py-3 select-none font-semibold focus:outline-none">
-        <span className="flex items-center gap-2 text-sm text-cyan-400 font-mono">
-          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+        <span className="flex items-center gap-2 text-sm text-slate-700">
+          <span className="h-2 w-2 rounded-full bg-slate-400" />
           AI 视角：真实提示词上下文预览
         </span>
-        <span className="text-xs text-zinc-500 font-mono group-open:hidden">点击展开预览</span>
-        <span className="text-xs text-zinc-500 font-mono hidden group-open:inline">点击收起</span>
+        <span className="text-xs text-zinc-500 group-open:hidden">点击展开</span>
+        <span className="text-xs text-zinc-500 hidden group-open:inline">点击收起</span>
       </summary>
-      <div className="border-t border-slate-800/80 px-4 py-4 font-mono text-xs leading-6 overflow-x-auto whitespace-pre-wrap select-all">
+      <div className="border-t border-slate-200 px-4 py-4 font-mono text-xs leading-6 overflow-x-auto whitespace-pre-wrap select-all text-slate-600">
         {contextText}
       </div>
     </details>
+  );
+}
+
+function LongTermMemoryView({ state }: { state: Record<string, unknown> }) {
+  const domains = recordValue(state.domains);
+  const preferences = memoryItems(recordValue(domains.personal_preferences), 4);
+  const habits = memoryItems(recordValue(domains.lifestyle_habits), 4);
+  const risk = memoryItems(recordValue(domains.risk_profile), 2);
+  const hasMemory = preferences.length > 0 || habits.length > 0 || risk.length > 0;
+  if (!hasMemory) return null;
+
+  return (
+    <div className="mt-3 grid gap-3 md:grid-cols-3">
+      <MemoryCard title="长期偏好" items={preferences} empty="暂无明确偏好" />
+      <MemoryCard title="稳定习惯" items={habits} empty="暂无稳定习惯" />
+      <MemoryCard title="注意边界" items={risk} empty="暂无特殊风险" tone="rose" />
+    </div>
+  );
+}
+
+function MemoryCard({
+  title,
+  items,
+  empty,
+  tone = "slate",
+}: {
+  title: string;
+  items: string[];
+  empty: string;
+  tone?: "slate" | "rose";
+}) {
+  const toneClass = tone === "rose"
+    ? "border-rose-100 bg-rose-50 text-rose-950"
+    : "border-slate-100 bg-slate-50 text-slate-950";
+  return (
+    <div className={`rounded-lg border p-3 ${toneClass}`}>
+      <div className="text-xs font-semibold opacity-70">{title}</div>
+      {items.length > 0 ? (
+        <ul className="mt-2 space-y-1.5 text-sm leading-5">
+          {items.map((item) => (
+            <li key={item} className="line-clamp-2">{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-2 text-sm opacity-60">{empty}</div>
+      )}
+    </div>
   );
 }
 
@@ -444,6 +499,7 @@ function StateProfileView({
   updatedAt: string;
 }) {
   const domains = recordValue(state.domains);
+  const primaryKeys = ["action_focus", "personal_preferences", "lifestyle_habits", "body_feedback", "risk_profile"];
   const visibleDomains = [
     "action_focus",
     "goals",
@@ -459,18 +515,33 @@ function StateProfileView({
   ]
     .map((key) => [key, recordValue(domains[key])] as const)
     .filter(([, domain]) => Object.keys(recordValue(domain.current)).length || (Array.isArray(domain.history) && domain.history.length > 0));
+  const primaryDomains = visibleDomains.filter(([key]) => primaryKeys.includes(key));
+  const secondaryDomains = visibleDomains.filter(([key]) => !primaryKeys.includes(key));
 
   return (
     <div className="mt-3 space-y-4 text-sm">
       <p className="text-xs text-zinc-500">
-        当前状态会先由入营问卷建立基线，之后在用户聊天、打卡或阶段成效产生新证据时更新；旧证据会保留在证据链中。
+        默认只展示运营接话最常用的信息；完整字段和证据链可展开查看。
         最近更新：{formatDateTime(updatedAt)}
       </p>
       <div className="grid gap-3 lg:grid-cols-2">
-        {visibleDomains.map(([key, domain]) => (
+        {primaryDomains.map(([key, domain]) => (
           <StateDomainCard key={key} domain={domain} />
         ))}
       </div>
+      {secondaryDomains.length > 0 && (
+        <details className="rounded-lg border border-zinc-200 bg-zinc-50">
+          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-zinc-700">
+            <span>查看完整状态字段</span>
+            <span className="text-xs font-normal text-zinc-400">{secondaryDomains.length} 个补充字段</span>
+          </summary>
+          <div className="grid gap-3 border-t border-zinc-200 p-3 lg:grid-cols-2">
+            {secondaryDomains.map(([key, domain]) => (
+              <StateDomainCard key={key} domain={domain} />
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -752,6 +823,20 @@ function formatStateValue(value: unknown): string {
   }
   const record = recordValue(value);
   return text(record.value) || Object.values(record).map(formatStateValue).filter(Boolean).join("；") || "暂无数据";
+}
+
+function memoryItems(domain: Record<string, unknown>, limit: number) {
+  const current = recordValue(domain.current);
+  const value = recordValue(current.value);
+  return Object.entries(value)
+    .map(([key, item]) => {
+      const record = recordValue(item);
+      const rawValue = Object.prototype.hasOwnProperty.call(record, "value") ? record.value : item;
+      const formatted = formatStateValue(rawValue);
+      return formatted && formatted !== "暂无数据" ? `${stateFieldLabel(key)}：${formatted}` : "";
+    })
+    .filter(Boolean)
+    .slice(0, limit);
 }
 
 function blockByKey(document: UserDocument | undefined, key: string) {
