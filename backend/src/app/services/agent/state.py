@@ -15,6 +15,8 @@ class AgentState(TypedDict, total=False):
     tool_call_count: int
     web_search_count: int
     data_tool_failed: bool
+    data_tool_status: dict[str, bool]
+    consecutive_tool_failures: dict[str, int]
 
 
 @dataclass(frozen=True)

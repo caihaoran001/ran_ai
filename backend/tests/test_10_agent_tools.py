@@ -11,6 +11,7 @@ from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
+from app.models.user_profile import UserProfile
 from app.services.agent.graph import AgentReplyResult, AgentRunContext, RanrenAgentGraph
 from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.tools.service_case_tools import build_service_case_tools
@@ -45,6 +46,21 @@ class FakeAsyncTool:
     async def ainvoke(self, args):
         self.calls.append(args)
         return self.result
+
+
+class FakeSequenceTool:
+    def __init__(self, results):
+        self.calls = []
+        self.results = list(results)
+
+    async def ainvoke(self, args):
+        self.calls.append(args)
+        if not self.results:
+            return {"ok": True}
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 async def _case(db_session, *, started_at=None):
@@ -143,6 +159,35 @@ async def test_weight_trend_tool_returns_data_insufficient(db_session):
 
 
 @pytest.mark.asyncio
+async def test_weight_trend_tool_returns_initial_weight_when_no_checkins(db_session):
+    settings = get_settings()
+    service_case = await _case(db_session)
+    db_session.add(
+        UserProfile(
+            service_case_id=service_case.id,
+            profile_json={"overview": {"height_weight": "170cm / 65kg"}},
+            summary="入营初始体重 65kg",
+        )
+    )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_service_case_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=settings,
+        )
+    }
+
+    result = await tools["get_weight_trend"].ainvoke({"days": 7})
+
+    assert result["ok"] is True
+    assert result["points"] == []
+    assert result["initial_weight"] == 65
+    assert result["trend"] is None
+    assert "入营初始体重" in result["note"]
+
+
+@pytest.mark.asyncio
 async def test_graph_runs_agent_tools_loop(db_session):
     settings = get_settings()
     service_case = await _case(db_session)
@@ -173,6 +218,107 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert len(model.calls) == 2
     assert "【当前时间】" in model.calls[0][1].content
     assert "现在、最近、最新、今年" in model.calls[0][1].content
+    assert "不要用表格" in model.calls[0][0].content
+    assert "咒术回战：节奏快" in model.calls[0][0].content
+
+
+@pytest.mark.asyncio
+async def test_graph_data_tool_failure_resets_after_success(db_session):
+    settings = get_settings()
+    service_case = await _case(db_session)
+    model = FakeToolCallingModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "get_service_progress", "args": {}, "id": "call-progress-1"}],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "get_service_progress", "args": {}, "id": "call-progress-2"}],
+            ),
+            AIMessage(content="刚才查到了，你现在是服务进行中。"),
+        ]
+    )
+    graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=service_case.id),
+        settings=settings,
+        chat_model=model,
+    )
+    graph.tools_by_name["get_service_progress"] = FakeSequenceTool(
+        [{"ok": False, "error": "temporary db error"}, {"ok": True, "status": "in_service"}]
+    )
+
+    result = await graph.run(user_query="我现在第几天？", recent_messages=[])
+
+    assert result.data_tool_failed is False
+    assert result.tool_trace[0]["data_tool_failed"] is True
+    assert result.tool_trace[1]["data_tool_failed"] is False
+
+
+@pytest.mark.asyncio
+async def test_graph_data_tool_final_failure_stays_failed(db_session):
+    settings = get_settings()
+    service_case = await _case(db_session)
+    model = FakeToolCallingModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "get_service_progress", "args": {}, "id": "call-progress-1"}],
+            ),
+            AIMessage(content="我这边暂时查不到准确数据。"),
+        ]
+    )
+    graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=service_case.id),
+        settings=settings,
+        chat_model=model,
+    )
+    graph.tools_by_name["get_service_progress"] = FakeSequenceTool([{"ok": False, "error": "db error"}])
+
+    result = await graph.run(user_query="我现在第几天？", recent_messages=[])
+
+    assert result.data_tool_failed is True
+    assert result.tool_trace[0]["data_tool_failed"] is True
+
+
+@pytest.mark.asyncio
+async def test_graph_circuits_tool_after_two_consecutive_failures(db_session):
+    settings = get_settings()
+    service_case = await _case(db_session)
+    model = FakeToolCallingModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "get_service_progress", "args": {}, "id": "call-progress-1"}],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "get_service_progress", "args": {}, "id": "call-progress-2"}],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "get_service_progress", "args": {}, "id": "call-progress-3"}],
+            ),
+            AIMessage(content="我这边暂时查不到准确数据。"),
+        ]
+    )
+    graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=service_case.id),
+        settings=settings,
+        chat_model=model,
+    )
+    fake_tool = FakeSequenceTool(
+        [{"ok": False, "error": "db error"}, {"ok": False, "error": "db error"}]
+    )
+    graph.tools_by_name["get_service_progress"] = fake_tool
+
+    result = await graph.run(user_query="我现在第几天？", recent_messages=[])
+
+    assert len(fake_tool.calls) == 2
+    assert result.tool_trace[2]["ok"] is False
+    assert result.tool_trace[2]["circuit_rejected"] is True
+    assert "TOOL_CIRCUIT_OPEN" in result.tool_trace[2]["error"]
+    assert result.data_tool_failed is True
 
 
 @pytest.mark.asyncio

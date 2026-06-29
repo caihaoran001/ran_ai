@@ -22,6 +22,7 @@ logger = logging.getLogger("uvicorn.error")
 DATA_QUERY_KEYWORDS = ("第几天", "服务进度", "打卡", "体重", "腰围", "文档", "问卷", "最近变化")
 DATA_UNAVAILABLE_REPLY = "我这边暂时没能查到准确记录，先不乱报数据。稍后再帮你确认一下。"
 WEB_SEARCH_CALL_LIMIT = 2
+TOOL_FAILURE_CIRCUIT_LIMIT = 2
 
 
 class AgentDataUnavailableError(RuntimeError):
@@ -77,6 +78,8 @@ class RanrenAgentGraph:
             "tool_call_count": 0,
             "web_search_count": 0,
             "data_tool_failed": False,
+            "data_tool_status": {},
+            "consecutive_tool_failures": {},
         }
         try:
             result = await asyncio.wait_for(
@@ -139,8 +142,17 @@ class RanrenAgentGraph:
         allowed_calls: list[tuple[int, dict[str, Any]]] = []
         rejected_results: dict[int, tuple[ToolMessage, dict[str, Any]]] = {}
         web_search_seen = int(state.get("web_search_count") or 0)
+        failure_counts = dict(state.get("consecutive_tool_failures") or {})
         for idx, call in enumerate(runnable_calls):
             name = call.get("name") or ""
+            if name and failure_counts.get(name, 0) >= TOOL_FAILURE_CIRCUIT_LIMIT:
+                rejected_results[idx] = self._reject_tool_call(
+                    call,
+                    f"TOOL_CIRCUIT_OPEN: {name} 连续失败，已停止本轮继续调用。",
+                    data_tool_failed=_is_data_tool(name),
+                    circuit_rejected=True,
+                )
+                continue
             if name == "web_search_lifestyle":
                 if web_search_seen >= WEB_SEARCH_CALL_LIMIT:
                     rejected_results[idx] = self._reject_tool_call(
@@ -164,7 +176,21 @@ class RanrenAgentGraph:
         web_search_count = int(state.get("web_search_count") or 0) + sum(
             1 for trace in traces if trace["name"] == "web_search_lifestyle" and trace.get("ok")
         )
-        data_tool_failed = bool(state.get("data_tool_failed")) or any(trace.get("data_tool_failed") for trace in traces)
+        data_tool_status = dict(state.get("data_tool_status") or {})
+        consecutive_tool_failures = dict(state.get("consecutive_tool_failures") or {})
+        for trace in traces:
+            name = str(trace.get("name") or "")
+            if not name:
+                continue
+            if _is_data_tool(name):
+                data_tool_status[name] = bool(trace.get("data_tool_failed"))
+            if trace.get("circuit_rejected"):
+                continue
+            if trace.get("ok"):
+                consecutive_tool_failures[name] = 0
+            else:
+                consecutive_tool_failures[name] = consecutive_tool_failures.get(name, 0) + 1
+        data_tool_failed = any(data_tool_status.values())
         loaded = set(state.get("loaded_skills") or [])
         for trace in traces:
             if trace["name"] == "skill" and trace.get("ok"):
@@ -177,6 +203,8 @@ class RanrenAgentGraph:
             "tool_call_count": current_count + len(runnable_calls),
             "web_search_count": web_search_count,
             "data_tool_failed": data_tool_failed,
+            "data_tool_status": data_tool_status,
+            "consecutive_tool_failures": consecutive_tool_failures,
             "loaded_skills": sorted(loaded),
         }
 
@@ -205,13 +233,24 @@ class RanrenAgentGraph:
             content = f"TOOL_ERROR: {type(exc).__name__}: {exc}"
         return ToolMessage(content=content, tool_call_id=call_id), trace
 
-    def _reject_tool_call(self, call: dict[str, Any], content: str) -> tuple[ToolMessage, dict[str, Any]]:
+    def _reject_tool_call(
+        self,
+        call: dict[str, Any],
+        content: str,
+        *,
+        data_tool_failed: bool = False,
+        circuit_rejected: bool = False,
+    ) -> tuple[ToolMessage, dict[str, Any]]:
         trace: dict[str, Any] = {
             "name": call.get("name") or "",
             "args": call.get("args") or {},
             "ok": False,
             "error": content,
         }
+        if data_tool_failed:
+            trace["data_tool_failed"] = True
+        if circuit_rejected:
+            trace["circuit_rejected"] = True
         return ToolMessage(content=content, tool_call_id=_tool_call_id(call)), trace
 
     def _route_after_agent(self, state: AgentState) -> str:

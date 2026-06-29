@@ -13,6 +13,7 @@ from app.db.session import SessionLocal
 from app.models.checkin import Checkin
 from app.models.service_case import ServiceCase
 from app.models.user_document import UserDocument
+from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.services.agent.state import AgentRunContext
 from app.services.service_case_queries import effective_service_day, effective_start_at, select_active_service_cases
@@ -77,13 +78,24 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
         days = _clamp_days(days)
         async with SessionLocal() as session:
             rows = await _recent_checkins(session, context.service_case_id, days)
+            initial_weight = await _initial_weight_from_profile(session, context.service_case_id)
         points: list[dict[str, Any]] = []
         for row in rows:
             weight = _extract_float((row.parsed_json or {}).get("weight"))
             if weight is not None:
                 points.append({"date": row.checkin_date.isoformat(), "weight": weight})
         if len(points) < 2:
-            return {"ok": True, "days": days, "points": points, "trend": None, "note": "体重数据不足，不能判断趋势。"}
+            note = "体重数据不足，不能判断趋势。"
+            if initial_weight is not None and not points:
+                note = "暂无打卡体重，只有入营初始体重可参考，不能判断趋势。"
+            return {
+                "ok": True,
+                "days": days,
+                "points": points,
+                "initial_weight": initial_weight,
+                "trend": None,
+                "note": note,
+            }
         delta = round(points[-1]["weight"] - points[0]["weight"], 2)
         direction = "下降" if delta < 0 else ("上升" if delta > 0 else "持平")
         return {"ok": True, "days": days, "points": points, "delta_kg": delta, "direction": direction}
@@ -134,6 +146,34 @@ async def _recent_checkins(session, service_case_id: int, days: int) -> list[Che
         .limit(days)
     )
     return list(reversed(list(result)))
+
+
+async def _initial_weight_from_profile(session, service_case_id: int) -> float | None:
+    profile = await session.scalar(
+        select(UserProfile)
+        .where(UserProfile.service_case_id == service_case_id)
+        .order_by(UserProfile.created_at.desc())
+        .limit(1)
+    )
+    if profile is None:
+        return None
+    return _extract_initial_weight(profile.profile_json or {})
+
+
+def _extract_initial_weight(profile_json: dict[str, Any]) -> float | None:
+    overview = profile_json.get("overview") if isinstance(profile_json.get("overview"), dict) else {}
+    for key in ("weight_kg", "initial_weight_kg", "current_weight_kg", "weight"):
+        weight = _extract_float(overview.get(key))
+        if weight is not None:
+            return weight
+    height_weight = overview.get("height_weight")
+    if isinstance(height_weight, str):
+        for part in height_weight.split("/"):
+            if "kg" in part.lower() or "公斤" in part:
+                weight = _extract_float(part)
+                if weight is not None:
+                    return weight
+    return None
 
 
 def _clamp_days(days: int) -> int:
