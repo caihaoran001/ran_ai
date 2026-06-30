@@ -45,7 +45,7 @@ from app.services.intervention_service import (
 from app.services.outcome_engine import record_intake_profile_completed
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.questionnaire_template import get_active_questionnaire_template
-from app.services.service_case_queries import active_service_case_condition, get_active_service_case
+from app.services.service_case_queries import active_service_case_condition, get_active_service_case, service_window_ended
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,9 @@ async def get_questionnaire(
 ) -> QuestionnairePublic:
     service_case = await _case_by_token(session, token, include_deleted=False)
     default_values: dict[str, Any] = {}
+    timezone = ZoneInfo(get_settings().reminder_timezone)
+    if template != "intake" and service_window_ended(service_case, datetime.now(timezone), timezone):
+        raise HTTPException(status_code=410, detail="28天服务已结束，无需继续打卡")
     if template == "personalized_checkin":
         fields = await _personalized_checkin_fields(session, service_case)
         template_payload = {
@@ -102,6 +105,9 @@ async def submit_questionnaire(
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnaireSubmission:
     service_case = await _case_by_token(session, token, include_deleted=False)
+    timezone = ZoneInfo(get_settings().reminder_timezone)
+    if template != "intake" and service_window_ended(service_case, datetime.now(timezone), timezone):
+        raise HTTPException(status_code=410, detail="28天服务已结束，无需继续打卡")
     if template == "personalized_checkin":
         fields = await _personalized_checkin_fields(session, service_case)
     else:

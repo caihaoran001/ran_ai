@@ -67,6 +67,8 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const documentHistory = documentHistoryResult ?? documents;
   const questionnaireUrl = `${FRONTEND_BASE.replace(/\/$/, "")}/q/${serviceCase.questionnaire_token}`;
   const isGenerating = serviceCase.status === "generating";
+  const serviceGraduationDate = getServiceGraduationDate(serviceCase.started_at, serviceCase.service_plan_start_date);
+  const serviceWindowEnded = Boolean(serviceGraduationDate && chinaDateKey(new Date()) > serviceGraduationDate);
   const generationError =
     serviceCase.status === "questionnaire_submitted" && documents.length === 0
       ? extractGenerationError(serviceCase.notes)
@@ -159,6 +161,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           checkinLinkEnabled={serviceCase.checkin_link_enabled}
           morningPushEnabled={serviceCase.morning_push_enabled}
           inactiveWakeEnabled={serviceCase.inactive_wake_enabled}
+          serviceWindowEnded={serviceWindowEnded}
         />
       )}
 
@@ -176,7 +179,16 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-        <InfoCard title="已服务时长" value={formatServiceDuration(serviceCase.started_at, serviceCase.service_plan_start_date)} icon={Timer} />
+        <InfoCard
+          title="已服务时长"
+          value={formatServiceDuration(
+            serviceCase.started_at,
+            serviceCase.service_plan_start_date,
+            serviceCase.ended_at,
+            serviceCase.status,
+          )}
+          icon={Timer}
+        />
         <InfoCard title="内容生成耗时" value={formatGenerationDuration(serviceCase.questionnaire_to_llm_output_ms)} icon={Zap} />
         <InfoCard title="群最后活跃" value={formatDateTime(stats?.last_message_at)} icon={Clock3} />
         <InfoCard title="用户最后发言" value={formatDateTime(stats?.last_user_message_at)} icon={UserRound} />
@@ -401,7 +413,19 @@ function formatDateTime(value?: string | null) {
   return formatChinaDateTime(value, "暂无");
 }
 
-function formatServiceDuration(startedAt?: string | null, planStartDate?: string | null) {
+function formatServiceDuration(
+  startedAt?: string | null,
+  planStartDate?: string | null,
+  endedAt?: string | null,
+  status?: string | null,
+) {
+  const graduationDate = getServiceGraduationDate(startedAt, planStartDate);
+  if (graduationDate && chinaDateKey(new Date()) > graduationDate) {
+    return `已于 ${formatDateKey(graduationDate)} 毕业`;
+  }
+  if (status === "completed" && endedAt) {
+    return `已于 ${formatChinaDateTime(endedAt, "已完成")} 完成`;
+  }
   // 填了计划开始日期：按计划日算——未到则"待开始"，当天=第1天
   if (planStartDate) {
     const plan = new Date(`${planStartDate}T00:00:00`);
@@ -423,6 +447,36 @@ function formatServiceDuration(startedAt?: string | null, planStartDate?: string
   const hours = totalHours % 24;
   if (days <= 0) return `${hours}h`;
   return `${days}天零${hours}h`;
+}
+
+function getServiceGraduationDate(startedAt?: string | null, planStartDate?: string | null) {
+  if (planStartDate) {
+    return addDaysToDateKey(planStartDate, 27);
+  }
+  if (!startedAt) return null;
+  return addDaysToDateKey(chinaDateKey(new Date(startedAt)), 28);
+}
+
+function chinaDateKey(date: Date) {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function addDaysToDateKey(dateKey: string, days: number) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDateKey(dateKey: string) {
+  const [year, month, day] = dateKey.split("-");
+  return `${year}/${month}/${day}`;
 }
 
 function formatGenerationDuration(durationMs?: number | null) {

@@ -1,18 +1,25 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.checkin import Checkin
 from app.models.service_case import ServiceCase
 from app.schemas.checkin import CheckinCreate, CheckinRead
 from app.services.checkin_service import normalize_checkin_json
 from app.services.intervention_service import analyze_intervention, merge_case_insight
-from app.services.service_case_queries import active_service_case_condition, get_active_service_case, get_service_case
+from app.services.service_case_queries import (
+    active_service_case_condition,
+    get_active_service_case,
+    get_service_case,
+    service_window_ended,
+)
 
 router = APIRouter()
 
@@ -62,6 +69,9 @@ async def create_case_checkin(
     service_case = await get_active_service_case(session, service_case_id)
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
+    tz = ZoneInfo(get_settings().reminder_timezone)
+    if service_window_ended(service_case, datetime.now(tz), tz):
+        raise HTTPException(status_code=409, detail="service case has graduated; check-in is no longer required")
     checkin = Checkin(
         service_case_id=service_case.id,
         group_id=service_case.group_id,

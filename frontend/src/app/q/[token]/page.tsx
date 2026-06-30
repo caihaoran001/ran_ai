@@ -36,7 +36,16 @@ export default async function QuestionnairePage({
   const sp = await searchParams;
   const template = sp?.template;
   const suffix = template ? `?template=${encodeURIComponent(template)}` : "";
-  const questionnaire = await api<Questionnaire>(`/questionnaires/${token}${suffix}`);
+  let questionnaire: Questionnaire;
+  try {
+    questionnaire = await api<Questionnaire>(`/questionnaires/${token}${suffix}`);
+  } catch (error) {
+    const message = String(error);
+    if (template && (message.includes("410") || message.includes("28天服务已结束"))) {
+      return <GraduatedCheckinPage />;
+    }
+    throw error;
+  }
   const editMode = sp?.edit === "1" && Boolean(questionnaire.latest_submission);
   const isReadonly = Boolean(questionnaire.latest_submission && !questionnaire.allow_repeat) && !editMode;
   const initialAnswers: Record<string, string> = {};
@@ -72,6 +81,24 @@ export default async function QuestionnairePage({
             initialAnswers={editMode ? initialAnswers : undefined}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+function GraduatedCheckinPage() {
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <div className="mx-auto flex min-h-screen max-w-2xl items-center px-4 py-10">
+        <section className="w-full rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-lg font-bold text-emerald-700">
+            ✓
+          </div>
+          <h1 className="mt-4 text-xl font-bold text-slate-950">28天服务已结束</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            您已完成本期服务，无需继续提交每日打卡。历史记录已保留，后续问题请在群内联系班主任。
+          </p>
+        </section>
       </div>
     </div>
   );

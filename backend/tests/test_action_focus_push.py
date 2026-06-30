@@ -1,5 +1,5 @@
 """晨间执行重点推送回归测试。"""
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -84,4 +84,13 @@ async def test_push_skips_when_case_toggle_off(db_session, mock_session_local):
     sc.morning_push_enabled = False
     await db_session.flush()
     await ReminderService().check_action_focus_push_once(now=datetime(2026, 6, 25, 9, 0, tzinfo=TZ))
+    assert len(await _msgs(db_session, sc.id)) == 0
+
+
+@pytest.mark.asyncio
+async def test_push_skips_graduated_case(db_session, mock_session_local):
+    sc = await _make_case(db_session, focus_key="bowel_rhythm", case_no="AF-graduated")
+    sc.service_plan_start_date = date(2026, 6, 1)
+    await db_session.flush()
+    await ReminderService().check_action_focus_push_once(now=datetime(2026, 6, 29, 9, 0, tzinfo=TZ))
     assert len(await _msgs(db_session, sc.id)) == 0

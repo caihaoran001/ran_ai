@@ -17,6 +17,8 @@ from app.models.message import (
 )
 from app.models.service_case import ServiceCase
 
+SERVICE_CASE_WINDOW_DAYS = 28
+
 
 def effective_start_at(service_case: ServiceCase) -> datetime | None:
     """服务计时起点：用户在问卷选的『计划开始日期』(当地时区当天0点)优先；未填则回退 started_at(文件发送时刻)。"""
@@ -60,6 +62,26 @@ def checkin_day(service_case: ServiceCase, now: datetime, tz: ZoneInfo) -> int |
         return None
     day = (now.date() - first).days + 1
     return day if day >= 1 else None
+
+
+def service_graduation_date(service_case: ServiceCase, tz: ZoneInfo) -> _date | None:
+    """28 天服务窗口的毕业日期：第 28 天当天仍在服务内，次日开始停止打卡/提醒。"""
+    first = checkin_first_day(service_case, tz)
+    if first is None:
+        return None
+    return first + timedelta(days=SERVICE_CASE_WINDOW_DAYS - 1)
+
+
+def service_window_ended(service_case: ServiceCase, now: datetime, tz: ZoneInfo) -> bool:
+    graduation = service_graduation_date(service_case, tz)
+    return graduation is not None and now.date() > graduation
+
+
+def service_graduation_at(service_case: ServiceCase, tz: ZoneInfo) -> datetime | None:
+    graduation = service_graduation_date(service_case, tz)
+    if graduation is None:
+        return None
+    return datetime.combine(graduation, _time.max, tzinfo=tz)
 
 
 def active_service_case_condition():

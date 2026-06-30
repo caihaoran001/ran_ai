@@ -1,7 +1,10 @@
 import uuid
+from datetime import date
 
 import pytest
 
+from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.user import User
 from tests.conftest import seed_checkins
 
 
@@ -55,6 +58,36 @@ async def test_create_single_checkin(admin_client, public_client, cai_haoran_ans
     assert parsed["sleep"] == "6h"
     assert parsed["mood"] == "3"
     assert parsed["exercise"] == "是"
+
+
+@pytest.mark.asyncio
+async def test_graduated_case_rejects_new_checkin(admin_client, public_client, db_session):
+    suffix = uuid.uuid4().hex[:8]
+    user = User(name="Graduated User", phone="13800000009")
+    db_session.add(user)
+    await db_session.flush()
+    service_case = ServiceCase(
+        case_no=f"GRAD-{suffix}",
+        user_id=user.id,
+        group_id=f"test-graduated-{suffix}",
+        questionnaire_token=f"tok-graduated-{suffix}",
+        status=ServiceCaseStatus.IN_SERVICE,
+        service_plan_start_date=date(2026, 1, 1),
+    )
+    db_session.add(service_case)
+    await db_session.flush()
+
+    checkin_resp = await admin_client.post(
+        f"/service-cases/{service_case.id}/checkins",
+        json={"content": "毕业后补打卡", "parsed_json": {"weight": "60"}},
+    )
+    assert checkin_resp.status_code == 409
+
+    questionnaire_resp = await public_client.get(
+        f"/questionnaires/{service_case.questionnaire_token}",
+        params={"template": "personalized_checkin"},
+    )
+    assert questionnaire_resp.status_code == 410
 
 
 @pytest.mark.asyncio

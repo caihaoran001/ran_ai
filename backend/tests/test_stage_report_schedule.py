@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 from app.services.reminder_service import _due_stage_reports
+from app.services.service_case_queries import service_graduation_date, service_window_ended
 
 TZ = ZoneInfo(get_settings().reminder_timezone)
 
@@ -67,3 +68,10 @@ def test_falls_back_to_started_at_when_no_plan():
     # 未填计划开始日 → 用文件发送(started_at)当天=第1天。6/1发送 → 6/3 为第3天，23点出 day3
     case = _case(plan=None, started_at=datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc))
     assert _due_stage_reports(case, _at(2026, 6, 3, 23), TZ, set()) == ["day3"]
+
+
+def test_service_graduates_after_day28_not_on_day28():
+    case = _case(plan=date(2026, 6, 1))
+    assert service_graduation_date(case, TZ) == date(2026, 6, 28)
+    assert service_window_ended(case, _at(2026, 6, 28, 23), TZ) is False
+    assert service_window_ended(case, _at(2026, 6, 29, 0), TZ) is True

@@ -38,7 +38,15 @@ from app.services.document_service import (
 from app.services.knowledge_evolution import KnowledgeEvolutionService
 from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
 from app.services.outcome_engine import generate_outcome_snapshot
-from app.services.service_case_queries import active_service_case_condition, checkin_day, effective_service_day, select_active_service_cases
+from app.services.service_case_queries import (
+    SERVICE_CASE_WINDOW_DAYS,
+    active_service_case_condition,
+    checkin_day,
+    effective_service_day,
+    select_active_service_cases,
+    service_graduation_at,
+    service_window_ended,
+)
 from app.services.short_link import get_or_create_short_link
 
 
@@ -97,6 +105,7 @@ class ReminderService:
                     if not acquired:
                         logger.debug("Reminder scheduler skipped: advisory lock is held by another worker")
                     else:
+                        await self.check_service_graduations_once()
                         if self.settings.reminder_enabled:
                             await self.check_once()
                             await self.check_inactive_followups_once()
@@ -123,6 +132,28 @@ class ReminderService:
                 )
             except asyncio.TimeoutError:
                 pass
+
+    async def check_service_graduations_once(self, now: datetime | None = None) -> None:
+        timezone = ZoneInfo(self.settings.reminder_timezone)
+        now = now or datetime.now(timezone)
+        async with SessionLocal() as session:
+            service_cases = list(
+                await session.scalars(
+                    select_active_service_cases(
+                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                        ServiceCase.started_at.is_not(None),
+                    )
+                )
+            )
+            changed = False
+            for service_case in service_cases:
+                if not service_window_ended(service_case, now, timezone):
+                    continue
+                service_case.status = ServiceCaseStatus.COMPLETED
+                service_case.ended_at = service_case.ended_at or service_graduation_at(service_case, timezone)
+                changed = True
+            if changed:
+                await session.commit()
 
     async def check_once(self) -> None:
         now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
@@ -167,6 +198,8 @@ class ReminderService:
                 day = checkin_day(service_case, now, timezone)
                 # 第1天日期未到(存量沿用次日语义)则不催打卡
                 if day is None:
+                    continue
+                if day > SERVICE_CASE_WINDOW_DAYS:
                     continue
                 if schedule.get("enabled", True):
                     rule = _questionnaire_rule_for_day(schedule, day)
@@ -274,6 +307,8 @@ class ReminderService:
 
             for service_case in service_cases:
                 if service_case.id in reminded_ids:
+                    continue
+                if service_window_ended(service_case, now, ZoneInfo(self.settings.reminder_timezone)):
                     continue
                 if not service_case.inactive_wake_enabled:
                     continue  # 单服务单关闭了无互动自动唤醒
@@ -535,6 +570,8 @@ class ReminderService:
                 # 第1天日期当天发；存量未填计划日→沿用旧"次日=第1天"，天数号不变、不会重发；未到则不发
                 if day is None:
                     continue
+                if day > SERVICE_CASE_WINDOW_DAYS:
+                    continue
                 rule = _questionnaire_rule_for_day(schedule, day)
                 if not rule:
                     continue
@@ -678,6 +715,8 @@ class ReminderService:
             }
             for service_case in service_cases:
                 if service_case.id in sent_set:
+                    continue
+                if service_window_ended(service_case, now, ZoneInfo(self.settings.reminder_timezone)):
                     continue
                 if not service_case.morning_push_enabled:
                     continue  # 单服务单关闭了早间个性化提醒
