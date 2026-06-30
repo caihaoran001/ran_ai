@@ -20,7 +20,16 @@ from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
-from app.schemas.dashboard import AICostCaseItem, AICostSummary, CaseHealthItem, DashboardMetric, DashboardSummary, OutcomeDashboardSummary
+from app.schemas.dashboard import (
+    AICostCaseItem,
+    AICostSummary,
+    CaseHealthItem,
+    DashboardMetric,
+    DashboardSummary,
+    EmotionalAlertCaseItem,
+    EmotionalAlertMessage,
+    OutcomeDashboardSummary,
+)
 from app.services.service_case_queries import active_service_case_condition, effective_start_at, pending_review_case_ids_subquery
 
 router = APIRouter()
@@ -218,6 +227,51 @@ async def dashboard_summary(
     )
 
 
+@router.get("/emotional-alerts", response_model=list[EmotionalAlertCaseItem])
+async def dashboard_emotional_alerts(
+    session: AsyncSession = Depends(get_session),
+) -> list[EmotionalAlertCaseItem]:
+    china_tz = ZoneInfo("Asia/Shanghai")
+    today = datetime.now(china_tz).date()
+    today_start = datetime.combine(today, time.min, tzinfo=china_tz).astimezone(timezone.utc)
+    today_end = today_start + timedelta(days=1)
+
+    rows = (
+        await session.execute(
+            select(Message, ServiceCase, User)
+            .join(ServiceCase, Message.service_case_id == ServiceCase.id)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(
+                active_service_case_condition(),
+                Message.created_at >= today_start,
+                Message.created_at < today_end,
+                Message.direction == MessageDirection.INBOUND,
+                Message.sender_type == MessageSenderType.USER,
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+        )
+    ).all()
+
+    cases: dict[int, EmotionalAlertCaseItem] = {}
+    for message, service_case, user in rows:
+        if not _has_emotion_signal(message):
+            continue
+        item = cases.get(service_case.id)
+        if item is None:
+            item = EmotionalAlertCaseItem(
+                service_case_id=service_case.id,
+                case_no=service_case.case_no,
+                user_id=user.id if user else None,
+                user_name=user.name if user else None,
+                group_id=service_case.group_id,
+                group_name=service_case.group_name,
+                messages=[],
+            )
+            cases[service_case.id] = item
+        item.messages.append(_build_emotional_alert_message(message))
+    return list(cases.values())
+
+
 @router.get("/ai-costs", response_model=list[AICostCaseItem])
 async def dashboard_ai_costs(
     session: AsyncSession = Depends(get_session),
@@ -281,6 +335,50 @@ def _has_emotion_signal(message: Message) -> bool:
             return bool(emotion_signal.get("detected"))
         return _analysis_has_emotion_code(analysis)
     return False
+
+
+def _build_emotional_alert_message(message: Message) -> EmotionalAlertMessage:
+    detail = _emotion_signal_detail(message)
+    return EmotionalAlertMessage(
+        message_id=message.id,
+        content=message.content,
+        detected_at=message.created_at,
+        level=detail.get("level"),
+        reason=detail.get("reason"),
+        evidence=detail.get("evidence"),
+    )
+
+
+def _emotion_signal_detail(message: Message) -> dict[str, str | None]:
+    analysis = message.analysis_json if isinstance(message.analysis_json, dict) else None
+    if analysis is None:
+        return {}
+    emotion_signal = analysis.get("emotion_signal")
+    if isinstance(emotion_signal, dict):
+        return {
+            "level": _string_or_none(emotion_signal.get("level")),
+            "reason": _string_or_none(emotion_signal.get("reason")),
+            "evidence": _string_or_none(emotion_signal.get("evidence")),
+        }
+    for key in ("intervention_reasons", "risk_flags"):
+        values = analysis.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if isinstance(item, dict) and item.get("code") in {"emotional_distress", "depression", "self_harm"}:
+                return {
+                    "level": _string_or_none(item.get("level")),
+                    "reason": _string_or_none(item.get("label") or item.get("reason")),
+                    "evidence": _string_or_none(item.get("evidence")),
+                }
+    return {}
+
+
+def _string_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 async def _build_ai_cost_summary(session: AsyncSession) -> AICostSummary:

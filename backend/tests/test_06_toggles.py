@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
 
 from app.api.routes import diagnostics as diagnostics_mod
 from app.models.ai_usage import AIUsageLog
+from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_delivery_mode
@@ -48,6 +51,76 @@ async def test_dashboard_cost_excludes_diagnostic_usage(admin_client, db_session
     summary = response.json()["ai_cost_summary"]
     assert summary["total_calls"] == before["total_calls"] + 1
     assert summary["total_tokens"] == before["total_tokens"] + 100
+
+
+@pytest.mark.asyncio
+async def test_dashboard_emotional_alerts_show_trigger_messages(admin_client, db_session):
+    china_tz = ZoneInfo("Asia/Shanghai")
+    today = datetime.now(china_tz).date()
+    today_start = datetime.combine(today, time.min, tzinfo=china_tz).astimezone(timezone.utc)
+
+    create_resp = await admin_client.post(
+        "/service-cases",
+        json={"group_id": f"emotion-alert-{secrets.token_hex(6)}", "user": {"name": "情绪预警用户"}},
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    case = create_resp.json()
+    case_id = case["id"]
+    group_id = case["group_id"]
+
+    db_session.add_all(
+        [
+            Message(
+                service_case_id=case_id,
+                group_id=group_id,
+                direction=MessageDirection.INBOUND,
+                sender_type=MessageSenderType.USER,
+                message_type="text",
+                content="今天真的很挫败，感觉快撑不住了",
+                purpose=MessagePurpose.CHAT,
+                status=MessageStatus.RECEIVED,
+                analysis_json={
+                    "emotion_signal": {
+                        "detected": True,
+                        "level": "high",
+                        "reason": "明显负面情绪和执行挫败",
+                        "evidence": "快撑不住了",
+                    }
+                },
+                created_at=today_start + timedelta(hours=10),
+            ),
+            Message(
+                service_case_id=case_id,
+                group_id=group_id,
+                direction=MessageDirection.INBOUND,
+                sender_type=MessageSenderType.USER,
+                message_type="text",
+                content="今天正常打卡",
+                purpose=MessagePurpose.CHAT,
+                status=MessageStatus.RECEIVED,
+                analysis_json={"emotion_signal": {"detected": False, "level": "low"}},
+                created_at=today_start + timedelta(hours=11),
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    summary_resp = await admin_client.get("/dashboard/summary")
+    assert summary_resp.status_code == 200, summary_resp.text
+    assert summary_resp.json()["emotional_users_today"] >= 1
+
+    detail_resp = await admin_client.get("/dashboard/emotional-alerts")
+    assert detail_resp.status_code == 200, detail_resp.text
+    cases = [item for item in detail_resp.json() if item["service_case_id"] == case_id]
+    assert len(cases) == 1
+    assert cases[0]["case_no"] == case["case_no"]
+    assert cases[0]["user_name"] == "情绪预警用户"
+    assert len(cases[0]["messages"]) == 1
+    message = cases[0]["messages"][0]
+    assert message["content"] == "今天真的很挫败，感觉快撑不住了"
+    assert message["level"] == "high"
+    assert message["reason"] == "明显负面情绪和执行挫败"
+    assert message["evidence"] == "快撑不住了"
 
 
 @pytest.mark.asyncio

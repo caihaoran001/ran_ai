@@ -61,6 +61,25 @@ class CaseHealthItem(BaseModel):
     last_inbound_at: datetime | None = None
 
 
+class EmotionalAlertMessage(BaseModel):
+    message_id: int
+    content: str
+    detected_at: datetime
+    level: str | None = None
+    reason: str | None = None
+    evidence: str | None = None
+
+
+class EmotionalAlertCaseItem(BaseModel):
+    service_case_id: int
+    case_no: str
+    user_id: int | None = None
+    user_name: str | None = None
+    group_id: str
+    group_name: str | None = None
+    messages: list[EmotionalAlertMessage] = Field(default_factory=list)
+
+
 class DashboardSummary(BaseModel):
     service_cases_total: int
     service_cases_in_service: int

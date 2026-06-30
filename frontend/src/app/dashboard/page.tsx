@@ -241,7 +241,7 @@ export default async function DashboardPage() {
           value={summary.emotional_users_today ?? 0}
           icon={LifeBuoy}
           color="red"
-          href="/users?filter=human_intervention"
+          href="/dashboard/emotional-alerts"
           description="今天入站消息中，经语义识别出现明显负面情绪、执行挫败或心理风险线索的用户数。"
         />
         <StatCard
