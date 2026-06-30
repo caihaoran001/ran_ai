@@ -1089,12 +1089,14 @@ class RanrenAIEngine:
                     trigger_id=trigger_id,
                     user_query=message.text,
                     recent_messages=recent_user_messages,
+                    analysis=analysis,
                     settings=settings,
                 )
                 reply = agent_result.reply
                 outbound_analysis = {
                     "agent": {
                         "enabled": True,
+                        "context_plan": analysis.get("agent_context_plan") if isinstance(analysis, dict) else None,
                         "tool_trace": agent_result.tool_trace,
                         "data_tool_failed": agent_result.data_tool_failed,
                     }

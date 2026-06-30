@@ -23,3 +23,4 @@ class AgentState(TypedDict, total=False):
 class AgentRunContext:
     service_case_id: int
     trigger_id: int | None = None
+    agent_context_plan: dict | None = None

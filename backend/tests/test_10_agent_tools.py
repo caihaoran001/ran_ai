@@ -264,6 +264,63 @@ async def test_agent_memory_context_compacts_profile_and_state(db_session):
 
 
 @pytest.mark.asyncio
+async def test_agent_memory_context_respects_selected_scopes(db_session):
+    service_case = await _case(db_session)
+    db_session.add(
+        UserProfile(
+            service_case_id=service_case.id,
+            profile_json={
+                "summary": "用户晚餐容易拖晚，体重目标是稳定精力。",
+                "risks": "咖啡因敏感",
+            },
+            summary="用户晚餐容易拖晚，体重目标是稳定精力。",
+            generated_by_model="test",
+        )
+    )
+    db_session.add(
+        UserStateProfile(
+            service_case_id=service_case.id,
+            state_json={
+                "domains": {
+                    "personal_preferences": {
+                        "current": {"value": {"hobby": {"value": "喜欢潮玩和动漫"}}}
+                    },
+                    "lifestyle_habits": {
+                        "current": {"value": {"work": "工作日晚间经常加班"}}
+                    },
+                    "product_usage": {
+                        "current": {"value": {"timing": "午B容易忘记"}}
+                    },
+                }
+            },
+            summary="动态状态",
+            source="test",
+        )
+    )
+    await db_session.flush()
+
+    interest_memory = await build_agent_memory_context(
+        db_session,
+        service_case_id=service_case.id,
+        memory_scopes=["preferences"],
+    )
+    assert "个人偏好：喜欢潮玩和动漫" in interest_memory
+    assert "咖啡因敏感" not in interest_memory
+    assert "午B容易忘记" not in interest_memory
+    assert "工作日晚间经常加班" not in interest_memory
+
+    product_memory = await build_agent_memory_context(
+        db_session,
+        service_case_id=service_case.id,
+        memory_scopes=["current_state", "warnings", "habits"],
+    )
+    assert "午B容易忘记" in product_memory
+    assert "咖啡因敏感" in product_memory
+    assert "工作日晚间经常加班" in product_memory
+    assert "喜欢潮玩和动漫" not in product_memory
+
+
+@pytest.mark.asyncio
 async def test_graph_runs_agent_tools_loop(db_session):
     settings = get_settings()
     service_case = await _case(db_session)
@@ -516,8 +573,9 @@ async def test_engine_uses_agent_only_when_global_and_case_toggles_enabled(
     await set_ai_reply_delivery_mode("auto_send", db_session)
     calls: list[int] = []
 
-    async def fake_generate_agent_reply(*, service_case_id, trigger_id, user_query, recent_messages, settings):
+    async def fake_generate_agent_reply(*, service_case_id, trigger_id, user_query, recent_messages, analysis, settings):
         calls.append(service_case_id)
+        assert analysis == {"requires_human_intervention": False}
         return AgentReplyResult(
             reply="agent reply",
             tool_trace=[{"name": "get_service_progress", "ok": True}],

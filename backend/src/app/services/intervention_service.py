@@ -22,6 +22,33 @@ VALID_RISK_LEVELS = frozenset({"low", "medium", "high"})
 
 VALID_SOURCES = frozenset({"chat_message", "questionnaire"})
 
+VALID_AGENT_MESSAGE_SCENES = frozenset({
+    "product_rule",
+    "data_query",
+    "diet_advice",
+    "body_feedback",
+    "emotion_support",
+    "casual_interest",
+    "correction",
+    "unknown",
+})
+
+VALID_AGENT_MEMORY_SCOPES = frozenset({
+    "stable_facts",
+    "preferences",
+    "habits",
+    "current_state",
+    "recent_topics",
+    "warnings",
+})
+
+VALID_AGENT_TOOL_HINTS = frozenset({
+    "service_case_data",
+    "product_rule",
+    "web_search",
+    "knowledge_base",
+})
+
 
 async def analyze_intervention(
     *,
@@ -124,6 +151,9 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
     if "requires_immediate_safety_reply" in insight:
         normalized["requires_immediate_safety_reply"] = bool(insight.get("requires_immediate_safety_reply"))
     normalized["health_consultation"] = bool(insight.get("health_consultation"))
+    agent_context_plan = _normalize_agent_context_plan(insight.get("agent_context_plan"))
+    if agent_context_plan is not None:
+        normalized["agent_context_plan"] = agent_context_plan
     return normalized
 
 
@@ -175,6 +205,30 @@ def mark_intake_age_risk(service_case: ServiceCase, fields: list[dict], answers:
     }
     service_case.risk_flags = _merge_lists(service_case.risk_flags, [flag])
     service_case.risk_level = "high"
+
+
+def _normalize_agent_context_plan(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    message_scene = str(value.get("message_scene") or "unknown").strip()
+    if message_scene not in VALID_AGENT_MESSAGE_SCENES:
+        message_scene = "unknown"
+    memory_scopes = [
+        item
+        for item in _string_list(value.get("memory_scopes"))
+        if item in VALID_AGENT_MEMORY_SCOPES
+    ]
+    tool_hints = [
+        item
+        for item in _string_list(value.get("tool_hints"))
+        if item in VALID_AGENT_TOOL_HINTS
+    ]
+    return {
+        "message_scene": message_scene,
+        "memory_scopes": _dedupe_strings(memory_scopes),
+        "tool_hints": _dedupe_strings(tool_hints),
+        "reason": _string(value.get("reason"))[:160],
+    }
 
 
 def questionnaire_content(fields: list[dict], answers: dict[str, Any]) -> str:
@@ -255,6 +309,23 @@ def _dedupe_items(items: list[dict]) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [_string(item) for item in value if _string(item)]
+
+
+def _dedupe_strings(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
         deduped.append(item)
     return deduped
 

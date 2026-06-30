@@ -108,9 +108,11 @@ class RanrenAgentGraph:
     async def _build_memory_context(self) -> str:
         try:
             async with db_session_module.SessionLocal() as session:
+                memory_scopes = _agent_memory_scopes(self.context.agent_context_plan)
                 return await build_agent_memory_context(
                     session,
                     service_case_id=self.context.service_case_id,
+                    memory_scopes=memory_scopes,
                 )
         except Exception:
             logger.exception("Failed to build agent memory context service_case_id=%s", self.context.service_case_id)
@@ -282,16 +284,37 @@ async def generate_agent_reply(
     trigger_id: int | None,
     user_query: str,
     recent_messages: list[str],
+    analysis: dict[str, Any] | None = None,
     settings: Settings | None = None,
 ) -> AgentReplyResult:
     settings = settings or get_settings()
     result = await RanrenAgentGraph(
-        context=AgentRunContext(service_case_id=service_case_id, trigger_id=trigger_id),
+        context=AgentRunContext(
+            service_case_id=service_case_id,
+            trigger_id=trigger_id,
+            agent_context_plan=_agent_context_plan(analysis),
+        ),
         settings=settings,
     ).run(user_query=user_query, recent_messages=recent_messages)
     if result.data_tool_failed and _looks_like_data_query(user_query):
         raise AgentDataUnavailableError(DATA_UNAVAILABLE_REPLY)
     return result
+
+
+def _agent_context_plan(analysis: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(analysis, dict):
+        return None
+    value = analysis.get("agent_context_plan")
+    return value if isinstance(value, dict) else None
+
+
+def _agent_memory_scopes(agent_context_plan: dict[str, Any] | None) -> list[str] | None:
+    if not isinstance(agent_context_plan, dict) or "memory_scopes" not in agent_context_plan:
+        return None
+    scopes = agent_context_plan.get("memory_scopes")
+    if not isinstance(scopes, list):
+        return None
+    return [str(item) for item in scopes if isinstance(item, str)]
 
 
 def _last_ai_text(messages: list[BaseMessage]) -> str:

@@ -178,6 +178,35 @@ def test_explicit_robot_stop_becomes_human_handoff_analysis():
     assert _requires_immediate_handoff(insight) is True
 
 
+def test_intervention_normalizes_agent_context_plan():
+    insight = normalize_insight(
+        {
+            "requires_human_intervention": False,
+            "risk_flags": [],
+            "intervention_reasons": [],
+            "renewal_intent": {"detected": False},
+            "refund_intent": {"detected": False},
+            "emotion_signal": {"detected": False, "level": "low"},
+            "health_consultation": False,
+            "agent_context_plan": {
+                "message_scene": "casual_interest",
+                "memory_scopes": ["preferences", "recent_topics", "warnings", "unknown_scope", "preferences"],
+                "tool_hints": ["web_search", "service_case_data", "bad_hint", "web_search"],
+                "reason": "用户在聊潮玩兴趣，后续只需要兴趣和最近话题。",
+            },
+        },
+        source="chat_message",
+        content="LABUBU之后出圈的是啥",
+    )
+
+    assert insight["agent_context_plan"] == {
+        "message_scene": "casual_interest",
+        "memory_scopes": ["preferences", "recent_topics", "warnings"],
+        "tool_hints": ["web_search", "service_case_data"],
+        "reason": "用户在聊潮玩兴趣，后续只需要兴趣和最近话题。",
+    }
+
+
 def test_high_risk_health_goes_immediate_handoff():
     # 健康红线(孕期/慢病等 level=high)→ ①层直接@班主任
     analysis = {
