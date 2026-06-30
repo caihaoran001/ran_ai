@@ -150,29 +150,6 @@ class AIService:
             logger.exception("Qwen VL image translation failed")
             return "用户上传了一张图片，但解析描述失败。"
 
-        fallback_model = (self.settings.qwen_vision_fallback_model or "").strip()
-        if _image_description_needs_fallback(description) and fallback_model and fallback_model != model:
-            logger.info(
-                "qwen_vl_low_confidence primary_model=%s fallback_model=%s description=%s",
-                model,
-                fallback_model,
-                description,
-            )
-            try:
-                fallback_description = await self._translate_image_once(
-                    model=fallback_model,
-                    system_prompt=system_prompt,
-                    base64_image=base64_image,
-                    mime_type=mime_type,
-                    scenario="qwen_vl_translate_fallback",
-                    service_case_id=service_case_id,
-                    message_id=message_id,
-                )
-                if fallback_description:
-                    description = fallback_description
-            except Exception:
-                logger.exception("Qwen VL fallback image translation failed")
-
         return _conservative_image_description(description)
 
     async def _translate_image_once(
