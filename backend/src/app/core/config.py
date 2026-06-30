@@ -50,7 +50,7 @@ class Settings(BaseSettings):
         validation_alias="QWEN_BASE_URL",
     )
     qwen_api_key: str = Field(default="", validation_alias="QWEN_API_KEY")
-    qwen_model: str = Field(default="qwen3.6-flash", validation_alias="QWEN_MODEL")
+    qwen_model: str = Field(default="qwen3.7-plus", validation_alias="QWEN_MODEL")
     qwen_vision_fallback_model: str = Field(default="qwen3.5-omni-plus", validation_alias="QWEN_VISION_FALLBACK_MODEL")
     ai_timeout_seconds: float = Field(default=60.0, validation_alias="AI_TIMEOUT_SECONDS")
     ai_max_concurrent_requests: int = Field(
