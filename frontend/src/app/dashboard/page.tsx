@@ -125,99 +125,43 @@ export default async function DashboardPage() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <StatCard
-          label="今日新增用户"
-          value={summary.new_users_today}
-          icon={Plus}
-          color="blue"
-          href="/users?filter=new_today"
-          description="今天新创建且未删除的服务单。"
-        />
-        <StatCard
-          label="风险用户"
-          value={summary.risk_users}
-          icon={AlertTriangle}
-          color="red"
-          href="/users?filter=risk"
-          description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险词，需要人工关注。"
-        />
-        <StatCard
           label="需关注事件"
           value={summary.human_intervention_users ?? 0}
           icon={ShieldAlert}
           color="red"
-          href="/documents#pending-reviews"
-          description="触发转人工、@班主任后待复核的 AI 回复事件数，点击进入审核控制台逐条处理。"
-        />
-        <StatCard
-          label="未跟进（2-7天）"
-          value={summary.unfollowed_users}
-          icon={Clock3}
-          color="yellow"
-          href="/users?filter=unfollowed"
-          description="服务中，且最近 2-7 天没有用户入站消息的服务单；与流失用户互斥。"
-        />
-        <StatCard
-          label="续购跟进窗口"
-          value={renewalFollowupUsers}
-          icon={ShoppingCart}
-          color="green"
-          href="/users?filter=renewal_followup"
-          description="按服务天数推算：已服务 18-28 天，适合人工做续购沟通，不代表用户已表达购买意愿。"
-        />
-        <StatCard
-          label="明确续购意向"
-          value={summary.renewal_intent_users ?? 0}
-          icon={HeartHandshake}
-          color="green"
-          href="/users?filter=renewal_intent"
-          description="用户聊天中出现续费、复购、再买、继续购买等表达。"
+          href="/dashboard/attention-events"
+          description="触发转人工、@班主任后待复核的事件数；点击查看服务单、触发原话和 AI 拟回复。"
         />
         <StatCard
           label="退款/退出意向"
           value={summary.refund_intent_users ?? 0}
           icon={RefreshCcw}
           color="red"
-          href="/users?filter=refund_intent"
-          description="用户聊天中出现退款、退费、不继续、退出、退群等表达。"
+          href="/dashboard/refund-intents"
+          description="用户聊天中出现退款、退费、不继续、退出、退群等表达；点击查看触发原话。"
         />
         <StatCard
-          label="流失用户"
-          value={summary.lost_users}
-          icon={TrendingDown}
-          color="orange"
-          href="/users?filter=lost"
-          description="服务中，且超过 7 天没有用户入站消息的服务单；不再计入未跟进。"
+          label="今日情绪预警"
+          value={summary.emotional_users_today ?? 0}
+          icon={LifeBuoy}
+          color="red"
+          href="/dashboard/emotional-alerts"
+          description="今天入站消息中，经语义识别出现明显负面情绪、执行挫败或心理风险线索的用户数。"
         />
         <StatCard
-          label="服务单总数"
-          value={summary.service_cases_total}
-          icon={ClipboardList}
-          color="blue"
-          href="/users"
-          description="当前未删除服务单总数。"
-        />
-        <StatCard
-          label="服务中"
-          value={summary.service_cases_in_service}
-          icon={UserCheck}
+          label="明确续购意向"
+          value={summary.renewal_intent_users ?? 0}
+          icon={HeartHandshake}
           color="green"
-          href="/users?filter=in_service"
-          description="状态为服务中的服务单。"
-        />
-        <StatCard
-          label="今日打卡"
-          value={summary.checkins_today}
-          icon={CheckCircle2}
-          color="yellow"
-          href="/checkins"
-          description="今天提交的打卡记录数。"
+          href="/dashboard/renewal-intents"
+          description="用户聊天中出现续费、复购、再买、继续购买等表达；点击查看触发原话。"
         />
         <StatCard
           label="今日用户消息"
           value={summary.messages_today}
           icon={MessageCircle}
           color="cyan"
-          href="/users?filter=messaged_today"
+          href="/dashboard/today-messages"
           description={
             <>
               今天收到的用户入站消息数。今日社群双向消息共{" "}
@@ -237,20 +181,76 @@ export default async function DashboardPage() {
           }
         />
         <StatCard
-          label="今日情绪预警"
-          value={summary.emotional_users_today ?? 0}
-          icon={LifeBuoy}
-          color="red"
-          href="/dashboard/emotional-alerts"
-          description="今天入站消息中，经语义识别出现明显负面情绪、执行挫败或心理风险线索的用户数。"
+          label="今日打卡"
+          value={summary.checkins_today}
+          icon={CheckCircle2}
+          color="yellow"
+          href="/dashboard/today-checkins"
+          description="今天提交的打卡记录数；点击只看今日打卡，并按服务单聚合。"
         />
         <StatCard
           label="待审核文件"
           value={summary.pending_documents}
           icon={FileText}
           color="orange"
-          href="/documents"
-          description="每个服务单当前有效的最新文档里，状态为草稿或待审核的文件数。历史版本不计入。"
+          href="/dashboard/pending-documents"
+          description="每个服务单当前有效的最新文档里，状态为草稿或待审核的文件数；点击查看具体服务单和文件。"
+        />
+        <StatCard
+          label="风险用户"
+          value={summary.risk_users}
+          icon={AlertTriangle}
+          color="red"
+          href="/users?filter=risk"
+          description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险词，需要人工关注。"
+        />
+        <StatCard
+          label="未跟进（2-7天）"
+          value={summary.unfollowed_users}
+          icon={Clock3}
+          color="yellow"
+          href="/users?filter=unfollowed"
+          description="服务中，且最近 2-7 天没有用户入站消息的服务单；与流失用户互斥。"
+        />
+        <StatCard
+          label="流失用户"
+          value={summary.lost_users}
+          icon={TrendingDown}
+          color="orange"
+          href="/users?filter=lost"
+          description="服务中，且超过 7 天没有用户入站消息的服务单；不再计入未跟进。"
+        />
+        <StatCard
+          label="续购跟进窗口"
+          value={renewalFollowupUsers}
+          icon={ShoppingCart}
+          color="green"
+          href="/users?filter=renewal_followup"
+          description="按服务天数推算：已服务 18-28 天，适合人工做续购沟通，不代表用户已表达购买意愿。"
+        />
+        <StatCard
+          label="今日新增用户"
+          value={summary.new_users_today}
+          icon={Plus}
+          color="blue"
+          href="/users?filter=new_today"
+          description="今天新创建且未删除的服务单。"
+        />
+        <StatCard
+          label="服务单总数"
+          value={summary.service_cases_total}
+          icon={ClipboardList}
+          color="blue"
+          href="/users"
+          description="当前未删除服务单总数。"
+        />
+        <StatCard
+          label="服务中"
+          value={summary.service_cases_in_service}
+          icon={UserCheck}
+          color="green"
+          href="/users?filter=in_service"
+          description="状态为服务中的服务单。"
         />
         <AICostCard summary={summary.ai_cost_summary} />
       </div>

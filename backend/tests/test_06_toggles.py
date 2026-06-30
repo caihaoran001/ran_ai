@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,8 +9,10 @@ from sqlalchemy import select
 
 from app.api.routes import diagnostics as diagnostics_mod
 from app.models.ai_usage import AIUsageLog
+from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_delivery_mode
 from app.services.ranren_ai.engine import RanrenAIEngine, _requires_immediate_handoff
@@ -121,6 +123,147 @@ async def test_dashboard_emotional_alerts_show_trigger_messages(admin_client, db
     assert message["level"] == "high"
     assert message["reason"] == "明显负面情绪和执行挫败"
     assert message["evidence"] == "快撑不住了"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_drilldown_endpoints_show_case_and_trigger_content(admin_client, db_session):
+    create_resp = await admin_client.post(
+        "/service-cases",
+        json={"group_id": f"dashboard-drilldown-{secrets.token_hex(6)}", "user": {"name": "看板明细用户"}},
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    created_case = create_resp.json()
+    case = await db_session.get(ServiceCase, created_case["id"])
+    assert case is not None
+
+    now = datetime.now(timezone.utc)
+    trigger = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="能不能@班主任，我不想听机器人解释了",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={
+            "intervention_reasons": [
+                {
+                    "code": "robot_stop",
+                    "level": "medium",
+                    "reason": "用户要求人工介入并停止机器人解释",
+                    "evidence": "@班主任",
+                }
+            ]
+        },
+        created_at=now,
+    )
+    renewal = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="这期结束我想续一期，怎么买？",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={
+            "renewal_intent": {
+                "detected": True,
+                "reason": "明确表达续一期并询问购买",
+                "evidence": "想续一期，怎么买",
+            }
+        },
+        created_at=now + timedelta(seconds=1),
+    )
+    refund = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="我想退出服务，帮我退款吧",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={
+            "refund_intent": {
+                "detected": True,
+                "reason": "明确表达退出和退款",
+                "evidence": "退出服务，帮我退款",
+            }
+        },
+        created_at=now + timedelta(seconds=2),
+    )
+    pending_reply = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.BOT,
+        message_type="text",
+        content="我先帮你转给班主任确认。",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.PENDING,
+        trigger=trigger,
+        created_at=now + timedelta(seconds=3),
+    )
+    db_session.add_all([trigger, renewal, refund, pending_reply])
+    await db_session.flush()
+
+    case.renewal_intent_flags = [{"detected": True, "reason": "明确表达续一期并询问购买", "evidence": "想续一期，怎么买"}]
+    case.refund_intent_flags = [{"detected": True, "reason": "明确表达退出和退款", "evidence": "退出服务，帮我退款"}]
+    db_session.add(
+        Checkin(
+            service_case_id=case.id,
+            group_id=case.group_id,
+            user_id=case.user_id,
+            checkin_date=date.today(),
+            content="今日打卡：早C完成，饮水达标",
+            parsed_json={"water": "达标", "product_schedule": {"morning_c": "完成"}},
+        )
+    )
+    db_session.add(
+        UserDocument(
+            service_case_id=case.id,
+            document_type=DocumentType.ENERGY_RESTART_PRESCRIPTION,
+            title="个人能量重启处方单",
+            content_md="待审核",
+            content_json={"blocks": []},
+            status=DocumentStatus.REVIEWING,
+        )
+    )
+    await db_session.flush()
+
+    attention_resp = await admin_client.get("/dashboard/attention-events")
+    assert attention_resp.status_code == 200, attention_resp.text
+    attention_case = next(item for item in attention_resp.json() if item["case"]["service_case_id"] == case.id)
+    assert attention_case["case"]["user_name"] == "看板明细用户"
+    assert attention_case["events"][0]["content"] == "能不能@班主任，我不想听机器人解释了"
+    assert attention_case["events"][0]["ai_reply_content"] == "我先帮你转给班主任确认。"
+
+    renewal_resp = await admin_client.get("/dashboard/intent-events/renewal")
+    assert renewal_resp.status_code == 200, renewal_resp.text
+    renewal_case = next(item for item in renewal_resp.json() if item["case"]["service_case_id"] == case.id)
+    assert renewal_case["events"][0]["content"] == "这期结束我想续一期，怎么买？"
+
+    refund_resp = await admin_client.get("/dashboard/intent-events/refund")
+    assert refund_resp.status_code == 200, refund_resp.text
+    refund_case = next(item for item in refund_resp.json() if item["case"]["service_case_id"] == case.id)
+    assert refund_case["events"][0]["content"] == "我想退出服务，帮我退款吧"
+
+    today_messages_resp = await admin_client.get("/dashboard/today-messages")
+    assert today_messages_resp.status_code == 200, today_messages_resp.text
+    message_case = next(item for item in today_messages_resp.json() if item["case"]["service_case_id"] == case.id)
+    assert any(event["content"] == "这期结束我想续一期，怎么买？" for event in message_case["events"])
+
+    checkins_resp = await admin_client.get("/dashboard/today-checkins")
+    assert checkins_resp.status_code == 200, checkins_resp.text
+    checkin_case = next(item for item in checkins_resp.json() if item["case"]["service_case_id"] == case.id)
+    assert checkin_case["checkins"][0]["content"] == "今日打卡：早C完成，饮水达标"
+
+    docs_resp = await admin_client.get("/dashboard/pending-documents")
+    assert docs_resp.status_code == 200, docs_resp.text
+    docs_case = next(item for item in docs_resp.json() if item["case"]["service_case_id"] == case.id)
+    assert docs_case["documents"][0]["title"] == "个人能量重启处方单"
 
 
 @pytest.mark.asyncio

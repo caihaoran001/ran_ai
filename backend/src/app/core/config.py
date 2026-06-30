@@ -67,11 +67,11 @@ class Settings(BaseSettings):
     web_search_timeout_seconds: float = Field(default=8.0, validation_alias="WEB_SEARCH_TIMEOUT_SECONDS")
     web_search_max_results: int = Field(default=5, validation_alias="WEB_SEARCH_MAX_RESULTS")
     ai_prompt_cost_per_1m_tokens: float = Field(
-        default=0.0,
+        default=12.55,
         validation_alias="AI_PROMPT_COST_PER_1M_TOKENS",
     )
     ai_completion_cost_per_1m_tokens: float = Field(
-        default=0.0,
+        default=25.11,
         validation_alias="AI_COMPLETION_COST_PER_1M_TOKENS",
     )
     document_output_dir: str = Field(

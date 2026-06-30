@@ -24,7 +24,14 @@ from app.schemas.dashboard import (
     AICostCaseItem,
     AICostSummary,
     CaseHealthItem,
+    DashboardCaseCheckins,
+    DashboardCaseMessageEvents,
+    DashboardCasePendingDocuments,
+    DashboardCaseRef,
+    DashboardCheckinEvent,
     DashboardMetric,
+    DashboardMessageEvent,
+    DashboardPendingDocument,
     DashboardSummary,
     EmotionalAlertCaseItem,
     EmotionalAlertMessage,
@@ -33,6 +40,13 @@ from app.schemas.dashboard import (
 from app.services.service_case_queries import active_service_case_condition, effective_start_at, pending_review_case_ids_subquery
 
 router = APIRouter()
+
+
+def _today_bounds() -> tuple[datetime, datetime]:
+    china_tz = ZoneInfo("Asia/Shanghai")
+    today = datetime.now(china_tz).date()
+    today_start = datetime.combine(today, time.min, tzinfo=china_tz).astimezone(timezone.utc)
+    return today_start, today_start + timedelta(days=1)
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -48,10 +62,8 @@ async def dashboard_summary(
             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
         )
     )
-    china_tz = ZoneInfo("Asia/Shanghai")
-    today = datetime.now(china_tz).date()
-    today_start = datetime.combine(today, time.min, tzinfo=china_tz).astimezone(timezone.utc)
-    today_end = today_start + timedelta(days=1)
+    today_start, today_end = _today_bounds()
+    today = today_start.astimezone(ZoneInfo("Asia/Shanghai")).date()
     checkins_today = await session.scalar(
         select(func.count(Checkin.id))
         .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
@@ -231,10 +243,7 @@ async def dashboard_summary(
 async def dashboard_emotional_alerts(
     session: AsyncSession = Depends(get_session),
 ) -> list[EmotionalAlertCaseItem]:
-    china_tz = ZoneInfo("Asia/Shanghai")
-    today = datetime.now(china_tz).date()
-    today_start = datetime.combine(today, time.min, tzinfo=china_tz).astimezone(timezone.utc)
-    today_end = today_start + timedelta(days=1)
+    today_start, today_end = _today_bounds()
 
     rows = (
         await session.execute(
@@ -270,6 +279,218 @@ async def dashboard_emotional_alerts(
             cases[service_case.id] = item
         item.messages.append(_build_emotional_alert_message(message))
     return list(cases.values())
+
+
+@router.get("/attention-events", response_model=list[DashboardCaseMessageEvents])
+async def dashboard_attention_events(
+    session: AsyncSession = Depends(get_session),
+) -> list[DashboardCaseMessageEvents]:
+    rows = (
+        await session.execute(
+            select(Message, ServiceCase, User)
+            .join(ServiceCase, Message.service_case_id == ServiceCase.id)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(
+                active_service_case_condition(),
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.sender_type == MessageSenderType.BOT,
+                Message.purpose == MessagePurpose.CHAT,
+                Message.status == MessageStatus.PENDING,
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+        )
+    ).all()
+    trigger_ids = [message.trigger_id for message, _, _ in rows if message.trigger_id]
+    triggers = {}
+    if trigger_ids:
+        triggers = {
+            message.id: message
+            for message in await session.scalars(select(Message).where(Message.id.in_(trigger_ids)))
+        }
+
+    cases: dict[int, DashboardCaseMessageEvents] = {}
+    for pending_message, service_case, user in rows:
+        trigger = triggers.get(pending_message.trigger_id) if pending_message.trigger_id else None
+        detail = _attention_event_detail(trigger)
+        event = DashboardMessageEvent(
+            event_id=f"attention-{pending_message.id}",
+            message_id=trigger.id if trigger else None,
+            content=trigger.content if trigger else "",
+            occurred_at=trigger.created_at if trigger else pending_message.created_at,
+            reason=detail.get("reason"),
+            evidence=detail.get("evidence"),
+            level=detail.get("level"),
+            ai_reply_message_id=pending_message.id,
+            ai_reply_content=pending_message.content,
+            ai_reply_created_at=pending_message.created_at,
+        )
+        _append_case_event(cases, service_case=service_case, user=user, event=event)
+    return list(cases.values())
+
+
+@router.get("/intent-events/{intent_type}", response_model=list[DashboardCaseMessageEvents])
+async def dashboard_intent_events(
+    intent_type: str,
+    session: AsyncSession = Depends(get_session),
+) -> list[DashboardCaseMessageEvents]:
+    if intent_type not in {"renewal", "refund"}:
+        return []
+    flag_column = ServiceCase.renewal_intent_flags if intent_type == "renewal" else ServiceCase.refund_intent_flags
+    rows = (
+        await session.execute(
+            select(ServiceCase, User)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(active_service_case_condition(), flag_column.is_not(None))
+            .order_by(ServiceCase.updated_at.desc(), ServiceCase.id.desc())
+        )
+    ).all()
+    case_ids = [service_case.id for service_case, _ in rows]
+    messages_by_case: dict[int, list[Message]] = {case_id: [] for case_id in case_ids}
+    if case_ids:
+        messages = await session.scalars(
+            select(Message)
+            .where(
+                Message.service_case_id.in_(case_ids),
+                Message.direction == MessageDirection.INBOUND,
+                Message.sender_type == MessageSenderType.USER,
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+        )
+        for message in messages:
+            if _message_has_intent(message, intent_type):
+                messages_by_case.setdefault(message.service_case_id or 0, []).append(message)
+
+    grouped: dict[int, DashboardCaseMessageEvents] = {}
+    for service_case, user in rows:
+        flags = service_case.renewal_intent_flags if intent_type == "renewal" else service_case.refund_intent_flags
+        events = _intent_events_from_messages(messages_by_case.get(service_case.id, []), intent_type)
+        if not events:
+            events = _intent_events_from_flags(flags or [], intent_type)
+        for event in events:
+            _append_case_event(grouped, service_case=service_case, user=user, event=event)
+    return list(grouped.values())
+
+
+@router.get("/today-messages", response_model=list[DashboardCaseMessageEvents])
+async def dashboard_today_messages(
+    session: AsyncSession = Depends(get_session),
+) -> list[DashboardCaseMessageEvents]:
+    today_start, today_end = _today_bounds()
+    rows = (
+        await session.execute(
+            select(Message, ServiceCase, User)
+            .join(ServiceCase, Message.service_case_id == ServiceCase.id)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(
+                active_service_case_condition(),
+                Message.created_at >= today_start,
+                Message.created_at < today_end,
+                Message.direction == MessageDirection.INBOUND,
+                Message.sender_type == MessageSenderType.USER,
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+        )
+    ).all()
+    grouped: dict[int, DashboardCaseMessageEvents] = {}
+    for message, service_case, user in rows:
+        _append_case_event(
+            grouped,
+            service_case=service_case,
+            user=user,
+            event=DashboardMessageEvent(
+                event_id=f"message-{message.id}",
+                message_id=message.id,
+                content=message.content,
+                occurred_at=message.created_at,
+            ),
+        )
+    return list(grouped.values())
+
+
+@router.get("/today-checkins", response_model=list[DashboardCaseCheckins])
+async def dashboard_today_checkins(
+    session: AsyncSession = Depends(get_session),
+) -> list[DashboardCaseCheckins]:
+    today = _today_bounds()[0].astimezone(ZoneInfo("Asia/Shanghai")).date()
+    rows = (
+        await session.execute(
+            select(Checkin, ServiceCase, User)
+            .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(active_service_case_condition(), Checkin.checkin_date == today)
+            .order_by(Checkin.created_at.desc(), Checkin.id.desc())
+        )
+    ).all()
+    grouped: dict[int, DashboardCaseCheckins] = {}
+    for checkin, service_case, user in rows:
+        item = grouped.get(service_case.id)
+        if item is None:
+            item = DashboardCaseCheckins(case=_case_ref(service_case, user), checkins=[])
+            grouped[service_case.id] = item
+        item.checkins.append(
+            DashboardCheckinEvent(
+                checkin_id=checkin.id,
+                checkin_date=checkin.checkin_date.isoformat(),
+                content=checkin.content,
+                parsed_json=checkin.parsed_json,
+                created_at=checkin.created_at,
+            )
+        )
+    return list(grouped.values())
+
+
+@router.get("/pending-documents", response_model=list[DashboardCasePendingDocuments])
+async def dashboard_pending_documents(
+    session: AsyncSession = Depends(get_session),
+) -> list[DashboardCasePendingDocuments]:
+    from sqlalchemy import text
+
+    latest_doc_ids = (
+        select(UserDocument.id)
+        .distinct(
+            UserDocument.service_case_id,
+            UserDocument.document_type,
+            text("content_json->>'stage'"),
+        )
+        .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
+        .where(active_service_case_condition())
+        .order_by(
+            UserDocument.service_case_id,
+            UserDocument.document_type,
+            text("content_json->>'stage'"),
+            UserDocument.created_at.desc(),
+        )
+        .subquery()
+    )
+    rows = (
+        await session.execute(
+            select(UserDocument, ServiceCase, User)
+            .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(
+                UserDocument.id.in_(select(latest_doc_ids.c.id)),
+                UserDocument.status.in_([DocumentStatus.DRAFT, DocumentStatus.REVIEWING]),
+            )
+            .order_by(UserDocument.updated_at.desc(), UserDocument.id.desc())
+        )
+    ).all()
+    grouped: dict[int, DashboardCasePendingDocuments] = {}
+    for document, service_case, user in rows:
+        item = grouped.get(service_case.id)
+        if item is None:
+            item = DashboardCasePendingDocuments(case=_case_ref(service_case, user), documents=[])
+            grouped[service_case.id] = item
+        item.documents.append(
+            DashboardPendingDocument(
+                document_id=document.id,
+                document_type=document.document_type.value,
+                title=document.title,
+                status=document.status.value,
+                created_at=document.created_at,
+                updated_at=document.updated_at,
+            )
+        )
+    return list(grouped.values())
 
 
 @router.get("/ai-costs", response_model=list[AICostCaseItem])
@@ -335,6 +556,105 @@ def _has_emotion_signal(message: Message) -> bool:
             return bool(emotion_signal.get("detected"))
         return _analysis_has_emotion_code(analysis)
     return False
+
+
+def _case_ref(service_case: ServiceCase, user: User | None) -> DashboardCaseRef:
+    return DashboardCaseRef(
+        service_case_id=service_case.id,
+        case_no=service_case.case_no,
+        user_id=user.id if user else None,
+        user_name=user.name if user else None,
+        group_id=service_case.group_id,
+        group_name=service_case.group_name,
+    )
+
+
+def _append_case_event(
+    grouped: dict[int, DashboardCaseMessageEvents],
+    *,
+    service_case: ServiceCase,
+    user: User | None,
+    event: DashboardMessageEvent,
+) -> None:
+    item = grouped.get(service_case.id)
+    if item is None:
+        item = DashboardCaseMessageEvents(case=_case_ref(service_case, user), events=[])
+        grouped[service_case.id] = item
+    item.events.append(event)
+
+
+def _attention_event_detail(message: Message | None) -> dict[str, str | None]:
+    if message is None:
+        return {}
+    analysis = message.analysis_json if isinstance(message.analysis_json, dict) else None
+    if analysis is None:
+        return {}
+    for key in ("intervention_reasons", "risk_flags"):
+        values = analysis.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            return {
+                "level": _string_or_none(item.get("level")),
+                "reason": _string_or_none(item.get("reason")),
+                "evidence": _string_or_none(item.get("evidence")),
+            }
+    return {}
+
+
+def _message_has_intent(message: Message, intent_type: str) -> bool:
+    analysis = message.analysis_json if isinstance(message.analysis_json, dict) else None
+    if analysis is None:
+        return False
+    key = "renewal_intent" if intent_type == "renewal" else "refund_intent"
+    value = analysis.get(key)
+    return isinstance(value, dict) and bool(value.get("detected"))
+
+
+def _intent_events_from_messages(messages: list[Message], intent_type: str) -> list[DashboardMessageEvent]:
+    key = "renewal_intent" if intent_type == "renewal" else "refund_intent"
+    events: list[DashboardMessageEvent] = []
+    for message in messages:
+        analysis = message.analysis_json if isinstance(message.analysis_json, dict) else None
+        value = analysis.get(key) if analysis else None
+        if not isinstance(value, dict) or not value.get("detected"):
+            continue
+        events.append(
+            DashboardMessageEvent(
+                event_id=f"{intent_type}-message-{message.id}",
+                message_id=message.id,
+                content=message.content,
+                occurred_at=message.created_at,
+                reason=_string_or_none(value.get("reason")),
+                evidence=_string_or_none(value.get("evidence")),
+            )
+        )
+    return events
+
+
+def _intent_events_from_flags(flags: list[dict], intent_type: str) -> list[DashboardMessageEvent]:
+    events: list[DashboardMessageEvent] = []
+    seen: set[tuple[str | None, str | None]] = set()
+    for index, flag in enumerate(flags):
+        if not isinstance(flag, dict) or not flag.get("detected", True):
+            continue
+        reason = _string_or_none(flag.get("reason"))
+        evidence = _string_or_none(flag.get("evidence"))
+        key = (reason, evidence)
+        if key in seen:
+            continue
+        seen.add(key)
+        events.append(
+            DashboardMessageEvent(
+                event_id=f"{intent_type}-flag-{index}",
+                content=evidence or reason or "已标记意向，但没有保存原话证据。",
+                reason=reason,
+                evidence=evidence,
+            )
+        )
+    return events
 
 
 def _build_emotional_alert_message(message: Message) -> EmotionalAlertMessage:

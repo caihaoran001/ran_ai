@@ -80,6 +80,60 @@ class EmotionalAlertCaseItem(BaseModel):
     messages: list[EmotionalAlertMessage] = Field(default_factory=list)
 
 
+class DashboardCaseRef(BaseModel):
+    service_case_id: int
+    case_no: str
+    user_id: int | None = None
+    user_name: str | None = None
+    group_id: str
+    group_name: str | None = None
+
+
+class DashboardMessageEvent(BaseModel):
+    event_id: str
+    message_id: int | None = None
+    content: str
+    occurred_at: datetime | None = None
+    reason: str | None = None
+    evidence: str | None = None
+    level: str | None = None
+    ai_reply_message_id: int | None = None
+    ai_reply_content: str | None = None
+    ai_reply_created_at: datetime | None = None
+
+
+class DashboardCaseMessageEvents(BaseModel):
+    case: DashboardCaseRef
+    events: list[DashboardMessageEvent] = Field(default_factory=list)
+
+
+class DashboardCheckinEvent(BaseModel):
+    checkin_id: int
+    checkin_date: str
+    content: str
+    parsed_json: dict | None = None
+    created_at: datetime
+
+
+class DashboardCaseCheckins(BaseModel):
+    case: DashboardCaseRef
+    checkins: list[DashboardCheckinEvent] = Field(default_factory=list)
+
+
+class DashboardPendingDocument(BaseModel):
+    document_id: int
+    document_type: str
+    title: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class DashboardCasePendingDocuments(BaseModel):
+    case: DashboardCaseRef
+    documents: list[DashboardPendingDocument] = Field(default_factory=list)
+
+
 class DashboardSummary(BaseModel):
     service_cases_total: int
     service_cases_in_service: int

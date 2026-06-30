@@ -95,6 +95,8 @@ Caddy 路由规则：
 ```env
 AI_MODEL=deepseek-v4-pro
 AI_DOCUMENT_MODEL=deepseek-v4-pro
+AI_PROMPT_COST_PER_1M_TOKENS=12.55
+AI_COMPLETION_COST_PER_1M_TOKENS=25.11
 ```
 
 `AI_DOCUMENT_MODEL` 只影响入营交付文件、阶段报告和毕业报告；聊天回复、风控识别等仍按 `AI_MODEL` / `AI_RISK_MODEL` 走，避免把群聊回复一起切到更慢模型。
