@@ -32,6 +32,7 @@ services:
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
       QWEN_MODEL: ${QWEN_MODEL:-qwen3-vl-flash}
+      QWEN_VISION_FALLBACK_MODEL: ${QWEN_VISION_FALLBACK_MODEL:-qwen3.7-plus}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v4}

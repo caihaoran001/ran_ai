@@ -19,6 +19,27 @@ from app.services.ai_service.json_utils import parse_json_object
 logger = logging.getLogger("uvicorn.error")
 
 _LIMITERS: dict[int, asyncio.Semaphore] = {}
+_LOW_CONFIDENCE_IMAGE_MARKERS = (
+    "置信度：低",
+    "置信度:低",
+    "置信度低",
+    "不够清楚",
+    "看不清",
+    "无法确认",
+    "无法判断",
+    "不能可靠",
+    "难以辨认",
+    "不确定",
+    "较模糊",
+    "模糊",
+)
+_MEAL_UNSPECIFIC_MARKERS = (
+    "一盘饭菜",
+    "一些食物",
+    "几种食物",
+    "一份餐食",
+    "一顿餐",
+)
 
 
 def _get_limiter(max_concurrent: int) -> asyncio.Semaphore:
@@ -49,6 +70,31 @@ def _int_or_none(value: object) -> int | None:
         return None
 
 
+def _image_description_needs_fallback(description: str) -> bool:
+    text = (description or "").strip()
+    if not text:
+        return True
+    normalized = text.replace(" ", "")
+    if any(marker in normalized for marker in _LOW_CONFIDENCE_IMAGE_MARKERS):
+        return True
+    if any(marker in normalized for marker in ("体重秤", "体脂秤", "营养标签", "配料表")):
+        has_digit = any(ch.isdigit() for ch in normalized)
+        if not has_digit:
+            return True
+    if any(marker in normalized for marker in _MEAL_UNSPECIFIC_MARKERS):
+        return True
+    return False
+
+
+def _conservative_image_description(description: str) -> str:
+    text = (description or "").strip()
+    if not text:
+        return "用户上传了一张图片，但画面内容不够清楚，不能可靠识别关键数字或食物细节。"
+    if _image_description_needs_fallback(text) and "不要把该识别结果当作确定事实" not in text:
+        return f"{text} 不要把该识别结果当作确定事实，回复时应请用户确认关键数字或食物细节。"
+    return text
+
+
 class AIService:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
@@ -76,13 +122,73 @@ class AIService:
             return "用户上传了一张图片。"
 
         model = self.settings.qwen_model or "qwen-vl-plus"
-        started_at = time.monotonic()
         system_prompt = (
-            "你是一个专业助手。请用一句话极其简练、准确地描述这张图片里包含的主体事物、数据或状态"
-            "（例如：用户上传了一张显示体重为 72.5 公斤的体重秤照片；用户上传了一张包含西兰花和鸡胸肉的午餐照片），"
-            "以便文本大模型理解。请只输出这一句描述，不要包含任何多余的问候语、废话或解释。"
+            "你是燃人AI的图片理解助手。请输出一段自然语言描述，供后续文本大模型理解用户发来的图片。"
+            "输出必须保守、准确、可直接放进聊天上下文，不要输出 JSON、表格、问候语或解释过程。\n"
+            "关注顺序：\n"
+            "1. 如果是体重秤、体脂秤、营养标签、配料表、聊天截图或包含数字的图片，优先识别关键数字、单位、日期和关键文字；"
+            "数字必须逐位核对，小数点和单位看不清时不要猜。\n"
+            "2. 如果是餐食图片，优先描述主要食物、疑似食材、烹饪方式、明显份量，以及是否能看出主食、蛋白质、蔬菜、油脂；"
+            "不能确定的食材必须写“疑似”，不要把相似食物说成确定事实。\n"
+            "3. 如果画面模糊、遮挡、反光、字号太小或食物混杂，必须明确写出“置信度：低”或“置信度：中”，并说明哪些部分无法确认。\n"
+            "4. 如果能清楚识别，可以写“置信度：高”。\n"
+            "示例：用户上传了一张体重秤照片，屏幕数字疑似为 72.5kg，但小数位略模糊，置信度：中，建议向用户确认后再记录。\n"
+            "示例：用户上传了一张餐食照片，可见米饭、青菜和一份疑似鸡肉的蛋白质食物，肉类种类不够清楚，置信度：中。"
         )
 
+        try:
+            description = await self._translate_image_once(
+                model=model,
+                system_prompt=system_prompt,
+                base64_image=base64_image,
+                mime_type=mime_type,
+                scenario="qwen_vl_translate",
+                service_case_id=service_case_id,
+                message_id=message_id,
+            )
+        except Exception:
+            logger.exception("Qwen VL image translation failed")
+            return "用户上传了一张图片，但解析描述失败。"
+
+        fallback_model = (self.settings.qwen_vision_fallback_model or "").strip()
+        if _image_description_needs_fallback(description) and fallback_model and fallback_model != model:
+            logger.info(
+                "qwen_vl_low_confidence primary_model=%s fallback_model=%s description=%s",
+                model,
+                fallback_model,
+                description,
+            )
+            try:
+                fallback_description = await self._translate_image_once(
+                    model=fallback_model,
+                    system_prompt=system_prompt,
+                    base64_image=base64_image,
+                    mime_type=mime_type,
+                    scenario="qwen_vl_translate_fallback",
+                    service_case_id=service_case_id,
+                    message_id=message_id,
+                )
+                if fallback_description:
+                    description = fallback_description
+            except Exception:
+                logger.exception("Qwen VL fallback image translation failed")
+
+        return _conservative_image_description(description)
+
+    async def _translate_image_once(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        base64_image: str,
+        mime_type: str,
+        scenario: str,
+        service_case_id: int | None,
+        message_id: int | None,
+    ) -> str:
+        started_at = time.monotonic()
+        finish = None
+        usage = None
         try:
             async with _get_limiter(self.settings.ai_max_concurrent_requests):
                 response = await self._qwen_client.chat.completions.create(
@@ -96,28 +202,30 @@ class AIService:
                                     "type": "image_url",
                                     "image_url": {
                                         "url": f"data:{mime_type};base64,{base64_image}"
-                                    }
+                                    },
                                 }
-                            ]
-                        }
+                            ],
+                        },
                     ],
-                    max_tokens=200,
+                    max_tokens=300,
                 )
-            
+
+            finish = response.choices[0].finish_reason if response.choices else None
+            usage = getattr(response, "usage", None)
             content = response.choices[0].message.content if response.choices else ""
             description = (content or "").strip()
             logger.info(
-                "qwen_vl_call model=%s elapsed_ms=%.1f description=%s",
+                "qwen_vl_call scenario=%s model=%s elapsed_ms=%.1f description=%s",
+                scenario,
                 model,
                 (time.monotonic() - started_at) * 1000,
-                description
+                description,
             )
-            usage = getattr(response, "usage", None)
             await self._record_usage(
-                scenario="qwen_vl_translate",
+                scenario=scenario,
                 model=model,
                 elapsed_ms=int((time.monotonic() - started_at) * 1000),
-                finish_reason=response.choices[0].finish_reason if response.choices else None,
+                finish_reason=finish,
                 usage=usage,
                 attempts=1,
                 success=True,
@@ -127,20 +235,19 @@ class AIService:
             )
             return description
         except Exception as exc:
-            logger.exception("Qwen VL image translation failed")
             await self._record_usage(
-                scenario="qwen_vl_translate",
+                scenario=scenario,
                 model=model,
                 elapsed_ms=int((time.monotonic() - started_at) * 1000),
-                finish_reason=None,
-                usage=None,
+                finish_reason=finish,
+                usage=usage,
                 attempts=1,
                 success=False,
                 error_type=type(exc).__name__,
                 service_case_id=service_case_id,
                 message_id=message_id,
             )
-            return "用户上传了一张图片，但解析描述失败。"
+            raise
 
     def _model_for(self, scenario: str) -> str:
         """按场景选择模型：风控和文档生成可独立于默认聊天模型。"""

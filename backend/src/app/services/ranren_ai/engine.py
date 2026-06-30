@@ -289,7 +289,7 @@ class RanrenAIEngine:
             item = data_list[0] if data_list else {}
             msg_data = item.get("msgData") or {}
 
-            file_url = msg_data.get("fileMiddleHttpUrl") or msg_data.get("fileBigHttpUrl") or msg_data.get("cdnUrl") or msg_data.get("cloudUrl")
+            file_url = msg_data.get("fileBigHttpUrl") or msg_data.get("fileMiddleHttpUrl") or msg_data.get("cdnUrl") or msg_data.get("cloudUrl")
             file_aes_key = msg_data.get("fileAesKey") or msg_data.get("aesKey")
             file_auth_key = msg_data.get("fileAuthKey")
 
