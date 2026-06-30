@@ -70,6 +70,13 @@ const TEMPLATE_LABELS: Record<string, string> = {
   stage_review: "阶段复盘",
 };
 
+const SCHEDULE_MESSAGE_VARIABLES = [
+  "{day}",
+  "{personalized_link}",
+  "{questionnaire_link}",
+  "{user_name}",
+];
+
 function templateLabel(template: { template_key: string; name: string }) {
   return template.name || TEMPLATE_LABELS[template.template_key] || template.template_key;
 }
@@ -189,7 +196,7 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
             <div>
               <h2 className="panel-title">发送计划</h2>
               <p className="panel-subtitle">
-              文案支持 {"{questionnaire_link}"}、{"{day}"}、{"{user_name}"}、{"{case_no}"}、{"{group_id}"}、{"{template_key}"}。
+              文案支持 {"{personalized_link}"}、{"{questionnaire_link}"}、{"{day}"}、{"{user_name}"}、{"{case_no}"}、{"{group_id}"}、{"{template_key}"}。
               </p>
             </div>
           </div>
@@ -775,7 +782,7 @@ function ScheduleEditor({
                       <span>发送话术</span>
                       {/* 五、变量 Tag Panel */}
                       <div className="flex items-center gap-1">
-                        {["{day}", "{questionnaire_link}", "{user_name}"].map((varName) => (
+                        {SCHEDULE_MESSAGE_VARIABLES.map((varName) => (
                           <button
                             key={varName}
                             type="button"
@@ -870,7 +877,7 @@ function ScheduleEditor({
                   <span>默认发送话术</span>
                   {/* 五、变量 Tag Panel */}
                   <div className="flex items-center gap-1">
-                    {["{day}", "{questionnaire_link}", "{user_name}"].map((varName) => (
+                    {SCHEDULE_MESSAGE_VARIABLES.map((varName) => (
                       <button
                         key={varName}
                         type="button"
