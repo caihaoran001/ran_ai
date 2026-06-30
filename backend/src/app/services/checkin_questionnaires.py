@@ -8,6 +8,15 @@ from app.models.app_setting import AppSetting
 
 
 CHECKIN_SCHEDULE_SETTING_KEY = "checkin_questionnaire_schedule"
+OLD_DAILY_ACTION_COPY = "请优先完成您的今日【必填】每日行动"
+
+
+def _checkin_link_intro() -> str:
+    return (
+        "晚上好，今天是第{day}天打卡【仅需10秒】，"
+        "看看咱们的【专属5项】完成得怎样吧：\n"
+        "👉 {personalized_link}"
+    )
 
 
 def default_checkin_questionnaire_templates() -> list[dict[str, Any]]:
@@ -62,8 +71,8 @@ def default_checkin_schedule() -> dict[str, Any]:
                 "day": 1,
                 "template_key": "daily_checkin_standard",
                 "message": (
-                    "晚上好，今天是第 {day} 天。请优先完成您的今日【必填】每日行动：\n"
-                    "👉 {personalized_link} (仅需10秒)\n\n"
+                    _checkin_link_intro()
+                    + "\n\n"
                     "如今天时间充裕，建议也完成本次【选填】节点复盘，方便我们了解您的整体状况：\n"
                     "📝 {questionnaire_link}"
                 ),
@@ -72,8 +81,8 @@ def default_checkin_schedule() -> dict[str, Any]:
                 "day": 3,
                 "template_key": "daily_checkin_standard",
                 "message": (
-                    "晚上好，今天是第 {day} 天。请优先完成您的今日【必填】每日行动：\n"
-                    "👉 {personalized_link} (仅需10秒)\n\n"
+                    _checkin_link_intro()
+                    + "\n\n"
                     "如今天时间充裕，建议也完成本次【选填】节点复盘，方便判定早期执行情况：\n"
                     "📝 {questionnaire_link}"
                 ),
@@ -82,8 +91,8 @@ def default_checkin_schedule() -> dict[str, Any]:
                 "day": 7,
                 "template_key": "stage_review",
                 "message": (
-                    "晚上好，今天是第 {day} 天。请优先完成您的今日【必填】每日行动：\n"
-                    "👉 {personalized_link} (仅需10秒)\n\n"
+                    _checkin_link_intro()
+                    + "\n\n"
                     "今天也是首个 7 天复盘日！有空请务必填写一下本次【选填】节点复盘，以便我们为您总结本周期变化和制定下阶段目标：\n"
                     "📝 {questionnaire_link}"
                 ),
@@ -92,8 +101,8 @@ def default_checkin_schedule() -> dict[str, Any]:
                 "day": 14,
                 "template_key": "stage_review",
                 "message": (
-                    "晚上好，今天是第 {day} 天。请优先完成您的今日【必填】每日行动：\n"
-                    "👉 {personalized_link} (仅需10秒)\n\n"
+                    _checkin_link_intro()
+                    + "\n\n"
                     "今天迎来了第 14 天复盘日！有空请务必填写一下本次【选填】节点复盘，我们将会为您调整健康策略：\n"
                     "📝 {questionnaire_link}"
                 ),
@@ -102,8 +111,8 @@ def default_checkin_schedule() -> dict[str, Any]:
                 "day": 21,
                 "template_key": "stage_review",
                 "message": (
-                    "晚上好，今天是第 {day} 天。请优先完成您的今日【必填】每日行动：\n"
-                    "👉 {personalized_link} (仅需10秒)\n\n"
+                    _checkin_link_intro()
+                    + "\n\n"
                     "今天来到了第 21 天复盘日！胜利在望，有空请务必填写一下本次【选填】节点复盘，以便为您锁定制胜重点：\n"
                     "📝 {questionnaire_link}"
                 ),
@@ -112,8 +121,8 @@ def default_checkin_schedule() -> dict[str, Any]:
                 "day": 28,
                 "template_key": "stage_review",
                 "message": (
-                    "晚上好，今天是第 {day} 天。请优先完成您的今日【必填】每日行动：\n"
-                    "👉 {personalized_link} (仅需10秒)\n\n"
+                    _checkin_link_intro()
+                    + "\n\n"
                     "恭喜您完成了 28 天的服务周期！请优先完成固定打卡，并在有空时填写本次【选填】节点复盘，我们将为您输出最终交付报告：\n"
                     "📝 {questionnaire_link}"
                 ),
@@ -123,8 +132,8 @@ def default_checkin_schedule() -> dict[str, Any]:
             "enabled": True,
             "template_key": "daily_checkin_simple",
             "message": (
-                "晚上好，今天是第 {day} 天。请优先完成您的今日【必填】每日行动：\n"
-                "👉 {personalized_link} (仅需10秒)\n\n"
+                _checkin_link_intro()
+                + "\n\n"
                 "如今天时间充裕，建议也填写一下本次【选填】节点复盘：\n"
                 "📝 {questionnaire_link}"
             ),
@@ -193,13 +202,25 @@ def normalize_checkin_schedule(value: dict[str, Any] | None) -> dict[str, Any]:
     rules = schedule.get("rules")
     if not isinstance(rules, list):
         rules = default["rules"]
-    schedule["rules"] = [rule for rule in rules if isinstance(rule, dict)]
+    schedule["rules"] = [
+        _normalize_checkin_rule_copy(rule) for rule in rules if isinstance(rule, dict)
+    ]
 
     daily_rule = schedule.get("daily_rule")
     if not isinstance(daily_rule, dict):
         daily_rule = default["daily_rule"]
-    schedule["daily_rule"] = daily_rule
+    schedule["daily_rule"] = _normalize_checkin_rule_copy(daily_rule)
     return schedule
+
+
+def _normalize_checkin_rule_copy(rule: dict[str, Any]) -> dict[str, Any]:
+    normalized = {**rule}
+    message = normalized.get("message")
+    if isinstance(message, str) and OLD_DAILY_ACTION_COPY in message:
+        intro = _checkin_link_intro()
+        tail = message.split("\n\n", 1)[1] if "\n\n" in message else ""
+        normalized["message"] = f"{intro}\n\n{tail}" if tail else intro
+    return normalized
 
 
 def _field(key: str, title: str, field_type: str = "SIMPLE", *, required: bool = False, options: list[str] | None = None, subtitle: str = "") -> dict[str, Any]:
