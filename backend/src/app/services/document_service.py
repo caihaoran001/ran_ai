@@ -1386,6 +1386,21 @@ def _flatten_payload_text_length(value: object) -> int:
     return len(str(value).strip())
 
 
+_STAGE_REPORT_REQUIRED_FIELDS = {
+    "stage_summary": "阶段总结",
+    "risk_reminder": "风险提醒",
+    "adjustment_advice": "微调建议",
+    "repurchase_advice": "复购建议",
+}
+_GRADUATION_REPORT_REQUIRED_FIELDS = {
+    "weight_change": "体重变化",
+    "rhythm_change": "节律变化",
+    "execution_rate": "执行率",
+    "growth_summary": "用户成长总结",
+    "next_route": "下一阶段路线图",
+}
+
+
 async def _generate_stage_payload(
     *,
     ai: AIService,
@@ -1447,31 +1462,82 @@ async def _generate_stage_payload(
             "【安全红线】\n"
             "必须使用生活方式管理表达，严禁医疗诊断、治疗建议、用药建议或疗效承诺。"
         )
-    try:
-        stage_scenario = "graduation_report" if stage == "graduation" else "stage_report"
-        text = await ai.generate_text(
-            scenario=stage_scenario,
-            temperature=0.3,
-            service_case_id=service_case.id,
-            system_prompt=prompt,
-            user_prompt=(
-                f"用户：{user_name}\n服务单：{service_case.case_no}\n报告：{title}\n阶段：{stage}\n"
-                f"请严格按字段结构填值：\n{json.dumps(stage_report_prompt_schema(stage), ensure_ascii=False, indent=2)}\n\n"
-                f"用户画像：\n{json.dumps(latest_profile.profile_json if latest_profile else {}, ensure_ascii=False, indent=2)}\n\n"
-                f"打卡记录：\n{json.dumps(checkin_summary, ensure_ascii=False, indent=2)}\n\n"
-                f"最近用户消息：\n{json.dumps(inbound_messages, ensure_ascii=False, indent=2)}"
-            ),
-        )
-        payload = parse_json_object(text)
-    except Exception:
-        logger.exception(
-            "Stage report payload generation failed (LLM/parse); using degraded fallback stage=%s", stage
-        )
-        result = _fallback_stage_payload(stage, {}, checkins)
-        if isinstance(result, dict):
-            result["__degraded__"] = True
-        return result
-    return _fallback_stage_payload(stage, payload, checkins)
+
+    stage_scenario = "graduation_report" if stage == "graduation" else "stage_report"
+    last_payload: dict | None = None
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        raw_text = ""
+        try:
+            raw_text = await ai.generate_text(
+                scenario=stage_scenario,
+                temperature=0.3,
+                service_case_id=service_case.id,
+                system_prompt=prompt,
+                user_prompt=(
+                    f"用户：{user_name}\n服务单：{service_case.case_no}\n报告：{title}\n阶段：{stage}\n"
+                    f"请严格按字段结构填值：\n{json.dumps(stage_report_prompt_schema(stage), ensure_ascii=False, indent=2)}\n\n"
+                    f"用户画像：\n{json.dumps(latest_profile.profile_json if latest_profile else {}, ensure_ascii=False, indent=2)}\n\n"
+                    f"打卡记录：\n{json.dumps(checkin_summary, ensure_ascii=False, indent=2)}\n\n"
+                    f"最近用户消息：\n{json.dumps(inbound_messages, ensure_ascii=False, indent=2)}"
+                ),
+            )
+            payload = parse_json_object(raw_text)
+            last_payload = payload
+            missing = _missing_stage_payload_fields(stage, payload)
+            if not missing:
+                return _fallback_stage_payload(stage, payload, checkins)
+            logger.warning(
+                "Stage report payload missing required fields stage=%s case_no=%s attempt=%s/%s keys=%s missing=%s raw_len=%s raw_preview=%r",
+                stage,
+                service_case.case_no,
+                attempt,
+                max_attempts,
+                sorted(payload.keys()) if isinstance(payload, dict) else [],
+                missing,
+                len(raw_text or ""),
+                _preview_text(raw_text),
+            )
+        except Exception:
+            logger.exception(
+                "Stage report payload generation failed (LLM/parse) stage=%s case_no=%s attempt=%s/%s",
+                stage,
+                service_case.case_no,
+                attempt,
+                max_attempts,
+            )
+
+    logger.error(
+        "Stage report payload unusable after retries; using degraded fallback stage=%s case_no=%s keys=%s",
+        stage,
+        service_case.case_no,
+        sorted(last_payload.keys()) if isinstance(last_payload, dict) else [],
+    )
+    result = _fallback_stage_payload(stage, last_payload or {}, checkins)
+    if isinstance(result, dict):
+        result["__degraded__"] = True
+    return result
+
+
+def _missing_stage_payload_fields(stage: str, payload: dict) -> list[str]:
+    required = (
+        _GRADUATION_REPORT_REQUIRED_FIELDS
+        if stage == "graduation"
+        else _STAGE_REPORT_REQUIRED_FIELDS
+    )
+    missing: list[str] = []
+    for key in required:
+        value = payload.get(key) if isinstance(payload, dict) else None
+        if not str(value or "").strip():
+            missing.append(key)
+    return missing
+
+
+def _preview_text(text: str, limit: int = 500) -> str:
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[:limit]}..."
 
 
 def _stage_report_method_prompt(stage: str) -> str:

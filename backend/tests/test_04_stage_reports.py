@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
+from datetime import date
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
+from app.services.document_service import _generate_stage_payload
 from tests.conftest import seed_checkins, seed_chat_messages
 
 
@@ -217,6 +221,59 @@ async def test_stage_report_content_has_checkin_data(admin_client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_stage_report_retries_when_llm_fields_missing():
+    ai = _SequenceAI(
+        [
+            json.dumps({"summary": "字段不对"}, ensure_ascii=False),
+            json.dumps(
+                {
+                    "stage_summary": "本阶段执行稳定，体重和饮水都有真实记录。",
+                    "risk_reminder": "暂无明显不适，继续观察。",
+                    "adjustment_advice": "饮水稳定到1500ml以上，23点前准备休息。",
+                    "repurchase_advice": "先稳住本阶段节奏，再看下一阶段是否延续。",
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    payload = await _generate_stage_payload(
+        ai=ai,
+        service_case=SimpleNamespace(id=1, case_no="TEST-STAGE-RETRY"),
+        user_name="测试用户",
+        stage="day14",
+        title="14天阶段报告",
+        latest_profile=None,
+        checkins=[_fake_checkin()],
+        messages=[],
+    )
+
+    assert ai.calls == 2
+    assert payload["stage_summary"].startswith("本阶段执行稳定")
+    assert "__degraded__" not in payload
+
+
+@pytest.mark.asyncio
+async def test_stage_report_marks_degraded_after_unusable_retries():
+    ai = _SequenceAI([json.dumps({"summary": "字段不对"}, ensure_ascii=False)] * 3)
+
+    payload = await _generate_stage_payload(
+        ai=ai,
+        service_case=SimpleNamespace(id=1, case_no="TEST-STAGE-DEGRADED"),
+        user_name="测试用户",
+        stage="day14",
+        title="14天阶段报告",
+        latest_profile=None,
+        checkins=[_fake_checkin()],
+        messages=[],
+    )
+
+    assert ai.calls == 3
+    assert payload["__degraded__"] is True
+    assert "最新反馈" in payload["stage_summary"]
+
+
+@pytest.mark.asyncio
 async def test_graduation_report(admin_client, db_session):
     await _ensure_manual_review(admin_client)
 
@@ -287,3 +344,22 @@ async def _ensure_manual_review(admin_client):
         json={"mode": "manual_review"},
     )
     assert resp.status_code == 200, resp.text
+
+
+class _SequenceAI:
+    def __init__(self, responses: list[str]):
+        self._responses = list(responses)
+        self.calls = 0
+
+    async def generate_text(self, **kwargs):
+        self.calls += 1
+        return self._responses[min(self.calls - 1, len(self._responses) - 1)]
+
+
+def _fake_checkin():
+    return SimpleNamespace(
+        checkin_date=date(2026, 6, 28),
+        created_at=datetime(2026, 6, 28, tzinfo=timezone.utc),
+        content="晨起体重（kg）: 62.10\n今日饮水量: 1500-2000ml",
+        parsed_json={"weight": "62.10", "water": "1500-2000ml"},
+    )
