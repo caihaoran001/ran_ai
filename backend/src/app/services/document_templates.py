@@ -112,7 +112,7 @@ STAGE_REPORT_SPEC = {
     "stage_summary": "阶段总结",
     "risk_reminder": "风险提醒",
     "adjustment_advice": "微调建议",
-    "repurchase_advice": "复购建议",
+    "followup_advice": "后续执行建议",
 }
 
 
@@ -177,7 +177,11 @@ def build_stage_report_content_json(
             _text_block("stage_summary", "1. 阶段总结", fields.get("stage_summary")),
             _text_block("risk_reminder", "2. 风险提醒", fields.get("risk_reminder")),
             _text_block("adjustment_advice", "3. 微调建议", fields.get("adjustment_advice")),
-            _text_block("repurchase_advice", "4. 后续建议", fields.get("repurchase_advice")),
+            _text_block(
+                "followup_advice",
+                "4. 后续执行建议",
+                fields.get("followup_advice") or fields.get("repurchase_advice"),
+            ),
         ]
     payload = _payload(title=title, recipient=user_name, blocks=blocks)
     payload["stage"] = stage

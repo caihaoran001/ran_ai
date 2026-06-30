@@ -1390,7 +1390,7 @@ _STAGE_REPORT_REQUIRED_FIELDS = {
     "stage_summary": "阶段总结",
     "risk_reminder": "风险提醒",
     "adjustment_advice": "微调建议",
-    "repurchase_advice": "复购建议",
+    "followup_advice": "后续执行建议",
 }
 _GRADUATION_REPORT_REQUIRED_FIELDS = {
     "weight_change": "体重变化",
@@ -1457,10 +1457,10 @@ async def _generate_stage_payload(
             "- stage_summary：总结本阶段用户的整体执行情况。必须结合打卡记录中的真实数据（体重趋势、打卡天数、产品执行率、睡眠和饮水变化），写出'做得好的地方'和'需要微调的地方'，禁止只写空泛的'执行不错继续加油'。\n"
             "- risk_reminder：检查用户打卡和聊天中是否出现过体感不适（胸闷、心悸、严重失眠、过敏等），如有则写出具体提醒并建议就医；如无明显风险，写一句通用安全提示即可。\n"
             "- adjustment_advice：基于用户当前最薄弱的1-2个维度（如晚餐收口、睡眠时间、饮水量），给出具体、量化、可执行的微调建议。禁止写'适当控制饮食'等模糊表达。\n"
-            "- repurchase_advice：先围绕用户下一阶段的目标和已经取得的进步，再温和提出不中断执行的建议。语气必须是'帮助用户看到继续的价值'，而不是'催促购买'。\n\n"
+            "- followup_advice：只写当前28天服务内的后续执行重点，帮助用户把现阶段动作做稳。严禁出现复购、续购、续费、续营、购买、囤货、补货、下一期、报名、优惠、活动等商业转化表达。\n\n"
 
             "【安全红线】\n"
-            "必须使用生活方式管理表达，严禁医疗诊断、治疗建议、用药建议或疗效承诺。"
+            "必须使用生活方式管理表达，严禁医疗诊断、治疗建议、用药建议或疗效承诺。非毕业阶段报告严禁引导复购或购买。"
         )
 
     stage_scenario = "graduation_report" if stage == "graduation" else "stage_report"
@@ -1484,17 +1484,17 @@ async def _generate_stage_payload(
             )
             payload = parse_json_object(raw_text)
             last_payload = payload
-            missing = _missing_stage_payload_fields(stage, payload)
-            if not missing:
+            invalid_reasons = _invalid_stage_payload_reasons(stage, payload)
+            if not invalid_reasons:
                 return _fallback_stage_payload(stage, payload, checkins)
             logger.warning(
-                "Stage report payload missing required fields stage=%s case_no=%s attempt=%s/%s keys=%s missing=%s raw_len=%s raw_preview=%r",
+                "Stage report payload invalid stage=%s case_no=%s attempt=%s/%s keys=%s reasons=%s raw_len=%s raw_preview=%r",
                 stage,
                 service_case.case_no,
                 attempt,
                 max_attempts,
                 sorted(payload.keys()) if isinstance(payload, dict) else [],
-                missing,
+                invalid_reasons,
                 len(raw_text or ""),
                 _preview_text(raw_text),
             )
@@ -1533,6 +1533,32 @@ def _missing_stage_payload_fields(stage: str, payload: dict) -> list[str]:
     return missing
 
 
+_STAGE_REPORT_COMMERCIAL_TERMS = (
+    "复购",
+    "续购",
+    "续费",
+    "续营",
+    "购买",
+    "继续购买",
+    "再买",
+    "囤货",
+    "补货",
+    "下一期",
+    "报名",
+    "优惠",
+)
+
+
+def _invalid_stage_payload_reasons(stage: str, payload: dict) -> list[str]:
+    reasons = [f"missing:{key}" for key in _missing_stage_payload_fields(stage, payload)]
+    if stage != "graduation":
+        text = json.dumps(payload, ensure_ascii=False) if isinstance(payload, dict) else str(payload)
+        commercial_terms = [term for term in _STAGE_REPORT_COMMERCIAL_TERMS if term in text]
+        if commercial_terms:
+            reasons.append(f"commercial_terms:{','.join(commercial_terms)}")
+    return reasons
+
+
 def _preview_text(text: str, limit: int = 500) -> str:
     cleaned = " ".join((text or "").split())
     if len(cleaned) <= limit:
@@ -1557,7 +1583,7 @@ def _stage_report_method_prompt(stage: str) -> str:
         "4. 体重不降或波动时，必须同时查看睡眠、饮水、排便、晚餐收口、情绪压力和早C/午B/晚A执行，不得简单归因于用户不努力。\n"
         "5. 风险提醒只基于真实打卡和聊天记录；若出现胸闷、心悸、严重失眠、过敏、孕哺、慢病或用药相关表达，必须提示人工复核/就医，不给医疗建议。\n"
         "6. 微调建议每次最多给 1-2 个动作，必须具体到今天能做，例如饮水量、晚餐主食量、睡前时间、步数或产品饮用时间。\n"
-        "7. 复购建议只在用户执行稳定、有阶段收益或主动表达意向时温和提出；不得制造焦虑、催单或承诺继续购买一定有效。"
+        "7. 非毕业阶段只给当前服务周期内的后续执行建议，不写复购、续购、购买、囤货、优惠等商业转化内容。"
     )
 
 
@@ -1574,7 +1600,7 @@ def _fallback_stage_payload(stage: str, payload: dict, checkins: list[Checkin]) 
         payload.setdefault("stage_summary", f"本阶段已记录 {checkin_days} 天打卡，最新反馈：{json.dumps(latest, ensure_ascii=False) if latest else '暂无结构化反馈'}。")
         payload.setdefault("risk_reminder", "如出现胸闷、心悸、严重失眠、过敏等明显不适，请及时联系班主任并建议就医。")
         payload.setdefault("adjustment_advice", "继续守住早C/午B/晚A、饮水、睡眠、情绪、运动和体重记录六项基础动作。")
-        payload.setdefault("repurchase_advice", "如果执行节奏已经稳定，可以提前准备下一阶段，避免中断已建立的节律。")
+        payload.setdefault("followup_advice", "接下来先稳住本阶段执行节奏，继续按日记录产品、饮水、睡眠、排便、运动和体重变化。")
     return payload
 
 

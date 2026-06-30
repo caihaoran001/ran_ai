@@ -230,7 +230,7 @@ async def test_stage_report_retries_when_llm_fields_missing():
                     "stage_summary": "本阶段执行稳定，体重和饮水都有真实记录。",
                     "risk_reminder": "暂无明显不适，继续观察。",
                     "adjustment_advice": "饮水稳定到1500ml以上，23点前准备休息。",
-                    "repurchase_advice": "先稳住本阶段节奏，再看下一阶段是否延续。",
+                    "followup_advice": "先稳住本阶段节奏，再把饮水和睡眠连续性做实。",
                 },
                 ensure_ascii=False,
             ),
@@ -271,6 +271,46 @@ async def test_stage_report_marks_degraded_after_unusable_retries():
     assert ai.calls == 3
     assert payload["__degraded__"] is True
     assert "最新反馈" in payload["stage_summary"]
+
+
+@pytest.mark.asyncio
+async def test_stage_report_retries_when_non_graduation_has_commercial_terms():
+    ai = _SequenceAI(
+        [
+            json.dumps(
+                {
+                    "stage_summary": "本阶段执行稳定，体重和饮水都有真实记录。",
+                    "risk_reminder": "暂无明显不适，继续观察。",
+                    "adjustment_advice": "饮水稳定到1500ml以上，23点前准备休息。",
+                    "followup_advice": "可以提前考虑复购，避免节奏中断。",
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "stage_summary": "本阶段执行稳定，体重和饮水都有真实记录。",
+                    "risk_reminder": "暂无明显不适，继续观察。",
+                    "adjustment_advice": "饮水稳定到1500ml以上，23点前准备休息。",
+                    "followup_advice": "先稳住本阶段节奏，再把饮水和睡眠连续性做实。",
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    payload = await _generate_stage_payload(
+        ai=ai,
+        service_case=SimpleNamespace(id=1, case_no="TEST-STAGE-COMMERCIAL"),
+        user_name="测试用户",
+        stage="day14",
+        title="14天阶段报告",
+        latest_profile=None,
+        checkins=[_fake_checkin()],
+        messages=[],
+    )
+
+    assert ai.calls == 2
+    assert "复购" not in json.dumps(payload, ensure_ascii=False)
 
 
 @pytest.mark.asyncio
