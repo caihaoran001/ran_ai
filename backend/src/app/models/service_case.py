@@ -32,6 +32,7 @@ class ServiceCaseStatus(str, enum.Enum):
     APPROVED = "approved"
     IN_SERVICE = "in_service"
     COMPLETED = "completed"
+    REFUNDED = "refunded"
 
 
 class ServiceCase(TimestampMixin, Base):
@@ -78,6 +79,10 @@ class ServiceCase(TimestampMixin, Base):
     intervention_reasons: Mapped[list[dict] | None] = mapped_column(JSON)
     renewal_intent_flags: Mapped[list[dict] | None] = mapped_column(JSON)
     refund_intent_flags: Mapped[list[dict] | None] = mapped_column(JSON)
+    # 大模型识别到"疑似已完成退款"→置真进入后台"已退款待确认"列表；运营确认后才改 status=REFUNDED 停推送。
+    refund_pending_confirmation: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false")
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User | None] = relationship(back_populates="service_cases")

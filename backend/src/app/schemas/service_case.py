@@ -43,6 +43,7 @@ class ServiceCaseUpdate(BaseModel):
     morning_push_enabled: bool | None = None
     inactive_wake_enabled: bool | None = None
     needs_human_intervention: bool | None = None
+    refund_pending_confirmation: bool | None = None  # 运营驳回退款候选(置 False)时用
     reset_risk: bool | None = None  # 人工解除高风险标记
 
 
@@ -72,6 +73,7 @@ class ServiceCaseRead(Timestamped):
     intervention_reasons: list[dict] | None = None
     renewal_intent_flags: list[dict] | None = None
     refund_intent_flags: list[dict] | None = None
+    refund_pending_confirmation: bool = False
     deleted_at: datetime | None = None
     user: UserRead | None = None
 
