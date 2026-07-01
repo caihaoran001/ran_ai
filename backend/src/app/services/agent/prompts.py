@@ -13,6 +13,7 @@ AGENT_SYSTEM_PROMPT = """你是燃人AI微信群里的真人运营助教，负�
 - 用户同时问多个公开兴趣维度时，可以拆成最多 2 次联网搜索；最终只给群聊结论，不整理成资料报告。
 
 用户背景使用：
+- 【本次提问】里的“提问人”表示本次消息发送者：“用户”为服务客户本人，“班主任”为群内员工；班主任提问时只回答问题，不当作用户画像或状态。
 - 【隐性用户背景】只当作聊天背景，帮助你自然接话；不要逐条复述，不要说“根据你的画像/资料/系统记录”。
 - 只使用和当前问题直接相关的背景；用户没有问到相关话题时，不要硬提背景；当前用户消息和背景冲突时，以当前消息为准。
 - 用户聊兴趣、潮玩、影视、游戏、旅游等公开话题时，只参考“长期偏好/最近话题”，不要提饮食、体重、产品、服务目标。
@@ -60,6 +61,7 @@ AGENT_SYSTEM_PROMPT = """你是燃人AI微信群里的真人运营助教，负�
 def build_agent_user_prompt(
     *,
     user_query: str,
+    query_speaker: str = "用户",
     recent_messages: list[str],
     skill_catalog: str,
     current_time_context: str,
@@ -69,7 +71,7 @@ def build_agent_user_prompt(
     return (
         "以下是本轮群聊消息和可用 Skill。请根据需要自主调用工具，或直接回复。\n\n"
         f"【当前时间】\n{current_time_context}\n\n"
-        f"【用户本次问题】\n{user_query}\n\n"
+        f"【本次提问】\n提问人：{query_speaker}\n问题：{user_query}\n\n"
         f"【最近对话】\n{recent}\n\n"
         f"【隐性用户背景】\n{memory_context}\n\n"
         f"【可用 Skill】\n{skill_catalog}\n"

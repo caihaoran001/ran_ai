@@ -437,6 +437,18 @@ def test_qiwe_system_command_bypasses_aggregator():
 
     assert _bypass_aggregator(command) is True
     assert _bypass_aggregator(normal) is False
+    explicit_query = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="@燃人AI 最近有什么好看的电影？",
+        raw_payload={
+            "userId": "bot-1",
+            "msgData": {"atList": [{"userId": "bot-1"}]},
+        },
+        timestamp=datetime.now(timezone.utc),
+    )
+    assert _bypass_aggregator(explicit_query) is True
 
 
 @pytest.mark.asyncio
@@ -508,6 +520,7 @@ async def test_qiwe_questionnaire_command_skips_intervention_llm(monkeypatch):
 async def test_qiwe_staff_sender_ignoring(monkeypatch):
     from app.models.message import MessageSenderType
     added_messages: list[Message] = []
+    reply_inputs: list[tuple[str, MessageSenderType]] = []
 
     class FakeSession:
         async def __aenter__(self):
@@ -545,8 +558,14 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
     monkeypatch.setattr(RanrenAIEngine, "_latest_active_case", lambda self, session, chat_id: asyncio.sleep(0, result=fake_case))
     monkeypatch.setattr(RanrenAIEngine, "_recent_user_messages", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(RanrenAIEngine, "_store_intervention_analysis", lambda *args, **kwargs: asyncio.sleep(0, result=None))
-    monkeypatch.setattr(RanrenAIEngine, "_reply_with_ai", lambda *args, **kwargs: asyncio.sleep(0, result=None))
     monkeypatch.setattr(RanrenAIEngine, "_run_outcome_analysis", lambda *args, **kwargs: asyncio.sleep(0, result=None))
+
+    async def fake_reply_with_ai(self, message, **kwargs):
+        trigger_id = kwargs.get("trigger_id")
+        trigger = added_messages[(trigger_id or 1) - 1]
+        reply_inputs.append((message.text, trigger.sender_type))
+
+    monkeypatch.setattr(RanrenAIEngine, "_reply_with_ai", fake_reply_with_ai)
 
     engine = RanrenAIEngine(FakeChannel())
 
@@ -597,13 +616,38 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
 
     await engine.handle_message(message3)
 
-    assert len(added_messages) == 3
+    # Case 4: Staff explicitly @mentions the bot; it should trigger a reply but remain STAFF in storage.
+    message4 = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-staff",
+        chat_type="group",
+        text="@燃人AI 最近有什么好看的电影？",
+        message_id="m4",
+        user_id="user-1",
+        user_name="上海 Lucy",
+        raw_payload={
+            "userId": "bot-1",
+            "msgData": {"atList": [{"userId": "bot-1"}]},
+        },
+        timestamp=datetime.now(timezone.utc),
+    )
+    await engine.handle_message(message4)
+
+    assert len(added_messages) == 4
     # Message 1 should be MessageSenderType.STAFF
     assert added_messages[0].sender_type == MessageSenderType.STAFF
     # Message 2 should be MessageSenderType.STAFF
     assert added_messages[1].sender_type == MessageSenderType.STAFF
     # Message 3 should be MessageSenderType.USER
     assert added_messages[2].sender_type == MessageSenderType.USER
+    # Message 4 should still be MessageSenderType.STAFF even though it triggers AI.
+    assert added_messages[3].sender_type == MessageSenderType.STAFF
+    assert reply_inputs == [
+        ("我是普通用户", MessageSenderType.USER),
+        ("最近有什么好看的电影？", MessageSenderType.STAFF),
+    ]
+    assert added_messages[3].analysis_json["_qiwe_meta"]["sender_type"] == "staff"
+    assert added_messages[3].analysis_json["_qiwe_meta"]["explicit_bot_query_text"] == "最近有什么好看的电影？"
     assert called_analyze is True
 
 

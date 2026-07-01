@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hmac
 import logging
+import re
 import time
 from typing import Any
 
@@ -80,12 +81,44 @@ def _bypass_aggregator(message: ChannelMessage) -> bool:
     # 非文本(表情/图片等)绕过聚合，直接走 engine：只入库留痕、不回复，且不与文本消息合并
     if message.message_type != "text":
         return True
+    # 群内显式@机器人并带正文：立即作为一次独立提问处理，避免被8秒聚合窗口混入普通发言
+    if _mentions_qiwe_bot(message) and _strip_leading_mentions(message.text):
+        return True
     # 群内@机器人控制命令需要立即生效，不等待8秒聚合窗口
     msg_data = (message.raw_payload or {}).get("msgData") if isinstance(message.raw_payload, dict) else None
     at_list = msg_data.get("atList") if isinstance(msg_data, dict) else None
     if at_list and ("退下" in message.text or "回来" in message.text):
         return True
     return "发送本群入营问卷" in message.text or "发送本群专属问卷" in message.text
+
+
+def _mentions_qiwe_bot(message: ChannelMessage) -> bool:
+    payload = message.raw_payload if isinstance(message.raw_payload, dict) else {}
+    msg_data = payload.get("msgData") if isinstance(payload.get("msgData"), dict) else {}
+    at_list = msg_data.get("atList") or []
+    if not isinstance(at_list, list) or not at_list:
+        return False
+
+    bot_user_id = _as_str(payload.get("userId") or payload.get("receiverId")).strip()
+    if not bot_user_id:
+        return False
+
+    for item in at_list:
+        values: list[str] = []
+        if isinstance(item, dict):
+            for key in ("userId", "user_id", "wxid", "id", "uid"):
+                value = item.get(key)
+                if value is not None:
+                    values.append(str(value).strip())
+        elif item is not None:
+            values.append(str(item).strip())
+        if bot_user_id in values:
+            return True
+    return False
+
+
+def _strip_leading_mentions(text: str) -> str:
+    return re.sub(r"^(?:@\S+\s*)+", "", " ".join((text or "").split()).strip()).strip()
 
 
 def _get_aggregator(request: Request) -> QiWeMessageAggregator:

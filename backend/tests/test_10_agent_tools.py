@@ -573,8 +573,11 @@ async def test_engine_uses_agent_only_when_global_and_case_toggles_enabled(
     await set_ai_reply_delivery_mode("auto_send", db_session)
     calls: list[int] = []
 
-    async def fake_generate_agent_reply(*, service_case_id, trigger_id, user_query, recent_messages, analysis, settings):
+    async def fake_generate_agent_reply(
+        *, service_case_id, trigger_id, user_query, query_speaker, recent_messages, analysis, settings
+    ):
         calls.append(service_case_id)
+        assert query_speaker == "用户"
         assert analysis == {"requires_human_intervention": False}
         return AgentReplyResult(
             reply="agent reply",

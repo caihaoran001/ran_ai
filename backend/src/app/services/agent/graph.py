@@ -60,13 +60,14 @@ class RanrenAgentGraph:
         self.model = base_model.bind_tools(self.tools) if hasattr(base_model, "bind_tools") else base_model
         self.graph = self._compile()
 
-    async def run(self, *, user_query: str, recent_messages: list[str]) -> AgentReplyResult:
+    async def run(self, *, user_query: str, recent_messages: list[str], query_speaker: str = "用户") -> AgentReplyResult:
         memory_context = await self._build_memory_context()
         initial_messages: list[BaseMessage] = [
             SystemMessage(content=AGENT_SYSTEM_PROMPT),
             HumanMessage(
                 content=build_agent_user_prompt(
                     user_query=user_query,
+                    query_speaker=query_speaker,
                     recent_messages=recent_messages,
                     skill_catalog=self.skill_registry.catalog_text(),
                     current_time_context=_current_time_context(),
@@ -283,6 +284,7 @@ async def generate_agent_reply(
     service_case_id: int,
     trigger_id: int | None,
     user_query: str,
+    query_speaker: str = "用户",
     recent_messages: list[str],
     analysis: dict[str, Any] | None = None,
     settings: Settings | None = None,
@@ -295,7 +297,7 @@ async def generate_agent_reply(
             agent_context_plan=_agent_context_plan(analysis),
         ),
         settings=settings,
-    ).run(user_query=user_query, recent_messages=recent_messages)
+    ).run(user_query=user_query, recent_messages=recent_messages, query_speaker=query_speaker)
     if result.data_tool_failed and _looks_like_data_query(user_query):
         raise AgentDataUnavailableError(DATA_UNAVAILABLE_REPLY)
     return result
