@@ -107,6 +107,24 @@ class DashboardCaseMessageEvents(BaseModel):
     events: list[DashboardMessageEvent] = Field(default_factory=list)
 
 
+class DashboardRiskReason(BaseModel):
+    level: str | None = None
+    reason: str | None = None
+    evidence: str | None = None
+
+
+class DashboardCaseInsightItem(BaseModel):
+    """通用『服务单洞察』条目：风险原因 / 闲置天数 / 服务天数按需填充。"""
+
+    case: DashboardCaseRef
+    risk_level: str | None = None
+    idle_days: int | None = None
+    last_inbound_at: datetime | None = None
+    service_day: int | None = None
+    started_at: datetime | None = None
+    reasons: list[DashboardRiskReason] = Field(default_factory=list)
+
+
 class DashboardCheckinEvent(BaseModel):
     checkin_id: int
     checkin_date: str

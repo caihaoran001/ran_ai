@@ -132,7 +132,7 @@ export default async function DashboardPage() {
           icon={ShieldAlert}
           color="red"
           href="/dashboard/attention-events"
-          description="触发转人工、@班主任后待复核的事件数；点击查看服务单、触发原话和 AI 拟回复。"
+          description="今日触发转人工、@班主任的事件数；点击查看服务单、触发原话和 AI/班主任回复。"
         />
         <StatCard
           label="退款/退出意向"
@@ -211,32 +211,32 @@ export default async function DashboardPage() {
           value={summary.risk_users}
           icon={AlertTriangle}
           color="red"
-          href="/users?filter=risk"
-          description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险词，需要人工关注。"
+          href="/dashboard/risk-users"
+          description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险，需要人工关注；点击查看具体风险原因。"
         />
         <StatCard
           label="未跟进（2-7天）"
           value={summary.unfollowed_users}
           icon={Clock3}
           color="yellow"
-          href="/users?filter=unfollowed"
-          description="服务中，且最近 2-7 天没有用户入站消息的服务单；与流失用户互斥。"
+          href="/dashboard/unfollowed"
+          description="服务中，且最近 2-7 天没有用户入站消息的服务单；与流失用户互斥；点击查看闲置天数。"
         />
         <StatCard
           label="流失用户"
           value={summary.lost_users}
           icon={TrendingDown}
           color="orange"
-          href="/users?filter=lost"
-          description="服务中，且超过 7 天没有用户入站消息的服务单；不再计入未跟进。"
+          href="/dashboard/lost"
+          description="服务中，且超过 7 天没有用户入站消息的服务单；不再计入未跟进；点击查看闲置天数。"
         />
         <StatCard
           label="续购跟进窗口"
           value={renewalFollowupUsers}
           icon={ShoppingCart}
           color="green"
-          href="/users?filter=renewal_followup"
-          description="按服务天数推算：已服务 18-28 天，适合人工做续购沟通，不代表用户已表达购买意愿。"
+          href="/dashboard/renewal-followup"
+          description="按服务天数推算：已服务 18-28 天，适合人工做续购沟通，不代表用户已表达购买意愿；点击查看服务天数。"
         />
         <StatCard
           label="今日新增用户"

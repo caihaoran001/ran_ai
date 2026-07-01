@@ -30,6 +30,22 @@ export type DashboardCaseMessageEvents = {
   events: DashboardMessageEvent[];
 };
 
+export type DashboardRiskReason = {
+  level?: string | null;
+  reason?: string | null;
+  evidence?: string | null;
+};
+
+export type DashboardCaseInsightItem = {
+  case: DashboardCaseRef;
+  risk_level?: string | null;
+  idle_days?: number | null;
+  last_inbound_at?: string | null;
+  service_day?: number | null;
+  started_at?: string | null;
+  reasons: DashboardRiskReason[];
+};
+
 export type DashboardCheckinEvent = {
   checkin_id: number;
   checkin_date: string;
@@ -124,6 +140,63 @@ export function MessageEventList({
                 )}
               </div>
             ))}
+          </div>
+        </CaseSection>
+      ))}
+    </div>
+  );
+}
+
+export function CaseInsightList({
+  items,
+  emptyText,
+}: {
+  items: DashboardCaseInsightItem[];
+  emptyText: string;
+}) {
+  if (!items.length) {
+    return <div className="panel p-12 text-center text-slate-500">{emptyText}</div>;
+  }
+  return (
+    <div className="grid gap-4">
+      {items.map((item) => (
+        <CaseSection key={item.case.service_case_id} caseRef={item.case}>
+          <div className="p-5">
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs font-semibold">
+              {item.risk_level === "high" && (
+                <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-rose-700">高风险</span>
+              )}
+              {typeof item.idle_days === "number" && (
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">
+                  已闲置 {item.idle_days} 天
+                </span>
+              )}
+              {item.last_inbound_at && (
+                <span className="text-slate-400">最近入站 {formatChinaShortDateTime(item.last_inbound_at)}</span>
+              )}
+              {typeof item.service_day === "number" && (
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-700">
+                  {item.service_day < 1 ? "未开始" : `服务第 ${item.service_day} 天`}
+                </span>
+              )}
+              {item.started_at && (
+                <span className="text-slate-400">起始 {formatChinaShortDateTime(item.started_at)}</span>
+              )}
+            </div>
+            {item.reasons.length ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                {item.reasons.map((reason, index) => (
+                  <InfoBox
+                    key={index}
+                    tone="rose"
+                    title={`风险原因${reason.level ? `（${LEVEL_LABELS[reason.level] || reason.level}）` : ""}`}
+                    content={reason.reason || reason.evidence || "已标记风险，但未保存具体原因。"}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">暂无更多说明，点击进入服务单查看详情。</p>
+            )}
           </div>
         </CaseSection>
       ))}

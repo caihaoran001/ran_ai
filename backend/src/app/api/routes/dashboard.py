@@ -13,7 +13,7 @@ from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
-from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
+from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
@@ -25,9 +25,11 @@ from app.schemas.dashboard import (
     AICostSummary,
     CaseHealthItem,
     DashboardCaseCheckins,
+    DashboardCaseInsightItem,
     DashboardCaseMessageEvents,
     DashboardCasePendingDocuments,
     DashboardCaseRef,
+    DashboardRiskReason,
     DashboardCheckinEvent,
     DashboardMetric,
     DashboardMessageEvent,
@@ -37,7 +39,7 @@ from app.schemas.dashboard import (
     EmotionalAlertMessage,
     OutcomeDashboardSummary,
 )
-from app.services.service_case_queries import active_service_case_condition, effective_start_at, pending_review_case_ids_subquery
+from app.services.service_case_queries import active_service_case_condition, effective_start_at
 
 router = APIRouter()
 
@@ -47,6 +49,11 @@ def _today_bounds() -> tuple[datetime, datetime]:
     today = datetime.now(china_tz).date()
     today_start = datetime.combine(today, time.min, tzinfo=china_tz).astimezone(timezone.utc)
     return today_start, today_start + timedelta(days=1)
+
+
+def _requires_human_intervention_expr():
+    """入站用户消息是否触发转人工/@班主任：analysis_json.requires_human_intervention=true。"""
+    return Message.analysis_json["requires_human_intervention"].as_boolean().is_(True)
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -130,17 +137,21 @@ async def dashboard_summary(
             ServiceCase.risk_level == "high",
         )
     )
-    # 『需关注事件』数：待审核 AI 回复(OUTBOUND+BOT+CHAT+PENDING)的条数（事件级，
-    # 同一用户多次触发算多条），不是有待审核回复的服务单个数。
+    # 『需关注事件』数：今日触发转人工/@班主任 的事件数（事件级，同一用户多次触发算多条）。
+    # 口径与「今日用户消息/今日打卡」一致，每日自然滚动，无需人工清零机制。
+    # 判定信号：入站用户消息的 analysis_json.requires_human_intervention（由 analyze_intervention 写入，
+    # 正是 engine 触发 @班主任 handoff 的条件）。注：旧的「待审核 AI 回复(PENDING)」机制已废弃——
+    # 现凡需介入一律直接 @班主任(status=SENT)，不再生成 PENDING 回复，故不能再用它统计。
     human_intervention_users = await session.scalar(
         select(func.count(Message.id))
         .join(ServiceCase, Message.service_case_id == ServiceCase.id)
         .where(
             active_service_case_condition(),
-            Message.direction == MessageDirection.OUTBOUND,
-            Message.sender_type == MessageSenderType.BOT,
-            Message.purpose == MessagePurpose.CHAT,
-            Message.status == MessageStatus.PENDING,
+            Message.created_at >= today_start,
+            Message.created_at < today_end,
+            Message.direction == MessageDirection.INBOUND,
+            Message.sender_type == MessageSenderType.USER,
+            _requires_human_intervention_expr(),
         )
     )
     now = datetime.now(timezone.utc)
@@ -293,6 +304,8 @@ async def dashboard_emotional_alerts(
 async def dashboard_attention_events(
     session: AsyncSession = Depends(get_session),
 ) -> list[DashboardCaseMessageEvents]:
+    """今日触发转人工/@班主任 的事件：以入站用户消息(触发点)为主，附带 @班主任/AI 回复。"""
+    today_start, today_end = _today_bounds()
     rows = (
         await session.execute(
             select(Message, ServiceCase, User)
@@ -300,40 +313,193 @@ async def dashboard_attention_events(
             .outerjoin(User, ServiceCase.user_id == User.id)
             .where(
                 active_service_case_condition(),
-                Message.direction == MessageDirection.OUTBOUND,
-                Message.sender_type == MessageSenderType.BOT,
-                Message.purpose == MessagePurpose.CHAT,
-                Message.status == MessageStatus.PENDING,
+                Message.created_at >= today_start,
+                Message.created_at < today_end,
+                Message.direction == MessageDirection.INBOUND,
+                Message.sender_type == MessageSenderType.USER,
+                _requires_human_intervention_expr(),
             )
             .order_by(Message.created_at.desc(), Message.id.desc())
         )
     ).all()
-    trigger_ids = [message.trigger_id for message, _, _ in rows if message.trigger_id]
-    triggers = {}
+
+    # 按 trigger_id 找每个触发点对应的出站回复(@班主任 handoff / AI 回复)。
+    trigger_ids = [trigger.id for trigger, _, _ in rows]
+    replies: dict[int, Message] = {}
     if trigger_ids:
-        triggers = {
-            message.id: message
-            for message in await session.scalars(select(Message).where(Message.id.in_(trigger_ids)))
-        }
+        for reply in await session.scalars(
+            select(Message)
+            .where(
+                Message.trigger_id.in_(trigger_ids),
+                Message.direction == MessageDirection.OUTBOUND,
+            )
+            .order_by(Message.id.asc())
+        ):
+            if reply.trigger_id is not None:
+                replies[reply.trigger_id] = reply  # 同一触发点多条时取最新一条
 
     cases: dict[int, DashboardCaseMessageEvents] = {}
-    for pending_message, service_case, user in rows:
-        trigger = triggers.get(pending_message.trigger_id) if pending_message.trigger_id else None
+    for trigger, service_case, user in rows:
         detail = _attention_event_detail(trigger)
+        reply = replies.get(trigger.id)
         event = DashboardMessageEvent(
-            event_id=f"attention-{pending_message.id}",
-            message_id=trigger.id if trigger else None,
-            content=trigger.content if trigger else "",
-            occurred_at=trigger.created_at if trigger else pending_message.created_at,
+            event_id=f"attention-{trigger.id}",
+            message_id=trigger.id,
+            content=trigger.content,
+            occurred_at=trigger.created_at,
             reason=detail.get("reason"),
             evidence=detail.get("evidence"),
             level=detail.get("level"),
-            ai_reply_message_id=pending_message.id,
-            ai_reply_content=pending_message.content,
-            ai_reply_created_at=pending_message.created_at,
+            ai_reply_message_id=reply.id if reply else None,
+            ai_reply_content=reply.content if reply else None,
+            ai_reply_created_at=reply.created_at if reply else None,
         )
         _append_case_event(cases, service_case=service_case, user=user, event=event)
     return list(cases.values())
+
+
+def _risk_reasons(service_case: ServiceCase) -> list[DashboardRiskReason]:
+    """风险原因：优先 risk_flags 里 level in {high,medium}，为空则回退 intervention_reasons。"""
+    sources: list[dict] = []
+    if isinstance(service_case.risk_flags, list):
+        sources = [
+            item
+            for item in service_case.risk_flags
+            if isinstance(item, dict) and item.get("level") in {"high", "medium"}
+        ]
+    if not sources and isinstance(service_case.intervention_reasons, list):
+        sources = [item for item in service_case.intervention_reasons if isinstance(item, dict)]
+    reasons: list[DashboardRiskReason] = []
+    seen: set[tuple[str | None, str | None]] = set()
+    for item in sources:
+        reason = _string_or_none(item.get("reason") or item.get("label"))
+        evidence = _string_or_none(item.get("evidence"))
+        key = (reason, evidence)
+        if key in seen:
+            continue
+        seen.add(key)
+        reasons.append(
+            DashboardRiskReason(level=_string_or_none(item.get("level")), reason=reason, evidence=evidence)
+        )
+    return reasons
+
+
+@router.get("/risk-cases", response_model=list[DashboardCaseInsightItem])
+async def dashboard_risk_cases(
+    session: AsyncSession = Depends(get_session),
+) -> list[DashboardCaseInsightItem]:
+    """高风险服务单：展示具体风险原因 + 用户/服务单。"""
+    rows = (
+        await session.execute(
+            select(ServiceCase, User)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(active_service_case_condition(), ServiceCase.risk_level == "high")
+            .order_by(ServiceCase.updated_at.desc(), ServiceCase.id.desc())
+        )
+    ).all()
+    return [
+        DashboardCaseInsightItem(
+            case=_case_ref(service_case, user),
+            risk_level=service_case.risk_level,
+            reasons=_risk_reasons(service_case),
+        )
+        for service_case, user in rows
+    ]
+
+
+async def _idle_cases(
+    session: AsyncSession,
+    *,
+    min_days: int,
+    max_days: int | None,
+) -> list[DashboardCaseInsightItem]:
+    """服务中、且最近入站消息距今 [min_days, max_days) 天的服务单（含闲置天数）。"""
+    now = datetime.now(timezone.utc)
+    last_message_subq = (
+        select(Message.service_case_id, func.max(Message.created_at).label("last_at"))
+        .where(Message.direction == MessageDirection.INBOUND)
+        .group_by(Message.service_case_id)
+        .subquery()
+    )
+    last_activity_at = func.coalesce(last_message_subq.c.last_at, ServiceCase.created_at)
+    conditions = [
+        active_service_case_condition(),
+        ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+        last_activity_at < now - timedelta(days=min_days),
+    ]
+    if max_days is not None:
+        conditions.append(last_activity_at >= now - timedelta(days=max_days))
+    rows = (
+        await session.execute(
+            select(ServiceCase, User, last_message_subq.c.last_at)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .outerjoin(last_message_subq, last_message_subq.c.service_case_id == ServiceCase.id)
+            .where(*conditions)
+            .order_by(last_activity_at.asc(), ServiceCase.id.desc())
+        )
+    ).all()
+    items: list[DashboardCaseInsightItem] = []
+    for service_case, user, last_at in rows:
+        basis = last_at or service_case.created_at
+        if basis is not None and basis.tzinfo is None:
+            basis = basis.replace(tzinfo=timezone.utc)
+        idle_days = (now - basis).days if basis is not None else None
+        items.append(
+            DashboardCaseInsightItem(
+                case=_case_ref(service_case, user),
+                risk_level=service_case.risk_level,
+                idle_days=idle_days,
+                last_inbound_at=last_at,
+            )
+        )
+    return items
+
+
+@router.get("/unfollowed-cases", response_model=list[DashboardCaseInsightItem])
+async def dashboard_unfollowed_cases(
+    session: AsyncSession = Depends(get_session),
+) -> list[DashboardCaseInsightItem]:
+    return await _idle_cases(session, min_days=2, max_days=7)
+
+
+@router.get("/lost-cases", response_model=list[DashboardCaseInsightItem])
+async def dashboard_lost_cases(
+    session: AsyncSession = Depends(get_session),
+) -> list[DashboardCaseInsightItem]:
+    return await _idle_cases(session, min_days=7, max_days=None)
+
+
+@router.get("/renewal-followup-cases", response_model=list[DashboardCaseInsightItem])
+async def dashboard_renewal_followup_cases(
+    session: AsyncSession = Depends(get_session),
+) -> list[DashboardCaseInsightItem]:
+    """续购跟进窗口：已服务 18-28 天的服务单（含服务天数）。"""
+    now = datetime.now(timezone.utc)
+    china_tz = ZoneInfo("Asia/Shanghai")
+    today = now.astimezone(china_tz).date()
+    rows = (
+        await session.execute(
+            select(ServiceCase, User)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(
+                active_service_case_condition(),
+                ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                ServiceCase.started_at.is_not(None),
+                ServiceCase.started_at <= now - timedelta(days=18),
+                ServiceCase.started_at >= now - timedelta(days=28),
+            )
+            .order_by(ServiceCase.started_at.asc(), ServiceCase.id.desc())
+        )
+    ).all()
+    return [
+        DashboardCaseInsightItem(
+            case=_case_ref(service_case, user),
+            risk_level=service_case.risk_level,
+            service_day=_case_service_day(service_case, today, china_tz),
+            started_at=service_case.started_at,
+        )
+        for service_case, user in rows
+    ]
 
 
 @router.get("/intent-events/{intent_type}", response_model=list[DashboardCaseMessageEvents])
@@ -1169,11 +1335,21 @@ async def dashboard_case_health(session: AsyncSession = Depends(get_session)) ->
         if stage:
             stages_by_case.setdefault(doc.service_case_id, set()).add(str(stage))
 
-    # 『需关注』事件级：有待审核 AI 回复(PENDING)的 case
+    # 『需关注』事件级：今日触发转人工/@班主任 的 case（与看板卡片同口径）。
+    today_start, today_end = _today_bounds()
     pending_review_ids: set[int] = set(
         (
             await session.scalars(
-                pending_review_case_ids_subquery().where(Message.service_case_id.in_(case_ids))
+                select(Message.service_case_id)
+                .where(
+                    Message.service_case_id.in_(case_ids),
+                    Message.created_at >= today_start,
+                    Message.created_at < today_end,
+                    Message.direction == MessageDirection.INBOUND,
+                    Message.sender_type == MessageSenderType.USER,
+                    _requires_human_intervention_expr(),
+                )
+                .distinct()
             )
         ).all()
     )

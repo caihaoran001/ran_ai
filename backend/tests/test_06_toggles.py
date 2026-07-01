@@ -147,6 +147,7 @@ async def test_dashboard_drilldown_endpoints_show_case_and_trigger_content(admin
         purpose=MessagePurpose.CHAT,
         status=MessageStatus.RECEIVED,
         analysis_json={
+            "requires_human_intervention": True,
             "intervention_reasons": [
                 {
                     "code": "robot_stop",
