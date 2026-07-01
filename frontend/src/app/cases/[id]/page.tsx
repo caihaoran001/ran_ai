@@ -345,6 +345,15 @@ function StatusBadge({ status }: { status: string }) {
 
   const config = statusConfig[status] || { label: status, className: "border-slate-200 bg-slate-50 text-slate-700" };
 
+  if (status === "refunded") {
+    return (
+      <span className="status-pill border-rose-300 bg-rose-100 font-semibold text-rose-700 ring-1 ring-rose-300 ring-offset-1">
+        <RefreshCcw className="h-3.5 w-3.5" />
+        已退款
+      </span>
+    );
+  }
+
   return (
     <span className={`status-pill ${config.className}`}>
       {config.label}

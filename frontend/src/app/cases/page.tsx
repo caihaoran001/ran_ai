@@ -1,6 +1,31 @@
 import Link from "next/link";
+import { RefreshCcw } from "lucide-react";
 import { api, ServiceCase } from "@/lib/api";
 import { NewCaseForm } from "./new-case-form";
+
+const STATUS_LABELS: Record<string, string> = {
+  created: "已创建",
+  questionnaire_submitted: "已提交问卷",
+  generating: "文件生成中",
+  documents_generated: "已生成文档",
+  reviewing: "审核中",
+  approved: "已批准",
+  in_service: "服务中",
+  completed: "已完成",
+  refunded: "已退款",
+};
+
+function CaseStatusCell({ status }: { status: string }) {
+  if (status === "refunded") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700 ring-1 ring-rose-300 ring-offset-1">
+        <RefreshCcw className="h-3.5 w-3.5" />
+        已退款
+      </span>
+    );
+  }
+  return <span className="text-zinc-700">{STATUS_LABELS[status] ?? status}</span>;
+}
 
 export default async function CasesPage() {
   const cases = await api<ServiceCase[]>("/service-cases").catch(() => []);
@@ -33,7 +58,7 @@ export default async function CasesPage() {
                 </td>
                 <td className="px-4 py-3">{item.user?.name ?? "-"}</td>
                 <td className="px-4 py-3">{item.group_id}</td>
-                <td className="px-4 py-3">{item.status}</td>
+                <td className="px-4 py-3"><CaseStatusCell status={item.status} /></td>
                 <td className="px-4 py-3">
                   <Link className="text-zinc-700 hover:underline" href={`/q/${item.questionnaire_token}`}>
                     打开问卷
