@@ -34,6 +34,7 @@ type Summary = {
   repurchase_soon_users: number;
   renewal_intent_users?: number;
   refund_intent_users?: number;
+  refund_pending_users?: number;
   lost_users: number;
   emotional_users_today?: number;
   outcome_summary?: OutcomeSummary;
@@ -97,6 +98,7 @@ export default async function DashboardPage() {
     repurchase_soon_users: 0,
     renewal_intent_users: 0,
     refund_intent_users: 0,
+    refund_pending_users: 0,
     lost_users: 0,
     emotional_users_today: 0,
     outcome_summary: {
@@ -139,6 +141,14 @@ export default async function DashboardPage() {
           color="red"
           href="/dashboard/refund-intents"
           description="用户聊天中出现退款、退费、不继续、退出、退群等表达；点击查看触发原话。"
+        />
+        <StatCard
+          label="已退款待确认"
+          value={summary.refund_pending_users ?? 0}
+          icon={RefreshCcw}
+          color="red"
+          href="/dashboard/refund-pending"
+          description="AI 识别到客户可能已完成退款、等待运营确认；确认后停止打卡/阶段报告等主动推送，群聊仍保留。"
         />
         <StatCard
           label="今日情绪预警"

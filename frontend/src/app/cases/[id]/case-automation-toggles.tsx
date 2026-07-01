@@ -131,6 +131,7 @@ export function CaseAutomationToggles({
   morningPushEnabled,
   inactiveWakeEnabled,
   serviceWindowEnded = false,
+  refunded = false,
 }: {
   serviceCaseId: number;
   aiAutoReplyEnabled: boolean;
@@ -139,16 +140,21 @@ export function CaseAutomationToggles({
   morningPushEnabled: boolean;
   inactiveWakeEnabled: boolean;
   serviceWindowEnded?: boolean;
+  refunded?: boolean;
 }) {
   const [aiAgentOn, setAiAgentOn] = useState(aiAgentEnabled);
+  // 退款客户与服务到期一样：停掉产品类定时推送（打卡/个性化提醒/无互动唤醒），仅保留群内 AI 聊天。
+  const pushDisabled = serviceWindowEnded || refunded;
 
   return (
     <div className="panel p-5">
       <h3 className="font-semibold text-slate-950">自动化设置（仅本服务单）</h3>
       <p className="mt-1 text-xs leading-5 text-slate-500">
-        {serviceWindowEnded
-          ? "该服务单已满 28 天毕业，打卡链接、个性化提醒和无互动唤醒已由系统自动停用。"
-          : "定时推送还需对应全局开关开启才会真正发送；此处只能在全局已开的基础上，单独关掉本服务单。"}
+        {refunded
+          ? "该客户已退款，打卡链接、个性化提醒、无互动唤醒及阶段报告已停用，仅保留群内 AI 聊天。"
+          : serviceWindowEnded
+            ? "该服务单已满 28 天毕业，打卡链接、个性化提醒和无互动唤醒已由系统自动停用。"
+            : "定时推送还需对应全局开关开启才会真正发送；此处只能在全局已开的基础上，单独关掉本服务单。"}
       </p>
 
       <div className="mt-3 divide-y divide-slate-100">
@@ -180,7 +186,7 @@ export function CaseAutomationToggles({
           icon={CalendarCheck}
           title="打卡链接"
           desc="晚间定时发送的每日打卡链接。"
-          disabled={serviceWindowEnded}
+          disabled={pushDisabled}
         />
         <Row
           serviceCaseId={serviceCaseId}
@@ -189,7 +195,7 @@ export function CaseAutomationToggles({
           icon={Sunrise}
           title="个性化提醒"
           desc="早间根据当前执行重点推送的一句话提醒。"
-          disabled={serviceWindowEnded}
+          disabled={pushDisabled}
         />
         <Row
           serviceCaseId={serviceCaseId}
@@ -198,7 +204,7 @@ export function CaseAutomationToggles({
           icon={BellRing}
           title="无互动唤醒"
           desc="长时间无互动时自动发一句唤醒/承接。"
-          disabled={serviceWindowEnded}
+          disabled={pushDisabled}
         />
       </div>
     </div>

@@ -4,6 +4,7 @@ import { api, FRONTEND_BASE, ServiceCase, ServiceCaseStats, UserDocument, Checki
 import { formatChinaDateTime } from "@/lib/format";
 import { CaseActions } from "./case-actions";
 import { CaseRiskReset } from "./case-risk-reset";
+import { CaseRefundControls } from "./case-refund-controls";
 import { CaseGeneratingPoller } from "./case-generating-poller";
 import { ChatMessages } from "./chat-messages";
 import { QuestionnaireSection } from "./questionnaire-section";
@@ -69,6 +70,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const isGenerating = serviceCase.status === "generating";
   const serviceGraduationDate = getServiceGraduationDate(serviceCase.started_at, serviceCase.service_plan_start_date);
   const serviceWindowEnded = Boolean(serviceGraduationDate && chinaDateKey(new Date()) > serviceGraduationDate);
+  const refunded = serviceCase.status === "refunded";
   const generationError =
     serviceCase.status === "questionnaire_submitted" && documents.length === 0
       ? extractGenerationError(serviceCase.notes)
@@ -124,11 +126,19 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           </div>
         </div>
         {!serviceCase.deleted_at && (
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* 候选态的确认横幅单独整行展示；此处仅放常态「标记已退款」/已退款「恢复服务」的紧凑按钮 */}
+            {!(serviceCase.refund_pending_confirmation && !refunded) && (
+              <CaseRefundControls caseId={serviceCase.id} status={serviceCase.status} refundPending={false} />
+            )}
             <CaseActions caseId={serviceCase.id} currentStartedAt={serviceCase.started_at} />
           </div>
         )}
       </div>
+
+      {!serviceCase.deleted_at && serviceCase.refund_pending_confirmation && !refunded && (
+        <CaseRefundControls caseId={serviceCase.id} status={serviceCase.status} refundPending />
+      )}
 
       {generationError && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">
@@ -162,6 +172,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           morningPushEnabled={serviceCase.morning_push_enabled}
           inactiveWakeEnabled={serviceCase.inactive_wake_enabled}
           serviceWindowEnded={serviceWindowEnded}
+          refunded={refunded}
         />
       )}
 
@@ -326,6 +337,7 @@ function StatusBadge({ status }: { status: string }) {
     approved: { label: "已批准", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
     in_service: { label: "服务中", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
     completed: { label: "已完成", className: "border-slate-200 bg-slate-50 text-slate-600" },
+    refunded: { label: "已退款", className: "border-rose-200 bg-rose-50 text-rose-700" },
     sent: { label: "已发送", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
     draft: { label: "草稿", className: "border-slate-200 bg-slate-50 text-slate-600" },
     archived: { label: "已归档·未发送", className: "border-slate-200 bg-slate-100 text-slate-500" },

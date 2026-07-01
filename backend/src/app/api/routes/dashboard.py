@@ -6,7 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import distinct, func, select
+from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -187,6 +187,13 @@ async def dashboard_summary(
         session,
         ServiceCase.refund_intent_flags.is_not(None),
     )
+    refund_pending_users = await _count_flagged_cases(
+        session,
+        and_(
+            ServiceCase.refund_pending_confirmation.is_(True),
+            ServiceCase.status != ServiceCaseStatus.REFUNDED,
+        ),
+    )
 
     today_user_messages = list(
         await session.scalars(
@@ -232,6 +239,7 @@ async def dashboard_summary(
         repurchase_soon_users=renewal_followup_users or 0,
         renewal_intent_users=renewal_intent_users,
         refund_intent_users=refund_intent_users,
+        refund_pending_users=refund_pending_users,
         lost_users=lost_users or 0,
         emotional_users_today=emotional_users_today or 0,
         outcome_summary=outcome_summary,

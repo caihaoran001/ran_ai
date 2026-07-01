@@ -149,6 +149,7 @@ class DashboardSummary(BaseModel):
     repurchase_soon_users: int = 0
     renewal_intent_users: int = 0
     refund_intent_users: int = 0
+    refund_pending_users: int = 0
     lost_users: int = 0
     emotional_users_today: int = 0
     outcome_summary: OutcomeDashboardSummary = Field(default_factory=OutcomeDashboardSummary)

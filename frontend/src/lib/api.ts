@@ -52,6 +52,7 @@ export type ServiceCase = {
   intervention_reasons?: Array<Record<string, string>> | null;
   renewal_intent_flags?: Array<Record<string, string | boolean>> | null;
   refund_intent_flags?: Array<Record<string, string | boolean>> | null;
+  refund_pending_confirmation?: boolean;
   user?: { id: number; name: string; phone?: string | null; wecom_user_id?: string | null } | null;
   created_at: string;
   updated_at: string;
