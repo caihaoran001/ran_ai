@@ -6,12 +6,14 @@ import { useSSE } from "@/hooks/use-sse";
 
 export function ReviewConsoleLiveRefresh() {
   const router = useRouter();
-  const { pendingReviewCount, interventionCount, connected } = useSSE();
+  const { pendingReviewCount, connected } = useSSE();
   const lastSignature = useRef<string | null>(null);
 
   useEffect(() => {
     if (!connected) return;
-    const signature = `${pendingReviewCount}:${interventionCount}`;
+    // pendingReviewCount(=pending_total) 已含待审核文件/知识草稿/已退款待确认，
+    // 任一变化即刷新控制台；AI 回复待审核不再参与。
+    const signature = `${pendingReviewCount}`;
     if (lastSignature.current === null) {
       lastSignature.current = signature;
       return;
@@ -20,7 +22,7 @@ export function ReviewConsoleLiveRefresh() {
       lastSignature.current = signature;
       router.refresh();
     }
-  }, [connected, interventionCount, pendingReviewCount, router]);
+  }, [connected, pendingReviewCount, router]);
 
   return (
     <div className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">

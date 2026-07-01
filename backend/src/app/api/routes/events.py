@@ -10,7 +10,7 @@ from sqlalchemy import func, select, text
 from app.db.session import SessionLocal
 from app.models.knowledge_draft import KnowledgeDraft
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
-from app.models.service_case import ServiceCase
+from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, UserDocument
 from app.services.service_case_queries import active_service_case_condition, pending_review_case_ids_subquery
 
@@ -53,6 +53,14 @@ async def _review_counts() -> dict[str, int]:
             select(func.count(KnowledgeDraft.id)).where(KnowledgeDraft.status == "pending")
         ) or 0
         pending_documents = await _pending_latest_document_count(session)
+        # 已退款待确认：AI 识别到客户已发起/申请退款，等运营在审核控制台核实。
+        refund_pending = await session.scalar(
+            select(func.count(ServiceCase.id)).where(
+                active_service_case_condition(),
+                ServiceCase.refund_pending_confirmation.is_(True),
+                ServiceCase.status != ServiceCaseStatus.REFUNDED,
+            )
+        ) or 0
         intervention_count = await session.scalar(
             select(func.count(ServiceCase.id)).where(
                 active_service_case_condition(),
@@ -60,11 +68,15 @@ async def _review_counts() -> dict[str, int]:
             )
         ) or 0
 
+    # pending_total 驱动审核控制台侧边栏红点：只统计控制台里真正待处理的项——
+    # 待审核文件、待审核知识草稿、已退款待确认。AI 回复待审核(pending_ai_messages)
+    # 与 intervention_count 不再计入红点(自动发送模式下该复核块已从控制台移除)。
     return {
         "pending_ai_messages": pending_ai_messages,
         "pending_knowledge_drafts": pending_knowledge_drafts,
         "pending_documents": pending_documents,
-        "pending_total": pending_ai_messages + pending_knowledge_drafts + pending_documents,
+        "refund_pending": refund_pending,
+        "pending_total": pending_knowledge_drafts + pending_documents + refund_pending,
         "intervention_count": intervention_count,
     }
 
