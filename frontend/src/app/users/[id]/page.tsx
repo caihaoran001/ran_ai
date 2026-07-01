@@ -2,6 +2,22 @@ import Link from "next/link";
 import { api, Checkin, Message, User, UserDocument, UserProfile, UserStateProfile } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
 
+const SERVICE_STATUS_LABELS: Record<string, string> = {
+  created: "已创建",
+  questionnaire_submitted: "已提交问卷",
+  generating: "文件生成中",
+  documents_generated: "已生成文档",
+  reviewing: "审核中",
+  approved: "已批准",
+  in_service: "服务中",
+  completed: "已完成",
+  refunded: "已退款",
+};
+
+function statusLabel(status: string): string {
+  return SERVICE_STATUS_LABELS[status] ?? status;
+}
+
 export default async function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await api<User>(`/users/${id}`);
@@ -96,7 +112,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         <section className="rounded-lg border border-zinc-200 bg-white p-4">
           <h2 className="font-medium">正在进行的方案</h2>
           <Link className="mt-3 block rounded-md border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50" href={`/cases/${serviceCase.id}`}>
-            {serviceCase.case_no} · {serviceCase.status}
+            {serviceCase.case_no} · {statusLabel(serviceCase.status)}
           </Link>
           <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
             <Info label="人工介入" value={serviceCase.needs_human_intervention ? reasonText(serviceCase.intervention_reasons) : "暂无"} />
@@ -149,7 +165,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         <div className="mt-3 max-h-48 overflow-y-auto grid gap-2 pr-1 text-sm">
           {user.service_cases.map((item) => (
             <Link key={item.id} className="rounded-md border border-zinc-200 px-3 py-2 hover:bg-zinc-50" href={`/cases/${item.id}`}>
-              {item.case_no} · {item.group_id} · {item.status}
+              {item.case_no} · {item.group_id} · {statusLabel(item.status)}
             </Link>
           ))}
         </div>

@@ -196,6 +196,7 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
     approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
     in_service: "border-emerald-200 bg-emerald-50 text-emerald-700",
     completed: "border-slate-200 bg-slate-50 text-slate-600",
+    refunded: "border-rose-200 bg-rose-50 text-rose-700",
   };
 
   const statusLabels: Record<string, string> = {
@@ -207,6 +208,7 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
     approved: "已批准",
     in_service: "服务中",
     completed: "已完成",
+    refunded: "已退款",
   };
 
   return (
