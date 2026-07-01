@@ -89,9 +89,9 @@ export function CaseRefundControls({
         type="button"
         onClick={() => run({ status: "in_service", refund_pending_confirmation: false })}
         disabled={busy}
-        className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50"
+        className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50"
       >
-        <RotateCcw className="h-3.5 w-3.5" />
+        <RotateCcw className="h-4 w-4" />
         {busy ? "处理中…" : "恢复服务"}
       </button>
     );
@@ -114,13 +114,13 @@ export function CaseRefundControls({
         type="button"
         onClick={() => (confirmMark ? run({ status: "refunded", refund_pending_confirmation: false }) : setConfirmMark(true))}
         disabled={busy}
-        className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold transition-all disabled:opacity-50 ${
+        className={`inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border px-3 text-sm font-semibold shadow-sm transition-colors disabled:opacity-50 ${
           confirmMark
             ? "border-rose-600 bg-rose-600 text-white hover:bg-rose-700"
             : "border-rose-200 bg-rose-50 text-rose-600 hover:border-rose-300 hover:bg-rose-100"
         }`}
       >
-        <RefreshCcw className="h-3.5 w-3.5" />
+        <RefreshCcw className="h-4 w-4" />
         {busy ? "处理中…" : confirmMark ? "确认标记已退款？" : "标记已退款"}
       </button>
     </div>
