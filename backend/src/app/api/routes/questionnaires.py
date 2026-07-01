@@ -68,7 +68,7 @@ async def get_questionnaire(
         template_payload = {
             "template_key": "personalized_checkin",
             "name": "每日行动",
-            "title": f"HB.AI | {service_case.user.name if service_case.user else '您'}的每日行动（必填）",
+            "title": f"燃人HumanBurning.AI | {service_case.user.name if service_case.user else '您'}的每日行动（必填）",
             "description": "这是为您量身定制的每日固定行动（共 5 项）。今日如时间紧张，请优先完成此表（只需10秒）。",
             "fields": fields
         }

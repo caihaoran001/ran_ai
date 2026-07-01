@@ -767,7 +767,7 @@ low：只有单一模糊信号。
 
 # 13. 输出要求
 
-你只能输出符合《HB.AI JSON协议》的合法JSON。
+你只能输出符合《燃人HumanBurning.AI JSON协议》的合法JSON。
 
 禁止：
 

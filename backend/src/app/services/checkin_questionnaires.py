@@ -24,21 +24,21 @@ def default_checkin_questionnaire_templates() -> list[dict[str, Any]]:
         {
             "template_key": "daily_checkin_standard",
             "name": "每日打卡标准版",
-            "title": "HB.AI 每日打卡｜标准版",
+            "title": "燃人HumanBurning.AI 每日打卡｜标准版",
             "description": "第 1 天、第 3 天使用，用于建立基础状态和识别早期执行问题。",
             "fields": _standard_fields(),
         },
         {
             "template_key": "daily_checkin_simple",
             "name": "每日打卡简版",
-            "title": "HB.AI 每日打卡｜简版",
+            "title": "燃人HumanBurning.AI 每日打卡｜简版",
             "description": "日常高频打卡使用，降低用户负担。",
             "fields": _simple_fields(),
         },
         {
             "template_key": "stage_review",
             "name": "阶段复盘",
-            "title": "HB.AI 阶段复盘",
+            "title": "燃人HumanBurning.AI 阶段复盘",
             "description": "第 7/14/21/28 天使用，用于总结周期变化和制定下阶段目标。",
             "fields": _stage_review_fields(),
         },
@@ -311,7 +311,7 @@ def personalized_checkin_fields_with_weight(weight_kg: float | None = None) -> l
 
 def _standard_fields() -> list[dict[str, Any]]:
     return [
-        _segment("std_intro", "HB.AI 每日打卡｜标准版", "按健康管理优先级排序：先看结果，再看执行；先看节律，再看饮食；最后看体感和风险。"),
+        _segment("std_intro", "燃人HumanBurning.AI 每日打卡｜标准版", "按健康管理优先级排序：先看结果，再看执行；先看节律，再看饮食；最后看体感和风险。"),
         _field("morning_weight", "今日晨起体重（kg）", required=True),
         _field("waist", "今日腰围/肚围（cm）", subtitle="腰围每 7 天测一次；如今天未测，填写「本日未测」。"),
         _field("morning_c", "早C完成情况", "RADIO", required=True, options=["已喝", "未喝"]),
@@ -338,7 +338,7 @@ def _standard_fields() -> list[dict[str, Any]]:
 
 def _simple_fields() -> list[dict[str, Any]]:
     return [
-        _segment("simple_intro", "HB.AI 每日打卡｜简版", "适合群内高频执行，班主任每 3 天补一次详细版。"),
+        _segment("simple_intro", "燃人HumanBurning.AI 每日打卡｜简版", "适合群内高频执行，班主任每 3 天补一次详细版。"),
         _field("morning_weight", "晨起体重（kg）", required=True),
         _field("morning_c", "早C", "RADIO", options=["已喝", "未喝"]),
         _field("noon_b", "午B", "RADIO", options=["已喝", "未喝"]),
@@ -356,7 +356,7 @@ def _simple_fields() -> list[dict[str, Any]]:
 
 def _stage_review_fields() -> list[dict[str, Any]]:
     return [
-        _segment("stage_intro", "HB.AI 阶段复盘", "第 7/14/21/28 天使用，用于总结周期变化、判断执行质量，并制定下一个 7 天目标。"),
+        _segment("stage_intro", "燃人HumanBurning.AI 阶段复盘", "第 7/14/21/28 天使用，用于总结周期变化、判断执行质量，并制定下一个 7 天目标。"),
         _field("current_weight", "当前体重（kg）", required=True),
         _field("current_waist", "当前腰围/肚围（cm）", required=True),
         _field("avg_sleep", "过去7天平均睡眠", "SIMPLE", subtitle="例如：大约23:30入睡，质量变好/无变化/变差。"),
