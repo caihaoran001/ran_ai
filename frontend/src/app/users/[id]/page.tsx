@@ -10,7 +10,7 @@ const SERVICE_STATUS_LABELS: Record<string, string> = {
   reviewing: "审核中",
   approved: "已批准",
   in_service: "服务中",
-  completed: "已完成",
+  completed: "已毕业",
   refunded: "已退款",
 };
 
@@ -278,7 +278,8 @@ function serviceStageText(serviceCase: User["service_cases"][number]) {
     documents_generated: "文件已生成",
     reviewing: "待审核",
     in_service: "服务中",
-    completed: "已完成",
+    completed: "已毕业",
+    refunded: "已退款",
   };
   const status = statusMap[serviceCase.status] || serviceCase.status;
   const start = serviceCase.service_plan_start_date || serviceCase.started_at || serviceCase.created_at;

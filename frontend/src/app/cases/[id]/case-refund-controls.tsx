@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, RefreshCcw, RotateCcw } from "lucide-react";
+import { AlertTriangle, LoaderCircle, RefreshCcw, RotateCcw } from "lucide-react";
 import { API_BASE } from "@/lib/api";
 
 async function patchCase(caseId: number, body: Record<string, unknown>): Promise<boolean> {
@@ -21,9 +21,12 @@ async function patchCase(caseId: number, body: Record<string, unknown>): Promise
 /**
  * 退款闭环操作：
  * - 候选态(refundPending)：模型识别到疑似已退款，显眼提示 +「确认退款」「不是退款」。
- * - 已退款(refunded)：提供「恢复服务」回到服务中。
- * - 常态：提供「标记已退款」兜底(群外退款模型识别不到)。
+ * - 已退款(refunded)：提供「恢复服务」(二次确认)回到服务中。
+ * - 常态：提供「标记已退款」(二次确认)兜底(群外退款模型识别不到)。
  * 确认退款后 status=REFUNDED，打卡/阶段报告等产品类主动推送自动停止，AI 群聊照常。
+ *
+ * 交互要点：PATCH 成功后用 useTransition 包住 router.refresh()，按钮在整页
+ * 服务端数据刷新完成前保持禁用+转圈，避免运营误以为卡住而重复点击。
  */
 export function CaseRefundControls({
   caseId,
@@ -36,16 +39,24 @@ export function CaseRefundControls({
 }) {
   const [busy, setBusy] = useState(false);
   const [confirmMark, setConfirmMark] = useState(false);
+  const [confirmRestore, setConfirmRestore] = useState(false);
+  const [isPending, startTransition] = useTransition();
   const router = useRouter();
   const refunded = status === "refunded";
+  // busy = 请求在途；isPending = 请求完成后整页服务端组件仍在重新渲染。
+  const pending = busy || isPending;
 
   async function run(body: Record<string, unknown>) {
     setBusy(true);
     try {
-      if (await patchCase(caseId, body)) router.refresh();
+      if (await patchCase(caseId, body)) {
+        // 保持禁用直到刷新后的新状态渲染完成
+        startTransition(() => router.refresh());
+      }
     } finally {
       setBusy(false);
       setConfirmMark(false);
+      setConfirmRestore(false);
     }
   }
 
@@ -64,15 +75,16 @@ export function CaseRefundControls({
           <button
             type="button"
             onClick={() => run({ status: "refunded", refund_pending_confirmation: false })}
-            disabled={busy}
+            disabled={pending}
             className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:opacity-50"
           >
-            确认退款
+            {pending && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
+            {pending ? "处理中…" : "确认退款"}
           </button>
           <button
             type="button"
             onClick={() => run({ refund_pending_confirmation: false })}
-            disabled={busy}
+            disabled={pending}
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
           >
             不是退款
@@ -82,30 +94,44 @@ export function CaseRefundControls({
     );
   }
 
-  // 已退款态：恢复服务
+  // 已退款态：恢复服务（二次确认）
   if (refunded) {
     return (
-      <button
-        type="button"
-        onClick={() => run({ status: "in_service", refund_pending_confirmation: false })}
-        disabled={busy}
-        className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50"
-      >
-        <RotateCcw className="h-4 w-4" />
-        {busy ? "处理中…" : "恢复服务"}
-      </button>
+      <div className="inline-flex items-center gap-2">
+        {confirmRestore && !pending && (
+          <button
+            type="button"
+            className="text-xs text-slate-500 hover:text-slate-700"
+            onClick={() => setConfirmRestore(false)}
+          >
+            取消
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => (confirmRestore ? run({ status: "in_service", refund_pending_confirmation: false }) : setConfirmRestore(true))}
+          disabled={pending}
+          className={`inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border px-3 text-sm font-semibold shadow-sm transition-colors disabled:opacity-50 ${
+            confirmRestore
+              ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+              : "border-slate-300 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800"
+          }`}
+        >
+          {pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+          {pending ? "处理中…" : confirmRestore ? "确认恢复服务？" : "恢复服务"}
+        </button>
+      </div>
     );
   }
 
-  // 常态：手动标记已退款（兜底）
+  // 常态：手动标记已退款（二次确认，兜底）
   return (
     <div className="inline-flex items-center gap-2">
-      {confirmMark && (
+      {confirmMark && !pending && (
         <button
           type="button"
           className="text-xs text-slate-500 hover:text-slate-700"
           onClick={() => setConfirmMark(false)}
-          disabled={busy}
         >
           取消
         </button>
@@ -113,15 +139,15 @@ export function CaseRefundControls({
       <button
         type="button"
         onClick={() => (confirmMark ? run({ status: "refunded", refund_pending_confirmation: false }) : setConfirmMark(true))}
-        disabled={busy}
+        disabled={pending}
         className={`inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border px-3 text-sm font-semibold shadow-sm transition-colors disabled:opacity-50 ${
           confirmMark
             ? "border-rose-600 bg-rose-600 text-white hover:bg-rose-700"
             : "border-rose-200 bg-rose-50 text-rose-600 hover:border-rose-300 hover:bg-rose-100"
         }`}
       >
-        <RefreshCcw className="h-4 w-4" />
-        {busy ? "处理中…" : confirmMark ? "确认标记已退款？" : "标记已退款"}
+        {pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+        {pending ? "处理中…" : confirmMark ? "确认标记已退款？" : "标记已退款"}
       </button>
     </div>
   );

@@ -336,7 +336,7 @@ function StatusBadge({ status }: { status: string }) {
     reviewing: { label: "审核中", className: "border-violet-200 bg-violet-50 text-violet-700" },
     approved: { label: "已批准", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
     in_service: { label: "服务中", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
-    completed: { label: "已完成", className: "border-slate-200 bg-slate-50 text-slate-600" },
+    completed: { label: "已毕业", className: "border-slate-200 bg-slate-50 text-slate-600" },
     refunded: { label: "已退款", className: "border-rose-200 bg-rose-50 text-rose-700" },
     sent: { label: "已发送", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
     draft: { label: "草稿", className: "border-slate-200 bg-slate-50 text-slate-600" },
