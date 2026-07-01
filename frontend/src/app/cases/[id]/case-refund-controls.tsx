@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, RotateCcw } from "lucide-react";
+import { AlertTriangle, RefreshCcw, RotateCcw } from "lucide-react";
 import { API_BASE } from "@/lib/api";
 
 async function patchCase(caseId: number, body: Record<string, unknown>): Promise<boolean> {
@@ -114,10 +114,13 @@ export function CaseRefundControls({
         type="button"
         onClick={() => (confirmMark ? run({ status: "refunded", refund_pending_confirmation: false }) : setConfirmMark(true))}
         disabled={busy}
-        className={`inline-flex items-center text-xs font-medium transition-all ${
-          confirmMark ? "font-semibold text-rose-600 underline hover:text-rose-700" : "text-slate-500 hover:text-slate-900"
+        className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold transition-all disabled:opacity-50 ${
+          confirmMark
+            ? "border-rose-600 bg-rose-600 text-white hover:bg-rose-700"
+            : "border-rose-200 bg-rose-50 text-rose-600 hover:border-rose-300 hover:bg-rose-100"
         }`}
       >
+        <RefreshCcw className="h-3.5 w-3.5" />
         {busy ? "处理中…" : confirmMark ? "确认标记已退款？" : "标记已退款"}
       </button>
     </div>
