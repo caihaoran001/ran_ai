@@ -1944,7 +1944,14 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
             await session.scalars(
                 select(ServiceCase)
                 .where(
-                    ServiceCase.status.in_([ServiceCaseStatus.APPROVED, ServiceCaseStatus.IN_SERVICE]),
+                    # 退款客户仍保留群、正常聊天：REFUNDED 也要能在重启后回复在途消息（只停产品类主动推送）。
+                    ServiceCase.status.in_(
+                        [
+                            ServiceCaseStatus.APPROVED,
+                            ServiceCaseStatus.IN_SERVICE,
+                            ServiceCaseStatus.REFUNDED,
+                        ]
+                    ),
                     ServiceCase.ai_auto_reply_enabled == True,
                     ServiceCase.deleted_at.is_(None),
                 )

@@ -304,6 +304,14 @@ def _apply_service_case_filter(statement, metric: str | None):
         return statement.where(ServiceCase.renewal_intent_flags.is_not(None))
     if metric == "refund_intent":
         return statement.where(ServiceCase.refund_intent_flags.is_not(None))
+    if metric == "refund_pending":
+        # 模型识别到"疑似已退款"、等待运营确认（尚未改成 REFUNDED、仍在正常服务）
+        return statement.where(
+            ServiceCase.refund_pending_confirmation.is_(True),
+            ServiceCase.status != ServiceCaseStatus.REFUNDED,
+        )
+    if metric == "refunded":
+        return statement.where(ServiceCase.status == ServiceCaseStatus.REFUNDED)
     if metric in {"unfollowed", "lost"}:
         last_message_subq = (
             select(Message.service_case_id, func.max(Message.created_at).label("last_at"))
