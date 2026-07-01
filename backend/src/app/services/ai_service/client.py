@@ -437,6 +437,7 @@ class AIService:
                 "  - 用户明确要求停止机器人、不要机器人继续解释、不要再听 AI 解释时，intervention_reasons 必须输出 code='robot_stop'，requires_human_intervention=true，requires_immediate_safety_reply=false。\n"
                 "  - 用户表达服务体验不满、觉得被骗/没效果/不是想要的服务、质疑机器人专业性/身份、辱骂或冲突升级时，intervention_reasons 必须输出 code='complaint'。\n"
                 "  - 用户明确退款/退钱/退群/退出/不继续/不想继续服务时，refund_intent.detected=true，同时 intervention_reasons 输出 code='refund_request'，requires_human_intervention=true。\n"
+                "  - refund_intent.completed 只在退款已经【成为事实】时才为 true：用户表示钱已退回/已到账/客服已经给他办好退款/已经退款成功等。仅仅是想退、在问怎么退、在问退款规则、威胁要退，completed 一律为 false。\n"
                 "- L1 执行/服务敏感（level='low'）：怕吃不敢吃、轻度控卡焦虑、对产品使用疑惑、普通活动咨询、仅询问退款规则但没有提出退款。requires_human_intervention=false，AI 正常应答，仅做静默标记。\n\n"
 
                 "【L1 与 L2 的边界判断标准】\n"
@@ -475,7 +476,8 @@ class AIService:
                 '    "source": "来源"\n'
                 "  },\n"
                 '  "refund_intent": {  // 退款意愿识别\n'
-                '    "detected": boolean,\n'
+                '    "detected": boolean,  // 是否表达退款意愿(想退/问怎么退/已退都算)\n'
+                '    "completed": boolean,  // 退款是否已成为事实(钱已退回/客服已办好);仅想退或问规则为false\n'
                 '    "reason": "判断依据",\n'
                 '    "evidence": "用户原话证据",\n'
                 '    "source": "来源"\n'

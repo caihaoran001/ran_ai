@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any
 
-from app.models.service_case import ServiceCase
+from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.ai_service import AIService
 
 logger = logging.getLogger(__name__)
@@ -181,6 +181,14 @@ def merge_case_insight(service_case: ServiceCase, insight: dict[str, Any]) -> No
     refund = insight.get("refund_intent")
     if isinstance(refund, dict) and refund.get("detected"):
         service_case.refund_intent_flags = _merge_lists(service_case.refund_intent_flags, [refund])
+    # 模型识别到"退款已成为事实"→进入后台"已退款待确认"列表(不改状态、不停推)，等运营确认。
+    # 已是 REFUNDED 的无需再提示；候选标记一旦置真则保持，由运营确认/驳回时清除。
+    if (
+        isinstance(refund, dict)
+        and refund.get("completed")
+        and service_case.status != ServiceCaseStatus.REFUNDED
+    ):
+        service_case.refund_pending_confirmation = True
 
 
 def mark_intake_age_risk(service_case: ServiceCase, fields: list[dict], answers: dict[str, Any]) -> None:
@@ -271,6 +279,7 @@ def _normalize_intent(value: Any, *, source: str) -> dict[str, Any]:
         value = {}
     return {
         "detected": bool(value.get("detected")),
+        "completed": bool(value.get("completed")),  # 仅 refund_intent 使用：退款是否已成为事实
         "reason": _string(value.get("reason")),
         "evidence": _string(value.get("evidence")),
         "source": _string(value.get("source")) or source,
