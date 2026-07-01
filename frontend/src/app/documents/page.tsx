@@ -14,13 +14,15 @@ import { PendingMessageActions } from "./pending-message-actions";
 import { FAQEvolutionCenter, ExcellentCaseEvolutionCenter } from "./knowledge-draft-group";
 import { DocumentSearchList } from "./document-search-list";
 import { ReviewConsoleLiveRefresh } from "./review-console-live-refresh";
-import { Bot, CheckCircle2, Clock, MessageCircle } from "lucide-react";
+import { RefundReviewActions } from "./refund-review-actions";
+import { Bot, CheckCircle2, Clock, MessageCircle, RefreshCcw } from "lucide-react";
 
 export default async function DocumentsListPage() {
   const serviceCases = await api<ServiceCase[]>("/service-cases").catch(() => []);
   const policy = await api<{ mode: string }>("/settings/content-delivery-policy").catch(() => ({ mode: "manual_review" }));
   const aiReplyPolicy = await api<{ mode: string }>("/settings/ai-reply-delivery-policy").catch(() => ({ mode: "manual_review" }));
   const pendingMessages = await api<Message[]>("/messages/pending-ai").catch(() => []);
+  const refundPendingCases = await api<ServiceCase[]>("/service-cases?filter=refund_pending").catch(() => []);
   const pendingKnowledgeDrafts = await api<KnowledgeDraft[]>("/knowledge-drafts?status=pending").catch(() => []);
   const approvedKnowledgeDrafts = await api<KnowledgeDraft[]>("/knowledge-drafts?status=approved").catch(() => []);
   const knowledgeFaqs = await api<KnowledgeFAQ[]>("/knowledge-faqs?status=all").catch(() => []);
@@ -59,8 +61,13 @@ export default async function DocumentsListPage() {
       {/* 1. 交付文件控制台 */}
       <DocumentSearchList />
 
-      {/* 2. AI回复待审核 */}
-      <PendingMessageGroup messages={pendingMessages} casesById={casesById} />
+      {/* 2. 退款审核 */}
+      <RefundReviewGroup cases={refundPendingCases} />
+
+      {/* 2b. AI回复待审核（仅当人工审核模式下积压了待审核回复时才显示） */}
+      {pendingMessages.length > 0 && (
+        <PendingMessageGroup messages={pendingMessages} casesById={casesById} />
+      )}
 
       {/* 3. 参考问答库 (FAQ) 进化工作台 */}
       <FAQEvolutionCenter
@@ -119,6 +126,69 @@ function formatBeijing(iso?: string): string {
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", hour12: false,
   });
+}
+
+// 取最新一条退款意向标记的证据原话（refund_intent_flags 末尾一条）
+function latestRefundEvidence(flags?: Array<Record<string, string | boolean>> | null): string {
+  if (!flags?.length) return "";
+  const latest = flags[flags.length - 1];
+  const evidence = typeof latest.evidence === "string" ? latest.evidence : "";
+  const reason = typeof latest.reason === "string" ? latest.reason : "";
+  return evidence || reason || "";
+}
+
+function RefundReviewGroup({ cases }: { cases: ServiceCase[] }) {
+  return (
+    <section id="refund-reviews" className="panel overflow-hidden scroll-mt-6">
+      <div className="panel-header">
+        <div className="flex items-center justify-between">
+          <h2 className="panel-title">退款审核</h2>
+          <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
+            {cases.length} 单待确认
+          </span>
+        </div>
+        <p className="panel-subtitle">AI 从群聊识别到客户已发起/申请退款，等待运营核实。确认后将停止打卡提醒、阶段报告等产品类主动推送，群内 AI 聊天仍保留。</p>
+      </div>
+      <div className="p-5">
+        {cases.length > 0 ? (
+          <div className="space-y-4">
+            {cases.map((item) => {
+              const evidence = latestRefundEvidence(item.refund_intent_flags);
+              return (
+                <div key={item.id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 rounded-xl border border-rose-100 bg-rose-50/40 px-5 py-4 shadow-sm transition-colors hover:border-rose-200">
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+                      <span className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">
+                        <RefreshCcw className="h-3.5 w-3.5" />
+                        疑似已退款
+                      </span>
+                      <Link className="font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
+                        {item.case_no}
+                      </Link>
+                      {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
+                      {item.group_id && <span className="text-slate-400">· {item.group_id}</span>}
+                    </div>
+                    {evidence && (
+                      <p className="text-sm leading-relaxed text-slate-700">
+                        <span className="font-bold text-slate-400">客户说：</span>
+                        {evidence}
+                      </p>
+                    )}
+                  </div>
+                  <RefundReviewActions caseId={item.id} />
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-slate-400">
+            <CheckCircle2 className="mx-auto mb-3 h-9 w-9 text-emerald-500" />
+            <p className="text-sm font-medium">暂无待审核退款</p>
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function PendingMessageGroup({
