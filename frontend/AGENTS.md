@@ -53,7 +53,6 @@ GET    /api/users/:id                  # 用户详情
 DELETE /api/users/:id                  # 软删除用户
 
 # 服务单
-POST   /api/service-cases              # 创建服务单
 GET    /api/service-cases              # 服务单列表
 GET    /api/service-cases/:id          # 服务单详情
 GET    /api/service-cases/:id/stats    # 服务单统计

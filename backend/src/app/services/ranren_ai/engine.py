@@ -992,6 +992,7 @@ class RanrenAIEngine:
             group_id=message.chat_id,
             questionnaire_token=secrets.token_urlsafe(24),
             notes=f"由 {message.channel} 入营问卷指令自动创建",
+            ai_agent_enabled=True,
         )
         session.add(service_case)
         await session.flush()

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { RefreshCcw } from "lucide-react";
 import { api, ServiceCase } from "@/lib/api";
-import { NewCaseForm } from "./new-case-form";
 
 const STATUS_LABELS: Record<string, string> = {
   created: "已创建",
@@ -34,9 +33,8 @@ export default async function CasesPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">服务单</h1>
-        <p className="mt-1 text-sm text-zinc-500">一个社群对应一个 28 天服务空间。</p>
+        <p className="mt-1 text-sm text-zinc-500">一个社群对应一个 28 天服务空间。新服务单由群内入营问卷指令自动创建。</p>
       </div>
-      <NewCaseForm />
       <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
         <table className="w-full text-left text-sm">
           <thead className="bg-zinc-50 text-zinc-500">
