@@ -1,6 +1,7 @@
 from app.models.checkin import Checkin
 from app.models.ai_usage import AIUsageLog
 from app.models.app_setting import AppSetting
+from app.models.inbound_event import InboundEvent
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.knowledge_draft import KnowledgeDraft
 from app.models.knowledge_faq import KnowledgeFAQ, KnowledgeFAQVersion
@@ -22,6 +23,7 @@ __all__ = [
     "AppSetting",
     "DocumentStatus",
     "DocumentType",
+    "InboundEvent",
     "KnowledgeChunk",
     "KnowledgeDraft",
     "KnowledgeFAQ",

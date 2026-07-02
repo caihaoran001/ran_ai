@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -961,3 +962,124 @@ async def test_reconcile_interrupted_sends_marks_failed(db_session):
     assert old.status == MessageStatus.FAILED
     assert old.error and "interrupted" in old.error
     assert fresh.status == MessageStatus.SENDING
+
+
+@pytest.mark.asyncio
+async def test_qiwe_aggregator_persists_and_marks_inbound_events(db_session):
+    """Fix②：进 8s 聚合窗口前先落 inbound_events；处理成功后标 processed。"""
+    from sqlalchemy import select
+    from app.models.inbound_event import InboundEvent
+
+    engine = FakeEngine()
+    aggregator = QiWeMessageAggregator(FakeChannel(), window_seconds=10.0, engine=engine)
+    message_id = f"inbox-ok-{secrets.token_hex(4)}"
+    message = ChannelMessage(
+        channel="qiwe", chat_id="room-inbox", chat_type="group",
+        text="窗口内消息", message_id=message_id, user_id="u1",
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    await aggregator.enqueue(message)
+    pending = await db_session.scalar(select(InboundEvent).where(InboundEvent.message_id == message_id))
+    assert pending is not None
+    assert pending.status == InboundEvent.STATUS_PENDING
+
+    await aggregator.flush(("room-inbox", "u1"))
+    await db_session.refresh(pending)
+    assert len(engine.messages) == 1
+    assert pending.status == InboundEvent.STATUS_PROCESSED
+    assert pending.processed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_qiwe_aggregator_keeps_inbound_event_pending_when_engine_fails(db_session):
+    """Fix②：引擎抛异常时不标 processed，保留给开机 replay 兜底。"""
+    from sqlalchemy import select
+    from app.models.inbound_event import InboundEvent
+
+    aggregator = QiWeMessageAggregator(FakeChannel(), window_seconds=10.0, engine=FailingEngine())
+    message_id = f"inbox-fail-{secrets.token_hex(4)}"
+    message = ChannelMessage(
+        channel="qiwe", chat_id="room-inbox-fail", chat_type="group",
+        text="会失败的消息", message_id=message_id, user_id="u1",
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    await aggregator.enqueue(message)
+    await aggregator.flush(("room-inbox-fail", "u1"))
+
+    event = await db_session.scalar(select(InboundEvent).where(InboundEvent.message_id == message_id))
+    assert event.status == InboundEvent.STATUS_PENDING
+    assert event.processed_at is None
+
+
+@pytest.mark.asyncio
+async def test_replay_pending_inbound_events_reprocesses_unhandled_event(db_session, monkeypatch):
+    """Fix②：开机重放卡在聚合窗口、从未进引擎的 pending inbound_event。"""
+    from datetime import timedelta
+    from sqlalchemy import select
+    from app.models.inbound_event import InboundEvent
+    from app.services.qiwe_service.inbox import replay_pending_inbound_events
+
+    now = datetime.now(timezone.utc)
+    event = InboundEvent(
+        channel="qiwe", chat_id="room-replay", user_id="u1", message_id="replay-1",
+        text="重放我", message_type="text", raw_payload={"k": "v"},
+        message_timestamp=now - timedelta(minutes=1),
+        status=InboundEvent.STATUS_PENDING,
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(event)
+    await db_session.flush()
+
+    calls = []
+
+    async def fake_handle_message(self, message):
+        calls.append(message)
+
+    monkeypatch.setattr(RanrenAIEngine, "handle_message", fake_handle_message)
+    await replay_pending_inbound_events(FakeChannel(), now)
+
+    assert len(calls) == 1
+    assert calls[0].text == "重放我"
+    assert calls[0].message_id == "replay-1"
+    await db_session.refresh(event)
+    assert event.status == InboundEvent.STATUS_PROCESSED
+
+
+@pytest.mark.asyncio
+async def test_replay_pending_inbound_events_skips_already_handled_event(db_session, monkeypatch):
+    """Fix②：若同窗口已存在入站 Message，说明正常进入过引擎，只标 processed、不重放。"""
+    from datetime import timedelta
+    from app.models.inbound_event import InboundEvent
+    from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
+    from app.services.qiwe_service.inbox import replay_pending_inbound_events
+
+    now = datetime.now(timezone.utc)
+    event = InboundEvent(
+        channel="qiwe", chat_id="room-skip", user_id="u1", message_id="skip-1",
+        text="别重放", message_type="text", raw_payload=None,
+        message_timestamp=now - timedelta(minutes=1),
+        status=InboundEvent.STATUS_PENDING,
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(event)
+    db_session.add(Message(
+        group_id="room-skip", wecom_message_id="merged-skip", content="别重放", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        created_at=now - timedelta(seconds=50),
+    ))
+    await db_session.flush()
+
+    calls = []
+
+    async def fake_handle_message(self, message):
+        calls.append(message)
+
+    monkeypatch.setattr(RanrenAIEngine, "handle_message", fake_handle_message)
+    await replay_pending_inbound_events(FakeChannel(), now)
+
+    assert calls == []
+    await db_session.refresh(event)
+    assert event.status == InboundEvent.STATUS_PROCESSED

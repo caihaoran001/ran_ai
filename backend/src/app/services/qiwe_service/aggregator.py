@@ -9,6 +9,10 @@ import time
 from typing import Protocol
 
 from app.services.channels.base import ChannelMessage, MessageChannel
+from app.services.qiwe_service.inbox import (
+    mark_inbound_events_processed,
+    persist_inbound_event,
+)
 from app.services.ranren_ai import RanrenAIEngine
 
 
@@ -23,6 +27,7 @@ class MessageEngine(Protocol):
 @dataclass
 class _PendingBatch:
     messages: list[ChannelMessage] = field(default_factory=list)
+    event_ids: list[int] = field(default_factory=list)
     timer_task: asyncio.Task | None = None
     processing_task: asyncio.Task | None = None
 
@@ -69,6 +74,11 @@ class QiWeMessageAggregator:
 
             batch = self._batches.setdefault(key, _PendingBatch())
             batch.messages.append(message)
+            # durable inbox：进聚合窗口前先落库，堵住「8s 窗口内重启丢消息」的黑洞。
+            # 持久化失败只记日志、不阻断实时处理（persist_inbound_event 内部已兜底）。
+            event_id = await persist_inbound_event(message)
+            if event_id is not None:
+                batch.event_ids.append(event_id)
 
             if batch.processing_task and not batch.processing_task.done():
                 logger.info(
@@ -176,13 +186,17 @@ class QiWeMessageAggregator:
                 return
 
             messages = batch.messages
+            event_ids = batch.event_ids
             batch.messages = []
+            batch.event_ids = []
             batch.timer_task = None
-            task = asyncio.create_task(self._process_batch(key, messages))
+            task = asyncio.create_task(self._process_batch(key, messages, event_ids))
             batch.processing_task = task
         await task
 
-    async def _process_batch(self, key: tuple[str, str], messages: list[ChannelMessage]) -> None:
+    async def _process_batch(
+        self, key: tuple[str, str], messages: list[ChannelMessage], event_ids: list[int] | None = None
+    ) -> None:
         started_at = time.monotonic()
         first = messages[0]
         last = messages[-1]
@@ -194,8 +208,10 @@ class QiWeMessageAggregator:
             first.message_id,
             last.message_id,
         )
+        processed = False
         try:
             await self.engine.handle_message(_merge_messages(messages))
+            processed = True
         except Exception as exc:
             logger.exception(
                 "QiWe fixed window flush failed chat_id=%s user_id=%s count=%s first_message_id=%s last_message_id=%s error_type=%s",
@@ -208,6 +224,10 @@ class QiWeMessageAggregator:
             )
             return
         finally:
+            # handle_message 已被完整调用（引擎在最开头就把入站落成 Message），才标记这批 inbox
+            # 事件为已处理；若引擎抛异常，保留 pending，开机 replay 会按 DB 事实保守判断是否重放。
+            if processed:
+                await mark_inbound_events_processed(event_ids or [])
             async with self._lock:
                 batch = self._batches.get(key)
                 if batch and batch.processing_task is asyncio.current_task():
