@@ -259,6 +259,24 @@ def test_high_risk_health_consultation_handoff():
 
 
 @pytest.mark.asyncio
+async def test_handoff_throttle_persists_across_engine_restart(
+    db_session, mock_message_channel, cai_haoran_answers
+):
+    # Fix①：转人工@班主任的节流时间戳落库(service_cases.last_handoff_at)，
+    # 部署重启(全新引擎实例、内存态清零)后仍生效，30 分钟内不重复@。
+    case_id, _ = await _setup_case_with_intake(db_session, cai_haoran_answers)
+
+    engine_before = RanrenAIEngine(mock_message_channel)
+    assert await engine_before._recently_handed_off(case_id) is False
+    await engine_before._mark_handoff(case_id)
+    assert await engine_before._recently_handed_off(case_id) is True
+
+    # 模拟重启：换一个没有任何内存态的新引擎实例（旧的内存字典实现在这里会返回 False → 重复@）
+    engine_after = RanrenAIEngine(mock_message_channel)
+    assert await engine_after._recently_handed_off(case_id) is True
+
+
+@pytest.mark.asyncio
 async def test_ai_reply_stored_as_outbound(db_session, mock_ai, cai_haoran_answers):
     case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
     await _ingest_and_analyze(

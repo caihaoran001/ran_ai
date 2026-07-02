@@ -77,6 +77,8 @@ class ServiceCase(TimestampMixin, Base):
     risk_flags: Mapped[list[dict] | None] = mapped_column(JSON)
     needs_human_intervention: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     intervention_reasons: Mapped[list[dict] | None] = mapped_column(JSON)
+    # 上次 @班主任转人工的时间(UTC)：持久化短期防刷屏节流，重启不丢，30 分钟内不重复@（替代旧内存字典）。
+    last_handoff_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     renewal_intent_flags: Mapped[list[dict] | None] = mapped_column(JSON)
     refund_intent_flags: Mapped[list[dict] | None] = mapped_column(JSON)
     # 大模型识别到"疑似已完成退款"→置真进入后台"已退款待确认"列表；运营确认后才改 status=REFUNDED 停推送。

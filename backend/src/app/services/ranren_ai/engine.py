@@ -289,6 +289,9 @@ def _decrypt_image_bytes(encrypted_data: bytes, aes_key_str: str) -> bytes:
 class RanrenAIEngine:
     """Channel-agnostic business engine for inbound customer messages."""
 
+    # 转人工 @班主任 的短期防刷屏窗口（秒）：同一 service_case 30 分钟内不重复@。
+    HANDOFF_THROTTLE_SECONDS = 1800
+
     def __init__(
         self,
         channel: MessageChannel,
@@ -298,10 +301,10 @@ class RanrenAIEngine:
         self.channel = channel
         self.settings = settings or get_settings()
         self.has_pending_newer_message = has_pending_newer_message
-        # 转人工@班主任的短期防刷屏：记录每个 service_case 上次@的单调时钟时间，
-        # 30 分钟内不重复@（替代旧的 needs_human_intervention 永久标记——旧逻辑会在第一次@后
-        # 永久不再@后续风险，导致班主任漏消息；新逻辑每个新风险事件都会@、只在短期内防刷屏）。
-        self._last_handoff_at: dict[int, float] = {}
+        # 转人工@班主任的短期防刷屏：每个 service_case 30 分钟内不重复@（替代旧的
+        # needs_human_intervention 永久标记——旧逻辑会在第一次@后永久不再@后续风险，导致班主任漏消息；
+        # 新逻辑每个新风险事件都会@、只在短期内防刷屏）。节流时间戳持久化在
+        # service_cases.last_handoff_at（见 _recently_handed_off / _mark_handoff），重启不再清零。
 
     async def _process_inbound_image(self, message_id: int, message: ChannelMessage, service_case_id: int | None) -> None:
         try:
@@ -667,16 +670,14 @@ class RanrenAIEngine:
                 inbound_id=inbound_id,
                 analysis=analysis,
             )
-            now_mono = time.monotonic()
-            recently_handed_off = (now_mono - self._last_handoff_at.get(service_case_id, 0.0)) < 1800
             # 转人工 @班主任 = 当前句需要任何人工介入(requires_human_intervention，含急性/高风险/诉求/中风险)，
             # 外加：持久高风险用户(risk_level=high)问需专业判断的健康/方案问题(health_consultation)。
             # 注：暂不使用「AI 生成回复进待审核」机制——凡需介入一律 @班主任转人工，AI 不再生成待审核回复。
             health_handoff = _requires_health_handoff(analysis, case_risk_level)
             needs_handoff = bool(analysis.get("requires_human_intervention")) or health_handoff
             if needs_handoff:
-                if not recently_handed_off:
-                    self._last_handoff_at[service_case_id] = now_mono
+                if not await self._recently_handed_off(service_case_id):
+                    await self._mark_handoff(service_case_id)
                     await self._reply_human_handoff(message, service_case_id=service_case_id, trigger_id=inbound_id)
                     logger.info(
                         "RanrenAI handed off to staff chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
@@ -824,14 +825,12 @@ class RanrenAIEngine:
             analysis=analysis,
         )
 
-        now_mono = time.monotonic()
-        recently_handed_off = (now_mono - self._last_handoff_at.get(service_case_id, 0.0)) < 1800
         health_handoff = _requires_health_handoff(analysis, case_risk_level)
         needs_handoff = bool(analysis.get("requires_human_intervention")) or health_handoff
 
         if needs_handoff:
-            if not recently_handed_off:
-                self._last_handoff_at[service_case_id] = now_mono
+            if not await self._recently_handed_off(service_case_id):
+                await self._mark_handoff(service_case_id)
                 await self._reply_human_handoff(channel_msg, service_case_id=service_case_id, trigger_id=inbound_id)
                 logger.info(
                     "RanrenAI reprocess handed off to staff chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
@@ -953,6 +952,29 @@ class RanrenAIEngine:
                 db_inbound.analysis_json = new_analysis
             await session.commit()
             return risk_level
+
+    async def _recently_handed_off(self, service_case_id: int) -> bool:
+        """30 分钟内是否已 @ 过班主任。节流时间持久化在 service_cases.last_handoff_at，重启不丢。"""
+        async with SessionLocal() as session:
+            service_case = await session.scalar(
+                select_active_service_cases(ServiceCase.id == service_case_id)
+            )
+        last = service_case.last_handoff_at if service_case else None
+        if last is None:
+            return False
+        if last.tzinfo is None:  # SQLite 等可能返回 naive datetime，按 UTC 处理
+            last = last.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - last).total_seconds() < self.HANDOFF_THROTTLE_SECONDS
+
+    async def _mark_handoff(self, service_case_id: int) -> None:
+        """记录本次 @班主任时间，用于短期防刷屏节流。"""
+        async with SessionLocal() as session:
+            service_case = await session.scalar(
+                select_active_service_cases(ServiceCase.id == service_case_id)
+            )
+            if service_case:
+                service_case.last_handoff_at = datetime.now(timezone.utc)
+                await session.commit()
 
     async def _run_outcome_analysis(
         self,
