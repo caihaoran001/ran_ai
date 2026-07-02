@@ -9,10 +9,10 @@ from tests.conftest import seed_checkins
 
 
 @pytest.mark.asyncio
-async def test_create_single_checkin(admin_client, public_client, cai_haoran_answers):
+async def test_create_single_checkin(admin_client, create_case, public_client, cai_haoran_answers):
     gid = f"test-checkin-create-{uuid.uuid4().hex[:8]}"
 
-    create_resp = await admin_client.post("/service-cases", json={
+    create_resp = await create_case({
         "group_id": gid,
         "user": {"name": "Test User", "phone": "13800000001"},
     })
@@ -91,10 +91,10 @@ async def test_graduated_case_rejects_new_checkin(admin_client, public_client, d
 
 
 @pytest.mark.asyncio
-async def test_seed_28_days_checkins(admin_client, db_session):
+async def test_seed_28_days_checkins(admin_client, create_case, db_session):
     gid = f"test-checkin-seed-{uuid.uuid4().hex[:8]}"
 
-    create_resp = await admin_client.post("/service-cases", json={
+    create_resp = await create_case({
         "group_id": gid,
         "user": {"name": "Seed User", "phone": "13800000002"},
     })
@@ -127,10 +127,10 @@ async def test_seed_28_days_checkins(admin_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_checkin_parsed_json_structure(admin_client):
+async def test_checkin_parsed_json_structure(admin_client, create_case):
     gid = f"test-checkin-json-{uuid.uuid4().hex[:8]}"
 
-    create_resp = await admin_client.post("/service-cases", json={
+    create_resp = await create_case({
         "group_id": gid,
         "user": {"name": "JSON Test User", "phone": "13800000003"},
     })
@@ -179,10 +179,10 @@ async def test_checkin_parsed_json_structure(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_checkin_date_ordering(admin_client):
+async def test_checkin_date_ordering(admin_client, create_case):
     gid = f"test-checkin-order-{uuid.uuid4().hex[:8]}"
 
-    create_resp = await admin_client.post("/service-cases", json={
+    create_resp = await create_case({
         "group_id": gid,
         "user": {"name": "Order Test User", "phone": "13800000004"},
     })

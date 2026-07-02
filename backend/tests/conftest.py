@@ -529,6 +529,65 @@ async def admin_client(mock_ai, db_session):
 
 
 @pytest_asyncio.fixture
+async def create_case(db_session):
+    """测试造数据用：直接建 User+ServiceCase 入库。
+
+    生产已移除手动新建服务单的 HTTP 端点（服务单只由群内入营问卷指令自动创建），
+    此 fixture 复刻原端点的默认值行为，供测试快速铺设服务单，返回带 .status_code /
+    .json() 的轻量响应对象以贴合原有断言写法。
+    """
+    import secrets as _secrets
+    from datetime import datetime as _dt
+
+    from app.models.service_case import ServiceCase
+    from app.models.user import User
+
+    class _FakeResp:
+        def __init__(self, data: dict):
+            self._data = data
+            self.status_code = 201
+            self.text = ""
+
+        def json(self) -> dict:
+            return self._data
+
+    async def _create(payload: dict) -> _FakeResp:
+        user_data = dict(payload.get("user") or {})
+        user_data["name"] = (user_data.get("name") or "").strip() or "待填写问卷用户"
+        user = User(**user_data)
+        db_session.add(user)
+        await db_session.flush()
+
+        case_no = payload.get("case_no") or (
+            f"RAI-{_dt.now().strftime('%Y%m%d')}-{_secrets.token_hex(3).upper()}"
+        )
+        service_case = ServiceCase(
+            case_no=case_no,
+            user_id=user.id,
+            group_id=payload["group_id"],
+            questionnaire_token=_secrets.token_urlsafe(24),
+            notes=payload.get("notes"),
+        )
+        db_session.add(service_case)
+        await db_session.flush()
+        return _FakeResp(
+            {
+                "id": service_case.id,
+                "case_no": service_case.case_no,
+                "user_id": service_case.user_id,
+                "group_id": service_case.group_id,
+                "questionnaire_token": service_case.questionnaire_token,
+                "status": service_case.status.value,
+                "ai_agent_enabled": service_case.ai_agent_enabled,
+                "ai_auto_reply_enabled": service_case.ai_auto_reply_enabled,
+                "auto_send_documents": service_case.auto_send_documents,
+            }
+        )
+
+    return _create
+
+
+@pytest_asyncio.fixture
 async def public_client(mock_ai, db_session):
     app = _make_test_app()
     

@@ -161,6 +161,7 @@ def _make_intake_mock_response(*, weight_band: str = "维持优化带（A带）"
 @pytest.mark.asyncio
 async def test_questionnaire_submit_creates_profile_and_documents(
     admin_client,
+    create_case,
     db_session,
     mock_ai,
     cai_haoran_answers,
@@ -171,7 +172,7 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     }
 
     group_id = f"test-group-intake-{secrets.token_hex(6)}"
-    resp = await admin_client.post("/service-cases", json={
+    resp = await create_case({
         "group_id": group_id,
         "user": {"name": "蔡浩然"},
     })
@@ -244,6 +245,7 @@ async def test_questionnaire_submit_creates_profile_and_documents(
 @pytest.mark.asyncio
 async def test_generating_status_on_submit(
     admin_client,
+    create_case,
     mock_ai,
     cai_haoran_answers,
 ):
@@ -253,7 +255,7 @@ async def test_generating_status_on_submit(
     }
 
     group_id = f"test-group-genstatus-{secrets.token_hex(6)}"
-    resp = await admin_client.post("/service-cases", json={
+    resp = await create_case({
         "group_id": group_id,
         "user": {"name": "Test Status User"},
     })
@@ -280,11 +282,12 @@ async def test_generating_status_on_submit(
 @pytest.mark.asyncio
 async def test_intake_submit_records_profile_completed_outcome(
     admin_client,
+    create_case,
     db_session,
     cai_haoran_answers,
 ):
     group_id = f"test-group-intake-outcome-{secrets.token_hex(6)}"
-    resp = await admin_client.post("/service-cases", json={
+    resp = await create_case({
         "group_id": group_id,
         "user": {"name": "Outcome Intake User"},
     })
@@ -327,9 +330,9 @@ async def test_intake_submit_records_profile_completed_outcome(
 
 
 @pytest.mark.asyncio
-async def test_personalized_checkin_uses_latest_document_daily_checkin_block(admin_client, db_session):
+async def test_personalized_checkin_uses_latest_document_daily_checkin_block(admin_client, create_case, db_session):
     group_id = f"test-personalized-checkin-{secrets.token_hex(6)}"
-    resp = await admin_client.post("/service-cases", json={
+    resp = await create_case({
         "group_id": group_id,
         "user": {"name": "旧画像用户"},
     })
@@ -462,6 +465,7 @@ def test_document_payload_bmi_is_overwritten_by_intake_facts():
 @pytest.mark.asyncio
 async def test_failed_generation_reverts_status(
     admin_client,
+    create_case,
     db_session,
     mock_ai,
     cai_haoran_answers,
@@ -473,7 +477,7 @@ async def test_failed_generation_reverts_status(
     }
 
     group_id = f"test-group-fail-{secrets.token_hex(6)}"
-    resp = await admin_client.post("/service-cases", json={
+    resp = await create_case({
         "group_id": group_id,
         "user": {"name": "Test Fail User"},
     })

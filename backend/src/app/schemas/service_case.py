@@ -2,24 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.models.service_case import ServiceCaseStatus
 from app.schemas.common import Timestamped
-
-
-class UserCreate(BaseModel):
-    name: str = Field(default="", max_length=100)
-    phone: str | None = None
-    wecom_user_id: str | None = None
-    notes: str | None = None
-
-
-class ServiceCaseCreate(BaseModel):
-    group_id: str = Field(min_length=1, max_length=128)
-    user: UserCreate
-    case_no: str | None = None
-    notes: str | None = None
 
 
 class UserRead(Timestamped):

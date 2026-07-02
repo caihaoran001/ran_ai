@@ -13,13 +13,12 @@ from tests.conftest import seed_checkins, seed_chat_messages
 
 
 @pytest.mark.asyncio
-async def test_stage_report_generation_all_stages(admin_client, db_session):
+async def test_stage_report_generation_all_stages(admin_client, create_case, db_session):
     await _ensure_manual_review(admin_client)
 
     group_id = f"test-04a-{uuid4().hex[:8]}"
-    create_resp = await admin_client.post(
-        "/service-cases",
-        json={
+    create_resp = await create_case(
+        {
             "group_id": group_id,
             "user": {"name": "阶段测试用户"},
         },
@@ -78,13 +77,12 @@ async def test_stage_report_generation_all_stages(admin_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_stage_report_no_duplicate_generation(admin_client, db_session):
+async def test_stage_report_no_duplicate_generation(admin_client, create_case, db_session):
     await _ensure_manual_review(admin_client)
 
     group_id = f"test-04b-{uuid4().hex[:8]}"
-    create_resp = await admin_client.post(
-        "/service-cases",
-        json={
+    create_resp = await create_case(
+        {
             "group_id": group_id,
             "user": {"name": "去重测试用户"},
         },
@@ -150,13 +148,12 @@ async def test_stage_report_no_duplicate_generation(admin_client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_stage_report_content_has_checkin_data(admin_client, db_session):
+async def test_stage_report_content_has_checkin_data(admin_client, create_case, db_session):
     await _ensure_manual_review(admin_client)
 
     group_id = f"test-04c-{uuid4().hex[:8]}"
-    create_resp = await admin_client.post(
-        "/service-cases",
-        json={
+    create_resp = await create_case(
+        {
             "group_id": group_id,
             "user": {"name": "打卡数据测试用户"},
         },
@@ -314,13 +311,12 @@ async def test_stage_report_retries_when_non_graduation_has_commercial_terms():
 
 
 @pytest.mark.asyncio
-async def test_graduation_report(admin_client, db_session):
+async def test_graduation_report(admin_client, create_case, db_session):
     await _ensure_manual_review(admin_client)
 
     group_id = f"test-04d-{uuid4().hex[:8]}"
-    create_resp = await admin_client.post(
-        "/service-cases",
-        json={
+    create_resp = await create_case(
+        {
             "group_id": group_id,
             "user": {"name": "毕业报告测试用户"},
         },

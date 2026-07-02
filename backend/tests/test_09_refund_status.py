@@ -114,9 +114,9 @@ async def test_stage_reports_skip_refunded(db_session, mock_session_local):
 # ---- 列表筛选 -------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_list_filters_refund_pending_and_refunded(admin_client):
+async def test_list_filters_refund_pending_and_refunded(admin_client, create_case):
     group_id = f"rf-list-{uuid4().hex[:8]}"
-    case = (await admin_client.post("/service-cases", json={"group_id": group_id, "user": {"name": "退款列表"}})).json()
+    case = (await create_case({"group_id": group_id, "user": {"name": "退款列表"}})).json()
     case_id = case["id"]
 
     # 置候选（模拟识别到已退款事实，尚未确认）

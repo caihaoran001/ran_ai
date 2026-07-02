@@ -56,14 +56,13 @@ async def test_dashboard_cost_excludes_diagnostic_usage(admin_client, db_session
 
 
 @pytest.mark.asyncio
-async def test_dashboard_emotional_alerts_show_trigger_messages(admin_client, db_session):
+async def test_dashboard_emotional_alerts_show_trigger_messages(admin_client, create_case, db_session):
     china_tz = ZoneInfo("Asia/Shanghai")
     today = datetime.now(china_tz).date()
     today_start = datetime.combine(today, time.min, tzinfo=china_tz).astimezone(timezone.utc)
 
-    create_resp = await admin_client.post(
-        "/service-cases",
-        json={"group_id": f"emotion-alert-{secrets.token_hex(6)}", "user": {"name": "情绪预警用户"}},
+    create_resp = await create_case(
+        {"group_id": f"emotion-alert-{secrets.token_hex(6)}", "user": {"name": "情绪预警用户"}},
     )
     assert create_resp.status_code == 201, create_resp.text
     case = create_resp.json()
@@ -126,10 +125,9 @@ async def test_dashboard_emotional_alerts_show_trigger_messages(admin_client, db
 
 
 @pytest.mark.asyncio
-async def test_dashboard_drilldown_endpoints_show_case_and_trigger_content(admin_client, db_session):
-    create_resp = await admin_client.post(
-        "/service-cases",
-        json={"group_id": f"dashboard-drilldown-{secrets.token_hex(6)}", "user": {"name": "看板明细用户"}},
+async def test_dashboard_drilldown_endpoints_show_case_and_trigger_content(admin_client, create_case, db_session):
+    create_resp = await create_case(
+        {"group_id": f"dashboard-drilldown-{secrets.token_hex(6)}", "user": {"name": "看板明细用户"}},
     )
     assert create_resp.status_code == 201, create_resp.text
     created_case = create_resp.json()
@@ -297,9 +295,9 @@ async def test_ai_reply_policy_crud(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_service_case_auto_send_toggle(admin_client):
+async def test_service_case_auto_send_toggle(admin_client, create_case):
     group_id = f"test-toggle-auto-{secrets.token_hex(6)}"
-    resp = await admin_client.post("/service-cases", json={
+    resp = await create_case({
         "group_id": group_id,
         "user": {"name": "AutoSend测试"},
     })
@@ -327,9 +325,9 @@ async def test_service_case_auto_send_toggle(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_service_case_ai_reply_toggle(admin_client):
+async def test_service_case_ai_reply_toggle(admin_client, create_case):
     group_id = f"test-toggle-ai-reply-{secrets.token_hex(6)}"
-    resp = await admin_client.post("/service-cases", json={
+    resp = await create_case({
         "group_id": group_id,
         "user": {"name": "AIReply测试"},
     })
@@ -349,9 +347,9 @@ async def test_service_case_ai_reply_toggle(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_service_case_agent_toggle_defaults_off_and_updates(admin_client):
+async def test_service_case_agent_toggle_defaults_off_and_updates(admin_client, create_case):
     group_id = f"test-toggle-agent-{secrets.token_hex(6)}"
-    resp = await admin_client.post("/service-cases", json={
+    resp = await create_case({
         "group_id": group_id,
         "user": {"name": "Agent开关测试"},
     })
@@ -372,9 +370,9 @@ async def test_service_case_agent_toggle_defaults_off_and_updates(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_qiwe_ai_reply_respects_global_manual_review_policy(admin_client, db_session):
+async def test_qiwe_ai_reply_respects_global_manual_review_policy(admin_client, create_case, db_session):
     group_id = f"test-qiwe-ai-policy-{secrets.token_hex(6)}"
-    resp = await admin_client.post("/service-cases", json={
+    resp = await create_case({
         "group_id": group_id,
         "user": {"name": "QiWe审核策略测试"},
     })
@@ -601,6 +599,7 @@ async def test_knowledge_evolution_settings(admin_client):
 @pytest.mark.asyncio
 async def test_content_delivery_policy_auto_send_behaviour(
     admin_client,
+    create_case,
     mock_ai,
     cai_haoran_answers,
     wait_background,
@@ -615,7 +614,7 @@ async def test_content_delivery_policy_auto_send_behaviour(
     await admin_client.post("/settings/content-delivery-policy", json={"mode": "auto_send"})
     try:
         group_id = f"test-autosend-policy-{secrets.token_hex(6)}"
-        resp = await admin_client.post("/service-cases", json={
+        resp = await create_case({
             "group_id": group_id,
             "user": {"name": "策略自动发送测试"},
         })
@@ -641,9 +640,9 @@ async def test_content_delivery_policy_auto_send_behaviour(
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_service_case(admin_client, db_session):
+async def test_soft_delete_service_case(admin_client, create_case, db_session):
     group_id = f"test-soft-delete-{secrets.token_hex(6)}"
-    resp = await admin_client.post("/service-cases", json={
+    resp = await create_case({
         "group_id": group_id,
         "user": {"name": "软删除测试"},
     })

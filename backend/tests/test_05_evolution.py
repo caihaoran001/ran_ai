@@ -26,11 +26,10 @@ async def test_knowledge_evolution_config_defaults(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_pure_extraction_with_seed_data(admin_client):
+async def test_pure_extraction_with_seed_data(admin_client, create_case):
     suffix = secrets.token_hex(6)
-    resp = await admin_client.post(
-        "/service-cases",
-        json={
+    resp = await create_case(
+        {
             "group_id": f"test-evo-group-{suffix}",
             "user": {"name": "进化测试用户", "phone": f"138{suffix[:8]}"},
         },
@@ -57,14 +56,14 @@ async def test_knowledge_drafts_list(admin_client):
 @pytest.mark.asyncio
 async def test_evolution_generates_drafts_from_seeded_chat(
     admin_client,
+    create_case,
     db_session,
     mock_ai,
 ):
     suffix = secrets.token_hex(6)
     group_id = f"test-evo-gen-{suffix}"
-    resp = await admin_client.post(
-        "/service-cases",
-        json={"group_id": group_id, "user": {"name": "进化生成测试"}},
+    resp = await create_case(
+        {"group_id": group_id, "user": {"name": "进化生成测试"}},
     )
     assert resp.status_code == 201
     case = resp.json()
@@ -124,14 +123,14 @@ async def test_evolution_generates_drafts_from_seeded_chat(
 @pytest.mark.asyncio
 async def test_stage_case_scan_uses_full_history_and_existing_case_context(
     admin_client,
+    create_case,
     db_session,
     mock_ai,
 ):
     suffix = secrets.token_hex(6)
     group_id = f"test-evo-history-{suffix}"
-    resp = await admin_client.post(
-        "/service-cases",
-        json={"group_id": group_id, "user": {"name": "案例上下文测试"}},
+    resp = await create_case(
+        {"group_id": group_id, "user": {"name": "案例上下文测试"}},
     )
     assert resp.status_code == 201
     case = resp.json()

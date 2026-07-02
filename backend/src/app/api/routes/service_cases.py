@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import secrets
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -18,7 +17,6 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.schemas.service_case import (
     ServiceCaseAIContextPreview,
-    ServiceCaseCreate,
     ServiceCaseRead,
     ServiceCaseStats,
     ServiceCaseUpdate,
@@ -79,31 +77,6 @@ async def list_service_cases(
     cases = list(await session.scalars(statement))
     await _annotate_pending_review(session, cases)
     return cases
-
-
-@router.post("", response_model=ServiceCaseRead, status_code=status.HTTP_201_CREATED)
-async def create_service_case(
-    payload: ServiceCaseCreate,
-    session: AsyncSession = Depends(get_session),
-) -> ServiceCase:
-    user_data = payload.user.model_dump()
-    user_data["name"] = user_data["name"].strip() or "待填写问卷用户"
-    user = User(**user_data)
-    session.add(user)
-    await session.flush()
-
-    service_case = ServiceCase(
-        case_no=payload.case_no or _generate_case_no(),
-        user_id=user.id,
-        group_id=payload.group_id,
-        questionnaire_token=secrets.token_urlsafe(24),
-        notes=payload.notes,
-    )
-    session.add(service_case)
-    await session.commit()
-    result = await get_active_service_case(session, service_case.id, options=(selectinload(ServiceCase.user),))
-    assert result is not None
-    return result
 
 
 @router.get("/{service_case_id}", response_model=ServiceCaseRead)
@@ -340,7 +313,3 @@ def _apply_service_case_filter(statement, metric: str | None):
         return statement.join(message_subq, message_subq.c.service_case_id == ServiceCase.id)
 
     return statement
-
-
-def _generate_case_no() -> str:
-    return f"RAI-{datetime.now().strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}"
