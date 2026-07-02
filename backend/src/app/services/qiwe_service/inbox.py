@@ -88,7 +88,7 @@ async def replay_pending_inbound_events(channel: MessageChannel, startup_time: d
     """
     from app.services.ranren_ai.engine import RanrenAIEngine  # 延迟导入避免循环依赖
 
-    cutoff = startup_time - timedelta(seconds=15)
+    max_time = startup_time
     min_time = startup_time - timedelta(hours=2)
     async with SessionLocal() as session:
         events = list(
@@ -96,7 +96,7 @@ async def replay_pending_inbound_events(channel: MessageChannel, startup_time: d
                 select(InboundEvent)
                 .where(
                     InboundEvent.status == InboundEvent.STATUS_PENDING,
-                    InboundEvent.created_at <= cutoff,
+                    InboundEvent.created_at <= max_time,
                     InboundEvent.created_at >= min_time,
                 )
                 .order_by(InboundEvent.id.asc())

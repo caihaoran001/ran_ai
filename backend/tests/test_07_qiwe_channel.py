@@ -1048,6 +1048,38 @@ async def test_replay_pending_inbound_events_reprocesses_unhandled_event(db_sess
 
 
 @pytest.mark.asyncio
+async def test_replay_pending_inbound_events_reprocesses_recent_pre_startup_event(db_session, monkeypatch):
+    """Fix②回归：启动前 1 秒写入的 pending event 也必须重放，不能被 15s cutoff 漏掉。"""
+    from datetime import timedelta
+    from app.models.inbound_event import InboundEvent
+    from app.services.qiwe_service.inbox import replay_pending_inbound_events
+
+    now = datetime.now(timezone.utc)
+    event = InboundEvent(
+        channel="qiwe", chat_id="room-replay-recent", user_id="u1", message_id="replay-recent-1",
+        text="刚进窗口就重启", message_type="text", raw_payload=None,
+        message_timestamp=now - timedelta(seconds=1),
+        status=InboundEvent.STATUS_PENDING,
+        created_at=now - timedelta(seconds=1),
+    )
+    db_session.add(event)
+    await db_session.flush()
+
+    calls = []
+
+    async def fake_handle_message(self, message):
+        calls.append(message)
+
+    monkeypatch.setattr(RanrenAIEngine, "handle_message", fake_handle_message)
+    await replay_pending_inbound_events(FakeChannel(), now)
+
+    assert len(calls) == 1
+    assert calls[0].text == "刚进窗口就重启"
+    await db_session.refresh(event)
+    assert event.status == InboundEvent.STATUS_PROCESSED
+
+
+@pytest.mark.asyncio
 async def test_replay_pending_inbound_events_skips_already_handled_event(db_session, monkeypatch):
     """Fix②：若同窗口已存在入站 Message，说明正常进入过引擎，只标 processed、不重放。"""
     from datetime import timedelta
