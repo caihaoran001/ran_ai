@@ -184,7 +184,10 @@ class AIService:
                             ],
                         },
                     ],
-                    max_tokens=300,
+                    # 思考型视觉模型(如 qwen3.5-plus)会先输出思考过程再给描述，
+                    # 实测思考+描述可达数千 token；上限过小(原 300)会在思考中途截断、拿不到最终描述。
+                    # 非思考模型(如 flash)实际只输出一两百 token，不受此上限影响。
+                    max_tokens=8192,
                 )
 
             finish = response.choices[0].finish_reason if response.choices else None
