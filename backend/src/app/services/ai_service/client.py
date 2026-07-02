@@ -51,14 +51,52 @@ def _get_limiter(max_concurrent: int) -> asyncio.Semaphore:
     return limiter
 
 
-def _estimated_cost_yuan(*, prompt_tokens: int | None, completion_tokens: int | None, settings: Settings) -> float | None:
+def _estimated_cost_yuan(
+    *,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    settings: Settings,
+    scenario: str | None = None,
+) -> float | None:
     if prompt_tokens is None and completion_tokens is None:
         return None
-    prompt_price = max(float(settings.ai_prompt_cost_per_1m_tokens or 0), 0.0)
-    completion_price = max(float(settings.ai_completion_cost_per_1m_tokens or 0), 0.0)
+    prompt_price, completion_price = _pricing_for_usage(
+        prompt_tokens=prompt_tokens,
+        settings=settings,
+        scenario=scenario,
+    )
     prompt_cost = (prompt_tokens or 0) * prompt_price / 1_000_000
     completion_cost = (completion_tokens or 0) * completion_price / 1_000_000
     return round(prompt_cost + completion_cost, 8)
+
+
+def _pricing_for_usage(
+    *,
+    prompt_tokens: int | None,
+    settings: Settings,
+    scenario: str | None,
+) -> tuple[float, float]:
+    if scenario == "qwen_vl_translate":
+        # qwen3.5-plus 阶梯价按单次请求输入 token 所在档位计价；图片 OCR 请求通常远低于 128K。
+        tokens = prompt_tokens or 0
+        if tokens < 128_000:
+            return (
+                max(float(settings.qwen_prompt_cost_under_128k_per_1m_tokens or 0), 0.0),
+                max(float(settings.qwen_completion_cost_under_128k_per_1m_tokens or 0), 0.0),
+            )
+        if tokens < 256_000:
+            return (
+                max(float(settings.qwen_prompt_cost_128k_to_256k_per_1m_tokens or 0), 0.0),
+                max(float(settings.qwen_completion_cost_128k_to_256k_per_1m_tokens or 0), 0.0),
+            )
+        return (
+            max(float(settings.qwen_prompt_cost_over_256k_per_1m_tokens or 0), 0.0),
+            max(float(settings.qwen_completion_cost_over_256k_per_1m_tokens or 0), 0.0),
+        )
+    return (
+        max(float(settings.ai_prompt_cost_per_1m_tokens or 0), 0.0),
+        max(float(settings.ai_completion_cost_per_1m_tokens or 0), 0.0),
+    )
 
 
 def _int_or_none(value: object) -> int | None:
@@ -345,6 +383,7 @@ class AIService:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             settings=self.settings,
+            scenario=scenario,
         )
         diagnostic_run_id = (os.getenv("RAN_AI_DIAGNOSTIC_RUN_ID") or "").strip() or None
         is_diagnostic = bool(diagnostic_run_id) or scenario.startswith("diagnostics_")
