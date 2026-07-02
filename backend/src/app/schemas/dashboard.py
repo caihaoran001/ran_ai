@@ -30,6 +30,8 @@ class AICostSummary(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     estimated_cost_yuan: float = 0.0
+    deepseek_cost_yuan: float = 0.0
+    vision_cost_yuan: float = 0.0
 
 
 class AICostCaseItem(BaseModel):
@@ -43,6 +45,8 @@ class AICostCaseItem(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     estimated_cost_yuan: float = 0.0
+    deepseek_cost_yuan: float = 0.0
+    vision_cost_yuan: float = 0.0
     last_call_at: datetime | None = None
 
 

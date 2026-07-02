@@ -70,6 +70,8 @@ export type ServiceCaseStats = {
   ai_total_calls: number;
   ai_total_tokens: number;
   ai_estimated_cost_yuan: number;
+  ai_deepseek_cost_yuan: number;
+  ai_vision_cost_yuan: number;
 };
 
 export type UserProfile = {

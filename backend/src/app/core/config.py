@@ -51,7 +51,6 @@ class Settings(BaseSettings):
     )
     qwen_api_key: str = Field(default="", validation_alias="QWEN_API_KEY")
     qwen_model: str = Field(default="qwen3.7-plus", validation_alias="QWEN_MODEL")
-    qwen_vision_fallback_model: str = Field(default="qwen3.5-omni-plus", validation_alias="QWEN_VISION_FALLBACK_MODEL")
     # qwen3.5-plus 官方阶梯价（中国内地，元/百万 tokens）：按单次请求输入 tokens 所在档位计价。
     qwen_prompt_cost_under_128k_per_1m_tokens: float = Field(
         default=0.8,
@@ -92,11 +91,11 @@ class Settings(BaseSettings):
     web_search_timeout_seconds: float = Field(default=8.0, validation_alias="WEB_SEARCH_TIMEOUT_SECONDS")
     web_search_max_results: int = Field(default=5, validation_alias="WEB_SEARCH_MAX_RESULTS")
     ai_prompt_cost_per_1m_tokens: float = Field(
-        default=12.55,
+        default=3.0,
         validation_alias="AI_PROMPT_COST_PER_1M_TOKENS",
     )
     ai_completion_cost_per_1m_tokens: float = Field(
-        default=25.11,
+        default=6.0,
         validation_alias="AI_COMPLETION_COST_PER_1M_TOKENS",
     )
     document_output_dir: str = Field(

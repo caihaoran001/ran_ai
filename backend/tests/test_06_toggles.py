@@ -34,6 +34,16 @@ async def test_dashboard_cost_excludes_diagnostic_usage(admin_client, db_session
                 is_diagnostic=False,
             ),
             AIUsageLog(
+                scenario="qwen_vl_translate",
+                model="qwen3.5-plus",
+                total_tokens=50,
+                prompt_tokens=30,
+                completion_tokens=20,
+                estimated_cost_yuan=0.2,
+                success=True,
+                is_diagnostic=False,
+            ),
+            AIUsageLog(
                 scenario="diagnostics_e2e_quality_judge",
                 model="test-model",
                 total_tokens=900,
@@ -51,8 +61,57 @@ async def test_dashboard_cost_excludes_diagnostic_usage(admin_client, db_session
     response = await admin_client.get("/dashboard/summary")
     assert response.status_code == 200, response.text
     summary = response.json()["ai_cost_summary"]
-    assert summary["total_calls"] == before["total_calls"] + 1
-    assert summary["total_tokens"] == before["total_tokens"] + 100
+    assert summary["total_calls"] == before["total_calls"] + 2
+    assert summary["total_tokens"] == before["total_tokens"] + 150
+    assert summary["estimated_cost_yuan"] == pytest.approx(before["estimated_cost_yuan"] + 0.3)
+    assert summary["deepseek_cost_yuan"] == pytest.approx(before.get("deepseek_cost_yuan", 0) + 0.1)
+    assert summary["vision_cost_yuan"] == pytest.approx(before.get("vision_cost_yuan", 0) + 0.2)
+
+
+@pytest.mark.asyncio
+async def test_service_case_stats_splits_deepseek_and_vision_costs(admin_client, create_case, db_session):
+    create_resp = await create_case(
+        {"group_id": f"cost-split-{secrets.token_hex(6)}", "user": {"name": "成本拆分用户"}},
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    case_id = create_resp.json()["id"]
+
+    db_session.add_all(
+        [
+            AIUsageLog(
+                service_case_id=case_id,
+                scenario="ai_reply",
+                model="deepseek-v4-pro",
+                total_tokens=100,
+                prompt_tokens=60,
+                completion_tokens=40,
+                estimated_cost_yuan=0.01,
+                success=True,
+                is_diagnostic=False,
+            ),
+            AIUsageLog(
+                service_case_id=case_id,
+                scenario="qwen_vl_translate",
+                model="qwen3.5-plus",
+                total_tokens=200,
+                prompt_tokens=120,
+                completion_tokens=80,
+                estimated_cost_yuan=0.02,
+                success=True,
+                is_diagnostic=False,
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    response = await admin_client.get(f"/service-cases/{case_id}/stats")
+    assert response.status_code == 200, response.text
+    stats = response.json()
+    assert stats["ai_total_calls"] == 2
+    assert stats["ai_total_tokens"] == 300
+    assert stats["ai_estimated_cost_yuan"] == pytest.approx(0.03)
+    assert stats["ai_deepseek_cost_yuan"] == pytest.approx(0.01)
+    assert stats["ai_vision_cost_yuan"] == pytest.approx(0.02)
 
 
 @pytest.mark.asyncio

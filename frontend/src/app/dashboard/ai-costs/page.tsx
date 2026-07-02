@@ -13,12 +13,16 @@ type AICostCaseItem = {
   prompt_tokens: number;
   completion_tokens: number;
   estimated_cost_yuan: number;
+  deepseek_cost_yuan: number;
+  vision_cost_yuan: number;
   last_call_at?: string | null;
 };
 
 export default async function AICostsPage() {
   const items = await api<AICostCaseItem[]>("/dashboard/ai-costs").catch(() => []);
   const totalCost = items.reduce((sum, item) => sum + (item.estimated_cost_yuan || 0), 0);
+  const totalDeepSeekCost = items.reduce((sum, item) => sum + (item.deepseek_cost_yuan || 0), 0);
+  const totalVisionCost = items.reduce((sum, item) => sum + (item.vision_cost_yuan || 0), 0);
   const totalTokens = items.reduce((sum, item) => sum + (item.total_tokens || 0), 0);
   const totalCalls = items.reduce((sum, item) => sum + (item.total_calls || 0), 0);
 
@@ -36,8 +40,10 @@ export default async function AICostsPage() {
         </Link>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-5">
         <SummaryCard label="总估算成本" value={`¥${totalCost.toFixed(2)}`} />
+        <SummaryCard label="DeepSeek 成本" value={`¥${totalDeepSeekCost.toFixed(2)}`} />
+        <SummaryCard label="识图成本" value={`¥${totalVisionCost.toFixed(2)}`} />
         <SummaryCard label="总 Tokens" value={totalTokens.toLocaleString("zh-CN")} />
         <SummaryCard label="总调用次数" value={totalCalls.toLocaleString("zh-CN")} />
       </div>
@@ -56,6 +62,7 @@ export default async function AICostsPage() {
                   <th className="px-5 py-3">Tokens</th>
                   <th className="px-5 py-3">输入 / 输出</th>
                   <th className="px-5 py-3">估算成本</th>
+                  <th className="px-5 py-3">DeepSeek / 识图</th>
                   <th className="px-5 py-3">最后调用</th>
                 </tr>
               </thead>
@@ -75,6 +82,9 @@ export default async function AICostsPage() {
                       {item.prompt_tokens.toLocaleString("zh-CN")} / {item.completion_tokens.toLocaleString("zh-CN")}
                     </td>
                     <td className="px-5 py-4 font-semibold text-zinc-900">¥{item.estimated_cost_yuan.toFixed(2)}</td>
+                    <td className="px-5 py-4 text-zinc-500">
+                      ¥{item.deepseek_cost_yuan.toFixed(2)} / ¥{item.vision_cost_yuan.toFixed(2)}
+                    </td>
                     <td className="px-5 py-4 text-zinc-500">{formatChinaDateTime(item.last_call_at)}</td>
                   </tr>
                 ))}

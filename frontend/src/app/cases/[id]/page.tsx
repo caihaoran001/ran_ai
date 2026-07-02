@@ -210,6 +210,8 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <AICostInfoCard
           cost={stats?.ai_estimated_cost_yuan}
+          deepseekCost={stats?.ai_deepseek_cost_yuan}
+          visionCost={stats?.ai_vision_cost_yuan}
           tokens={stats?.ai_total_tokens}
           calls={stats?.ai_total_calls}
           className="xl:col-span-2"
@@ -388,16 +390,22 @@ function InfoCard({
 
 function AICostInfoCard({
   cost,
+  deepseekCost,
+  visionCost,
   tokens,
   calls,
   className = "",
 }: {
   cost?: number | null;
+  deepseekCost?: number | null;
+  visionCost?: number | null;
   tokens?: number | null;
   calls?: number | null;
   className?: string;
 }) {
   const costValue = cost ?? 0;
+  const deepseekCostValue = deepseekCost ?? 0;
+  const visionCostValue = visionCost ?? 0;
   const tokenCount = tokens ?? 0;
   const callCount = calls ?? 0;
   return (
@@ -412,9 +420,17 @@ function AICostInfoCard({
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold tracking-tight text-slate-950">¥{costValue.toFixed(2)}</div>
-          <p className="mt-1 text-xs text-slate-500">按当前模型单价回算</p>
+          <p className="mt-1 text-xs text-slate-500">DeepSeek + 识图模型调用合计</p>
         </div>
         <div className="grid min-w-56 grid-cols-2 gap-2 text-xs">
+          <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
+            <div className="text-slate-400">DeepSeek</div>
+            <div className="mt-1 font-semibold text-slate-800">¥{deepseekCostValue.toFixed(2)}</div>
+          </div>
+          <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
+            <div className="text-slate-400">识图</div>
+            <div className="mt-1 font-semibold text-slate-800">¥{visionCostValue.toFixed(2)}</div>
+          </div>
           <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
             <div className="text-slate-400">Tokens</div>
             <div className="mt-1 font-semibold text-slate-800">{tokenCount.toLocaleString("zh-CN")}</div>

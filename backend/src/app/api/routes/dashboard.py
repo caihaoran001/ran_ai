@@ -671,7 +671,15 @@ async def dashboard_pending_documents(
 async def dashboard_ai_costs(
     session: AsyncSession = Depends(get_session),
 ) -> list[AICostCaseItem]:
-    ai_cost_expr = _ai_cost_expr()
+    total_cost_expr = func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0)
+    vision_cost_expr = func.coalesce(
+        func.sum(AIUsageLog.estimated_cost_yuan).filter(AIUsageLog.scenario == "qwen_vl_translate"),
+        0.0,
+    )
+    deepseek_cost_expr = func.coalesce(
+        func.sum(AIUsageLog.estimated_cost_yuan).filter(AIUsageLog.scenario != "qwen_vl_translate"),
+        0.0,
+    )
     rows = await session.execute(
         select(
             ServiceCase.id,
@@ -683,14 +691,16 @@ async def dashboard_ai_costs(
             func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
             func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0),
             func.coalesce(func.sum(AIUsageLog.completion_tokens), 0),
-            ai_cost_expr,
+            total_cost_expr,
+            deepseek_cost_expr,
+            vision_cost_expr,
             func.max(AIUsageLog.created_at),
         )
         .join(ServiceCase, AIUsageLog.service_case_id == ServiceCase.id)
         .outerjoin(User, ServiceCase.user_id == User.id)
         .where(active_service_case_condition(), AIUsageLog.is_diagnostic.is_(False))
         .group_by(ServiceCase.id, ServiceCase.case_no, ServiceCase.user_id, User.name, ServiceCase.group_id)
-        .order_by(ai_cost_expr.desc(), func.max(AIUsageLog.created_at).desc())
+        .order_by(total_cost_expr.desc(), func.max(AIUsageLog.created_at).desc())
     )
     return [
         AICostCaseItem(
@@ -704,6 +714,8 @@ async def dashboard_ai_costs(
             prompt_tokens=prompt_tokens or 0,
             completion_tokens=completion_tokens or 0,
             estimated_cost_yuan=round(float(cost or 0), 6),
+            deepseek_cost_yuan=round(float(deepseek_cost or 0), 6),
+            vision_cost_yuan=round(float(vision_cost or 0), 6),
             last_call_at=last_call_at,
         )
         for (
@@ -717,6 +729,8 @@ async def dashboard_ai_costs(
             prompt_tokens,
             completion_tokens,
             cost,
+            deepseek_cost,
+            vision_cost,
             last_call_at,
         ) in rows
     ]
@@ -876,14 +890,24 @@ def _string_or_none(value: Any) -> str | None:
 
 
 async def _build_ai_cost_summary(session: AsyncSession) -> AICostSummary:
-    ai_cost_expr = _ai_cost_expr()
+    total_cost_expr = func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0)
+    vision_cost_expr = func.coalesce(
+        func.sum(AIUsageLog.estimated_cost_yuan).filter(AIUsageLog.scenario == "qwen_vl_translate"),
+        0.0,
+    )
+    deepseek_cost_expr = func.coalesce(
+        func.sum(AIUsageLog.estimated_cost_yuan).filter(AIUsageLog.scenario != "qwen_vl_translate"),
+        0.0,
+    )
     row = await session.execute(
         select(
             func.count(AIUsageLog.id),
             func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
             func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0),
             func.coalesce(func.sum(AIUsageLog.completion_tokens), 0),
-            ai_cost_expr,
+            total_cost_expr,
+            deepseek_cost_expr,
+            vision_cost_expr,
         )
         .outerjoin(ServiceCase, AIUsageLog.service_case_id == ServiceCase.id)
         .where(
@@ -891,25 +915,15 @@ async def _build_ai_cost_summary(session: AsyncSession) -> AICostSummary:
             (AIUsageLog.service_case_id.is_(None)) | active_service_case_condition(),
         )
     )
-    total_calls, total_tokens, prompt_tokens, completion_tokens, cost = row.one()
+    total_calls, total_tokens, prompt_tokens, completion_tokens, cost, deepseek_cost, vision_cost = row.one()
     return AICostSummary(
         total_calls=total_calls or 0,
         total_tokens=total_tokens or 0,
         prompt_tokens=prompt_tokens or 0,
         completion_tokens=completion_tokens or 0,
         estimated_cost_yuan=round(float(cost or 0), 6),
-    )
-
-
-def _ai_cost_expr():
-    settings = get_settings()
-    prompt_cost_per_1m = max(float(settings.ai_prompt_cost_per_1m_tokens or 0), 0.0)
-    completion_cost_per_1m = max(float(settings.ai_completion_cost_per_1m_tokens or 0), 0.0)
-    return (
-        func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0) * prompt_cost_per_1m / 1_000_000.0
-        + func.coalesce(func.sum(AIUsageLog.completion_tokens), 0)
-        * completion_cost_per_1m
-        / 1_000_000.0
+        deepseek_cost_yuan=round(float(deepseek_cost or 0), 6),
+        vision_cost_yuan=round(float(vision_cost or 0), 6),
     )
 
 

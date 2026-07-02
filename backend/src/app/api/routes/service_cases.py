@@ -8,7 +8,6 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
@@ -132,19 +131,22 @@ async def get_service_case_stats(
         if started_at.tzinfo is None:
             started_at = started_at.replace(tzinfo=timezone.utc)
         days = max((now - started_at).total_seconds() / 86400, 1.0)
-    settings = get_settings()
-    ai_cost_expr = _ai_cost_expr(
-        prompt_cost_per_1m=settings.ai_prompt_cost_per_1m_tokens,
-        completion_cost_per_1m=settings.ai_completion_cost_per_1m_tokens,
-    )
     ai_usage = await session.execute(
         select(
             func.count(AIUsageLog.id),
             func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
-            ai_cost_expr,
+            func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0),
+            func.coalesce(
+                func.sum(AIUsageLog.estimated_cost_yuan).filter(AIUsageLog.scenario == "qwen_vl_translate"),
+                0.0,
+            ),
+            func.coalesce(
+                func.sum(AIUsageLog.estimated_cost_yuan).filter(AIUsageLog.scenario != "qwen_vl_translate"),
+                0.0,
+            ),
         ).where(AIUsageLog.service_case_id == service_case_id)
     )
-    ai_calls, ai_tokens, ai_cost = ai_usage.one()
+    ai_calls, ai_tokens, ai_cost, ai_vision_cost, ai_deepseek_cost = ai_usage.one()
 
     return ServiceCaseStats(
         message_count=len(messages),
@@ -158,6 +160,8 @@ async def get_service_case_stats(
         ai_total_calls=ai_calls or 0,
         ai_total_tokens=ai_tokens or 0,
         ai_estimated_cost_yuan=round(float(ai_cost or 0), 6),
+        ai_deepseek_cost_yuan=round(float(ai_deepseek_cost or 0), 6),
+        ai_vision_cost_yuan=round(float(ai_vision_cost or 0), 6),
     )
 
 
@@ -170,17 +174,6 @@ async def get_service_case_ai_context_preview(
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
     return ServiceCaseAIContextPreview(context=await build_ai_user_context(session, service_case))
-
-
-def _ai_cost_expr(*, prompt_cost_per_1m: float, completion_cost_per_1m: float):
-    prompt_cost = max(float(prompt_cost_per_1m or 0), 0.0)
-    completion_cost = max(float(completion_cost_per_1m or 0), 0.0)
-    return (
-        func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0) * prompt_cost / 1_000_000.0
-        + func.coalesce(func.sum(AIUsageLog.completion_tokens), 0)
-        * completion_cost
-        / 1_000_000.0
-    )
 
 
 @router.patch("/{service_case_id}", response_model=ServiceCaseRead)

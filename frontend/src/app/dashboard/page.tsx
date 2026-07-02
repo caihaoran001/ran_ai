@@ -62,6 +62,8 @@ type AICostSummary = {
   prompt_tokens: number;
   completion_tokens: number;
   estimated_cost_yuan: number;
+  deepseek_cost_yuan: number;
+  vision_cost_yuan: number;
 };
 
 type OutcomeMetric = {
@@ -113,6 +115,8 @@ export default async function DashboardPage() {
       prompt_tokens: 0,
       completion_tokens: 0,
       estimated_cost_yuan: 0,
+      deepseek_cost_yuan: 0,
+      vision_cost_yuan: 0,
     },
   }));
   const renewalFollowupUsers = summary.renewal_followup_users ?? summary.repurchase_soon_users;
@@ -518,6 +522,8 @@ function AICostCard({ summary }: { summary?: AICostSummary }) {
   const calls = summary?.total_calls ?? 0;
   const tokens = summary?.total_tokens ?? 0;
   const cost = summary?.estimated_cost_yuan ?? 0;
+  const deepseekCost = summary?.deepseek_cost_yuan ?? 0;
+  const visionCost = summary?.vision_cost_yuan ?? 0;
   const hasData = calls > 0 || tokens > 0 || cost > 0;
 
   return (
@@ -538,7 +544,7 @@ function AICostCard({ summary }: { summary?: AICostSummary }) {
             {hasData ? `¥${cost.toFixed(2)}` : "暂无成本数据"}
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            按当前模型单价回算
+            DeepSeek + 识图模型调用合计
           </p>
         </div>
         <span className="rounded-full border border-cyan-200 bg-white/80 px-2.5 py-1 text-xs font-semibold text-cyan-700">
@@ -546,6 +552,14 @@ function AICostCard({ summary }: { summary?: AICostSummary }) {
         </span>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
+          <div className="text-slate-400">DeepSeek</div>
+          <div className="mt-1 font-semibold text-slate-700">¥{deepseekCost.toFixed(2)}</div>
+        </div>
+        <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
+          <div className="text-slate-400">识图</div>
+          <div className="mt-1 font-semibold text-slate-700">¥{visionCost.toFixed(2)}</div>
+        </div>
         <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
           <div className="text-slate-400">调用</div>
           <div className="mt-1 font-semibold text-slate-700">{calls.toLocaleString("zh-CN")} 次</div>
