@@ -11,7 +11,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -577,20 +577,17 @@ class RanrenAIEngine:
             if resume_takeover_receipt:
                 receipt = "那我继续来跟进哈~"
                 try:
-                    result = await self.channel.send_text(
-                        message.chat_id,
-                        receipt,
-                        reply_to=message.message_id,
-                        reply_context=message.raw_payload,
-                    )
-                    await self._record_outbound(
+                    await self._send_and_record(
                         message=message,
                         service_case_id=service_case_id,
                         content=receipt,
-                        message_id=result.message_id if result else None,
-                        status=MessageStatus.SENT if (result and result.success) else MessageStatus.FAILED,
-                        error=(result.error if result else "send result was None"),
                         trigger_id=inbound_id,
+                        send=lambda: self.channel.send_text(
+                            message.chat_id,
+                            receipt,
+                            reply_to=message.message_id,
+                            reply_context=message.raw_payload,
+                        ),
                     )
                 except Exception as e:
                     logger.error("Failed to send resume command receipt: %s", e)
@@ -897,36 +894,34 @@ class RanrenAIEngine:
                 except Exception as e:
                     logger.error("Failed to resolve nickname for at-mention ID %s: %s", target_user_id, e)
 
-            result = await self.channel.send_hypertext(
+            # Reconstruct readable text for outbound message logging in DB
+            plain_text = f"{prefix_text}@{nickname} 麻烦有空时接手跟进一下哈～"
+            send = lambda: self.channel.send_hypertext(
                 message.chat_id,
                 content_list,
                 reply_to=message.message_id,
                 reply_context=message.raw_payload,
             )
-            # Reconstruct readable text for outbound message logging in DB
-            plain_text = f"{prefix_text}@{nickname} 麻烦有空时接手跟进一下哈～"
         else:
             # Fallback to standard plain text send（不支持 @，仅发安抚话术）
-            result = await self.channel.send_text(
+            plain_text = safety_text
+            send = lambda: self.channel.send_text(
                 message.chat_id,
                 safety_text,
                 reply_to=message.message_id,
                 reply_context=message.raw_payload,
             )
-            plain_text = safety_text
 
-        # 3. Record outbound to DB
-        if result is None:
-            logger.warning("Human handoff send returned None chat_id=%s service_case_id=%s", message.chat_id, service_case_id)
-        await self._record_outbound(
+        # 3. record-first 发送并落库（先 SENDING、后回填），保证崩溃不重复@班主任
+        result = await self._send_and_record(
             message=message,
             service_case_id=service_case_id,
             content=plain_text,
-            message_id=result.message_id if result else "mock-error-id",
-            status=MessageStatus.SENT if (result and result.success) else MessageStatus.FAILED,
-            error=result.error if result else "send result was None",
             trigger_id=trigger_id,
+            send=send,
         )
+        if result is None:
+            logger.warning("Human handoff send returned None chat_id=%s service_case_id=%s", message.chat_id, service_case_id)
 
     async def _store_intervention_analysis(
         self,
@@ -1075,22 +1070,19 @@ class RanrenAIEngine:
             "2.《28 天执行标准与打卡要求》\n\n"
             "填得越真实，后面的建议越准确。"
         )
-        result = await self.channel.send_text(
-            message.chat_id,
-            reply,
-            reply_to=message.message_id,
-            reply_context=message.raw_payload,
-        )
-        send_elapsed_ms = (time.monotonic() - started_at) * 1000
-        await self._record_outbound(
+        result = await self._send_and_record(
             message=message,
             service_case_id=service_case.id,
             content=reply,
-            message_id=result.message_id,
-            status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
-            error=result.error,
             trigger_id=trigger_id,
+            send=lambda: self.channel.send_text(
+                message.chat_id,
+                reply,
+                reply_to=message.message_id,
+                reply_context=message.raw_payload,
+            ),
         )
+        send_elapsed_ms = (time.monotonic() - started_at) * 1000
         logger.info(
             "RanrenAI questionnaire reply sent chat_id=%s trigger_id=%s success=%s channel_message_id=%s send_elapsed_ms=%.1f",
             message.chat_id,
@@ -1210,23 +1202,20 @@ class RanrenAIEngine:
                 )
                 return
             send_started_at = time.monotonic()
-            result = await self.channel.send_text(
-                message.chat_id,
-                reply,
-                reply_to=message.message_id,
-                reply_context=message.raw_payload,
-            )
-            send_elapsed_ms = (time.monotonic() - send_started_at) * 1000
-            await self._record_outbound(
+            result = await self._send_and_record(
                 message=message,
                 service_case_id=service_case_id,
                 content=reply,
-                message_id=result.message_id,
-                status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
-                error=result.error,
                 trigger_id=trigger_id,
                 analysis_json=outbound_analysis,
+                send=lambda: self.channel.send_text(
+                    message.chat_id,
+                    reply,
+                    reply_to=message.message_id,
+                    reply_context=message.raw_payload,
+                ),
             )
+            send_elapsed_ms = (time.monotonic() - send_started_at) * 1000
             logger.info(
                 "RanrenAI AI reply sent chat_id=%s trigger_id=%s success=%s channel_message_id=%s send_elapsed_ms=%.1f",
                 message.chat_id,
@@ -1373,6 +1362,101 @@ class RanrenAIEngine:
                 )
             )
             await session.commit()
+
+    async def _create_outbound_sending(
+        self,
+        *,
+        message: ChannelMessage,
+        service_case_id: int | None,
+        content: str,
+        trigger_id: int | None = None,
+        analysis_json: dict | None = None,
+    ) -> int:
+        """record-first：发送前先落一条 SENDING 出站记录，返回其 id。
+
+        这样即使进程恰好在「已调用渠道 API 发出、但还没回填结果」的瞬间崩溃，DB 里也已存在
+        一条挂了 trigger_id 的出站记录，开机 recover_stuck 会据此去重、不重复补发（宁可少发）。
+        """
+        async with SessionLocal() as session:
+            row = Message(
+                service_case_id=service_case_id,
+                group_id=message.chat_id,
+                wecom_message_id=None,
+                direction=MessageDirection.OUTBOUND,
+                sender_type=MessageSenderType.BOT,
+                message_type="markdown",
+                content=content,
+                purpose=MessagePurpose.CHAT,
+                status=MessageStatus.SENDING,
+                error=None,
+                trigger_id=trigger_id,
+                analysis_json=analysis_json,
+            )
+            session.add(row)
+            await session.flush()
+            outbound_id = row.id
+            await session.commit()
+            return outbound_id
+
+    async def _finalize_outbound(
+        self,
+        outbound_id: int,
+        *,
+        message_id: str | None,
+        success: bool,
+        error: str | None,
+    ) -> None:
+        """回填 SENDING 记录的最终结果：成功→SENT+sent_at，失败→FAILED。"""
+        async with SessionLocal() as session:
+            row = await session.get(Message, outbound_id)
+            if row is None:
+                return
+            row.wecom_message_id = message_id
+            row.status = MessageStatus.SENT if success else MessageStatus.FAILED
+            row.error = None if success else error
+            if success:
+                row.sent_at = datetime.now(timezone.utc)
+            await session.commit()
+
+    async def _send_and_record(
+        self,
+        *,
+        message: ChannelMessage,
+        service_case_id: int | None,
+        content: str,
+        send: Callable[[], Awaitable[Any]],
+        trigger_id: int | None = None,
+        analysis_json: dict | None = None,
+    ) -> Any:
+        """record-first 出站发送：先落 SENDING 行 → 调 send() 真正发送 → 回填 SENT/FAILED。
+
+        send() 抛异常时也会把记录回填为 FAILED 再向上抛，保证不残留悬空 SENDING（崩溃场景除外，
+        由开机对账兜底）。返回 send() 的原始结果供调用方记日志。
+        """
+        outbound_id = await self._create_outbound_sending(
+            message=message,
+            service_case_id=service_case_id,
+            content=content,
+            trigger_id=trigger_id,
+            analysis_json=analysis_json,
+        )
+        try:
+            result = await send()
+        except Exception as exc:
+            await self._finalize_outbound(
+                outbound_id,
+                message_id=None,
+                success=False,
+                error=f"send raised: {type(exc).__name__}: {exc}",
+            )
+            raise
+        await self._finalize_outbound(
+            outbound_id,
+            message_id=(result.message_id if result else None),
+            success=bool(result and result.success),
+            error=(result.error if result else "send result was None"),
+        )
+        return result
 
     async def _has_newer_inbound_message(self, *, service_case_id: int | None, trigger_id: int | None) -> bool:
         if not service_case_id or not trigger_id:
@@ -1986,6 +2070,41 @@ def _should_retrieve_case_context(analysis: dict | None) -> bool:
         isinstance(item, dict) and item.get("code") == "physical_discomfort"
         for item in risk_flags
     )
+
+
+async def reconcile_interrupted_sends(startup_time: datetime) -> None:
+    """开机对账：把重启前残留的 SENDING(在途)出站记录标为 FAILED。
+
+    正常发送在 record-first 落库后会立即回填 SENT/FAILED；进程重启后仍是 SENDING 的记录，
+    说明它在「已落库、但发送结果未回填」的瞬间被中断。按「宁可少发」策略：绝不自动重发
+    (避免可能已送达的消息重复刷屏)，只标记为 FAILED 让运营在后台可见、必要时手动补发。
+    这些记录仍带 trigger_id，故 recover_stuck_inbound_messages 也会据此判定「已回复」而不再补发。
+    """
+    from datetime import timedelta
+
+    cutoff = startup_time - timedelta(seconds=15)
+    async with SessionLocal() as session:
+        rows = list(
+            await session.scalars(
+                select(Message).where(
+                    Message.direction == MessageDirection.OUTBOUND,
+                    Message.status == MessageStatus.SENDING,
+                    Message.created_at <= cutoff,
+                )
+            )
+        )
+        if not rows:
+            return
+        for row in rows:
+            row.status = MessageStatus.FAILED
+            if not row.error:
+                row.error = "interrupted during send by restart; not auto-resent (send-once policy)"
+        await session.commit()
+        logger.info(
+            "reconcile_interrupted_sends: marked %d interrupted SENDING outbound messages as FAILED: %s",
+            len(rows),
+            [r.id for r in rows],
+        )
 
 
 async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: datetime) -> None:

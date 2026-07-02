@@ -798,3 +798,166 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     assert len(reprocess_calls) == 1
     assert reprocess_calls[0].id == msg_a.id
     assert reprocess_calls[0].content == "我需要补发这个回复。"
+
+
+@pytest.mark.asyncio
+async def test_send_and_record_is_record_first(db_session):
+    """Fix③：出站发送前先落 SENDING 行(record-first)，发送成功后回填 SENT + sent_at。"""
+    from sqlalchemy import select
+    from app.models.service_case import ServiceCase, ServiceCaseStatus
+    from app.models.message import (
+        Message,
+        MessageDirection,
+        MessagePurpose,
+        MessageSenderType,
+        MessageStatus,
+    )
+    from app.models.user import User
+
+    user = User(name="record-first用户")
+    db_session.add(user)
+    await db_session.flush()
+    case = ServiceCase(
+        user_id=user.id, case_no="CASE-RF", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-rf", questionnaire_token="token-rf",
+    )
+    db_session.add(case)
+    await db_session.flush()
+    inbound = Message(
+        service_case_id=case.id, group_id="group-rf", wecom_message_id="in-rf",
+        content="问句", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+    )
+    db_session.add(inbound)
+    await db_session.flush()
+
+    engine = RanrenAIEngine(FakeChannel())
+    channel_msg = ChannelMessage(
+        channel="qiwe", chat_id="group-rf", chat_type="group",
+        text="问句", message_id="in-rf", user_id="u-rf",
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    seen = {}
+
+    async def _send():
+        # 发送这一刻，DB 里应已存在一条 SENDING 出站记录（record-first 的核心）
+        row = await db_session.scalar(
+            select(Message).where(
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.trigger_id == inbound.id,
+            )
+        )
+        seen["status"] = row.status if row else None
+        return ChannelSendResult(success=True, message_id="sent-rf")
+
+    result = await engine._send_and_record(
+        message=channel_msg, service_case_id=case.id, content="回复内容",
+        trigger_id=inbound.id, send=_send,
+    )
+
+    assert result.success is True
+    assert seen["status"] == MessageStatus.SENDING
+    row = await db_session.scalar(
+        select(Message).where(
+            Message.direction == MessageDirection.OUTBOUND,
+            Message.trigger_id == inbound.id,
+        )
+    )
+    assert row.status == MessageStatus.SENT
+    assert row.sent_at is not None
+    assert row.wecom_message_id == "sent-rf"
+
+
+@pytest.mark.asyncio
+async def test_interrupted_send_not_duplicated_by_recovery(db_session, monkeypatch):
+    """Fix③：崩溃留下的 SENDING 出站记录带 trigger_id，recover_stuck 视为已回复、不重复补发。"""
+    from datetime import timedelta
+    from app.services.ranren_ai.engine import recover_stuck_inbound_messages
+    from app.models.service_case import ServiceCase, ServiceCaseStatus
+    from app.models.message import (
+        Message,
+        MessageDirection,
+        MessagePurpose,
+        MessageSenderType,
+        MessageStatus,
+    )
+    from app.models.user import User
+
+    user = User(name="中断发送用户")
+    db_session.add(user)
+    await db_session.flush()
+    now = datetime.now(timezone.utc)
+    case = ServiceCase(
+        user_id=user.id, case_no="CASE-INT", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-int", questionnaire_token="token-int",
+    )
+    db_session.add(case)
+    await db_session.flush()
+    inbound = Message(
+        service_case_id=case.id, group_id="group-int", wecom_message_id="in-int",
+        content="被中断的问句", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {}}, created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(inbound)
+    await db_session.flush()
+    # 模拟“已发出但没回填”崩溃：留下一条 SENDING 出站记录
+    stuck = Message(
+        service_case_id=case.id, group_id="group-int", wecom_message_id=None,
+        content="在途回复", message_type="markdown",
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.SENDING,
+        trigger_id=inbound.id, created_at=now - timedelta(seconds=30),
+    )
+    db_session.add(stuck)
+    await db_session.flush()
+
+    reprocess_calls = []
+
+    async def fake_reprocess_message(self, message):
+        reprocess_calls.append(message)
+
+    monkeypatch.setattr(RanrenAIEngine, "reprocess_message", fake_reprocess_message)
+    await recover_stuck_inbound_messages(FakeChannel(), now)
+    assert reprocess_calls == []  # 已有出站(SENDING)记录 → 不重复补发
+
+
+@pytest.mark.asyncio
+async def test_reconcile_interrupted_sends_marks_failed(db_session):
+    """Fix③：开机对账把重启前残留的 SENDING 标为 FAILED(不自动重发)；新起的 SENDING 不动。"""
+    from datetime import timedelta
+    from app.services.ranren_ai.engine import reconcile_interrupted_sends
+    from app.models.message import (
+        Message,
+        MessageDirection,
+        MessagePurpose,
+        MessageSenderType,
+        MessageStatus,
+    )
+
+    now = datetime.now(timezone.utc)
+    old = Message(
+        group_id="group-rec", content="旧的在途", message_type="markdown",
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.SENDING,
+        created_at=now - timedelta(minutes=1),
+    )
+    fresh = Message(
+        group_id="group-rec", content="刚起的在途", message_type="markdown",
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.SENDING,
+        created_at=now,  # 晚于 cutoff(now-15s) → 不动
+    )
+    db_session.add_all([old, fresh])
+    await db_session.flush()
+
+    await reconcile_interrupted_sends(now)
+
+    await db_session.refresh(old)
+    await db_session.refresh(fresh)
+    assert old.status == MessageStatus.FAILED
+    assert old.error and "interrupted" in old.error
+    assert fresh.status == MessageStatus.SENDING

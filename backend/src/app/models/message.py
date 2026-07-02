@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import enum
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, JSON, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -36,6 +37,10 @@ class MessagePurpose(str, enum.Enum):
 class MessageStatus(str, enum.Enum):
     RECEIVED = "received"
     PENDING = "pending"
+    # SENDING：出站消息已落库、正在/即将调用渠道 API 发送的「在途」态。
+    # 先落 SENDING 再发（record-first），任何「已发出但未回填结果」瞬间的崩溃都会留下这条记录，
+    # 使开机 recover_stuck 依 trigger_id 去重、不重复发送；残留的 SENDING 由开机对账标为 FAILED。
+    SENDING = "sending"
     SENT = "sent"
     FAILED = "failed"
 
@@ -71,6 +76,8 @@ class Message(TimestampMixin, Base):
         nullable=False,
     )
     error: Mapped[str | None] = mapped_column(Text)
+    # 出站消息确认发送成功的时间(UTC)；未发送/发送失败为空。
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     analysis_json: Mapped[dict | None] = mapped_column(JSON)
     trigger_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id"), index=True)
     
