@@ -35,7 +35,8 @@ def main():
     # 2. Package codebase locally (include standalone output, exclude cache & diagnostics history)
     print("\n📦 Step 2: Packaging codebase locally...")
     tar_cmd = (
-        "tar --exclude='frontend/node_modules' --exclude='.venv' --exclude='*.log' --exclude='.git' "
+        "tar --exclude='frontend/node_modules' --exclude='.venv' --exclude='__pycache__' "
+        "--exclude='*.pyc' --exclude='*.log' --exclude='.git' "
         "--exclude='ran_ai_deploy.tar.gz' --exclude='.codex' --exclude='.antigravitycli' "
         "--exclude='.playwright-mcp' --exclude='.sisyphus' --exclude='.agents' "
         "--exclude='./.env' --exclude='./docker-compose.prod.yml' "
