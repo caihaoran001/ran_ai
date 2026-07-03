@@ -22,6 +22,7 @@ from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ranren_ai.engine import (
     RanrenAIEngine,
+    _format_chat_history_line,
     _group_bot_control_command,
     _requires_health_handoff,
     _requires_immediate_handoff,
@@ -87,6 +88,25 @@ async def _ingest_and_analyze(db_session, case_id, group_id, content, mock_ai):
     ))
     await db_session.flush()
     return insight
+
+
+def test_format_chat_history_line_labels_bot_as_ai_assistant():
+    message = Message(
+        service_case_id=1,
+        group_id="test-group",
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.BOT,
+        message_type="text",
+        content="排时间线是我刚才整理的",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.SENT,
+        created_at=datetime(2026, 7, 3, 8, 41, tzinfo=timezone.utc),
+    )
+
+    line = _format_chat_history_line(message)
+
+    assert "AI助教: 排时间线是我刚才整理的" in line
+    assert "营养师:" not in line
 
 
 @pytest.mark.asyncio
@@ -342,7 +362,8 @@ async def test_recent_chat_history_includes_document_delivery(db_session, mock_m
     engine = RanrenAIEngine(mock_message_channel)
     lines = await engine._recent_user_messages(db_session, case_id)
 
-    assert any("营养师: 两份专属文件已生成，请查收" in line for line in lines)
+    assert any("AI助教: 两份专属文件已生成，请查收" in line for line in lines)
+    assert not any("营养师:" in line for line in lines)
     assert any("用户: 收到" in line for line in lines)
 
 

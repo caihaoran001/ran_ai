@@ -661,6 +661,7 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "让我想想" in model.calls[0][0].content
     assert "根据搜索结果" in model.calls[0][0].content
     assert "不要说“根据你的画像/资料/系统记录”" in model.calls[0][0].content
+    assert "不要把这些历史 AI 回复说成营养师" in model.calls[0][0].content
     assert "只使用和当前问题直接相关的背景" in model.calls[0][0].content
     assert "只参考“长期偏好/最近话题”" in model.calls[0][0].content
     assert "只参考“当前状态/风险边界/产品执行”" in model.calls[0][0].content
