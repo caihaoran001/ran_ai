@@ -15,7 +15,6 @@ backend/
 │   │   ├── channels/        # 消息渠道抽象层
 │   │   ├── ranren_ai/       # 渠道无关业务引擎
 │   │   ├── qiwe_service/    # QiWe 消息聚合
-│   │   ├── wecom_service/   # 企微通道 (legacy，字段保留不再迁移)
 │   │   ├── knowledge_base/  # 本地 Markdown FAQ fallback
 │   │   ├── case_library.py  # 优秀案例库检索
 │   │   ├── checkin_questionnaires.py  # 打卡问卷模板
@@ -36,7 +35,7 @@ backend/
 │   │   ├── risk_service.py  # 风险判断
 │   │   ├── service_case_queries.py # 服务单查询辅助
 │   │   └── user_state_profile.py # 用户动态状态画像 (outcome → JSONB 投影)
-│   ├── workers/       # 后台任务 (定时提醒 + 企微 worker)
+│   ├── workers/       # 后台任务 (定时提醒调度器)
 │   ├── db/            # 数据库会话管理
 │   └── core/          # 配置和常量
 ├── alembic/           # 数据库迁移
@@ -89,7 +88,6 @@ backend/
 | 打卡问卷模板 | `src/app/services/checkin_questionnaires.py` | 每日打卡问卷 schema 调度 |
 | 入营问卷模板 | `src/app/services/questionnaire_template.py` | 入营问卷字段 JSON |
 | 知识进化配置 | `src/app/services/knowledge_evolution_settings.py` | 知识进化定时参数 + 开关 |
-| 企微通道 (legacy) | `src/app/services/wecom_service/` | 企微字段保留，不再迁移到 QiWe 路径 |
 | 自动化测试 | `tests/` | 56 用例 (Mock LLM + 真实 LLM E2E)，见 `tests/README.md` |
 
 ## CONVENTIONS
@@ -107,9 +105,6 @@ backend/
 ```bash
 # API 服务
 uv run ran-ai-api
-
-# 企微通道 worker (legacy，新通道走 QiWe)
-uv run ran-ai-wecom-worker
 
 # 定时任务调度器
 uv run ran-ai-scheduler

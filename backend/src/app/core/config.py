@@ -119,25 +119,6 @@ class Settings(BaseSettings):
     knowledge_evolution_qa_at: str = Field(default="00:00", validation_alias="KNOWLEDGE_EVOLUTION_QA_AT")
     knowledge_evolution_case_days: str = Field(default="3,7,14,21,28", validation_alias="KNOWLEDGE_EVOLUTION_CASE_DAYS")
 
-    wecom_bot_id: str = Field(default="", validation_alias="WECOM_BOT_ID")
-    wecom_secret: str = Field(default="", validation_alias="WECOM_SECRET")
-    wecom_websocket_url: str = Field(
-        default="wss://openws.work.weixin.qq.com",
-        validation_alias="WECOM_WEBSOCKET_URL",
-    )
-    wecom_dm_policy: str = Field(default="allowlist", validation_alias="WECOM_DM_POLICY")
-    wecom_allowed_users: str = Field(default="", validation_alias="WECOM_ALLOWED_USERS")
-    wecom_group_policy: str = Field(
-        default="allowlist",
-        validation_alias="WECOM_GROUP_POLICY",
-    )
-    wecom_group_allow_from: str = Field(
-        default="",
-        validation_alias="WECOM_GROUP_ALLOW_FROM",
-    )
-    wecom_groups_json: str = Field(default="", validation_alias="WECOM_GROUPS_JSON")
-    wecom_worker_enabled: bool = Field(default=False, validation_alias="WECOM_WORKER_ENABLED")
-
     qiwei_enabled: bool = Field(default=False, validation_alias="QIWEI_ENABLED")
     qiwei_token: str = Field(default="", validation_alias="QIWEI_TOKEN")
     qiwei_guid: str = Field(default="", validation_alias="QIWEI_GUID")

@@ -1,1 +1,0 @@
-"""WeCom bot integration."""

@@ -35,7 +35,6 @@ uv sync
 uv run alembic upgrade head
 uv run ran-ai-api               # API server
 uv run ran-ai-scheduler         # reminder/knowledge-evolution/outcome scheduler
-uv run ran-ai-wecom-worker      # legacy WeCom worker (new channel is QiWe)
 uv run pytest tests/ -v         # full test suite (Mock LLM; real-LLM E2E is isolated)
 uv run pytest tests/test_02_chat.py -v          # single file
 uv run pytest tests/test_02_chat.py::test_name  # single test

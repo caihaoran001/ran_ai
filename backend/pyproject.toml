@@ -25,7 +25,6 @@ dependencies = [
 
 [project.scripts]
 ran-ai-api = "app.main:main"
-ran-ai-wecom-worker = "app.workers.wecom_bot:main"
 ran-ai-scheduler = "app.workers.scheduler:main"
 
 [build-system]
