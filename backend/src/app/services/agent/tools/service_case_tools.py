@@ -11,6 +11,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.models.checkin import Checkin
+from app.models.message import Message
 from app.models.service_case import ServiceCase
 from app.models.user_document import UserDocument
 from app.models.user_profile import UserProfile
@@ -21,6 +22,10 @@ from app.services.service_case_queries import effective_service_day, effective_s
 
 class DaysArgs(BaseModel):
     days: int = Field(default=7, ge=1, le=30, description="Lookback days, from 1 to 30.")
+
+
+# 单次返回给 LLM 的文件正文上限（字符），控 token；入库全文上限更大（见 engine._MAX_FILE_TEXT_CHARS）。
+_MAX_TOOL_FILE_CHARS = 4000
 
 
 def build_service_case_tools(*, context: AgentRunContext, settings: Settings) -> list[BaseTool]:
@@ -100,6 +105,48 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
         direction = "下降" if delta < 0 else ("上升" if delta > 0 else "持平")
         return {"ok": True, "days": days, "points": points, "delta_kg": delta, "direction": direction}
 
+    async def read_group_file() -> dict[str, Any]:
+        """读取本群最近上传文件的已解析正文（当前仅支持 docx）。"""
+        async with SessionLocal() as session:
+            rows = await session.scalars(
+                select(Message)
+                .where(Message.service_case_id == context.service_case_id)
+                .where(Message.message_type == "file")
+                .order_by(Message.id.desc())
+                .limit(5)
+            )
+            for row in rows:
+                analysis = row.analysis_json if isinstance(row.analysis_json, dict) else {}
+                info = analysis.get("file_info")
+                if not isinstance(info, dict):
+                    return {
+                        "ok": True,
+                        "filename": None,
+                        "parse_status": "missing",
+                        "text": "",
+                        "note": "最近这份文件还没有可读取的解析正文。",
+                    }
+                filename = info.get("filename") or ""
+                status = info.get("parse_status") or "unknown"
+                text = str(info.get("extracted_text") or "")
+                if status == "ok" and text.strip():
+                    return {
+                        "ok": True,
+                        "filename": filename,
+                        "parse_status": status,
+                        "text": text[:_MAX_TOOL_FILE_CHARS],
+                        "truncated": len(text) > _MAX_TOOL_FILE_CHARS,
+                    }
+                # 找到最近的文件但内容不可读（格式不支持/解析失败/空）：如实告知，别让模型瞎编。
+                return {
+                    "ok": True,
+                    "filename": filename,
+                    "parse_status": status,
+                    "text": "",
+                    "note": "这份文件暂时读不了内容（可能不是 docx 或解析失败）。",
+                }
+            return {"ok": True, "filename": None, "text": "", "note": "本群最近没有可读取的上传文件。"}
+
     async def get_user_state_profile() -> dict[str, Any]:
         async with SessionLocal() as session:
             row = await session.scalar(
@@ -134,6 +181,15 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             coroutine=get_user_state_profile,
             name="get_user_state_profile",
             description="Read the latest dynamic user state profile for the current service case only.",
+        ),
+        StructuredTool.from_function(
+            coroutine=read_group_file,
+            name="read_group_file",
+            description=(
+                "Read the extracted text of the most recent file uploaded into the current group "
+                "(currently docx only). Use this whenever the user or staff asks about a document "
+                "they sent in the group. Returns note when no readable file exists."
+            ),
         ),
     ]
 

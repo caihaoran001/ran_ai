@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import secrets
+from io import BytesIO
 from datetime import date, datetime, timezone
 
 import pytest
 from langchain_core.messages import AIMessage
+from docx import Document
 
 from app.core.config import get_settings
 from app.models.checkin import Checkin
@@ -66,6 +68,30 @@ class FakeSequenceTool:
         return result
 
 
+class FakeFileResponse:
+    def __init__(self, content: bytes):
+        self.content = content
+
+    def raise_for_status(self):
+        return None
+
+
+class FakeFileHttpClient:
+    def __init__(self, content: bytes, *, timeout=None, follow_redirects=None):
+        self.content = content
+        self.calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def get(self, url, headers=None):
+        self.calls.append((url, headers or {}))
+        return FakeFileResponse(self.content)
+
+
 async def _case(db_session, *, started_at=None):
     user = User(name="Agent测试用户")
     db_session.add(user)
@@ -97,6 +123,15 @@ async def _inbound(db_session, service_case: ServiceCase, content: str = "我现
     db_session.add(inbound)
     await db_session.flush()
     return inbound
+
+
+def _docx_bytes(*paragraphs: str) -> bytes:
+    document = Document()
+    for paragraph in paragraphs:
+        document.add_paragraph(paragraph)
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
 
 
 @pytest.mark.asyncio
@@ -194,6 +229,172 @@ async def test_weight_trend_tool_returns_initial_weight_when_no_checkins(db_sess
     assert result["initial_weight"] == 65
     assert result["trend"] is None
     assert "入营初始体重" in result["note"]
+
+
+@pytest.mark.asyncio
+async def test_read_group_file_tool_returns_latest_parsed_docx(db_session):
+    settings = get_settings()
+    service_case = await _case(db_session)
+    other_case = await _case(db_session)
+    db_session.add(
+        Message(
+            service_case_id=other_case.id,
+            group_id=other_case.group_id,
+            direction=MessageDirection.INBOUND,
+            sender_type=MessageSenderType.USER,
+            message_type="file",
+            content="[文件] 其他服务单.docx",
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.RECEIVED,
+            analysis_json={
+                "file_info": {
+                    "filename": "其他服务单.docx",
+                    "parse_status": "ok",
+                    "extracted_text": "不应该跨服务单读取",
+                }
+            },
+        )
+    )
+    db_session.add(
+        Message(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            direction=MessageDirection.INBOUND,
+            sender_type=MessageSenderType.STAFF,
+            message_type="file",
+            content="[文件] 执行方案.docx",
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.RECEIVED,
+            analysis_json={
+                "file_info": {
+                    "filename": "执行方案.docx",
+                    "parse_status": "ok",
+                    "extracted_text": "早餐先吃蛋白质，午餐主食减半。",
+                }
+            },
+        )
+    )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_service_case_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=settings,
+        )
+    }
+
+    result = await tools["read_group_file"].ainvoke({})
+
+    assert result["ok"] is True
+    assert result["filename"] == "执行方案.docx"
+    assert result["parse_status"] == "ok"
+    assert "早餐先吃蛋白质" in result["text"]
+    assert "不应该跨服务单读取" not in result["text"]
+
+
+@pytest.mark.asyncio
+async def test_read_group_file_tool_reports_latest_unparsed_file(db_session):
+    settings = get_settings()
+    service_case = await _case(db_session)
+    db_session.add(
+        Message(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            direction=MessageDirection.INBOUND,
+            sender_type=MessageSenderType.STAFF,
+            message_type="file",
+            content="[文件] 已解析.docx",
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.RECEIVED,
+            analysis_json={
+                "file_info": {
+                    "filename": "已解析.docx",
+                    "parse_status": "ok",
+                    "extracted_text": "旧文件内容",
+                }
+            },
+        )
+    )
+    db_session.add(
+        Message(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            direction=MessageDirection.INBOUND,
+            sender_type=MessageSenderType.STAFF,
+            message_type="file",
+            content="[文件]",
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.RECEIVED,
+            analysis_json={"_qiwe_meta": {"sender_type": "staff"}},
+        )
+    )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_service_case_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=settings,
+        )
+    }
+
+    result = await tools["read_group_file"].ainvoke({})
+
+    assert result["ok"] is True
+    assert result["parse_status"] == "missing"
+    assert result["text"] == ""
+    assert "旧文件内容" not in result.get("note", "")
+
+
+@pytest.mark.asyncio
+async def test_process_inbound_file_extracts_docx_text(db_session, monkeypatch):
+    service_case = await _case(db_session)
+    inbound = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="file",
+        content="[文件]",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {"sender_type": "staff"}},
+    )
+    db_session.add(inbound)
+    await db_session.flush()
+    inbound_id = inbound.id
+    await db_session.commit()
+    docx_content = _docx_bytes("早餐先吃蛋白质", "午餐主食减半")
+
+    def fake_client(*args, **kwargs):
+        return FakeFileHttpClient(docx_content, *args, **kwargs)
+
+    monkeypatch.setattr("app.services.ranren_ai.engine.httpx.AsyncClient", fake_client)
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id=service_case.group_id,
+        chat_type="group",
+        text="[文件]",
+        message_type="file",
+        raw_payload={
+            "msgData": {
+                "fileHttpUrl": "https://imunion.weixin.qq.com/cgi-bin/mmae-bin/tpdownloadmedia?param=v1_test",
+                "fileAuthKey": "auth-key",
+                "fileSize": len(docx_content),
+                "filename": "执行方案.docx",
+            }
+        },
+    )
+
+    await RanrenAIEngine(FakeAsyncTool({}))._process_inbound_file(inbound_id, message, service_case.id)
+    await db_session.refresh(inbound)
+
+    assert inbound.content == "[文件] 执行方案.docx"
+    info = inbound.analysis_json["file_info"]
+    assert info["filename"] == "执行方案.docx"
+    assert info["parse_status"] == "ok"
+    assert "早餐先吃蛋白质" in info["extracted_text"]
+    assert "午餐主食减半" in info["extracted_text"]
+    assert message.text == "[文件] 执行方案.docx"
 
 
 @pytest.mark.asyncio

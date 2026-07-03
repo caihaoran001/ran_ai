@@ -375,6 +375,37 @@ def test_qiwe_callback_image_event_to_channel_message():
     assert message.text == "[图片]"
 
 
+def test_qiwe_callback_file_event_to_channel_message():
+    message = _channel_message_from_qiwe(
+        {
+            "cmd": 15000,
+            "msgType": 102,
+            "userId": "bot-user",
+            "fromRoomId": 10926518308089720,
+            "senderId": 7881300658070689,
+            "senderName": "用户A",
+            "timestamp": 1779951380,
+            "msgUniqueIdentifier": "unique-file-1",
+            "msgData": {
+                "fileHttpUrl": "https://imunion.weixin.qq.com/cgi-bin/mmae-bin/tpdownloadmedia?param=v1_x",
+                "fileAesKey": "aes-key-here",
+                "fileAuthKey": "auth-key-here",
+                "fileSize": 39710,
+                "filename": "阿杰_60-90天健康减脂执行方案.docx",
+            },
+        }
+    )
+
+    assert message is not None
+    assert message.channel == "qiwe"
+    assert message.chat_id == "10926518308089720"
+    assert message.chat_type == "group"
+    assert message.user_id == "7881300658070689"
+    assert message.message_type == "file"
+    assert message.text == "[文件]"
+    assert _bypass_aggregator(message) is True
+
+
 
 def test_qiwe_callback_ignores_self_message():
     message = _channel_message_from_qiwe(

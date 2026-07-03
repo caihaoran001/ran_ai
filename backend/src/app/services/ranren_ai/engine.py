@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from html import escape
 import httpx
+import io
 import logging
 from pathlib import Path
 import re
@@ -152,6 +153,10 @@ RANREN_AI_SYSTEM_PROMPT = (
 # 入站图片下载大小上限：中图通常几十~一百多 KB；超过此值(极端情况/回退到原图)放弃识别，
 # 保护服务器带宽、内存与 Qwen token。如需调整，改这一处即可。
 _MAX_INBOUND_IMAGE_BYTES = 8 * 1024 * 1024
+# 入站文件下载/文本抽取上限：文件通常比图片小，但仍需防超大文档拖垮带宽/内存/token。
+_MAX_INBOUND_FILE_BYTES = 5 * 1024 * 1024
+# 抽取文本落库上限（字符）：防止超大文档把 analysis_json 撑爆。
+_MAX_FILE_TEXT_CHARS = 12000
 
 # 入站图片下载的 SSRF 域名白名单：file_url 来自 QiWe 回调载荷(外部可构造)，
 # 只允许下载企微/微信图床域名，防止被诱导去请求内网或任意第三方地址。
@@ -284,6 +289,39 @@ def _decrypt_image_bytes(encrypted_data: bytes, aes_key_str: str) -> bytes:
         pass
 
     return decrypted
+
+
+def _file_extension(filename: str) -> str:
+    """从文件名取小写扩展名(含点)，取不到返回空串。"""
+    name = (filename or "").strip().lower()
+    dot = name.rfind(".")
+    return name[dot:] if dot != -1 else ""
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_docx_text(data: bytes) -> str:
+    """抽取 docx 正文(段落 + 表格)。python-docx 已是项目依赖。"""
+    from docx import Document  # 局部导入，避免影响不涉及文件解析的调用路径
+
+    document = Document(io.BytesIO(data))
+    parts: list[str] = []
+    for para in document.paragraphs:
+        text = (para.text or "").strip()
+        if text:
+            parts.append(text)
+    for table in document.tables:
+        for row in table.rows:
+            cells = [(cell.text or "").strip() for cell in row.cells]
+            line = " | ".join(cell for cell in cells if cell)
+            if line:
+                parts.append(line)
+    return "\n".join(parts)
 
 
 class RanrenAIEngine:
@@ -421,6 +459,116 @@ class RanrenAIEngine:
             except Exception:
                 logger.exception("Failed to set fallback content for message_id=%s", message_id)
             message.text = fallback
+
+    async def _process_inbound_file(
+        self, message_id: int, message: ChannelMessage, service_case_id: int | None
+    ) -> None:
+        """下载群内上传的文件、解密并抽取文本（v1 仅 docx），结果写入 analysis_json.file_info。
+
+        与 _process_inbound_image 同层：下载/解密复用图片那套骨架（直链 fileHttpUrl + AES-ECB），
+        只是把“视觉识别”换成“按扩展名抽文本”。抽取失败/格式不支持一律走占位降级，不抛到主流程。
+        无直链的文件（需走 wxWorkDownloadAsync 异步下载）v1 暂不支持，占位留痕。
+        """
+        filename = ""
+        try:
+            raw_payload = message.raw_payload or {}
+            data_list = raw_payload.get("data") or [raw_payload]
+            item = data_list[0] if data_list else {}
+            msg_data = item.get("msgData") or {}
+
+            filename = str(msg_data.get("filename") or msg_data.get("fileName") or "").strip()
+            file_url = (
+                msg_data.get("fileHttpUrl")
+                or msg_data.get("fileBigHttpUrl")
+                or msg_data.get("cdnUrl")
+                or msg_data.get("cloudUrl")
+            )
+            file_aes_key = msg_data.get("fileAesKey") or msg_data.get("aesKey")
+            file_auth_key = msg_data.get("fileAuthKey")
+            declared_size = _safe_int(msg_data.get("fileSize"))
+
+            if not file_url:
+                raise ValueError("inbound file has no direct download url (async download unsupported in v1)")
+
+            file_url = file_url.replace("\n", "").replace("\r", "").strip()
+            # SSRF 防护：file_url 来自外部回调，仅允许企微/微信媒体域名（与图片同一白名单）。
+            if not _is_allowed_image_host(file_url):
+                raise ValueError(f"inbound file host not allowed: {file_url}")
+
+            if declared_size and declared_size > _MAX_INBOUND_FILE_BYTES:
+                raise ValueError(f"inbound file too large (declared): {declared_size} bytes")
+
+            ext = _file_extension(filename)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.38(0x1800262c)"
+            }
+            if file_auth_key:
+                headers["authkey"] = file_auth_key.replace("\n", "").replace("\r", "").strip()
+
+            logger.info("Downloading inbound file message_id=%s filename=%s from: %s", message_id, filename, file_url)
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                response = await client.get(file_url, headers=headers)
+                response.raise_for_status()
+                encrypted_bytes = response.content
+
+            if len(encrypted_bytes) > _MAX_INBOUND_FILE_BYTES:
+                raise ValueError(f"inbound file too large: {len(encrypted_bytes)} bytes")
+
+            # 文件回调与图片同样是 AES-ECB 加密，_decrypt_image_bytes 末尾的 PKCS#7 去填充对 docx(ZIP) 同样适用。
+            file_bytes = _decrypt_image_bytes(encrypted_bytes, file_aes_key) if file_aes_key else encrypted_bytes
+
+            parse_status = "unsupported"
+            extracted_text = ""
+            if ext == ".docx":
+                extracted_text = _extract_docx_text(file_bytes)
+                parse_status = "ok" if extracted_text.strip() else "empty"
+
+            marker = f"[文件] {filename}" if filename else "[文件]"
+            async with SessionLocal() as session:
+                db_msg = await session.get(Message, message_id)
+                if db_msg:
+                    db_msg.content = marker
+                    analysis = dict(db_msg.analysis_json or {})
+                    analysis["file_info"] = {
+                        "filename": filename,
+                        "file_size": len(file_bytes),
+                        "ext": ext,
+                        "parse_status": parse_status,
+                        "extracted_text": extracted_text[:_MAX_FILE_TEXT_CHARS],
+                    }
+                    db_msg.analysis_json = analysis
+                    session.add(db_msg)
+                    await session.commit()
+            message.text = marker
+            logger.info(
+                "Processed inbound file message_id=%s filename=%s parse_status=%s text_len=%d",
+                message_id,
+                filename,
+                parse_status,
+                len(extracted_text),
+            )
+        except Exception:
+            logger.exception("Error processing inbound file message_id=%s filename=%s", message_id, filename)
+            # 兜底：下载/解密/抽取任一步失败，落一个可读占位并记录 parse_status=error，
+            # 供 read_group_file 工具据此如实告知“暂无法读取”，而不是让 Agent 瞎编文件内容。
+            marker = f"[文件] {filename}（暂未能读取内容）" if filename else "[文件]（暂未能读取内容）"
+            try:
+                async with SessionLocal() as session:
+                    db_msg = await session.get(Message, message_id)
+                    if db_msg:
+                        db_msg.content = marker
+                        analysis = dict(db_msg.analysis_json or {})
+                        analysis["file_info"] = {
+                            "filename": filename,
+                            "parse_status": "error",
+                            "extracted_text": "",
+                        }
+                        db_msg.analysis_json = analysis
+                        session.add(db_msg)
+                        await session.commit()
+            except Exception:
+                logger.exception("Failed to set fallback content for file message_id=%s", message_id)
+            message.text = marker
 
     async def handle_message(self, message: ChannelMessage) -> None:
         started_at = time.monotonic()
@@ -616,14 +764,37 @@ class RanrenAIEngine:
                 await self._process_inbound_image(inbound_id, message, service_case_id)
                 # 图片消息翻译完成后，其在内存中的 text 属性已被更新为描述，继续向下执行流程以触发自动回复、成效提取和风险评估
             else:
-                # 其他非文本消息（如语音、文件等）仍直接入库留痕，不触发 AI 回复
-                logger.info(
-                    "RanrenAI non-text message stored without AI reply channel=%s chat_id=%s message_id=%s type=%s",
-                    message.channel,
-                    message.chat_id,
-                    message.message_id,
-                    message.message_type,
-                )
+                # 文件消息：后台下载/解密/抽取文本入库（与新旧回复链路无关的共享层，供新 Agent 链路 read_group_file 读取）。
+                if message.message_type == "file" and inbound_id is not None:
+                    await self._process_inbound_file(inbound_id, message, service_case_id)
+                    # 用户上传文件回执一句（挂 trigger_id）；班主任(staff)上传静默处理、不打扰（沿用“AI 不拆班主任台”）。
+                    if not is_staff:
+                        ack = "文件收到啦，需要我帮你看什么？"
+                        try:
+                            await self._send_and_record(
+                                message=message,
+                                service_case_id=service_case_id,
+                                content=ack,
+                                trigger_id=inbound_id,
+                                send=lambda: self.channel.send_text(
+                                    message.chat_id,
+                                    ack,
+                                    reply_to=message.message_id,
+                                    reply_context=message.raw_payload,
+                                ),
+                            )
+                        except Exception:
+                            logger.exception("Failed to send file receipt ack message_id=%s", inbound_id)
+                else:
+                    # 其他非文本消息（语音/表情等）仍直接入库留痕，不触发 AI 回复
+                    logger.info(
+                        "RanrenAI non-text message stored without AI reply channel=%s chat_id=%s message_id=%s type=%s",
+                        message.channel,
+                        message.chat_id,
+                        message.message_id,
+                        message.message_type,
+                    )
+                # 文件本身不触发完整 AI 回复；后续被 @/被问才由 Agent 调 read_group_file 读取
                 return
 
         if explicit_bot_query_text:
