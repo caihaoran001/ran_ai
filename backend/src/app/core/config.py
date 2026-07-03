@@ -138,6 +138,7 @@ class Settings(BaseSettings):
     )
 
     reminder_enabled: bool = Field(default=False, validation_alias="REMINDER_ENABLED")
+    agent_reminders_enabled: bool = Field(default=True, validation_alias="AGENT_REMINDERS_ENABLED")
     reminder_check_interval_seconds: float = Field(
         default=30.0,
         validation_alias="REMINDER_CHECK_INTERVAL_SECONDS",

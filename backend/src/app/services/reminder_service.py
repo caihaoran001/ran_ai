@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.config import Settings, get_settings
 from app.db.session import SessionLocal
+from app.models.agent_reminder_task import AgentReminderTask, AgentReminderTaskStatus
 from app.models.message import (
     Message,
     MessageDirection,
@@ -80,8 +81,14 @@ class ReminderService:
                 questionnaire_schedule_enabled = schedule.get("enabled", False)
         except Exception:
             logger.exception("Failed to load questionnaire schedule config")
-        if not self.settings.reminder_enabled and not knowledge_enabled and not self.settings.outcome_snapshots_enabled and not questionnaire_schedule_enabled:
-            logger.info("Reminder, outcome snapshot, knowledge evolution and questionnaire schedule services disabled")
+        if (
+            not self.settings.reminder_enabled
+            and not self.settings.agent_reminders_enabled
+            and not knowledge_enabled
+            and not self.settings.outcome_snapshots_enabled
+            and not questionnaire_schedule_enabled
+        ):
+            logger.info("Reminder, agent reminder, outcome snapshot, knowledge evolution and questionnaire schedule services disabled")
             return
         self._stopped.clear()
         self._task = asyncio.create_task(self._run_loop(), name="reminder-service")
@@ -106,6 +113,8 @@ class ReminderService:
                         logger.debug("Reminder scheduler skipped: advisory lock is held by another worker")
                     else:
                         await self.check_service_graduations_once()
+                        if self.settings.agent_reminders_enabled:
+                            await self.check_agent_reminder_tasks_once()
                         if self.settings.reminder_enabled:
                             await self.check_once()
                             await self.check_inactive_followups_once()
@@ -239,6 +248,74 @@ class ReminderService:
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error
+            await session.commit()
+
+    async def check_agent_reminder_tasks_once(self, now: datetime | None = None) -> None:
+        if not self.settings.agent_reminders_enabled:
+            return
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        now = now or datetime.now(tz)
+        now_utc = now.astimezone(timezone.utc)
+        async with SessionLocal() as session:
+            tasks = list(
+                await session.scalars(
+                    select(AgentReminderTask)
+                    .where(
+                        AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+                        AgentReminderTask.remind_at <= now_utc,
+                    )
+                    .order_by(AgentReminderTask.remind_at, AgentReminderTask.id)
+                    .limit(20)
+                )
+            )
+            for task in tasks:
+                service_case = await session.scalar(
+                    select_active_service_cases(ServiceCase.id == task.service_case_id)
+                )
+                if service_case is None:
+                    task.status = AgentReminderTaskStatus.FAILED
+                    task.error = "service case not found or deleted"
+                    continue
+                if service_case.status in {ServiceCaseStatus.COMPLETED, ServiceCaseStatus.REFUNDED}:
+                    task.status = AgentReminderTaskStatus.FAILED
+                    task.error = f"service case is {service_case.status.value}"
+                    continue
+                if service_window_ended(service_case, now, tz):
+                    task.status = AgentReminderTaskStatus.FAILED
+                    task.error = "service window ended"
+                    continue
+
+                task.status = AgentReminderTaskStatus.SENDING
+                task.error = None
+                message = Message(
+                    service_case_id=task.service_case_id,
+                    group_id=task.group_id,
+                    direction=MessageDirection.OUTBOUND,
+                    sender_type=MessageSenderType.SYSTEM,
+                    message_type="markdown",
+                    content=task.content,
+                    purpose=MessagePurpose.REMINDER,
+                    status=MessageStatus.PENDING,
+                    trigger_id=task.trigger_message_id,
+                    analysis_json={"agent_reminder_task_id": task.id},
+                )
+                session.add(message)
+                await session.flush()
+
+                result = await _send_channel_text_with_retries(task.group_id, task.content)
+                if result and result.success:
+                    message.status = MessageStatus.SENT
+                    message.wecom_message_id = result.message_id
+                    message.sent_at = datetime.now(timezone.utc)
+                    task.status = AgentReminderTaskStatus.SENT
+                    task.sent_message_id = message.id
+                    task.sent_at = message.sent_at
+                else:
+                    message.status = MessageStatus.FAILED
+                    message.error = result.error if result else "channel send failed"
+                    task.status = AgentReminderTaskStatus.FAILED
+                    task.sent_message_id = message.id
+                    task.error = message.error
             await session.commit()
 
     async def check_inactive_followups_once(self) -> None:

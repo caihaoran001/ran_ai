@@ -315,12 +315,14 @@ app/services/qiwe_service/    QiWe 群消息聚合
 
 ```bash
 REMINDER_ENABLED=true
+AGENT_REMINDERS_ENABLED=true
 REMINDER_AT=12:00
 REMINDER_TIMEZONE=Asia/Shanghai
 REMINDER_WEEKDAYS=1,2,3,4,5
 ```
 
 提醒状态写入 `reminder_events`，同一天不会重复提醒。
+Agent 群内一次性提醒使用独立任务表，默认复用 `REMINDER_CHECK_INTERVAL_SECONDS=30`，到点后 30 秒内发送。
 
 ## 成效追踪
 

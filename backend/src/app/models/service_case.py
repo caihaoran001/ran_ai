@@ -11,6 +11,7 @@ from app.db.base import Base
 from app.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
+    from app.models.agent_reminder_task import AgentReminderTask
     from app.models.ai_usage import AIUsageLog
     from app.models.checkin import Checkin
     from app.models.message import Message
@@ -109,6 +110,10 @@ class ServiceCase(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     reminder_events: Mapped[list[ReminderEvent]] = relationship(
+        back_populates="service_case",
+        cascade="all, delete-orphan",
+    )
+    agent_reminder_tasks: Mapped[list[AgentReminderTask]] = relationship(
         back_populates="service_case",
         cascade="all, delete-orphan",
     )

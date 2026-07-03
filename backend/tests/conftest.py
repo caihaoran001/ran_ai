@@ -486,6 +486,7 @@ async def mock_session_local(db_session):
         "app.api.routes.documents",
         "app.services.ranren_ai.engine",
         "app.services.qiwe_service.inbox",
+        "app.services.agent.tools.reminder_tools",
         "app.services.agent.tools.service_case_tools",
         "app.services.agent.tools.knowledge_tools",
         "app.services.reminder_service",

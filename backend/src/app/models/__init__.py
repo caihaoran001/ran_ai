@@ -1,3 +1,4 @@
+from app.models.agent_reminder_task import AgentReminderTask, AgentReminderTaskStatus
 from app.models.checkin import Checkin
 from app.models.ai_usage import AIUsageLog
 from app.models.app_setting import AppSetting
@@ -19,6 +20,8 @@ from app.models.user_state_profile import UserStateProfile
 
 __all__ = [
     "Checkin",
+    "AgentReminderTask",
+    "AgentReminderTaskStatus",
     "AIUsageLog",
     "AppSetting",
     "DocumentStatus",
