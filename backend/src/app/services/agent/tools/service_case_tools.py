@@ -24,8 +24,44 @@ class DaysArgs(BaseModel):
     days: int = Field(default=7, ge=1, le=30, description="Lookback days, from 1 to 30.")
 
 
+class ListFilesArgs(BaseModel):
+    limit: int = Field(default=10, ge=1, le=20, description="How many recent uploaded files to list, 1 to 20.")
+
+
+class ReadFileArgs(BaseModel):
+    message_id: int | None = Field(
+        default=None,
+        description="Read this exact file by its message_id (from list_group_files). Highest priority.",
+    )
+    filename: str | None = Field(
+        default=None,
+        description="Fuzzy match a file by (partial) filename, case-insensitive. Used when message_id is not given.",
+    )
+
+
 # 单次返回给 LLM 的文件正文上限（字符），控 token；入库全文上限更大（见 engine._MAX_FILE_TEXT_CHARS）。
 _MAX_TOOL_FILE_CHARS = 4000
+# 列表/定位时最多回溯的入站文件消息条数（防一次扫全群历史）。
+_MAX_FILE_SCAN = 20
+
+
+def _file_record(row: "Message") -> dict[str, Any] | None:
+    """把一条 file 消息压成给 LLM 的文件条目；没有 file_info 的返回 None。"""
+    analysis = row.analysis_json if isinstance(row.analysis_json, dict) else {}
+    info = analysis.get("file_info")
+    if not isinstance(info, dict):
+        return None
+    status = info.get("parse_status") or "unknown"
+    text = str(info.get("extracted_text") or "")
+    return {
+        "message_id": row.id,
+        "filename": info.get("filename") or "",
+        "uploaded_at": row.created_at.isoformat() if row.created_at else None,
+        "sender_type": row.sender_type.value if row.sender_type else None,
+        "parse_status": status,
+        "readable": bool(status == "ok" and text.strip()),
+        "text_length": len(text),
+    }
 
 
 def build_service_case_tools(*, context: AgentRunContext, settings: Settings) -> list[BaseTool]:
@@ -105,47 +141,106 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
         direction = "下降" if delta < 0 else ("上升" if delta > 0 else "持平")
         return {"ok": True, "days": days, "points": points, "delta_kg": delta, "direction": direction}
 
-    async def read_group_file() -> dict[str, Any]:
-        """读取本群最近上传文件的已解析正文（当前仅支持 docx）。"""
+    async def list_group_files(limit: int = 10) -> dict[str, Any]:
+        """列出当前服务单最近上传的入站文件（含 message_id / 文件名 / 上传时间 / 解析状态）。"""
+        limit = max(1, min(int(limit) if isinstance(limit, (int, float)) else 10, 20))
         async with SessionLocal() as session:
             rows = await session.scalars(
                 select(Message)
                 .where(Message.service_case_id == context.service_case_id)
                 .where(Message.message_type == "file")
                 .order_by(Message.id.desc())
-                .limit(5)
+                .limit(_MAX_FILE_SCAN)
             )
+            files: list[dict[str, Any]] = []
             for row in rows:
-                analysis = row.analysis_json if isinstance(row.analysis_json, dict) else {}
-                info = analysis.get("file_info")
-                if not isinstance(info, dict):
+                record = _file_record(row)
+                if record is not None:
+                    files.append(record)
+                if len(files) >= limit:
+                    break
+            if not files:
+                return {"ok": True, "count": 0, "files": [], "note": "本群最近没有可读取的上传文件。"}
+            return {"ok": True, "count": len(files), "files": files}
+
+    async def read_group_file(message_id: int | None = None, filename: str | None = None) -> dict[str, Any]:
+        """读取本群上传文件的已解析正文（当前仅支持 docx）。
+
+        定位优先级：message_id > filename 模糊匹配 > 最新文件。读不到内容时如实返回 note，不编造。
+        """
+        async with SessionLocal() as session:
+            rows = list(
+                await session.scalars(
+                    select(Message)
+                    .where(Message.service_case_id == context.service_case_id)
+                    .where(Message.message_type == "file")
+                    .order_by(Message.id.desc())
+                    .limit(_MAX_FILE_SCAN)
+                )
+            )
+
+            target: Message | None = None
+            if message_id is not None:
+                target = next((row for row in rows if row.id == message_id), None)
+                if target is None:
                     return {
                         "ok": True,
                         "filename": None,
-                        "parse_status": "missing",
                         "text": "",
-                        "note": "最近这份文件还没有可读取的解析正文。",
+                        "note": f"没找到 message_id={message_id} 对应的文件，可先用 list_group_files 确认。",
                     }
-                filename = info.get("filename") or ""
-                status = info.get("parse_status") or "unknown"
-                text = str(info.get("extracted_text") or "")
-                if status == "ok" and text.strip():
+            elif filename and filename.strip():
+                needle = filename.strip().lower()
+                for row in rows:
+                    info = (row.analysis_json or {}).get("file_info") if isinstance(row.analysis_json, dict) else None
+                    name = (info.get("filename") if isinstance(info, dict) else "") or ""
+                    if needle in name.lower():
+                        target = row
+                        break
+                if target is None:
                     return {
                         "ok": True,
-                        "filename": filename,
-                        "parse_status": status,
-                        "text": text[:_MAX_TOOL_FILE_CHARS],
-                        "truncated": len(text) > _MAX_TOOL_FILE_CHARS,
+                        "filename": None,
+                        "text": "",
+                        "note": f"没找到文件名包含“{filename}”的文件，可先用 list_group_files 看看有哪些。",
                     }
-                # 找到最近的文件但内容不可读（格式不支持/解析失败/空）：如实告知，别让模型瞎编。
+            else:
+                # 默认取最新一条文件消息（如实反映“最新这份”的可读状态；有没有别的由 list_group_files 说明）
+                target = rows[0] if rows else None
+
+            if target is None:
+                return {"ok": True, "filename": None, "text": "", "note": "本群最近没有可读取的上传文件。"}
+
+            record = _file_record(target)
+            if record is None:
                 return {
                     "ok": True,
-                    "filename": filename,
-                    "parse_status": status,
+                    "filename": None,
+                    "message_id": target.id,
+                    "parse_status": "missing",
                     "text": "",
-                    "note": "这份文件暂时读不了内容（可能不是 docx 或解析失败）。",
+                    "note": "这份文件还没有可读取的解析正文。",
                 }
-            return {"ok": True, "filename": None, "text": "", "note": "本群最近没有可读取的上传文件。"}
+            info = target.analysis_json.get("file_info", {})
+            text = str(info.get("extracted_text") or "")
+            if record["readable"]:
+                return {
+                    "ok": True,
+                    "message_id": target.id,
+                    "filename": record["filename"],
+                    "parse_status": record["parse_status"],
+                    "text": text[:_MAX_TOOL_FILE_CHARS],
+                    "truncated": len(text) > _MAX_TOOL_FILE_CHARS,
+                }
+            # 找到文件但内容不可读（格式不支持/解析失败/空）：如实告知，别让模型瞎编。
+            return {
+                "ok": True,
+                "message_id": target.id,
+                "filename": record["filename"],
+                "parse_status": record["parse_status"],
+                "text": "",
+                "note": "这份文件暂时读不了内容（可能不是 docx 或解析失败）。",
+            }
 
     async def get_user_state_profile() -> dict[str, Any]:
         async with SessionLocal() as session:
@@ -183,13 +278,27 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             description="Read the latest dynamic user state profile for the current service case only.",
         ),
         StructuredTool.from_function(
+            coroutine=list_group_files,
+            name="list_group_files",
+            description=(
+                "List recent files uploaded into the current group, newest first. Returns for each: "
+                "message_id, filename, uploaded_at, sender_type, parse_status, readable, text_length. "
+                "Use this first when the user references a non-latest file (e.g. 'the previous one', "
+                "a filename, or 'the second file') so you can then read the right one by message_id."
+            ),
+            args_schema=ListFilesArgs,
+        ),
+        StructuredTool.from_function(
             coroutine=read_group_file,
             name="read_group_file",
             description=(
-                "Read the extracted text of the most recent file uploaded into the current group "
-                "(currently docx only). Use this whenever the user or staff asks about a document "
-                "they sent in the group. Returns note when no readable file exists."
+                "Read the extracted text of a file uploaded into the current group (currently docx only). "
+                "Priority: message_id (exact) > filename (fuzzy, case-insensitive) > latest file when no "
+                "argument is given. Use no argument for 'this/the one just sent'; use list_group_files first "
+                "then pass message_id for 'the previous/second/that named file'. Returns note when the target "
+                "cannot be read; never fabricate file contents."
             ),
+            args_schema=ReadFileArgs,
         ),
     ]
 

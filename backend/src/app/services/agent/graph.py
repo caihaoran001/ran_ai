@@ -349,7 +349,14 @@ def _tool_result_failed(result: Any) -> bool:
 
 
 def _is_data_tool(name: str) -> bool:
-    return name in {"get_service_progress", "get_recent_checkins", "get_weight_trend", "get_user_state_profile", "read_group_file"}
+    return name in {
+        "get_service_progress",
+        "get_recent_checkins",
+        "get_weight_trend",
+        "get_user_state_profile",
+        "list_group_files",
+        "read_group_file",
+    }
 
 
 def _looks_like_data_query(text: str) -> bool:

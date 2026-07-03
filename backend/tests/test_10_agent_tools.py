@@ -345,6 +345,97 @@ async def test_read_group_file_tool_reports_latest_unparsed_file(db_session):
     assert "旧文件内容" not in result.get("note", "")
 
 
+def _file_msg(service_case, *, filename, text, status="ok", sender=MessageSenderType.USER):
+    return Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=sender,
+        message_type="file",
+        content=f"[文件] {filename}",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={"file_info": {"filename": filename, "parse_status": status, "extracted_text": text}},
+    )
+
+
+async def _tools(db_session, service_case):
+    return {
+        tool.name: tool
+        for tool in build_service_case_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_group_files_lists_current_case_newest_first(db_session):
+    service_case = await _case(db_session)
+    other_case = await _case(db_session)
+    db_session.add(_file_msg(other_case, filename="别的服务单.docx", text="不该出现"))
+    db_session.add(_file_msg(service_case, filename="阿杰方案.docx", text="早餐蛋白质"))
+    db_session.add(_file_msg(service_case, filename="第二份.docx", text="", status="empty"))
+    await db_session.flush()
+    tools = await _tools(db_session, service_case)
+
+    result = await tools["list_group_files"].ainvoke({})
+
+    assert result["ok"] is True
+    assert result["count"] == 2  # 不含别的服务单
+    names = [f["filename"] for f in result["files"]]
+    assert names == ["第二份.docx", "阿杰方案.docx"]  # 最新在前
+    assert "别的服务单.docx" not in names
+    first = result["files"][0]
+    assert first["readable"] is False and first["parse_status"] == "empty"
+    assert {"message_id", "uploaded_at", "sender_type", "text_length"} <= set(first)
+    assert result["files"][1]["readable"] is True
+
+
+@pytest.mark.asyncio
+async def test_read_group_file_by_message_id_reads_exact_file(db_session):
+    service_case = await _case(db_session)
+    older = _file_msg(service_case, filename="阿杰方案.docx", text="阿杰的执行方案正文")
+    db_session.add(older)
+    db_session.add(_file_msg(service_case, filename="最新.docx", text="最新文件正文"))
+    await db_session.flush()
+    tools = await _tools(db_session, service_case)
+
+    result = await tools["read_group_file"].ainvoke({"message_id": older.id})
+
+    assert result["filename"] == "阿杰方案.docx"
+    assert "阿杰的执行方案正文" in result["text"]
+    assert result["message_id"] == older.id
+
+
+@pytest.mark.asyncio
+async def test_read_group_file_by_filename_fuzzy_match(db_session):
+    service_case = await _case(db_session)
+    db_session.add(_file_msg(service_case, filename="阿杰_60-90天健康减脂执行方案.docx", text="阿杰方案正文"))
+    db_session.add(_file_msg(service_case, filename="最新体检报告.docx", text="体检正文"))
+    await db_session.flush()
+    tools = await _tools(db_session, service_case)
+
+    result = await tools["read_group_file"].ainvoke({"filename": "阿杰"})
+
+    assert "阿杰" in result["filename"]
+    assert "阿杰方案正文" in result["text"]
+
+
+@pytest.mark.asyncio
+async def test_read_group_file_message_id_not_found_returns_note(db_session):
+    service_case = await _case(db_session)
+    db_session.add(_file_msg(service_case, filename="唯一.docx", text="正文"))
+    await db_session.flush()
+    tools = await _tools(db_session, service_case)
+
+    result = await tools["read_group_file"].ainvoke({"message_id": 99999999})
+
+    assert result["ok"] is True
+    assert result["text"] == ""
+    assert "没找到" in result["note"]
+
+
 @pytest.mark.asyncio
 async def test_process_inbound_file_extracts_docx_text(db_session, monkeypatch):
     service_case = await _case(db_session)
