@@ -648,7 +648,7 @@ class RanrenAIEngine:
                 service_case_silenced = not bool(getattr(service_case, "ai_auto_reply_enabled", True))
 
                 # Self-healing and dynamic binding for real customer messages
-                if not is_staff and message.channel in ("wecom", "qiwe") and message.user_id:
+                if not is_staff and message.channel == "qiwe" and message.user_id:
                     case_user = None
                     if hasattr(session, "get"):
                         case_user = await session.get(User, service_case.user_id)
@@ -1197,7 +1197,7 @@ class RanrenAIEngine:
     ) -> ServiceCase:
         user = User(
             name="待填写问卷用户",
-            wecom_user_id=None if is_staff else (message.user_id if message.channel in ("wecom", "qiwe") else None),
+            wecom_user_id=None if is_staff else (message.user_id if message.channel == "qiwe" else None),
             notes=f"由 {message.channel} 入营问卷指令自动创建",
         )
         session.add(user)
