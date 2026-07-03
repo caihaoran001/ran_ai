@@ -684,6 +684,97 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_qiwe_file_upload_acks_user_but_stays_silent_for_staff(monkeypatch):
+    """文件上传：用户发→回执一句“文件收到啦…”；班主任发→静默不回（AI 不拆班主任台）。
+
+    _process_inbound_file 的下载/解密/抽取已在 test_10 单测覆盖，这里打桩成 no-op，
+    只验证 handle_message 里“按发送者身份决定是否回执”的分支。
+    """
+    added_messages: list[Message] = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+        def add(self, obj):
+            if isinstance(obj, Message):
+                obj.id = len(added_messages) + 1
+                added_messages.append(obj)
+
+        async def commit(self):
+            return None
+
+        async def flush(self):
+            return None
+
+    async def fake_get_qiwei_staff_senders(*args, **kwargs):
+        return [{"type": "equals", "pattern": "上海 Lucy"}]
+
+    fake_case = SimpleNamespace(
+        id=42,
+        case_no="CASE-42",
+        group_id="room-file",
+        questionnaire_token="token-42",
+    )
+
+    processed: list[int] = []
+
+    async def fake_process_inbound_file(self, message_id, message, service_case_id):
+        processed.append(message_id)
+
+    sent_texts: list[str] = []
+
+    async def fake_send_and_record(self, *, message, service_case_id, content, trigger_id, send):
+        # _send_and_record 的 record-first 落库已在 test_send_and_record_is_record_first 覆盖，
+        # 这里只记录回执内容，隔离“是否回执”的分支判断。
+        sent_texts.append(content)
+        return ChannelSendResult(success=True, message_id="ack-1")
+
+    monkeypatch.setattr("app.services.ranren_ai.engine.SessionLocal", lambda *a, **k: FakeSession())
+    monkeypatch.setattr("app.services.content_policy.get_qiwei_staff_senders", fake_get_qiwei_staff_senders)
+    monkeypatch.setattr(RanrenAIEngine, "_latest_active_case", lambda self, session, chat_id: asyncio.sleep(0, result=fake_case))
+    monkeypatch.setattr(RanrenAIEngine, "_recent_user_messages", lambda *a, **k: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(RanrenAIEngine, "_process_inbound_file", fake_process_inbound_file)
+    monkeypatch.setattr(RanrenAIEngine, "_send_and_record", fake_send_and_record)
+
+    engine = RanrenAIEngine(FakeChannel())
+
+    # 用户上传文件 → 回执一句
+    user_file = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-file",
+        chat_type="group",
+        text="[文件]",
+        message_type="file",
+        message_id="f-user",
+        user_id="user-1",
+        user_name="普通客户",
+        timestamp=datetime.now(timezone.utc),
+    )
+    await engine.handle_message(user_file)
+
+    # 班主任上传文件 → 静默不回
+    staff_file = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-file",
+        chat_type="group",
+        text="[文件]",
+        message_type="file",
+        message_id="f-staff",
+        user_id="user-2",
+        user_name="上海 Lucy",
+        timestamp=datetime.now(timezone.utc),
+    )
+    await engine.handle_message(staff_file)
+
+    assert processed == [1, 2]  # 两条都解析入库
+    assert sent_texts == ["文件收到啦，需要我帮你看什么？"]  # 只对用户回执一次
+
+
+@pytest.mark.asyncio
 async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     from datetime import datetime, timedelta, timezone
     from app.services.ranren_ai.engine import recover_stuck_inbound_messages
