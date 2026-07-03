@@ -322,7 +322,7 @@ REMINDER_WEEKDAYS=1,2,3,4,5
 ```
 
 提醒状态写入 `reminder_events`，同一天不会重复提醒。
-Agent 群内一次性提醒使用独立任务表，默认复用 `REMINDER_CHECK_INTERVAL_SECONDS=30`，到点后 30 秒内发送。
+Agent 群内一次性提醒使用独立任务表，默认复用 `REMINDER_CHECK_INTERVAL_SECONDS=30`；到点后会再跑一遍 Agent 生成最终提醒文案，并在 30 秒内发送。
 
 ## 成效追踪
 

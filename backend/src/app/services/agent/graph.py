@@ -46,6 +46,7 @@ class RanrenAgentGraph:
         settings: Settings | None = None,
         skill_registry: SkillRegistry | None = None,
         chat_model: Any | None = None,
+        include_reminder_tools: bool = True,
     ):
         self.context = context
         self.settings = settings or get_settings()
@@ -54,6 +55,7 @@ class RanrenAgentGraph:
             context=context,
             settings=self.settings,
             skill_registry=self.skill_registry,
+            include_reminder_tools=include_reminder_tools,
         )
         self.tools_by_name = {tool.name: tool for tool in self.tools}
         base_model = chat_model or create_agent_chat_model(self.settings)
@@ -301,6 +303,28 @@ async def generate_agent_reply(
     if result.data_tool_failed and _looks_like_data_query(user_query):
         raise AgentDataUnavailableError(DATA_UNAVAILABLE_REPLY)
     return result
+
+
+async def generate_scheduled_reminder_reply(
+    *,
+    service_case_id: int,
+    trigger_id: int | None,
+    reminder_instruction: str,
+    recent_messages: list[str],
+    settings: Settings | None = None,
+) -> AgentReplyResult:
+    settings = settings or get_settings()
+    user_query = (
+        "这是一条到点执行的群内定时提醒任务。请不要追问确认，也不要创建新的提醒；"
+        "直接生成现在要发到群里的最终提醒文案。文案要短、自然，优先结合当前服务进度、"
+        "近期打卡、体重趋势、用户状态画像和业务知识；如果原始要求只是普通事项，也按原意简单提醒。\n"
+        f"原始提醒要求：{reminder_instruction}"
+    )
+    return await RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=service_case_id, trigger_id=trigger_id),
+        settings=settings,
+        include_reminder_tools=False,
+    ).run(user_query=user_query, recent_messages=recent_messages, query_speaker="系统定时任务")
 
 
 def _agent_context_plan(analysis: dict[str, Any] | None) -> dict[str, Any] | None:

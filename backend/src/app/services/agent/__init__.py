@@ -4,6 +4,7 @@ from app.services.agent.graph import (
     AgentRunContext,
     RanrenAgentGraph,
     generate_agent_reply,
+    generate_scheduled_reminder_reply,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "AgentRunContext",
     "RanrenAgentGraph",
     "generate_agent_reply",
+    "generate_scheduled_reminder_reply",
 ]

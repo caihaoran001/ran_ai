@@ -17,11 +17,13 @@ def build_agent_tools(
     context: AgentRunContext,
     settings: Settings,
     skill_registry: SkillRegistry,
+    include_reminder_tools: bool = True,
 ) -> list[BaseTool]:
     tools: list[BaseTool] = []
     tools.extend(build_skill_tools(skill_registry))
     tools.extend(build_service_case_tools(context=context, settings=settings))
-    tools.extend(build_reminder_tools(context=context, settings=settings))
+    if include_reminder_tools:
+        tools.extend(build_reminder_tools(context=context, settings=settings))
     tools.extend(build_knowledge_tools(settings=settings))
     tools.extend(build_web_search_tools(settings=settings))
     return tools

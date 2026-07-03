@@ -15,7 +15,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.agent.state import AgentRunContext
 from app.services.service_case_queries import select_active_service_cases, service_window_ended
 
-_MAX_REMINDER_CONTENT_CHARS = 240
+_MAX_REMINDER_INSTRUCTION_CHARS = 240
 _MAX_REMINDER_DAYS_AHEAD = 30
 
 
@@ -25,7 +25,11 @@ class CreateReminderArgs(BaseModel):
         max_length=64,
         description="Reminder time as ISO-8601 datetime. Include timezone when possible.",
     )
-    content: str = Field(min_length=1, max_length=_MAX_REMINDER_CONTENT_CHARS, description="Reminder text to send.")
+    content: str = Field(
+        min_length=1,
+        max_length=_MAX_REMINDER_INSTRUCTION_CHARS,
+        description="Reminder goal/instruction. The scheduled agent will generate the final message at send time.",
+    )
 
 
 def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> list[BaseTool]:
@@ -73,7 +77,7 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
             "task_id": task_id,
             "remind_at": remind_local.isoformat(),
             "content": clean_content,
-            "note": "已创建一次性群提醒。",
+            "note": "已创建一次性群提醒；到点后会先由 Agent 结合当时上下文生成最终提醒文案。",
         }
 
     return [
@@ -81,10 +85,12 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
             coroutine=create_group_reminder,
             name="create_group_reminder",
             description=(
-                "Create a one-time reminder for the current group only. Use when the user explicitly asks the bot "
-                "to remind the group at a specific future date/time. The remind_at argument must be a concrete "
-                "ISO-8601 datetime; if the time is vague, ask one clarification before calling this tool. "
-                "Does not support recurring daily/weekly reminders."
+                "Create a one-time scheduled agent reminder for the current group only. At the due time, the "
+                "scheduler will run the agent again to generate the final message from the stored instruction. "
+                "Use when the user explicitly asks the bot to remind, advise, suggest, or proactively say "
+                "something at a specific future date/time. The remind_at argument must be a concrete ISO-8601 "
+                "datetime; if the time is vague, ask one clarification before calling this tool. Does not support "
+                "recurring daily/weekly reminders."
             ),
             args_schema=CreateReminderArgs,
         )
@@ -107,4 +113,4 @@ def _parse_remind_at(value: str, tz: ZoneInfo) -> datetime | None:
 
 def _clean_content(value: str) -> str:
     clean = " ".join((value or "").split())
-    return clean[:_MAX_REMINDER_CONTENT_CHARS]
+    return clean[:_MAX_REMINDER_INSTRUCTION_CHARS]

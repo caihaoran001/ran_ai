@@ -7,7 +7,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import Settings, get_settings
@@ -28,6 +28,7 @@ from app.models.user import User
 from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
+from app.services.agent import generate_scheduled_reminder_reply
 from app.services.channels import get_current_channel, send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
 from app.services.document_service import (
@@ -287,22 +288,54 @@ class ReminderService:
 
                 task.status = AgentReminderTaskStatus.SENDING
                 task.error = None
+                await session.flush()
+
+                recent_messages = await _recent_chat_lines(session, task.service_case_id)
+                try:
+                    agent_result = await generate_scheduled_reminder_reply(
+                        service_case_id=task.service_case_id,
+                        trigger_id=task.trigger_message_id,
+                        reminder_instruction=task.content,
+                        recent_messages=recent_messages,
+                        settings=self.settings,
+                    )
+                    outbound_content = agent_result.reply.strip()
+                    outbound_analysis = {
+                        "agent_reminder_task_id": task.id,
+                        "agent": {
+                            "enabled": True,
+                            "scheduled_reminder": True,
+                            "tool_trace": agent_result.tool_trace,
+                            "data_tool_failed": agent_result.data_tool_failed,
+                        },
+                        "reminder_instruction": task.content,
+                    }
+                except Exception as exc:
+                    logger.exception("Scheduled agent reminder generation failed task_id=%s", task.id)
+                    task.status = AgentReminderTaskStatus.FAILED
+                    task.error = f"agent generation failed: {type(exc).__name__}: {exc}"
+                    continue
+                if not outbound_content:
+                    task.status = AgentReminderTaskStatus.FAILED
+                    task.error = "agent generation returned empty reply"
+                    continue
+
                 message = Message(
                     service_case_id=task.service_case_id,
                     group_id=task.group_id,
                     direction=MessageDirection.OUTBOUND,
                     sender_type=MessageSenderType.SYSTEM,
                     message_type="markdown",
-                    content=task.content,
+                    content=outbound_content,
                     purpose=MessagePurpose.REMINDER,
                     status=MessageStatus.PENDING,
                     trigger_id=task.trigger_message_id,
-                    analysis_json={"agent_reminder_task_id": task.id},
+                    analysis_json=outbound_analysis,
                 )
                 session.add(message)
                 await session.flush()
 
-                result = await _send_channel_text_with_retries(task.group_id, task.content)
+                result = await _send_channel_text_with_retries(task.group_id, outbound_content)
                 if result and result.success:
                     message.status = MessageStatus.SENT
                     message.wecom_message_id = result.message_id
@@ -1082,6 +1115,42 @@ async def _send_channel_text_with_retries(chat_id: str, content: str):
             last_result.error,
         )
     return last_result
+
+
+async def _recent_chat_lines(session, service_case_id: int, *, limit: int = 10) -> list[str]:
+    result = await session.scalars(
+        select(Message)
+        .where(
+            Message.service_case_id == service_case_id,
+            or_(
+                and_(
+                    Message.direction == MessageDirection.INBOUND,
+                    Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
+                    Message.purpose == MessagePurpose.CHAT,
+                    Message.status == MessageStatus.RECEIVED,
+                ),
+                and_(
+                    Message.direction == MessageDirection.OUTBOUND,
+                    Message.sender_type.in_([MessageSenderType.BOT, MessageSenderType.STAFF]),
+                    Message.purpose.in_([MessagePurpose.CHAT, MessagePurpose.DOCUMENT_DELIVERY]),
+                    Message.status == MessageStatus.SENT,
+                ),
+            ),
+        )
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+    )
+    return [_format_chat_line(item) for item in reversed(list(result))]
+
+
+def _format_chat_line(message: Message) -> str:
+    role = "用户"
+    if message.direction == MessageDirection.OUTBOUND:
+        role = "助教" if message.sender_type == MessageSenderType.BOT else "班主任"
+    elif message.sender_type == MessageSenderType.STAFF:
+        role = "班主任"
+    content = " ".join((message.content or "").split())
+    return f"{role}: {content[:300]}"
 
 
 @asynccontextmanager
