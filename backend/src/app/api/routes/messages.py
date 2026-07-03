@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 from sqlalchemy import not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.session import get_session
 from app.models.message import (
@@ -41,6 +42,7 @@ async def list_case_messages(
                 & (Message.status == MessageStatus.FAILED)
             ),
         )
+        .options(selectinload(Message.trigger))
         .order_by(Message.created_at.asc(), Message.id.asc())
     )
     return list(result)
@@ -84,8 +86,6 @@ async def send_case_message(
     await session.refresh(message)
     return message
 
-
-from sqlalchemy.orm import selectinload
 
 @router.get("/messages/pending-ai", response_model=list[MessageRead])
 async def list_pending_ai_messages(
