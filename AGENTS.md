@@ -91,7 +91,10 @@ Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY
 
 ## DEBUGGING & DIAGNOSTICS (调试与排查指南)
 - **查看实时运行日志**：在排查消息收发、大模型调用、企微回调等问题时，**必须**在项目根目录运行 `docker logs -f --tail 100 ran-ai-backend` 查看最新日志。
-- **查询数据库真实记录**：若需核实最新入库的聊天数据与时间戳，请进入 `backend/` 目录下运行 `uv run python ../scratch/query_latest_messages.py`，它会直接打印最新的 10 条真实对话记录。其他 AI Agent 接手时，遇到消息收发问题应主动使用这些工具进行排查，而不需用户手动复制日志。
+- **查真实数据/配置一律以线上为准，禁止拿本地推断**：排查任何真实业务数据（聊天记录、服务单、消息 payload、画像等）或线上配置/运行状态时，**必须查生产**，严禁用本地 `.env`、本地 DB、`.env.example` 或代码默认值推断。原因：本地库是种子/测试数据，且**阿里云 RDS 只在 ECS 的 VPC 内可达，本地连不到 RDS**。
+  - **查数据（RDS）**：SSH 进 ECS（`43.98.170.61`，见 `scratch/*remote*.py` 的 paramiko 写法或 `docs/qiwe_debugging_guide.md`）后 `docker exec -i ran_ai-backend-1 uv run python -` 跑查询脚本——只有容器内 `DATABASE_URL` 指向 RDS。
+  - **查配置/运行状态**：读 ECS 上 `/root/ran_ai/.env`、`docker compose -f docker-compose.prod.yml config`、运行中容器环境或容器内 `get_settings()`；只输出目标非密钥字段，避免打印完整 `.env`。
+  - `scratch/query_latest_messages.py` 等直连 `SessionLocal()` 的脚本连的是**本地库**，仅用于纯本地开发自测，不能当线上真实记录。
 - **企微接口调试指南**：关于如何与 QiWe API 网关交互（包括拉取群成员、获取用户昵称等）、排查 `QIWEI_GUID` 等凭证问题、以及连接远程数据库运行诊断脚本的详细指引，请参考文档 [docs/qiwe_debugging_guide.md](file:///home/chr/桌面/ran_ai/docs/qiwe_debugging_guide.md)。
 - **修改后端代码后必须重启**：修改 `backend/src/` 下的 Python 文件后，**必须**运行 `docker restart ran-ai-backend` 重启后端服务，否则改动不会生效。这是最容易忘记的步骤，每次修改后端代码后都要检查是否需要重启。
 
