@@ -320,6 +320,9 @@ class ReminderService:
                     task.error = "agent generation returned empty reply"
                     continue
 
+                # 提醒默认原生 @ 请求者（当初说“提醒我…”的那个用户）：从 trigger 消息解析其企微 userId。
+                at_target = await _resolve_reminder_at_target(session, task.trigger_message_id)
+
                 message = Message(
                     service_case_id=task.service_case_id,
                     group_id=task.group_id,
@@ -335,7 +338,8 @@ class ReminderService:
                 session.add(message)
                 await session.flush()
 
-                result = await _send_channel_text_with_retries(task.group_id, outbound_content)
+                result, sent_content = await _send_reminder_with_at(task.group_id, outbound_content, at_target)
+                message.content = sent_content
                 if result and result.success:
                     message.status = MessageStatus.SENT
                     message.wecom_message_id = result.message_id
@@ -1115,6 +1119,59 @@ async def _send_channel_text_with_retries(chat_id: str, content: str):
             last_result.error,
         )
     return last_result
+
+
+async def _resolve_reminder_at_target(session, trigger_message_id: int | None) -> tuple[str, str] | None:
+    """取提醒请求者的企微 (userId, 昵称)，用于到点原生 @。
+
+    仅当 trigger 是用户(USER)消息、且能从 analysis_json._qiwe_meta 拿到 sender_id 时返回；
+    否则返回 None（如班主任代设、系统触发、非企微渠道），调用方回退纯文本发送。
+    """
+    if not trigger_message_id:
+        return None
+    trigger = await session.get(Message, trigger_message_id)
+    if trigger is None or trigger.sender_type != MessageSenderType.USER:
+        return None
+    analysis = trigger.analysis_json if isinstance(trigger.analysis_json, dict) else {}
+    meta = analysis.get("_qiwe_meta") if isinstance(analysis.get("_qiwe_meta"), dict) else {}
+    user_id = str(meta.get("sender_id") or "").strip()
+    if not user_id:
+        return None
+    name = str(meta.get("sender_name") or "").strip() or user_id
+    return user_id, name
+
+
+async def _send_reminder_with_at(chat_id: str, content: str, at_target: tuple[str, str] | None):
+    """发送定时提醒：能拿到 @ 目标且渠道支持 hypertext 时，用原生 @（企微高亮），否则纯文本。
+
+    返回 (send_result, db_content)：db_content 反映实际发出的内容（带 "@昵称 " 前缀或纯文本），
+    用于落库展示与实际发送一致。原生 @ 发送失败则回退纯文本，保证提醒仍能送达。
+    """
+    channel = get_current_channel()
+    if at_target and channel is not None and hasattr(channel, "send_hypertext"):
+        user_id, name = at_target
+        # subtype 1 = 原生 @ 成员(text 传 userId)；subtype 0 = 普通文本。与班主任 handoff 同一机制。
+        content_list = [
+            {"subtype": 1, "text": user_id},
+            {"subtype": 0, "text": " " + content},
+        ]
+        db_content = f"@{name} {content}"
+        last_result = None
+        for attempt in range(1, CHANNEL_SEND_MAX_ATTEMPTS + 1):
+            result = await channel.send_hypertext(chat_id, content_list)
+            if result.success:
+                return result, db_content
+            last_result = result
+            if not result.retryable or attempt >= CHANNEL_SEND_MAX_ATTEMPTS:
+                break
+            await asyncio.sleep(CHANNEL_SEND_RETRY_DELAY_SECONDS)
+        logger.warning(
+            "Reminder native @ send failed, falling back to plain text: chat_id=%s error=%s",
+            chat_id,
+            getattr(last_result, "error", None),
+        )
+    result = await _send_channel_text_with_retries(chat_id, content)
+    return result, content
 
 
 async def _recent_chat_lines(session, service_case_id: int, *, limit: int = 10) -> list[str]:

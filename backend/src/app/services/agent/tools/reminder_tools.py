@@ -63,6 +63,30 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
             if service_window_ended(service_case, now_local, tz):
                 return {"ok": False, "error": "当前服务窗口已结束，不能创建提醒。"}
 
+            # 幂等去重：同一服务单在目标时间 ±120s 内已有待发提醒时，不重复创建。
+            # 防 Agent 对同一意图连发两次（如用户说一次、随后确认一次各建一条，导致到点重复提醒）。
+            remind_utc = remind_local.astimezone(timezone.utc)
+            dedup_window = timedelta(seconds=120)
+            existing = await session.scalar(
+                select(AgentReminderTask)
+                .where(
+                    AgentReminderTask.service_case_id == service_case.id,
+                    AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+                    AgentReminderTask.remind_at >= remind_utc - dedup_window,
+                    AgentReminderTask.remind_at <= remind_utc + dedup_window,
+                )
+                .order_by(AgentReminderTask.remind_at)
+            )
+            if existing is not None:
+                return {
+                    "ok": True,
+                    "task_id": existing.id,
+                    "remind_at": existing.remind_at.astimezone(tz).isoformat(),
+                    "content": existing.content,
+                    "deduped": True,
+                    "note": "该时间点附近已有一条待发提醒，未重复创建（沿用已存在的提醒）。",
+                }
+
             task = AgentReminderTask(
                 service_case_id=service_case.id,
                 group_id=service_case.group_id,
