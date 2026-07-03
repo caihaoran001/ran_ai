@@ -100,8 +100,7 @@ Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY
 
 ## DEPLOYMENT & PRODUCTION UPDATES (部署与发布规范)
 - **代码部署 vs 配置变更（必须分开）**：部署代码跑 `scratch/local_prebuilt_deploy.py`，它**只更新代码、不碰生产 `.env` 与 `docker-compose.prod.yml`**（打包已排除，解压不覆盖）；要改生产配置（密钥/数据库/QiWe guid 等）才单独跑 `scratch/configure_remote_files.py`（先改其内置模板再跑）。**严禁**在部署脚本里加回"覆盖 `.env`/`docker-compose.prod.yml`"的步骤，否则服务器上的手改配置会被覆盖、可能搞坏线上。详见 `docs/deployment.md` 1.5 节。
-- **线上状态以生产环境为准**：讨论当前线上开关/配置/运行状态时，必须直接查 ECS 上 `/root/ran_ai/.env`、`docker compose -f docker-compose.prod.yml config`、运行中容器环境或应用 `get_settings()`；严禁用本地 `.env`、`.env.example`、代码默认值或 compose fallback 推断线上状态。查询时只输出目标非密钥字段，避免打印完整 `.env`。
-- **生产数据库使用阿里云 RDS**：生产环境通过 `DATABASE_URL` 连接阿里云 RDS PostgreSQL 15 + vector 扩展，`docker-compose.prod.yml` 不应再启动内置 PostgreSQL，避免生产数据分裂。本地开发仍使用 `docker-compose.yml` 的本地 PostgreSQL。
+- **生产数据库使用阿里云 RDS**：生产环境通过 `DATABASE_URL` 连接阿里云 RDS PostgreSQL 15 + vector 扩展，`docker-compose.prod.yml` 不应再启动内置 PostgreSQL，避免生产数据分裂。本地开发仍使用 `docker-compose.yml` 的本地 PostgreSQL。（"以线上为准、禁止本地推断"的排查规则见 DEBUGGING 段）
 - **本地预构建上传（严禁在 ECS 编译）**：为防止 ECS 资源卡死与编译时长时间不可用，前端编译必须在本地运行 `npm run build` 生成 standalone 制品后再打包上传。
 - **保护生产依赖**：Next.js standalone 运行时所需的 node_modules 位于 `frontend/.next/standalone/node_modules/`。
   - 编写 `.dockerignore` 时，**严禁**全局排除 `node_modules`，必须使用前缀锚定（如 `/node_modules`）以保留子目录下的生产依赖。
