@@ -296,6 +296,233 @@ async def test_reminder_service_sends_native_at_mention_to_requester(db_session,
 
 
 @pytest.mark.asyncio
+async def test_create_group_reminder_tool_creates_recurring_task(db_session):
+    service_case = await _case(db_session)
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+    remind_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+
+    result = await tools["create_group_reminder"].ainvoke(
+        {"remind_at": remind_at, "content": "吃午饭", "recurrence": "daily"}
+    )
+
+    assert result["ok"] is True
+    assert result["recurrence"] == "daily"
+    task = await db_session.scalar(select(AgentReminderTask).where(AgentReminderTask.id == result["task_id"]))
+    assert task is not None
+    assert task.recurrence == "daily"
+
+
+@pytest.mark.asyncio
+async def test_create_group_reminder_tool_rejects_bad_recurrence(db_session):
+    service_case = await _case(db_session)
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+    remind_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+
+    result = await tools["create_group_reminder"].ainvoke(
+        {"remind_at": remind_at, "content": "吃午饭", "recurrence": "monthly"}
+    )
+
+    assert result["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_reminder_service_schedules_next_recurrence(db_session, monkeypatch):
+    service_case = await _case(db_session)
+    task = AgentReminderTask(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        remind_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        content="吃午饭",
+        recurrence="daily",
+        status=AgentReminderTaskStatus.PENDING,
+    )
+    db_session.add(task)
+    await db_session.flush()
+
+    async def fake_generate_scheduled_reminder_reply(**kwargs):
+        return AgentReplyResult(reply="到点吃午饭啦，蛋白配蔬菜。", tool_trace=[])
+
+    monkeypatch.setattr(
+        "app.services.reminder_service.generate_scheduled_reminder_reply",
+        fake_generate_scheduled_reminder_reply,
+    )
+
+    await ReminderService(get_settings()).check_agent_reminder_tasks_once(now=datetime.now(timezone.utc))
+
+    assert task.status == AgentReminderTaskStatus.SENT
+    # 发完后应新排一条 +1 天的 PENDING，content/recurrence 一致
+    pending = list(
+        await db_session.scalars(
+            select(AgentReminderTask).where(
+                AgentReminderTask.service_case_id == service_case.id,
+                AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+            )
+        )
+    )
+    assert len(pending) == 1
+    nxt = pending[0]
+    assert nxt.id != task.id
+    assert nxt.recurrence == "daily"
+    assert nxt.content == "吃午饭"
+    assert nxt.remind_at > datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_list_group_reminders_tool(db_session):
+    service_case = await _case(db_session)
+    for offset, content in ((10, "做饭"), (20, "喝水")):
+        db_session.add(
+            AgentReminderTask(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                remind_at=datetime.now(timezone.utc) + timedelta(minutes=offset),
+                content=content,
+                status=AgentReminderTaskStatus.PENDING,
+            )
+        )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+
+    result = await tools["list_group_reminders"].ainvoke({})
+
+    assert result["ok"] is True
+    assert result["count"] == 2
+    assert {item["content"] for item in result["pending"]} == {"做饭", "喝水"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_group_reminder_tool_cancels_by_id(db_session):
+    service_case = await _case(db_session)
+    keep = AgentReminderTask(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        remind_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+        content="做饭",
+        status=AgentReminderTaskStatus.PENDING,
+    )
+    drop = AgentReminderTask(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        remind_at=datetime.now(timezone.utc) + timedelta(minutes=20),
+        content="喝晚A",
+        status=AgentReminderTaskStatus.PENDING,
+    )
+    db_session.add_all([keep, drop])
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+
+    result = await tools["cancel_group_reminder"].ainvoke({"task_id": drop.id})
+
+    assert result["ok"] is True
+    assert result["count"] == 1
+    await db_session.refresh(drop)
+    await db_session.refresh(keep)
+    assert drop.status == AgentReminderTaskStatus.CANCELLED
+    assert drop.cancelled_at is not None
+    assert keep.status == AgentReminderTaskStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_cancel_group_reminder_tool_need_choice_when_multiple(db_session):
+    service_case = await _case(db_session)
+    for offset, content in ((10, "做饭"), (20, "喝水")):
+        db_session.add(
+            AgentReminderTask(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                remind_at=datetime.now(timezone.utc) + timedelta(minutes=offset),
+                content=content,
+                status=AgentReminderTaskStatus.PENDING,
+            )
+        )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+
+    result = await tools["cancel_group_reminder"].ainvoke({})
+
+    assert result["ok"] is True
+    assert result.get("need_choice") is True
+    assert len(result["pending"]) == 2
+    # 未指明时不应取消任何一条
+    remaining = list(
+        await db_session.scalars(
+            select(AgentReminderTask).where(
+                AgentReminderTask.service_case_id == service_case.id,
+                AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+            )
+        )
+    )
+    assert len(remaining) == 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_group_reminder_tool_cancel_all(db_session):
+    service_case = await _case(db_session)
+    for offset, content in ((10, "做饭"), (20, "喝水")):
+        db_session.add(
+            AgentReminderTask(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                remind_at=datetime.now(timezone.utc) + timedelta(minutes=offset),
+                content=content,
+                status=AgentReminderTaskStatus.PENDING,
+            )
+        )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+
+    result = await tools["cancel_group_reminder"].ainvoke({"cancel_all": True})
+
+    assert result["ok"] is True
+    assert result["count"] == 2
+    remaining = list(
+        await db_session.scalars(
+            select(AgentReminderTask).where(
+                AgentReminderTask.service_case_id == service_case.id,
+                AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+            )
+        )
+    )
+    assert remaining == []
+
+
+@pytest.mark.asyncio
 async def test_reminder_service_marks_completed_case_task_failed(db_session):
     service_case = await _case(db_session, status=ServiceCaseStatus.COMPLETED)
     task = AgentReminderTask(

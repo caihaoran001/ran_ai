@@ -18,6 +18,7 @@ from app.services.service_case_queries import select_active_service_cases, servi
 
 _MAX_REMINDER_INSTRUCTION_CHARS = 240
 _MAX_REMINDER_DAYS_AHEAD = 30
+_ALLOWED_RECURRENCE = {"none", "daily", "weekly"}
 
 
 class CreateReminderArgs(BaseModel):
@@ -34,11 +35,34 @@ class CreateReminderArgs(BaseModel):
             "'生成一句早间饮食注意事项'. The scheduled agent will generate the final message at send time."
         ),
     )
+    recurrence: str = Field(
+        default="none",
+        description=(
+            "Recurrence rule: 'none' (one-time, default), 'daily' (every day at the same time), "
+            "or 'weekly' (every week on the same weekday/time). For a recurring reminder, remind_at "
+            "is the first occurrence; the series auto-stops when the 28-day service window ends and "
+            "can be cancelled anytime via cancel_group_reminder."
+        ),
+    )
+
+
+class CancelReminderArgs(BaseModel):
+    task_id: int | None = Field(
+        default=None,
+        description="Specific pending reminder id to cancel (from list_group_reminders). Omit to auto-pick when only one is pending.",
+    )
+    cancel_all: bool = Field(
+        default=False,
+        description="Cancel all pending reminders for the current group when true.",
+    )
 
 
 def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> list[BaseTool]:
-    async def create_group_reminder(remind_at: str, content: str) -> dict[str, Any]:
+    async def create_group_reminder(remind_at: str, content: str, recurrence: str = "none") -> dict[str, Any]:
         tz = ZoneInfo(settings.reminder_timezone)
+        recurrence = (recurrence or "none").strip().lower()
+        if recurrence not in _ALLOWED_RECURRENCE:
+            return {"ok": False, "error": "循环规则只支持单次(none)、每天(daily)、每周(weekly)。"}
         parsed = _parse_remind_at(remind_at, tz)
         if parsed is None:
             return {"ok": False, "error": "提醒时间不明确，请先追问具体日期和时间。"}
@@ -93,6 +117,7 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
                 trigger_message_id=context.trigger_id,
                 remind_at=remind_local.astimezone(timezone.utc),
                 content=clean_content,
+                recurrence=recurrence,
                 status=AgentReminderTaskStatus.PENDING,
             )
             session.add(task)
@@ -100,28 +125,144 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
             task_id = task.id
             await session.commit()
 
+        recur_note = {
+            "none": "已创建一次性群提醒；到点后会先由 Agent 结合当时上下文生成最终提醒文案。",
+            "daily": "已创建每天循环群提醒；服务期结束会自动停止，用户可随时取消。",
+            "weekly": "已创建每周循环群提醒；服务期结束会自动停止，用户可随时取消。",
+        }
         return {
             "ok": True,
             "task_id": task_id,
             "remind_at": remind_local.isoformat(),
             "content": clean_content,
-            "note": "已创建一次性群提醒；到点后会先由 Agent 结合当时上下文生成最终提醒文案。",
+            "recurrence": recurrence,
+            "note": recur_note[recurrence],
         }
+
+    async def list_group_reminders() -> dict[str, Any]:
+        tz = ZoneInfo(settings.reminder_timezone)
+        async with SessionLocal() as session:
+            tasks = list(
+                await session.scalars(
+                    select(AgentReminderTask)
+                    .where(
+                        AgentReminderTask.service_case_id == context.service_case_id,
+                        AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+                    )
+                    .order_by(AgentReminderTask.remind_at)
+                )
+            )
+        pending = [
+            {
+                "task_id": task.id,
+                "remind_at": task.remind_at.astimezone(tz).isoformat(),
+                "content": task.content,
+                "recurrence": task.recurrence,
+            }
+            for task in tasks
+        ]
+        return {"ok": True, "pending": pending, "count": len(pending)}
+
+    async def cancel_group_reminder(task_id: int | None = None, cancel_all: bool = False) -> dict[str, Any]:
+        tz = ZoneInfo(settings.reminder_timezone)
+        async with SessionLocal() as session:
+            tasks = list(
+                await session.scalars(
+                    select(AgentReminderTask)
+                    .where(
+                        AgentReminderTask.service_case_id == context.service_case_id,
+                        AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+                    )
+                    .order_by(AgentReminderTask.remind_at)
+                )
+            )
+            if not tasks:
+                return {"ok": True, "cancelled": [], "note": "当前没有待发提醒。"}
+
+            if task_id is not None:
+                targets = [t for t in tasks if t.id == task_id]
+                if not targets:
+                    return {
+                        "ok": False,
+                        "error": f"没有找到编号 {task_id} 的待发提醒（可能已发送或已取消）。",
+                        "pending": _pending_view(tasks, tz),
+                    }
+            elif cancel_all:
+                targets = tasks
+            elif len(tasks) == 1:
+                targets = tasks
+            else:
+                # 多条待发且未指明取消哪个：交回列表让 Agent 反问用户。
+                return {
+                    "ok": True,
+                    "need_choice": True,
+                    "pending": _pending_view(tasks, tz),
+                    "note": "有多条待发提醒，请先确认用户要取消哪一个（或全部）。",
+                }
+
+            now_utc = datetime.now(timezone.utc)
+            cancelled = []
+            for task in targets:
+                task.status = AgentReminderTaskStatus.CANCELLED
+                task.cancelled_at = now_utc
+                cancelled.append(
+                    {
+                        "task_id": task.id,
+                        "remind_at": task.remind_at.astimezone(tz).isoformat(),
+                        "content": task.content,
+                        "recurrence": task.recurrence,
+                    }
+                )
+            await session.commit()
+        return {"ok": True, "cancelled": cancelled, "count": len(cancelled)}
 
     return [
         StructuredTool.from_function(
             coroutine=create_group_reminder,
             name="create_group_reminder",
             description=(
-                "Create a one-time scheduled agent reminder for the current group only. At the due time, the "
-                "scheduler will run the agent again to generate the final message from the stored instruction. "
-                "Use when the user explicitly asks the bot to remind, advise, suggest, or proactively say "
-                "something at a specific future date/time. The remind_at argument must be a concrete ISO-8601 "
-                "datetime; if the time is vague, ask one clarification before calling this tool. Does not support "
-                "recurring daily/weekly reminders."
+                "Create a scheduled agent reminder for the current group only. At the due time, the scheduler "
+                "runs the agent again to generate the final message from the stored instruction. Use when the "
+                "user explicitly asks the bot to remind, advise, suggest, or proactively say something at a "
+                "specific future date/time. The remind_at argument must be a concrete ISO-8601 datetime; if the "
+                "time is vague, ask one clarification before calling this tool. Set recurrence to 'daily' or "
+                "'weekly' for repeating reminders (remind_at is the first occurrence); recurring series auto-stop "
+                "when the 28-day service window ends and can be cancelled anytime."
             ),
             args_schema=CreateReminderArgs,
-        )
+        ),
+        StructuredTool.from_function(
+            coroutine=list_group_reminders,
+            name="list_group_reminders",
+            description=(
+                "List all pending (not-yet-sent) reminders for the current group, with their id, local time, "
+                "content and recurrence. Call this before cancel_group_reminder when the user's reference is "
+                "ambiguous, so you can map it to a task_id."
+            ),
+        ),
+        StructuredTool.from_function(
+            coroutine=cancel_group_reminder,
+            name="cancel_group_reminder",
+            description=(
+                "Cancel pending reminder(s) for the current group when the user says things like '别提醒了' / "
+                "'取消提醒' / '晚A那个先别提醒'. Pass task_id to cancel a specific one, cancel_all=true to cancel "
+                "every pending reminder. With no args it auto-cancels when exactly one is pending, otherwise it "
+                "returns the pending list (need_choice) so you can ask the user which to cancel."
+            ),
+            args_schema=CancelReminderArgs,
+        ),
+    ]
+
+
+def _pending_view(tasks: list[AgentReminderTask], tz: ZoneInfo) -> list[dict[str, Any]]:
+    return [
+        {
+            "task_id": task.id,
+            "remind_at": task.remind_at.astimezone(tz).isoformat(),
+            "content": task.content,
+            "recurrence": task.recurrence,
+        }
+        for task in tasks
     ]
 
 

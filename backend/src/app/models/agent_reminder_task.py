@@ -39,6 +39,8 @@ class AgentReminderTask(TimestampMixin, Base):
     trigger_message_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id"), index=True)
     remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 循环规则：none=单次(默认)，daily=每天，weekly=每周。到点成功发出后由调度器按此排下一次。
+    recurrence: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
     status: Mapped[AgentReminderTaskStatus] = mapped_column(
         Enum(AgentReminderTaskStatus, name="agent_reminder_task_status"),
         nullable=False,

@@ -347,6 +347,9 @@ class ReminderService:
                     task.status = AgentReminderTaskStatus.SENT
                     task.sent_message_id = message.id
                     task.sent_at = message.sent_at
+                    # 循环提醒：本次成功发出后，若下一次仍落在服务窗口内，排下一条待发任务。
+                    # 每条循环序列任一时刻只有 1 条 PENDING，用户取消这条即终止整个序列。
+                    await _schedule_next_recurrence(session, task, service_case, now, tz)
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error if result else "channel send failed"
@@ -1172,6 +1175,46 @@ async def _send_reminder_with_at(chat_id: str, content: str, at_target: tuple[st
         )
     result = await _send_channel_text_with_retries(chat_id, content)
     return result, content
+
+
+def _next_recurrence_at(remind_at: datetime, recurrence: str, now: datetime, tz: ZoneInfo) -> datetime | None:
+    """按循环规则算出严格晚于 now 的下一次触发时间（本地时区推进，跳过已错过的时段）。
+
+    daily=+1天，weekly=+7天；带迭代上限防呆（调度器长时间停机也不会死循环）。
+    """
+    step = {"daily": timedelta(days=1), "weekly": timedelta(weeks=1)}.get(recurrence)
+    if step is None:
+        return None
+    base = remind_at.astimezone(tz) if remind_at.tzinfo else remind_at.replace(tzinfo=timezone.utc).astimezone(tz)
+    now_local = now.astimezone(tz)
+    nxt = base + step
+    for _ in range(400):  # 上限覆盖 >1 年的 daily，正常只推进 1 次
+        if nxt > now_local:
+            return nxt
+        nxt += step
+    return None
+
+
+async def _schedule_next_recurrence(session, task, service_case, now: datetime, tz: ZoneInfo) -> None:
+    """循环提醒成功发出后，若下一次仍在服务窗口内，新建一条 PENDING 续排；否则序列自然结束。"""
+    if task.recurrence not in {"daily", "weekly"}:
+        return
+    next_at = _next_recurrence_at(task.remind_at, task.recurrence, now, tz)
+    if next_at is None:
+        return
+    if service_window_ended(service_case, next_at, tz):
+        return  # 下一次已越过服务窗口，停止循环
+    session.add(
+        AgentReminderTask(
+            service_case_id=task.service_case_id,
+            group_id=task.group_id,
+            trigger_message_id=task.trigger_message_id,
+            remind_at=next_at.astimezone(timezone.utc),
+            content=task.content,
+            recurrence=task.recurrence,
+            status=AgentReminderTaskStatus.PENDING,
+        )
+    )
 
 
 async def _recent_chat_lines(session, service_case_id: int, *, limit: int = 10) -> list[str]:
