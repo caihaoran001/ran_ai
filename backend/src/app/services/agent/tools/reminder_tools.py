@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -28,7 +29,10 @@ class CreateReminderArgs(BaseModel):
     content: str = Field(
         min_length=1,
         max_length=_MAX_REMINDER_INSTRUCTION_CHARS,
-        description="Reminder goal/instruction. The scheduled agent will generate the final message at send time.",
+        description=(
+            "Reminder goal/instruction without the scheduling time, e.g. '称体重' or "
+            "'生成一句早间饮食注意事项'. The scheduled agent will generate the final message at send time."
+        ),
     )
 
 
@@ -113,4 +117,22 @@ def _parse_remind_at(value: str, tz: ZoneInfo) -> datetime | None:
 
 def _clean_content(value: str) -> str:
     clean = " ".join((value or "").split())
+    clean = _strip_leading_schedule_phrase(clean).strip(" ，,。")
     return clean[:_MAX_REMINDER_INSTRUCTION_CHARS]
+
+
+def _strip_leading_schedule_phrase(value: str) -> str:
+    return re.sub(
+        (
+            r"^请?(?:在)?"
+            r"(?:(?:今天|明天|后天|今晚|明早|明晚|周[一二三四五六日天]|星期[一二三四五六日天])\s*)?"
+            r"(?:(?:早上|上午|中午|下午|晚上|夜里)\s*)?"
+            r"(?:[0-2]?\d|[一二两三四五六七八九十]{1,3})"
+            r"(?:[:：点时](?:[0-5]?\d|[零一二三四五六七八九十]{1,3})?(?:分)?)?"
+            r"(?:左右|前后|的时候)?\s*"
+            r"(?:提醒(?:一下)?(?:我|我们|群里)?|发(?:一条|个)?|说(?:一声|一句)?)\s*"
+        ),
+        "",
+        value,
+        count=1,
+    )

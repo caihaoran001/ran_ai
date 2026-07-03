@@ -317,8 +317,9 @@ async def generate_scheduled_reminder_reply(
     user_query = (
         "这是一条到点执行的群内定时提醒任务。请不要追问确认，也不要创建新的提醒；"
         "直接生成现在要发到群里的最终提醒文案。文案要短、自然，优先结合当前服务进度、"
-        "近期打卡、体重趋势、用户状态画像和业务知识；如果原始要求只是普通事项，也按原意简单提醒。\n"
-        f"原始提醒要求：{reminder_instruction}"
+        "近期打卡、体重趋势、用户状态画像和业务知识；如果提醒目标只是普通事项，也按原意简单提醒。"
+        "现在已经到了执行时间，不要复述或强调原定时间；如果提醒目标里仍残留日期/几点等时间表达，忽略时间壳，只处理要提醒的事情。\n"
+        f"提醒目标：{reminder_instruction}"
     )
     return await RanrenAgentGraph(
         context=AgentRunContext(service_case_id=service_case_id, trigger_id=trigger_id),

@@ -111,6 +111,29 @@ async def test_create_group_reminder_tool_creates_pending_task(db_session):
 
 
 @pytest.mark.asyncio
+async def test_create_group_reminder_tool_strips_schedule_time_from_instruction(db_session):
+    service_case = await _case(db_session)
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+    remind_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+
+    result = await tools["create_group_reminder"].ainvoke(
+        {"remind_at": remind_at, "content": "明天上午9点提醒我称体重"}
+    )
+
+    assert result["ok"] is True
+    task = await db_session.scalar(select(AgentReminderTask).where(AgentReminderTask.id == result["task_id"]))
+    assert task is not None
+    assert task.content == "称体重"
+    assert result["content"] == "称体重"
+
+
+@pytest.mark.asyncio
 async def test_create_group_reminder_tool_rejects_past_time(db_session):
     service_case = await _case(db_session)
     tools = {
