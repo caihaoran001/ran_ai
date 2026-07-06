@@ -167,6 +167,7 @@ _INBOUND_IMAGE_ALLOWED_HOST_SUFFIXES = (
     ".qq.com",
     ".myqcloud.com",
 )
+_QIWE_IMAGE_MSG_TYPES = (7, 14, 101)
 
 
 def _is_allowed_image_host(file_url: str) -> bool:
@@ -238,6 +239,37 @@ def _explicit_bot_query_text(message: ChannelMessage) -> str | None:
         return None
     text = re.sub(r"^(?:@\S+\s*)+", "", text).strip()
     return text or None
+
+
+def _raw_payload_items(raw_payload: Any) -> list[dict[str, Any]]:
+    if isinstance(raw_payload, list):
+        items: list[dict[str, Any]] = []
+        for entry in raw_payload:
+            items.extend(_raw_payload_items(entry))
+        return items
+    if not isinstance(raw_payload, dict):
+        return []
+    data = raw_payload.get("data")
+    if isinstance(data, list) and data:
+        return [item for item in data if isinstance(item, dict)]
+    return [raw_payload]
+
+
+def _is_image_payload_item(item: dict[str, Any]) -> bool:
+    return item.get("msgType") in _QIWE_IMAGE_MSG_TYPES
+
+
+def _image_payload_items(message: ChannelMessage) -> list[dict[str, Any]]:
+    return [item for item in _raw_payload_items(message.raw_payload) if _is_image_payload_item(item)]
+
+
+def _strip_image_placeholders(text: str) -> str:
+    lines = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped and stripped != "[图片]":
+            lines.append(stripped)
+    return "\n".join(lines).strip()
 
 
 def _decrypt_image_bytes(encrypted_data: bytes, aes_key_str: str) -> bytes:
@@ -344,20 +376,22 @@ class RanrenAIEngine:
         # 新逻辑每个新风险事件都会@、只在短期内防刷屏）。节流时间戳持久化在
         # service_cases.last_handoff_at（见 _recently_handed_off / _mark_handoff），重启不再清零。
 
-    async def _process_inbound_image(self, message_id: int, message: ChannelMessage, service_case_id: int | None) -> None:
+    async def _describe_inbound_image(
+        self,
+        *,
+        message_id: int,
+        image_payload: dict[str, Any],
+        service_case_id: int | None,
+    ) -> tuple[str, dict[str, Any] | None]:
         try:
-            raw_payload = message.raw_payload or {}
-            data_list = raw_payload.get("data") or [raw_payload]
-            item = data_list[0] if data_list else {}
-            msg_data = item.get("msgData") or {}
+            msg_data = image_payload.get("msgData") or {}
 
             file_url = msg_data.get("fileBigHttpUrl") or msg_data.get("fileMiddleHttpUrl") or msg_data.get("cdnUrl") or msg_data.get("cloudUrl")
             file_aes_key = msg_data.get("fileAesKey") or msg_data.get("aesKey")
             file_auth_key = msg_data.get("fileAuthKey")
 
             if not file_url:
-                logger.warning("No image file URL found in raw payload for message_id=%s", message_id)
-                return
+                raise ValueError("no image file URL found in raw payload")
 
             # Clean URL
             file_url = file_url.replace("\n", "").replace("\r", "").strip()
@@ -424,41 +458,88 @@ class RanrenAIEngine:
                 message_id=message_id,
             )
 
-            # Update Message in Database
+            image_info = {
+                "local_path": str(file_path.resolve()),
+                "filename": filename,
+                "width": msg_data.get("width"),
+                "height": msg_data.get("height"),
+                "file_size": len(decrypted_bytes),
+                "content_type": mime_type,
+            }
+            return description, image_info
+        except Exception:
+            logger.exception("Error processing inbound image for message_id=%s", message_id)
+            return "用户发来一张图片（暂未能识别其内容）。", None
+
+    async def _process_inbound_image(self, message_id: int, message: ChannelMessage, service_case_id: int | None) -> None:
+        image_items = _image_payload_items(message)
+        description, image_info = await self._describe_inbound_image(
+            message_id=message_id,
+            image_payload=image_items[0] if image_items else {},
+            service_case_id=service_case_id,
+        )
+        try:
             async with SessionLocal() as session:
                 db_msg = await session.get(Message, message_id)
                 if db_msg:
                     db_msg.content = description
-                    
                     analysis = db_msg.analysis_json or {}
-                    analysis["image_info"] = {
-                        "local_path": str(file_path.resolve()),
-                        "filename": filename,
-                        "width": msg_data.get("width"),
-                        "height": msg_data.get("height"),
-                        "file_size": len(decrypted_bytes),
-                        "content_type": mime_type,
-                    }
+                    if image_info:
+                        analysis["image_info"] = image_info
                     db_msg.analysis_json = analysis
                     session.add(db_msg)
                     await session.commit()
-                    message.text = description
-                    logger.info("Successfully updated message_id=%s content with description: '%s'", message_id, description)
         except Exception:
-            logger.exception("Error processing inbound image for message_id=%s", message_id)
-            # 兜底：下载/解密/识别任一步失败时，给一个有意义的占位描述，
-            # 避免 message.text 停留在 "[图片]" 而触发 AI 对空内容瞎回复。
-            fallback = "用户发来一张图片（暂未能识别其内容）。"
-            try:
-                async with SessionLocal() as session:
-                    db_msg = await session.get(Message, message_id)
-                    if db_msg and (not db_msg.content or db_msg.content in ("[图片]", "[表情/图片等非文本消息]")):
-                        db_msg.content = fallback
-                        session.add(db_msg)
-                        await session.commit()
-            except Exception:
-                logger.exception("Failed to set fallback content for message_id=%s", message_id)
-            message.text = fallback
+            logger.exception("Failed to persist image description for message_id=%s", message_id)
+        message.text = description
+
+    async def _process_embedded_images_for_text(
+        self,
+        message_id: int,
+        message: ChannelMessage,
+        service_case_id: int | None,
+        user_text: str,
+    ) -> None:
+        image_items = _image_payload_items(message)
+        if not image_items:
+            return
+
+        descriptions: list[str] = []
+        image_infos: list[dict[str, Any]] = []
+        for idx, image_payload in enumerate(image_items, start=1):
+            description, image_info = await self._describe_inbound_image(
+                message_id=message_id,
+                image_payload=image_payload,
+                service_case_id=service_case_id,
+            )
+            prefix = "图片识别结果" if len(image_items) == 1 else f"图片{idx}识别结果"
+            descriptions.append(f"{prefix}：{description}")
+            if image_info:
+                image_infos.append(image_info)
+
+        parts = descriptions[:]
+        if user_text:
+            parts.append(f"用户补充文字：{user_text}")
+        merged_text = "\n".join(parts).strip()
+        if not merged_text:
+            merged_text = "用户发来一张图片（暂未能识别其内容）。"
+
+        try:
+            async with SessionLocal() as session:
+                db_msg = await session.get(Message, message_id)
+                if db_msg:
+                    db_msg.content = merged_text
+                    analysis = db_msg.analysis_json or {}
+                    if image_infos:
+                        analysis["image_infos"] = image_infos
+                        analysis["image_info"] = image_infos[0]
+                    analysis["image_context_only"] = not bool(user_text)
+                    db_msg.analysis_json = analysis
+                    session.add(db_msg)
+                    await session.commit()
+        except Exception:
+            logger.exception("Failed to persist embedded image descriptions for message_id=%s", message_id)
+        message.text = merged_text
 
     async def _process_inbound_file(
         self, message_id: int, message: ChannelMessage, service_case_id: int | None
@@ -582,6 +663,7 @@ class RanrenAIEngine:
         analysis: dict | None = None
         inbound_id: int | None = None
         recent_user_messages: list[str] = []
+        image_analysis_content: str | None = None
 
         is_staff = False
         sender_type = MessageSenderType.USER
@@ -758,11 +840,22 @@ class RanrenAIEngine:
             )
             return
 
+        if message.message_type == "text" and inbound_id is not None and _image_payload_items(message):
+            image_analysis_content = _strip_image_placeholders(message.text)
+            await self._process_embedded_images_for_text(
+                inbound_id,
+                message,
+                service_case_id,
+                image_analysis_content,
+            )
+
         if message.message_type != "text":
             # 如果是图片消息，触发后台下载、解密与大模型翻译
             if message.message_type == "image" and inbound_id is not None:
                 await self._process_inbound_image(inbound_id, message, service_case_id)
-                # 图片消息翻译完成后，其在内存中的 text 属性已被更新为描述，继续向下执行流程以触发自动回复、成效提取和风险评估
+                # 图片消息翻译完成后，其在内存中的 text 属性已被更新为描述，继续向下执行流程触发自动回复。
+                # 视觉描述不是用户原话，不进入风控/成效结构化提取。
+                image_analysis_content = ""
             else:
                 # 文件消息：后台下载/解密/抽取文本入库（与新旧回复链路无关的共享层，供新 Agent 链路 read_group_file 读取）。
                 if message.message_type == "file" and inbound_id is not None:
@@ -822,56 +915,65 @@ class RanrenAIEngine:
             return
 
         if service_case_id and inbound_id and not is_staff:
-            analysis = await analyze_intervention(
-                source="chat_message",
-                content=message.text,
-                context={
-                    "service_case_id": service_case_id,
-                    "message_id": inbound_id,
-                    "group_id": message.chat_id,
-                    "current_message": message.text,
-                    "recent_user_messages": recent_user_messages,
-                },
-            )
-            case_risk_level = await self._store_intervention_analysis(
-                service_case_id=service_case_id,
-                inbound_id=inbound_id,
-                analysis=analysis,
-            )
-            # 转人工 @班主任 = 当前句需要任何人工介入(requires_human_intervention，含急性/高风险/诉求/中风险)，
-            # 外加：持久高风险用户(risk_level=high)问需专业判断的健康/方案问题(health_consultation)。
-            # 注：暂不使用「AI 生成回复进待审核」机制——凡需介入一律 @班主任转人工，AI 不再生成待审核回复。
-            health_handoff = _requires_health_handoff(analysis, case_risk_level)
-            needs_handoff = bool(analysis.get("requires_human_intervention")) or health_handoff
-            if needs_handoff:
-                if not await self._recently_handed_off(service_case_id):
-                    await self._mark_handoff(service_case_id)
-                    await self._reply_human_handoff(message, service_case_id=service_case_id, trigger_id=inbound_id)
-                    logger.info(
-                        "RanrenAI handed off to staff chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
-                        message.chat_id,
-                        inbound_id,
-                        service_case_id,
-                        (time.monotonic() - started_at) * 1000,
-                    )
-                else:
-                    # 30 分钟内已 @ 过班主任，不重复 @ 刷屏；同样不生成 AI 回复，仅留痕返回。
-                    logger.info(
-                        "RanrenAI skip duplicate handoff within 30min chat_id=%s trigger_id=%s service_case_id=%s",
-                        message.chat_id,
-                        inbound_id,
-                        service_case_id,
-                    )
-                return
-            outcome_result = await self._run_outcome_analysis(
-                service_case_id=service_case_id,
-                inbound_id=inbound_id,
-                analysis=analysis,
-                recent_user_messages=recent_user_messages,
-            )
-            if outcome_result is not None:
-                analysis = {**analysis, "outcome": outcome_result}
-                await self._update_inbound_analysis(inbound_id, analysis)
+            if image_analysis_content is not None and not image_analysis_content:
+                logger.info(
+                    "RanrenAI skip intervention/outcome analysis for image-only message chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id,
+                    inbound_id,
+                    service_case_id,
+                )
+            else:
+                analysis_input = image_analysis_content or message.text
+                analysis = await analyze_intervention(
+                    source="chat_message",
+                    content=analysis_input,
+                    context={
+                        "service_case_id": service_case_id,
+                        "message_id": inbound_id,
+                        "group_id": message.chat_id,
+                        "current_message": analysis_input,
+                        "recent_user_messages": recent_user_messages,
+                    },
+                )
+                case_risk_level = await self._store_intervention_analysis(
+                    service_case_id=service_case_id,
+                    inbound_id=inbound_id,
+                    analysis=analysis,
+                )
+                # 转人工 @班主任 = 当前句需要任何人工介入(requires_human_intervention，含急性/高风险/诉求/中风险)，
+                # 外加：持久高风险用户(risk_level=high)问需专业判断的健康/方案问题(health_consultation)。
+                # 注：暂不使用「AI 生成回复进待审核」机制——凡需介入一律 @班主任转人工，AI 不再生成待审核回复。
+                health_handoff = _requires_health_handoff(analysis, case_risk_level)
+                needs_handoff = bool(analysis.get("requires_human_intervention")) or health_handoff
+                if needs_handoff:
+                    if not await self._recently_handed_off(service_case_id):
+                        await self._mark_handoff(service_case_id)
+                        await self._reply_human_handoff(message, service_case_id=service_case_id, trigger_id=inbound_id)
+                        logger.info(
+                            "RanrenAI handed off to staff chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
+                            message.chat_id,
+                            inbound_id,
+                            service_case_id,
+                            (time.monotonic() - started_at) * 1000,
+                        )
+                    else:
+                        # 30 分钟内已 @ 过班主任，不重复 @ 刷屏；同样不生成 AI 回复，仅留痕返回。
+                        logger.info(
+                            "RanrenAI skip duplicate handoff within 30min chat_id=%s trigger_id=%s service_case_id=%s",
+                            message.chat_id,
+                            inbound_id,
+                            service_case_id,
+                        )
+                    return
+                outcome_result = await self._run_outcome_analysis(
+                    service_case_id=service_case_id,
+                    inbound_id=inbound_id,
+                    analysis=analysis,
+                    recent_user_messages=recent_user_messages,
+                )
+                if outcome_result is not None:
+                    analysis = {**analysis, "outcome": outcome_result}
+                    await self._update_inbound_analysis(inbound_id, analysis)
 
         if not service_case_id:
             logger.info(

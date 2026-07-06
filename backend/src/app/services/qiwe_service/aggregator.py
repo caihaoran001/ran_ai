@@ -119,6 +119,23 @@ class QiWeMessageAggregator:
                     message.message_id,
                 )
                 return
+            key = _conversation_key(message)
+            batch = self._batches.get(key)
+            if message.message_type == "text" and batch and (
+                batch.messages or (batch.processing_task and not batch.processing_task.done())
+            ):
+                batch.messages.append(message)
+                event_id = await persist_inbound_event(message)
+                if event_id is not None:
+                    batch.event_ids.append(event_id)
+                logger.info(
+                    "QiWe immediate text queued behind pending batch chat_id=%s user_id=%s message_id=%s pending_size=%s",
+                    message.chat_id,
+                    message.user_id,
+                    message.message_id,
+                    len(batch.messages),
+                )
+                return
         logger.info(
             "QiWe immediate dispatch start chat_id=%s user_id=%s message_id=%s",
             message.chat_id,

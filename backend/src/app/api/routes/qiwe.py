@@ -95,7 +95,10 @@ def _is_authorized_callback(request: Request, settings: Settings) -> bool:
 
 
 def _bypass_aggregator(message: ChannelMessage) -> bool:
-    # 非文本(表情/图片等)绕过聚合，直接走 engine：只入库留痕、不回复，且不与文本消息合并
+    # 图片进入聚合窗口：用户常见操作是先发图、再补一句问题，需要合成一轮回复。
+    if message.message_type == "image":
+        return False
+    # 文件/语音/表情等仍绕过聚合，直接走 engine 的对应留痕/回执逻辑。
     if message.message_type != "text":
         return True
     # 群内显式@机器人并带正文：立即作为一次独立提问处理，避免被8秒聚合窗口混入普通发言

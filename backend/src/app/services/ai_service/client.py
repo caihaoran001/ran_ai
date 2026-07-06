@@ -175,15 +175,21 @@ class AIService:
         )
 
         try:
-            description = await self._translate_image_once(
-                model=model,
-                system_prompt=system_prompt,
-                base64_image=base64_image,
-                mime_type=mime_type,
-                scenario="qwen_vl_translate",
-                service_case_id=service_case_id,
-                message_id=message_id,
+            description = await asyncio.wait_for(
+                self._translate_image_once(
+                    model=model,
+                    system_prompt=system_prompt,
+                    base64_image=base64_image,
+                    mime_type=mime_type,
+                    scenario="qwen_vl_translate",
+                    service_case_id=service_case_id,
+                    message_id=message_id,
+                ),
+                timeout=_normalized_timeout(self.settings.ai_timeout_seconds),
             )
+        except asyncio.TimeoutError:
+            logger.exception("Qwen VL image translation timed out")
+            return "用户上传了一张图片，但解析描述超时。"
         except Exception:
             logger.exception("Qwen VL image translation failed")
             return "用户上传了一张图片，但解析描述失败。"

@@ -50,7 +50,7 @@ class Settings(BaseSettings):
         validation_alias="QWEN_BASE_URL",
     )
     qwen_api_key: str = Field(default="", validation_alias="QWEN_API_KEY")
-    qwen_model: str = Field(default="qwen3.7-plus", validation_alias="QWEN_MODEL")
+    qwen_model: str = Field(default="qwen3.5-plus", validation_alias="QWEN_MODEL")
     # qwen3.5-plus 官方阶梯价（中国内地，元/百万 tokens）：按单次请求输入 tokens 所在档位计价。
     qwen_prompt_cost_under_128k_per_1m_tokens: float = Field(
         default=0.8,

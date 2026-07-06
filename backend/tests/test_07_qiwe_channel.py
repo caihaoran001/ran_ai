@@ -10,7 +10,7 @@ import pytest
 from app.api.routes.qiwe import _bypass_aggregator, _channel_message_from_qiwe, _is_authorized_callback
 from app.services.channels.base import ChannelMessage, ChannelSendResult
 from app.services.channels.qiwe import QiWeChannel
-from app.services.qiwe_service.aggregator import QiWeMessageAggregator
+from app.services.qiwe_service.aggregator import QiWeMessageAggregator, _merge_messages
 from app.services.ranren_ai.engine import RanrenAIEngine
 from app.models.message import Message
 
@@ -191,6 +191,62 @@ async def test_qiwe_aggregator_merges_consecutive_user_messages():
 
 
 @pytest.mark.asyncio
+async def test_qiwe_aggregator_merges_image_then_text():
+    engine = FakeEngine()
+    aggregator = QiWeMessageAggregator(FakeChannel(), window_seconds=0.01, engine=engine)
+
+    await aggregator.enqueue(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id="room-1",
+            chat_type="group",
+            text="[图片]",
+            message_id="img-1",
+            user_id="u1",
+            message_type="image",
+            raw_payload={"msgType": 101, "msgData": {"fileBigHttpUrl": "https://example.qpic.cn/a.jpg"}},
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+    await aggregator.enqueue(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id="room-1",
+            chat_type="group",
+            text="这个能吃吗",
+            message_id="txt-1",
+            user_id="u1",
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+    await asyncio.sleep(0.03)
+
+    assert len(engine.messages) == 1
+    assert engine.messages[0].message_type == "text"
+    assert engine.messages[0].text == "[图片]\n这个能吃吗"
+    assert isinstance(engine.messages[0].raw_payload, list)
+
+
+def test_qiwe_merge_single_image_keeps_image_type():
+    image = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="[图片]",
+        message_id="img-1",
+        user_id="u1",
+        message_type="image",
+        raw_payload={"msgType": 101, "msgData": {"fileBigHttpUrl": "https://example.qpic.cn/a.jpg"}},
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    merged = _merge_messages([image])
+
+    assert merged.message_type == "image"
+    assert merged.text == "[图片]"
+
+
+@pytest.mark.asyncio
 async def test_qiwe_aggregator_ignores_duplicate_message_id():
     engine = FakeEngine()
     aggregator = QiWeMessageAggregator(FakeChannel(), window_seconds=0.01, engine=engine)
@@ -265,6 +321,41 @@ async def test_qiwe_aggregator_dispatch_now_reuses_dedupe():
 
     assert len(engine.messages) == 1
     assert engine.messages[0].text == "发送本群入营问卷"
+
+
+@pytest.mark.asyncio
+async def test_qiwe_aggregator_queues_immediate_text_behind_pending_image():
+    engine = FakeEngine()
+    aggregator = QiWeMessageAggregator(FakeChannel(), window_seconds=0.01, engine=engine)
+
+    await aggregator.enqueue(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id="room-1",
+            chat_type="group",
+            text="[图片]",
+            message_id="img-pending",
+            user_id="u1",
+            message_type="image",
+            raw_payload={"msgType": 101, "msgData": {"fileBigHttpUrl": "https://example.qpic.cn/a.jpg"}},
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+    await aggregator.dispatch_now(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id="room-1",
+            chat_type="group",
+            text="@机器人 这个能吃吗",
+            message_id="txt-immediate",
+            user_id="u1",
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+    await asyncio.sleep(0.03)
+
+    assert len(engine.messages) == 1
+    assert engine.messages[0].text == "[图片]\n@机器人 这个能吃吗"
 
 
 @pytest.mark.asyncio
@@ -373,6 +464,7 @@ def test_qiwe_callback_image_event_to_channel_message():
     assert message.user_id == "7881300658070689"
     assert message.message_type == "image"
     assert message.text == "[图片]"
+    assert _bypass_aggregator(message) is False
 
 
 def test_qiwe_callback_file_event_to_channel_message():
