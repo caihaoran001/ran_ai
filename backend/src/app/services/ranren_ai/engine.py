@@ -2278,6 +2278,44 @@ async def reconcile_interrupted_sends(startup_time: datetime) -> None:
         )
 
 
+async def mark_outbound_blocked_by_channel_id(channel_message_id: str, reason: str) -> bool:
+    """企微风控拦截对账：收到 spam_block 通知后，把对应出站消息标为 FAILED。
+
+    发送时渠道 API 会当场返回成功、消息记为 SENT；但账号被风控时，企微随后会异步回一条
+    spam_block 通知（msgType=1011），说明这条其实没能进群。此处按通知携带的渠道消息 id
+    (wecom_message_id) 回查那条已发记录，改为 FAILED 并写入风控原因，让后台如实反映「没送达」。
+    只降级 SENT/SENDING；已是 FAILED 或找不到则跳过。返回是否命中并更新了一条记录。
+    """
+    channel_message_id = (channel_message_id or "").strip()
+    if not channel_message_id:
+        return False
+    async with SessionLocal() as session:
+        row = await session.scalar(
+            select(Message).where(
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.wecom_message_id == channel_message_id,
+            )
+        )
+        if row is None:
+            logger.warning(
+                "mark_outbound_blocked_by_channel_id: no outbound message for channel_message_id=%s",
+                channel_message_id,
+            )
+            return False
+        if row.status not in (MessageStatus.SENT, MessageStatus.SENDING):
+            return False
+        row.status = MessageStatus.FAILED
+        row.error = reason or "QiWe风控拦截：消息未送达"
+        row.sent_at = None
+        await session.commit()
+        logger.warning(
+            "mark_outbound_blocked_by_channel_id: marked message id=%s as FAILED (QiWe spam_block) channel_message_id=%s",
+            row.id,
+            channel_message_id,
+        )
+        return True
+
+
 async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: datetime) -> None:
     """Scan and reprocess inbound user messages that were received but never processed (e.g. due to service restart).
     This function is run on application startup to recover any messages that were lost/interrupted during deployment restart.

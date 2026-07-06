@@ -1237,3 +1237,69 @@ async def test_replay_pending_inbound_events_skips_already_handled_event(db_sess
     assert calls == []
     await db_session.refresh(event)
     assert event.status == InboundEvent.STATUS_PROCESSED
+
+
+def test_spam_block_notice_parses_and_ignores_normal():
+    from app.api.routes.qiwe import _spam_block_notice
+
+    # 风控拦截通知：msgType=1011 + spam_block_ 前缀 → 抽出渠道id和解码后的原因
+    blocked = {
+        "cmd": 15000,
+        "msgType": 1011,
+        "msgUniqueIdentifier": "spam_block_CAQQqb2i0gYY=",
+        "msgData": {
+            "base64RawData": "5Zug6LSm5Y+36L+d6KeE77yM5b2T5YmN5Yqf6IO95bey6KKr6ZmQ5Yi25L2/55So44CCIOafpeeci+ivpuaDhQ=="
+        },
+    }
+    result = _spam_block_notice(blocked)
+    assert result is not None
+    channel_message_id, reason = result
+    assert channel_message_id == "CAQQqb2i0gYY="
+    assert "因账号违规" in reason
+
+    # 普通文本消息不应被识别为风控通知
+    normal = {
+        "cmd": 15000,
+        "msgType": 2,
+        "msgUniqueIdentifier": "123",
+        "msgData": {"content": "你好"},
+    }
+    assert _spam_block_notice(normal) is None
+
+
+@pytest.mark.asyncio
+async def test_mark_outbound_blocked_flips_sent_to_failed(db_session):
+    from app.services.ranren_ai.engine import mark_outbound_blocked_by_channel_id
+    from app.models.service_case import ServiceCase, ServiceCaseStatus
+    from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
+    from app.models.user import User
+
+    user = User(name="风控测试用户")
+    db_session.add(user)
+    await db_session.flush()
+    case = ServiceCase(
+        user_id=user.id, case_no="CASE-BLK", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-blk", questionnaire_token="token-blk",
+    )
+    db_session.add(case)
+    await db_session.flush()
+
+    sent = Message(
+        service_case_id=case.id, group_id="group-blk", wecom_message_id="CAQQblocked=",
+        content="这条其实被风控拦了。", message_type="text",
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.SENT,
+        sent_at=datetime.now(timezone.utc),
+    )
+    db_session.add(sent)
+    await db_session.flush()
+
+    hit = await mark_outbound_blocked_by_channel_id("CAQQblocked=", "QiWe风控拦截：因账号违规")
+    assert hit is True
+    await db_session.refresh(sent)
+    assert sent.status == MessageStatus.FAILED
+    assert "风控" in (sent.error or "")
+    assert sent.sent_at is None
+
+    # 不存在的渠道id → 不命中
+    assert await mark_outbound_blocked_by_channel_id("NOPE=", "x") is False

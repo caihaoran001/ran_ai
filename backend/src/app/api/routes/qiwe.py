@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 import hmac
 import logging
@@ -16,6 +17,7 @@ from app.services.channels import get_current_channel, set_current_channel
 from app.services.channels.base import ChannelMessage
 from app.services.channels.qiwe import QiWeChannel
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator
+from app.services.ranren_ai.engine import mark_outbound_blocked_by_channel_id
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
@@ -37,7 +39,21 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
     aggregator = _get_aggregator(request)
     accepted = 0
     bypassed = 0
+    blocked = 0
     for item in payload.get("data") or []:
+        spam_block = _spam_block_notice(item)
+        if spam_block is not None:
+            channel_message_id, reason = spam_block
+            blocked += 1
+            logger.warning(
+                "QiWe callback spam_block notice channel_message_id=%s reason=%s",
+                channel_message_id,
+                reason,
+            )
+            background_tasks.add_task(
+                mark_outbound_blocked_by_channel_id, channel_message_id, reason
+            )
+            continue
         message = _channel_message_from_qiwe(item)
         if message is not None:
             accepted += 1
@@ -54,9 +70,10 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
             else:
                 background_tasks.add_task(aggregator.enqueue, message)
     logger.info(
-        "QiWe callback accepted count=%s bypassed=%s elapsed_ms=%.1f",
+        "QiWe callback accepted count=%s bypassed=%s blocked=%s elapsed_ms=%.1f",
         accepted,
         bypassed,
+        blocked,
         (time.monotonic() - received_at) * 1000,
     )
     return ""
@@ -136,6 +153,35 @@ def _get_aggregator(request: Request) -> QiWeMessageAggregator:
     )
     request.app.state.qiwe_aggregator = aggregator
     return aggregator
+
+
+_SPAM_BLOCK_PREFIX = "spam_block_"
+
+
+def _spam_block_notice(item: dict[str, Any]) -> tuple[str, str] | None:
+    """识别企微风控拦截通知(msgType=1011)：返回(被拦截消息的渠道id, 风控原因文案)。
+
+    通知形如 msgUniqueIdentifier="spam_block_<channel_message_id>"，正文(base64RawData)
+    解码后是「因账号违规，当前功能已被限制使用。查看详情」之类。非该类通知返回 None。
+    """
+    if item.get("cmd") != 15000 or item.get("msgType") != 1011:
+        return None
+    identifier = _as_str(item.get("msgUniqueIdentifier"))
+    if not identifier.startswith(_SPAM_BLOCK_PREFIX):
+        return None
+    channel_message_id = identifier[len(_SPAM_BLOCK_PREFIX):].strip()
+    if not channel_message_id:
+        return None
+    msg_data = item.get("msgData") if isinstance(item.get("msgData"), dict) else {}
+    raw = msg_data.get("base64RawData") or item.get("base64RawData")
+    detail = ""
+    if raw:
+        try:
+            detail = base64.b64decode(raw).decode("utf-8", errors="ignore").strip()
+        except Exception:
+            detail = ""
+    reason = f"QiWe风控拦截：{detail}" if detail else "QiWe风控拦截：消息未送达（账号功能被限制）"
+    return channel_message_id, reason
 
 
 def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
