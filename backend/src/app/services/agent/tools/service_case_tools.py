@@ -20,7 +20,7 @@ from app.models.message import (
     MessageStatus,
 )
 from app.models.service_case import ServiceCase
-from app.models.user_document import DocumentType, UserDocument
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.services.agent.state import AgentRunContext
@@ -308,12 +308,15 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
         document_type: DocumentType | None = None,
         limit: int = 12,
     ) -> dict[str, Any]:
-        """列出当前服务单已生成的交付文档，供 LLM 选择 document_id 后精确读取。"""
+        """列出当前服务单已发送给群里的交付文档，供 LLM 选择 document_id 后精确读取。"""
         limit = max(1, min(int(limit) if isinstance(limit, (int, float)) else 12, 30))
         async with SessionLocal() as session:
             stmt = (
                 select(UserDocument)
-                .where(UserDocument.service_case_id == context.service_case_id)
+                .where(
+                    UserDocument.service_case_id == context.service_case_id,
+                    UserDocument.status == DocumentStatus.SENT,
+                )
                 .order_by(UserDocument.created_at.desc(), UserDocument.id.desc())
                 .limit(min(_MAX_DOCUMENT_SCAN, limit))
             )
@@ -322,9 +325,9 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             documents = [_document_record(row) for row in await session.scalars(stmt)]
             if not documents:
                 doc_hint = (
-                    f"类型为 {document_type.value} 的交付文档"
+                    f"类型为 {document_type.value} 的已发送交付文档"
                     if document_type is not None
-                    else "交付文档"
+                    else "已发送交付文档"
                 )
                 return {"ok": True, "count": 0, "documents": [], "note": f"当前服务单还没有{doc_hint}。"}
             return {"ok": True, "count": len(documents), "documents": documents}
@@ -333,7 +336,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
         document_id: int | None = None,
         document_type: DocumentType | None = None,
     ) -> dict[str, Any]:
-        """读取当前服务单交付文档正文。
+        """读取当前服务单已发送给群里的交付文档正文。
 
         定位优先级：document_id > document_type。阶段报告一类多份，优先 list_delivery_documents 后按 id 读。
         """
@@ -343,6 +346,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                     select(UserDocument).where(
                         UserDocument.id == document_id,
                         UserDocument.service_case_id == context.service_case_id,
+                        UserDocument.status == DocumentStatus.SENT,
                     )
                 )
                 if document is None:
@@ -350,7 +354,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                         "ok": True,
                         "document_id": document_id,
                         "text": "",
-                        "note": f"没找到 document_id={document_id} 对应的当前服务单交付文档，可先用 list_delivery_documents 确认。",
+                        "note": f"没找到 document_id={document_id} 对应的当前服务单已发送交付文档，可先用 list_delivery_documents 确认。",
                     }
             elif document_type is not None:
                 rows = list(
@@ -359,6 +363,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                         .where(
                             UserDocument.service_case_id == context.service_case_id,
                             UserDocument.document_type == document_type,
+                            UserDocument.status == DocumentStatus.SENT,
                         )
                         .order_by(UserDocument.created_at.desc(), UserDocument.id.desc())
                         .limit(_MAX_DOCUMENT_SCAN)
@@ -369,7 +374,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                         "ok": True,
                         "document_type": document_type.value,
                         "text": "",
-                        "note": f"当前服务单还没有类型为 {document_type.value} 的交付文档。",
+                        "note": f"当前服务单还没有类型为 {document_type.value} 的已发送交付文档。",
                     }
                 if len(rows) > 1:
                     return {
@@ -384,7 +389,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                 return {
                     "ok": True,
                     "text": "",
-                    "note": "请先用 list_delivery_documents 查看当前服务单有哪些交付文档，再传 document_id 精确读取。",
+                    "note": "请先用 list_delivery_documents 查看当前服务单有哪些已发送交付文档，再传 document_id 精确读取。",
                 }
 
             record = _document_record(document)
@@ -498,10 +503,11 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             coroutine=list_delivery_documents,
             name="list_delivery_documents",
             description=(
-                "List delivery documents generated for THIS service case, newest first. Returns document_id, "
+                "List delivery documents already sent to the group for THIS service case, newest first. Returns document_id, "
                 "document_type (strict UserDocument.document_type enum), document_type_label, title, status, "
                 "timestamps, readable, and text_length. Use this before reading stage reports or when the user "
-                "does not identify an exact document, because stage_report can have multiple documents."
+                "does not identify an exact document, because stage_report can have multiple documents. Draft, "
+                "reviewing, archived, or otherwise unsent documents are intentionally hidden from the group-chat agent."
             ),
             args_schema=ListDeliveryDocumentsArgs,
         ),
@@ -509,10 +515,11 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             coroutine=read_delivery_document,
             name="read_delivery_document",
             description=(
-                "Read the Markdown body of a delivery document for THIS service case. Prefer document_id from "
+                "Read the Markdown body of an already-sent delivery document for THIS service case. Prefer document_id from "
                 "list_delivery_documents for exact reads. document_type is a strict UserDocument.document_type "
                 "enum and may be used only when there is a single matching document; if multiple documents match "
-                "(especially stage_report), the tool returns candidates and asks for document_id."
+                "(especially stage_report), the tool returns candidates and asks for document_id. Unsent documents "
+                "are not readable from this group-chat tool."
             ),
             args_schema=ReadDeliveryDocumentArgs,
         ),
