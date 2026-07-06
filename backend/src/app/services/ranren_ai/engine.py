@@ -505,7 +505,7 @@ class RanrenAIEngine:
                 db_msg = await session.get(Message, message_id)
                 if db_msg:
                     db_msg.content = description if has_description else "用户发来一张图片（图片解析失败）。"
-                    analysis = db_msg.analysis_json or {}
+                    analysis = dict(db_msg.analysis_json or {})
                     if image_info:
                         analysis["image_info"] = image_info
                     analysis["image_parse_status"] = "ok" if has_description else "failed"
@@ -570,7 +570,7 @@ class RanrenAIEngine:
                 db_msg = await session.get(Message, message_id)
                 if db_msg:
                     db_msg.content = persist_content
-                    analysis = db_msg.analysis_json or {}
+                    analysis = dict(db_msg.analysis_json or {})
                     if image_infos:
                         analysis["image_infos"] = image_infos
                         analysis["image_info"] = image_infos[0]

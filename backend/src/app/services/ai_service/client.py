@@ -144,7 +144,7 @@ class AIService:
         self._qwen_client = AsyncOpenAI(
             api_key=self.settings.qwen_api_key or "missing",
             base_url=self.settings.qwen_base_url,
-            timeout=_normalized_timeout(self.settings.ai_timeout_seconds),
+            timeout=_normalized_image_timeout(getattr(self.settings, "qwen_image_timeout_seconds", None)),
         )
 
     async def translate_image(
@@ -174,6 +174,7 @@ class AIService:
             "示例：用户上传了一张餐食照片，可见米饭、青菜和一份疑似鸡肉的蛋白质食物，肉类种类不够清楚，置信度：中。"
         )
 
+        started_at = time.monotonic()
         try:
             description = await asyncio.wait_for(
                 self._translate_image_once(
@@ -185,10 +186,22 @@ class AIService:
                     service_case_id=service_case_id,
                     message_id=message_id,
                 ),
-                timeout=_normalized_timeout(self.settings.ai_timeout_seconds),
+                timeout=_normalized_image_timeout(getattr(self.settings, "qwen_image_timeout_seconds", None)),
             )
         except asyncio.TimeoutError:
             logger.exception("Qwen VL image translation timed out")
+            await self._record_usage(
+                scenario="qwen_vl_translate",
+                model=model,
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                finish_reason=None,
+                usage=None,
+                attempts=1,
+                success=False,
+                error_type="TimeoutError",
+                service_case_id=service_case_id,
+                message_id=message_id,
+            )
             return "用户上传了一张图片，但解析描述超时。"
         except Exception:
             logger.exception("Qwen VL image translation failed")
@@ -670,6 +683,12 @@ def _normalized_timeout(value: float | None) -> float:
     if value is None or value <= 0:
         return 60.0
     return min(float(value), 120.0)
+
+
+def _normalized_image_timeout(value: float | None) -> float:
+    if value is None or value <= 0:
+        return 180.0
+    return min(float(value), 300.0)
 
 
 def _prompt_data(value: object) -> str:
