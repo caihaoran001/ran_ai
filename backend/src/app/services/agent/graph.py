@@ -380,6 +380,9 @@ def _is_data_tool(name: str) -> bool:
         "get_recent_checkins",
         "get_weight_trend",
         "get_user_state_profile",
+        "get_sent_checkin_links",
+        "list_delivery_documents",
+        "read_delivery_document",
         "list_group_files",
         "read_group_file",
     }

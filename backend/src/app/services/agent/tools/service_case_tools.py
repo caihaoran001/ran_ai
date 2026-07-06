@@ -20,7 +20,7 @@ from app.models.message import (
     MessageStatus,
 )
 from app.models.service_case import ServiceCase
-from app.models.user_document import UserDocument
+from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.services.agent.state import AgentRunContext
@@ -46,14 +46,50 @@ class ReadFileArgs(BaseModel):
     )
 
 
+class ListDeliveryDocumentsArgs(BaseModel):
+    document_type: DocumentType | None = Field(
+        default=None,
+        description=(
+            "Optional exact UserDocument.document_type enum filter. Valid values: "
+            "energy_restart_prescription, day28_execution_standard, stage_report, graduation_report."
+        ),
+    )
+    limit: int = Field(default=12, ge=1, le=30, description="How many recent delivery documents to list, 1 to 30.")
+
+
+class ReadDeliveryDocumentArgs(BaseModel):
+    document_id: int | None = Field(
+        default=None,
+        description="Read this exact delivery document by document_id from list_delivery_documents. Highest priority.",
+    )
+    document_type: DocumentType | None = Field(
+        default=None,
+        description=(
+            "Optional exact UserDocument.document_type enum filter when document_id is unavailable. "
+            "For stage_report, prefer list_delivery_documents then document_id because there can be multiple reports."
+        ),
+    )
+
+
 # 单次返回给 LLM 的文件正文上限（字符），控 token；入库全文上限更大（见 engine._MAX_FILE_TEXT_CHARS）。
 _MAX_TOOL_FILE_CHARS = 4000
+# 单次返回给 LLM 的交付文档正文上限（字符），避免阶段报告/执行单过长撑爆上下文。
+_MAX_TOOL_DOCUMENT_CHARS = 6000
 # 列表/定位时最多回溯的入站文件消息条数（防一次扫全群历史）。
 _MAX_FILE_SCAN = 20
+# 列表/定位时最多回溯的交付文档条数。
+_MAX_DOCUMENT_SCAN = 30
 # 一次最多回溯的已发打卡链接条数（一个服务窗口最多 28 天，留足余量）。
 _MAX_CHECKIN_LINK_ROWS = 40
 # 从提醒正文里抽取打卡/问卷短链（形如 https://admin.humanburning.ai/s/xxxx）。
 _CHECKIN_LINK_RE = re.compile(r"https?://\S+/s/\S+")
+
+_DOCUMENT_TYPE_LABELS: dict[DocumentType, str] = {
+    DocumentType.ENERGY_RESTART_PRESCRIPTION: "能量重启处方单",
+    DocumentType.DAY28_EXECUTION_STANDARD: "28天执行单",
+    DocumentType.STAGE_REPORT: "阶段报告",
+    DocumentType.GRADUATION_REPORT: "毕业报告",
+}
 
 
 def _file_record(row: "Message") -> dict[str, Any] | None:
@@ -72,6 +108,21 @@ def _file_record(row: "Message") -> dict[str, Any] | None:
         "parse_status": status,
         "readable": bool(status == "ok" and text.strip()),
         "text_length": len(text),
+    }
+
+
+def _document_record(row: UserDocument) -> dict[str, Any]:
+    content = row.content_md or ""
+    return {
+        "document_id": row.id,
+        "document_type": row.document_type.value,
+        "document_type_label": _DOCUMENT_TYPE_LABELS.get(row.document_type, row.document_type.value),
+        "title": row.title,
+        "status": row.status.value,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "readable": bool(content.strip()),
+        "text_length": len(content),
     }
 
 
@@ -253,6 +304,105 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                 "note": "这份文件暂时读不了内容（可能不是 docx 或解析失败）。",
             }
 
+    async def list_delivery_documents(
+        document_type: DocumentType | None = None,
+        limit: int = 12,
+    ) -> dict[str, Any]:
+        """列出当前服务单已生成的交付文档，供 LLM 选择 document_id 后精确读取。"""
+        limit = max(1, min(int(limit) if isinstance(limit, (int, float)) else 12, 30))
+        async with SessionLocal() as session:
+            stmt = (
+                select(UserDocument)
+                .where(UserDocument.service_case_id == context.service_case_id)
+                .order_by(UserDocument.created_at.desc(), UserDocument.id.desc())
+                .limit(min(_MAX_DOCUMENT_SCAN, limit))
+            )
+            if document_type is not None:
+                stmt = stmt.where(UserDocument.document_type == document_type)
+            documents = [_document_record(row) for row in await session.scalars(stmt)]
+            if not documents:
+                doc_hint = (
+                    f"类型为 {document_type.value} 的交付文档"
+                    if document_type is not None
+                    else "交付文档"
+                )
+                return {"ok": True, "count": 0, "documents": [], "note": f"当前服务单还没有{doc_hint}。"}
+            return {"ok": True, "count": len(documents), "documents": documents}
+
+    async def read_delivery_document(
+        document_id: int | None = None,
+        document_type: DocumentType | None = None,
+    ) -> dict[str, Any]:
+        """读取当前服务单交付文档正文。
+
+        定位优先级：document_id > document_type。阶段报告一类多份，优先 list_delivery_documents 后按 id 读。
+        """
+        async with SessionLocal() as session:
+            if document_id is not None:
+                document = await session.scalar(
+                    select(UserDocument).where(
+                        UserDocument.id == document_id,
+                        UserDocument.service_case_id == context.service_case_id,
+                    )
+                )
+                if document is None:
+                    return {
+                        "ok": True,
+                        "document_id": document_id,
+                        "text": "",
+                        "note": f"没找到 document_id={document_id} 对应的当前服务单交付文档，可先用 list_delivery_documents 确认。",
+                    }
+            elif document_type is not None:
+                rows = list(
+                    await session.scalars(
+                        select(UserDocument)
+                        .where(
+                            UserDocument.service_case_id == context.service_case_id,
+                            UserDocument.document_type == document_type,
+                        )
+                        .order_by(UserDocument.created_at.desc(), UserDocument.id.desc())
+                        .limit(_MAX_DOCUMENT_SCAN)
+                    )
+                )
+                if not rows:
+                    return {
+                        "ok": True,
+                        "document_type": document_type.value,
+                        "text": "",
+                        "note": f"当前服务单还没有类型为 {document_type.value} 的交付文档。",
+                    }
+                if len(rows) > 1:
+                    return {
+                        "ok": True,
+                        "document_type": document_type.value,
+                        "text": "",
+                        "candidates": [_document_record(row) for row in rows],
+                        "note": "这个类型下有多份文档，请先看 candidates，再用 document_id 精确读取。",
+                    }
+                document = rows[0]
+            else:
+                return {
+                    "ok": True,
+                    "text": "",
+                    "note": "请先用 list_delivery_documents 查看当前服务单有哪些交付文档，再传 document_id 精确读取。",
+                }
+
+            record = _document_record(document)
+            text = document.content_md or ""
+            if not text.strip():
+                return {
+                    "ok": True,
+                    **record,
+                    "text": "",
+                    "note": "这份交付文档没有可读取的 Markdown 正文。",
+                }
+            return {
+                "ok": True,
+                **record,
+                "text": text[:_MAX_TOOL_DOCUMENT_CHARS],
+                "truncated": len(text) > _MAX_TOOL_DOCUMENT_CHARS,
+            }
+
     async def get_sent_checkin_links() -> dict[str, Any]:
         """查本服务单已经发出去的打卡/问卷链接：哪天、几点发的、链接是什么、是否成功。
         用于用户问“昨天打卡你发了吗/打卡链接是不是你发的”时核实，别推给班主任也别猜。"""
@@ -343,6 +493,28 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                 "'did you send yesterday's check-in', 'wasn't the check-in link from you'); answer from the "
                 "records, do not attribute it to human staff and do not guess."
             ),
+        ),
+        StructuredTool.from_function(
+            coroutine=list_delivery_documents,
+            name="list_delivery_documents",
+            description=(
+                "List delivery documents generated for THIS service case, newest first. Returns document_id, "
+                "document_type (strict UserDocument.document_type enum), document_type_label, title, status, "
+                "timestamps, readable, and text_length. Use this before reading stage reports or when the user "
+                "does not identify an exact document, because stage_report can have multiple documents."
+            ),
+            args_schema=ListDeliveryDocumentsArgs,
+        ),
+        StructuredTool.from_function(
+            coroutine=read_delivery_document,
+            name="read_delivery_document",
+            description=(
+                "Read the Markdown body of a delivery document for THIS service case. Prefer document_id from "
+                "list_delivery_documents for exact reads. document_type is a strict UserDocument.document_type "
+                "enum and may be used only when there is a single matching document; if multiple documents match "
+                "(especially stage_report), the tool returns candidates and asks for document_id."
+            ),
+            args_schema=ReadDeliveryDocumentArgs,
         ),
         StructuredTool.from_function(
             coroutine=list_group_files,

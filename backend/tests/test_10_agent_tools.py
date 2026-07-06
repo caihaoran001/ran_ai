@@ -13,6 +13,7 @@ from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.services.agent.context_builder import build_agent_memory_context
@@ -434,6 +435,205 @@ async def test_read_group_file_message_id_not_found_returns_note(db_session):
     assert result["ok"] is True
     assert result["text"] == ""
     assert "没找到" in result["note"]
+
+
+def _delivery_doc(
+    service_case,
+    *,
+    document_type: DocumentType,
+    title: str,
+    content_md: str,
+    status: DocumentStatus = DocumentStatus.REVIEWING,
+) -> UserDocument:
+    return UserDocument(
+        service_case_id=service_case.id,
+        document_type=document_type,
+        title=title,
+        content_md=content_md,
+        content_json={},
+        status=status,
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_delivery_documents_lists_current_case_with_real_document_type(db_session):
+    service_case = await _case(db_session)
+    other_case = await _case(db_session)
+    db_session.add(
+        _delivery_doc(
+            other_case,
+            document_type=DocumentType.ENERGY_RESTART_PRESCRIPTION,
+            title="其他服务单处方单",
+            content_md="不应该跨服务单读取",
+        )
+    )
+    db_session.add(
+        _delivery_doc(
+            service_case,
+            document_type=DocumentType.ENERGY_RESTART_PRESCRIPTION,
+            title="能量重启处方单",
+            content_md="处方单正文",
+            status=DocumentStatus.SENT,
+        )
+    )
+    db_session.add(
+        _delivery_doc(
+            service_case,
+            document_type=DocumentType.STAGE_REPORT,
+            title="第7天阶段报告",
+            content_md="阶段报告正文",
+        )
+    )
+    await db_session.flush()
+    tools = await _tools(db_session, service_case)
+
+    result = await tools["list_delivery_documents"].ainvoke({})
+
+    assert result["ok"] is True
+    assert result["count"] == 2
+    titles = [item["title"] for item in result["documents"]]
+    assert titles == ["第7天阶段报告", "能量重启处方单"]
+    assert "其他服务单处方单" not in titles
+    first = result["documents"][0]
+    assert first["document_type"] == DocumentType.STAGE_REPORT.value
+    assert first["document_type_label"] == "阶段报告"
+    assert first["readable"] is True
+    assert {"document_id", "status", "created_at", "updated_at", "text_length"} <= set(first)
+
+
+@pytest.mark.asyncio
+async def test_list_delivery_documents_filters_by_document_type_enum(db_session):
+    service_case = await _case(db_session)
+    db_session.add(
+        _delivery_doc(
+            service_case,
+            document_type=DocumentType.ENERGY_RESTART_PRESCRIPTION,
+            title="能量重启处方单",
+            content_md="处方单正文",
+        )
+    )
+    db_session.add(
+        _delivery_doc(
+            service_case,
+            document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+            title="28天执行单",
+            content_md="执行单正文",
+        )
+    )
+    await db_session.flush()
+    tools = await _tools(db_session, service_case)
+
+    result = await tools["list_delivery_documents"].ainvoke(
+        {"document_type": DocumentType.DAY28_EXECUTION_STANDARD.value}
+    )
+
+    assert result["ok"] is True
+    assert result["count"] == 1
+    assert result["documents"][0]["document_type"] == DocumentType.DAY28_EXECUTION_STANDARD.value
+    assert result["documents"][0]["title"] == "28天执行单"
+
+
+@pytest.mark.asyncio
+async def test_read_delivery_document_by_document_id_reads_exact_document(db_session):
+    service_case = await _case(db_session)
+    other_case = await _case(db_session)
+    target = _delivery_doc(
+        service_case,
+        document_type=DocumentType.STAGE_REPORT,
+        title="第7天阶段报告",
+        content_md="第7天报告：晚A执行稳定。",
+    )
+    db_session.add(target)
+    db_session.add(
+        _delivery_doc(
+            service_case,
+            document_type=DocumentType.STAGE_REPORT,
+            title="第14天阶段报告",
+            content_md="第14天报告正文",
+        )
+    )
+    db_session.add(
+        _delivery_doc(
+            other_case,
+            document_type=DocumentType.STAGE_REPORT,
+            title="其他服务单第7天报告",
+            content_md="不应该跨服务单读取",
+        )
+    )
+    await db_session.flush()
+    tools = await _tools(db_session, service_case)
+
+    result = await tools["read_delivery_document"].ainvoke({"document_id": target.id})
+
+    assert result["ok"] is True
+    assert result["document_id"] == target.id
+    assert result["document_type"] == DocumentType.STAGE_REPORT.value
+    assert result["title"] == "第7天阶段报告"
+    assert "晚A执行稳定" in result["text"]
+    assert "不应该跨服务单读取" not in result["text"]
+
+
+@pytest.mark.asyncio
+async def test_read_delivery_document_by_type_returns_single_match(db_session):
+    service_case = await _case(db_session)
+    db_session.add(
+        _delivery_doc(
+            service_case,
+            document_type=DocumentType.ENERGY_RESTART_PRESCRIPTION,
+            title="能量重启处方单",
+            content_md="早餐先吃蛋白质。",
+        )
+    )
+    await db_session.flush()
+    tools = await _tools(db_session, service_case)
+
+    result = await tools["read_delivery_document"].ainvoke(
+        {"document_type": DocumentType.ENERGY_RESTART_PRESCRIPTION.value}
+    )
+
+    assert result["ok"] is True
+    assert result["document_type"] == DocumentType.ENERGY_RESTART_PRESCRIPTION.value
+    assert "早餐先吃蛋白质" in result["text"]
+
+
+@pytest.mark.asyncio
+async def test_read_delivery_document_by_type_returns_candidates_when_multiple(db_session):
+    service_case = await _case(db_session)
+    db_session.add(
+        _delivery_doc(
+            service_case,
+            document_type=DocumentType.STAGE_REPORT,
+            title="第7天阶段报告",
+            content_md="第7天正文",
+        )
+    )
+    db_session.add(
+        _delivery_doc(
+            service_case,
+            document_type=DocumentType.STAGE_REPORT,
+            title="第14天阶段报告",
+            content_md="第14天正文",
+        )
+    )
+    await db_session.flush()
+    tools = await _tools(db_session, service_case)
+
+    result = await tools["read_delivery_document"].ainvoke({"document_type": DocumentType.STAGE_REPORT.value})
+
+    assert result["ok"] is True
+    assert result["text"] == ""
+    assert len(result["candidates"]) == 2
+    assert {item["title"] for item in result["candidates"]} == {"第7天阶段报告", "第14天阶段报告"}
+    assert "document_id" in result["note"]
+
+
+@pytest.mark.asyncio
+async def test_read_delivery_document_rejects_freeform_document_type(db_session):
+    service_case = await _case(db_session)
+    tools = await _tools(db_session, service_case)
+
+    with pytest.raises(Exception):
+        await tools["read_delivery_document"].ainvoke({"document_type": "处方"})
 
 
 @pytest.mark.asyncio
