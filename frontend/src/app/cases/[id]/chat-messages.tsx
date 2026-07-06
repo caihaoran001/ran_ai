@@ -117,6 +117,10 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
               {msg.status === "failed" &&
                 (msg.error?.includes("驳回") ? (
                   <div className="mt-1 text-xs text-zinc-400">已驳回 · 未发送</div>
+                ) : msg.error?.includes("风控") ? (
+                  <div className="mt-1 text-xs text-red-500" title={msg.error}>
+                    发送失败 · 企业微信风控拦截（账号违规被限制，实际未进群）
+                  </div>
                 ) : (
                   <div className="mt-1 text-xs text-red-500">发送失败</div>
                 ))}
