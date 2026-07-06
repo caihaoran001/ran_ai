@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 from io import BytesIO
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -916,3 +916,83 @@ async def test_engine_uses_agent_only_when_global_and_case_toggles_enabled(
     finally:
         settings.ai_agent_enabled = original_agent_enabled
         await set_ai_reply_delivery_mode("manual_review", db_session)
+
+
+@pytest.mark.asyncio
+async def test_get_sent_checkin_links_returns_only_sent_links(db_session):
+    settings = get_settings()
+    started = datetime.now(timezone.utc) - timedelta(days=5)
+    service_case = await _case(db_session, started_at=started)
+
+    # 已发出的打卡链接（应返回）
+    checkin = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content="晚上好，今天打卡【仅需10秒】 👉 https://admin.humanburning.ai/s/2vaf7K",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.SENT,
+    )
+    # 纯文字自定义提醒（无短链，应排除）
+    text_reminder = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content="早上好，记得称体重哦。",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.SENT,
+    )
+    # 发送失败的打卡链接（应排除）
+    failed = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content="今天打卡 👉 https://admin.humanburning.ai/s/failed1",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.FAILED,
+    )
+    db_session.add_all([checkin, text_reminder, failed])
+    await db_session.flush()
+
+    tools = {
+        tool.name: tool
+        for tool in build_service_case_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=settings,
+        )
+    }
+
+    result = await tools["get_sent_checkin_links"].ainvoke({})
+
+    assert result["ok"] is True
+    assert result["count"] == 1
+    item = result["items"][0]
+    assert item["link"] == "https://admin.humanburning.ai/s/2vaf7K"
+    assert item["sent_date"] is not None
+    assert item["sent_time"] is not None
+    assert item["service_day"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_get_sent_checkin_links_empty_when_none_sent(db_session):
+    settings = get_settings()
+    service_case = await _case(db_session)
+    tools = {
+        tool.name: tool
+        for tool in build_service_case_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=settings,
+        )
+    }
+
+    result = await tools["get_sent_checkin_links"].ainvoke({})
+
+    assert result["ok"] is True
+    assert result["count"] == 0
+    assert "还没发过" in result["note"]
