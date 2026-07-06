@@ -57,7 +57,7 @@ def main():
       WEB_SEARCH_MAX_RESULTS: ${WEB_SEARCH_MAX_RESULTS:-5}
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
-      QWEN_MODEL: ${QWEN_MODEL:-qwen3.5-plus}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen3.7-plus}
       QWEN_IMAGE_TIMEOUT_SECONDS: ${QWEN_IMAGE_TIMEOUT_SECONDS:-180}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
@@ -164,6 +164,9 @@ QIWEI_CALLBACK_SECRET=de3851af-60ae-455b-9eb5-38fb7e71d8c8
 
 # Qwen API config (for image multimodal analysis)
 QWEN_API_KEY=sk-6223d5336f004cec91ea032e473faab2
+QWEN_MODEL=qwen3.7-plus
+QWEN_PROMPT_COST_UNDER_128K_PER_1M_TOKENS=2
+QWEN_COMPLETION_COST_UNDER_128K_PER_1M_TOKENS=8
 """
 
     with sftp.file('/root/ran_ai/.env', 'w') as f:

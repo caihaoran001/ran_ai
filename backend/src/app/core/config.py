@@ -50,15 +50,16 @@ class Settings(BaseSettings):
         validation_alias="QWEN_BASE_URL",
     )
     qwen_api_key: str = Field(default="", validation_alias="QWEN_API_KEY")
-    qwen_model: str = Field(default="qwen3.5-plus", validation_alias="QWEN_MODEL")
+    qwen_model: str = Field(default="qwen3.7-plus", validation_alias="QWEN_MODEL")
     qwen_image_timeout_seconds: float = Field(default=180.0, validation_alias="QWEN_IMAGE_TIMEOUT_SECONDS")
-    # qwen3.5-plus 官方阶梯价（中国内地，元/百万 tokens）：按单次请求输入 tokens 所在档位计价。
+    # Qwen image translation pricing (China mainland, CNY per 1M tokens).
+    # The tier is selected by request input tokens; image OCR requests are usually under 128K.
     qwen_prompt_cost_under_128k_per_1m_tokens: float = Field(
-        default=0.8,
+        default=2.0,
         validation_alias="QWEN_PROMPT_COST_UNDER_128K_PER_1M_TOKENS",
     )
     qwen_completion_cost_under_128k_per_1m_tokens: float = Field(
-        default=4.8,
+        default=8.0,
         validation_alias="QWEN_COMPLETION_COST_UNDER_128K_PER_1M_TOKENS",
     )
     qwen_prompt_cost_128k_to_256k_per_1m_tokens: float = Field(

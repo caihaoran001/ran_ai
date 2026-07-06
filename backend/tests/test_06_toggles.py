@@ -35,7 +35,7 @@ async def test_dashboard_cost_excludes_diagnostic_usage(admin_client, db_session
             ),
             AIUsageLog(
                 scenario="qwen_vl_translate",
-                model="qwen3.5-plus",
+                model="qwen3.7-plus",
                 total_tokens=50,
                 prompt_tokens=30,
                 completion_tokens=20,
@@ -92,7 +92,7 @@ async def test_service_case_stats_splits_deepseek_and_vision_costs(admin_client,
             AIUsageLog(
                 service_case_id=case_id,
                 scenario="qwen_vl_translate",
-                model="qwen3.5-plus",
+                model="qwen3.7-plus",
                 total_tokens=200,
                 prompt_tokens=120,
                 completion_tokens=80,

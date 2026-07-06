@@ -77,7 +77,8 @@ def _pricing_for_usage(
     scenario: str | None,
 ) -> tuple[float, float]:
     if scenario == "qwen_vl_translate":
-        # qwen3.5-plus 阶梯价按单次请求输入 token 所在档位计价；图片 OCR 请求通常远低于 128K。
+        # Qwen image translation pricing is tiered by the request input-token range.
+        # Image OCR requests are usually far below 128K input tokens.
         tokens = prompt_tokens or 0
         if tokens < 128_000:
             return (
@@ -165,7 +166,8 @@ class AIService:
             "输出必须保守、准确、可直接放进聊天上下文，不要输出 JSON、表格、问候语或解释过程。\n"
             "关注顺序：\n"
             "1. 如果是体重秤、体脂秤、营养标签、配料表、聊天截图或包含数字的图片，优先识别关键数字、单位、日期和关键文字；"
-            "数字必须逐位核对，小数点和单位看不清时不要猜。\n"
+            "先判断图片是否被旋转、竖排、反光或遮挡，按正确阅读方向读取；"
+            "数字必须逐位核对，尤其区分数码管中的 5/6/8/9/0，小数点和单位看不清时不要猜。\n"
             "2. 如果是餐食图片，优先描述主要食物、疑似食材、烹饪方式、明显份量，以及是否能看出主食、蛋白质、蔬菜、油脂；"
             "不能确定的食材必须写“疑似”，不要把相似食物说成确定事实。\n"
             "3. 如果画面模糊、遮挡、反光、字号太小或食物混杂，必须明确写出“置信度：低”或“置信度：中”，并说明哪些部分无法确认。\n"
@@ -241,7 +243,7 @@ class AIService:
                             ],
                         },
                     ],
-                    # 思考型视觉模型(如 qwen3.5-plus)会先输出思考过程再给描述，
+                    # Some vision models can emit long reasoning before the final description.
                     # 实测思考+描述可达数千 token；上限过小(原 300)会在思考中途截断、拿不到最终描述。
                     # 非思考模型(如 flash)实际只输出一两百 token，不受此上限影响。
                     max_tokens=8192,

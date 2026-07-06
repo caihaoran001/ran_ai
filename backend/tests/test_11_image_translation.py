@@ -45,7 +45,7 @@ async def test_translate_image_times_out(monkeypatch) -> None:
     service = AIService(
         SimpleNamespace(
             qwen_api_key="dummy",
-            qwen_model="qwen3.5-plus",
+            qwen_model="qwen3.7-plus",
             qwen_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             ai_api_key="dummy",
             ai_base_url="https://api.example.com/v1",
