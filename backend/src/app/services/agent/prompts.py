@@ -23,7 +23,7 @@ AGENT_SYSTEM_PROMPT = """你是燃人AI微信群里的 AI 运营助教，负责�
 - 到点提醒时系统会自动用企微原生 @ 提醒到设提醒的那个用户（真实 @，不是纯文字）。因此确认时可以说“到点会 @ 你提醒”，但不要自己在回复里敲“@名字”，也不要说自己做不到 @。
 
 用户背景使用：
-- 【本次提问】里的“提问人”表示本次消息发送者：“用户”为服务客户本人，“班主任”为群内员工；班主任提问时只回答问题，不当作用户画像或状态。
+- 【本次提问】里用“用户：”或“班主任：”标明本次消息发送者；“图片内容：”是系统识别出的图片描述或识别状态，不是用户原话。班主任提问时只回答问题，不当作用户画像或状态。
 - 【隐性用户背景】只当作聊天背景，帮助你自然接话；不要逐条复述，不要说“根据你的画像/资料/系统记录”。
 - 【最近对话】里“AI助教”是你之前发出的回复；不要把这些历史 AI 回复说成营养师、班主任或其他真人说过的话。
 - 只使用和当前问题直接相关的背景；用户没有问到相关话题时，不要硬提背景；当前用户消息和背景冲突时，以当前消息为准。
@@ -87,10 +87,13 @@ def build_agent_user_prompt(
     memory_context: str,
 ) -> str:
     recent = "\n".join(f"- {item}" for item in recent_messages) if recent_messages else "无"
+    current_query = user_query
+    if not current_query.lstrip().startswith(("用户：", "班主任：", "系统定时任务：")):
+        current_query = f"{query_speaker}：{user_query}"
     return (
         "以下是本轮群聊消息和可用 Skill。请根据需要自主调用工具，或直接回复。\n\n"
         f"【当前时间】\n{current_time_context}\n\n"
-        f"【本次提问】\n提问人：{query_speaker}\n问题：{user_query}\n\n"
+        f"【本次提问】\n{current_query}\n\n"
         f"【最近对话】\n{recent}\n\n"
         f"【隐性用户背景】\n{memory_context}\n\n"
         f"【可用 Skill】\n{skill_catalog}\n"

@@ -11,7 +11,7 @@ from app.api.routes.qiwe import _bypass_aggregator, _channel_message_from_qiwe, 
 from app.services.channels.base import ChannelMessage, ChannelSendResult
 from app.services.channels.qiwe import QiWeChannel
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator, _merge_messages
-from app.services.ranren_ai.engine import RanrenAIEngine, _image_description_is_available
+from app.services.ranren_ai.engine import RanrenAIEngine, _current_query_body, _image_description_is_available
 from app.models.message import Message
 
 
@@ -443,6 +443,24 @@ def test_failed_image_description_is_not_available_for_ai_context():
     assert _image_description_is_available("用户上传了一张图片，但解析描述失败。") is False
     assert _image_description_is_available("用户上传了一张图片，但解析描述超时。") is False
     assert _image_description_is_available("用户上传了一张餐食照片，可见米饭，置信度：高。") is True
+
+
+def test_current_query_body_uses_compact_speaker_and_image_lines():
+    analysis = {
+        "_qiwe_meta": {"sender_type": "user"},
+        "image_prompt": {"status": "ok", "content": "可见米饭和青菜，置信度：中。"},
+    }
+
+    assert _current_query_body(analysis, "这个能吃吗") == "用户：这个能吃吗\n图片内容：可见米饭和青菜，置信度：中。"
+
+
+def test_current_query_body_for_image_only_failure():
+    analysis = {
+        "_qiwe_meta": {"sender_type": "user"},
+        "image_prompt": {"status": "failed", "content": "识别失败，无法可靠读取。"},
+    }
+
+    assert _current_query_body(analysis, "") == "用户：（发了一张图片）\n图片内容：识别失败，无法可靠读取。"
 
 
 def test_qiwe_callback_image_event_to_channel_message():
