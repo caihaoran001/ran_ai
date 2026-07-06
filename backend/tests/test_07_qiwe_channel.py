@@ -11,7 +11,7 @@ from app.api.routes.qiwe import _bypass_aggregator, _channel_message_from_qiwe, 
 from app.services.channels.base import ChannelMessage, ChannelSendResult
 from app.services.channels.qiwe import QiWeChannel
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator, _merge_messages
-from app.services.ranren_ai.engine import RanrenAIEngine
+from app.services.ranren_ai.engine import RanrenAIEngine, _image_description_is_available
 from app.models.message import Message
 
 
@@ -437,6 +437,12 @@ def test_qiwe_callback_text_event_to_channel_message():
     assert message.user_id == "7881300658070689"
     assert message.text == "老师我分几句说"
     assert message.message_type == "text"
+
+
+def test_failed_image_description_is_not_available_for_ai_context():
+    assert _image_description_is_available("用户上传了一张图片，但解析描述失败。") is False
+    assert _image_description_is_available("用户上传了一张图片，但解析描述超时。") is False
+    assert _image_description_is_available("用户上传了一张餐食照片，可见米饭，置信度：高。") is True
 
 
 def test_qiwe_callback_image_event_to_channel_message():

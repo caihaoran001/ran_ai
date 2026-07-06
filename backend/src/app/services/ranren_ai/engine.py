@@ -168,6 +168,12 @@ _INBOUND_IMAGE_ALLOWED_HOST_SUFFIXES = (
     ".myqcloud.com",
 )
 _QIWE_IMAGE_MSG_TYPES = (7, 14, 101)
+_IMAGE_PARSE_FAILURE_REPLY = "这张图片暂时没解析出来，可以重发一张更清楚的，或者直接用文字说下关键内容。"
+_IMAGE_PARSE_FAILURE_MARKERS = (
+    "解析描述失败",
+    "解析描述超时",
+    "暂未能识别其内容",
+)
 
 
 def _is_allowed_image_host(file_url: str) -> bool:
@@ -270,6 +276,11 @@ def _strip_image_placeholders(text: str) -> str:
         if stripped and stripped != "[图片]":
             lines.append(stripped)
     return "\n".join(lines).strip()
+
+
+def _image_description_is_available(description: str) -> bool:
+    text = (description or "").strip()
+    return bool(text) and not any(marker in text for marker in _IMAGE_PARSE_FAILURE_MARKERS)
 
 
 def _decrypt_image_bytes(encrypted_data: bytes, aes_key_str: str) -> bytes:
@@ -465,33 +476,37 @@ class RanrenAIEngine:
                 "height": msg_data.get("height"),
                 "file_size": len(decrypted_bytes),
                 "content_type": mime_type,
+                "parse_status": "ok" if _image_description_is_available(description) else "failed",
             }
             return description, image_info
         except Exception:
             logger.exception("Error processing inbound image for message_id=%s", message_id)
             return "用户发来一张图片（暂未能识别其内容）。", None
 
-    async def _process_inbound_image(self, message_id: int, message: ChannelMessage, service_case_id: int | None) -> None:
+    async def _process_inbound_image(self, message_id: int, message: ChannelMessage, service_case_id: int | None) -> bool:
         image_items = _image_payload_items(message)
         description, image_info = await self._describe_inbound_image(
             message_id=message_id,
             image_payload=image_items[0] if image_items else {},
             service_case_id=service_case_id,
         )
+        has_description = _image_description_is_available(description)
         try:
             async with SessionLocal() as session:
                 db_msg = await session.get(Message, message_id)
                 if db_msg:
-                    db_msg.content = description
+                    db_msg.content = description if has_description else "用户发来一张图片（图片解析失败，未进入 AI 上下文）。"
                     analysis = db_msg.analysis_json or {}
                     if image_info:
                         analysis["image_info"] = image_info
+                    analysis["image_parse_status"] = "ok" if has_description else "failed"
                     db_msg.analysis_json = analysis
                     session.add(db_msg)
                     await session.commit()
         except Exception:
             logger.exception("Failed to persist image description for message_id=%s", message_id)
-        message.text = description
+        message.text = description if has_description else ""
+        return has_description
 
     async def _process_embedded_images_for_text(
         self,
@@ -499,21 +514,25 @@ class RanrenAIEngine:
         message: ChannelMessage,
         service_case_id: int | None,
         user_text: str,
-    ) -> None:
+    ) -> bool:
         image_items = _image_payload_items(message)
         if not image_items:
-            return
+            return False
 
         descriptions: list[str] = []
         image_infos: list[dict[str, Any]] = []
+        failed_count = 0
         for idx, image_payload in enumerate(image_items, start=1):
             description, image_info = await self._describe_inbound_image(
                 message_id=message_id,
                 image_payload=image_payload,
                 service_case_id=service_case_id,
             )
-            prefix = "图片识别结果" if len(image_items) == 1 else f"图片{idx}识别结果"
-            descriptions.append(f"{prefix}：{description}")
+            if _image_description_is_available(description):
+                prefix = "图片识别结果" if len(image_items) == 1 else f"图片{idx}识别结果"
+                descriptions.append(f"{prefix}：{description}")
+            else:
+                failed_count += 1
             if image_info:
                 image_infos.append(image_info)
 
@@ -521,25 +540,31 @@ class RanrenAIEngine:
         if user_text:
             parts.append(f"用户补充文字：{user_text}")
         merged_text = "\n".join(parts).strip()
-        if not merged_text:
-            merged_text = "用户发来一张图片（暂未能识别其内容）。"
+        persist_content = merged_text or "用户发来图片（图片解析失败，未进入 AI 上下文）。"
 
         try:
             async with SessionLocal() as session:
                 db_msg = await session.get(Message, message_id)
                 if db_msg:
-                    db_msg.content = merged_text
+                    db_msg.content = persist_content
                     analysis = db_msg.analysis_json or {}
                     if image_infos:
                         analysis["image_infos"] = image_infos
                         analysis["image_info"] = image_infos[0]
                     analysis["image_context_only"] = not bool(user_text)
+                    if descriptions and failed_count:
+                        analysis["image_parse_status"] = "partial_failed"
+                    elif descriptions:
+                        analysis["image_parse_status"] = "ok"
+                    else:
+                        analysis["image_parse_status"] = "failed"
                     db_msg.analysis_json = analysis
                     session.add(db_msg)
                     await session.commit()
         except Exception:
             logger.exception("Failed to persist embedded image descriptions for message_id=%s", message_id)
         message.text = merged_text
+        return bool(descriptions)
 
     async def _process_inbound_file(
         self, message_id: int, message: ChannelMessage, service_case_id: int | None
@@ -848,14 +873,44 @@ class RanrenAIEngine:
                 service_case_id,
                 image_analysis_content,
             )
+            if not message.text and not image_analysis_content:
+                if not is_staff and service_case_id:
+                    await self._send_and_record(
+                        message=message,
+                        service_case_id=service_case_id,
+                        content=_IMAGE_PARSE_FAILURE_REPLY,
+                        trigger_id=inbound_id,
+                        send=lambda: self.channel.send_text(
+                            message.chat_id,
+                            _IMAGE_PARSE_FAILURE_REPLY,
+                            reply_to=message.message_id,
+                            reply_context=message.raw_payload,
+                        ),
+                    )
+                return
 
         if message.message_type != "text":
             # 如果是图片消息，触发后台下载、解密与大模型翻译
             if message.message_type == "image" and inbound_id is not None:
-                await self._process_inbound_image(inbound_id, message, service_case_id)
+                image_parsed = await self._process_inbound_image(inbound_id, message, service_case_id)
                 # 图片消息翻译完成后，其在内存中的 text 属性已被更新为描述，继续向下执行流程触发自动回复。
                 # 视觉描述不是用户原话，不进入风控/成效结构化提取。
                 image_analysis_content = ""
+                if not image_parsed:
+                    if not is_staff and service_case_id:
+                        await self._send_and_record(
+                            message=message,
+                            service_case_id=service_case_id,
+                            content=_IMAGE_PARSE_FAILURE_REPLY,
+                            trigger_id=inbound_id,
+                            send=lambda: self.channel.send_text(
+                                message.chat_id,
+                                _IMAGE_PARSE_FAILURE_REPLY,
+                                reply_to=message.message_id,
+                                reply_context=message.raw_payload,
+                            ),
+                        )
+                    return
             else:
                 # 文件消息：后台下载/解密/抽取文本入库（与新旧回复链路无关的共享层，供新 Agent 链路 read_group_file 读取）。
                 if message.message_type == "file" and inbound_id is not None:
