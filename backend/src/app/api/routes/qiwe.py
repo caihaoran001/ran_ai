@@ -180,7 +180,7 @@ def _spam_block_notice(item: dict[str, Any]) -> tuple[str, str] | None:
             detail = base64.b64decode(raw).decode("utf-8", errors="ignore").strip()
         except Exception:
             detail = ""
-    reason = f"QiWe风控拦截：{detail}" if detail else "QiWe风控拦截：消息未送达（账号功能被限制）"
+    reason = f"企业微信官方风控拦截：{detail}" if detail else "企业微信官方风控拦截：消息未送达（账号功能被限制）"
     return channel_message_id, reason
 
 

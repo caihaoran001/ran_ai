@@ -2305,7 +2305,7 @@ async def mark_outbound_blocked_by_channel_id(channel_message_id: str, reason: s
         if row.status not in (MessageStatus.SENT, MessageStatus.SENDING):
             return False
         row.status = MessageStatus.FAILED
-        row.error = reason or "QiWe风控拦截：消息未送达"
+        row.error = reason or "企业微信官方风控拦截：消息未送达"
         row.sent_at = None
         await session.commit()
         logger.warning(
