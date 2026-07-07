@@ -16,16 +16,23 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
   const [saving, setSaving] = useState(false);
   const [sent, setSent] = useState(document.status === "sent");
   const [confirming, setConfirming] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const save = useCallback(async (newContent: string, newContentJson?: DocumentContentJson | null) => {
     setSaving(true);
-    await fetch(`${API_BASE}/documents/${document.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(newContentJson ? { content_json: newContentJson } : { content_md: newContent }),
-    });
-    setSaving(false);
+    try {
+      const response = await fetch(`${API_BASE}/documents/${document.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(newContentJson ? { content_json: newContentJson } : { content_md: newContent }),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }, [document.id]);
 
   useEffect(() => {
@@ -54,12 +61,24 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
 
   async function send() {
     setConfirming(false);
+    setSendError(null);
     setBusy(true);
-    await save(content, contentJson);
-    await fetch(`${API_BASE}/documents/${document.id}/send`, { method: "POST" });
-    setSent(true);
-    setBusy(false);
-    router.refresh();
+    try {
+      const saved = await save(content, contentJson);
+      if (!saved) {
+        throw new Error("保存失败，未发送。请稍后重试。");
+      }
+      const response = await fetch(`${API_BASE}/documents/${document.id}/send`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error(await response.text() || "发送失败，请稍后重试。");
+      }
+      setSent(true);
+      router.refresh();
+    } catch (error) {
+      setSendError(readableError(error));
+    } finally {
+      setBusy(false);
+    }
   }
 
   // 已发送的文件允许重发（企微「已发送」仅代表网关受理，不等于真正进群），重发前二次确认防误点
@@ -130,6 +149,11 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
           >
             <MarkdownPreview content={content} />
             <div className="mt-4 text-xs text-zinc-400 text-center">点击任意位置编辑</div>
+          </div>
+        )}
+        {sendError && (
+          <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {sendError}
           </div>
         )}
       </div>
@@ -334,4 +358,14 @@ function renderPreviewText(value: DocumentContentJson) {
     }
   }
   return lines.join("\n");
+}
+
+function readableError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "发送失败，请稍后重试。";
+  try {
+    const parsed = JSON.parse(message) as { detail?: unknown };
+    return typeof parsed.detail === "string" ? parsed.detail : message;
+  } catch {
+    return message;
+  }
 }
