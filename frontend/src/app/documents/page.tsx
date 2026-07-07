@@ -18,28 +18,42 @@ import { RefundReviewActions } from "./refund-review-actions";
 import { Bot, CheckCircle2, Clock, MessageCircle, RefreshCcw } from "lucide-react";
 
 export default async function DocumentsListPage() {
-  const serviceCases = await api<ServiceCase[]>("/service-cases").catch(() => []);
-  const policy = await api<{ mode: string }>("/settings/content-delivery-policy").catch(() => ({ mode: "manual_review" }));
-  const aiReplyPolicy = await api<{ mode: string }>("/settings/ai-reply-delivery-policy").catch(() => ({ mode: "manual_review" }));
-  const pendingMessages = await api<Message[]>("/messages/pending-ai").catch(() => []);
-  const refundPendingCases = await api<ServiceCase[]>("/service-cases?filter=refund_pending").catch(() => []);
-  const pendingKnowledgeDrafts = await api<KnowledgeDraft[]>("/knowledge-drafts?status=pending").catch(() => []);
-  const approvedKnowledgeDrafts = await api<KnowledgeDraft[]>("/knowledge-drafts?status=approved").catch(() => []);
-  const knowledgeFaqs = await api<KnowledgeFAQ[]>("/knowledge-faqs?status=all").catch(() => []);
-  const knowledgeEvolutionConfig = await api<KnowledgeEvolutionSetting>("/settings/knowledge-evolution").catch(() => ({
-    enabled: false,
-    interval_seconds: 3600,
-    qa_at: "00:00",
-    daily_qa_limit: 500,
-    case_days: "3,7,14,21,28",
-    case_limit_per_case: 200,
-    timezone: "Asia/Shanghai",
-  }));
-  const knowledgeIndexStats = await api<KnowledgeIndexStats>("/knowledge-base/index/stats").catch(() => ({
-    total_chunks: 0,
-    embedded_chunks: 0,
-    by_source_type: {},
-  }));
+  const [
+    policy,
+    aiReplyPolicy,
+    pendingMessages,
+    refundPendingCases,
+    pendingKnowledgeDrafts,
+    approvedKnowledgeDrafts,
+    knowledgeFaqs,
+    knowledgeEvolutionConfig,
+    knowledgeIndexStats,
+  ] = await Promise.all([
+    api<{ mode: string }>("/settings/content-delivery-policy").catch(() => ({ mode: "manual_review" })),
+    api<{ mode: string }>("/settings/ai-reply-delivery-policy").catch(() => ({ mode: "manual_review" })),
+    api<Message[]>("/messages/pending-ai").catch(() => []),
+    api<ServiceCase[]>("/service-cases?filter=refund_pending").catch(() => []),
+    api<KnowledgeDraft[]>("/knowledge-drafts?status=pending").catch(() => []),
+    api<KnowledgeDraft[]>("/knowledge-drafts?status=approved").catch(() => []),
+    api<KnowledgeFAQ[]>("/knowledge-faqs?status=all").catch(() => []),
+    api<KnowledgeEvolutionSetting>("/settings/knowledge-evolution").catch(() => ({
+      enabled: false,
+      interval_seconds: 3600,
+      qa_at: "00:00",
+      daily_qa_limit: 500,
+      case_days: "3,7,14,21,28",
+      case_limit_per_case: 200,
+      timezone: "Asia/Shanghai",
+    })),
+    api<KnowledgeIndexStats>("/knowledge-base/index/stats").catch(() => ({
+      total_chunks: 0,
+      embedded_chunks: 0,
+      by_source_type: {},
+    })),
+  ]);
+  const serviceCases = pendingMessages.length > 0
+    ? await api<ServiceCase[]>("/service-cases").catch(() => [])
+    : [];
   const casesById = new Map(serviceCases.map((item) => [item.id, item]));
 
   return (

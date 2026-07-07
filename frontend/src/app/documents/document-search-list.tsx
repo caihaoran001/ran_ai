@@ -1,74 +1,108 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, type MouseEvent } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent } from "react";
 import Link from "next/link";
-import { api, UserDocument, API_BASE } from "@/lib/api";
+import { api, UserDocument, DashboardCasePendingDocuments, API_BASE } from "@/lib/api";
 import { useSSE } from "@/hooks/use-sse";
 import { FileText, Search, RefreshCw, Eye, CheckCircle, ArrowRight, Clock, ShieldCheck } from "lucide-react";
 
-interface MappedDocument extends UserDocument {
+type ReviewDocument = {
+  id: number;
+  service_case_id: number;
+  document_type: string;
+  title: string;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
   case_no: string;
   group_id: string;
   user_name: string;
   user_phone: string;
-}
+};
 
 export function DocumentSearchList() {
-  const [documents, setDocuments] = useState<MappedDocument[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [pendingDocuments, setPendingDocuments] = useState<ReviewDocument[]>([]);
+  const [historyDocuments, setHistoryDocuments] = useState<ReviewDocument[]>([]);
+  const [loadingPending, setLoadingPending] = useState(true);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "reviewed">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "reviewed">("pending");
   const [refreshing, setRefreshing] = useState(false);
-  const { pendingDocuments } = useSSE();
+  const { pendingDocuments: pendingDocumentCount } = useSSE();
   const lastPendingDocuments = useRef<number | null>(null);
 
-  const fetchDocuments = async () => {
+  const fetchPendingDocuments = useCallback(async () => {
     try {
-      // 1. Fetch all documents in a single O(1) request
-      const rawDocs = await api<UserDocument[]>("/documents");
-      
-      // 2. Fetch service cases concurrently to map user details in $O(1)$
-      const cases = await api<any[]>("/service-cases");
-      const casesMap = new Map(cases.map((c) => [c.id, c]));
+      const grouped = await api<DashboardCasePendingDocuments[]>("/dashboard/pending-documents");
+      setPendingDocuments(flattenPendingDocuments(grouped));
+    } catch (err) {
+      console.error("Failed to fetch pending documents:", err);
+    } finally {
+      setLoadingPending(false);
+      setRefreshing(false);
+    }
+  }, []);
 
-      const mapped: MappedDocument[] = rawDocs.map((doc) => {
+  const fetchHistoryDocuments = useCallback(async () => {
+    if (loadingHistory) return;
+    setLoadingHistory(true);
+    try {
+      const [rawDocs, cases] = await Promise.all([
+        api<UserDocument[]>("/documents"),
+        api<any[]>("/service-cases"),
+      ]);
+      const casesMap = new Map(cases.map((c) => [c.id, c]));
+      const mapped: ReviewDocument[] = rawDocs.map((doc) => {
         const sc = casesMap.get(doc.service_case_id);
         return {
-          ...doc,
+          id: doc.id,
+          service_case_id: doc.service_case_id,
+          document_type: doc.document_type,
+          title: doc.title,
+          status: doc.status,
           case_no: sc?.case_no || "未知服务单",
           group_id: sc?.group_id || "未知群组",
           user_name: sc?.user?.name || "未知客户",
           user_phone: sc?.user?.phone || "无手机号",
         };
       });
-
-      setDocuments(mapped);
+      setHistoryDocuments(mapped.filter((doc) => doc.status === "approved" || doc.status === "sent" || doc.status === "archived"));
+      setHistoryLoaded(true);
     } catch (err) {
-      console.error("Failed to fetch documents in batch:", err);
+      console.error("Failed to fetch document history:", err);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      setLoadingHistory(false);
     }
-  };
+  }, [loadingHistory]);
 
   useEffect(() => {
-    fetchDocuments();
-  }, []);
+    fetchPendingDocuments();
+  }, [fetchPendingDocuments]);
 
   useEffect(() => {
     if (lastPendingDocuments.current === null) {
-      lastPendingDocuments.current = pendingDocuments;
+      lastPendingDocuments.current = pendingDocumentCount;
       return;
     }
-    if (lastPendingDocuments.current !== pendingDocuments) {
-      lastPendingDocuments.current = pendingDocuments;
-      fetchDocuments();
+    if (lastPendingDocuments.current !== pendingDocumentCount) {
+      lastPendingDocuments.current = pendingDocumentCount;
+      fetchPendingDocuments();
     }
-  }, [pendingDocuments]);
+  }, [fetchPendingDocuments, pendingDocumentCount]);
+
+  useEffect(() => {
+    if ((statusFilter === "all" || statusFilter === "reviewed") && !historyLoaded) {
+      fetchHistoryDocuments();
+    }
+  }, [fetchHistoryDocuments, statusFilter, historyLoaded]);
 
   const handleRefresh = () => {
     setRefreshing(true);
-    fetchDocuments();
+    fetchPendingDocuments();
+    if (historyLoaded) {
+      fetchHistoryDocuments();
+    }
   };
 
   const statusConfig: Record<string, { label: string; className: string }> = {
@@ -81,6 +115,11 @@ export function DocumentSearchList() {
 
   // Client-side fuzzy search and status filter
   const filteredDocuments = useMemo(() => {
+    const documents = statusFilter === "pending"
+      ? pendingDocuments
+      : statusFilter === "reviewed"
+        ? historyDocuments
+        : [...pendingDocuments, ...historyDocuments];
     return documents.filter((doc) => {
       // Search filter
       const query = searchQuery.trim().toLowerCase();
@@ -101,17 +140,17 @@ export function DocumentSearchList() {
       }
       return true;
     });
-  }, [documents, searchQuery, statusFilter]);
+  }, [pendingDocuments, historyDocuments, searchQuery, statusFilter]);
 
   const pendingCount = useMemo(() => {
-    return documents.filter((doc) => doc.status === "reviewing" || doc.status === "draft").length;
-  }, [documents]);
+    return pendingDocuments.length;
+  }, [pendingDocuments]);
 
   const reviewedCount = useMemo(() => {
-    return documents.filter((doc) => doc.status === "approved" || doc.status === "sent" || doc.status === "archived").length;
-  }, [documents]);
+    return historyDocuments.length;
+  }, [historyDocuments]);
 
-  if (loading) {
+  if (loadingPending) {
     return (
       <div className="space-y-6">
         <div className="flex animate-pulse flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -137,6 +176,11 @@ export function DocumentSearchList() {
 
   const pendingDocs = filteredDocuments.filter((doc) => doc.status === "reviewing" || doc.status === "draft");
   const reviewedDocs = filteredDocuments.filter((doc) => doc.status === "approved" || doc.status === "sent" || doc.status === "archived");
+  const visibleDocuments = statusFilter === "pending"
+    ? pendingDocuments
+    : statusFilter === "reviewed"
+      ? historyDocuments
+      : [...pendingDocuments, ...historyDocuments];
 
   return (
     <div className="space-y-6">
@@ -162,7 +206,7 @@ export function DocumentSearchList() {
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              全部 ({documents.length})
+              全部 ({historyLoaded ? visibleDocuments.length : `${pendingCount}+`})
             </button>
             <button
               onClick={() => setStatusFilter("pending")}
@@ -182,22 +226,22 @@ export function DocumentSearchList() {
                   : "text-slate-600 hover:text-emerald-700"
               }`}
             >
-              已审核 ({reviewedCount})
+              已审核 ({historyLoaded ? reviewedCount : "加载"})
             </button>
           </div>
 
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-slate-600 transition-colors hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-800 disabled:opacity-50"
+            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-cyan-200 bg-white px-3 text-cyan-800 transition-colors hover:bg-cyan-50 disabled:opacity-50"
             title="刷新文档"
           >
-            <RefreshCw className={`h-4 w-4 text-zinc-500 ${refreshing ? "animate-spin" : ""}`} />
+            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
           </button>
         </div>
       </div>
 
-      {documents.length === 0 ? (
+      {visibleDocuments.length === 0 && statusFilter === "pending" ? (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center sm:p-12">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
             <FileText className="h-6 w-6 text-slate-400" />
@@ -228,7 +272,7 @@ export function DocumentSearchList() {
                 {pendingDocs.length > 0 ? (
                   <div className="max-h-[500px] space-y-3.5 overflow-y-auto pr-1.5">
                     {pendingDocs.map((doc) => (
-                      <DocumentCard key={doc.id} doc={doc} statusConfig={statusConfig} onDiscard={fetchDocuments} />
+                      <DocumentCard key={doc.id} doc={doc} statusConfig={statusConfig} onDiscard={fetchPendingDocuments} />
                     ))}
                   </div>
                 ) : (
@@ -263,6 +307,11 @@ export function DocumentSearchList() {
                       <DocumentCard key={doc.id} doc={doc} statusConfig={statusConfig} />
                     ))}
                   </div>
+                ) : loadingHistory ? (
+                  <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/70 py-16 text-center text-slate-400">
+                    <RefreshCw className="mb-2 h-6 w-6 animate-spin" />
+                    <p className="text-xs font-bold text-slate-500">正在加载已审核历史</p>
+                  </div>
                 ) : (
                   <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/70 py-16 text-center text-slate-400">
                     <ShieldCheck className="mb-2 h-6 w-6" />
@@ -278,12 +327,30 @@ export function DocumentSearchList() {
   );
 }
 
+function flattenPendingDocuments(items: DashboardCasePendingDocuments[]): ReviewDocument[] {
+  return items.flatMap((item) =>
+    item.documents.map((doc) => ({
+      id: doc.document_id,
+      service_case_id: item.case.service_case_id,
+      document_type: doc.document_type,
+      title: doc.title,
+      status: doc.status,
+      created_at: doc.created_at,
+      updated_at: doc.updated_at,
+      case_no: item.case.case_no,
+      group_id: item.case.group_name || item.case.group_id,
+      user_name: item.case.user_name || "未知客户",
+      user_phone: item.case.user_phone || "无手机号",
+    })),
+  );
+}
+
 function DocumentCard({
   doc,
   statusConfig,
   onDiscard,
 }: {
-  doc: MappedDocument;
+  doc: ReviewDocument;
   statusConfig: Record<string, { label: string; className: string }>;
   onDiscard?: () => void;
 }) {
@@ -348,7 +415,7 @@ function DocumentCard({
               type="button"
               onClick={handleDiscard}
               disabled={discarding}
-              className="min-h-9 rounded-md border border-slate-200 px-3 text-xs font-bold text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
+              className="min-h-9 rounded-md border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700 transition-colors hover:bg-rose-50 hover:text-rose-800 disabled:opacity-50"
             >
               {discarding ? "处理中…" : "不发送"}
             </button>

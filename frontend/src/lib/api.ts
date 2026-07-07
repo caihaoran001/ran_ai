@@ -121,6 +121,30 @@ export type UserDocument = {
   sent_at?: string | null;
 };
 
+export type DashboardCaseRef = {
+  service_case_id: number;
+  case_no: string;
+  user_id?: number | null;
+  user_name?: string | null;
+  user_phone?: string | null;
+  group_id: string;
+  group_name?: string | null;
+};
+
+export type DashboardPendingDocument = {
+  document_id: number;
+  document_type: string;
+  title: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DashboardCasePendingDocuments = {
+  case: DashboardCaseRef;
+  documents: DashboardPendingDocument[];
+};
+
 export type DocumentTableCell = {
   value: string;
   editable?: boolean;

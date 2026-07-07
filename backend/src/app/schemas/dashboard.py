@@ -89,6 +89,7 @@ class DashboardCaseRef(BaseModel):
     case_no: str
     user_id: int | None = None
     user_name: str | None = None
+    user_phone: str | None = None
     group_id: str
     group_name: str | None = None
 

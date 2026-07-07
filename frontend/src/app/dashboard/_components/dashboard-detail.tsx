@@ -8,6 +8,7 @@ export type DashboardCaseRef = {
   case_no: string;
   user_id?: number | null;
   user_name?: string | null;
+  user_phone?: string | null;
   group_id: string;
   group_name?: string | null;
 };
@@ -255,7 +256,7 @@ export function PendingDocumentList({ items }: { items: DashboardCasePendingDocu
                   </div>
                 </div>
                 <Link
-                  href={`/documents/${item.case.service_case_id}`}
+                  href={`/documents/${document.document_id}`}
                   className="inline-flex min-h-10 items-center justify-center rounded-lg border border-cyan-200 px-3 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-50"
                 >
                   审核文件

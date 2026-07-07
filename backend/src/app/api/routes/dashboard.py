@@ -752,6 +752,7 @@ def _case_ref(service_case: ServiceCase, user: User | None) -> DashboardCaseRef:
         case_no=service_case.case_no,
         user_id=user.id if user else None,
         user_name=user.name if user else None,
+        user_phone=user.phone if user else None,
         group_id=service_case.group_id,
         group_name=service_case.group_name,
     )
