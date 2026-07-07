@@ -52,6 +52,10 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
   }, [content, isEditing]);
 
   async function send() {
+    // 已发送的文件允许重发（企微「已发送」仅代表网关受理，不等于真正进群），重发前二次确认防误点
+    if (sent && !window.confirm(`确认重新把《${document.title}》发送到群？`)) {
+      return;
+    }
     setBusy(true);
     await save(content, contentJson);
     await fetch(`${API_BASE}/documents/${document.id}/send`, { method: "POST" });
@@ -70,11 +74,11 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
         <div className="flex gap-2">
           <Button
             type="button"
-            className={sent ? "bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed hover:bg-zinc-100" : "bg-emerald-700 hover:bg-emerald-600 text-white"}
+            className={sent ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100" : "bg-emerald-700 hover:bg-emerald-600 text-white"}
             onClick={send}
-            disabled={busy || sent}
+            disabled={busy}
           >
-            {busy ? "发送中..." : sent ? "已发送" : "确认发送"}
+            {busy ? "发送中..." : sent ? "重新发送" : "确认发送"}
           </Button>
           <a
             suppressHydrationWarning
