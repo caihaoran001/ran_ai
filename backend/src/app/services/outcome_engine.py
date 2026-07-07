@@ -91,6 +91,68 @@ FIELD_ACTION_RULES: dict[str, tuple[tuple[str, float], ...]] = {
     "next_stage_intent": (("motivation_support", 0.2),),
 }
 
+FOLLOWUP_QUESTIONS: dict[str, str] = {
+    "profile_completed": "问卷和基础资料这块还有哪里需要我帮你确认吗？",
+    "plan_understood": "现在方案里还有哪一步不太确定吗？",
+    "documents_received": "方案文件你这边看到了吗，有没有哪块需要我帮你拎一下？",
+    "started_execution": "今天已经开始按方案走了吗？",
+    "product_schedule": "今天早C、午B、晚A这几个时间点跟得上吗？",
+    "rhythm_understood": "几个产品分别什么时候喝，现在清楚了吗？",
+    "weight_change": "今早体重有记录吗，和前两天比怎么样？",
+    "waist_or_body_change": "这两天裤腰或肚子体感有没有一点变化？",
+    "energy_change": "今天白天精神状态怎么样，比前两天稳一点吗？",
+    "sleep_change": "昨晚睡得怎么样，有没有比前几天稳一点？",
+    "bowel_change": "今天排便怎么样，顺不顺？",
+    "plateau_signal": "这几天体重整体是卡住了，还是还有一点波动？",
+    "execution_rate_signal": "这两天执行大概能做到几成？",
+    "adjustment_need": "现在最卡的是产品时间、晚餐，还是别的地方？",
+    "positive_body_signal": "除了精神状态，腰腹或身体轻松感有没有变化？",
+    "challenge_goal_result": "这 28 天目标你自己感觉达成到几成？",
+    "weight_result": "这 28 天体重最终大概变化了多少？",
+    "waist_result": "腰围或裤腰这 28 天有没有明显变化？",
+    "habit_stability": "现在这些动作不提醒也能自然做到一部分了吗？",
+    "next_stage_intent": "后面你更想继续稳住，还是先调整一下节奏？",
+    "lifestyle_habit": "现在有没有哪一个习惯已经比较自然了？",
+    "long_term_weight_stability": "最近体重整体算稳定，还是又有反复？",
+    "self_management": "遇到出差或聚餐时，你现在大概知道怎么调整了吗？",
+    "long_term_membership": "后面你更想继续跟着，还是先自己稳一阵？",
+    "referral_signal": "身边有人问过你这段时间的变化吗？",
+    "brand_advocacy": "这套方法里有没有哪一点是你觉得最适合自己的？",
+}
+
+FOLLOWUP_FIELD_PRIORITY: tuple[str, ...] = (
+    "sleep_change",
+    "bowel_change",
+    "energy_change",
+    "product_schedule",
+    "rhythm_understood",
+    "started_execution",
+    "adjustment_need",
+    "execution_rate_signal",
+    "positive_body_signal",
+    "weight_change",
+    "waist_or_body_change",
+    "plan_understood",
+    "documents_received",
+    "profile_completed",
+    "habit_stability",
+    "next_stage_intent",
+    "self_management",
+    "lifestyle_habit",
+    "long_term_weight_stability",
+)
+
+RELATED_FOLLOWUP_FIELDS: dict[str, tuple[str, ...]] = {
+    "energy_change": ("sleep_change", "bowel_change"),
+    "sleep_change": ("energy_change",),
+    "bowel_change": ("energy_change",),
+    "product_schedule": ("rhythm_understood", "execution_rate_signal"),
+    "rhythm_understood": ("product_schedule",),
+    "execution_rate_signal": ("adjustment_need", "product_schedule"),
+    "adjustment_need": ("product_schedule", "execution_rate_signal"),
+    "positive_body_signal": ("energy_change", "waist_or_body_change"),
+}
+
 
 @dataclass(frozen=True)
 class OutcomeGoal:
@@ -457,27 +519,16 @@ async def apply_outcome_analysis(
     state.collected_fields = collected
     state.missing_fields = missing
 
-    followup_plan = _normalize_followup(raw.get("followup_plan"), missing, allowed_followup_fields)
-    if (
-        service_case.risk_level == "high"
-        or _must_suppress_followup(intervention_analysis)
-    ):
-        followup_plan = {"should_ask": False, "field_key": "", "question": "", "reason": "风险或人工介入场景，暂停成效追问。"}
-    elif followup_plan.get("should_ask") and _is_followup_in_cooldown(state):
-        followup_plan = {
-            "should_ask": False,
-            "field_key": "",
-            "question": "",
-            "reason": "上一轮成效追问仍在冷却期，避免连续追问造成回复疲劳。",
-        }
-    elif followup_plan.get("should_ask") and _is_followup_context_unsuitable(message.content, created_events):
-        followup_plan = {
-            "should_ask": False,
-            "field_key": "",
-            "question": "",
-            "reason": "本轮不是成效采集语境，避免在确认、闲聊或流程问题后硬追问。",
-        }
-    elif followup_plan.get("should_ask"):
+    followup_plan = _plan_followup(
+        service_case=service_case,
+        message=message,
+        state=state,
+        missing_fields=missing,
+        created_events=created_events,
+        intervention_analysis=intervention_analysis,
+        allowed_followup_fields=allowed_followup_fields,
+    )
+    if followup_plan.get("should_ask"):
         state.last_followup_field = followup_plan["field_key"]
         state.last_followup_question = followup_plan["question"]
         state.last_followup_at = datetime.now(timezone.utc)
@@ -1051,30 +1102,64 @@ def _normalize_profile_signals(value: Any) -> list[dict[str, Any]]:
     return signals[:5]
 
 
-def _normalize_followup(
-    value: Any,
+def _plan_followup(
+    *,
+    service_case: ServiceCase,
+    message: Message,
+    state: OutcomeStageState,
     missing_fields: list[str],
-    allowed_fields: set[str] | None = None,
+    created_events: list[dict[str, Any]],
+    intervention_analysis: dict[str, Any] | None,
+    allowed_followup_fields: set[str] | None,
 ) -> dict[str, Any]:
-    if not isinstance(value, dict) or not value.get("should_ask"):
-        return {"should_ask": False, "field_key": "", "question": "", "reason": ""}
-    field_key = _string(value.get("field_key"))
-    question = _string(value.get("question"))
-    if field_key not in missing_fields or not question:
-        return {"should_ask": False, "field_key": "", "question": "", "reason": ""}
-    if allowed_fields is not None and field_key not in allowed_fields:
+    if service_case.risk_level == "high" or _must_suppress_followup(intervention_analysis):
+        return {"should_ask": False, "field_key": "", "question": "", "reason": "风险或人工介入场景，暂停成效追问。"}
+    if _is_followup_in_cooldown(state):
         return {
             "should_ask": False,
             "field_key": "",
             "question": "",
-            "reason": "本轮追问字段不在当前时段或当日未答范围内，已由后端拦截。",
+            "reason": "上一轮成效追问仍在冷却期，避免连续追问造成回复疲劳。",
         }
+    if _is_followup_context_unsuitable(message.content, created_events):
+        return {
+            "should_ask": False,
+            "field_key": "",
+            "question": "",
+            "reason": "本轮不是成效采集语境，避免在确认、闲聊或流程问题后硬追问。",
+        }
+
+    created_keys = {str(item.get("field_key") or "") for item in created_events}
+    candidates = [
+        field
+        for field in missing_fields
+        if field not in created_keys
+        and field in FOLLOWUP_QUESTIONS
+        and (allowed_followup_fields is None or field in allowed_followup_fields)
+    ]
+    field_key = _select_followup_field(candidates, created_events)
+    if not field_key:
+        return {"should_ask": False, "field_key": "", "question": "", "reason": "当前时段没有适合顺手追问的缺失字段。"}
     return {
         "should_ask": True,
         "field_key": field_key,
-        "question": question,
-        "reason": _string(value.get("reason")),
+        "question": FOLLOWUP_QUESTIONS[field_key],
+        "reason": "后端根据阶段缺口、当前时段和本轮语境选择的顺手追问。",
     }
+
+
+def _select_followup_field(candidates: list[str], created_events: list[dict[str, Any]]) -> str:
+    candidate_set = set(candidates)
+    if not candidate_set:
+        return ""
+    for event in created_events:
+        for related in RELATED_FOLLOWUP_FIELDS.get(str(event.get("field_key") or ""), ()):
+            if related in candidate_set:
+                return related
+    for field in FOLLOWUP_FIELD_PRIORITY:
+        if field in candidate_set:
+            return field
+    return candidates[0]
 
 
 def _allowed_followup_fields_from_context(context: Any) -> set[str] | None:

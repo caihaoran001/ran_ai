@@ -402,7 +402,7 @@ async def test_outcome_plan_includes_followup_time_context(db_session):
 
 
 @pytest.mark.asyncio
-async def test_followup_is_blocked_when_not_in_allowed_time_fields(db_session):
+async def test_followup_planner_ignores_model_field_and_uses_allowed_backend_field(db_session):
     case = await _setup_outcome_case(db_session, days=7)
     message = Message(
         service_case_id=case.id,
@@ -438,8 +438,54 @@ async def test_followup_is_blocked_when_not_in_allowed_time_fields(db_session):
         allowed_followup_fields={"energy_change"},
     )
 
-    assert result["followup_plan"]["should_ask"] is False
-    assert "后端拦截" in result["followup_plan"]["reason"]
+    assert result["followup_plan"]["should_ask"] is True
+    assert result["followup_plan"]["field_key"] == "energy_change"
+    assert "后端" in result["followup_plan"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_followup_planner_generates_question_without_model_followup_plan(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    message = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="今天下午没那么困了",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+
+    result = await apply_outcome_analysis(
+        db_session,
+        service_case=case,
+        message=message,
+        spec=spec,
+        state=state,
+        raw={
+            "outcome_events": [
+                {
+                    "field_key": "energy_change",
+                    "event_type": "improved",
+                    "value": "用户反馈白天精神状态有改善",
+                    "evidence_text": message.content,
+                    "confidence": 0.9,
+                }
+            ],
+            "followup_plan": {"should_ask": False},
+        },
+        intervention_analysis={"requires_human_intervention": False},
+        allowed_followup_fields={"sleep_change", "bowel_change"},
+    )
+
+    assert result["followup_plan"]["should_ask"] is True
+    assert result["followup_plan"]["field_key"] == "sleep_change"
+    assert result["followup_plan"]["question"]
 
 
 @pytest.mark.asyncio
