@@ -138,6 +138,7 @@ RANREN_AI_SYSTEM_PROMPT = (
     "引用知识库和标准回复时，优先保留并呼应用户发言中触发的核心业务名词，例如早C、午B、晚A、平台期、不掉秤、空腹、随餐等，以保持服务话术一致。\n"
     "但组织回复时必须自然、温暖、顺畅，绝对避免生硬地机械复读或拼接用户的原始吐槽原话。\n"
     "【极短输入处理】如果用户只发『在？』『？』『1』『好的』『嗯嗯』『收到』『OK』『好嘞』等极短内容，不要主动展开饮食、产品、打卡、睡眠建议；默认简短回应（如『在，怎么啦？』『收到～』），若不明白用户意图，就问『你想确认哪一块？』。\n"
+    "【可以选择不回复】当对话已经自然收尾——例如你上一句已经把话说完，用户只回了一个『OK』『👌』『收到』『好的』这类纯确认表情或短词，且没有新的问题或情绪——你可以选择本轮不再回复：此时只输出一个标记 <no_reply>，不要输出任何其他文字、标点或解释。严禁把『（对话自然收尾，无需回复）』这类内心独白或舞台指示当成正文发出去；想表达不回复就只输出 <no_reply>。除此之外的正常情况都要照常自然接话。\n"
     "【不要替用户补剧情】没有明确证据时，不要推断用户正在外面、刚忙完、精神变好、续航撑住、已经/应该喝某一杯等状态。历史消息只能作为背景，不能当作当前正在发生；如果历史场景超过30分钟，不要据此判断用户『现在』在哪里、正在吃什么、正在喝什么。\n"
     "【真实需求使用原则】\n"
     "用户状态与真实需求只是背景理解，不是每次回复都必须点破的主题。当前用户这句话永远优先：先回答眼前问题，再决定是否轻轻带入长期需求。\n"
@@ -1498,6 +1499,17 @@ class RanrenAIEngine:
                 trigger_id=trigger_id,
             )
 
+        # AI 主动选择沉默：模型输出 <no_reply> 表示对话已自然收尾、本轮无需回复。
+        # 直接丢弃——不发送、不入聊天记录、不进待审核，避免把内心独白/旁白当正文发进群。
+        if reply and _reply_is_no_reply(reply):
+            logger.info(
+                "RanrenAI skip AI reply because model chose no-reply chat_id=%s trigger_id=%s service_case_id=%s",
+                message.chat_id,
+                trigger_id,
+                service_case_id,
+            )
+            return
+
         if reply:
             reply = _sanitize_ai_reply(reply, self.settings)
             # 逻辑①不拆台：AI 生成期间班主任(真人)已就这条接话 → AI 不抢话，直接丢弃(不发、不入待审核)
@@ -2214,6 +2226,15 @@ def _requires_health_handoff(analysis: dict | None, risk_level: str | None) -> b
     AI 答不了高风险用户的饮食/运动/用药/方案问题，直接转真人；普通消息(打卡/闲聊/感谢)不在此列、AI 正常回。
     """
     return risk_level == "high" and isinstance(analysis, dict) and bool(analysis.get("health_consultation"))
+
+
+# AI 可主动选择沉默：模型输出该标记表示本轮无需回复，后端据此不发送、也不入聊天记录。
+_NO_REPLY_MARKER = "<no_reply>"
+
+
+def _reply_is_no_reply(reply: str) -> bool:
+    """模型输出中包含 <no_reply> 标记即视为选择不回复（大小写不敏感）。"""
+    return _NO_REPLY_MARKER in (reply or "").lower()
 
 
 def _sanitize_ai_reply(reply: str, settings: Settings) -> str:
