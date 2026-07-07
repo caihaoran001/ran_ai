@@ -11,7 +11,10 @@ from app.models.outcome import OutcomeEvent, OutcomeStageState
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
-from app.services.document_service import _apply_intake_facts_to_document_payloads
+from app.services.document_service import (
+    _apply_intake_facts_to_document_payloads,
+    _intake_generation_system_prompt,
+)
 from app.services.intake_facts import build_intake_fact_summary
 from app.services.questionnaire_template import default_questionnaire_template
 
@@ -156,6 +159,17 @@ def _make_intake_mock_response(*, weight_band: str = "维持优化带（A带）"
             },
         }
     })
+
+
+def test_intake_prompt_requires_five_independent_daily_checkin_questions():
+    prompt = _intake_generation_system_prompt()
+
+    assert (
+        "daily_checkin 必须严格输出5项且每项只能对应一个独立回答意图："
+        "第1项固定为早C/午B/晚A合并打卡，后4项围绕用户具体卡点定制；"
+        "候选问题超过5个时只保留优先级最高的5个并舍弃其余，禁止合并多个问题，"
+        "尤其禁止「是否……？请记录……」「是否……并填写……」「是否……同时记录……」等把判断题和填空/评分题塞进同一项的句式。"
+    ) in prompt
 
 
 @pytest.mark.asyncio
