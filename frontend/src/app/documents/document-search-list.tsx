@@ -149,6 +149,7 @@ export function DocumentSearchList() {
   const reviewedCount = useMemo(() => {
     return historyDocuments.length;
   }, [historyDocuments]);
+  const allCountLabel = historyLoaded ? String(pendingCount + reviewedCount) : `${pendingCount}+`;
 
   if (loadingPending) {
     return (
@@ -206,7 +207,7 @@ export function DocumentSearchList() {
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              全部 ({historyLoaded ? visibleDocuments.length : `${pendingCount}+`})
+              全部 ({allCountLabel})
             </button>
             <button
               onClick={() => setStatusFilter("pending")}
