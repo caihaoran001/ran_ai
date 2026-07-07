@@ -1252,6 +1252,31 @@ async def test_qiwe_aggregator_keeps_inbound_event_pending_when_engine_fails(db_
 
 
 @pytest.mark.asyncio
+async def test_qiwe_immediate_dispatch_persists_and_marks_inbound_event(db_session):
+    """绕过聚合的控制/文件类消息也要先落 durable inbox，成功后标 processed。"""
+    from sqlalchemy import select
+    from app.models.inbound_event import InboundEvent
+
+    engine = FakeEngine()
+    aggregator = QiWeMessageAggregator(FakeChannel(), window_seconds=10.0, engine=engine)
+    message_id = f"inbox-now-{secrets.token_hex(4)}"
+    message = ChannelMessage(
+        channel="qiwe", chat_id="room-inbox-now", chat_type="group",
+        text="[文件]", message_id=message_id, user_id="u1",
+        message_type="file", timestamp=datetime.now(timezone.utc),
+    )
+
+    await aggregator.dispatch_now(message)
+
+    event = await db_session.scalar(select(InboundEvent).where(InboundEvent.message_id == message_id))
+    assert event is not None
+    assert len(engine.messages) == 1
+    assert event.event_type == InboundEvent.EVENT_MESSAGE
+    assert event.status == InboundEvent.STATUS_PROCESSED
+    assert event.processed_at is not None
+
+
+@pytest.mark.asyncio
 async def test_replay_pending_inbound_events_reprocesses_unhandled_event(db_session, monkeypatch):
     """Fix②：开机重放卡在聚合窗口、从未进引擎的 pending inbound_event。"""
     from datetime import timedelta
@@ -1419,3 +1444,99 @@ async def test_mark_outbound_blocked_flips_sent_to_failed(db_session):
 
     # 不存在的渠道id → 不命中
     assert await mark_outbound_blocked_by_channel_id("NOPE=", "x") is False
+
+
+@pytest.mark.asyncio
+async def test_qiwe_spam_block_event_persists_processes_and_marks_processed(db_session):
+    from sqlalchemy import select
+    from app.models.inbound_event import InboundEvent
+    from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
+    from app.services.qiwe_service.inbox import (
+        persist_qiwe_spam_block_event,
+        process_qiwe_spam_block_event,
+    )
+
+    sent = Message(
+        group_id="group-spam-persist", wecom_message_id="CAQQspam-persist=",
+        content="这条稍后被风控通知拦截。", message_type="text",
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.SENT,
+        sent_at=datetime.now(timezone.utc),
+    )
+    db_session.add(sent)
+    await db_session.flush()
+
+    raw_payload = {
+        "cmd": 15000,
+        "msgType": 1011,
+        "msgUniqueIdentifier": "spam_block_CAQQspam-persist=",
+        "msgData": {"base64RawData": "5Zug6LSm5Y+36L+d6KeE"},
+    }
+    event_id = await persist_qiwe_spam_block_event(
+        channel_message_id="CAQQspam-persist=",
+        reason="企业微信官方风控拦截：因账号违规",
+        raw_payload=raw_payload,
+    )
+
+    event = await db_session.scalar(select(InboundEvent).where(InboundEvent.id == event_id))
+    assert event is not None
+    assert event.event_type == InboundEvent.EVENT_QIWE_SPAM_BLOCK
+    assert event.status == InboundEvent.STATUS_PENDING
+
+    handled = await process_qiwe_spam_block_event(
+        event_id,
+        "CAQQspam-persist=",
+        "企业微信官方风控拦截：因账号违规",
+    )
+
+    assert handled is True
+    await db_session.refresh(sent)
+    await db_session.refresh(event)
+    assert sent.status == MessageStatus.FAILED
+    assert sent.sent_at is None
+    assert "风控" in (sent.error or "")
+    assert event.status == InboundEvent.STATUS_PROCESSED
+    assert event.processed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_replay_pending_inbound_events_processes_qiwe_spam_block_event(db_session):
+    from datetime import timedelta
+    from app.models.inbound_event import InboundEvent
+    from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
+    from app.services.qiwe_service.inbox import replay_pending_inbound_events
+
+    now = datetime.now(timezone.utc)
+    sent = Message(
+        group_id="group-spam-replay", wecom_message_id="CAQQspam-replay=",
+        content="重启窗口丢了后台对账。", message_type="text",
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.SENT,
+        sent_at=now - timedelta(minutes=1),
+    )
+    event = InboundEvent(
+        event_type=InboundEvent.EVENT_QIWE_SPAM_BLOCK,
+        channel="qiwe", chat_id="CAQQspam-replay=", user_id=None,
+        message_id="spam_block_CAQQspam-replay=",
+        text="企业微信官方风控拦截：因账号违规",
+        message_type=InboundEvent.EVENT_QIWE_SPAM_BLOCK,
+        raw_payload={
+            "cmd": 15000,
+            "msgType": 1011,
+            "msgUniqueIdentifier": "spam_block_CAQQspam-replay=",
+            "msgData": {"base64RawData": "5Zug6LSm5Y+36L+d6KeE"},
+        },
+        message_timestamp=now - timedelta(minutes=1),
+        status=InboundEvent.STATUS_PENDING,
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add_all([sent, event])
+    await db_session.flush()
+
+    await replay_pending_inbound_events(FakeChannel(), now)
+
+    await db_session.refresh(sent)
+    await db_session.refresh(event)
+    assert sent.status == MessageStatus.FAILED
+    assert sent.sent_at is None
+    assert event.status == InboundEvent.STATUS_PROCESSED

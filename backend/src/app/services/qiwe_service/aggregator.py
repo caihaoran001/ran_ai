@@ -110,6 +110,7 @@ class QiWeMessageAggregator:
 
     async def dispatch_now(self, message: ChannelMessage) -> None:
         started_at = time.monotonic()
+        event_id: int | None = None
         async with self._lock:
             if self._is_duplicate_locked(message):
                 logger.info(
@@ -136,6 +137,7 @@ class QiWeMessageAggregator:
                     len(batch.messages),
                 )
                 return
+            event_id = await persist_inbound_event(message)
         logger.info(
             "QiWe immediate dispatch start chat_id=%s user_id=%s message_id=%s",
             message.chat_id,
@@ -153,6 +155,7 @@ class QiWeMessageAggregator:
                 type(exc).__name__,
             )
             return
+        await mark_inbound_events_processed([event_id] if event_id is not None else [])
         logger.info(
             "QiWe immediate dispatch done chat_id=%s user_id=%s message_id=%s elapsed_ms=%.1f",
             message.chat_id,

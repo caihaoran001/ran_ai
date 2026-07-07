@@ -23,8 +23,11 @@ class InboundEvent(TimestampMixin, Base):
 
     STATUS_PENDING = "pending"
     STATUS_PROCESSED = "processed"
+    EVENT_MESSAGE = "message"
+    EVENT_QIWE_SPAM_BLOCK = "qiwe_spam_block"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(32), default=EVENT_MESSAGE, nullable=False, index=True)
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
     chat_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     user_id: Mapped[str | None] = mapped_column(String(128))

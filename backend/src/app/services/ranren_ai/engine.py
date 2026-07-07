@@ -2475,7 +2475,7 @@ async def mark_outbound_blocked_by_channel_id(channel_message_id: str, reason: s
     发送时渠道 API 会当场返回成功、消息记为 SENT；但账号被风控时，企微随后会异步回一条
     spam_block 通知（msgType=1011），说明这条其实没能进群。此处按通知携带的渠道消息 id
     (wecom_message_id) 回查那条已发记录，改为 FAILED 并写入风控原因，让后台如实反映「没送达」。
-    只降级 SENT/SENDING；已是 FAILED 或找不到则跳过。返回是否命中并更新了一条记录。
+    只降级 SENT/SENDING；已是 FAILED 等终态则视为已对账、不重复改写。返回是否命中一条记录。
     """
     channel_message_id = (channel_message_id or "").strip()
     if not channel_message_id:
@@ -2494,7 +2494,13 @@ async def mark_outbound_blocked_by_channel_id(channel_message_id: str, reason: s
             )
             return False
         if row.status not in (MessageStatus.SENT, MessageStatus.SENDING):
-            return False
+            logger.info(
+                "mark_outbound_blocked_by_channel_id: outbound message id=%s already status=%s channel_message_id=%s",
+                row.id,
+                row.status,
+                channel_message_id,
+            )
+            return True
         row.status = MessageStatus.FAILED
         row.error = reason or "企业微信官方风控拦截：消息未送达"
         row.sent_at = None

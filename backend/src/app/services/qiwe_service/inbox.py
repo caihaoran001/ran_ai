@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import base64
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy import select
 
@@ -13,6 +15,8 @@ from app.services.channels.base import ChannelMessage, MessageChannel
 
 logger = logging.getLogger("uvicorn.error")
 
+_SPAM_BLOCK_PREFIX = "spam_block_"
+
 
 async def persist_inbound_event(message: ChannelMessage) -> int | None:
     """把一条入站消息落到持久化收件箱，返回事件 id。
@@ -22,6 +26,7 @@ async def persist_inbound_event(message: ChannelMessage) -> int | None:
     try:
         async with SessionLocal() as session:
             event = InboundEvent(
+                event_type=InboundEvent.EVENT_MESSAGE,
                 channel=message.channel,
                 chat_id=message.chat_id,
                 user_id=message.user_id,
@@ -44,6 +49,86 @@ async def persist_inbound_event(message: ChannelMessage) -> int | None:
             message.message_id,
         )
         return None
+
+
+def qiwe_spam_block_notice(item: dict[str, Any]) -> tuple[str, str] | None:
+    """识别企微风控拦截通知(msgType=1011)，返回(被拦截消息渠道 id, 原因文案)。"""
+    if item.get("cmd") != 15000 or item.get("msgType") != 1011:
+        return None
+    identifier = str(item.get("msgUniqueIdentifier") or "")
+    if not identifier.startswith(_SPAM_BLOCK_PREFIX):
+        return None
+    channel_message_id = identifier[len(_SPAM_BLOCK_PREFIX):].strip()
+    if not channel_message_id:
+        return None
+    msg_data = item.get("msgData") if isinstance(item.get("msgData"), dict) else {}
+    raw = msg_data.get("base64RawData") or item.get("base64RawData")
+    detail = ""
+    if raw:
+        try:
+            detail = base64.b64decode(raw).decode("utf-8", errors="ignore").strip()
+        except Exception:
+            detail = ""
+    reason = f"企业微信官方风控拦截：{detail}" if detail else "企业微信官方风控拦截：消息未送达（账号功能被限制）"
+    return channel_message_id, reason
+
+
+def _timestamp_from_payload(item: dict[str, Any]) -> datetime:
+    try:
+        return datetime.fromtimestamp(int(item.get("timestamp")), timezone.utc)
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+async def persist_qiwe_spam_block_event(
+    *,
+    channel_message_id: str,
+    reason: str,
+    raw_payload: dict[str, Any],
+) -> int | None:
+    """持久化企微风控通知，避免 background task 因重启丢失后留下假 SENT。"""
+    channel_message_id = (channel_message_id or "").strip()
+    if not channel_message_id:
+        return None
+    try:
+        async with SessionLocal() as session:
+            event = InboundEvent(
+                event_type=InboundEvent.EVENT_QIWE_SPAM_BLOCK,
+                channel="qiwe",
+                chat_id=channel_message_id,
+                user_id=None,
+                message_id=str(raw_payload.get("msgUniqueIdentifier") or f"{_SPAM_BLOCK_PREFIX}{channel_message_id}"),
+                text=reason or "企业微信官方风控拦截：消息未送达",
+                message_type=InboundEvent.EVENT_QIWE_SPAM_BLOCK,
+                raw_payload=raw_payload,
+                message_timestamp=_timestamp_from_payload(raw_payload),
+                status=InboundEvent.STATUS_PENDING,
+            )
+            session.add(event)
+            await session.flush()
+            event_id = event.id
+            await session.commit()
+            return event_id
+    except Exception:
+        logger.exception(
+            "persist_qiwe_spam_block_event failed channel_message_id=%s",
+            channel_message_id,
+        )
+        return None
+
+
+async def process_qiwe_spam_block_event(
+    event_id: int | None,
+    channel_message_id: str,
+    reason: str,
+) -> bool:
+    """执行风控对账；命中出站记录后才把 durable event 标 processed。"""
+    from app.services.ranren_ai.engine import mark_outbound_blocked_by_channel_id
+
+    handled = await mark_outbound_blocked_by_channel_id(channel_message_id, reason)
+    if handled and event_id is not None:
+        await mark_inbound_events_processed([event_id])
+    return handled
 
 
 async def mark_inbound_events_processed(event_ids: list[int]) -> None:
@@ -114,6 +199,29 @@ async def replay_pending_inbound_events(channel: MessageChannel, startup_time: d
     engine = RanrenAIEngine(channel)
     for event in events:
         try:
+            if event.event_type == InboundEvent.EVENT_QIWE_SPAM_BLOCK:
+                spam_block = qiwe_spam_block_notice(event.raw_payload or {})
+                if spam_block is None:
+                    logger.warning(
+                        "replay_pending_inbound_events: malformed qiwe spam_block event_id=%s",
+                        event.id,
+                    )
+                    await mark_inbound_events_processed([event.id])
+                    continue
+                channel_message_id, reason = spam_block
+                handled = await process_qiwe_spam_block_event(
+                    event.id,
+                    channel_message_id,
+                    event.text or reason,
+                )
+                if handled:
+                    logger.info(
+                        "replay_pending_inbound_events processed qiwe spam_block event_id=%s channel_message_id=%s",
+                        event.id,
+                        channel_message_id,
+                    )
+                continue
+
             ref_time = event.message_timestamp or event.created_at
             async with SessionLocal() as session:
                 already = await session.scalar(
