@@ -15,6 +15,7 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sent, setSent] = useState(document.status === "sent");
+  const [confirming, setConfirming] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const save = useCallback(async (newContent: string, newContentJson?: DocumentContentJson | null) => {
@@ -52,16 +53,22 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
   }, [content, isEditing]);
 
   async function send() {
-    // 已发送的文件允许重发（企微「已发送」仅代表网关受理，不等于真正进群），重发前二次确认防误点
-    if (sent && !window.confirm(`确认重新把《${document.title}》发送到群？`)) {
-      return;
-    }
+    setConfirming(false);
     setBusy(true);
     await save(content, contentJson);
     await fetch(`${API_BASE}/documents/${document.id}/send`, { method: "POST" });
     setSent(true);
     setBusy(false);
     router.refresh();
+  }
+
+  // 已发送的文件允许重发（企微「已发送」仅代表网关受理，不等于真正进群），重发前二次确认防误点
+  function handleSendClick() {
+    if (sent) {
+      setConfirming(true);
+    } else {
+      send();
+    }
   }
 
   return (
@@ -74,8 +81,13 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
         <div className="flex gap-2">
           <Button
             type="button"
-            className={sent ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100" : "bg-emerald-700 hover:bg-emerald-600 text-white"}
-            onClick={send}
+            className={
+              "h-9 min-h-0 rounded-md px-3 " +
+              (sent
+                ? "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                : "bg-emerald-700 hover:bg-emerald-600 text-white")
+            }
+            onClick={handleSendClick}
             disabled={busy}
           >
             {busy ? "发送中..." : sent ? "重新发送" : "确认发送"}
@@ -121,6 +133,41 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
           </div>
         )}
       </div>
+
+      {confirming && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm"
+          onClick={() => setConfirming(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="w-full max-w-sm rounded-xl border border-zinc-200 bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold text-slate-900">重新发送到群？</h3>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              将把《{document.title}》再次发送到该服务单的群里。若上次未真正到群可用此操作补发，请确认无误后再发。
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-4 text-sm text-slate-600 hover:bg-zinc-50"
+                onClick={() => setConfirming(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 items-center justify-center rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-600"
+                onClick={send}
+              >
+                确认重新发送
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
