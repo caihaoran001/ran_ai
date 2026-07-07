@@ -20,6 +20,7 @@ def _state(key):
 
 def test_current_focus_key():
     assert _current_focus_key(_state("bowel_rhythm")) == "bowel_rhythm"
+    assert _current_focus_key(_state("body_feedback_care")) == "body_feedback_care"
     assert _current_focus_key({"domains": {"action_focus": {"current": {"value": {"current_focus": {}}}}}}) is None
     assert _current_focus_key(None) is None
 
@@ -51,6 +52,15 @@ async def test_push_sends_mapped_focus(db_session, mock_session_local):
     await ReminderService().check_action_focus_push_once(now=datetime(2026, 6, 25, 9, 0, tzinfo=TZ))
     msgs = await _msgs(db_session, sc.id)
     assert any("肠道" in m.content and m.purpose == MessagePurpose.REMINDER for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_push_sends_body_feedback_focus(db_session, mock_session_local):
+    sc = await _make_case(db_session, focus_key="body_feedback_care", case_no="AF-body")
+    await db_session.flush()
+    await ReminderService().check_action_focus_push_once(now=datetime(2026, 6, 25, 9, 0, tzinfo=TZ))
+    msgs = await _msgs(db_session, sc.id)
+    assert any("体感观察" in m.content and m.purpose == MessagePurpose.REMINDER for m in msgs)
 
 
 @pytest.mark.asyncio

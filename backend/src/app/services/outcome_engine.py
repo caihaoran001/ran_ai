@@ -63,9 +63,9 @@ ACTION_FOCUS_DEFINITIONS: dict[str, dict[str, str]] = {
         "label": "低摩擦执行",
         "action": "接下来先减少任务数量，只保留最容易完成的一两个动作。",
     },
-    "safety_review": {
-        "label": "安全与人工复核",
-        "action": "接下来先安全优先，暂停加码并交由班主任复核。",
+    "body_feedback_care": {
+        "label": "体感观察",
+        "action": "接下来先记录不适、降低执行强度，产品时机和用量按保守节奏复核。",
     },
     "motivation_support": {
         "label": "鼓励与陪跑",
@@ -77,7 +77,7 @@ ACTION_FOCUS_DEFINITIONS: dict[str, dict[str, str]] = {
 FIELD_ACTION_RULES: dict[str, tuple[tuple[str, float], ...]] = {
     "sleep_change": (("sleep_wind_down", 0.35),),
     "bowel_change": (("bowel_rhythm", 0.35),),
-    "discomfort_feedback": (("safety_review", 1.0), ("product_timing", 0.55)),
+    "discomfort_feedback": (("body_feedback_care", 0.9), ("product_timing", 0.45), ("execution_simplify", 0.25)),
     "product_schedule": (("product_timing", 0.35), ("execution_simplify", 0.2)),
     "rhythm_understood": (("product_timing", 0.25),),
     "started_execution": (("execution_simplify", 0.2),),
@@ -659,10 +659,6 @@ async def score_action_focus(
     current_focus = focus_state.get("current_focus") if isinstance(focus_state.get("current_focus"), dict) else {}
     increments: list[dict[str, Any]] = []
 
-    forced_key = _forced_action_key(intervention_analysis)
-    if forced_key:
-        increments.append(_action_increment(forced_key, 1.0, "风控或人工介入信号", message.content, forced=True))
-
     for event in created_events:
         increments.extend(_increments_from_event(event))
 
@@ -692,9 +688,10 @@ async def score_action_focus(
     top_candidate = _top_candidate(candidates)
     changed = False
     change_reason = ""
-    if top_candidate and _should_switch_action_focus(current_focus, top_candidate, forced=bool(forced_key)):
+    current_focus = _valid_current_focus(current_focus)
+    if top_candidate and _should_switch_action_focus(current_focus, top_candidate):
         changed = True
-        change_reason = "高优先级信号触发行动重点切换" if forced_key else "候选行动累计分达到阈值"
+        change_reason = "候选行动累计分达到阈值"
         now = datetime.now(timezone.utc)
         current_focus = {
             "key": top_candidate["key"],
@@ -1172,17 +1169,6 @@ def _is_followup_in_cooldown(state: OutcomeStageState) -> bool:
     return datetime.now(timezone.utc) - last.astimezone(timezone.utc) < FOLLOWUP_COOLDOWN
 
 
-def _forced_action_key(intervention_analysis: dict[str, Any] | None) -> str:
-    if not intervention_analysis:
-        return ""
-    if intervention_analysis.get("requires_human_intervention"):
-        return "safety_review"
-    refund = intervention_analysis.get("refund_intent")
-    if isinstance(refund, dict) and refund.get("detected"):
-        return "safety_review"
-    return ""
-
-
 def _increments_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
     field_key = str(event.get("field_key") or "")
     event_type = str(event.get("event_type") or "").lower()
@@ -1250,15 +1236,20 @@ def _top_candidate(candidates: dict[str, dict[str, Any]]) -> dict[str, Any] | No
     return max(candidates.values(), key=lambda item: float(item.get("score") or 0.0))
 
 
+def _valid_current_focus(current_focus: dict[str, Any]) -> dict[str, Any]:
+    """Drop legacy/non-operational focus keys so they do not block new scoring."""
+
+    if not isinstance(current_focus, dict):
+        return {}
+    key = current_focus.get("key")
+    return current_focus if isinstance(key, str) and key in ACTION_FOCUS_DEFINITIONS else {}
+
+
 def _should_switch_action_focus(
     current_focus: dict[str, Any],
     candidate: dict[str, Any],
-    *,
-    forced: bool,
 ) -> bool:
     candidate_score = float(candidate.get("score") or 0.0)
-    if forced:
-        return True
     if candidate_score < ACTION_FOCUS_THRESHOLD:
         return False
     if not current_focus:

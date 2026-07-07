@@ -474,7 +474,7 @@ async def test_generate_outcome_snapshot_is_idempotent(db_session, mock_ai):
 
 
 @pytest.mark.asyncio
-async def test_action_focus_switches_from_high_priority_structured_fact(db_session):
+async def test_action_focus_switches_from_body_feedback_structured_fact(db_session):
     case = await _setup_outcome_case(db_session, days=3)
     message = Message(
         service_case_id=case.id,
@@ -513,13 +513,45 @@ async def test_action_focus_switches_from_high_priority_structured_fact(db_sessi
     )
 
     assert result["action_focus"]["changed"] is True
-    assert result["action_focus"]["current_focus"]["key"] == "safety_review"
+    assert result["action_focus"]["current_focus"]["key"] == "body_feedback_care"
     state_profile = await db_session.scalar(
         select(UserStateProfile).where(UserStateProfile.service_case_id == case.id)
     )
     assert state_profile is not None
     action_focus = state_profile.state_json["domains"]["action_focus"]["current"]["value"]
-    assert action_focus["current_focus"]["label"] == "安全与人工复核"
+    assert action_focus["current_focus"]["label"] == "体感观察"
+
+
+@pytest.mark.asyncio
+async def test_human_intervention_signal_does_not_become_action_focus(db_session):
+    case = await _setup_outcome_case(db_session, days=3)
+    message = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="我想找班主任确认一下",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    spec = current_milestone_spec(case)
+    state = await get_or_create_stage_state(db_session, case.id, spec)
+
+    result = await apply_outcome_analysis(
+        db_session,
+        service_case=case,
+        message=message,
+        spec=spec,
+        state=state,
+        raw={"outcome_events": [], "followup_plan": {"should_ask": False}},
+        intervention_analysis={"requires_human_intervention": True},
+    )
+
+    assert result["action_focus"]["changed"] is False
+    assert result["action_focus"]["current_focus"] == {}
 
 
 @pytest.mark.asyncio
