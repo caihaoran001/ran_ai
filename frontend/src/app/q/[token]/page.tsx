@@ -57,17 +57,17 @@ export default async function QuestionnairePage({
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-2xl px-4 py-6 sm:py-8">
-        <header className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="bg-gradient-to-r from-cyan-700 to-cyan-600 px-5 py-5 text-white">
-            <div className="text-xs font-semibold uppercase tracking-wider text-cyan-100">
+      <div className="mx-auto max-w-2xl px-4 py-5 sm:py-8">
+        <header className="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm sm:mb-6">
+          <div className="bg-cyan-700 px-4 py-4 text-white sm:px-5 sm:py-5">
+            <div className="text-xs font-semibold text-cyan-100">
               燃人AI · 高燃人生
             </div>
-            <h1 className="mt-1.5 text-xl font-bold leading-snug sm:text-2xl">
+            <h1 className="text-break mt-1.5 text-xl font-bold leading-snug sm:text-2xl">
               {questionnaire.title ?? "燃人AI服务问卷"}
             </h1>
           </div>
-          <p className="px-5 py-3.5 text-sm leading-6 text-slate-500">
+          <p className="px-4 py-3.5 text-sm leading-6 text-slate-600 sm:px-5">
             {questionnaire.user_name ? `${questionnaire.user_name}，` : ""}
             {editMode ? "编辑模式：修改答案后点击提交，系统会用新答案重新生成画像与报告。" : isReadonly ? "以下是您已提交的问卷内容。" : (questionnaire.description ?? "请完成以下信息。")}
           </p>
@@ -90,7 +90,7 @@ function GraduatedCheckinPage() {
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="mx-auto flex min-h-screen max-w-2xl items-center px-4 py-10">
-        <section className="w-full rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+        <section className="w-full rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-lg font-bold text-emerald-700">
             ✓
           </div>
@@ -109,14 +109,14 @@ function QuestionnaireReadonly({ questionnaire }: { questionnaire: Questionnaire
   const answeredFields = answerItems(questionnaire.fields, answers);
   return (
     <section className="space-y-3">
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm leading-6 text-emerald-800">
         已于 {formatDateTime(questionnaire.latest_submission?.created_at)} 提交。该链接现在仅用于查看，不支持修改或重复提交。
       </div>
       {answeredFields.map((field) => (
         <div key={field.key} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-sm font-semibold text-slate-900">{field.label}</div>
-          {field.subtitle && <div className="mt-1 text-xs text-slate-400">{field.subtitle}</div>}
-          <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+          {field.subtitle && <div className="mt-1 text-xs text-slate-500">{field.subtitle}</div>}
+          <div className="text-break mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
             {field.value}
           </div>
         </div>

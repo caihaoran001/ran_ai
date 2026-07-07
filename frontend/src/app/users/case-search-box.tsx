@@ -19,7 +19,7 @@ export function CaseSearchBox() {
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
       <div className="relative flex-1">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input
@@ -29,7 +29,7 @@ export function CaseSearchBox() {
             if (e.key === "Enter") navigate(value);
           }}
           placeholder="搜索 姓名 / 手机号 / 群名"
-          className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm shadow-sm outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-200"
+          className="h-11 w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm shadow-sm outline-none placeholder:text-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
         />
         {value && (
           <button
@@ -48,7 +48,7 @@ export function CaseSearchBox() {
       <button
         type="button"
         onClick={() => navigate(value)}
-        className="rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cyan-800"
+        className="min-h-11 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cyan-800 sm:w-auto"
       >
         搜索
       </button>

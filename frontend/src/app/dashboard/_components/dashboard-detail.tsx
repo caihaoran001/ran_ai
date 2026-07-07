@@ -96,7 +96,7 @@ export function DetailHeader({
 }) {
   return (
     <div>
-      <Link href="/dashboard" className="inline-flex items-center gap-2 text-sm font-semibold text-cyan-700 hover:underline">
+      <Link href="/dashboard" className="inline-flex min-h-10 items-center gap-2 text-sm font-semibold text-cyan-700 hover:underline">
         <ArrowLeft className="h-4 w-4" />
         返回数据看板
       </Link>
@@ -128,7 +128,7 @@ export function MessageEventList({
                 <EventBadges event={event} />
                 <QuoteBlock title="用户原话" content={event.content || event.evidence || "未保存原话"} />
                 {(event.reason || event.evidence) && (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
                     {event.reason && <InfoBox tone="amber" title="识别原因" content={event.reason} />}
                     {event.evidence && <InfoBox tone="rose" title="模型标注证据" content={event.evidence} />}
                   </div>
@@ -243,10 +243,10 @@ export function PendingDocumentList({ items }: { items: DashboardCasePendingDocu
           <div className="divide-y divide-slate-100">
             {item.documents.map((document) => (
               <div key={document.document_id} className="flex flex-col gap-3 p-5 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-bold text-slate-950">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2 text-sm font-bold text-slate-950">
                     <FileText className="h-4 w-4 text-slate-400" />
-                    {document.title}
+                    <span className="text-break">{document.title}</span>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                     <span>{document.document_type}</span>
@@ -256,7 +256,7 @@ export function PendingDocumentList({ items }: { items: DashboardCasePendingDocu
                 </div>
                 <Link
                   href={`/documents/${item.case.service_case_id}`}
-                  className="inline-flex items-center justify-center rounded-lg border border-cyan-200 px-3 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-50"
+                  className="inline-flex min-h-10 items-center justify-center rounded-lg border border-cyan-200 px-3 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-50"
                 >
                   审核文件
                 </Link>
@@ -274,7 +274,7 @@ function CaseSection({ caseRef, children }: { caseRef: DashboardCaseRef; childre
     <section className="panel overflow-hidden">
       <div className="flex flex-col gap-3 border-b border-slate-100 p-5 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
-          <Link href={`/cases/${caseRef.service_case_id}`} className="text-lg font-bold text-slate-950 hover:text-cyan-700">
+          <Link href={`/cases/${caseRef.service_case_id}`} className="text-break text-lg font-bold text-slate-950 hover:text-cyan-700">
             {caseRef.user_name || "未命名用户"}
           </Link>
           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-slate-500">
@@ -284,7 +284,7 @@ function CaseSection({ caseRef, children }: { caseRef: DashboardCaseRef; childre
         </div>
         <Link
           href={`/cases/${caseRef.service_case_id}`}
-          className="inline-flex items-center justify-center rounded-lg border border-cyan-200 px-3 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-50"
+          className="inline-flex min-h-10 items-center justify-center rounded-lg border border-cyan-200 px-3 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-50"
         >
           查看服务单
         </Link>
@@ -314,7 +314,7 @@ function QuoteBlock({ title, content, muted = false }: { title: string; content:
         <MessageSquareText className="h-4 w-4" />
         {title}
       </div>
-      <p className="whitespace-pre-wrap text-sm leading-6 text-slate-900">{content}</p>
+      <p className="text-break whitespace-pre-wrap text-sm leading-6 text-slate-900">{content}</p>
     </div>
   );
 }
@@ -326,7 +326,7 @@ function InfoBox({ title, content, tone }: { title: string; content: string; ton
       : "border-rose-200 bg-rose-50 text-rose-900";
   const titleClass = tone === "amber" ? "text-amber-700" : "text-rose-700";
   return (
-    <div className={`${boxClass} rounded-lg border p-3 text-sm`}>
+    <div className={`${boxClass} text-break rounded-lg border p-3 text-sm`}>
       <div className={`mb-1 text-xs font-bold ${titleClass}`}>{title}</div>
       {content}
     </div>
@@ -350,7 +350,7 @@ function StructuredCheckin({ parsed }: { parsed?: Record<string, unknown> | null
   return (
     <div className="mt-3 grid gap-2 md:grid-cols-4">
       {rows.map(([label, value]) => (
-        <span key={label} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+        <span key={label} className="text-break rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
           <span className="text-slate-500">{label}：</span>
           {String(value)}
         </span>

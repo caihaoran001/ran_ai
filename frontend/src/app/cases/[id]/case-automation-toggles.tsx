@@ -50,7 +50,7 @@ function Row({
   }
 
   return (
-    <div className="flex items-center justify-between gap-4 py-3">
+    <div className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 items-start gap-3">
         <Icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
         <div className="min-w-0">
@@ -58,7 +58,7 @@ function Row({
           <p className="mt-0.5 text-xs leading-5 text-slate-500">{desc}</p>
         </div>
       </div>
-      <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+      <label className="relative inline-flex shrink-0 cursor-pointer items-center self-start sm:self-center">
         <input type="checkbox" checked={on} disabled={busy || disabled} onChange={toggle} className="sr-only peer" />
         <div className="peer h-6 w-11 rounded-full bg-slate-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-cyan-700 peer-checked:after:translate-x-full peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-cyan-300 peer-disabled:cursor-not-allowed peer-disabled:opacity-50" />
       </label>
@@ -104,9 +104,9 @@ function AgentReceiptButton({
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 pl-7">
+    <div className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between sm:pl-7">
       <p className="text-xs leading-5 text-slate-500">需要告知用户时，手动向群内发送一次轻提示。</p>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         {sent && <span className="text-xs text-emerald-600">已发送</span>}
         {error && <span className="text-xs text-rose-600">{error}</span>}
         <button

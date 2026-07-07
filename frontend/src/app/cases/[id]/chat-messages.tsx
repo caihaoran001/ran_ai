@@ -10,13 +10,13 @@ function ChatImage({ messageId, alt }: { messageId: number; alt: string }) {
   if (failed) {
     // 图片缓存被清理(超过保留期)或暂时取不到时的兜底，避免破图图标
     return (
-      <div className="max-w-sm rounded border border-zinc-200 bg-zinc-50 px-3 py-4 text-center text-xs text-zinc-400">
+      <div className="max-w-full rounded border border-zinc-200 bg-zinc-50 px-3 py-4 text-center text-xs text-zinc-400 sm:max-w-sm">
         图片已过期或无法加载
       </div>
     );
   }
   return (
-    <div className="relative overflow-hidden rounded border border-zinc-200 bg-zinc-50 max-w-sm">
+    <div className="relative max-w-full overflow-hidden rounded border border-zinc-200 bg-zinc-50 sm:max-w-sm">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={url}
@@ -52,7 +52,7 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
 
   return (
     <section className="rounded-lg border border-zinc-200 bg-white p-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h2 className="font-medium">聊天记录</h2>
         <span className="text-sm text-zinc-500">{messages.length} 条</span>
       </div>
@@ -63,7 +63,7 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
             className={`flex ${msg.direction === "outbound" ? "justify-end" : "justify-start"}`}
           >
             <div
-              className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+              className={`max-w-[92%] rounded-lg px-3 py-2 text-sm sm:max-w-[80%] ${
                 msg.direction === "outbound"
                   ? "bg-blue-50 text-blue-900"
                   : msg.sender_type === "bot"
@@ -73,7 +73,7 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
                   : "bg-zinc-100 text-zinc-900"
               }`}
             >
-              <div className="flex items-center gap-2 text-xs opacity-70 mb-1">
+              <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs opacity-70">
                 <span>
                   {msg.direction === "outbound"
                     ? msg.sender_type === "bot"
@@ -112,7 +112,7 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
                   )}
                 </div>
               ) : (
-                <div className="whitespace-pre-wrap">{msg.content}</div>
+                <div className="text-break whitespace-pre-wrap">{msg.content}</div>
               )}
               {msg.status === "failed" &&
                 (msg.error?.includes("驳回") ? (

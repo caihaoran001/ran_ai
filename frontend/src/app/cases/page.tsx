@@ -23,21 +23,43 @@ function CaseStatusCell({ status }: { status: string }) {
       </span>
     );
   }
-  return <span className="text-zinc-700">{STATUS_LABELS[status] ?? status}</span>;
+  return <span className="status-pill border-slate-200 bg-slate-50 text-slate-700">{STATUS_LABELS[status] ?? status}</span>;
 }
 
 export default async function CasesPage() {
   const cases = await api<ServiceCase[]>("/service-cases").catch(() => []);
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <div>
-        <h1 className="text-2xl font-semibold">服务单</h1>
-        <p className="mt-1 text-sm text-zinc-500">一个社群对应一个 28 天服务空间。新服务单由群内入营问卷指令自动创建。</p>
+        <h1 className="page-heading">服务单</h1>
+        <p className="page-subtitle">一个社群对应一个 28 天服务空间。新服务单由群内入营问卷指令自动创建。</p>
       </div>
-      <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-zinc-50 text-zinc-500">
+
+      <div className="mobile-card-list">
+        {cases.map((item) => (
+          <Link key={item.id} href={`/cases/${item.id}`} className="mobile-record-card transition-colors hover:border-cyan-300 hover:bg-cyan-50/30">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-break font-semibold text-slate-950">{item.case_no}</div>
+                <div className="mt-1 text-sm text-slate-600">{item.user?.name ?? "待填写问卷用户"}</div>
+              </div>
+              <CaseStatusCell status={item.status} />
+            </div>
+            <div className="mt-3 space-y-1 text-sm text-slate-600">
+              <div className="text-break">群 ID：{item.group_id}</div>
+              <span className="admin-link inline-flex">打开服务单</span>
+            </div>
+          </Link>
+        ))}
+        {cases.length === 0 && (
+          <div className="mobile-record-card py-8 text-center text-sm text-slate-500">暂无服务单</div>
+        )}
+      </div>
+
+      <div className="table-shell hidden md:block">
+        <table className="data-table">
+          <thead>
             <tr>
               <th className="px-4 py-3">编号</th>
               <th className="px-4 py-3">用户</th>
@@ -50,15 +72,15 @@ export default async function CasesPage() {
             {cases.map((item) => (
               <tr key={item.id} className="border-t border-zinc-100">
                 <td className="px-4 py-3">
-                  <Link className="font-medium text-zinc-900 hover:underline" href={`/cases/${item.id}`}>
+                  <Link className="admin-link text-slate-950" href={`/cases/${item.id}`}>
                     {item.case_no}
                   </Link>
                 </td>
                 <td className="px-4 py-3">{item.user?.name ?? "-"}</td>
-                <td className="px-4 py-3">{item.group_id}</td>
+                <td className="px-4 py-3 text-break">{item.group_id}</td>
                 <td className="px-4 py-3"><CaseStatusCell status={item.status} /></td>
                 <td className="px-4 py-3">
-                  <Link className="text-zinc-700 hover:underline" href={`/q/${item.questionnaire_token}`}>
+                  <Link className="admin-link" href={`/q/${item.questionnaire_token}`}>
                     打开问卷
                   </Link>
                 </td>

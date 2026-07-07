@@ -277,17 +277,23 @@ export default async function DashboardPage() {
 
 function CaseHealthTable({ items }: { items: CaseHealthItem[] }) {
   return (
-    <section className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
-      <div className="border-b border-zinc-100 px-6 py-5">
-        <h2 className="text-lg font-bold text-zinc-900">在服务用户巡检</h2>
-        <p className="mt-1 text-sm text-zinc-500">
+    <section className="panel overflow-hidden">
+      <div className="panel-header">
+        <h2 className="panel-title">在服务用户巡检</h2>
+        <p className="panel-subtitle">
           每个服务中群的服务天数、最近打卡、当前重点、风险与阶段报告进度；点击进入服务单。
         </p>
       </div>
       {items.length === 0 ? (
-        <div className="p-8 text-center text-sm text-zinc-400">暂无服务中的用户。</div>
+        <div className="p-8 text-center text-sm text-slate-500">暂无服务中的用户。</div>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+          <div className="grid gap-3 p-4 md:hidden">
+            {items.map((item) => (
+              <CaseHealthMobileCard key={item.service_case_id} item={item} />
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[820px] text-sm">
             <thead>
               <tr className="border-b border-zinc-100 text-left text-xs text-zinc-500">
@@ -305,9 +311,48 @@ function CaseHealthTable({ items }: { items: CaseHealthItem[] }) {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </section>
+  );
+}
+
+function CaseHealthMobileCard({ item }: { item: CaseHealthItem }) {
+  const checkinText =
+    item.last_checkin_date == null
+      ? "未打卡"
+      : item.days_since_checkin === 0
+      ? "今天"
+      : `${item.days_since_checkin} 天前`;
+  const checkinStale = item.last_checkin_date == null || (item.days_since_checkin ?? 0) >= 2;
+
+  return (
+    <Link href={`/cases/${item.service_case_id}`} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-cyan-300 hover:bg-cyan-50/30">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-break font-semibold text-slate-950">{item.user_name || "未命名"}</div>
+          <div className="text-break mt-1 text-xs text-slate-500">{item.group_id}</div>
+        </div>
+        <span className="status-pill border-emerald-200 bg-emerald-50 text-emerald-700">
+          {item.service_day < 1 ? "未开始" : `第 ${item.service_day} 天`}
+        </span>
+      </div>
+      <div className="mt-3 grid gap-2 text-sm">
+        <div className={checkinStale ? "font-semibold text-rose-600" : "text-slate-700"}>最近打卡：{checkinText}</div>
+        <div className="text-break text-slate-700">行动重点：{item.action_focus || "暂无"}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          {item.risk_level === "high" ? (
+            <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">高风险</span>
+          ) : item.needs_human_intervention ? (
+            <span className="status-pill border-amber-200 bg-amber-50 text-amber-700">需关注</span>
+          ) : (
+            <span className="status-pill border-slate-200 bg-slate-50 text-slate-600">正常</span>
+          )}
+          <span className="text-xs text-slate-500">阶段报告 {item.stage_reports.length} 项</span>
+        </div>
+      </div>
+    </Link>
   );
 }
 
@@ -378,12 +423,12 @@ function OutcomeSummaryPanel({ summary }: { summary?: OutcomeSummary }) {
   const signalMetrics = metrics.filter((metric) => !primaryKeys.has(metric.key));
 
   return (
-    <section className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
-      <div className="border-b border-zinc-100 px-6 py-5">
+    <section className="panel overflow-hidden">
+      <div className="panel-header">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 className="text-lg font-bold text-zinc-900">客户成效引擎</h2>
-            <p className="mt-1 text-sm text-zinc-500">
+            <h2 className="panel-title">客户成效引擎</h2>
+            <p className="panel-subtitle">
               汇总真实执行数据、成效证据和体感反馈；样本不足时不硬下结论。
             </p>
           </div>
@@ -395,7 +440,7 @@ function OutcomeSummaryPanel({ summary }: { summary?: OutcomeSummary }) {
         </div>
       </div>
 
-      <div className="grid gap-4 p-6 lg:grid-cols-3">
+      <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-3">
         {primaryMetrics.map((metric) => (
           <OutcomeMetricCard key={metric.key} metric={metric} />
         ))}
@@ -407,7 +452,7 @@ function OutcomeSummaryPanel({ summary }: { summary?: OutcomeSummary }) {
       </div>
 
       {!!signalMetrics.length && (
-        <div className="border-t border-zinc-100 px-6 py-5">
+        <div className="border-t border-zinc-100 px-4 py-5 sm:px-5">
           <h3 className="text-sm font-semibold text-zinc-900">经营信号</h3>
           <div className="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
             {signalMetrics.map((metric) => (
@@ -504,13 +549,13 @@ function StatCard({
     <Link
       href={href}
       title={typeof description === "string" ? description : undefined}
-      className={`block rounded-xl border p-5 shadow-sm transition-colors duration-200 hover:border-cyan-300 hover:bg-white ${tone.card}`}
+      className={`block rounded-xl border p-4 shadow-sm transition-colors duration-200 hover:border-cyan-300 hover:bg-white sm:p-5 ${tone.card}`}
     >
       <div className="flex items-center justify-between">
         <span className={`flex h-10 w-10 items-center justify-center rounded-lg shadow-sm ${tone.icon}`}>
           <Icon className="h-5 w-5" />
         </span>
-        <span className="text-3xl font-bold tracking-tight text-slate-950">{value}</span>
+        <span className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{value}</span>
       </div>
       <div className="mt-4 text-sm font-semibold text-slate-700">{label}</div>
       <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
@@ -530,7 +575,7 @@ function AICostCard({ summary }: { summary?: AICostSummary }) {
     <Link
       href="/dashboard/ai-costs"
       title="查看每个用户的 AI 调用成本明细"
-      className="block rounded-xl border border-cyan-200 bg-cyan-50/70 p-5 shadow-sm transition-colors duration-200 hover:border-cyan-300 hover:bg-white"
+      className="block rounded-xl border border-cyan-200 bg-cyan-50/70 p-4 shadow-sm transition-colors duration-200 hover:border-cyan-300 hover:bg-white sm:p-5"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -540,7 +585,7 @@ function AICostCard({ summary }: { summary?: AICostSummary }) {
             </span>
             AI 调用成本
           </div>
-          <div className="mt-4 text-3xl font-bold tracking-tight text-slate-950">
+          <div className="mt-4 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">
             {hasData ? `¥${cost.toFixed(2)}` : "暂无成本数据"}
           </div>
           <p className="mt-1 text-xs text-slate-500">

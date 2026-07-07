@@ -24,7 +24,7 @@ export default async function UsersPage({
 
   return (
     <div className="page-stack">
-      <div className="flex items-center justify-between">
+      <div className="toolbar-row">
         <div>
           <h1 className="page-heading">
             {showDeleted ? "已删除用户" : "用户管理"}
@@ -37,9 +37,9 @@ export default async function UsersPage({
                 : "一个客户空间对应一个服务单"}
           </p>
         </div>
-        <div className="flex rounded-lg border border-slate-200 bg-white p-1 text-sm shadow-sm">
+        <div className="grid w-full grid-cols-2 rounded-lg border border-slate-200 bg-white p-1 text-sm shadow-sm sm:w-auto">
           <Link
-            className={`rounded-md px-4 py-2 font-semibold transition-colors duration-200 ${
+            className={`min-h-10 rounded-md px-4 py-2 text-center font-semibold transition-colors duration-200 ${
               !showDeleted ? "bg-cyan-700 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"
             }`}
             href="/users"
@@ -47,7 +47,7 @@ export default async function UsersPage({
             正常用户
           </Link>
           <Link
-            className={`rounded-md px-4 py-2 font-semibold transition-colors duration-200 ${
+            className={`min-h-10 rounded-md px-4 py-2 text-center font-semibold transition-colors duration-200 ${
               showDeleted ? "bg-cyan-700 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"
             }`}
             href="/users?deleted=1"
@@ -60,7 +60,7 @@ export default async function UsersPage({
       {!showDeleted && <CaseSearchBox />}
 
       {filterLabel && (
-        <div className="flex items-center justify-between rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm">
+        <div className="flex flex-col gap-2 rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
           <span className="text-cyan-900">已按“{filterLabel}”筛选服务单。</span>
           <Link href="/users" className="font-semibold text-cyan-800 hover:underline">
             清除筛选
@@ -99,15 +99,15 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
   const user = serviceCase.user;
   return (
     <div className="panel transition-colors duration-200 hover:border-cyan-200">
-      <div className="flex items-start justify-between border-b border-slate-100 p-6">
-        <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-cyan-100 bg-cyan-50 text-xl font-bold text-cyan-800 shadow-sm">
+      <div className="flex flex-col gap-4 border-b border-slate-100 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-cyan-100 bg-cyan-50 text-lg font-bold text-cyan-800 shadow-sm sm:h-12 sm:w-12 sm:text-xl">
             {(user?.name ?? "用").charAt(0)}
           </div>
-          <div>
+          <div className="min-w-0">
             <h3 className="text-lg font-bold text-slate-950">
               {user ? (
-                <Link href={`/users/${user.id}`} className="transition-colors hover:text-cyan-700">
+                <Link href={`/users/${user.id}`} className="text-break transition-colors hover:text-cyan-700">
                   {user.name}
                 </Link>
               ) : (
@@ -130,10 +130,14 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
             </div>
           </div>
         </div>
-        {user && <DeleteServiceCaseButton serviceCaseId={serviceCase.id} userName={user.name} />}
+        {user && (
+          <div className="sm:shrink-0">
+            <DeleteServiceCaseButton serviceCaseId={serviceCase.id} userName={user.name} />
+          </div>
+        )}
       </div>
 
-      <div className="p-6">
+      <div className="p-4 sm:p-5">
         <h4 className="mb-3 text-xs font-bold text-slate-400">服务单</h4>
         <ServiceCaseItem serviceCase={serviceCase} />
       </div>
@@ -144,13 +148,13 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
 function DeletedUserCard({ user }: { user: User }) {
   return (
     <div className="panel transition-colors duration-200 hover:border-slate-300">
-      <div className="flex items-start justify-between border-b border-slate-100 p-6">
-        <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-xl font-bold text-slate-500">
+      <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-lg font-bold text-slate-500 sm:h-12 sm:w-12 sm:text-xl">
             {user.name.charAt(0)}
           </div>
-          <div>
-            <h3 className="text-lg font-bold text-slate-950">{user.name}</h3>
+          <div className="min-w-0">
+            <h3 className="text-break text-lg font-bold text-slate-950">{user.name}</h3>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-500">
               {user.phone && (
                 <span className="flex items-center gap-1">
@@ -172,7 +176,7 @@ function DeletedUserCard({ user }: { user: User }) {
           删除于 {formatChinaShortDateTime(user.deleted_at)}
         </span>
       </div>
-      <div className="p-6">
+      <div className="p-4 sm:p-5">
         <h4 className="mb-3 text-xs font-bold text-slate-400">历史服务单</h4>
         {user.service_cases?.length ? (
           <div className="space-y-3">
@@ -214,10 +218,10 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
   return (
     <Link
       href={`/cases/${serviceCase.id}`}
-      className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 p-4 transition-colors hover:border-cyan-300 hover:bg-cyan-50/30"
+      className="flex flex-col gap-3 rounded-lg border border-slate-200 p-4 transition-colors hover:border-cyan-300 hover:bg-cyan-50/30 sm:flex-row sm:items-center sm:justify-between"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-3">
-        <div className="text-sm font-semibold text-slate-950">{serviceCase.case_no}</div>
+        <div className="text-break text-sm font-semibold text-slate-950">{serviceCase.case_no}</div>
         <span className={`status-pill ${statusColors[serviceCase.status] || "border-slate-200 bg-slate-50 text-slate-600"}`}>
           <span className="inline-flex items-center gap-1">
             {serviceCase.status === "generating" && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
@@ -231,7 +235,7 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
           <span className="status-pill border-orange-200 bg-orange-50 text-orange-700">高风险</span>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-4 text-sm text-slate-500">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-500 sm:shrink-0 sm:justify-end">
         <span className="hidden max-w-52 truncate lg:inline">群: {serviceCase.group_name || serviceCase.group_id}</span>
         <span>{formatChinaShortDateTime(serviceCase.created_at)}</span>
         <span className="inline-flex items-center gap-1 font-semibold text-cyan-700">

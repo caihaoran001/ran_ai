@@ -141,7 +141,7 @@ function RefundReviewGroup({ cases }: { cases: ServiceCase[] }) {
   return (
     <section id="refund-reviews" className="panel overflow-hidden scroll-mt-6">
       <div className="panel-header">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="panel-title">退款审核</h2>
           <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
             {cases.length} 单待确认
@@ -155,21 +155,21 @@ function RefundReviewGroup({ cases }: { cases: ServiceCase[] }) {
             {cases.map((item) => {
               const evidence = latestRefundEvidence(item.refund_intent_flags);
               return (
-                <div key={item.id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 rounded-xl border border-rose-100 bg-rose-50/40 px-5 py-4 shadow-sm transition-colors hover:border-rose-200">
+                <div key={item.id} className="flex flex-col gap-3 rounded-xl border border-rose-100 bg-rose-50/40 px-4 py-4 shadow-sm transition-colors hover:border-rose-200 sm:flex-row sm:items-start sm:justify-between sm:px-5">
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
                       <span className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">
                         <RefreshCcw className="h-3.5 w-3.5" />
                         疑似已退款
                       </span>
-                      <Link className="font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
+                      <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
                         {item.case_no}
                       </Link>
                       {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
                       {item.group_id && <span className="text-slate-400">· {item.group_id}</span>}
                     </div>
                     {evidence && (
-                      <p className="text-sm leading-relaxed text-slate-700">
+                      <p className="text-break text-sm leading-relaxed text-slate-700">
                         <span className="font-bold text-slate-400">客户说：</span>
                         {evidence}
                       </p>
@@ -201,7 +201,7 @@ function PendingMessageGroup({
   return (
     <section id="pending-reviews" className="panel overflow-hidden scroll-mt-6">
       <div className="panel-header">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="panel-title">需关注事件 · AI 回复待审核</h2>
           <span className="status-pill border-amber-200 bg-amber-50 text-amber-700">
             {messages.length} 条待处理
@@ -218,7 +218,7 @@ function PendingMessageGroup({
               const triggerAt = message.trigger?.display_at ?? message.trigger?.created_at ?? message.created_at;
               return (
                 <div key={message.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition-colors hover:border-cyan-200">
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-slate-100 bg-slate-50/80 px-5 py-2.5 text-xs text-slate-500">
+                  <div className="flex flex-col gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span>
                         服务单：
@@ -243,7 +243,7 @@ function PendingMessageGroup({
                     </span>
                   </div>
                   {reasons.length > 0 && (
-                    <div className="border-b border-amber-100 bg-amber-50/70 px-5 py-2 text-xs leading-5 text-amber-800">
+                    <div className="text-break border-b border-amber-100 bg-amber-50/70 px-4 py-2 text-xs leading-5 text-amber-800 sm:px-5">
                       <span className="font-bold">转人工原因：</span>
                       {reasons.join("；")}
                     </div>
@@ -254,7 +254,7 @@ function PendingMessageGroup({
                         <MessageCircle className="h-3.5 w-3.5" />
                         客户说
                       </div>
-                      <div className="text-sm font-medium leading-relaxed text-slate-700">
+                      <div className="text-break text-sm font-medium leading-relaxed text-slate-700">
                         {message.trigger?.content || <span className="italic text-slate-400">（未能关联到原始消息）</span>}
                       </div>
                     </div>

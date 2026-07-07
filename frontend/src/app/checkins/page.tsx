@@ -17,29 +17,29 @@ export default async function CheckinsPage() {
   }));
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <div>
-        <h1 className="text-2xl font-semibold">打卡记录</h1>
-        <p className="mt-1 text-sm text-zinc-500">按服务单查看最近 100 条打卡。</p>
+        <h1 className="page-heading">打卡记录</h1>
+        <p className="page-subtitle">按服务单查看最近 100 条打卡。</p>
       </div>
       <div className="grid gap-4">
         {rows.map(({ serviceCase, checkins }) => (
-          <section key={serviceCase.id} className="rounded-lg border border-zinc-200 bg-white p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <h2 className="font-medium">{serviceCase.user?.name ?? serviceCase.case_no}</h2>
-                <p className="text-sm text-zinc-500">{serviceCase.group_id}</p>
+          <section key={serviceCase.id} className="panel p-4 sm:p-5">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-break font-semibold text-slate-950">{serviceCase.user?.name ?? serviceCase.case_no}</h2>
+                <p className="text-break mt-1 text-sm text-slate-600">{serviceCase.group_id}</p>
               </div>
-              <Link className="text-sm hover:underline" href={`/cases/${serviceCase.id}`}>服务单详情</Link>
+              <Link className="inline-flex min-h-10 items-center justify-center rounded-lg border border-cyan-200 px-3 text-sm font-semibold text-cyan-800 hover:bg-cyan-50" href={`/cases/${serviceCase.id}`}>服务单详情</Link>
             </div>
             <div className="grid gap-2 text-sm">
               {checkins.slice(0, 7).map((checkin) => (
-                <div key={checkin.id} className="rounded-md border border-zinc-200 px-3 py-2">
-                  <span className="mr-3 text-zinc-500">{checkin.checkin_date}</span>
+                <div key={checkin.id} className="rounded-lg border border-slate-200 px-3 py-2.5">
+                  <div className="mb-2 text-xs font-semibold text-slate-500">{checkin.checkin_date}</div>
                   <StructuredCheckin checkin={checkin} />
                 </div>
               ))}
-              {checkins.length === 0 && <p className="text-zinc-500">暂无打卡</p>}
+              {checkins.length === 0 && <p className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-slate-500">暂无打卡</p>}
             </div>
           </section>
         ))}
@@ -64,10 +64,10 @@ function StructuredCheckin({ checkin }: { checkin: Checkin }) {
   ].filter(([, value]) => value);
   if (rows.length === 0) return <span>{checkin.content}</span>;
   return (
-    <div className="mt-2 grid gap-1 md:grid-cols-4">
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
       {rows.map(([label, value]) => (
-        <span key={label} className="rounded bg-zinc-50 px-2 py-1">
-          <span className="text-zinc-500">{label}：</span>{value}
+        <span key={label} className="text-break rounded-lg bg-slate-50 px-2.5 py-1.5">
+          <span className="text-slate-500">{label}：</span>{value}
         </span>
       ))}
     </div>

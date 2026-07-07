@@ -79,13 +79,13 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   return (
     <div className="page-stack">
       {isGenerating && <CaseGeneratingPoller />}
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
             <h1 className="page-heading">{serviceCase.case_no}</h1>
             <StatusBadge status={serviceCase.status} />
           </div>
-          <p className="mt-2 text-sm text-slate-500">
+          <p className="text-break mt-2 text-sm text-slate-600">
             {serviceCase.user ? (
               <Link
                 href={`/users/${serviceCase.user.id}`}
@@ -126,7 +126,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           </div>
         </div>
         {!serviceCase.deleted_at && (
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             {/* 候选态的确认横幅单独整行展示；此处仅放常态「标记已退款」/已退款「恢复服务」的紧凑按钮 */}
             {!(serviceCase.refund_pending_confirmation && !refunded) && (
               <CaseRefundControls caseId={serviceCase.id} status={serviceCase.status} refundPending={false} />
@@ -233,11 +233,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
             {documents.length > 0 ? (
               <div className="space-y-3">
                 {documents.map((document) => (
-                  <div key={document.id} className="flex items-center justify-between rounded-lg border border-slate-200 p-4 transition-colors hover:border-cyan-300 hover:bg-cyan-50/30">
-                    <Link className="font-medium text-slate-950 hover:text-cyan-700" href={`/documents/${document.id}`}>
+                  <div key={document.id} className="flex flex-col gap-3 rounded-lg border border-slate-200 p-4 transition-colors hover:border-cyan-300 hover:bg-cyan-50/30 sm:flex-row sm:items-center sm:justify-between">
+                    <Link className="text-break font-medium text-slate-950 hover:text-cyan-700" href={`/documents/${document.id}`}>
                       {document.title}
                     </Link>
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
                       <StatusBadge status={document.status} />
                       <a
                         suppressHydrationWarning
@@ -277,11 +277,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
             {checkins.length > 0 ? (
               <div className="space-y-3">
                 {checkins.slice(0, 5).map((checkin) => (
-                  <div key={checkin.id} className="flex items-center gap-3 rounded-lg border border-slate-100 p-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                  <div key={checkin.id} className="flex items-start gap-3 rounded-lg border border-slate-100 p-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
                       <CheckCircle2 className="h-4 w-4" />
                     </div>
-                    <div className="flex-1">
+                    <div className="min-w-0 flex-1">
                       <StructuredCheckin checkin={checkin} />
                       <div className="text-xs text-zinc-400">{formatDateTime(checkin.created_at)}</div>
                     </div>
@@ -305,7 +305,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
 
 function StructuredCheckin({ checkin }: { checkin: Checkin }) {
   const parsed = checkin.parsed_json;
-  if (!parsed) return <div className="text-sm text-zinc-900">{checkin.content}</div>;
+  if (!parsed) return <div className="text-break text-sm text-zinc-900">{checkin.content}</div>;
   const product = parsed.product_schedule || {};
   const rows = [
     ["早C", product.morning_c],
@@ -317,11 +317,11 @@ function StructuredCheckin({ checkin }: { checkin: Checkin }) {
     ["运动", parsed.exercise],
     ["体重", parsed.weight],
   ].filter(([, value]) => value);
-  if (rows.length === 0) return <div className="text-sm text-zinc-900">{checkin.content}</div>;
+  if (rows.length === 0) return <div className="text-break text-sm text-zinc-900">{checkin.content}</div>;
   return (
     <div className="grid gap-1 text-sm text-zinc-900 sm:grid-cols-2">
       {rows.map(([label, value]) => (
-        <div key={label}>
+        <div key={label} className="text-break">
           <span className="text-zinc-500">{label}：</span>{value}
         </div>
       ))}
@@ -383,7 +383,7 @@ function InfoCard({
         <Icon className="h-4 w-4 text-cyan-700" />
         {title}
       </div>
-      <div className={`mt-2 break-words text-lg font-semibold text-slate-950 ${valueClassName}`}>{value}</div>
+      <div className={`text-break mt-2 text-lg font-semibold text-slate-950 ${valueClassName}`}>{value}</div>
     </div>
   );
 }
@@ -422,7 +422,7 @@ function AICostInfoCard({
           <div className="mt-2 text-2xl font-bold tracking-tight text-slate-950">¥{costValue.toFixed(2)}</div>
           <p className="mt-1 text-xs text-slate-500">DeepSeek + 识图模型调用合计</p>
         </div>
-        <div className="grid min-w-56 grid-cols-2 gap-2 text-xs">
+        <div className="grid w-full grid-cols-2 gap-2 text-xs sm:min-w-56">
           <div className="rounded-lg border border-cyan-100 bg-white/80 px-3 py-2">
             <div className="text-slate-400">DeepSeek</div>
             <div className="mt-1 font-semibold text-slate-800">¥{deepseekCostValue.toFixed(2)}</div>

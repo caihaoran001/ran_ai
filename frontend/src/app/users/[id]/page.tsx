@@ -43,10 +43,10 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
     : "来源：问卷自动生成";
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">{user.name}</h1>
-        <p className="mt-1 text-sm text-zinc-500">{user.phone ?? "无手机号"} · {user.wecom_user_id ?? "无聊天用户 ID"}</p>
+    <div className="page-stack">
+      <div className="min-w-0">
+        <h1 className="page-heading">{user.name}</h1>
+        <p className="text-break page-subtitle">{user.phone ?? "无手机号"} · {user.wecom_user_id ?? "无聊天用户 ID"}</p>
         {user.deleted_at && (
           <p className="mt-2 inline-flex rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">
             已删除：{formatDateTime(user.deleted_at)}
@@ -65,8 +65,8 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         />
       )}
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
-        <h2 className="font-medium">基本信息</h2>
+      <section className="panel p-4 sm:p-5">
+        <h2 className="font-semibold text-slate-950">基本信息</h2>
         <div className="mt-3 grid gap-3 text-sm md:grid-cols-4">
           <Info label="用户ID" value={String(user.id)} />
           <Info label="真实姓名" value={user.name} />
@@ -79,9 +79,9 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-medium">用户画像</h2>
+      <section className="panel p-4 sm:p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="font-semibold text-slate-950">用户画像</h2>
           <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-600">{profileSource}</span>
         </div>
         {profile ? (
@@ -93,9 +93,9 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         )}
       </section>
       {stateProfile && (
-        <section className="rounded-lg border border-zinc-200 bg-white p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-medium">当前用户状态</h2>
+        <section className="panel p-4 sm:p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="font-semibold text-slate-950">当前用户状态</h2>
             <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">证据驱动更新</span>
           </div>
           <LongTermMemoryView state={stateProfile.state_json} />
@@ -103,15 +103,15 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         </section>
       )}
       {(energyDocument || executionDocument) && (
-        <section className="rounded-lg border border-zinc-200 bg-white p-4">
-          <h2 className="font-medium">交付文件摘要</h2>
+        <section className="panel p-4 sm:p-5">
+          <h2 className="font-semibold text-slate-950">交付文件摘要</h2>
           <DocumentHighlights energyDocument={energyDocument} executionDocument={executionDocument} />
         </section>
       )}
       {serviceCase && (
-        <section className="rounded-lg border border-zinc-200 bg-white p-4">
-          <h2 className="font-medium">正在进行的方案</h2>
-          <Link className="mt-3 block rounded-md border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50" href={`/cases/${serviceCase.id}`}>
+        <section className="panel p-4 sm:p-5">
+          <h2 className="font-semibold text-slate-950">正在进行的方案</h2>
+          <Link className="text-break mt-3 block rounded-md border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50" href={`/cases/${serviceCase.id}`}>
             {serviceCase.case_no} · {statusLabel(serviceCase.status)}
           </Link>
           <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
@@ -123,8 +123,8 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           </div>
         </section>
       )}
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
-        <h2 className="font-medium">打卡数据</h2>
+      <section className="panel p-4 sm:p-5">
+        <h2 className="font-semibold text-slate-950">打卡数据</h2>
         <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
           <Info label="体重变化" value={weightTrend(checkins)} />
           <Info label="睡眠变化" value={latestParsed?.sleep || "暂无数据"} />
@@ -134,8 +134,8 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <Info label="打卡天数" value={`${uniqueCheckinDays} 天`} />
         </div>
       </section>
-      <section className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-zinc-500">
-        <h2 className="font-medium">购买与复购</h2>
+      <section className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-zinc-500 sm:p-5">
+        <h2 className="font-semibold">购买与复购</h2>
         <p className="mt-2 text-xs">订单数据尚未接入，仅预留展示位。</p>
         <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
           <Info label="购买记录" value="未接入" muted />
@@ -143,8 +143,8 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <Info label="客单价" value="未接入" muted />
         </div>
       </section>
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
-        <h2 className="font-medium">历史聊天摘要</h2>
+      <section className="panel p-4 sm:p-5">
+        <h2 className="font-semibold text-slate-950">历史聊天摘要</h2>
         <p className="mt-3 text-sm text-zinc-600">{chatSummary(messages)}</p>
         <div className="mt-3 max-h-48 overflow-y-auto space-y-2 pr-1 text-sm">
           {messages.slice(-5).map((message) => (
@@ -155,24 +155,24 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
                   : message.direction === "outbound" ? "运营"
                   : (message.display_sender_name || "客户")
               }：</span>
-              {message.content}
+              <span className="text-break whitespace-pre-wrap">{message.content}</span>
             </div>
           ))}
         </div>
       </section>
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
-        <h2 className="font-medium">服务单</h2>
+      <section className="panel p-4 sm:p-5">
+        <h2 className="font-semibold text-slate-950">服务单</h2>
         <div className="mt-3 max-h-48 overflow-y-auto grid gap-2 pr-1 text-sm">
           {user.service_cases.map((item) => (
-            <Link key={item.id} className="rounded-md border border-zinc-200 px-3 py-2 hover:bg-zinc-50" href={`/cases/${item.id}`}>
+            <Link key={item.id} className="text-break rounded-md border border-zinc-200 px-3 py-2 hover:bg-zinc-50" href={`/cases/${item.id}`}>
               {item.case_no} · {item.group_id} · {statusLabel(item.status)}
             </Link>
           ))}
         </div>
       </section>
       {profile && (
-        <section className="rounded-lg border border-zinc-200 bg-white p-4">
-          <h2 className="font-medium">调试信息</h2>
+        <section className="panel p-4 sm:p-5">
+          <h2 className="font-semibold text-slate-950">调试信息</h2>
           <p className="mt-1 text-xs text-zinc-500">供排查 AI 回复上下文使用，日常运营可忽略。</p>
           <AiContextPreview context={aiContextPreview?.context} />
         </section>
@@ -185,7 +185,7 @@ function Info({ label, value, muted = false }: { label: string; value: string; m
   return (
     <div className={`rounded-md border p-3 ${muted ? "border-zinc-200 bg-zinc-100 text-zinc-400" : "border-zinc-200 bg-zinc-50"}`}>
       <div className="text-xs text-zinc-500">{label}</div>
-      <div className={`mt-1 font-medium ${muted ? "text-zinc-400" : "text-zinc-900"}`}>{value}</div>
+      <div className={`text-break mt-1 font-medium ${muted ? "text-zinc-400" : "text-zinc-900"}`}>{value}</div>
     </div>
   );
 }
@@ -222,12 +222,12 @@ function OperationsSummary({
   const sentDocs = documents.filter((document) => document.status === "sent").length;
 
   return (
-    <section className="overflow-hidden rounded-xl border border-cyan-200 bg-gradient-to-br from-cyan-50 via-white to-white">
+    <section className="overflow-hidden rounded-xl border border-cyan-200 bg-cyan-50/60">
       <div className="border-b border-cyan-100 px-5 py-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-950">运营摘要</h2>
-            <p className="mt-1 text-sm text-slate-500">系统综合画像、打卡、聊天和文档后的运营视图，不是新的独立 AI 诊断。</p>
+            <p className="mt-1 text-sm leading-6 text-slate-600">系统综合画像、打卡、聊天和文档后的运营视图，不是新的独立 AI 诊断。</p>
           </div>
           <span className="rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs font-semibold text-cyan-800">
             {serviceStageText(serviceCase)}
@@ -265,7 +265,7 @@ function SummaryMetric({
   return (
     <div className={`rounded-lg border p-3 ${toneClass[tone]}`}>
       <div className="text-xs font-medium opacity-70">{label}</div>
-      <div className="mt-1 line-clamp-4 text-sm font-semibold leading-6">{value}</div>
+      <div className="text-break mt-1 line-clamp-4 text-sm font-semibold leading-6">{value}</div>
     </div>
   );
 }
@@ -361,7 +361,7 @@ function ProfileView({
     <div className="mt-3 space-y-4 text-sm leading-6">
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
         <div className="text-xs font-medium text-slate-500">一句话画像</div>
-        <p className="mt-2 text-sm leading-7 text-slate-800">{summary}</p>
+        <p className="text-break mt-2 text-sm leading-7 text-slate-800">{summary}</p>
         {tags.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1.5">
             {tags.map((tag) => (
@@ -416,7 +416,7 @@ function ProfileGroup({ title, items }: { title: string; items: string[][] }) {
         {items.map(([label, value]) => (
           <div key={label}>
             <div className="text-[11px] text-zinc-400">{label}</div>
-            <div className="mt-0.5 text-sm font-medium leading-6 text-zinc-900">{value}</div>
+            <div className="text-break mt-0.5 text-sm font-medium leading-6 text-zinc-900">{value}</div>
           </div>
         ))}
       </div>
@@ -432,7 +432,7 @@ function NeedList({ label, items }: { label: string; items: unknown }) {
       {list.length > 0 ? (
         <ul className="mt-1 space-y-1 text-sm list-disc pl-4 text-zinc-700">
           {list.map((item, idx) => (
-            <li key={idx}>{String(item)}</li>
+            <li key={idx} className="text-break">{String(item)}</li>
           ))}
         </ul>
       ) : (
@@ -454,7 +454,7 @@ function AiContextPreview({ context }: { context?: string }) {
         <span className="text-xs text-zinc-500 group-open:hidden">点击展开</span>
         <span className="text-xs text-zinc-500 hidden group-open:inline">点击收起</span>
       </summary>
-      <div className="border-t border-slate-200 px-4 py-4 font-mono text-xs leading-6 overflow-x-auto whitespace-pre-wrap select-all text-slate-600">
+      <div className="text-break max-w-full overflow-x-auto whitespace-pre-wrap border-t border-slate-200 px-4 py-4 font-mono text-xs leading-6 text-slate-600 select-all">
         {contextText}
       </div>
     </details>
@@ -498,7 +498,7 @@ function MemoryCard({
       {items.length > 0 ? (
         <ul className="mt-2 space-y-1.5 text-sm leading-5">
           {items.map((item) => (
-            <li key={item} className="line-clamp-2">{item}</li>
+            <li key={item} className="text-break line-clamp-2">{item}</li>
           ))}
         </ul>
       ) : (
@@ -585,14 +585,14 @@ function StateDomainCard({ domain }: { domain: Record<string, unknown> }) {
           {Object.entries(currentValue).slice(0, 5).map(([key, value]) => (
             <div key={key} className="leading-6">
               <span className="text-zinc-500">{stateFieldLabel(key)}：</span>
-              <span>{formatStateValue(value)}</span>
+              <span className="text-break">{formatStateValue(value)}</span>
             </div>
           ))}
         </div>
       ) : (
         <div className="mt-2 text-zinc-500">暂无当前状态</div>
       )}
-      {evidence && <p className="mt-2 rounded bg-white px-2 py-1 text-xs leading-5 text-zinc-500">依据：{evidence}</p>}
+      {evidence && <p className="text-break mt-2 rounded bg-white px-2 py-1 text-xs leading-5 text-zinc-500">依据：{evidence}</p>}
       {history.length > 0 && (
         <details className="mt-2">
           <summary className="cursor-pointer text-xs text-blue-600">查看证据链</summary>
@@ -600,7 +600,7 @@ function StateDomainCard({ domain }: { domain: Record<string, unknown> }) {
             {history.map((item, index) => (
               <div key={`${text(item.evidence)}-${index}`} className="rounded border border-zinc-100 bg-white p-2 text-xs leading-5">
                 <div className="text-zinc-400">{formatDateTime(text(item.occurred_at))}</div>
-                <div className="mt-1 text-zinc-600">{text(item.evidence) || formatStateValue(item.value)}</div>
+                <div className="text-break mt-1 text-zinc-600">{text(item.evidence) || formatStateValue(item.value)}</div>
               </div>
             ))}
           </div>
@@ -637,8 +637,8 @@ function ActionFocusCard({
       </div>
       {text(focus.label) ? (
         <div className="mt-2 space-y-1 leading-6">
-          <div><span className="text-zinc-500">重点：</span>{text(focus.label)}</div>
-          <div><span className="text-zinc-500">动作：</span>{text(focus.action) || "暂无动作"}</div>
+          <div className="text-break"><span className="text-zinc-500">重点：</span>{text(focus.label)}</div>
+          <div className="text-break"><span className="text-zinc-500">动作：</span>{text(focus.action) || "暂无动作"}</div>
           <div><span className="text-zinc-500">分数：</span>{String(focus.score ?? "暂无")}</div>
           {text(focus.soft_lock_until) && <div><span className="text-zinc-500">稳定期至：</span>{formatDateTime(text(focus.soft_lock_until))}</div>}
         </div>
@@ -649,11 +649,11 @@ function ActionFocusCard({
         <div className="mt-3 rounded bg-white px-2 py-2 text-xs leading-5 text-zinc-500">
           <div className="font-medium text-zinc-600">候选池</div>
           {sortedCandidates.map((item) => (
-            <div key={text(item.key) || text(item.label)}>{text(item.label)}：{String(item.score ?? "0")}</div>
+          <div key={text(item.key) || text(item.label)} className="text-break">{text(item.label)}：{String(item.score ?? "0")}</div>
           ))}
         </div>
       )}
-      {evidence && <p className="mt-2 rounded bg-white px-2 py-1 text-xs leading-5 text-zinc-500">依据：{evidence}</p>}
+      {evidence && <p className="text-break mt-2 rounded bg-white px-2 py-1 text-xs leading-5 text-zinc-500">依据：{evidence}</p>}
       {history.length > 0 && (
         <details className="mt-2">
           <summary className="cursor-pointer text-xs text-blue-600">查看变更记录</summary>
@@ -661,7 +661,7 @@ function ActionFocusCard({
             {history.map((item, index) => (
               <div key={`${text(item.evidence)}-${index}`} className="rounded border border-zinc-100 bg-white p-2 text-xs leading-5">
                 <div className="text-zinc-400">{formatDateTime(text(item.occurred_at))}</div>
-                <div className="mt-1 text-zinc-600">{text(item.evidence) || formatStateValue(item.value)}</div>
+                <div className="text-break mt-1 text-zinc-600">{text(item.evidence) || formatStateValue(item.value)}</div>
               </div>
             ))}
           </div>
@@ -724,7 +724,7 @@ function SummaryTextCard({ title, value }: { title: string; value: string }) {
   return (
     <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
       <div className="text-xs font-medium text-zinc-500">{title}</div>
-      <div className="mt-1 whitespace-pre-wrap">{value}</div>
+      <div className="text-break mt-1 whitespace-pre-wrap">{value}</div>
     </div>
   );
 }
@@ -735,7 +735,7 @@ function SummaryListCard({ title, items }: { title: string; items: string[] }) {
       <div className="text-xs font-medium text-zinc-500">{title}</div>
       <ul className="mt-2 space-y-1">
         {items.map((item) => (
-          <li key={item} className="ml-5 list-disc">{item}</li>
+          <li key={item} className="text-break ml-5 list-disc">{item}</li>
         ))}
       </ul>
     </div>

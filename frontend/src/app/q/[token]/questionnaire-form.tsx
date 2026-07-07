@@ -233,7 +233,7 @@ export function QuestionnaireForm({
 
   if (done) {
     return (
-      <div className="flex flex-col items-center gap-4 rounded-2xl border border-slate-200 bg-white px-6 py-12 text-center shadow-sm">
+      <div className="flex flex-col items-center gap-4 rounded-xl border border-slate-200 bg-white px-5 py-10 text-center shadow-sm sm:px-6 sm:py-12">
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
           <CheckCircle2 className="h-9 w-9 text-emerald-500" />
         </div>
@@ -353,9 +353,9 @@ export function QuestionnaireForm({
       )}
 
       {/* 底部固定提交栏 */}
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/90 px-4 py-3 backdrop-blur">
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
         <div className="mx-auto flex max-w-2xl items-center gap-3">
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between text-xs font-medium text-slate-500">
               <span>完成进度</span>
               <span className="tabular-nums text-cyan-700">{answeredCount}/{answerableFields.length}</span>
@@ -367,7 +367,7 @@ export function QuestionnaireForm({
               />
             </div>
           </div>
-          <Button disabled={submitting} className="h-11 min-w-28 px-6">
+          <Button disabled={submitting} className="h-11 min-w-28 shrink-0 px-5 sm:px-6">
             {submitting ? "提交中…" : "提交问卷"}
           </Button>
         </div>
@@ -398,13 +398,12 @@ function FieldInput({
   if (field.type === "SEGMENTATION") {
     return (
       <section id={id} className="pt-3">
-        <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-cyan-50 to-white px-4 py-3.5">
+        <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3.5">
           <h2 className="flex items-center gap-2 text-base font-bold text-slate-900">
-            <span className="h-4 w-1 rounded-full bg-cyan-600" />
             {field.title ?? field.label}
           </h2>
           {field.subtitle && (
-            <p className="mt-1.5 pl-3 text-sm leading-6 text-slate-500">{field.subtitle}</p>
+            <p className="mt-1.5 text-sm leading-6 text-slate-600">{field.subtitle}</p>
           )}
         </div>
       </section>
@@ -430,7 +429,7 @@ function FieldInput({
     control = (
       <label className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-2 text-sm font-semibold text-slate-900">{label}{required}</div>
-        {field.subtitle && <div className="mb-2 text-xs leading-5 text-slate-400">{field.subtitle}</div>}
+        {field.subtitle && <div className="mb-2 text-xs leading-5 text-slate-500">{field.subtitle}</div>}
         <input
           type="date"
           required={field.required}
@@ -438,16 +437,16 @@ function FieldInput({
           min={(() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toLocaleDateString("en-CA"); })()}
           max={(() => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toLocaleDateString("en-CA"); })()}
           onChange={(event) => onChange(event.target.value)}
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-100"
+          className="h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-100"
         />
-        <div className="mt-2 text-xs leading-5 text-slate-400">开始日期最早为次日（明天）起；服务将从这一天起算第 1 天。</div>
+        <div className="mt-2 text-xs leading-5 text-slate-500">开始日期最早为次日（明天）起；服务将从这一天起算第 1 天。</div>
       </label>
     );
   } else if (field.type === "SIMPLE" || field.type === "FILE") {
     control = (
       <label className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-2 text-sm font-semibold text-slate-900">{label}{required}</div>
-        {field.subtitle && <div className="mb-2 text-xs leading-5 text-slate-400">{field.subtitle}</div>}
+        {field.subtitle && <div className="mb-2 text-xs leading-5 text-slate-500">{field.subtitle}</div>}
         <Input
           required={field.required}
           placeholder={field.type === "FILE" ? "请填写文件链接，或写“后续补充”。" : ""}
@@ -460,7 +459,7 @@ function FieldInput({
     control = (
       <label className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-2 text-sm font-semibold text-slate-900">{label}{required}</div>
-        {field.subtitle && <div className="mb-2 text-xs leading-5 text-slate-400">{field.subtitle}</div>}
+        {field.subtitle && <div className="mb-2 text-xs leading-5 text-slate-500">{field.subtitle}</div>}
         <Textarea
           required={field.required}
           value={value ?? ""}
@@ -544,7 +543,7 @@ function ChoiceField({
   return (
     <fieldset className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <legend className="px-1 text-sm font-semibold text-slate-900">{label}{required}</legend>
-      {field.subtitle && <p className="mt-0.5 px-1 text-xs leading-5 text-slate-400">{field.subtitle}</p>}
+      {field.subtitle && <p className="mt-0.5 px-1 text-xs leading-5 text-slate-500">{field.subtitle}</p>}
       {multi && <p className="mt-0.5 px-1 text-xs text-cyan-600">可多选</p>}
       <div className="mt-2 grid gap-2">
         {(field.options ?? []).map((option) => {
@@ -574,7 +573,7 @@ function ChoiceField({
                   ? <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />
                   : <span className="h-2.5 w-2.5 rounded-full bg-cyan-600" />)}
               </span>
-              <span className="leading-6">{option}</span>
+              <span className="text-break leading-6">{option}</span>
             </label>
           );
         })}

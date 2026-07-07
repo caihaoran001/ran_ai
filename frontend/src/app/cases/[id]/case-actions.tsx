@@ -56,7 +56,7 @@ export function CaseActions({
 
   if (editing) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/50 p-1 px-2.5 shadow-inner transition-all">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/50 p-2 transition-all">
         <span className="text-xs text-zinc-500 font-medium">设定已服务：</span>
         <input
           type="number"
@@ -64,21 +64,21 @@ export function CaseActions({
           max="28"
           value={days}
           onChange={(e) => setDays(e.target.value)}
-          className="w-12 h-7 rounded border border-zinc-300 bg-white text-center text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className="h-9 w-14 rounded border border-zinc-300 bg-white text-center text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-100"
           disabled={busy}
         />
         <span className="text-xs text-zinc-500 font-medium">天</span>
         <button
           onClick={saveDays}
           disabled={busy}
-          className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded px-2.5 py-1 transition-all"
+          className="min-h-9 rounded bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"
         >
           {busy ? "保存中" : "确认"}
         </button>
         <button
           onClick={() => setEditing(false)}
           disabled={busy}
-          className="text-xs text-zinc-500 hover:text-zinc-700 rounded px-1 py-1"
+          className="min-h-9 rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
         >
           取消
         </button>
