@@ -125,6 +125,10 @@ async def get_test_suites():
 @router.get("/summary")
 async def get_diagnostics_summary(
     session: AsyncSession = Depends(get_session),
+    probe_ai: bool = Query(
+        True,
+        description="是否真实调用一次 LLM 测量延迟；数据看板加载时传 false 只查数据库，避免每次进页面都产生真实调用费用。",
+    ),
 ):
     database = {
         "status": "failed",
@@ -151,7 +155,14 @@ async def get_diagnostics_summary(
 
     settings = get_settings()
     ai_probe["model"] = settings.ai_model
-    if not settings.ai_api_key:
+    if not probe_ai:
+        ai_probe = {
+            "status": "idle",
+            "message": "未测速：点击按钮才会真实调用一次大模型测量延迟",
+            "latency_ms": None,
+            "model": settings.ai_model,
+        }
+    elif not settings.ai_api_key:
         ai_probe = {
             "status": "not_configured",
             "message": "未配置 AI_API_KEY，未执行连通探针",

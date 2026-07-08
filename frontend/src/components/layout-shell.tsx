@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { Activity, BarChart3, LogOut, Settings, ShieldCheck, Users } from "lucide-react";
+import { BarChart3, LogOut, Settings, ShieldCheck, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { InterventionBadge } from "@/components/intervention-notifier";
 
@@ -22,7 +22,6 @@ const navGroups: NavGroup[] = [
     title: "监控",
     items: [
       { href: "/dashboard", label: "数据看板", icon: BarChart3 },
-      { href: "/system-diagnostics", label: "诊断控制台", icon: Activity },
     ],
   },
 ];

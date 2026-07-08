@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ComponentType, ReactNode } from "react";
 import { api } from "@/lib/api";
+import { SystemStatusWidget } from "./system-status";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -131,9 +132,7 @@ export default async function DashboardPage() {
             <h1 className="page-heading">数据看板</h1>
             <p className="page-subtitle">服务概览、风险信号与运营质量巡检。优先处理红色风险，再看今日执行和服务规模。</p>
           </div>
-          <span className="status-pill border-emerald-200 bg-emerald-50 text-emerald-800">
-            在线巡检
-          </span>
+          <SystemStatusWidget />
         </div>
       </div>
 
