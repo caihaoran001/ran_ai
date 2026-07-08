@@ -2,7 +2,7 @@
 
 覆盖：
 - merge_case_insight 对 refund_intent.completed 的处理（置候选、不改状态；仅意向不置候选；已 REFUNDED 不重复置）。
-- 状态改 REFUNDED 后，主动推送（以晨间执行重点推送为代表，4 类推送同样只查 IN_SERVICE）不再发送。
+- 状态改 REFUNDED 后，主动推送（以阶段报告为代表，各类推送同样只查 IN_SERVICE）不再发送。
 - check_stage_reports_once 跳过 REFUNDED 服务单。
 - 列表筛选 refund_pending / refunded。
 """
@@ -13,22 +13,16 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select
 
-from app.models.message import Message, MessagePurpose
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import UserDocument
-from app.models.user_state_profile import UserStateProfile
 from app.services.intervention_service import merge_case_insight
 from app.services.reminder_service import ReminderService
 
 TZ = ZoneInfo("Asia/Shanghai")
 
 
-def _focus_state(key):
-    return {"domains": {"action_focus": {"current": {"value": {"current_focus": {"key": key, "label": "x", "action": "y"}}}}}}
-
-
-async def _make_case(db_session, *, status=ServiceCaseStatus.IN_SERVICE, focus_key=None, started_at=None):
+async def _make_case(db_session, *, status=ServiceCaseStatus.IN_SERVICE, started_at=None):
     tag = uuid4().hex[:8]
     user = User(name="u")
     db_session.add(user)
@@ -43,9 +37,6 @@ async def _make_case(db_session, *, status=ServiceCaseStatus.IN_SERVICE, focus_k
     )
     db_session.add(sc)
     await db_session.flush()
-    if focus_key:
-        db_session.add(UserStateProfile(service_case_id=sc.id, state_json=_focus_state(focus_key), summary=None, source="test"))
-        await db_session.flush()
     return sc
 
 
@@ -76,28 +67,7 @@ async def test_completed_refund_ignored_when_already_refunded(db_session):
     assert sc.refund_pending_confirmation is False
 
 
-# ---- 停推送（以晨间执行重点推送为代表，4 类推送同样只服务 IN_SERVICE）----------
-
-@pytest.mark.asyncio
-async def test_action_focus_push_skips_refunded(db_session, mock_session_local):
-    sc = await _make_case(db_session, status=ServiceCaseStatus.REFUNDED, focus_key="bowel_rhythm")
-    await db_session.flush()
-    await ReminderService().check_action_focus_push_once(now=datetime(2026, 6, 25, 9, 0, tzinfo=TZ))
-    msgs = list(await db_session.scalars(select(Message).where(Message.service_case_id == sc.id)))
-    assert msgs == []
-
-
-@pytest.mark.asyncio
-async def test_action_focus_push_still_sends_in_service(db_session, mock_session_local):
-    """对照组：同样条件下 IN_SERVICE 会推，证明上面的“不推”确因退款状态。"""
-    sc = await _make_case(db_session, status=ServiceCaseStatus.IN_SERVICE, focus_key="bowel_rhythm")
-    await db_session.flush()
-    await ReminderService().check_action_focus_push_once(now=datetime(2026, 6, 25, 9, 0, tzinfo=TZ))
-    msgs = list(await db_session.scalars(select(Message).where(Message.service_case_id == sc.id)))
-    assert any(m.purpose == MessagePurpose.REMINDER for m in msgs)
-
-
-# ---- 阶段报告 -------------------------------------------------------------
+# ---- 阶段报告（以阶段报告为代表，各类主动推送同样只服务 IN_SERVICE）----------
 
 @pytest.mark.asyncio
 async def test_stage_reports_skip_refunded(db_session, mock_session_local):

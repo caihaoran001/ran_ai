@@ -38,7 +38,6 @@ export type ServiceCase = {
   ai_auto_reply_enabled: boolean;
   ai_agent_enabled: boolean;
   checkin_link_enabled: boolean;
-  morning_push_enabled: boolean;
   inactive_wake_enabled: boolean;
   deleted_at?: string | null;
   started_at?: string | null;
