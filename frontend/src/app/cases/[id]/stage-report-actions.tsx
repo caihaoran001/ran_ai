@@ -60,8 +60,8 @@ export function StageReportActions({
             onClick={() => generate(stage)}
             className={
               alreadyGenerated
-                ? "cursor-not-allowed rounded-md border border-zinc-200 bg-zinc-100 px-3 py-2 text-sm text-zinc-400"
-                : "rounded-md border border-zinc-200 px-3 py-2 text-sm text-zinc-700 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+                ? "cursor-not-allowed rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-400"
+                : "rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
             }
           >
             {busyStage === stage ? "生成中..." : alreadyGenerated ? `${label}报告已生成` : `生成${label}报告`}

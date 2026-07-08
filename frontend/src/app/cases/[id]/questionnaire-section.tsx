@@ -20,12 +20,12 @@ export function QuestionnaireSection({ questionnaire, editUrl }: { questionnaire
     : [];
 
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-4">
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="font-medium">问卷结果</h2>
         <div className="flex flex-wrap items-center gap-3">
           {questionnaire?.latest_submission && (
-            <span className="text-xs text-zinc-400">
+            <span className="text-xs text-slate-400">
               {formatDateTime(questionnaire.latest_submission.created_at)}
             </span>
           )}
@@ -45,16 +45,16 @@ export function QuestionnaireSection({ questionnaire, editUrl }: { questionnaire
       {items.length > 0 ? (
         <div className="mt-3 max-h-[480px] overflow-y-auto space-y-3 pr-1 text-sm">
           {items.map((field) => (
-            <div key={field.key} className="rounded-md border border-zinc-200 px-3 py-2">
-              <div className="font-medium text-zinc-700">{field.label}</div>
-              <div className="text-break mt-1 whitespace-pre-wrap leading-6 text-zinc-900">
+            <div key={field.key} className="rounded-md border border-slate-200 px-3 py-2">
+              <div className="font-medium text-slate-700">{field.label}</div>
+              <div className="text-break mt-1 whitespace-pre-wrap leading-6 text-slate-900">
                 {field.value}
               </div>
             </div>
           ))}
         </div>
       ) : (
-        <p className="mt-3 text-sm text-zinc-500">暂未提交问卷</p>
+        <p className="mt-3 text-sm text-slate-500">暂未提交问卷</p>
       )}
     </section>
   );

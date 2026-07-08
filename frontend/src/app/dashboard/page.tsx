@@ -3,6 +3,7 @@ import type { ComponentType, ReactNode } from "react";
 import { api } from "@/lib/api";
 import {
   AlertTriangle,
+  ArrowUpRight,
   Brain,
   CheckCircle2,
   ClipboardList,
@@ -136,19 +137,26 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-white shadow-sm">
-        <div className="grid gap-0 lg:grid-cols-[1.2fr_2fr]">
-          <div className="border-b border-slate-800 p-5 lg:border-b-0 lg:border-r lg:p-6">
-            <div className="text-sm font-bold text-cyan-300">今日运营指挥台</div>
-            <div className="mt-3 text-3xl font-black tracking-tight">
-              {summary.service_cases_in_service}
-              <span className="ml-2 text-base font-bold text-slate-300">个服务中社群</span>
+      <section className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-white shadow-lg">
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-slate-900/70 via-slate-950 to-slate-950" />
+        <div
+          className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full bg-cyan-500/10 blur-[100px]"
+        />
+        <div className="relative grid gap-0 lg:grid-cols-[1.2fr_2fr]">
+          <div className="border-b border-slate-800/80 p-5 lg:border-b-0 lg:border-r lg:p-6">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-cyan-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+              今日运营指挥台
             </div>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
+            <div className="mt-4 flex items-baseline gap-2">
+              <span className="tabular text-4xl font-black tracking-tight">{summary.service_cases_in_service}</span>
+              <span className="text-base font-semibold text-slate-300">个服务中社群</span>
+            </div>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-400">
               先看需关注、退款和情绪风险，再处理待审核文件与今日触达。
             </p>
           </div>
-          <div className="grid grid-cols-2 divide-x divide-y divide-slate-800 sm:grid-cols-4 sm:divide-y-0">
+          <div className="grid grid-cols-2 divide-x divide-y divide-slate-800/80 sm:grid-cols-4 sm:divide-y-0">
             <CommandMetric label="风险待处理" value={(summary.human_intervention_users ?? 0) + (summary.refund_intent_users ?? 0) + (summary.refund_pending_users ?? 0) + (summary.emotional_users_today ?? 0)} tone="risk" />
             <CommandMetric label="今日消息" value={summary.messages_today} tone="info" />
             <CommandMetric label="今日打卡" value={summary.checkins_today} tone="work" />
@@ -209,7 +217,7 @@ function CaseHealthTable({ items }: { items: CaseHealthItem[] }) {
           <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[820px] text-sm">
             <thead>
-              <tr className="border-b border-zinc-100 text-left text-xs text-zinc-500">
+              <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
                 <th className="px-4 py-3 font-medium">用户 / 群</th>
                 <th className="px-4 py-3 font-medium">服务天数</th>
                 <th className="px-4 py-3 font-medium">最近打卡</th>
@@ -247,9 +255,9 @@ function CommandMetric({
     review: "text-amber-300",
   };
   return (
-    <div className="p-4 sm:p-5">
-      <div className={`text-3xl font-black tracking-tight ${toneClass[tone]}`}>{value}</div>
-      <div className="mt-2 text-xs font-bold text-slate-300">{label}</div>
+    <div className="p-4 transition-colors duration-200 hover:bg-white/[0.03] sm:p-5">
+      <div className={`tabular text-3xl font-black tracking-tight ${toneClass[tone]}`}>{value}</div>
+      <div className="mt-2 text-xs font-semibold text-slate-400">{label}</div>
     </div>
   );
 }
@@ -330,23 +338,23 @@ function CaseHealthRow({ item }: { item: CaseHealthItem }) {
   const stageNum: Record<string, string> = { day3: "3", day7: "7", day14: "14", day21: "21", day28: "28" };
 
   return (
-    <tr className="border-b border-zinc-50 hover:bg-zinc-50/60">
+    <tr className="border-b border-slate-50 hover:bg-slate-50/60">
       <td className="px-4 py-3">
         <Link href={`/cases/${item.service_case_id}`} className="font-medium text-cyan-700 hover:underline">
           {item.user_name || "未命名"}
         </Link>
-        <div className="text-xs text-zinc-400">{item.group_id}</div>
+        <div className="text-xs text-slate-400">{item.group_id}</div>
       </td>
-      <td className="px-4 py-3 text-zinc-700">{item.service_day < 1 ? "未开始" : `第 ${item.service_day} 天`}</td>
-      <td className={`px-4 py-3 ${checkinStale ? "font-medium text-rose-600" : "text-zinc-700"}`}>{checkinText}</td>
-      <td className="px-4 py-3 text-zinc-600">{item.action_focus || "—"}</td>
+      <td className="px-4 py-3 text-slate-700">{item.service_day < 1 ? "未开始" : `第 ${item.service_day} 天`}</td>
+      <td className={`px-4 py-3 ${checkinStale ? "font-medium text-rose-600" : "text-slate-700"}`}>{checkinText}</td>
+      <td className="px-4 py-3 text-slate-600">{item.action_focus || "—"}</td>
       <td className="px-4 py-3">
         {item.risk_level === "high" ? (
           <span className="rounded bg-rose-50 px-2 py-0.5 text-xs text-rose-700">高风险</span>
         ) : item.needs_human_intervention ? (
           <span className="rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700">需关注</span>
         ) : (
-          <span className="text-xs text-zinc-400">正常</span>
+          <span className="text-xs text-slate-400">正常</span>
         )}
       </td>
       <td className="px-4 py-3">
@@ -358,7 +366,7 @@ function CaseHealthRow({ item }: { item: CaseHealthItem }) {
               className={
                 item.stage_reports.includes(stage)
                   ? "inline-flex h-5 min-w-5 items-center justify-center rounded bg-cyan-600 px-1 text-[11px] text-white"
-                  : "inline-flex h-5 min-w-5 items-center justify-center rounded bg-zinc-100 px-1 text-[11px] text-zinc-500"
+                  : "inline-flex h-5 min-w-5 items-center justify-center rounded bg-slate-100 px-1 text-[11px] text-slate-500"
               }
             >
               {stageNum[stage]}
@@ -396,10 +404,10 @@ function OutcomeSummaryPanel({ summary }: { summary?: OutcomeSummary }) {
               汇总真实执行数据、成效证据和体感反馈；样本不足时不硬下结论。
             </p>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs text-zinc-500">
-            <span className="rounded-full bg-zinc-100 px-3 py-1">有效服务单 {summary?.active_cases ?? 0}</span>
-            <span className="rounded-full bg-zinc-100 px-3 py-1">7日样本 {summary?.eligible_day7_cases ?? 0}</span>
-            <span className="rounded-full bg-zinc-100 px-3 py-1">28日样本 {summary?.eligible_day28_cases ?? 0}</span>
+          <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+            <span className="rounded-full bg-slate-100 px-3 py-1">有效服务单 {summary?.active_cases ?? 0}</span>
+            <span className="rounded-full bg-slate-100 px-3 py-1">7日样本 {summary?.eligible_day7_cases ?? 0}</span>
+            <span className="rounded-full bg-slate-100 px-3 py-1">28日样本 {summary?.eligible_day28_cases ?? 0}</span>
           </div>
         </div>
       </div>
@@ -409,15 +417,15 @@ function OutcomeSummaryPanel({ summary }: { summary?: OutcomeSummary }) {
           <OutcomeMetricCard key={metric.key} metric={metric} />
         ))}
         {!primaryMetrics.length && (
-          <div className="col-span-full rounded-xl border border-dashed border-zinc-200 p-8 text-center text-sm text-zinc-500">
+          <div className="col-span-full rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">
             暂无成效指标，等用户聊天、打卡和阶段快照沉淀后会自动显示。
           </div>
         )}
       </div>
 
       {!!signalMetrics.length && (
-        <div className="border-t border-zinc-100 px-4 py-5 sm:px-5">
-          <h3 className="text-sm font-semibold text-zinc-900">经营信号</h3>
+        <div className="border-t border-slate-100 px-4 py-5 sm:px-5">
+          <h3 className="text-sm font-semibold text-slate-900">经营信号</h3>
           <div className="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
             {signalMetrics.map((metric) => (
               <OutcomeSignalRow key={metric.key} metric={metric} />
@@ -432,33 +440,33 @@ function OutcomeSummaryPanel({ summary }: { summary?: OutcomeSummary }) {
 function OutcomeMetricCard({ metric }: { metric: OutcomeMetric }) {
   const noSample = metric.status === "no_sample";
   return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-5">
-      <div className="text-sm font-medium text-zinc-600">{metric.label}</div>
+    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-5">
+      <div className="text-sm font-medium text-slate-600">{metric.label}</div>
       <div className="mt-3 flex items-end gap-2">
-        <span className={noSample ? "text-base font-semibold text-zinc-400" : "text-3xl font-bold text-zinc-950"}>
+        <span className={noSample ? "text-base font-semibold text-slate-400" : "text-3xl font-bold text-slate-950"}>
           {formatOutcomeValue(metric)}
         </span>
         {metric.status !== "no_sample" && metric.unit && (
-          <span className="pb-1 text-sm font-medium text-zinc-500">{metric.unit}</span>
+          <span className="pb-1 text-sm font-medium text-slate-500">{metric.unit}</span>
         )}
       </div>
-      <div className="mt-2 text-xs text-zinc-500">{formatOutcomeDenominator(metric)}</div>
-      <p className="mt-3 text-xs leading-5 text-zinc-500">{metric.description}</p>
+      <div className="mt-2 text-xs text-slate-500">{formatOutcomeDenominator(metric)}</div>
+      <p className="mt-3 text-xs leading-5 text-slate-500">{metric.description}</p>
     </div>
   );
 }
 
 function OutcomeSignalRow({ metric }: { metric: OutcomeMetric }) {
   return (
-    <div className="rounded-xl border border-zinc-200 px-4 py-3">
+    <div className="rounded-xl border border-slate-200 px-4 py-3">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium text-zinc-700">{metric.label}</span>
-        <span className="text-sm font-bold text-zinc-950">
+        <span className="text-sm font-medium text-slate-700">{metric.label}</span>
+        <span className="text-sm font-bold text-slate-950">
           {formatOutcomeValue(metric)}
           {metric.status !== "no_sample" ? metric.unit : ""}
         </span>
       </div>
-      <p className="mt-2 text-xs leading-5 text-zinc-500">{metric.description}</p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{metric.description}</p>
     </div>
   );
 }
@@ -499,31 +507,33 @@ function StatCard({
   description: ReactNode;
 }) {
   const Icon = icon;
-  const colorClasses: Record<string, { card: string; icon: string; marker: string }> = {
-    blue: { card: "border-slate-200 bg-white", icon: "bg-sky-50 text-sky-700 ring-sky-100", marker: "bg-sky-500" },
-    cyan: { card: "border-slate-200 bg-white", icon: "bg-cyan-50 text-cyan-700 ring-cyan-100", marker: "bg-cyan-600" },
-    green: { card: "border-slate-200 bg-white", icon: "bg-emerald-50 text-emerald-700 ring-emerald-100", marker: "bg-emerald-600" },
-    yellow: { card: "border-slate-200 bg-white", icon: "bg-amber-50 text-amber-700 ring-amber-100", marker: "bg-amber-500" },
-    orange: { card: "border-slate-200 bg-white", icon: "bg-orange-50 text-orange-700 ring-orange-100", marker: "bg-orange-500" },
-    red: { card: "border-rose-200 bg-white", icon: "bg-rose-50 text-rose-700 ring-rose-100", marker: "bg-rose-600" },
+  const colorClasses: Record<string, { card: string; icon: string; value: string }> = {
+    blue: { card: "", icon: "bg-sky-50 text-sky-700 ring-sky-100", value: "text-slate-900" },
+    cyan: { card: "", icon: "bg-cyan-50 text-cyan-700 ring-cyan-100", value: "text-slate-900" },
+    green: { card: "", icon: "bg-emerald-50 text-emerald-700 ring-emerald-100", value: "text-slate-900" },
+    yellow: { card: "", icon: "bg-amber-50 text-amber-700 ring-amber-100", value: "text-slate-900" },
+    orange: { card: "", icon: "bg-orange-50 text-orange-700 ring-orange-100", value: "text-slate-900" },
+    red: { card: "!border-rose-200/80 bg-gradient-to-b from-rose-50/50 to-white", icon: "bg-rose-100 text-rose-700 ring-rose-200/70", value: "text-rose-700" },
   };
-  const tone = colorClasses[color] ?? { card: "border-slate-200 bg-white", icon: "bg-slate-50 text-slate-700 ring-slate-100", marker: "bg-slate-400" };
+  const tone = colorClasses[color] ?? { card: "", icon: "bg-slate-100 text-slate-700 ring-slate-200", value: "text-slate-900" };
 
   return (
     <Link
       href={href}
       title={typeof description === "string" ? description : undefined}
-      className={`group relative block rounded-xl border p-4 transition-colors duration-200 hover:border-cyan-300 hover:bg-slate-50/40 ${tone.card}`}
+      className={`metric-card group flex flex-col !p-4 ${tone.card}`}
     >
-      <span className={`absolute left-4 top-4 h-2 w-2 rounded-full ${tone.marker}`} />
-      <div className="flex items-start justify-between gap-3 pl-4">
-        <span className={`flex h-9 w-9 items-center justify-center rounded-lg ring-1 ${tone.icon}`}>
+      <div className="flex items-center justify-between gap-3">
+        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ring-1 ${tone.icon}`}>
           <Icon className="h-5 w-5" />
         </span>
-        <span className="text-2xl font-black tracking-tight text-slate-950">{value}</span>
+        <span className={`tabular text-[1.75rem] font-extrabold leading-none tracking-tight ${tone.value}`}>{value}</span>
       </div>
-      <div className="mt-4 text-sm font-bold text-slate-800">{label}</div>
-      <p className="mt-2 text-xs leading-5 text-slate-600">{description}</p>
+      <div className="mt-4 flex items-center gap-1.5 text-sm font-bold text-slate-800">
+        {label}
+        <ArrowUpRight className="h-3.5 w-3.5 text-slate-300 transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-cyan-500" />
+      </div>
+      <p className="mt-1.5 text-xs leading-5 text-slate-500">{description}</p>
     </Link>
   );
 }

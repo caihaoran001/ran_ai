@@ -307,7 +307,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
 
 function StructuredCheckin({ checkin }: { checkin: Checkin }) {
   const parsed = checkin.parsed_json;
-  if (!parsed) return <div className="text-break text-sm text-zinc-900">{checkin.content}</div>;
+  if (!parsed) return <div className="text-break text-sm text-slate-900">{checkin.content}</div>;
   const product = parsed.product_schedule || {};
   const rows = [
     ["早C", product.morning_c],
@@ -319,7 +319,7 @@ function StructuredCheckin({ checkin }: { checkin: Checkin }) {
     ["运动", parsed.exercise],
     ["体重", parsed.weight],
   ].filter(([, value]) => value);
-  if (rows.length === 0) return <div className="text-break text-sm text-zinc-900">{checkin.content}</div>;
+  if (rows.length === 0) return <div className="text-break text-sm text-slate-900">{checkin.content}</div>;
   return (
     <div className="grid gap-2 text-sm text-slate-900 sm:grid-cols-2">
       {rows.map(([label, value]) => (

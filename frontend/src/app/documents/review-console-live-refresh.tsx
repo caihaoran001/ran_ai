@@ -26,7 +26,7 @@ export function ReviewConsoleLiveRefresh() {
 
   return (
     <div className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-      <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-emerald-500" : "bg-zinc-300"}`} />
+      <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-emerald-500" : "bg-slate-300"}`} />
       {connected ? "实时监听中" : "实时监听连接中"}
     </div>
   );

@@ -307,17 +307,17 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
       
       {/* Floating Toast Notification */}
       {toast && (
-        <div className="fixed right-6 top-6 z-50 flex max-w-md items-center gap-3 rounded-xl border border-zinc-200/60 bg-white/80 p-4 shadow-xl backdrop-blur-md animate-toast-in">
+        <div className="fixed right-6 top-6 z-50 flex max-w-md items-center gap-3 rounded-xl border border-slate-200/60 bg-white/80 p-4 shadow-xl backdrop-blur-md animate-toast-in">
           {toast.type === "success" ? (
             <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0 animate-bounce" />
           ) : (
             <AlertCircle className="h-5 w-5 text-rose-500 shrink-0 animate-pulse" />
           )}
           <div className="flex flex-col gap-0.5">
-            <span className="text-sm font-semibold text-zinc-900">
+            <span className="text-sm font-semibold text-slate-900">
               {toast.type === "success" ? "操作成功" : "配置错误"}
             </span>
-            <span className="text-xs text-zinc-600 leading-relaxed font-medium">
+            <span className="text-xs text-slate-600 leading-relaxed font-medium">
               {toast.message}
             </span>
           </div>

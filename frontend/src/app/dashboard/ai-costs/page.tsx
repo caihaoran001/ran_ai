@@ -30,8 +30,8 @@ export default async function AICostsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900">AI 调用成本明细</h1>
-          <p className="mt-1 text-sm text-zinc-500">
+          <h1 className="text-2xl font-bold text-slate-900">AI 调用成本明细</h1>
+          <p className="mt-1 text-sm text-slate-500">
             按服务单聚合 LLM 调用次数、token 和估算金额。金额取决于后台配置的模型单价。
           </p>
         </div>
@@ -48,14 +48,14 @@ export default async function AICostsPage() {
         <SummaryCard label="总调用次数" value={totalCalls.toLocaleString("zh-CN")} />
       </div>
 
-      <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-        <div className="border-b border-zinc-100 px-5 py-4">
-          <h2 className="font-semibold text-zinc-900">用户成本列表</h2>
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-100 px-5 py-4">
+          <h2 className="font-semibold text-slate-900">用户成本列表</h2>
         </div>
         {items.length ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-500">
+              <thead className="bg-slate-50 text-left text-xs font-semibold text-slate-500">
                 <tr>
                   <th className="px-5 py-3">用户 / 服务单</th>
                   <th className="px-5 py-3">调用次数</th>
@@ -66,33 +66,33 @@ export default async function AICostsPage() {
                   <th className="px-5 py-3">最后调用</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100">
+              <tbody className="divide-y divide-slate-100">
                 {items.map((item) => (
-                  <tr key={item.service_case_id} className="hover:bg-zinc-50/70">
+                  <tr key={item.service_case_id} className="hover:bg-slate-50/70">
                     <td className="px-5 py-4">
-                      <div className="font-medium text-zinc-900">{item.user_name || "未命名用户"}</div>
+                      <div className="font-medium text-slate-900">{item.user_name || "未命名用户"}</div>
                       <Link className="text-xs text-blue-600 hover:text-blue-700" href={`/cases/${item.service_case_id}`}>
                         {item.case_no}
                       </Link>
-                      <div className="mt-1 max-w-[260px] truncate text-xs text-zinc-400">群：{item.group_id}</div>
+                      <div className="mt-1 max-w-[260px] truncate text-xs text-slate-400">群：{item.group_id}</div>
                     </td>
-                    <td className="px-5 py-4 font-medium text-zinc-900">{item.total_calls}</td>
+                    <td className="px-5 py-4 font-medium text-slate-900">{item.total_calls}</td>
                     <td className="px-5 py-4">{item.total_tokens.toLocaleString("zh-CN")}</td>
-                    <td className="px-5 py-4 text-zinc-500">
+                    <td className="px-5 py-4 text-slate-500">
                       {item.prompt_tokens.toLocaleString("zh-CN")} / {item.completion_tokens.toLocaleString("zh-CN")}
                     </td>
-                    <td className="px-5 py-4 font-semibold text-zinc-900">¥{item.estimated_cost_yuan.toFixed(2)}</td>
-                    <td className="px-5 py-4 text-zinc-500">
+                    <td className="px-5 py-4 font-semibold text-slate-900">¥{item.estimated_cost_yuan.toFixed(2)}</td>
+                    <td className="px-5 py-4 text-slate-500">
                       ¥{item.deepseek_cost_yuan.toFixed(2)} / ¥{item.vision_cost_yuan.toFixed(2)}
                     </td>
-                    <td className="px-5 py-4 text-zinc-500">{formatChinaDateTime(item.last_call_at)}</td>
+                    <td className="px-5 py-4 text-slate-500">{formatChinaDateTime(item.last_call_at)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <div className="p-10 text-center text-sm text-zinc-500">暂无 AI 调用记录。</div>
+          <div className="p-10 text-center text-sm text-slate-500">暂无 AI 调用记录。</div>
         )}
       </section>
     </div>
@@ -101,9 +101,9 @@ export default async function AICostsPage() {
 
 function SummaryCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-      <div className="text-xs font-medium text-zinc-500">{label}</div>
-      <div className="mt-2 text-2xl font-bold text-zinc-900">{value}</div>
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className="mt-2 text-2xl font-bold text-slate-900">{value}</div>
     </div>
   );
 }

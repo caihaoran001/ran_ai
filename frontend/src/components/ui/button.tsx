@@ -1,15 +1,20 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-export function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  const { className, ...rest } = props;
-  return (
-    <button
-      className={cn(
-        "inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg bg-cyan-800 px-4 text-sm font-bold text-white transition-colors duration-200 hover:bg-cyan-900 active:bg-cyan-950 disabled:pointer-events-none disabled:opacity-50",
-        className,
-      )}
-      {...rest}
-    />
-  );
+type Variant = "primary" | "secondary" | "danger" | "ghost";
+
+const variantClass: Record<Variant, string> = {
+  primary: "btn-primary",
+  secondary: "admin-button-secondary",
+  danger: "admin-button-danger",
+  ghost:
+    "btn border border-transparent bg-transparent font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+};
+
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: Variant;
+}
+
+export function Button({ className, variant = "primary", ...rest }: ButtonProps) {
+  return <button className={cn(variantClass[variant], className)} {...rest} />;
 }

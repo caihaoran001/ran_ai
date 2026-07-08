@@ -39,7 +39,7 @@ export function DeleteServiceCaseButton({
       {confirmDelete && (
         <button
           type="button"
-          className="text-xs text-zinc-500 hover:text-zinc-700"
+          className="text-xs text-slate-500 hover:text-slate-700"
           onClick={() => setConfirmDelete(false)}
           disabled={busy}
         >

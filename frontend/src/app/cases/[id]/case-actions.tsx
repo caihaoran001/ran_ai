@@ -56,18 +56,18 @@ export function CaseActions({
 
   if (editing) {
     return (
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/50 p-2 transition-all">
-        <span className="text-xs text-zinc-500 font-medium">设定已服务：</span>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/50 p-2 transition-all">
+        <span className="text-xs text-slate-500 font-medium">设定已服务：</span>
         <input
           type="number"
           min="0"
           max="28"
           value={days}
           onChange={(e) => setDays(e.target.value)}
-          className="h-9 w-14 rounded border border-zinc-300 bg-white text-center text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-100"
+          className="h-9 w-14 rounded border border-slate-300 bg-white text-center text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-100"
           disabled={busy}
         />
-        <span className="text-xs text-zinc-500 font-medium">天</span>
+        <span className="text-xs text-slate-500 font-medium">天</span>
         <button
           onClick={saveDays}
           disabled={busy}
@@ -78,7 +78,7 @@ export function CaseActions({
         <button
           onClick={() => setEditing(false)}
           disabled={busy}
-          className="min-h-9 rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
+          className="min-h-9 rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700"
         >
           取消
         </button>

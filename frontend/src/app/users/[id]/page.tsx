@@ -411,18 +411,18 @@ function ProfileView({
       </div>
 
       {hasNeedAnalysis && (
-        <details className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50">
-          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-zinc-700">
+        <details className="mt-4 rounded-lg border border-slate-200 bg-slate-50">
+          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-slate-700">
             <span>完整健康需求识别</span>
-            <span className="text-xs font-normal text-zinc-400">展开查看表层需求、深层需求和证据</span>
+            <span className="text-xs font-normal text-slate-400">展开查看表层需求、深层需求和证据</span>
           </summary>
-          <div className="border-t border-zinc-200 p-4">
+          <div className="border-t border-slate-200 p-4">
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-3">
               <NeedList label="表层表达需求" items={needAnalysis.surface_needs} />
               <NeedList label="深层服务需求" items={needAnalysis.deep_needs} />
-              <div className="rounded-md border border-zinc-200 bg-white p-3">
-                <div className="text-xs font-medium text-zinc-500">最优先满足需求</div>
+              <div className="rounded-md border border-slate-200 bg-white p-3">
+                <div className="text-xs font-medium text-slate-500">最优先满足需求</div>
                 <div className="mt-1 font-semibold text-cyan-900">{String(needAnalysis.priority_need || "暂无")}</div>
               </div>
             </div>
@@ -441,13 +441,13 @@ function ProfileView({
 
 function ProfileGroup({ title, items }: { title: string; items: string[][] }) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-3">
-      <div className="text-xs font-semibold text-zinc-500">{title}</div>
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <div className="text-xs font-semibold text-slate-500">{title}</div>
       <div className="mt-2 space-y-2">
         {items.map(([label, value]) => (
           <div key={label}>
-            <div className="text-[11px] text-zinc-400">{label}</div>
-            <div className="text-break mt-0.5 text-sm font-medium leading-6 text-zinc-900">{value}</div>
+            <div className="text-[11px] text-slate-400">{label}</div>
+            <div className="text-break mt-0.5 text-sm font-medium leading-6 text-slate-900">{value}</div>
           </div>
         ))}
       </div>
@@ -458,16 +458,16 @@ function ProfileGroup({ title, items }: { title: string; items: string[][] }) {
 function NeedList({ label, items }: { label: string; items: unknown }) {
   const list = Array.isArray(items) ? items.filter(Boolean) : [];
   return (
-    <div className="rounded-md border border-zinc-200 bg-white p-3">
-      <div className="text-xs font-medium text-zinc-500">{label}</div>
+    <div className="rounded-md border border-slate-200 bg-white p-3">
+      <div className="text-xs font-medium text-slate-500">{label}</div>
       {list.length > 0 ? (
-        <ul className="mt-1 space-y-1 text-sm list-disc pl-4 text-zinc-700">
+        <ul className="mt-1 space-y-1 text-sm list-disc pl-4 text-slate-700">
           {list.map((item, idx) => (
             <li key={idx} className="text-break">{String(item)}</li>
           ))}
         </ul>
       ) : (
-        <div className="mt-1 text-zinc-400">暂无数据</div>
+        <div className="mt-1 text-slate-400">暂无数据</div>
       )}
     </div>
   );
@@ -482,8 +482,8 @@ function AiContextPreview({ context }: { context?: string }) {
           <span className="h-2 w-2 rounded-full bg-slate-400" />
           AI 视角：真实提示词上下文预览
         </span>
-        <span className="text-xs text-zinc-500 group-open:hidden">点击展开</span>
-        <span className="text-xs text-zinc-500 hidden group-open:inline">点击收起</span>
+        <span className="text-xs text-slate-500 group-open:hidden">点击展开</span>
+        <span className="text-xs text-slate-500 hidden group-open:inline">点击收起</span>
       </summary>
       <div className="text-break max-w-full overflow-x-auto whitespace-pre-wrap border-t border-slate-200 px-4 py-4 font-mono text-xs leading-6 text-slate-600 select-all">
         {contextText}
@@ -568,7 +568,7 @@ function StateProfileView({
 
   return (
     <div className="mt-3 space-y-4 text-sm">
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-slate-500">
         默认只展示运营接话最常用的信息；完整字段和证据链可展开查看。
         最近更新：{formatDateTime(updatedAt)}
       </p>
@@ -578,12 +578,12 @@ function StateProfileView({
         ))}
       </div>
       {secondaryDomains.length > 0 && (
-        <details className="rounded-lg border border-zinc-200 bg-zinc-50">
-          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-zinc-700">
+        <details className="rounded-lg border border-slate-200 bg-slate-50">
+          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-slate-700">
             <span>查看完整状态字段</span>
-            <span className="text-xs font-normal text-zinc-400">{secondaryDomains.length} 个补充字段</span>
+            <span className="text-xs font-normal text-slate-400">{secondaryDomains.length} 个补充字段</span>
           </summary>
-          <div className="grid gap-3 border-t border-zinc-200 p-3 lg:grid-cols-2">
+          <div className="grid gap-3 border-t border-slate-200 p-3 lg:grid-cols-2">
             {secondaryDomains.map(([key, domain]) => (
               <StateDomainCard key={key} domain={domain} />
             ))}
@@ -606,32 +606,32 @@ function StateDomainCard({ domain }: { domain: Record<string, unknown> }) {
   }
 
   return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-medium text-zinc-500">{label}</div>
-        {text(current.updated_at) && <div className="text-[11px] text-zinc-400">{formatDateTime(text(current.updated_at))}</div>}
+        <div className="text-xs font-medium text-slate-500">{label}</div>
+        {text(current.updated_at) && <div className="text-[11px] text-slate-400">{formatDateTime(text(current.updated_at))}</div>}
       </div>
       {Object.keys(currentValue).length > 0 ? (
         <div className="mt-2 space-y-1">
           {Object.entries(currentValue).slice(0, 5).map(([key, value]) => (
             <div key={key} className="leading-6">
-              <span className="text-zinc-500">{stateFieldLabel(key)}：</span>
+              <span className="text-slate-500">{stateFieldLabel(key)}：</span>
               <span className="text-break">{formatStateValue(value)}</span>
             </div>
           ))}
         </div>
       ) : (
-        <div className="mt-2 text-zinc-500">暂无当前状态</div>
+        <div className="mt-2 text-slate-500">暂无当前状态</div>
       )}
-      {evidence && <p className="text-break mt-2 rounded bg-white px-2 py-1 text-xs leading-5 text-zinc-500">依据：{evidence}</p>}
+      {evidence && <p className="text-break mt-2 rounded bg-white px-2 py-1 text-xs leading-5 text-slate-500">依据：{evidence}</p>}
       {history.length > 0 && (
         <details className="mt-2">
           <summary className="cursor-pointer text-xs text-blue-600">查看证据链</summary>
           <div className="mt-2 space-y-2">
             {history.map((item, index) => (
-              <div key={`${text(item.evidence)}-${index}`} className="rounded border border-zinc-100 bg-white p-2 text-xs leading-5">
-                <div className="text-zinc-400">{formatDateTime(text(item.occurred_at))}</div>
-                <div className="text-break mt-1 text-zinc-600">{text(item.evidence) || formatStateValue(item.value)}</div>
+              <div key={`${text(item.evidence)}-${index}`} className="rounded border border-slate-100 bg-white p-2 text-xs leading-5">
+                <div className="text-slate-400">{formatDateTime(text(item.occurred_at))}</div>
+                <div className="text-break mt-1 text-slate-600">{text(item.evidence) || formatStateValue(item.value)}</div>
               </div>
             ))}
           </div>
@@ -661,38 +661,38 @@ function ActionFocusCard({
     .slice(0, 3);
 
   return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-medium text-zinc-500">当前行动重点</div>
-        {text(current.updated_at) && <div className="text-[11px] text-zinc-400">{formatDateTime(text(current.updated_at))}</div>}
+        <div className="text-xs font-medium text-slate-500">当前行动重点</div>
+        {text(current.updated_at) && <div className="text-[11px] text-slate-400">{formatDateTime(text(current.updated_at))}</div>}
       </div>
       {text(focus.label) ? (
         <div className="mt-2 space-y-1 leading-6">
-          <div className="text-break"><span className="text-zinc-500">重点：</span>{text(focus.label)}</div>
-          <div className="text-break"><span className="text-zinc-500">动作：</span>{text(focus.action) || "暂无动作"}</div>
-          <div><span className="text-zinc-500">分数：</span>{String(focus.score ?? "暂无")}</div>
-          {text(focus.soft_lock_until) && <div><span className="text-zinc-500">稳定期至：</span>{formatDateTime(text(focus.soft_lock_until))}</div>}
+          <div className="text-break"><span className="text-slate-500">重点：</span>{text(focus.label)}</div>
+          <div className="text-break"><span className="text-slate-500">动作：</span>{text(focus.action) || "暂无动作"}</div>
+          <div><span className="text-slate-500">分数：</span>{String(focus.score ?? "暂无")}</div>
+          {text(focus.soft_lock_until) && <div><span className="text-slate-500">稳定期至：</span>{formatDateTime(text(focus.soft_lock_until))}</div>}
         </div>
       ) : (
-        <div className="mt-2 text-zinc-500">暂无当前行动重点</div>
+        <div className="mt-2 text-slate-500">暂无当前行动重点</div>
       )}
       {sortedCandidates.length > 0 && (
-        <div className="mt-3 rounded bg-white px-2 py-2 text-xs leading-5 text-zinc-500">
-          <div className="font-medium text-zinc-600">候选池</div>
+        <div className="mt-3 rounded bg-white px-2 py-2 text-xs leading-5 text-slate-500">
+          <div className="font-medium text-slate-600">候选池</div>
           {sortedCandidates.map((item) => (
           <div key={text(item.key) || text(item.label)} className="text-break">{text(item.label)}：{String(item.score ?? "0")}</div>
           ))}
         </div>
       )}
-      {evidence && <p className="text-break mt-2 rounded bg-white px-2 py-1 text-xs leading-5 text-zinc-500">依据：{evidence}</p>}
+      {evidence && <p className="text-break mt-2 rounded bg-white px-2 py-1 text-xs leading-5 text-slate-500">依据：{evidence}</p>}
       {history.length > 0 && (
         <details className="mt-2">
           <summary className="cursor-pointer text-xs text-blue-600">查看变更记录</summary>
           <div className="mt-2 space-y-2">
             {history.map((item, index) => (
-              <div key={`${text(item.evidence)}-${index}`} className="rounded border border-zinc-100 bg-white p-2 text-xs leading-5">
-                <div className="text-zinc-400">{formatDateTime(text(item.occurred_at))}</div>
-                <div className="text-break mt-1 text-zinc-600">{text(item.evidence) || formatStateValue(item.value)}</div>
+              <div key={`${text(item.evidence)}-${index}`} className="rounded border border-slate-100 bg-white p-2 text-xs leading-5">
+                <div className="text-slate-400">{formatDateTime(text(item.occurred_at))}</div>
+                <div className="text-break mt-1 text-slate-600">{text(item.evidence) || formatStateValue(item.value)}</div>
               </div>
             ))}
           </div>
@@ -753,8 +753,8 @@ function DocumentHighlights({
 
 function SummaryTextCard({ title, value }: { title: string; value: string }) {
   return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-      <div className="text-xs font-medium text-zinc-500">{title}</div>
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+      <div className="text-xs font-medium text-slate-500">{title}</div>
       <div className="text-break mt-1 whitespace-pre-wrap">{value}</div>
     </div>
   );
@@ -762,8 +762,8 @@ function SummaryTextCard({ title, value }: { title: string; value: string }) {
 
 function SummaryListCard({ title, items }: { title: string; items: string[] }) {
   return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-      <div className="text-xs font-medium text-zinc-500">{title}</div>
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+      <div className="text-xs font-medium text-slate-500">{title}</div>
       <ul className="mt-2 space-y-1">
         {items.map((item) => (
           <li key={item} className="text-break ml-5 list-disc">{item}</li>

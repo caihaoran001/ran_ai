@@ -54,11 +54,11 @@ export function RiskReplyConfig() {
   const isDirty = content !== initialContent;
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
+    <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <h3 className="text-base font-semibold text-zinc-900">高风险拦截固定话术配置</h3>
-          <p className="mt-1 text-sm text-zinc-500 leading-relaxed">
+          <h3 className="text-base font-semibold text-slate-900">高风险拦截固定话术配置</h3>
+          <p className="mt-1 text-sm text-slate-500 leading-relaxed">
             当用户触发转人工（健康红线、急性体感不适、投诉退款，或高风险用户咨询饮食/用药等需专业判断的问题）时，AI 不再自行回复，改为发送以下安抚话术并 @班主任接手处理。
           </p>
         </div>
@@ -81,7 +81,7 @@ export function RiskReplyConfig() {
         placeholder="请输入拦截话术内容..."
         disabled={busy}
       />
-      <p className="mt-2 text-xs text-zinc-400 leading-relaxed">
+      <p className="mt-2 text-xs text-slate-400 leading-relaxed">
         * 发送时系统会自动在此话术末尾换行并追加强提醒（例如：<code>@班主任 麻烦有空时接手跟进一下哈～</code>），无需在配置中手动填写艾特标记。
       </p>
     </div>

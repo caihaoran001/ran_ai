@@ -40,7 +40,7 @@ export function CaseRiskReset({ caseId }: { caseId: number }) {
       {confirmReset && (
         <button
           type="button"
-          className="text-xs text-zinc-500 hover:text-zinc-700"
+          className="text-xs text-slate-500 hover:text-slate-700"
           onClick={() => setConfirmReset(false)}
           disabled={busy}
         >
@@ -53,7 +53,7 @@ export function CaseRiskReset({ caseId }: { caseId: number }) {
         className={`ml-2 inline-flex items-center text-xs font-medium transition-all ${
           confirmReset
             ? "text-orange-600 hover:text-orange-700 font-semibold underline"
-            : "text-zinc-500 hover:text-zinc-900"
+            : "text-slate-500 hover:text-slate-900"
         }`}
       >
         {busy ? "处理中..." : confirmReset ? "确认重置？" : "重置风险等级"}

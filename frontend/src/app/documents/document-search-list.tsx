@@ -109,8 +109,8 @@ export function DocumentSearchList() {
     reviewing: { label: "待审核", className: "bg-amber-50 text-amber-700 border-amber-200/80" },
     approved: { label: "已批准", className: "bg-emerald-50 text-emerald-700 border-emerald-200/80" },
     sent: { label: "已发送", className: "bg-blue-50 text-blue-700 border-blue-200/80" },
-    draft: { label: "草稿", className: "bg-zinc-100 text-zinc-600 border-zinc-200" },
-    archived: { label: "未发送", className: "bg-zinc-100 text-zinc-500 border-zinc-300" },
+    draft: { label: "草稿", className: "bg-slate-100 text-slate-600 border-slate-200" },
+    archived: { label: "未发送", className: "bg-slate-100 text-slate-500 border-slate-300" },
   };
 
   // Client-side fuzzy search and status filter

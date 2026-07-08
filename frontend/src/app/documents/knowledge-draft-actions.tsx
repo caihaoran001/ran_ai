@@ -85,19 +85,19 @@ export function KnowledgeDraftActions({
       <div className="space-y-4 pt-2">
         {/* Title */}
         <div className="flex items-start gap-2 pt-1">
-          <BookOpen className="h-4 w-4 mt-0.5 text-zinc-400 shrink-0" />
-          <div className="text-sm font-bold text-zinc-800 leading-snug">
-            {title || <span className="italic text-zinc-400 font-normal">（暂无设定标题）</span>}
+          <BookOpen className="h-4 w-4 mt-0.5 text-slate-400 shrink-0" />
+          <div className="text-sm font-bold text-slate-800 leading-snug">
+            {title || <span className="italic text-slate-400 font-normal">（暂无设定标题）</span>}
           </div>
         </div>
         
         {/* Question block */}
-        <div className="group rounded-xl bg-zinc-50 border border-zinc-200/60 p-3.5 shadow-3xs hover:bg-zinc-50/80 hover:border-zinc-300 transition-all duration-200">
-          <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">
+        <div className="group rounded-xl bg-slate-50 border border-slate-200/60 p-3.5 shadow-3xs hover:bg-slate-50/80 hover:border-slate-300 transition-all duration-200">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
             <Compass className="h-3.5 w-3.5 text-blue-500" />
             <span>{draftType === "case" ? "案例背景与适用场景" : "用户常见提问方式"}</span>
           </div>
-          <p className="text-sm text-zinc-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-zinc-200">
+          <p className="text-sm text-slate-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-slate-200">
             {question}
           </p>
         </div>
@@ -108,23 +108,23 @@ export function KnowledgeDraftActions({
             <Sparkles className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
             <span>{draftType === "case" ? "金牌服务过程与改善结果" : "推荐业务标准回复"}</span>
           </div>
-          <p className="text-sm text-zinc-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-blue-200">
+          <p className="text-sm text-slate-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-blue-200">
             {answer}
           </p>
         </div>
 
         {/* Tags preview */}
         {tags.trim() && (
-          <div className="flex flex-wrap gap-2 items-center pt-1.5 border-t border-zinc-100/60">
-            <div className="flex items-center gap-1 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-              <Tag className="h-3 w-3 text-zinc-400" />
+          <div className="flex flex-wrap gap-2 items-center pt-1.5 border-t border-slate-100/60">
+            <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              <Tag className="h-3 w-3 text-slate-400" />
               <span>关联标签:</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {tags.split(/[、,，]/).map((item) => item.trim()).filter(Boolean).map((tag, idx) => (
                 <span 
                   key={idx} 
-                  className="rounded-full bg-zinc-100 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-150 px-2.5 py-0.5 text-2xs font-semibold text-zinc-600 border border-zinc-200/60 transition-all duration-150 cursor-default"
+                  className="rounded-full bg-slate-100 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-150 px-2.5 py-0.5 text-2xs font-semibold text-slate-600 border border-slate-200/60 transition-all duration-150 cursor-default"
                 >
                   #{tag}
                 </span>
@@ -134,13 +134,13 @@ export function KnowledgeDraftActions({
         )}
 
         {/* Action buttons */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-4 mt-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 mt-3">
           <Button
             type="button"
-            className="text-xs border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 hover:text-zinc-800 transition-all duration-205 active:scale-[0.97] font-semibold flex items-center gap-1.5 px-3 py-1.5 h-8.5"
+            className="text-xs border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-all duration-205 active:scale-[0.97] font-semibold flex items-center gap-1.5 px-3 py-1.5 h-8.5"
             onClick={() => setIsEditing(true)}
           >
-            <Edit2 className="h-3.5 w-3.5 text-zinc-500" />
+            <Edit2 className="h-3.5 w-3.5 text-slate-500" />
             <span>编辑草稿内容</span>
           </Button>
           <div className="flex gap-2">
@@ -164,7 +164,7 @@ export function KnowledgeDraftActions({
             </Button>
             <Button
               type="button"
-              className="text-xs border border-zinc-200 bg-white text-zinc-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 transition-all duration-205 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
+              className="text-xs border border-slate-200 bg-white text-slate-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 transition-all duration-205 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
               onClick={reject}
               disabled={busy}
             >
@@ -178,15 +178,15 @@ export function KnowledgeDraftActions({
   }
 
   return (
-    <div className="space-y-4 pt-4 border-t border-zinc-100 mt-3 animate-fadeIn">
+    <div className="space-y-4 pt-4 border-t border-slate-100 mt-3 animate-fadeIn">
       {/* Title form group */}
       <div className="space-y-1.5">
-        <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1.5">
-          <BookOpen className="h-3.5 w-3.5 text-zinc-400" />
+        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1.5">
+          <BookOpen className="h-3.5 w-3.5 text-slate-400" />
           <span>{draftType === "case" ? "优秀案例标题" : "知识草稿标题"}</span>
         </label>
         <input
-          className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-semibold text-zinc-800 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs"
+          className="w-full rounded-lg border border-slate-200 px-3.5 py-2 text-sm font-semibold text-slate-800 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs"
           placeholder={draftType === "case" ? "给此案例起一个清晰的标题描述..." : "给这条知识起一个清晰的主题名称..."}
           value={title}
           onChange={(event) => setTitle(event.target.value)}
@@ -196,24 +196,24 @@ export function KnowledgeDraftActions({
       {/* Category and Tags inline grid */}
       <div className="grid gap-4 grid-cols-2">
         <div className="space-y-1.5">
-          <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1.5">
-            <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-400" />
+          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1.5">
+            <SlidersHorizontal className="h-3.5 w-3.5 text-slate-400" />
             <span>{draftType === "case" ? "案例所属分类" : "所属分类"}</span>
           </label>
           <input
-            className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs"
+            className="w-full rounded-lg border border-slate-200 px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs"
             placeholder={draftType === "case" ? "例如：情绪转正、坚持执行" : "例如：营养干预、标准解答"}
             value={category}
             onChange={(event) => setCategory(event.target.value)}
           />
         </div>
         <div className="space-y-1.5">
-          <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1.5">
-            <Tag className="h-3.5 w-3.5 text-zinc-400" />
+          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1.5">
+            <Tag className="h-3.5 w-3.5 text-slate-400" />
             <span>{draftType === "case" ? "案例标签 (用顿号“、”分隔)" : "标签 (用顿号“、”分隔)"}</span>
           </label>
           <input
-            className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs"
+            className="w-full rounded-lg border border-slate-200 px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs"
             placeholder={draftType === "case" ? "例如：平台期、突破、减脂" : "例如：低血糖、孕妇"}
             value={tags}
             onChange={(event) => setTags(event.target.value)}
@@ -223,12 +223,12 @@ export function KnowledgeDraftActions({
 
       {/* Question textarea */}
       <div className="space-y-1.5">
-        <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1.5">
-          <Compass className="h-3.5 w-3.5 text-zinc-400" />
+        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1.5">
+          <Compass className="h-3.5 w-3.5 text-slate-400" />
           <span>{draftType === "case" ? "案例背景 / 适用场景描述" : "标准提问方式 (常见问法)"}</span>
         </label>
         <Textarea
-          className="min-h-20 text-sm leading-relaxed text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs rounded-lg px-3.5 py-2 border-zinc-200"
+          className="min-h-20 text-sm leading-relaxed text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs rounded-lg px-3.5 py-2 border-slate-200"
           placeholder={draftType === "case" ? "描述案例的背景适用场景和遇到的平台期问题..." : "输入标准问题或用户常见提问的模板..."}
           value={question}
           onChange={(event) => setQuestion(event.target.value)}
@@ -237,12 +237,12 @@ export function KnowledgeDraftActions({
 
       {/* Answer textarea */}
       <div className="space-y-1.5">
-        <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1.5">
-          <Sparkles className="h-3.5 w-3.5 text-zinc-400" />
+        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5 text-slate-400" />
           <span>{draftType === "case" ? "案例金牌服务过程与改善结果" : "推荐标准回复内容"}</span>
         </label>
         <Textarea
-          className="min-h-32 text-sm leading-relaxed text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs rounded-lg px-3.5 py-2 border-zinc-200"
+          className="min-h-32 text-sm leading-relaxed text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white shadow-2xs rounded-lg px-3.5 py-2 border-slate-200"
           placeholder={draftType === "case" ? "编写详细的辅导细节、心理鼓励步骤和最后的体重改善结果..." : "编写最规范、科学且具有指导意义的标准回复..."}
           value={answer}
           onChange={(event) => setAnswer(event.target.value)}
@@ -250,13 +250,13 @@ export function KnowledgeDraftActions({
       </div>
 
       {/* Action buttons */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-4 mt-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 mt-3">
         <Button
           type="button"
-          className="text-xs border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-all duration-200 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
+          className="text-xs border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all duration-200 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
           onClick={() => setIsEditing(false)}
         >
-          <X className="h-3.5 w-3.5 text-zinc-400" />
+          <X className="h-3.5 w-3.5 text-slate-400" />
           <span>返回预览</span>
         </Button>
         <div className="flex gap-2">
@@ -280,7 +280,7 @@ export function KnowledgeDraftActions({
           </Button>
           <Button
             type="button"
-            className="text-xs border border-zinc-200 bg-white text-zinc-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 transition-all duration-200 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
+            className="text-xs border border-slate-200 bg-white text-slate-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 transition-all duration-200 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
             onClick={reject}
             disabled={busy}
           >
@@ -313,24 +313,24 @@ export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50/20 p-5 shadow-3xs">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-150 pb-4 mb-4">
+    <div className="rounded-xl border border-slate-200 bg-slate-50/20 p-5 shadow-3xs">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-150 pb-4 mb-4">
         <div className="flex items-start gap-2.5">
           <Settings2 className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
           <div>
-            <h3 className="text-sm font-bold text-zinc-800 flex items-center gap-1.5">知识自我进化配置</h3>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">知识自我进化配置</h3>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">
               控制每日 FAQ 草稿、阶段优秀案例草稿的后台定时扫描任务。未通过人工审核的内容不会自动上线到知识库中。
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3 bg-white py-1.5 px-3.5 rounded-lg border border-zinc-200 shadow-3xs">
-          <span className="text-xs font-bold text-zinc-700">启用定时自动进化</span>
+        <div className="flex items-center gap-3 bg-white py-1.5 px-3.5 rounded-lg border border-slate-200 shadow-3xs">
+          <span className="text-xs font-bold text-slate-700">启用定时自动进化</span>
           <button
             type="button"
             onClick={() => setConfig({ ...config, enabled: !config.enabled })}
             className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
-              config.enabled ? "bg-blue-600" : "bg-zinc-200"
+              config.enabled ? "bg-blue-600" : "bg-slate-200"
             }`}
           >
             <span
@@ -345,7 +345,7 @@ export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig
       <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
         <Field label="每日 FAQ 扫描时间">
           <input
-            className="w-full rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
+            className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
             type="time"
             value={config.qa_at}
             onChange={(event) => setConfig({ ...config, qa_at: event.target.value })}
@@ -353,7 +353,7 @@ export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig
         </Field>
         <Field label="系统时区">
           <select
-            className="w-full rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all font-medium cursor-pointer"
+            className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all font-medium cursor-pointer"
             value={config.timezone}
             onChange={(event) => setConfig({ ...config, timezone: event.target.value })}
           >
@@ -362,7 +362,7 @@ export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig
         </Field>
         <Field label="阶段案例天数">
           <input
-            className="w-full rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
+            className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
             value={config.case_days}
             placeholder="3,7,14,21,28"
             onChange={(event) => setConfig({ ...config, case_days: event.target.value })}
@@ -370,7 +370,7 @@ export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig
         </Field>
       </div>
 
-      <div className="mt-5 flex items-center gap-3 border-t border-zinc-150 pt-4">
+      <div className="mt-5 flex items-center gap-3 border-t border-slate-150 pt-4">
         <Button 
           type="button" 
           onClick={save} 
@@ -398,7 +398,7 @@ export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="block space-y-1">
-      <span className="block text-xs font-bold text-zinc-450 uppercase tracking-wider">{label}</span>
+      <span className="block text-xs font-bold text-slate-450 uppercase tracking-wider">{label}</span>
       {children}
     </div>
   );
@@ -466,16 +466,16 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 pb-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
         <div>
-          <h3 className="text-sm font-bold text-zinc-800">结构化 FAQ 管理</h3>
-          <p className="mt-1 text-xs text-zinc-500 leading-relaxed">
+          <h3 className="text-sm font-bold text-slate-800">结构化 FAQ 管理</h3>
+          <p className="mt-1 text-xs text-slate-500 leading-relaxed">
             支持标准 FAQ 的发布、编辑修改、禁用状态控制与版本库自动升级；激活的 FAQ 将被同步到向量检索块中。
           </p>
         </div>
         <Button
           type="button"
-          className="border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 font-semibold text-xs px-3 h-8 flex items-center gap-1 active:scale-[0.98] transition-all"
+          className="border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-semibold text-xs px-3 h-8 flex items-center gap-1 active:scale-[0.98] transition-all"
           onClick={() => setCreating((value) => !value)}
         >
           <span>{creating ? "收起面板" : "新增 FAQ"}</span>
@@ -490,12 +490,12 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
           </div>
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
-                <BookOpen className="h-3.5 w-3.5 text-zinc-400" />
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
+                <BookOpen className="h-3.5 w-3.5 text-slate-400" />
                 <span>问答主题 / 标题</span>
               </label>
               <input
-                className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-semibold text-zinc-800 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white"
+                className="w-full rounded-lg border border-slate-200 px-3.5 py-2 text-sm font-semibold text-slate-800 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white"
                 placeholder="请输入明确的标题主题，例如：孕妇空腹低血糖应对"
                 value={draft.title}
                 onChange={(event) => setDraft({ ...draft, title: event.target.value })}
@@ -504,24 +504,24 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
             
             <div className="grid gap-3 grid-cols-2">
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
-                  <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-400" />
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-slate-400" />
                   <span>分类</span>
                 </label>
                 <input
-                  className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white"
+                  className="w-full rounded-lg border border-slate-200 px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white"
                   placeholder="例如：健康FAQ"
                   value={draft.category}
                   onChange={(event) => setDraft({ ...draft, category: event.target.value })}
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
-                  <Tag className="h-3.5 w-3.5 text-zinc-400" />
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
+                  <Tag className="h-3.5 w-3.5 text-slate-400" />
                   <span>标签 (用顿号“、”分隔)</span>
                 </label>
                 <input
-                  className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white"
+                  className="w-full rounded-lg border border-slate-200 px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white"
                   placeholder="例如：孕期、低血糖"
                   value={draft.tags}
                   onChange={(event) => setDraft({ ...draft, tags: event.target.value })}
@@ -530,12 +530,12 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
-                <Compass className="h-3.5 w-3.5 text-zinc-400" />
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
+                <Compass className="h-3.5 w-3.5 text-slate-400" />
                 <span>用户常见提问方式</span>
               </label>
               <Textarea
-                className="min-h-16 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white rounded-lg border-zinc-200 px-3.5 py-2"
+                className="min-h-16 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white rounded-lg border-slate-200 px-3.5 py-2"
                 placeholder="例如：孕妇早上起来经常低血糖怎么办？有什么快速恢复的办法吗？"
                 value={draft.question}
                 onChange={(event) => setDraft({ ...draft, question: event.target.value })}
@@ -543,12 +543,12 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
-                <Sparkles className="h-3.5 w-3.5 text-zinc-400" />
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
+                <Sparkles className="h-3.5 w-3.5 text-slate-400" />
                 <span>参考标准回复内容</span>
               </label>
               <Textarea
-                className="min-h-24 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white rounded-lg border-zinc-200 px-3.5 py-2"
+                className="min-h-24 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white rounded-lg border-slate-200 px-3.5 py-2"
                 placeholder="请输入最标准的专业指导回复文本，将做为机器人回复模板依据..."
                 value={draft.answer}
                 onChange={(event) => setDraft({ ...draft, answer: event.target.value })}
@@ -582,7 +582,7 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
           <KnowledgeFAQRow key={faq.id} faq={faq} busy={busyId === faq.id} setBusy={setBusyId} />
         ))}
         {faqs.length === 0 && (
-          <div className="rounded-xl border border-dashed border-zinc-200 py-12 text-center text-sm text-zinc-400 bg-zinc-50/20">
+          <div className="rounded-xl border border-dashed border-slate-200 py-12 text-center text-sm text-slate-400 bg-slate-50/20">
             暂无任何结构化 FAQ，点击右上角 “新增 FAQ” 进行创建。
           </div>
         )}
@@ -637,8 +637,8 @@ function KnowledgeFAQRow({
   return (
     <div className={`rounded-xl border p-4 shadow-3xs transition-all duration-200 ${
       faq.status === "active" 
-        ? "border-l-4 border-l-emerald-500 border-zinc-200 bg-white hover:border-zinc-300" 
-        : "border-l-4 border-l-zinc-300 border-zinc-200 bg-zinc-50/40 opacity-80 hover:opacity-100 hover:border-zinc-300"
+        ? "border-l-4 border-l-emerald-500 border-slate-200 bg-white hover:border-slate-300" 
+        : "border-l-4 border-l-slate-300 border-slate-200 bg-slate-50/40 opacity-80 hover:opacity-100 hover:border-slate-300"
     }`}>
       {/* Row Header Info */}
       <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -646,11 +646,11 @@ function KnowledgeFAQRow({
           <span className={`rounded-full px-2 py-0.5 text-2xs font-bold tracking-wide ${
             faq.status === "active" 
               ? "bg-emerald-50 text-emerald-700 border border-emerald-250/20" 
-              : "bg-zinc-150 text-zinc-500 border border-zinc-200/50"
+              : "bg-slate-150 text-slate-500 border border-slate-200/50"
           }`}>
             {faq.status === "active" ? "● 启用中" : "○ 已禁用"}
           </span>
-          <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-2xs font-semibold text-zinc-500 border border-zinc-200/40">
+          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-2xs font-semibold text-slate-500 border border-slate-200/40">
             v{faq.version}
           </span>
           {faq.category && (
@@ -659,19 +659,19 @@ function KnowledgeFAQRow({
             </span>
           )}
         </div>
-        <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">FAQ #{faq.id}</span>
+        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">FAQ #{faq.id}</span>
       </div>
 
       {editing ? (
-        <div className="space-y-4 pt-3.5 border-t border-zinc-100 mt-3 animate-fadeIn">
+        <div className="space-y-4 pt-3.5 border-t border-slate-100 mt-3 animate-fadeIn">
           {/* FAQ Title input */}
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
-              <BookOpen className="h-3.5 w-3.5 text-zinc-450" />
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
+              <BookOpen className="h-3.5 w-3.5 text-slate-450" />
               <span>FAQ 主题标题</span>
             </label>
             <input 
-              className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-semibold text-zinc-800 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white" 
+              className="w-full rounded-lg border border-slate-200 px-3.5 py-2 text-sm font-semibold text-slate-800 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white" 
               value={title} 
               onChange={(event) => setTitle(event.target.value)} 
             />
@@ -680,23 +680,23 @@ function KnowledgeFAQRow({
           {/* FAQ Category & Tags grid */}
           <div className="grid gap-3 grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
-                <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-450" />
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
+                <SlidersHorizontal className="h-3.5 w-3.5 text-slate-450" />
                 <span>FAQ 类别</span>
               </label>
               <input 
-                className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white" 
+                className="w-full rounded-lg border border-slate-200 px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white" 
                 value={category} 
                 onChange={(event) => setCategory(event.target.value)} 
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
-                <Tag className="h-3.5 w-3.5 text-zinc-450" />
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
+                <Tag className="h-3.5 w-3.5 text-slate-450" />
                 <span>FAQ 标签 (顿号分隔)</span>
               </label>
               <input 
-                className="w-full rounded-lg border border-zinc-200 px-3.5 py-2 text-sm text-zinc-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white" 
+                className="w-full rounded-lg border border-slate-200 px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all duration-200 bg-white" 
                 value={tags} 
                 onChange={(event) => setTags(event.target.value)} 
               />
@@ -705,12 +705,12 @@ function KnowledgeFAQRow({
 
           {/* FAQ Question textarea */}
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
-              <Compass className="h-3.5 w-3.5 text-zinc-450" />
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
+              <Compass className="h-3.5 w-3.5 text-slate-450" />
               <span>标准提问方式</span>
             </label>
             <Textarea 
-              className="min-h-16 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all rounded-lg border-zinc-200 px-3.5 py-2 bg-white" 
+              className="min-h-16 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all rounded-lg border-slate-200 px-3.5 py-2 bg-white" 
               value={question} 
               onChange={(event) => setQuestion(event.target.value)} 
             />
@@ -718,19 +718,19 @@ function KnowledgeFAQRow({
 
           {/* FAQ Answer textarea */}
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block flex items-center gap-1">
-              <Sparkles className="h-3.5 w-3.5 text-zinc-450" />
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1">
+              <Sparkles className="h-3.5 w-3.5 text-slate-450" />
               <span>标准回复内容</span>
             </label>
             <Textarea 
-              className="min-h-24 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all rounded-lg border-zinc-200 px-3.5 py-2 bg-white" 
+              className="min-h-24 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all rounded-lg border-slate-200 px-3.5 py-2 bg-white" 
               value={answer} 
               onChange={(event) => setAnswer(event.target.value)} 
             />
           </div>
 
           {/* Action buttons during edit */}
-          <div className="flex gap-2 pt-2 border-t border-zinc-150 mt-2">
+          <div className="flex gap-2 pt-2 border-t border-slate-150 mt-2">
             <Button 
               type="button" 
               className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-all duration-200 active:scale-[0.97] shadow-2xs px-3.5 text-xs h-8.5 flex items-center gap-1.5" 
@@ -751,10 +751,10 @@ function KnowledgeFAQRow({
             </Button>
             <Button 
               type="button" 
-              className="border border-zinc-250 bg-white text-zinc-700 hover:bg-zinc-50 font-semibold transition-all duration-200 active:scale-[0.97] text-xs h-8.5 px-3 flex items-center gap-1" 
+              className="border border-slate-250 bg-white text-slate-700 hover:bg-slate-50 font-semibold transition-all duration-200 active:scale-[0.97] text-xs h-8.5 px-3 flex items-center gap-1" 
               onClick={() => setEditing(false)}
             >
-              <X className="h-3.5 w-3.5 text-zinc-400" />
+              <X className="h-3.5 w-3.5 text-slate-400" />
               <span>取消</span>
             </Button>
           </div>
@@ -762,32 +762,32 @@ function KnowledgeFAQRow({
       ) : (
         <div className="space-y-3.5">
           {/* FAQ Title */}
-          <div className="font-bold text-zinc-800 leading-snug text-sm">{faq.title}</div>
+          <div className="font-bold text-slate-800 leading-snug text-sm">{faq.title}</div>
           
           {/* Collapsible Q&A blocks */}
-          <div className="text-xs text-zinc-650 leading-relaxed bg-zinc-50 p-2.5 rounded-lg border border-zinc-150">
-            <div className="font-bold text-zinc-400 mb-1 flex items-center gap-1 text-[10px]">
+          <div className="text-xs text-slate-650 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-150">
+            <div className="font-bold text-slate-400 mb-1 flex items-center gap-1 text-[10px]">
               <Compass className="h-3 w-3 text-blue-500" />
               <span>标准常见问法：</span>
             </div>
-            <div className="pl-4 border-l border-zinc-200/80 font-normal whitespace-pre-wrap">{faq.question}</div>
+            <div className="pl-4 border-l border-slate-200/80 font-normal whitespace-pre-wrap">{faq.question}</div>
           </div>
           
-          <div className="text-xs text-zinc-750 leading-relaxed bg-zinc-50 p-2.5 rounded-lg border border-zinc-150">
-            <div className="font-bold text-zinc-400 mb-1 flex items-center gap-1 text-[10px]">
+          <div className="text-xs text-slate-750 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-150">
+            <div className="font-bold text-slate-400 mb-1 flex items-center gap-1 text-[10px]">
               <Sparkles className="h-3 w-3 text-amber-500 animate-pulse" />
               <span>标准回复口径：</span>
             </div>
-            <div className="pl-4 border-l border-zinc-200/80 font-normal whitespace-pre-wrap">{faq.answer}</div>
+            <div className="pl-4 border-l border-slate-200/80 font-normal whitespace-pre-wrap">{faq.answer}</div>
           </div>
           
           {/* FAQ Tags */}
           {faq.tags && faq.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1 pt-1.5 border-t border-zinc-100/50">
+            <div className="flex flex-wrap gap-1 pt-1.5 border-t border-slate-100/50">
               {faq.tags.map((tag, idx) => (
                 <span 
                   key={idx} 
-                  className="rounded bg-zinc-100 hover:bg-blue-50/50 px-2 py-0.5 text-2xs font-semibold text-zinc-500 border border-zinc-200/40 transition-all duration-150 cursor-default"
+                  className="rounded bg-slate-100 hover:bg-blue-50/50 px-2 py-0.5 text-2xs font-semibold text-slate-500 border border-slate-200/40 transition-all duration-150 cursor-default"
                 >
                   #{tag}
                 </span>
@@ -796,19 +796,19 @@ function KnowledgeFAQRow({
           )}
 
           {/* Action buttons in preview */}
-          <div className="mt-3.5 flex flex-wrap gap-2 pt-2.5 border-t border-zinc-100/60">
+          <div className="mt-3.5 flex flex-wrap gap-2 pt-2.5 border-t border-slate-100/60">
             <Button 
               type="button" 
-              className="border border-zinc-250 bg-white text-zinc-600 hover:bg-zinc-50 hover:text-zinc-800 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1" 
+              className="border border-slate-250 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1" 
               onClick={() => setEditing(true)}
             >
-              <Edit2 className="h-3.5 w-3.5 text-zinc-500" />
+              <Edit2 className="h-3.5 w-3.5 text-slate-500" />
               <span>编辑 FAQ</span>
             </Button>
             {faq.status === "active" ? (
               <Button 
                 type="button" 
-                className="border border-zinc-250 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-100 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1" 
+                className="border border-slate-250 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-100 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1" 
                 onClick={() => setStatus("disable")} 
                 disabled={busy}
               >

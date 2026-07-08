@@ -42,7 +42,7 @@ export default async function RefundPendingPage() {
           </thead>
           <tbody>
             {cases.map((item) => (
-              <tr key={item.id} className="border-t border-zinc-100">
+              <tr key={item.id} className="border-t border-slate-100">
                 <td className="px-4 py-3">
                   <Link className="admin-link" href={`/cases/${item.id}`}>
                     {item.case_no}
@@ -59,7 +59,7 @@ export default async function RefundPendingPage() {
             ))}
             {cases.length === 0 && (
               <tr>
-                <td className="px-4 py-8 text-center text-zinc-500" colSpan={4}>
+                <td className="px-4 py-8 text-center text-slate-500" colSpan={4}>
                   暂无待确认的退款客户。
                 </td>
               </tr>

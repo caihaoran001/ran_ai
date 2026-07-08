@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, Lock, User, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Lock, User, Loader2, ShieldCheck } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -42,44 +42,51 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-slate-950 px-4 py-12 sm:px-6 lg:px-8">
-      {/* Background gradients */}
-      <div className="absolute top-1/4 left-1/4 h-80 w-80 rounded-full bg-cyan-700/10 blur-[120px]" />
-      <div className="absolute bottom-1/4 right-1/4 h-96 w-96 rounded-full bg-indigo-700/10 blur-[150px]" />
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-12">
+      {/* Ambient depth: single-hue radial washes + fine grid, no glass */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.04]"
+        style={{
+          backgroundImage:
+            "linear-gradient(to right, #fff 1px, transparent 1px), linear-gradient(to bottom, #fff 1px, transparent 1px)",
+          backgroundSize: "48px 48px",
+          maskImage: "radial-gradient(ellipse 80% 60% at 50% 40%, black, transparent)",
+          WebkitMaskImage: "radial-gradient(ellipse 80% 60% at 50% 40%, black, transparent)",
+        }}
+      />
+      <div className="pointer-events-none absolute -top-24 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-cyan-600/15 blur-[130px]" />
+      <div className="pointer-events-none absolute bottom-0 right-1/4 h-80 w-80 rounded-full bg-cyan-800/10 blur-[130px]" />
 
-      <div className="w-full max-w-md z-10">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-indigo-600 shadow-lg shadow-cyan-500/20 mb-4">
-            <span className="text-2xl font-black text-white">R</span>
-          </div>
-          <h2 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
-            欢迎登录{" "}
-            <span className="bg-gradient-to-r from-cyan-400 via-teal-400 to-indigo-400 bg-clip-text text-transparent">
-              燃人AI 1.0
-            </span>
-          </h2>
+      <div className="relative z-10 w-full max-w-sm">
+        {/* Brand */}
+        <div className="mb-8 flex flex-col items-center text-center">
+          <span className="relative mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 to-cyan-600 text-2xl font-black text-cyan-950 shadow-lg shadow-cyan-500/25 ring-1 ring-inset ring-white/25">
+            R
+            <span className="absolute -bottom-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-slate-950 bg-emerald-400" />
+          </span>
+          <h1 className="text-2xl font-extrabold tracking-tight text-white">燃人AI 1.0</h1>
           <p className="mt-2 text-sm text-slate-400">内部智能社群运营系统</p>
         </div>
 
-        {/* Form Card */}
-        <div className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-8 shadow-2xl backdrop-blur-xl transition-all duration-300">
-          <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Form card — solid, not glass */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-7 shadow-2xl shadow-black/40">
+          <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
-              <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm font-medium text-red-400 animate-pulse">
+              <div
+                role="alert"
+                className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-3.5 py-3 text-sm font-medium text-rose-300"
+              >
                 {error}
               </div>
             )}
 
             {/* Username */}
             <div>
-              <label htmlFor="username" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+              <label htmlFor="username" className="mb-1.5 block text-xs font-semibold text-slate-300">
                 用户名
               </label>
-              <div className="relative rounded-lg shadow-sm">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                  <User className="h-5 w-5 text-slate-500" />
-                </div>
+              <div className="relative">
+                <User className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                 <input
                   id="username"
                   name="username"
@@ -87,7 +94,7 @@ export default function LoginPage() {
                   required
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="block w-full rounded-lg border border-slate-800 bg-slate-950/80 py-3 pl-10 pr-3 text-sm text-white placeholder-slate-500 outline-none transition-all duration-200 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                  className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 pl-10 pr-3.5 text-sm font-medium text-white outline-none transition-all duration-150 placeholder:text-slate-500 hover:border-slate-600 focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/20"
                   placeholder="请输入用户名"
                 />
               </div>
@@ -95,13 +102,11 @@ export default function LoginPage() {
 
             {/* Password */}
             <div>
-              <label htmlFor="password" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+              <label htmlFor="password" className="mb-1.5 block text-xs font-semibold text-slate-300">
                 密码
               </label>
-              <div className="relative rounded-lg shadow-sm">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                  <Lock className="h-5 w-5 text-slate-500" />
-                </div>
+              <div className="relative">
+                <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                 <input
                   id="password"
                   name="password"
@@ -109,40 +114,42 @@ export default function LoginPage() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full rounded-lg border border-slate-800 bg-slate-950/80 py-3 pl-10 pr-10 text-sm text-white placeholder-slate-500 outline-none transition-all duration-200 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                  className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 pl-10 pr-11 text-sm font-medium text-white outline-none transition-all duration-150 placeholder:text-slate-500 hover:border-slate-600 focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/20"
                   placeholder="请输入密码"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-500 hover:text-slate-300 transition-colors"
+                  aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                  className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300"
                 >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
             </div>
 
-            {/* Submit */}
+            {/* Submit — solid teal, no rainbow gradient */}
             <button
               type="submit"
               disabled={isLoading}
-              className="relative flex w-full justify-center rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-600 py-3 px-4 text-sm font-bold text-white shadow-lg shadow-cyan-500/10 hover:shadow-cyan-500/20 active:scale-[0.98] transition-all duration-150 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 text-sm font-bold text-white shadow-lg shadow-cyan-900/40 outline-none transition-all duration-150 hover:bg-cyan-500 focus-visible:ring-4 focus-visible:ring-cyan-500/30 active:scale-[0.99] disabled:pointer-events-none disabled:opacity-60"
             >
               {isLoading ? (
-                <div className="flex items-center gap-2">
+                <>
                   <Loader2 className="h-4 w-4 animate-spin" />
                   <span>正在验证...</span>
-                </div>
+                </>
               ) : (
                 <span>登 录</span>
               )}
             </button>
           </form>
         </div>
-        
+
         {/* Footer */}
-        <p className="mt-8 text-center text-xs text-slate-600">
-          燃人AI 内部系统 &middot; 安全受控访问
+        <p className="mt-7 flex items-center justify-center gap-1.5 text-center text-xs text-slate-500">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          燃人AI 内部系统 · 安全受控访问
         </p>
       </div>
     </div>

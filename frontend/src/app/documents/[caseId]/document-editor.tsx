@@ -91,11 +91,11 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
   }
 
   return (
-    <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-4">
+    <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
         <div>
-          <div className="text-sm text-zinc-500">{document.document_type}</div>
-          {saving && <span className="text-xs text-zinc-400 ml-2">保存中...</span>}
+          <div className="text-sm text-slate-500">{document.document_type}</div>
+          {saving && <span className="text-xs text-slate-400 ml-2">保存中...</span>}
         </div>
         <div className="flex gap-2">
           <Button
@@ -113,7 +113,7 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
           </Button>
           <a
             suppressHydrationWarning
-            className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm hover:bg-zinc-50"
+            className="inline-flex h-9 items-center justify-center rounded-md border border-slate-300 px-3 text-sm hover:bg-slate-50"
             href={`${API_BASE}/documents/${document.id}/download`}
           >
             下载 docx
@@ -132,10 +132,10 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
           />
         ) : isEditing ? (
           <div>
-            <div className="mb-2 text-xs text-zinc-400">Markdown 编辑模式（修改后自动保存）</div>
+            <div className="mb-2 text-xs text-slate-400">Markdown 编辑模式（修改后自动保存）</div>
             <textarea
               ref={textareaRef}
-              className="w-full min-h-72 font-mono text-sm border border-zinc-200 rounded-lg p-4 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden"
+              className="w-full min-h-72 font-mono text-sm border border-slate-200 rounded-lg p-4 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden"
               value={content}
               onChange={(e) => setContent(e.target.value)}
               onBlur={() => setIsEditing(false)}
@@ -144,11 +144,11 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
           </div>
         ) : (
           <div 
-            className="min-h-72 rounded-lg border border-transparent hover:border-zinc-200 p-4 cursor-text transition-colors"
+            className="min-h-72 rounded-lg border border-transparent hover:border-slate-200 p-4 cursor-text transition-colors"
             onClick={() => setIsEditing(true)}
           >
             <MarkdownPreview content={content} />
-            <div className="mt-4 text-xs text-zinc-400 text-center">点击任意位置编辑</div>
+            <div className="mt-4 text-xs text-slate-400 text-center">点击任意位置编辑</div>
           </div>
         )}
         {sendError && (
@@ -166,7 +166,7 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
           <div
             role="dialog"
             aria-modal="true"
-            className="w-full max-w-sm rounded-xl border border-zinc-200 bg-white p-6 shadow-2xl"
+            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-base font-semibold text-slate-900">重新发送到群？</h3>
@@ -176,7 +176,7 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
             <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
-                className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-4 text-sm text-slate-600 hover:bg-zinc-50"
+                className="inline-flex h-9 items-center justify-center rounded-md border border-slate-300 px-4 text-sm text-slate-600 hover:bg-slate-50"
                 onClick={() => setConfirming(false)}
               >
                 取消
@@ -212,13 +212,13 @@ function StructuredEditor({
 
   return (
     <div className="space-y-5">
-      <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-        <div className="text-sm text-zinc-500">模板标题</div>
-        <div className="mt-1 text-center font-semibold text-zinc-900">{value.title}</div>
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <div className="text-sm text-slate-500">模板标题</div>
+        <div className="mt-1 text-center font-semibold text-slate-900">{value.title}</div>
       </div>
       {value.blocks.map((block, blockIndex) => (
-        <section key={block.key || blockIndex} className="rounded-lg border border-zinc-200 p-4">
-          <h3 className="font-semibold text-zinc-900">{block.title}</h3>
+        <section key={block.key || blockIndex} className="rounded-lg border border-slate-200 p-4">
+          <h3 className="font-semibold text-slate-900">{block.title}</h3>
           {block.kind === "table" ? (
             <div className="mt-3 overflow-x-auto">
               <table className={`w-full min-w-[640px] border-collapse text-sm${execColWidths(block.rows) ? " table-fixed" : ""}`}>
@@ -233,9 +233,9 @@ function StructuredEditor({
                   {(block.rows ?? []).map((row, rowIndex) => (
                     <tr key={rowIndex}>
                       {row.map((cell, cellIndex) => (
-                        <td key={cellIndex} className="border border-zinc-200 p-2 align-top">
+                        <td key={cellIndex} className="border border-slate-200 p-2 align-top">
                           {cell.editable === false ? (
-                            <div className="font-medium text-zinc-700">{cell.value}</div>
+                            <div className="font-medium text-slate-700">{cell.value}</div>
                           ) : (
                             <Textarea
                               className="min-h-12 border-0 p-0 focus:border-0"
@@ -282,7 +282,7 @@ function StructuredEditor({
                   <button
                     type="button"
                     title="删除这一条"
-                    className="mt-1 shrink-0 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-500 hover:border-red-300 hover:text-red-600"
+                    className="mt-1 shrink-0 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:border-red-300 hover:text-red-600"
                     onClick={() =>
                       updateBlock(blockIndex, (current) => ({
                         ...current,
@@ -296,7 +296,7 @@ function StructuredEditor({
               ))}
               <Button
                 type="button"
-                className="bg-white text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50"
+                className="bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
                 onClick={() =>
                   updateBlock(blockIndex, (current) => ({
                     ...current,
@@ -321,7 +321,7 @@ function StructuredEditor({
           )}
         </section>
       ))}
-      <div className="text-center text-xs text-zinc-400">内容会自动保存并重新生成 docx；标题和表格框架保持固定</div>
+      <div className="text-center text-xs text-slate-400">内容会自动保存并重新生成 docx；标题和表格框架保持固定</div>
     </div>
   );
 }

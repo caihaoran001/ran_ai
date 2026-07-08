@@ -10,13 +10,13 @@ function ChatImage({ messageId, alt }: { messageId: number; alt: string }) {
   if (failed) {
     // 图片缓存被清理(超过保留期)或暂时取不到时的兜底，避免破图图标
     return (
-      <div className="max-w-full rounded border border-zinc-200 bg-zinc-50 px-3 py-4 text-center text-xs text-zinc-400 sm:max-w-sm">
+      <div className="max-w-full rounded border border-slate-200 bg-slate-50 px-3 py-4 text-center text-xs text-slate-400 sm:max-w-sm">
         图片已过期或无法加载
       </div>
     );
   }
   return (
-    <div className="relative max-w-full overflow-hidden rounded border border-zinc-200 bg-zinc-50 sm:max-w-sm">
+    <div className="relative max-w-full overflow-hidden rounded border border-slate-200 bg-slate-50 sm:max-w-sm">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={url}
@@ -41,9 +41,9 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
 
   if (messages.length === 0) {
     return (
-      <section className="rounded-lg border border-zinc-200 bg-white p-4">
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="font-medium">聊天记录</h2>
-        <p className="mt-3 text-sm text-zinc-500">暂无聊天记录</p>
+        <p className="mt-3 text-sm text-slate-500">暂无聊天记录</p>
       </section>
     );
   }
@@ -51,10 +51,10 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
   const displayMessages = messages;
 
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-4">
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-medium">聊天记录</h2>
-        <span className="text-sm text-zinc-500">{messages.length} 条</span>
+        <span className="text-sm text-slate-500">{messages.length} 条</span>
       </div>
       <div ref={listRef} className="mt-3 max-h-[480px] overflow-y-auto space-y-3 pr-1">
         {displayMessages.map((msg) => (
@@ -70,7 +70,7 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
                   ? "bg-green-50 text-green-900"
                   : msg.sender_type === "staff"
                   ? "bg-purple-50 text-purple-900"
-                  : "bg-zinc-100 text-zinc-900"
+                  : "bg-slate-100 text-slate-900"
               }`}
             >
               <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs opacity-70">
@@ -89,7 +89,7 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
                     msg.analysis_json &&
                     typeof msg.analysis_json === "object" &&
                     (msg.analysis_json as any)._qiwe_meta?.sender_id && (
-                      <span className="text-[10px] text-zinc-400 select-all ml-1">
+                      <span className="text-[10px] text-slate-400 select-all ml-1">
                         (ID: {(msg.analysis_json as any)._qiwe_meta.sender_id})
                       </span>
                     )}
@@ -106,7 +106,7 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
                 <div className="mt-2 space-y-2">
                   <ChatImage messageId={msg.id} alt={msg.content || "用户上传的图片"} />
                   {msg.content && msg.content !== "[图片]" && (
-                    <p className="text-xs text-zinc-500 italic bg-zinc-50/50 p-2 rounded border-l-2 border-zinc-300">
+                    <p className="text-xs text-slate-500 italic bg-slate-50/50 p-2 rounded border-l-2 border-slate-300">
                       AI描述: {msg.content}
                     </p>
                   )}
@@ -116,7 +116,7 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
               )}
               {msg.status === "failed" &&
                 (msg.error?.includes("驳回") ? (
-                  <div className="mt-1 text-xs text-zinc-400">已驳回 · 未发送</div>
+                  <div className="mt-1 text-xs text-slate-400">已驳回 · 未发送</div>
                 ) : msg.error?.includes("风控") ? (
                   <div className="mt-1 text-xs text-red-500" title={msg.error}>
                     发送失败 · 企业微信风控拦截（账号违规被限制，实际未进群）

@@ -1,0 +1,4 @@
+
+# local env (never commit)
+.env.local
+.env*.local

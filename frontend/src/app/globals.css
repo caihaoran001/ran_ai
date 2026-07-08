@@ -2,16 +2,70 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================================
+   燃人AI 1.0 — Design System: "The Operations Console"
+   Dark navigation shell framing a light, evidence-dense workspace.
+   Tokens are authoritative; component classes below consume them so a single
+   edit here re-skins the whole admin surface.
+   ========================================================================== */
+
 :root {
+  /* Workspace neutrals (light) */
   --background: 210 24% 97%;
-  --foreground: 240 10% 4%;
-  --border: 220 13% 88%;
-  --brand: 190 91% 33%;
-  --brand-strong: 187 100% 24%;
-  --success: 160 84% 32%;
+  --foreground: 222 47% 11%;
+  --border: 214 32% 91%;
   --surface: 0 0% 100%;
-  --surface-muted: 210 30% 98%;
-  --ink-muted: 215 16% 35%;
+  --surface-muted: 210 33% 98%;
+  --ink-strong: 222 47% 11%; /* slate-900/950 headings */
+  --ink-body: 215 25% 27%;   /* slate-700 body */
+  --ink-muted: 215 19% 41%;  /* slate-600 secondary — meets 4.5:1 on white */
+  --ink-faint: 215 16% 52%;  /* slate-500 tertiary / placeholders */
+
+  /* Brand — Teal Current */
+  --brand: 192 91% 33%;        /* cyan-600 base */
+  --brand-strong: 194 84% 27%; /* cyan-800 primary action */
+  --brand-deep: 196 82% 20%;   /* cyan-900 hover */
+  --signal: 187 92% 53%;       /* cyan-400 live accent */
+
+  /* Semantic */
+  --success: 160 84% 32%;
+  --warning: 38 92% 45%;
+  --danger: 347 77% 44%;
+  --info: 199 89% 42%;
+
+  /* Console shell (dark) */
+  --console: 222 47% 8%;
+  --console-raised: 217 33% 13%;
+  --console-border: 215 28% 20%;
+
+  /* Radii */
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+
+  /* Elevation — soft, layered, cool-tinted */
+  --shadow-xs: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --shadow-sm: 0 1px 3px 0 rgb(15 23 42 / 0.05), 0 1px 2px -1px rgb(15 23 42 / 0.04);
+  --shadow-md: 0 6px 16px -6px rgb(15 23 42 / 0.12), 0 2px 6px -2px rgb(15 23 42 / 0.06);
+  --shadow-lg: 0 18px 40px -12px rgb(15 23 42 / 0.20), 0 6px 14px -6px rgb(15 23 42 / 0.10);
+  /* Panel rest: soft lift + a hairline top highlight (the signature edge). */
+  --shadow-panel: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.05), inset 0 1px 0 0 rgb(255 255 255 / 0.85);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 130ms;
+  --dur: 200ms;
+
+  /* Z-index scale */
+  --z-sticky: 30;
+  --z-sidebar: 50;
+  --z-dropdown: 60;
+  --z-modal-backdrop: 70;
+  --z-modal: 80;
+  --z-toast: 90;
+  --z-tooltip: 100;
 }
 
 html,
@@ -22,29 +76,49 @@ body {
 }
 
 body {
-  background:
-    radial-gradient(circle at 18rem 0, rgb(8 145 178 / 0.10), transparent 30rem),
-    linear-gradient(180deg, hsl(210 28% 98%), hsl(var(--background)) 18rem);
-  color: hsl(var(--foreground));
+  background-color: hsl(var(--background));
+  background-image:
+    radial-gradient(60rem 32rem at 100% -8rem, hsl(var(--brand) / 0.08), transparent 60%),
+    radial-gradient(48rem 28rem at -6rem 4rem, hsl(214 60% 55% / 0.06), transparent 55%);
+  background-attachment: fixed;
+  color: hsl(var(--ink-body));
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 a {
   text-decoration: none;
 }
 
+/* Numeric alignment for metrics / tables */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
 @layer components {
+  /* -------------------------------------------------------------- Shell */
   .admin-shell {
-    @apply min-h-screen bg-slate-100 text-slate-950;
+    @apply min-h-screen text-slate-900;
   }
 
+  /* --------------------------------------------------------- Page frame */
   .page-stack {
     @apply min-w-0 space-y-5 sm:space-y-6;
   }
 
   .page-header {
-    @apply min-w-0 rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm ring-1 ring-white sm:px-6 sm:py-5;
+    @apply relative min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white px-5 py-5 sm:px-7 sm:py-6;
+    box-shadow: var(--shadow-panel);
+  }
+  /* Accent hairline along the top edge of every page header. */
+  .page-header::before {
+    content: "";
+    @apply pointer-events-none absolute inset-x-0 top-0 h-px;
+    background: linear-gradient(90deg, transparent, hsl(var(--brand) / 0.45) 20%, hsl(var(--signal) / 0.6) 50%, hsl(var(--brand) / 0.45) 80%, transparent);
   }
 
   .page-header-row {
@@ -52,172 +126,216 @@ a {
   }
 
   .page-heading {
-    @apply break-words text-[1.5rem] font-black leading-8 tracking-tight text-slate-950 sm:text-[1.875rem];
+    @apply break-words text-[1.6rem] font-extrabold leading-9 tracking-tight text-slate-900 sm:text-[2rem];
   }
 
   .page-subtitle {
-    @apply mt-1.5 max-w-[75ch] text-sm leading-6 text-slate-600;
+    @apply mt-2 max-w-[72ch] text-sm leading-6 text-slate-500;
   }
 
+  /* -------------------------------------------------------------- Panel */
   .panel {
-    @apply min-w-0 rounded-xl border border-slate-200 bg-white shadow-sm ring-1 ring-white;
+    @apply min-w-0 rounded-2xl border border-slate-200/80 bg-white;
+    box-shadow: var(--shadow-panel);
   }
 
   .panel-header {
-    @apply border-b border-slate-200/80 bg-slate-100/70 px-4 py-4 sm:px-5;
+    @apply flex flex-col gap-1 border-b border-slate-200/70 bg-gradient-to-b from-slate-50/80 to-white px-5 py-4 sm:px-6;
   }
 
   .panel-header-clean {
-    @apply border-b border-slate-200/70 bg-white px-4 py-4 sm:px-5;
+    @apply flex flex-col gap-1 border-b border-slate-200/70 bg-white px-5 py-4 sm:px-6;
   }
 
   .panel-title {
-    @apply text-base font-bold leading-6 text-slate-950;
+    @apply text-[0.95rem] font-bold leading-6 tracking-tight text-slate-900;
   }
 
   .panel-subtitle {
-    @apply mt-1 max-w-[75ch] text-sm leading-6 text-slate-600;
-  }
-
-  .section-label {
-    @apply text-xs font-bold leading-4 text-slate-500;
-  }
-
-  .status-pill {
-    @apply inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold leading-4;
-  }
-
-  .metric-card {
-    @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors duration-200 sm:p-5;
-  }
-
-  .metric-card:hover {
-    @apply border-cyan-300 bg-white;
-  }
-
-  .toolbar-row {
-    @apply flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between;
+    @apply mt-0.5 max-w-[72ch] text-sm leading-6 text-slate-500;
   }
 
   .panel-body {
-    @apply p-4 sm:p-5;
+    @apply p-5 sm:p-6;
   }
 
+  .section-label {
+    @apply text-xs font-bold uppercase tracking-wide text-slate-400;
+  }
+
+  /* ------------------------------------------------------------ Toolbar */
+  .toolbar-row {
+    @apply flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between;
+  }
+
+  /* --------------------------------------------------------- Status pill */
+  .status-pill {
+    @apply inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold leading-4;
+  }
+  /* Semantic pill variants (opt-in; legacy inline color classes still work). */
+  .pill-ok { @apply border-emerald-200 bg-emerald-50 text-emerald-700; }
+  .pill-info { @apply border-cyan-200 bg-cyan-50 text-cyan-800; }
+  .pill-warn { @apply border-amber-200 bg-amber-50 text-amber-800; }
+  .pill-risk { @apply border-rose-200 bg-rose-50 text-rose-700; }
+  .pill-neutral { @apply border-slate-200 bg-slate-50 text-slate-600; }
+
+  /* ----------------------------------------------------------- Stat/KPI */
+  .metric-card {
+    @apply relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-5 transition-all duration-200;
+    box-shadow: var(--shadow-panel);
+  }
+  .metric-card:hover {
+    @apply border-slate-300 -translate-y-0.5;
+    box-shadow: var(--shadow-md);
+  }
+
+  /* --------------------------------------------------------------- Table */
   .table-shell {
-    @apply overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm ring-1 ring-white;
+    @apply overflow-hidden rounded-2xl border border-slate-200/80 bg-white;
+    box-shadow: var(--shadow-panel);
   }
 
   .data-table {
-    @apply w-full text-left text-sm;
+    @apply w-full border-collapse text-left text-sm;
   }
 
   .data-table thead {
-    @apply border-b border-slate-200 bg-slate-100 text-xs font-black text-slate-700;
+    @apply border-b border-slate-200 bg-slate-50/80;
   }
 
   .data-table th {
-    @apply px-4 py-3 font-bold;
+    @apply px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-500;
   }
 
   .data-table td {
-    @apply px-4 py-3.5 align-top text-slate-700;
+    @apply px-4 py-3.5 align-middle text-slate-700;
   }
 
   .data-table tbody tr {
-    @apply border-t border-slate-100 transition-colors hover:bg-cyan-50/40;
+    @apply border-t border-slate-100 transition-colors duration-150;
   }
 
+  .data-table tbody tr:hover {
+    @apply bg-cyan-50/50;
+  }
+
+  /* --------------------------------------------------- Mobile record card */
   .mobile-card-list {
     @apply grid gap-3 md:hidden;
   }
 
   .mobile-record-card {
-    @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm ring-1 ring-white;
+    @apply rounded-2xl border border-slate-200/80 bg-white p-4;
+    box-shadow: var(--shadow-panel);
   }
 
+  /* --------------------------------------------------------- Empty state */
   .empty-state {
-    @apply rounded-xl border border-dashed border-slate-300 bg-slate-100/70 px-4 py-10 text-center text-sm font-medium text-slate-600;
+    @apply flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-6 py-12 text-center text-sm font-medium text-slate-600;
   }
 
+  /* ---------------------------------------------------- Segmented control */
   .segmented-control {
-    @apply grid rounded-lg border border-slate-200 bg-slate-100 p-1 shadow-inner;
+    @apply inline-grid rounded-xl border border-slate-200 bg-slate-100/80 p-1;
   }
 
   .segmented-item {
-    @apply min-h-10 rounded-md px-3 py-2 text-center text-sm font-bold text-slate-600 transition-colors hover:text-slate-950;
+    @apply min-h-9 rounded-lg px-3.5 py-1.5 text-center text-sm font-semibold text-slate-600 transition-all duration-150 hover:text-slate-900;
   }
 
   .segmented-item-active {
-    @apply bg-white text-cyan-800 shadow-sm;
+    @apply bg-white text-cyan-800;
+    box-shadow: var(--shadow-sm);
   }
 
+  /* -------------------------------------------------------------- Buttons */
+  .btn {
+    @apply inline-flex min-h-10 cursor-pointer select-none items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition-all duration-150 disabled:pointer-events-none disabled:opacity-50;
+  }
+  /* Solid (not gradient) background so callers can still override the color
+     with a `bg-*` utility, e.g. <Button className="bg-emerald-700">. The
+     inset highlight + shadow carry the premium feel. */
+  .btn-primary {
+    @apply btn text-white;
+    background-color: hsl(var(--brand-strong));
+    box-shadow: 0 1px 2px 0 rgb(15 23 42 / 0.16), inset 0 1px 0 0 rgb(255 255 255 / 0.15);
+  }
+  .btn-primary:hover { background-color: hsl(var(--brand)); box-shadow: var(--shadow-md); }
+  .btn-primary:active { background-color: hsl(var(--brand-deep)); }
+
   .admin-button-secondary {
-    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 transition-colors hover:border-cyan-200 hover:bg-slate-50 hover:text-cyan-800 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply btn border border-slate-200 bg-white font-semibold text-slate-700 hover:border-cyan-300 hover:bg-cyan-50/50 hover:text-cyan-800;
+    box-shadow: var(--shadow-xs);
   }
 
   .admin-button-danger {
-    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-rose-200 bg-white px-3 text-sm font-bold text-rose-700 transition-colors hover:bg-rose-50 hover:text-rose-800 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply btn border border-rose-200 bg-white font-semibold text-rose-700 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-800;
+    box-shadow: var(--shadow-xs);
   }
 
   .admin-link {
-    @apply font-bold text-cyan-700 transition-colors hover:text-cyan-900 hover:underline;
+    @apply font-semibold text-cyan-700 underline-offset-2 transition-colors hover:text-cyan-900 hover:underline;
   }
 
+  /* --------------------------------------------------------------- Utils */
   .text-break {
     overflow-wrap: anywhere;
     word-break: break-word;
   }
+
+  .hairline {
+    @apply border-slate-200/70;
+  }
 }
 
+/* ------------------------------------------------------------- Focus ring */
 *:focus-visible {
-  outline: 3px solid rgb(34 211 238 / 0.55);
+  outline: 2px solid hsl(var(--signal) / 0.7);
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
+/* ---------------------------------------------------- Refined scrollbars */
+@supports (scrollbar-width: thin) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(148 163 184 / 0.5) transparent;
+  }
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(148 163 184 / 0.45);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background-color: rgb(100 116 139 / 0.6); }
+
+/* -------------------------------------------------------------- Keyframes */
 @keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes toastSlideIn {
-  from {
-    opacity: 0;
-    transform: translate(50%, -20px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translate(0, 0) scale(1);
-  }
+  from { opacity: 0; transform: translate(50%, -20px) scale(0.95); }
+  to { opacity: 1; transform: translate(0, 0) scale(1); }
 }
 
 @keyframes highlightPulse {
-  0% {
-    box-shadow: 0 0 0 2px rgba(8, 145, 178, 0.45);
-    background-color: rgba(236, 254, 255, 0.7);
-  }
-  100% {
-    box-shadow: 0 0 0 0px rgba(8, 145, 178, 0);
-    background-color: transparent;
-  }
+  0% { box-shadow: 0 0 0 2px hsl(var(--brand) / 0.45); background-color: hsl(var(--signal) / 0.12); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--brand) / 0); background-color: transparent; }
 }
 
-.animate-slide-in {
-  animation: slideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-.animate-toast-in {
-  animation: toastSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-.animate-highlight-pulse {
-  animation: highlightPulse 2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
+.animate-slide-in { animation: slideIn 0.35s var(--ease-out) forwards; }
+.animate-toast-in { animation: toastSlideIn 0.3s var(--ease-out) forwards; }
+.animate-highlight-pulse { animation: highlightPulse 2s var(--ease-out) forwards; }
+.animate-fade-in-up { animation: fadeInUp 0.4s var(--ease-out) both; }
 
 @media (prefers-reduced-motion: reduce) {
   *,

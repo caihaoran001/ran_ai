@@ -403,7 +403,7 @@ export default function SystemDiagnosticsPage() {
       : String(lastRunTime);
 
   return (
-    <div className="min-h-[calc(100vh-5rem)] pb-12 text-zinc-950">
+    <div className="min-h-[calc(100vh-5rem)] pb-12 text-slate-950">
       <header className="rounded-lg border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-emerald-50 px-5 py-5 shadow-sm">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-4xl">
@@ -414,10 +414,10 @@ export default function SystemDiagnosticsPage() {
               <ArrowLeft size={15} /> 返回数据看板
             </Link>
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <h1 className="text-2xl font-bold text-zinc-950">系统诊断控制台</h1>
+              <h1 className="text-2xl font-bold text-slate-950">系统诊断控制台</h1>
               <RunStateBadge busy={busy} failedCount={failedHealthCount} />
             </div>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
               以安全健康检查守住系统稳定性，以真实模型旅程验证内容质量。测试业务数据回滚，真实模型费用独立记录。
             </p>
           </div>
@@ -433,7 +433,7 @@ export default function SystemDiagnosticsPage() {
             <button
               onClick={runHealthChecks}
               disabled={busy}
-              className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-cyan-800 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cyan-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 disabled:cursor-not-allowed disabled:bg-zinc-400"
+              className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-cyan-800 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cyan-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-400"
             >
               {runningAll ? <LoaderCircle size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
               {runningAll ? "安全检查运行中" : "运行安全健康检查"}
@@ -488,24 +488,24 @@ export default function SystemDiagnosticsPage() {
 
       <section className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-5">
-          <section className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-            <div className="border-b border-zinc-100 px-5 py-4">
+          <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-100 px-5 py-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <div className="flex items-center gap-2">
                     <Server size={18} className="text-cyan-700" />
-                    <h2 className="font-semibold text-zinc-950">安全健康检查</h2>
+                    <h2 className="font-semibold text-slate-950">安全健康检查</h2>
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-zinc-500">
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
                     Mock AI 与 Mock 通道，覆盖接口、状态流转、数据契约、QiWe 通道和成效引擎回归。
                   </p>
                 </div>
                 <div className="min-w-56">
-                  <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
+                  <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
                     <span>通过进度</span>
                     <span>{passedHealthCount}/{healthSuites.length}</span>
                   </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-zinc-100">
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-100">
                     <div className="h-full rounded-full bg-cyan-700 transition-all" style={{ width: `${healthProgress}%` }} />
                   </div>
                 </div>
@@ -516,7 +516,7 @@ export default function SystemDiagnosticsPage() {
                 <MiniMetric label="失败" value={String(failedHealthCount)} tone="red" />
               </div>
             </div>
-            <div className="grid gap-3 bg-zinc-50 p-3 md:grid-cols-2 2xl:grid-cols-4">
+            <div className="grid gap-3 bg-slate-50 p-3 md:grid-cols-2 2xl:grid-cols-4">
               {healthSuites.map((suite) => (
                 <SuiteCard
                   key={suite.id}
@@ -540,11 +540,11 @@ export default function SystemDiagnosticsPage() {
                     <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-cyan-50 text-cyan-700 ring-1 ring-cyan-100">
                       <FlaskConical size={17} />
                     </span>
-                    <div className="font-semibold text-zinc-950">真实模型旅程验证</div>
+                    <div className="font-semibold text-slate-950">真实模型旅程验证</div>
                     <StatusBadge status={statuses[realE2ESuite.id] || "idle"} />
                   </div>
-                  <h2 className="mt-4 text-xl font-bold text-zinc-950">10 类用户，从入营问卷走到第 28 天</h2>
-                  <p className="mt-2 max-w-4xl text-sm leading-6 text-zinc-600">
+                  <h2 className="mt-4 text-xl font-bold text-slate-950">10 类用户，从入营问卷走到第 28 天</h2>
+                  <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">
                     覆盖积极配合、焦虑、沉默不打卡、轮班、咖啡因敏感、平台期质疑、退款、慢病用药、续营和低落恢复。
                     每类用户都会验证画像与文档一致性、聊天回复、风控、提醒、成效提取，并由模型自动评审内容质量。
                   </p>
@@ -563,7 +563,7 @@ export default function SystemDiagnosticsPage() {
                   <button
                     onClick={() => void runSuite(realE2ESuite)}
                     disabled={busy}
-                    className="mt-4 inline-flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:cursor-not-allowed disabled:bg-zinc-400"
+                    className="mt-4 inline-flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-400"
                   >
                     {currentRunningId === realE2ESuite.id ? <LoaderCircle size={16} className="animate-spin" /> : <Play size={16} />}
                     {currentRunningId === realE2ESuite.id ? "真实旅程运行中" : "运行真实旅程验证"}
@@ -579,8 +579,8 @@ export default function SystemDiagnosticsPage() {
         </div>
 
         <aside className="space-y-5">
-          <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 text-sm font-semibold text-zinc-950">
+          <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
               <Activity size={17} className="text-cyan-700" />
               运行摘要
             </div>
@@ -605,24 +605,24 @@ export default function SystemDiagnosticsPage() {
         </aside>
       </section>
 
-      <section className="mt-5 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
+      <section className="mt-5 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex items-center gap-2">
-            <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-slate-700">
               <Terminal size={16} />
             </span>
             <div>
-              <h2 className="text-sm font-semibold text-zinc-950">诊断终端</h2>
-              <p className="text-xs text-zinc-500">{consoleTitle}</p>
+              <h2 className="text-sm font-semibold text-slate-950">诊断终端</h2>
+              <p className="text-xs text-slate-500">{consoleTitle}</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50">
+            <label className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-md border border-slate-200 px-2.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50">
               <input
                 type="checkbox"
                 checked={autoScroll}
                 onChange={(event) => setAutoScroll(event.target.checked)}
-                className="h-3.5 w-3.5 rounded border-zinc-300 text-cyan-700 focus:ring-cyan-600"
+                className="h-3.5 w-3.5 rounded border-slate-300 text-cyan-700 focus:ring-cyan-600"
               />
               自动滚动
             </label>
@@ -657,7 +657,7 @@ export default function SystemDiagnosticsPage() {
             </IconButton>
           </div>
         </div>
-        <div className="border-b border-zinc-200 bg-zinc-50 px-3 py-2">
+        <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
           <div className="flex gap-1 overflow-x-auto">
             <LogTab active={selectedSuiteId === "all"} label="汇总" onClick={() => setSelectedSuiteId("all")} />
             {testSuites.map((suite) => (
@@ -712,19 +712,19 @@ function SuiteCard({
     <article
       onClick={onSelect}
       className={`group flex min-h-44 cursor-pointer flex-col rounded-md border bg-white p-4 shadow-sm transition-colors hover:border-cyan-300 hover:bg-cyan-50/40 focus-within:border-cyan-500 ${
-        selected ? "border-cyan-500 ring-2 ring-cyan-100" : "border-zinc-200"
+        selected ? "border-cyan-500 ring-2 ring-cyan-100" : "border-slate-200"
       }`}
     >
       <div className="flex items-start justify-between gap-3">
-        <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-md bg-zinc-100 px-2 font-mono text-xs font-bold text-zinc-600 group-hover:bg-white">
+        <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-md bg-slate-100 px-2 font-mono text-xs font-bold text-slate-600 group-hover:bg-white">
           {suite.display_id}
         </span>
         <StatusBadge status={status} />
       </div>
-      <h3 className="mt-3 text-sm font-semibold text-zinc-950">{shortName}</h3>
-      <p className="mt-1.5 line-clamp-3 text-xs leading-5 text-zinc-500">{suite.description}</p>
+      <h3 className="mt-3 text-sm font-semibold text-slate-950">{shortName}</h3>
+      <p className="mt-1.5 line-clamp-3 text-xs leading-5 text-slate-500">{suite.description}</p>
       <div className="mt-auto flex items-center justify-between pt-4">
-        <span className="text-xs font-medium text-zinc-400">{duration || "尚未运行"}</span>
+        <span className="text-xs font-medium text-slate-400">{duration || "尚未运行"}</span>
         <button
           onClick={(event) => {
             event.stopPropagation();
@@ -732,7 +732,7 @@ function SuiteCard({
           }}
           disabled={disabled}
           title={`运行 ${suite.display_id}`}
-          className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-700 shadow-sm transition-colors hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:opacity-60"
+          className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-60"
         >
           {status === "running" ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}
         </button>
@@ -753,16 +753,16 @@ function E2EProgressPanel({ progress, running }: { progress: E2EProgress; runnin
   const failedPercent = total ? (failed / total) * 100 : 0;
   const reviewedPercent = total ? (reviewed / total) * 100 : 0;
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div className="text-sm font-semibold text-zinc-950">E2E-01 用户旅程进度</div>
-          <p className="mt-1 text-xs leading-5 text-zinc-500">
+          <div className="text-sm font-semibold text-slate-950">E2E-01 用户旅程进度</div>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
             从实时日志中提取。已评审表示该用户业务链路已跑到质量评审，最终通过/失败以 pytest 状态行为准。
           </p>
         </div>
-        <div className="text-right text-xs text-zinc-500">
-          <div className="font-semibold text-zinc-900">
+        <div className="text-right text-xs text-slate-500">
+          <div className="font-semibold text-slate-900">
             {done}/{total} 完成 · {passed} 通过 / {reviewed} 已评审 / {failed} 失败
           </div>
           {running && progress.current_persona_name && (
@@ -773,7 +773,7 @@ function E2EProgressPanel({ progress, running }: { progress: E2EProgress; runnin
           )}
         </div>
       </div>
-      <div className="mt-4 h-2 overflow-hidden rounded-full bg-zinc-100" title={`${donePercent}%`}>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100" title={`${donePercent}%`}>
         <div className="flex h-full">
           <div className="bg-emerald-500 transition-all" style={{ width: `${passedPercent}%` }} />
           <div className="bg-cyan-500 transition-all" style={{ width: `${reviewedPercent}%` }} />
@@ -782,7 +782,7 @@ function E2EProgressPanel({ progress, running }: { progress: E2EProgress; runnin
       </div>
       <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
         {completed.length === 0 ? (
-          <div className="rounded-md border border-dashed border-zinc-200 px-3 py-3 text-xs text-zinc-500">
+          <div className="rounded-md border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
             暂无已完成用户。E2E-01 开始输出用户结果后会在这里显示。
           </div>
         ) : (
@@ -824,12 +824,12 @@ function e2eEntryTone(status: string) {
   if (status === "failed") return "border-rose-200 bg-rose-50 text-rose-900";
   if (status === "passed") return "border-emerald-200 bg-emerald-50 text-emerald-900";
   if (status === "reviewed") return "border-cyan-200 bg-cyan-50 text-cyan-900";
-  return "border-zinc-200 bg-zinc-50 text-zinc-700";
+  return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
 function StatusBadge({ status }: { status: TestStatus }) {
   const styles = {
-    idle: "bg-zinc-100 text-zinc-600 ring-zinc-200",
+    idle: "bg-slate-100 text-slate-600 ring-slate-200",
     running: "bg-sky-50 text-sky-800 ring-sky-200",
     passed: "bg-emerald-50 text-emerald-800 ring-emerald-200",
     failed: "bg-rose-50 text-rose-800 ring-rose-200",
@@ -859,13 +859,13 @@ function SummaryCard({
     red: "bg-rose-50 text-rose-700 ring-rose-100",
   };
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between gap-3">
-        <div className="text-xs font-semibold text-zinc-500">{label}</div>
+        <div className="text-xs font-semibold text-slate-500">{label}</div>
         <span className={`inline-flex h-8 w-8 items-center justify-center rounded-md ring-1 ${tones[tone]}`}>{icon}</span>
       </div>
-      <div className="mt-3 truncate text-xl font-bold text-zinc-950" title={value}>{value}</div>
-      <p className="mt-1 truncate text-xs leading-5 text-zinc-500" title={detail}>{detail}</p>
+      <div className="mt-3 truncate text-xl font-bold text-slate-950" title={value}>{value}</div>
+      <p className="mt-1 truncate text-xs leading-5 text-slate-500" title={detail}>{detail}</p>
     </div>
   );
 }
@@ -884,7 +884,7 @@ function LogTab({ active, label, onClick }: { active: boolean; label: string; on
     <button
       onClick={onClick}
       className={`h-8 cursor-pointer rounded-md px-3 text-xs font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 ${
-        active ? "bg-cyan-800 text-white" : "text-zinc-600 hover:bg-white hover:text-zinc-950"
+        active ? "bg-cyan-800 text-white" : "text-slate-600 hover:bg-white hover:text-slate-950"
       }`}
     >
       {label}
@@ -897,7 +897,7 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
     <button
       title={label}
       onClick={onClick}
-      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition-colors hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600"
+      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600"
     >
       {children}
     </button>
@@ -932,9 +932,9 @@ function MiniMetric({ label, value, tone }: { label: string; value: string; tone
 
 function SideRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start justify-between gap-3 border-b border-zinc-100 pb-3 last:border-0 last:pb-0">
-      <span className="text-xs text-zinc-500">{label}</span>
-      <span className="max-w-44 text-right text-sm font-semibold text-zinc-900">{value}</span>
+    <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3 last:border-0 last:pb-0">
+      <span className="text-xs text-slate-500">{label}</span>
+      <span className="max-w-44 text-right text-sm font-semibold text-slate-900">{value}</span>
     </div>
   );
 }
