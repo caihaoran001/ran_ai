@@ -211,14 +211,19 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
                 <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
                   管
                 </span>
-                <a
-                  href="/api/auth/logout"
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm("确定要退出登录吗？")) {
+                      window.location.href = "/api/auth/logout";
+                    }
+                  }}
                   className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
                   title="退出登录"
                 >
                   <LogOut className="h-4 w-4" />
                   <span className="hidden xl:inline">退出</span>
-                </a>
+                </button>
               </div>
             </div>
           </div>
