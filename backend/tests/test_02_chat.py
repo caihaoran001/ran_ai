@@ -653,6 +653,139 @@ async def test_group_at_bot_silence_and_resume_commands(db_session, mock_message
 
 
 @pytest.mark.asyncio
+async def test_group_silence_still_parses_images_and_files(
+    db_session,
+    mock_message_channel,
+    cai_haoran_answers,
+    monkeypatch,
+):
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
+    assert case is not None
+    case.status = ServiceCaseStatus.IN_SERVICE
+    await db_session.flush()
+
+    async def fake_describe_image(self, *, message_id, image_payload, service_case_id):
+        return (
+            "用户上传了一张餐盘图片，能看到米饭、鸡蛋和青菜。",
+            {
+                "local_path": "/tmp/test-image.jpg",
+                "filename": "test-image.jpg",
+                "content_type": "image/jpeg",
+                "parse_status": "ok",
+            },
+        )
+
+    class FakeFileResponse:
+        content = b"plain text"
+
+        def raise_for_status(self):
+            return None
+
+    class FakeFileClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeFileResponse()
+
+    monkeypatch.setattr(RanrenAIEngine, "_describe_inbound_image", fake_describe_image)
+    monkeypatch.setattr("app.services.ranren_ai.engine.httpx.AsyncClient", FakeFileClient)
+
+    engine = RanrenAIEngine(mock_message_channel)
+    await engine.handle_message(ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="@HumanBurning.AI 退下",
+        user_id="staff-1",
+        user_name="运营",
+        message_type="text",
+        message_id="cmd-silence-parse-media",
+        raw_payload=_bot_mentioned_payload(),
+    ))
+    await db_session.refresh(case)
+    assert case.ai_auto_reply_enabled is False
+
+    image_payload = {
+        "msgType": 7,
+        "msgData": {
+            "fileBigHttpUrl": "https://imunion.weixin.qq.com/cgi-bin/mmae-bin/tpdownloadmedia?param=image",
+        },
+    }
+    await engine.handle_message(ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="[图片]",
+        user_id="user-1",
+        user_name="用户",
+        message_type="image",
+        message_id="image-while-silenced",
+        raw_payload=image_payload,
+    ))
+
+    image_msg = await db_session.scalar(select(Message).where(Message.wecom_message_id == "image-while-silenced"))
+    assert image_msg is not None
+    assert image_msg.content == "用户上传了一张餐盘图片，能看到米饭、鸡蛋和青菜。"
+    assert image_msg.analysis_json["image_parse_status"] == "ok"
+    assert image_msg.analysis_json["image_prompt"]["content"] == "用户上传了一张餐盘图片，能看到米饭、鸡蛋和青菜。"
+
+    await engine.handle_message(ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="帮我看看\n[图片]",
+        user_id="user-1",
+        user_name="用户",
+        message_type="text",
+        message_id="text-image-while-silenced",
+        raw_payload=image_payload,
+    ))
+
+    text_image_msg = await db_session.scalar(select(Message).where(Message.wecom_message_id == "text-image-while-silenced"))
+    assert text_image_msg is not None
+    assert text_image_msg.content == "帮我看看\n图片内容：用户上传了一张餐盘图片，能看到米饭、鸡蛋和青菜。"
+    assert text_image_msg.analysis_json["image_parse_status"] == "ok"
+
+    await engine.handle_message(ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="[文件]",
+        user_id="user-1",
+        user_name="用户",
+        message_type="file",
+        message_id="file-while-silenced",
+        raw_payload={
+            "msgData": {
+                "fileHttpUrl": "https://imunion.weixin.qq.com/cgi-bin/mmae-bin/tpdownloadmedia?param=file",
+                "fileSize": 10,
+                "filename": "补充记录.txt",
+            }
+        },
+    ))
+
+    file_msg = await db_session.scalar(select(Message).where(Message.wecom_message_id == "file-while-silenced"))
+    assert file_msg is not None
+    assert file_msg.content == "[文件] 补充记录.txt"
+    assert file_msg.analysis_json["file_info"]["filename"] == "补充记录.txt"
+    assert file_msg.analysis_json["file_info"]["parse_status"] == "unsupported"
+
+    outbound_count = await db_session.scalar(select(func.count()).select_from(Message).where(
+        Message.service_case_id == case_id,
+        Message.direction == MessageDirection.OUTBOUND,
+    ))
+    assert outbound_count == 0
+
+
+@pytest.mark.asyncio
 async def test_group_resume_without_prior_silence_sends_no_receipt(db_session, mock_message_channel, cai_haoran_answers):
     case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
     case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))

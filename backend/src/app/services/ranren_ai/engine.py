@@ -701,6 +701,60 @@ class RanrenAIEngine:
                 logger.exception("Failed to set fallback content for file message_id=%s", message_id)
             message.text = marker
 
+    async def _process_inbound_attachments(
+        self,
+        *,
+        message: ChannelMessage,
+        inbound_id: int | None,
+        service_case_id: int | None,
+        analysis: dict | None,
+    ) -> tuple[dict | None, str | None, bool, bool]:
+        """Parse inbound images/files before deciding whether the bot may reply."""
+        image_analysis_content: str | None = None
+        file_processed = False
+        non_text_stored_only = False
+
+        if inbound_id is None:
+            return analysis, image_analysis_content, file_processed, non_text_stored_only
+
+        if message.message_type == "text" and _image_payload_items(message):
+            image_analysis_content = _strip_image_placeholders(message.text)
+            image_prompt = await self._process_embedded_images_for_text(
+                inbound_id,
+                message,
+                service_case_id,
+                image_analysis_content,
+            )
+            if image_prompt:
+                analysis = {**(analysis or {}), "image_prompt": image_prompt}
+            return analysis, image_analysis_content, file_processed, non_text_stored_only
+
+        if message.message_type == "image":
+            image_prompt = await self._process_inbound_image(inbound_id, message, service_case_id)
+            # 图片内容作为独立 prompt 元数据进入回复上下文；message.text 保持为空，避免伪装成用户原话。
+            # 视觉描述不进入风控/成效结构化提取。
+            image_analysis_content = ""
+            analysis = {**(analysis or {}), "image_prompt": image_prompt}
+            return analysis, image_analysis_content, file_processed, non_text_stored_only
+
+        if message.message_type == "file":
+            await self._process_inbound_file(inbound_id, message, service_case_id)
+            file_processed = True
+            return analysis, image_analysis_content, file_processed, non_text_stored_only
+
+        if message.message_type != "text":
+            # 其他非文本消息（语音/表情等）仍直接入库留痕，不触发 AI 回复
+            logger.info(
+                "RanrenAI non-text message stored without AI reply channel=%s chat_id=%s message_id=%s type=%s",
+                message.channel,
+                message.chat_id,
+                message.message_id,
+                message.message_type,
+            )
+            non_text_stored_only = True
+
+        return analysis, image_analysis_content, file_processed, non_text_stored_only
+
     async def handle_message(self, message: ChannelMessage) -> None:
         started_at = time.monotonic()
         should_send_questionnaire = "发送本群入营问卷" in message.text or "发送本群专属问卷" in message.text
@@ -880,9 +934,16 @@ class RanrenAIEngine:
             )
             return
 
+        analysis, image_analysis_content, file_processed, non_text_stored_only = await self._process_inbound_attachments(
+            message=message,
+            inbound_id=inbound_id,
+            service_case_id=service_case_id,
+            analysis=analysis,
+        )
+
         if service_case_silenced:
             logger.info(
-                "RanrenAI silenced by group command; stored inbound only chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
+                "RanrenAI silenced by group command; stored inbound and attachment context only chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
                 message.chat_id,
                 inbound_id,
                 service_case_id,
@@ -890,58 +951,31 @@ class RanrenAIEngine:
             )
             return
 
-        if message.message_type == "text" and inbound_id is not None and _image_payload_items(message):
-            image_analysis_content = _strip_image_placeholders(message.text)
-            image_prompt = await self._process_embedded_images_for_text(
-                inbound_id,
-                message,
-                service_case_id,
-                image_analysis_content,
-            )
-            if image_prompt:
-                analysis = {**(analysis or {}), "image_prompt": image_prompt}
-
-        if message.message_type != "text":
-            # 如果是图片消息，触发后台下载、解密与大模型翻译
-            if message.message_type == "image" and inbound_id is not None:
-                image_prompt = await self._process_inbound_image(inbound_id, message, service_case_id)
-                # 图片内容作为独立 prompt 元数据进入回复上下文；message.text 保持为空，避免伪装成用户原话。
-                # 视觉描述不进入风控/成效结构化提取。
-                image_analysis_content = ""
-                analysis = {**(analysis or {}), "image_prompt": image_prompt}
-            else:
-                # 文件消息：后台下载/解密/抽取文本入库（与新旧回复链路无关的共享层，供新 Agent 链路 read_group_file 读取）。
-                if message.message_type == "file" and inbound_id is not None:
-                    await self._process_inbound_file(inbound_id, message, service_case_id)
-                    # 用户上传文件回执一句（挂 trigger_id）；班主任(staff)上传静默处理、不打扰（沿用“AI 不拆班主任台”）。
-                    if not is_staff:
-                        ack = "文件收到啦，需要我帮你看什么？"
-                        try:
-                            await self._send_and_record(
-                                message=message,
-                                service_case_id=service_case_id,
-                                content=ack,
-                                trigger_id=inbound_id,
-                                send=lambda: self.channel.send_text(
-                                    message.chat_id,
-                                    ack,
-                                    reply_to=message.message_id,
-                                    reply_context=message.raw_payload,
-                                ),
-                            )
-                        except Exception:
-                            logger.exception("Failed to send file receipt ack message_id=%s", inbound_id)
-                else:
-                    # 其他非文本消息（语音/表情等）仍直接入库留痕，不触发 AI 回复
-                    logger.info(
-                        "RanrenAI non-text message stored without AI reply channel=%s chat_id=%s message_id=%s type=%s",
-                        message.channel,
-                        message.chat_id,
-                        message.message_id,
-                        message.message_type,
+        if file_processed:
+            # 文件消息：后台下载/解密/抽取文本入库（与新旧回复链路无关的共享层，供新 Agent 链路 read_group_file 读取）。
+            # 用户上传文件回执一句（挂 trigger_id）；班主任(staff)上传静默处理、不打扰（沿用“AI 不拆班主任台”）。
+            if not is_staff:
+                ack = "文件收到啦，需要我帮你看什么？"
+                try:
+                    await self._send_and_record(
+                        message=message,
+                        service_case_id=service_case_id,
+                        content=ack,
+                        trigger_id=inbound_id,
+                        send=lambda: self.channel.send_text(
+                            message.chat_id,
+                            ack,
+                            reply_to=message.message_id,
+                            reply_context=message.raw_payload,
+                        ),
                     )
-                # 文件本身不触发完整 AI 回复；后续被 @/被问才由 Agent 调 read_group_file 读取
-                return
+                except Exception:
+                    logger.exception("Failed to send file receipt ack message_id=%s", inbound_id)
+            # 文件本身不触发完整 AI 回复；后续被 @/被问才由 Agent 调 read_group_file 读取
+            return
+
+        if non_text_stored_only:
+            return
 
         # 班主任 @机器人 但本条无正文（问题与@被拆成两条发）：回溯紧邻的班主任发言作为问题，
         # 使其能像「@和问题同条」一样触发回复。仅限班主任路径；普通用户纯@维持原有上下文回复逻辑。
