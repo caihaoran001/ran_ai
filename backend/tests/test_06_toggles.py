@@ -406,7 +406,7 @@ async def test_service_case_ai_reply_toggle(admin_client, create_case):
 
 
 @pytest.mark.asyncio
-async def test_service_case_agent_toggle_defaults_off_and_updates(admin_client, create_case):
+async def test_service_case_agent_toggle_field_is_rejected(admin_client, create_case):
     group_id = f"test-toggle-agent-{secrets.token_hex(6)}"
     resp = await create_case({
         "group_id": group_id,
@@ -414,18 +414,17 @@ async def test_service_case_agent_toggle_defaults_off_and_updates(admin_client, 
     })
     assert resp.status_code == 201, resp.text
     case_id = resp.json()["id"]
-    assert resp.json()["ai_agent_enabled"] is False
+    assert "ai_agent_enabled" not in resp.json()
 
     resp = await admin_client.patch(
         f"/service-cases/{case_id}",
         json={"ai_agent_enabled": True},
     )
-    assert resp.status_code == 200
-    assert resp.json()["ai_agent_enabled"] is True
+    assert resp.status_code == 422
 
     resp = await admin_client.get(f"/service-cases/{case_id}")
     assert resp.status_code == 200
-    assert resp.json()["ai_agent_enabled"] is True
+    assert "ai_agent_enabled" not in resp.json()
 
 
 @pytest.mark.asyncio

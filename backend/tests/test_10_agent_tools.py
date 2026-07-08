@@ -894,21 +894,21 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "让我想想" in model.calls[0][0].content
     assert "根据搜索结果" in model.calls[0][0].content
     assert "不要说“根据你的画像/资料/系统记录”" in model.calls[0][0].content
-    assert "不要把这些历史 AI 回复说成营养师" in model.calls[0][0].content
-    assert "只使用和当前问题直接相关的背景" in model.calls[0][0].content
-    assert "只参考“长期偏好/最近话题”" in model.calls[0][0].content
-    assert "只参考“当前状态/风险边界/产品执行”" in model.calls[0][0].content
-    assert "实时数据必须查工具" in model.calls[0][0].content
-    assert "这是群聊接话，不是考试答题" in model.calls[0][0].content
-    assert "上下文不够时，优先追问一个关键点" in model.calls[0][0].content
-    assert "不确定时可以承认不知道" in model.calls[0][0].content
-    assert "多数时候只回对方当下这一下" in model.calls[0][0].content
+    assert "不要把它说成营养师、班主任或其他真人说过的话" in model.calls[0][0].content
+    assert "只用与当前问题直接相关的部分" in model.calls[0][0].content
+    assert "只参考长期偏好/最近话题" in model.calls[0][0].content
+    assert "只参考当前状态/风险边界/产品执行" in model.calls[0][0].content
+    assert "实时数据一律查工具" in model.calls[0][0].content
+    assert "这是群聊接话不是考试答题" in model.calls[0][0].content
+    assert "上下文不够先追问一个关键点" in model.calls[0][0].content
+    assert "不确定可以承认不知道" in model.calls[0][0].content
+    assert "多数时候只回当下这一下" in model.calls[0][0].content
     assert "零称呼起头" in model.calls[0][0].content
     assert "哥、姐、宝子、亲、阿姨" in model.calls[0][0].content
-    assert "你说的是哪一款娜塔莎" in model.calls[0][0].content
+    assert "你说 LABUBU 后面那个？" in model.calls[0][0].content
     assert "咒术回战：节奏快" in model.calls[0][0].content
-    assert "今天没排便，体重还涨了" in model.calls[0][0].content
-    assert "昨晚睡得很差，今天很烦" in model.calls[0][0].content
+    assert "今天没排便体重还涨了" in model.calls[0][0].content
+    assert "晚餐能吃荞麦面吗" in model.calls[0][0].content
 
 
 @pytest.mark.asyncio
@@ -1088,14 +1088,11 @@ async def test_graph_allows_two_web_searches_and_rejects_extra(db_session):
 
 
 @pytest.mark.asyncio
-async def test_engine_uses_agent_only_when_global_and_case_toggles_enabled(
+async def test_engine_uses_agent_without_global_or_case_toggle(
     db_session,
     mock_message_channel,
     monkeypatch,
 ):
-    settings = get_settings()
-    original_agent_enabled = settings.ai_agent_enabled
-    settings.ai_agent_enabled = True
     await set_ai_reply_delivery_mode("auto_send", db_session)
     calls: list[int] = []
 
@@ -1110,11 +1107,7 @@ async def test_engine_uses_agent_only_when_global_and_case_toggles_enabled(
             tool_trace=[{"name": "get_service_progress", "ok": True}],
         )
 
-    async def fake_legacy_reply(self, *, message, service_case_id, analysis, trigger_id):
-        return "legacy reply"
-
     monkeypatch.setattr("app.services.ranren_ai.engine.generate_agent_reply", fake_generate_agent_reply)
-    monkeypatch.setattr(RanrenAIEngine, "_generate_legacy_ai_reply", fake_legacy_reply)
 
     try:
         service_case = await _case(db_session)
@@ -1135,19 +1128,8 @@ async def test_engine_uses_agent_only_when_global_and_case_toggles_enabled(
             analysis={"requires_human_intervention": False},
             trigger_id=inbound.id,
         )
-        assert calls == []
-
-        service_case.ai_agent_enabled = True
-        inbound2 = await _inbound(db_session, service_case, "我现在第几天？")
-        await engine._reply_with_ai(
-            message,
-            service_case_id=service_case.id,
-            analysis={"requires_human_intervention": False},
-            trigger_id=inbound2.id,
-        )
         assert calls == [service_case.id]
     finally:
-        settings.ai_agent_enabled = original_agent_enabled
         await set_ai_reply_delivery_mode("manual_review", db_session)
 
 

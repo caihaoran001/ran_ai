@@ -342,17 +342,20 @@ async def _count_outbound_bot(db_session, case_id) -> int:
 
 
 @pytest.mark.asyncio
-async def test_no_reply_marker_legacy_path_suppresses_reply(
+async def test_no_reply_marker_agent_path_suppresses_reply_without_toggle(
     db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch
 ):
-    """legacy 路径模型输出 <no_reply> 时：不发送、不入库、不进待审核。"""
+    """Agent 输出 <no_reply> 时：不发送、不入库、不进待审核。"""
+    from app.services.agent.graph import AgentReplyResult
+    import app.services.ranren_ai.engine as engine_mod
+
     case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
     engine = RanrenAIEngine(mock_message_channel)
 
-    async def _fake_legacy(**kwargs):
-        return "<no_reply>"
+    async def _fake_agent(**kwargs):
+        return AgentReplyResult(reply="<no_reply>")
 
-    monkeypatch.setattr(engine, "_generate_legacy_ai_reply", _fake_legacy)
+    monkeypatch.setattr(engine_mod, "generate_agent_reply", _fake_agent)
 
     before = await _count_outbound_bot(db_session, case_id)
     await engine._reply_with_ai(
@@ -366,35 +369,38 @@ async def test_no_reply_marker_legacy_path_suppresses_reply(
 
 
 @pytest.mark.asyncio
-async def test_no_reply_marker_agent_path_suppresses_reply(
+async def test_agent_data_unavailable_records_safe_reply(
     db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch
 ):
-    """agent 路径(线上默认)模型输出 <no_reply> 时同样被拦截。"""
-    from app.services.agent.graph import AgentReplyResult
+    """Agent 数据工具不可用时发送固定安全文案，并记录可审计标记。"""
+    from app.services.agent.graph import AgentDataUnavailableError
     import app.services.ranren_ai.engine as engine_mod
 
     case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
-    case = await db_session.get(ServiceCase, case_id)
-    case.ai_agent_enabled = True
-    await db_session.flush()
-
     engine = RanrenAIEngine(mock_message_channel)
-    monkeypatch.setattr(engine.settings, "ai_agent_enabled", True, raising=False)
 
     async def _fake_agent(**kwargs):
-        return AgentReplyResult(reply="<no_reply>")
+        raise AgentDataUnavailableError("暂时没查到准确记录，我先不乱说，交给班主任确认一下。")
 
     monkeypatch.setattr(engine_mod, "generate_agent_reply", _fake_agent)
 
     before = await _count_outbound_bot(db_session, case_id)
     await engine._reply_with_ai(
-        ChannelMessage(channel="qiwe", chat_id=group_id, chat_type="group", text="[OK]", message_id="m-ok-2"),
+        ChannelMessage(channel="qiwe", chat_id=group_id, chat_type="group", text="我现在第几天？", message_id="m-data-1"),
         service_case_id=case_id,
         analysis={},
         trigger_id=None,
     )
     after = await _count_outbound_bot(db_session, case_id)
-    assert after == before, "agent 路径含 <no_reply> 标记也不应产生任何出站消息"
+    assert after == before + 1
+    msg = await db_session.scalar(
+        select(Message)
+        .where(Message.service_case_id == case_id, Message.direction == MessageDirection.OUTBOUND)
+        .order_by(Message.id.desc())
+        .limit(1)
+    )
+    assert msg is not None
+    assert msg.analysis_json == {"agent": {"enabled": True, "data_unavailable": True}}
 
 
 @pytest.mark.asyncio
@@ -402,13 +408,16 @@ async def test_normal_reply_still_sends_without_marker(
     db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch
 ):
     """回归保护：正常回复(不含标记)仍照常产生出站消息，避免误伤。"""
+    from app.services.agent.graph import AgentReplyResult
+    import app.services.ranren_ai.engine as engine_mod
+
     case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
     engine = RanrenAIEngine(mock_message_channel)
 
-    async def _fake_legacy(**kwargs):
-        return "行，那就坚定走。有问题随时喊我。"
+    async def _fake_agent(**kwargs):
+        return AgentReplyResult(reply="行，那就坚定走。有问题随时喊我。")
 
-    monkeypatch.setattr(engine, "_generate_legacy_ai_reply", _fake_legacy)
+    monkeypatch.setattr(engine_mod, "generate_agent_reply", _fake_agent)
 
     before = await _count_outbound_bot(db_session, case_id)
     await engine._reply_with_ai(
@@ -419,6 +428,38 @@ async def test_normal_reply_still_sends_without_marker(
     )
     after = await _count_outbound_bot(db_session, case_id)
     assert after == before + 1, "正常回复应正常产生出站消息"
+
+
+@pytest.mark.asyncio
+async def test_agent_error_records_failed_review_without_legacy_fallback(
+    db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch
+):
+    import app.services.ranren_ai.engine as engine_mod
+
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    engine = RanrenAIEngine(mock_message_channel)
+
+    async def _fake_agent(**kwargs):
+        raise RuntimeError("agent exploded")
+
+    monkeypatch.setattr(engine_mod, "generate_agent_reply", _fake_agent)
+
+    await engine._reply_with_ai(
+        ChannelMessage(channel="qiwe", chat_id=group_id, chat_type="group", text="收到", message_id="m-err-1"),
+        service_case_id=case_id,
+        analysis={},
+        trigger_id=None,
+    )
+    msg = await db_session.scalar(
+        select(Message)
+        .where(Message.service_case_id == case_id, Message.direction == MessageDirection.OUTBOUND)
+        .order_by(Message.id.desc())
+        .limit(1)
+    )
+    assert msg is not None
+    assert msg.status == MessageStatus.PENDING
+    assert msg.analysis_json == {"agent": {"enabled": True, "error": "agent_reply_failed"}}
+    assert "班主任" in msg.content
 
 
 @pytest.mark.asyncio

@@ -68,7 +68,6 @@ class ServiceCase(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(String(2000))
     auto_send_documents: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    ai_agent_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=text("false"))
     # 单服务单定时发送开关（默认开；实际发送还需对应全局开关也开启）：晚间打卡链接
     checkin_link_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default=text("true"))
     risk_level: Mapped[str] = mapped_column(String(32), default="normal", index=True)

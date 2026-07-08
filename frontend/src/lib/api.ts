@@ -36,7 +36,6 @@ export type ServiceCase = {
   notes?: string | null;
   auto_send_documents: boolean;
   ai_auto_reply_enabled: boolean;
-  ai_agent_enabled: boolean;
   checkin_link_enabled: boolean;
   deleted_at?: string | null;
   started_at?: string | null;

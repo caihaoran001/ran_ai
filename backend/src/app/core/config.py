@@ -83,7 +83,6 @@ class Settings(BaseSettings):
         default=10,
         validation_alias="AI_MAX_CONCURRENT_REQUESTS",
     )
-    ai_agent_enabled: bool = Field(default=False, validation_alias="AI_AGENT_ENABLED")
     agent_max_llm_calls: int = Field(default=5, validation_alias="AGENT_MAX_LLM_CALLS")
     agent_max_tool_calls: int = Field(default=8, validation_alias="AGENT_MAX_TOOL_CALLS")
     agent_timeout_seconds: float = Field(default=40.0, validation_alias="AGENT_TIMEOUT_SECONDS")

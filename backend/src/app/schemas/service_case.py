@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.models.service_case import ServiceCaseStatus
 from app.schemas.common import Timestamped
@@ -17,6 +17,8 @@ class UserRead(Timestamped):
 
 
 class ServiceCaseUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     group_id: str | None = None
     status: ServiceCaseStatus | None = None
     started_at: datetime | None = None
@@ -24,7 +26,6 @@ class ServiceCaseUpdate(BaseModel):
     notes: str | None = None
     auto_send_documents: bool | None = None
     ai_auto_reply_enabled: bool | None = None
-    ai_agent_enabled: bool | None = None
     checkin_link_enabled: bool | None = None
     needs_human_intervention: bool | None = None
     refund_pending_confirmation: bool | None = None  # 运营驳回退款候选(置 False)时用
@@ -47,7 +48,6 @@ class ServiceCaseRead(Timestamped):
     notes: str | None
     auto_send_documents: bool = False
     ai_auto_reply_enabled: bool = True
-    ai_agent_enabled: bool = False
     checkin_link_enabled: bool = True
     risk_level: str = "normal"
     risk_flags: list[dict] | None = None

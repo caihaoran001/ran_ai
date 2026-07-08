@@ -2,11 +2,10 @@
 
 import { useState } from "react";
 import { API_BASE } from "@/lib/api";
-import { Bot, CalendarCheck, Send, Workflow } from "lucide-react";
+import { Bot, CalendarCheck, Send } from "lucide-react";
 
 type ToggleKey =
   | "ai_auto_reply_enabled"
-  | "ai_agent_enabled"
   | "checkin_link_enabled";
 
 function Row({
@@ -67,19 +66,13 @@ function Row({
 const AGENT_RECEIPT_TEXT =
   "我这边已开启新的辅助回复模式，后面你问服务进度、近期打卡、体重趋势这类问题时，我会先查准确记录再回复。\n\n如果你问近期影视、音乐、展览、赛事、旅游这类公开信息，我也可以联网查一下再帮你整理。";
 
-function AgentReceiptButton({
-  serviceCaseId,
-  disabled,
-}: {
-  serviceCaseId: number;
-  disabled: boolean;
-}) {
+function AgentReceiptButton({ serviceCaseId }: { serviceCaseId: number }) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function sendReceipt() {
-    if (disabled || sending) return;
+    if (sending) return;
     setSending(true);
     setError(null);
     setSent(false);
@@ -110,8 +103,8 @@ function AgentReceiptButton({
         <button
           type="button"
           onClick={sendReceipt}
-          disabled={disabled || sending}
-          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-800 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={sending}
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-900 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Send className="h-3.5 w-3.5" />
           {sending ? "发送中…" : "发送群内提示"}
@@ -124,19 +117,16 @@ function AgentReceiptButton({
 export function CaseAutomationToggles({
   serviceCaseId,
   aiAutoReplyEnabled,
-  aiAgentEnabled,
   checkinLinkEnabled,
   serviceWindowEnded = false,
   refunded = false,
 }: {
   serviceCaseId: number;
   aiAutoReplyEnabled: boolean;
-  aiAgentEnabled: boolean;
   checkinLinkEnabled: boolean;
   serviceWindowEnded?: boolean;
   refunded?: boolean;
 }) {
-  const [aiAgentOn, setAiAgentOn] = useState(aiAgentEnabled);
   // 退款客户与服务到期一样：停掉产品类定时推送（打卡链接），仅保留群内 AI 聊天。
   const pushDisabled = serviceWindowEnded || refunded;
 
@@ -161,16 +151,7 @@ export function CaseAutomationToggles({
           title="AI 自动回复"
           desc="关闭后机器人在群里完全不说话（等同群内「@机器人 退下」）；开启等同「回来」。"
         />
-        <Row
-          serviceCaseId={serviceCaseId}
-          field="ai_agent_enabled"
-          initial={aiAgentEnabled}
-          icon={Workflow}
-          title="Agent 链路"
-          desc="默认关闭，走旧回复链路；开启后在全局 Agent 开关也开启时，本服务单可使用增强工具链路，按需查询当前服务记录或联网搜索公开信息。"
-          onUpdated={setAiAgentOn}
-        />
-        <AgentReceiptButton serviceCaseId={serviceCaseId} disabled={!aiAgentOn} />
+        <AgentReceiptButton serviceCaseId={serviceCaseId} />
 
         <div className="pb-1 pt-3 text-xs font-medium text-slate-400">定时推送</div>
         <Row

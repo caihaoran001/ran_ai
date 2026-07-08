@@ -169,7 +169,6 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         <CaseAutomationToggles
           serviceCaseId={serviceCase.id}
           aiAutoReplyEnabled={serviceCase.ai_auto_reply_enabled}
-          aiAgentEnabled={serviceCase.ai_agent_enabled}
           checkinLinkEnabled={serviceCase.checkin_link_enabled}
           serviceWindowEnded={serviceWindowEnded}
           refunded={refunded}

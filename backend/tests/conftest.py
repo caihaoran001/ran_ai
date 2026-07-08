@@ -580,7 +580,6 @@ async def create_case(db_session):
                 "group_id": service_case.group_id,
                 "questionnaire_token": service_case.questionnaire_token,
                 "status": service_case.status.value,
-                "ai_agent_enabled": service_case.ai_agent_enabled,
                 "ai_auto_reply_enabled": service_case.ai_auto_reply_enabled,
                 "auto_send_documents": service_case.auto_send_documents,
             }
