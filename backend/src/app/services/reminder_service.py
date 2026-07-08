@@ -117,7 +117,6 @@ class ReminderService:
                             await self.check_agent_reminder_tasks_once()
                         if self.settings.reminder_enabled:
                             await self.check_once()
-                            await self.check_inactive_followups_once()
                             await self.check_stage_reports_once()
                         await self.check_questionnaire_sends_once()
                         if self.settings.outcome_snapshots_enabled:
@@ -354,124 +353,6 @@ class ReminderService:
                     task.status = AgentReminderTaskStatus.FAILED
                     task.sent_message_id = message.id
                     task.error = message.error
-            await session.commit()
-
-    async def check_inactive_followups_once(self) -> None:
-        if not self.settings.inactive_followup_enabled:
-            return
-        now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
-        async with SessionLocal() as session:
-            schedule = await get_checkin_questionnaire_schedule(session)
-            inactive_config = schedule.get("inactive_followup") if isinstance(schedule, dict) else None
-            if isinstance(inactive_config, dict):
-                if inactive_config.get("enabled", True) is False:
-                    return
-                inactive_hours = _int_or_default(inactive_config.get("hours"), self.settings.inactive_followup_hours)
-                inactive_message = str(inactive_config.get("message") or self.settings.inactive_followup_message)
-            else:
-                inactive_hours = self.settings.inactive_followup_hours
-                inactive_message = self.settings.inactive_followup_message
-
-        if now.isoweekday() not in _parse_weekdays(self.settings.reminder_weekdays):
-            return
-        if now.time() < _parse_time(self.settings.reminder_at):
-            return
-
-        today = now.date()
-        stale_before = now - timedelta(hours=max(1, inactive_hours))
-        async with SessionLocal() as session:
-            service_cases = list(
-                await session.scalars(
-                    select_active_service_cases(
-                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
-                        ServiceCase.started_at.is_not(None),
-                        or_(ServiceCase.risk_level.is_(None), ServiceCase.risk_level != "high"),
-                    )
-                )
-            )
-            if not service_cases:
-                return
-            case_ids = [item.id for item in service_cases]
-            latest_inbound_rows = list(
-                await session.execute(
-                    select(Message.service_case_id, Message.created_at)
-                    .where(
-                        Message.service_case_id.in_(case_ids),
-                        Message.direction == MessageDirection.INBOUND,
-                        Message.sender_type == MessageSenderType.USER,
-                        Message.purpose == MessagePurpose.CHAT,
-                        Message.status == MessageStatus.RECEIVED,
-                    )
-                    .order_by(Message.service_case_id, Message.created_at.desc())
-                )
-            )
-            latest_by_case: dict[int, datetime] = {}
-            for case_id, created_at in latest_inbound_rows:
-                latest_by_case.setdefault(case_id, created_at)
-
-            reminders = list(
-                await session.scalars(
-                    select(ReminderEvent).where(
-                        ReminderEvent.rule_id == "inactive_followup",
-                        ReminderEvent.event_date == today,
-                        ReminderEvent.event_type == ReminderEventType.REMINDED,
-                    )
-                )
-            )
-            reminded_ids = {item.service_case_id for item in reminders}
-
-            for service_case in service_cases:
-                if service_case.id in reminded_ids:
-                    continue
-                if service_window_ended(service_case, now, ZoneInfo(self.settings.reminder_timezone)):
-                    continue
-                if not service_case.inactive_wake_enabled:
-                    continue  # 单服务单关闭了无互动自动唤醒
-                latest_inbound_at = latest_by_case.get(service_case.id) or service_case.started_at
-                if not latest_inbound_at:
-                    continue
-                if latest_inbound_at.tzinfo is None:
-                    latest_inbound_at = latest_inbound_at.replace(tzinfo=ZoneInfo("UTC"))
-                if latest_inbound_at.astimezone(ZoneInfo(self.settings.reminder_timezone)) > stale_before:
-                    continue
-                reminder_event = await _reserve_reminder_event(
-                    session,
-                    service_case.id,
-                    rule_id="inactive_followup",
-                    event_date=today,
-                    event_type=ReminderEventType.REMINDED,
-                )
-                if not reminder_event:
-                    continue
-                user = await session.get(User, service_case.user_id) if service_case.user_id else None
-                content = _format_template(
-                    inactive_message,
-                    {
-                        "case_no": service_case.case_no,
-                        "group_id": service_case.group_id,
-                        "user_name": user.name if user else "",
-                        "hours": inactive_hours,
-                    },
-                )
-                message = Message(
-                    service_case_id=service_case.id,
-                    group_id=service_case.group_id,
-                    direction=MessageDirection.OUTBOUND,
-                    sender_type=MessageSenderType.SYSTEM,
-                    message_type="markdown",
-                    content=content,
-                    purpose=MessagePurpose.REMINDER,
-                    status=MessageStatus.PENDING,
-                )
-                session.add(message)
-                await session.flush()
-                result = await _send_channel_text_with_retries(service_case.group_id, content)
-                if result.success:
-                    message.status = MessageStatus.SENT
-                    message.wecom_message_id = result.message_id
-                else:
-                    message.status = MessageStatus.FAILED
-                    message.error = result.error
             await session.commit()
 
     async def check_stuck_document_generation_once(self) -> None:
@@ -1304,10 +1185,3 @@ def _format_template(template: str, values: dict[str, object]) -> str:
         return template.format(**values)
     except Exception:
         return template + "\n" + str(values.get("questionnaire_link") or "")
-
-
-def _int_or_default(value: object, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default

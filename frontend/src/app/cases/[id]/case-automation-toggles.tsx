@@ -2,13 +2,12 @@
 
 import { useState } from "react";
 import { API_BASE } from "@/lib/api";
-import { Bot, CalendarCheck, BellRing, Send, Workflow } from "lucide-react";
+import { Bot, CalendarCheck, Send, Workflow } from "lucide-react";
 
 type ToggleKey =
   | "ai_auto_reply_enabled"
   | "ai_agent_enabled"
-  | "checkin_link_enabled"
-  | "inactive_wake_enabled";
+  | "checkin_link_enabled";
 
 function Row({
   serviceCaseId,
@@ -127,7 +126,6 @@ export function CaseAutomationToggles({
   aiAutoReplyEnabled,
   aiAgentEnabled,
   checkinLinkEnabled,
-  inactiveWakeEnabled,
   serviceWindowEnded = false,
   refunded = false,
 }: {
@@ -135,12 +133,11 @@ export function CaseAutomationToggles({
   aiAutoReplyEnabled: boolean;
   aiAgentEnabled: boolean;
   checkinLinkEnabled: boolean;
-  inactiveWakeEnabled: boolean;
   serviceWindowEnded?: boolean;
   refunded?: boolean;
 }) {
   const [aiAgentOn, setAiAgentOn] = useState(aiAgentEnabled);
-  // 退款客户与服务到期一样：停掉产品类定时推送（打卡/无互动唤醒），仅保留群内 AI 聊天。
+  // 退款客户与服务到期一样：停掉产品类定时推送（打卡链接），仅保留群内 AI 聊天。
   const pushDisabled = serviceWindowEnded || refunded;
 
   return (
@@ -148,9 +145,9 @@ export function CaseAutomationToggles({
       <h3 className="font-semibold text-slate-950">自动化设置（仅本服务单）</h3>
       <p className="mt-1 text-xs leading-5 text-slate-500">
         {refunded
-          ? "该客户已退款，打卡链接、无互动唤醒及阶段报告已停用，仅保留群内 AI 聊天。"
+          ? "该客户已退款，打卡链接及阶段报告已停用，仅保留群内 AI 聊天。"
           : serviceWindowEnded
-            ? "该服务单已满 28 天毕业，打卡链接和无互动唤醒已由系统自动停用。"
+            ? "该服务单已满 28 天毕业，打卡链接已由系统自动停用。"
             : "定时推送还需对应全局开关开启才会真正发送；此处只能在全局已开的基础上，单独关掉本服务单。"}
       </p>
 
@@ -183,15 +180,6 @@ export function CaseAutomationToggles({
           icon={CalendarCheck}
           title="打卡链接"
           desc="晚间定时发送的每日打卡链接。"
-          disabled={pushDisabled}
-        />
-        <Row
-          serviceCaseId={serviceCaseId}
-          field="inactive_wake_enabled"
-          initial={inactiveWakeEnabled}
-          icon={BellRing}
-          title="无互动唤醒"
-          desc="长时间无互动时自动发一句唤醒/承接。"
           disabled={pushDisabled}
         />
       </div>

@@ -155,12 +155,6 @@ class Settings(BaseSettings):
         default="现在已经到 {time} 了，还没有收到你的打卡，请补一下。",
         validation_alias="REMINDER_MESSAGE",
     )
-    inactive_followup_enabled: bool = Field(default=True, validation_alias="INACTIVE_FOLLOWUP_ENABLED")
-    inactive_followup_hours: int = Field(default=24, validation_alias="INACTIVE_FOLLOWUP_HOURS")
-    inactive_followup_message: str = Field(
-        default="今天先稳住一个小动作就好。你这边如果遇到执行卡点，可以直接发群里，我来帮你一起拆小一点。",
-        validation_alias="INACTIVE_FOLLOWUP_MESSAGE",
-    )
     outcome_snapshots_enabled: bool = Field(default=True, validation_alias="OUTCOME_SNAPSHOTS_ENABLED")
 
     auto_send_documents: bool = Field(

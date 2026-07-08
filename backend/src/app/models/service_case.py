@@ -69,10 +69,8 @@ class ServiceCase(TimestampMixin, Base):
     auto_send_documents: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     ai_agent_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=text("false"))
-    # 单服务单定时发送开关（默认开；实际发送还需对应全局开关也开启）：
-    # 晚间打卡链接 / 无互动自动唤醒
+    # 单服务单定时发送开关（默认开；实际发送还需对应全局开关也开启）：晚间打卡链接
     checkin_link_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default=text("true"))
-    inactive_wake_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default=text("true"))
     risk_level: Mapped[str] = mapped_column(String(32), default="normal", index=True)
     risk_flags: Mapped[list[dict] | None] = mapped_column(JSON)
     needs_human_intervention: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

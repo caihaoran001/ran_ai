@@ -53,11 +53,6 @@ type ScheduleConfig = {
     enabled: boolean;
     message: string;
   };
-  inactive_followup: {
-    enabled: boolean;
-    hours: number;
-    message: string;
-  };
   rules_enabled: boolean;
   rules: ScheduleRule[];
   daily_rule: DailyRule;
@@ -598,96 +593,6 @@ function ScheduleEditor({
           </div>
         </div>
 
-        {/* 长时间无互动后的温和唤醒 */}
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          <div className="mb-4 flex items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3">
-            <div>
-              <h3 className="font-semibold text-slate-950">无互动自动唤醒</h3>
-              <p className="mt-1 text-xs text-slate-500">
-                服务中的用户超过指定小时数没有在群内发言时，每天最多由机器人温和提醒一次。
-              </p>
-            </div>
-            <Switch
-              checked={schedule.inactive_followup.enabled}
-              disabled={!schedule.enabled}
-              onChange={(checked) =>
-                onChange({
-                  ...schedule,
-                  inactive_followup: {
-                    ...schedule.inactive_followup,
-                    enabled: checked,
-                  },
-                })
-              }
-            />
-          </div>
-          <div className={`space-y-4 p-4 pt-0 transition-all duration-300 ${
-            schedule.inactive_followup.enabled
-              ? "opacity-100"
-              : "opacity-45 pointer-events-none select-none filter grayscale-[30%]"
-          }`}>
-            <label className="block max-w-xs">
-              <div className="mb-2 text-sm font-semibold text-slate-700">超过多少小时无互动后提醒</div>
-              <Input
-                type="number"
-                min={1}
-                value={schedule.inactive_followup.hours}
-                disabled={!schedule.inactive_followup.enabled}
-                onChange={(event) =>
-                  onChange({
-                    ...schedule,
-                    inactive_followup: {
-                      ...schedule.inactive_followup,
-                      hours: Math.max(1, Number(event.target.value) || 24),
-                    },
-                  })
-                }
-              />
-            </label>
-            <label className="block">
-              <div className="mb-2 flex items-center justify-between gap-3 text-xs font-medium text-slate-500">
-                <span>唤醒话术</span>
-                <div className="flex flex-wrap items-center justify-end gap-1">
-                  <span className="mr-1.5 text-xs text-slate-400">点击追加变量:</span>
-                  {["{user_name}", "{case_no}", "{group_id}", "{hours}"].map((varName) => (
-                    <button
-                      key={varName}
-                      type="button"
-                      disabled={!schedule.inactive_followup.enabled}
-                      onClick={() =>
-                        onChange({
-                          ...schedule,
-                          inactive_followup: {
-                            ...schedule.inactive_followup,
-                            message: schedule.inactive_followup.message + varName,
-                          },
-                        })
-                      }
-                      className="inline-flex items-center rounded-md border border-cyan-100 bg-cyan-50 px-2 py-0.5 font-mono text-xs font-semibold text-cyan-800 transition-colors hover:bg-cyan-100 disabled:opacity-40"
-                    >
-                      {varName}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <Textarea
-                className="min-h-24 text-sm"
-                value={schedule.inactive_followup.message}
-                disabled={!schedule.inactive_followup.enabled}
-                onChange={(event) =>
-                  onChange({
-                    ...schedule,
-                    inactive_followup: {
-                      ...schedule.inactive_followup,
-                      message: event.target.value,
-                    },
-                  })
-                }
-              />
-            </label>
-          </div>
-        </div>
-
         {/* 二、指定服务日发送（带独立开关） */}
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 bg-slate-50/60">
@@ -1004,21 +909,6 @@ function normalizeSchedule(value: Record<string, unknown>): ScheduleConfig {
             enabled: true,
             message:
               "问卷已收到，正在生成专属方案。\n\n我们会基于你的填写结果生成：\n1.《个人能量重启处方单》\n2.《28天执行标准与打卡要求》\n\n生成完成后会第一时间发送给你，请稍等。",
-          },
-    inactive_followup:
-      value.inactive_followup && typeof value.inactive_followup === "object"
-        ? {
-            enabled: (value.inactive_followup as Record<string, unknown>).enabled !== false,
-            hours: Math.max(1, Number((value.inactive_followup as Record<string, unknown>).hours ?? 24) || 24),
-            message: String(
-              (value.inactive_followup as Record<string, unknown>).message
-                ?? "今天先稳住一个小动作就好。你这边如果遇到执行卡点，可以直接发群里，我来帮你一起拆小一点。",
-            ),
-          }
-        : {
-            enabled: true,
-            hours: 24,
-            message: "今天先稳住一个小动作就好。你这边如果遇到执行卡点，可以直接发群里，我来帮你一起拆小一点。",
           },
     rules_enabled: value.rules_enabled !== false,
     rules: Array.isArray(value.rules)
