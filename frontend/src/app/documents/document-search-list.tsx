@@ -154,18 +154,18 @@ export function DocumentSearchList() {
   if (loadingPending) {
     return (
       <div className="space-y-6">
-        <div className="flex animate-pulse flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="panel flex animate-pulse flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="h-10 w-full rounded-lg bg-slate-100 sm:w-80" />
           <div className="h-10 w-full rounded-lg bg-slate-100 sm:w-64" />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
+          <div className="panel space-y-4 p-5">
             <div className="h-6 w-32 animate-pulse rounded bg-slate-100" />
             <div className="h-32 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
             <div className="h-32 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
           </div>
-          <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
+          <div className="panel space-y-4 p-5">
             <div className="h-6 w-32 animate-pulse rounded bg-slate-100" />
             <div className="h-32 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
             <div className="h-32 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
@@ -185,7 +185,7 @@ export function DocumentSearchList() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="panel flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative min-w-0 flex-1 sm:max-w-md">
           <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
@@ -198,13 +198,13 @@ export function DocumentSearchList() {
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="grid grid-cols-3 rounded-lg border border-slate-200 bg-slate-100 p-1 text-center">
+          <div className="segmented-control grid-cols-3 text-center">
             <button
               onClick={() => setStatusFilter("all")}
               className={`min-h-10 rounded-md px-2 py-2 text-xs font-bold transition-colors sm:px-4 ${
                 statusFilter === "all"
-                  ? "bg-white text-slate-900 shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
+                  ? "bg-white text-slate-950 shadow-sm"
+                  : "text-slate-700 hover:text-slate-950"
               }`}
             >
               全部 ({allCountLabel})
@@ -213,8 +213,8 @@ export function DocumentSearchList() {
               onClick={() => setStatusFilter("pending")}
               className={`min-h-10 rounded-md px-2 py-2 text-xs font-bold transition-colors sm:px-4 ${
                 statusFilter === "pending"
-                  ? "bg-white text-amber-700 shadow-sm"
-                  : "text-slate-600 hover:text-amber-700"
+                  ? "bg-white text-amber-800 shadow-sm"
+                  : "text-slate-700 hover:text-amber-800"
               }`}
             >
               待审核 ({pendingCount})
@@ -223,8 +223,8 @@ export function DocumentSearchList() {
               onClick={() => setStatusFilter("reviewed")}
               className={`min-h-10 rounded-md px-2 py-2 text-xs font-bold transition-colors sm:px-4 ${
                 statusFilter === "reviewed"
-                  ? "bg-white text-emerald-700 shadow-sm"
-                  : "text-slate-600 hover:text-emerald-700"
+                  ? "bg-white text-emerald-800 shadow-sm"
+                  : "text-slate-700 hover:text-emerald-800"
               }`}
             >
               已审核 ({historyLoaded ? reviewedCount : "加载"})
@@ -234,7 +234,7 @@ export function DocumentSearchList() {
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-cyan-200 bg-white px-3 text-cyan-800 transition-colors hover:bg-cyan-50 disabled:opacity-50"
+            className="admin-button-secondary px-3 text-cyan-800"
             title="刷新文档"
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
@@ -243,7 +243,7 @@ export function DocumentSearchList() {
       </div>
 
       {visibleDocuments.length === 0 && statusFilter === "pending" ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center sm:p-12">
+        <div className="empty-state sm:p-12">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
             <FileText className="h-6 w-6 text-slate-400" />
           </div>
@@ -256,8 +256,8 @@ export function DocumentSearchList() {
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Column 1: Pending */}
           {(statusFilter === "all" || statusFilter === "pending") && (
-            <section className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
-              <div className="flex items-center justify-between border-b border-slate-100 px-4 py-4 sm:px-5">
+            <section className="panel flex flex-col overflow-hidden">
+              <div className="panel-header-clean flex items-center justify-between">
                 <div>
                   <h2 className="flex items-center gap-2 text-sm font-bold text-slate-800">
                     <span className="h-2 w-2 rounded-full bg-amber-500" />
@@ -269,7 +269,7 @@ export function DocumentSearchList() {
                   {pendingDocs.length} 份
                 </span>
               </div>
-              <div className="flex flex-1 flex-col bg-slate-50/40 p-4 sm:p-5">
+              <div className="flex flex-1 flex-col bg-slate-50/60 p-4 sm:p-5">
                 {pendingDocs.length > 0 ? (
                   <div className="max-h-[500px] space-y-3.5 overflow-y-auto pr-1.5">
                     {pendingDocs.map((doc) => (
@@ -277,9 +277,9 @@ export function DocumentSearchList() {
                     ))}
                   </div>
                 ) : (
-                  <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/70 py-16 text-center text-slate-400">
+                  <div className="empty-state flex flex-1 flex-col items-center justify-center bg-white/70">
                     <Clock className="mb-2 h-6 w-6" />
-                    <p className="text-xs font-bold text-slate-500">暂无待审核文件</p>
+                    <p className="text-xs font-bold text-slate-600">暂无待审核文件</p>
                   </div>
                 )}
               </div>
@@ -288,8 +288,8 @@ export function DocumentSearchList() {
 
           {/* Column 2: Reviewed */}
           {(statusFilter === "all" || statusFilter === "reviewed") && (
-            <section className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
-              <div className="flex items-center justify-between border-b border-slate-100 px-4 py-4 sm:px-5">
+            <section className="panel flex flex-col overflow-hidden">
+              <div className="panel-header-clean flex items-center justify-between">
                 <div>
                   <h2 className="flex items-center gap-2 text-sm font-bold text-slate-800">
                     <span className="h-2 w-2 rounded-full bg-emerald-500" />
@@ -301,7 +301,7 @@ export function DocumentSearchList() {
                   {reviewedDocs.length} 份
                 </span>
               </div>
-              <div className="flex flex-1 flex-col bg-slate-50/40 p-4 sm:p-5">
+              <div className="flex flex-1 flex-col bg-slate-50/60 p-4 sm:p-5">
                 {reviewedDocs.length > 0 ? (
                   <div className="max-h-[500px] space-y-3.5 overflow-y-auto pr-1.5">
                     {reviewedDocs.map((doc) => (
@@ -309,14 +309,14 @@ export function DocumentSearchList() {
                     ))}
                   </div>
                 ) : loadingHistory ? (
-                  <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/70 py-16 text-center text-slate-400">
+                  <div className="empty-state flex flex-1 flex-col items-center justify-center bg-white/70">
                     <RefreshCw className="mb-2 h-6 w-6 animate-spin" />
-                    <p className="text-xs font-bold text-slate-500">正在加载已审核历史</p>
+                    <p className="text-xs font-bold text-slate-600">正在加载已审核历史</p>
                   </div>
                 ) : (
-                  <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/70 py-16 text-center text-slate-400">
+                  <div className="empty-state flex flex-1 flex-col items-center justify-center bg-white/70">
                     <ShieldCheck className="mb-2 h-6 w-6" />
-                    <p className="text-xs font-bold text-slate-500">暂无已审核文件</p>
+                    <p className="text-xs font-bold text-slate-600">暂无已审核文件</p>
                   </div>
                 )}
               </div>
@@ -381,7 +381,7 @@ function DocumentCard({
   return (
     <Link
       href={`/documents/${doc.id}`}
-      className="group relative block rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-cyan-300 hover:bg-cyan-50/30"
+      className="group relative block rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-cyan-300 hover:bg-white"
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1.5">
@@ -416,7 +416,7 @@ function DocumentCard({
               type="button"
               onClick={handleDiscard}
               disabled={discarding}
-              className="min-h-9 rounded-md border border-rose-200 bg-white px-3 text-xs font-bold text-rose-700 transition-colors hover:bg-rose-50 hover:text-rose-800 disabled:opacity-50"
+              className="admin-button-danger min-h-9 px-3 text-xs"
             >
               {discarding ? "处理中…" : "不发送"}
             </button>

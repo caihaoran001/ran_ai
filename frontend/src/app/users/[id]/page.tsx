@@ -44,14 +44,21 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="page-stack">
-      <div className="min-w-0">
-        <h1 className="page-heading">{user.name}</h1>
-        <p className="text-break page-subtitle">{user.phone ?? "无手机号"} · {user.wecom_user_id ?? "无聊天用户 ID"}</p>
-        {user.deleted_at && (
-          <p className="mt-2 inline-flex rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">
-            已删除：{formatDateTime(user.deleted_at)}
-          </p>
-        )}
+      <div className="page-header">
+        <div className="page-header-row">
+          <div className="min-w-0">
+            <h1 className="page-heading">{user.name}</h1>
+            <p className="text-break page-subtitle">{user.phone ?? "无手机号"} · {user.wecom_user_id ?? "无聊天用户 ID"}</p>
+            {user.deleted_at && (
+              <p className="mt-2 inline-flex rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-bold text-red-700">
+                已删除：{formatDateTime(user.deleted_at)}
+              </p>
+            )}
+          </div>
+          <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">
+            用户档案
+          </span>
+        </div>
       </div>
 
       {serviceCase && (
@@ -65,9 +72,11 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         />
       )}
 
-      <section className="panel p-4 sm:p-5">
-        <h2 className="font-semibold text-slate-950">基本信息</h2>
-        <div className="mt-3 grid gap-3 text-sm md:grid-cols-4">
+      <section className="panel overflow-hidden">
+        <div className="panel-header-clean">
+          <h2 className="panel-title">基本信息</h2>
+        </div>
+        <div className="grid gap-3 p-4 text-sm sm:p-5 md:grid-cols-4">
           <Info label="用户ID" value={String(user.id)} />
           <Info label="真实姓名" value={user.name} />
           <Info label="手机号" value={user.phone ?? "暂无数据"} />
@@ -79,39 +88,48 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         </div>
       </section>
 
-      <section className="panel p-4 sm:p-5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="font-semibold text-slate-950">用户画像</h2>
+      <section className="panel overflow-hidden">
+        <div className="panel-header-clean flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="panel-title">用户画像</h2>
           <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-600">{profileSource}</span>
         </div>
-        {profile ? (
-          <>
+        <div className="panel-body">
+          {profile ? (
             <ProfileView profile={profile.profile_json} fallback={profile.summary} serviceCase={serviceCase} />
-          </>
-        ) : (
-          <p className="mt-3 text-sm text-zinc-500">尚未生成用户画像。用户提交入营问卷后，系统会自动生成画像和交付文件。</p>
-        )}
+          ) : (
+            <p className="empty-state">尚未生成用户画像。用户提交入营问卷后，系统会自动生成画像和交付文件。</p>
+          )}
+        </div>
       </section>
       {stateProfile && (
-        <section className="panel p-4 sm:p-5">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="font-semibold text-slate-950">当前用户状态</h2>
+        <section className="panel overflow-hidden">
+          <div className="panel-header-clean flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="panel-title">当前用户状态</h2>
             <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">证据驱动更新</span>
           </div>
-          <LongTermMemoryView state={stateProfile.state_json} />
-          <StateProfileView state={stateProfile.state_json} updatedAt={stateProfile.updated_at} />
+          <div className="panel-body">
+            <LongTermMemoryView state={stateProfile.state_json} />
+            <StateProfileView state={stateProfile.state_json} updatedAt={stateProfile.updated_at} />
+          </div>
         </section>
       )}
       {(energyDocument || executionDocument) && (
-        <section className="panel p-4 sm:p-5">
-          <h2 className="font-semibold text-slate-950">交付文件摘要</h2>
-          <DocumentHighlights energyDocument={energyDocument} executionDocument={executionDocument} />
+        <section className="panel overflow-hidden">
+          <div className="panel-header-clean">
+            <h2 className="panel-title">交付文件摘要</h2>
+          </div>
+          <div className="panel-body">
+            <DocumentHighlights energyDocument={energyDocument} executionDocument={executionDocument} />
+          </div>
         </section>
       )}
       {serviceCase && (
-        <section className="panel p-4 sm:p-5">
-          <h2 className="font-semibold text-slate-950">正在进行的方案</h2>
-          <Link className="text-break mt-3 block rounded-md border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50" href={`/cases/${serviceCase.id}`}>
+        <section className="panel overflow-hidden">
+          <div className="panel-header-clean">
+            <h2 className="panel-title">正在进行的方案</h2>
+          </div>
+          <div className="panel-body">
+          <Link className="text-break block rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm font-bold text-slate-900 hover:border-cyan-300 hover:bg-white" href={`/cases/${serviceCase.id}`}>
             {serviceCase.case_no} · {statusLabel(serviceCase.status)}
           </Link>
           <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
@@ -121,11 +139,14 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
             <Info label="续购意向" value={intentText(serviceCase.renewal_intent_flags)} />
             <Info label="退款/退出意向" value={intentText(serviceCase.refund_intent_flags)} />
           </div>
+          </div>
         </section>
       )}
-      <section className="panel p-4 sm:p-5">
-        <h2 className="font-semibold text-slate-950">打卡数据</h2>
-        <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
+      <section className="panel overflow-hidden">
+        <div className="panel-header-clean">
+          <h2 className="panel-title">打卡数据</h2>
+        </div>
+        <div className="grid gap-3 p-4 text-sm sm:p-5 md:grid-cols-3">
           <Info label="体重变化" value={weightTrend(checkins)} />
           <Info label="睡眠变化" value={latestParsed?.sleep || "暂无数据"} />
           <Info label="情绪变化" value={latestParsed?.mood || "暂无数据"} />
@@ -134,22 +155,26 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <Info label="打卡天数" value={`${uniqueCheckinDays} 天`} />
         </div>
       </section>
-      <section className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-zinc-500 sm:p-5">
-        <h2 className="font-semibold">购买与复购</h2>
-        <p className="mt-2 text-xs">订单数据尚未接入，仅预留展示位。</p>
-        <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
+      <section className="panel overflow-hidden">
+        <div className="panel-header-clean">
+          <h2 className="panel-title">购买与复购</h2>
+          <p className="panel-subtitle">订单数据尚未接入，仅预留展示位。</p>
+        </div>
+        <div className="grid gap-3 p-4 text-sm sm:p-5 md:grid-cols-3">
           <Info label="购买记录" value="未接入" muted />
           <Info label="复购记录" value="未接入" muted />
           <Info label="客单价" value="未接入" muted />
         </div>
       </section>
-      <section className="panel p-4 sm:p-5">
-        <h2 className="font-semibold text-slate-950">历史聊天摘要</h2>
-        <p className="mt-3 text-sm text-zinc-600">{chatSummary(messages)}</p>
-        <div className="mt-3 max-h-48 overflow-y-auto space-y-2 pr-1 text-sm">
+      <section className="panel overflow-hidden">
+        <div className="panel-header-clean">
+          <h2 className="panel-title">历史聊天摘要</h2>
+          <p className="panel-subtitle">{chatSummary(messages)}</p>
+        </div>
+        <div className="max-h-48 space-y-2 overflow-y-auto p-4 pr-2 text-sm sm:p-5">
           {messages.slice(-5).map((message) => (
-            <div key={message.id} className="rounded-md border border-zinc-100 p-2">
-              <span className="text-zinc-500">{
+            <div key={message.id} className="rounded-md border border-slate-200 bg-slate-50/60 p-2.5">
+              <span className="font-bold text-slate-600">{
                 message.sender_type === "bot" ? "燃人.AI"
                   : message.sender_type === "staff" ? (message.display_sender_name || "班主任")
                   : message.direction === "outbound" ? "运营"
@@ -160,21 +185,27 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           ))}
         </div>
       </section>
-      <section className="panel p-4 sm:p-5">
-        <h2 className="font-semibold text-slate-950">服务单</h2>
-        <div className="mt-3 max-h-48 overflow-y-auto grid gap-2 pr-1 text-sm">
+      <section className="panel overflow-hidden">
+        <div className="panel-header-clean">
+          <h2 className="panel-title">服务单</h2>
+        </div>
+        <div className="grid max-h-48 gap-2 overflow-y-auto p-4 pr-2 text-sm sm:p-5">
           {user.service_cases.map((item) => (
-            <Link key={item.id} className="text-break rounded-md border border-zinc-200 px-3 py-2 hover:bg-zinc-50" href={`/cases/${item.id}`}>
+            <Link key={item.id} className="text-break rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2 font-bold text-slate-900 hover:border-cyan-300 hover:bg-white" href={`/cases/${item.id}`}>
               {item.case_no} · {item.group_id} · {statusLabel(item.status)}
             </Link>
           ))}
         </div>
       </section>
       {profile && (
-        <section className="panel p-4 sm:p-5">
-          <h2 className="font-semibold text-slate-950">调试信息</h2>
-          <p className="mt-1 text-xs text-zinc-500">供排查 AI 回复上下文使用，日常运营可忽略。</p>
-          <AiContextPreview context={aiContextPreview?.context} />
+        <section className="panel overflow-hidden">
+          <div className="panel-header-clean">
+            <h2 className="panel-title">调试信息</h2>
+            <p className="panel-subtitle">供排查 AI 回复上下文使用，日常运营可忽略。</p>
+          </div>
+          <div className="panel-body">
+            <AiContextPreview context={aiContextPreview?.context} />
+          </div>
         </section>
       )}
     </div>
@@ -183,9 +214,9 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
 
 function Info({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
   return (
-    <div className={`rounded-md border p-3 ${muted ? "border-zinc-200 bg-zinc-100 text-zinc-400" : "border-zinc-200 bg-zinc-50"}`}>
-      <div className="text-xs text-zinc-500">{label}</div>
-      <div className={`text-break mt-1 font-medium ${muted ? "text-zinc-400" : "text-zinc-900"}`}>{value}</div>
+    <div className={`rounded-lg border p-3 ${muted ? "border-slate-200 bg-slate-100 text-slate-500" : "border-slate-200 bg-slate-50/70"}`}>
+      <div className="text-xs font-bold text-slate-600">{label}</div>
+      <div className={`text-break mt-1 font-bold ${muted ? "text-slate-500" : "text-slate-950"}`}>{value}</div>
     </div>
   );
 }

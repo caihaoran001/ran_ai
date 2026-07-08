@@ -79,61 +79,63 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   return (
     <div className="page-stack">
       {isGenerating && <CaseGeneratingPoller />}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="page-heading">{serviceCase.case_no}</h1>
-            <StatusBadge status={serviceCase.status} />
-          </div>
-          <p className="text-break mt-2 text-sm text-slate-600">
-            {serviceCase.user ? (
-              <Link
-                href={`/users/${serviceCase.user.id}`}
-                className="inline-flex items-center gap-1 font-semibold text-cyan-700 hover:text-cyan-800 hover:underline"
-              >
-                <UserRound className="h-4 w-4" />
-                {serviceCase.user.name}（查看完整用户画像与打卡历史）
-              </Link>
-            ) : (
-              "待填写问卷用户"
-            )}
-             · {serviceCase.group_id}
-          </p>
-          {serviceCase.deleted_at && (
-            <p className="mt-2 inline-flex rounded-md border border-red-200 bg-red-50 px-3 py-1 text-xs text-red-700">
-              已删除：{formatDateTime(serviceCase.deleted_at)}
+      <div className="page-header">
+        <div className="page-header-row">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="page-heading">{serviceCase.case_no}</h1>
+              <StatusBadge status={serviceCase.status} />
+            </div>
+            <p className="text-break mt-2 text-sm text-slate-600">
+              {serviceCase.user ? (
+                <Link
+                  href={`/users/${serviceCase.user.id}`}
+                  className="inline-flex items-center gap-1 font-bold text-cyan-700 hover:text-cyan-900 hover:underline"
+                >
+                  <UserRound className="h-4 w-4" />
+                  {serviceCase.user.name}（查看完整用户画像与打卡历史）
+                </Link>
+              ) : (
+                "待填写问卷用户"
+              )}
+               · {serviceCase.group_id}
             </p>
+            {serviceCase.deleted_at && (
+              <p className="mt-2 inline-flex rounded-md border border-red-200 bg-red-50 px-3 py-1 text-xs font-bold text-red-700">
+                已删除：{formatDateTime(serviceCase.deleted_at)}
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {serviceCase.risk_level === "high" && (
+                <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  高风险
+                  {serviceCase.risk_flags?.[0] && (
+                    <span className="opacity-80">· {riskLabel(serviceCase.risk_flags[0])}</span>
+                  )}
+                </span>
+              )}
+              {serviceCase.needs_human_intervention && (
+                <span className="status-pill border-orange-200 bg-orange-50 text-orange-700">
+                  <UserRound className="h-3.5 w-3.5" />
+                  需关注
+                </span>
+              )}
+              {serviceCase.risk_level === "high" && (
+                <CaseRiskReset caseId={serviceCase.id} />
+              )}
+            </div>
+          </div>
+          {!serviceCase.deleted_at && (
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              {/* 候选态的确认横幅单独整行展示；此处仅放常态「标记已退款」/已退款「恢复服务」的紧凑按钮 */}
+              {!(serviceCase.refund_pending_confirmation && !refunded) && (
+                <CaseRefundControls caseId={serviceCase.id} status={serviceCase.status} refundPending={false} />
+              )}
+              <CaseActions caseId={serviceCase.id} currentStartedAt={serviceCase.started_at} />
+            </div>
           )}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {serviceCase.risk_level === "high" && (
-              <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                高风险
-                {serviceCase.risk_flags?.[0] && (
-                  <span className="opacity-70">· {riskLabel(serviceCase.risk_flags[0])}</span>
-                )}
-              </span>
-            )}
-            {serviceCase.needs_human_intervention && (
-              <span className="status-pill border-orange-200 bg-orange-50 text-orange-700">
-                <UserRound className="h-3.5 w-3.5" />
-                需关注
-              </span>
-            )}
-            {serviceCase.risk_level === "high" && (
-              <CaseRiskReset caseId={serviceCase.id} />
-            )}
-          </div>
         </div>
-        {!serviceCase.deleted_at && (
-          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-            {/* 候选态的确认横幅单独整行展示；此处仅放常态「标记已退款」/已退款「恢复服务」的紧凑按钮 */}
-            {!(serviceCase.refund_pending_confirmation && !refunded) && (
-              <CaseRefundControls caseId={serviceCase.id} status={serviceCase.status} refundPending={false} />
-            )}
-            <CaseActions caseId={serviceCase.id} currentStartedAt={serviceCase.started_at} />
-          </div>
-        )}
       </div>
 
       {!serviceCase.deleted_at && serviceCase.refund_pending_confirmation && !refunded && (
@@ -233,15 +235,15 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
             {documents.length > 0 ? (
               <div className="space-y-3">
                 {documents.map((document) => (
-                  <div key={document.id} className="flex flex-col gap-3 rounded-lg border border-slate-200 p-4 transition-colors hover:border-cyan-300 hover:bg-cyan-50/30 sm:flex-row sm:items-center sm:justify-between">
-                    <Link className="text-break font-medium text-slate-950 hover:text-cyan-700" href={`/documents/${document.id}`}>
+                  <div key={document.id} className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-4 transition-colors hover:border-cyan-300 hover:bg-white sm:flex-row sm:items-center sm:justify-between">
+                    <Link className="text-break font-bold text-slate-950 hover:text-cyan-700" href={`/documents/${document.id}`}>
                       {document.title}
                     </Link>
                     <div className="flex flex-wrap items-center gap-3">
                       <StatusBadge status={document.status} />
                       <a
                         suppressHydrationWarning
-                        className="text-sm font-semibold text-cyan-700 hover:text-cyan-800"
+                        className="admin-link text-sm"
                         href={`/api/backend/documents/${document.id}/download`}
                       >
                         下载
@@ -251,7 +253,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                 ))}
               </div>
             ) : (
-              <div className="py-8 text-center text-slate-400">
+              <div className="empty-state">
                 <FileText className="mx-auto mb-2 h-9 w-9" />
                 <p>还没有生成交付文件</p>
               </div>
@@ -277,19 +279,19 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
             {checkins.length > 0 ? (
               <div className="space-y-3">
                 {checkins.slice(0, 5).map((checkin) => (
-                  <div key={checkin.id} className="flex items-start gap-3 rounded-lg border border-slate-100 p-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                  <div key={checkin.id} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-emerald-100 bg-emerald-50 text-emerald-700">
                       <CheckCircle2 className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <StructuredCheckin checkin={checkin} />
-                      <div className="text-xs text-zinc-400">{formatDateTime(checkin.created_at)}</div>
+                      <div className="mt-2 text-xs font-semibold text-slate-500">{formatDateTime(checkin.created_at)}</div>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="py-8 text-center text-slate-400">
+              <div className="empty-state">
                 <ClipboardList className="mx-auto mb-2 h-9 w-9" />
                 <p>暂无打卡记录</p>
               </div>
@@ -319,10 +321,10 @@ function StructuredCheckin({ checkin }: { checkin: Checkin }) {
   ].filter(([, value]) => value);
   if (rows.length === 0) return <div className="text-break text-sm text-zinc-900">{checkin.content}</div>;
   return (
-    <div className="grid gap-1 text-sm text-zinc-900 sm:grid-cols-2">
+    <div className="grid gap-2 text-sm text-slate-900 sm:grid-cols-2">
       {rows.map(([label, value]) => (
-        <div key={label} className="text-break">
-          <span className="text-zinc-500">{label}：</span>{value}
+        <div key={label} className="text-break rounded-md border border-slate-200 bg-white px-2.5 py-1.5">
+          <span className="font-bold text-slate-600">{label}：</span>{value}
         </div>
       ))}
     </div>
@@ -378,12 +380,14 @@ function InfoCard({
 }) {
   const Icon = icon;
   return (
-    <div className={`rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-colors hover:border-cyan-200 ${className}`}>
-      <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-        <Icon className="h-4 w-4 text-cyan-700" />
+    <div className={`rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-colors hover:border-cyan-200 hover:bg-slate-50/40 ${className}`}>
+      <div className="flex items-center gap-2 text-sm font-bold text-slate-600">
+        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-cyan-50 text-cyan-700 ring-1 ring-cyan-100">
+          <Icon className="h-4 w-4" />
+        </span>
         {title}
       </div>
-      <div className={`text-break mt-2 text-lg font-semibold text-slate-950 ${valueClassName}`}>{value}</div>
+      <div className={`text-break mt-3 text-lg font-black text-slate-950 ${valueClassName}`}>{value}</div>
     </div>
   );
 }

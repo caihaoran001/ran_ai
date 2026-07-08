@@ -18,28 +18,35 @@ export default async function CheckinsPage() {
 
   return (
     <div className="page-stack">
-      <div>
-        <h1 className="page-heading">打卡记录</h1>
-        <p className="page-subtitle">按服务单查看最近 100 条打卡。</p>
+      <div className="page-header">
+        <div className="page-header-row">
+          <div>
+            <h1 className="page-heading">打卡记录</h1>
+            <p className="page-subtitle">按服务单查看最近 100 条打卡，便于运营快速判断执行连续性。</p>
+          </div>
+          <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">
+            最近 {recentCheckins.length} 条
+          </span>
+        </div>
       </div>
       <div className="grid gap-4">
         {rows.map(({ serviceCase, checkins }) => (
-          <section key={serviceCase.id} className="panel p-4 sm:p-5">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <section key={serviceCase.id} className="panel overflow-hidden">
+            <div className="panel-header-clean flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <h2 className="text-break font-semibold text-slate-950">{serviceCase.user?.name ?? serviceCase.case_no}</h2>
                 <p className="text-break mt-1 text-sm text-slate-600">{serviceCase.group_id}</p>
               </div>
-              <Link className="inline-flex min-h-10 items-center justify-center rounded-lg border border-cyan-200 px-3 text-sm font-semibold text-cyan-800 hover:bg-cyan-50" href={`/cases/${serviceCase.id}`}>服务单详情</Link>
+              <Link className="admin-button-secondary text-cyan-800" href={`/cases/${serviceCase.id}`}>服务单详情</Link>
             </div>
-            <div className="grid gap-2 text-sm">
+            <div className="grid gap-2 p-4 text-sm sm:p-5">
               {checkins.slice(0, 7).map((checkin) => (
-                <div key={checkin.id} className="rounded-lg border border-slate-200 px-3 py-2.5">
-                  <div className="mb-2 text-xs font-semibold text-slate-500">{checkin.checkin_date}</div>
+                <div key={checkin.id} className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+                  <div className="mb-2 text-xs font-bold text-slate-600">{checkin.checkin_date}</div>
                   <StructuredCheckin checkin={checkin} />
                 </div>
               ))}
-              {checkins.length === 0 && <p className="rounded-lg border border-dashed border-slate-200 py-6 text-center text-slate-500">暂无打卡</p>}
+              {checkins.length === 0 && <p className="empty-state py-6">暂无打卡</p>}
             </div>
           </section>
         ))}
@@ -66,8 +73,8 @@ function StructuredCheckin({ checkin }: { checkin: Checkin }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
       {rows.map(([label, value]) => (
-        <span key={label} className="text-break rounded-lg bg-slate-50 px-2.5 py-1.5">
-          <span className="text-slate-500">{label}：</span>{value}
+        <span key={label} className="text-break rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
+          <span className="font-bold text-slate-600">{label}：</span>{value}
         </span>
       ))}
     </div>

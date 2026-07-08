@@ -124,150 +124,42 @@ export default async function DashboardPage() {
 
   return (
     <div className="page-stack">
-      <div>
-        <h1 className="page-heading">数据看板</h1>
-        <p className="page-subtitle">服务概览与关键指标</p>
+      <div className="page-header">
+        <div className="page-header-row">
+          <div>
+            <h1 className="page-heading">数据看板</h1>
+            <p className="page-subtitle">服务概览、风险信号与运营质量巡检。优先处理红色风险，再看今日执行和服务规模。</p>
+          </div>
+          <span className="status-pill border-emerald-200 bg-emerald-50 text-emerald-800">
+            在线巡检
+          </span>
+        </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <StatCard
-          label="需关注事件"
-          value={summary.human_intervention_users ?? 0}
-          icon={ShieldAlert}
-          color="red"
-          href="/dashboard/attention-events"
-          description="今日触发转人工、@班主任的事件数；点击查看服务单、触发原话和 AI/班主任回复。"
-        />
-        <StatCard
-          label="退款/退出意向"
-          value={summary.refund_intent_users ?? 0}
-          icon={RefreshCcw}
-          color="red"
-          href="/dashboard/refund-intents"
-          description="用户聊天中出现退款、退费、不继续、退出、退群等表达；点击查看触发原话。"
-        />
-        <StatCard
-          label="已退款待确认"
-          value={summary.refund_pending_users ?? 0}
-          icon={RefreshCcw}
-          color="red"
-          href="/dashboard/refund-pending"
-          description="AI 识别到客户可能已完成退款、等待运营确认；确认后停止打卡/阶段报告等主动推送，群聊仍保留。"
-        />
-        <StatCard
-          label="今日情绪预警"
-          value={summary.emotional_users_today ?? 0}
-          icon={LifeBuoy}
-          color="red"
-          href="/dashboard/emotional-alerts"
-          description="今天入站消息中，经语义识别出现明显负面情绪、执行挫败或心理风险线索的用户数。"
-        />
-        <StatCard
-          label="明确续购意向"
-          value={summary.renewal_intent_users ?? 0}
-          icon={HeartHandshake}
-          color="green"
-          href="/dashboard/renewal-intents"
-          description="用户聊天中出现续费、复购、再买、继续购买等表达；点击查看触发原话。"
-        />
-        <StatCard
-          label="今日用户消息"
-          value={summary.messages_today}
-          icon={MessageCircle}
-          color="cyan"
-          href="/dashboard/today-messages"
-          description={
-            <>
-              今天收到的用户入站消息数。今日社群双向消息共{" "}
-              <span className="mx-0.5 rounded-md border border-cyan-200 bg-cyan-50 px-1.5 py-0.5 text-[11px] font-semibold text-cyan-800">
-                {summary.messages_today + (summary.messages_outbound_today ?? 0)}
-              </span>{" "}
-              条（其中用户发送{" "}
-              <span className="mx-0.5 rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-800">
-                {summary.messages_today}
-              </span>{" "}
-              条，班主任/机器人回复{" "}
-              <span className="mx-0.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">
-                {summary.messages_outbound_today ?? 0}
-              </span>{" "}
-              条）。
-            </>
-          }
-        />
-        <StatCard
-          label="今日打卡"
-          value={summary.checkins_today}
-          icon={CheckCircle2}
-          color="yellow"
-          href="/dashboard/today-checkins"
-          description="今天提交的打卡记录数；点击只看今日打卡，并按服务单聚合。"
-        />
-        <StatCard
-          label="待审核文件"
-          value={summary.pending_documents}
-          icon={FileText}
-          color="orange"
-          href="/dashboard/pending-documents"
-          description="每个服务单当前有效的最新文档里，状态为草稿或待审核的文件数；点击查看具体服务单和文件。"
-        />
-        <StatCard
-          label="风险用户"
-          value={summary.risk_users}
-          icon={AlertTriangle}
-          color="red"
-          href="/dashboard/risk-users"
-          description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险，需要人工关注；点击查看具体风险原因。"
-        />
-        <StatCard
-          label="未跟进（2-7天）"
-          value={summary.unfollowed_users}
-          icon={Clock3}
-          color="yellow"
-          href="/dashboard/unfollowed"
-          description="服务中，且最近 2-7 天没有用户入站消息的服务单；与流失用户互斥；点击查看闲置天数。"
-        />
-        <StatCard
-          label="流失用户"
-          value={summary.lost_users}
-          icon={TrendingDown}
-          color="orange"
-          href="/dashboard/lost"
-          description="服务中，且超过 7 天没有用户入站消息的服务单；不再计入未跟进；点击查看闲置天数。"
-        />
-        <StatCard
-          label="续购跟进窗口"
-          value={renewalFollowupUsers}
-          icon={ShoppingCart}
-          color="green"
-          href="/dashboard/renewal-followup"
-          description="按服务天数推算：已服务 18-28 天，适合人工做续购沟通，不代表用户已表达购买意愿；点击查看服务天数。"
-        />
-        <StatCard
-          label="今日新增用户"
-          value={summary.new_users_today}
-          icon={Plus}
-          color="blue"
-          href="/users?filter=new_today"
-          description="今天新创建且未删除的服务单。"
-        />
-        <StatCard
-          label="服务单总数"
-          value={summary.service_cases_total}
-          icon={ClipboardList}
-          color="blue"
-          href="/users"
-          description="当前未删除服务单总数。"
-        />
-        <StatCard
-          label="服务中"
-          value={summary.service_cases_in_service}
-          icon={UserCheck}
-          color="green"
-          href="/users?filter=in_service"
-          description="状态为服务中的服务单。"
-        />
+      <DashboardMetricSection title="风险优先处理" description="这些信号需要运营先看证据，再决定是否介入。">
+        <StatCard label="需关注事件" value={summary.human_intervention_users ?? 0} icon={ShieldAlert} color="red" href="/dashboard/attention-events" description="今日触发转人工、@班主任的事件数；点击查看服务单、触发原话和 AI/班主任回复。" />
+        <StatCard label="退款/退出意向" value={summary.refund_intent_users ?? 0} icon={RefreshCcw} color="red" href="/dashboard/refund-intents" description="用户聊天中出现退款、退费、不继续、退出、退群等表达；点击查看触发原话。" />
+        <StatCard label="已退款待确认" value={summary.refund_pending_users ?? 0} icon={RefreshCcw} color="red" href="/dashboard/refund-pending" description="AI 识别到客户可能已完成退款、等待运营确认；确认后停止打卡/阶段报告等主动推送，群聊仍保留。" />
+        <StatCard label="今日情绪预警" value={summary.emotional_users_today ?? 0} icon={LifeBuoy} color="red" href="/dashboard/emotional-alerts" description="今天入站消息中，经语义识别出现明显负面情绪、执行挫败或心理风险线索的用户数。" />
+      </DashboardMetricSection>
+
+      <DashboardMetricSection title="今日运营节奏" description="用于判断当天服务触达、审核和跟进压力。">
+        <StatCard label="今日用户消息" value={summary.messages_today} icon={MessageCircle} color="cyan" href="/dashboard/today-messages" description={<>今天收到的用户入站消息数。今日社群双向消息共 <span className="font-bold text-cyan-900">{summary.messages_today + (summary.messages_outbound_today ?? 0)}</span> 条。</>} />
+        <StatCard label="今日打卡" value={summary.checkins_today} icon={CheckCircle2} color="yellow" href="/dashboard/today-checkins" description="今天提交的打卡记录数；点击只看今日打卡，并按服务单聚合。" />
+        <StatCard label="待审核文件" value={summary.pending_documents} icon={FileText} color="orange" href="/dashboard/pending-documents" description="当前有效最新文档中，草稿或待审核的文件数；点击查看具体服务单和文件。" />
+        <StatCard label="今日新增用户" value={summary.new_users_today} icon={Plus} color="blue" href="/users?filter=new_today" description="今天新创建且未删除的服务单。" />
+      </DashboardMetricSection>
+
+      <DashboardMetricSection title="服务规模与生命周期" description="用于安排续购、未跟进和流失处理优先级。">
+        <StatCard label="服务中" value={summary.service_cases_in_service} icon={UserCheck} color="green" href="/users?filter=in_service" description="状态为服务中的服务单。" />
+        <StatCard label="服务单总数" value={summary.service_cases_total} icon={ClipboardList} color="blue" href="/users" description="当前未删除服务单总数。" />
+        <StatCard label="风险用户" value={summary.risk_users} icon={AlertTriangle} color="red" href="/dashboard/risk-users" description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险，需要人工关注。" />
+        <StatCard label="未跟进（2-7天）" value={summary.unfollowed_users} icon={Clock3} color="yellow" href="/dashboard/unfollowed" description="服务中，且最近 2-7 天没有用户入站消息的服务单；点击查看闲置天数。" />
+        <StatCard label="流失用户" value={summary.lost_users} icon={TrendingDown} color="orange" href="/dashboard/lost" description="服务中，且超过 7 天没有用户入站消息的服务单；点击查看闲置天数。" />
+        <StatCard label="续购跟进窗口" value={renewalFollowupUsers} icon={ShoppingCart} color="green" href="/dashboard/renewal-followup" description="已服务 18-28 天，适合人工做续购沟通；不代表用户已表达购买意愿。" />
+        <StatCard label="明确续购意向" value={summary.renewal_intent_users ?? 0} icon={HeartHandshake} color="green" href="/dashboard/renewal-intents" description="用户聊天中出现续费、复购、再买、继续购买等表达；点击查看触发原话。" />
         <AICostCard summary={summary.ai_cost_summary} />
-      </div>
+      </DashboardMetricSection>
 
       <OutcomeSummaryPanel summary={summary.outcome_summary} />
       <CaseHealthTable items={caseHealth} />
@@ -314,6 +206,32 @@ function CaseHealthTable({ items }: { items: CaseHealthItem[] }) {
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+function DashboardMetricSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="panel overflow-hidden">
+      <div className="panel-header-clean">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="panel-title">{title}</h2>
+            <p className="panel-subtitle">{description}</p>
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-4">
+        {children}
+      </div>
     </section>
   );
 }
@@ -393,9 +311,11 @@ function CaseHealthRow({ item }: { item: CaseHealthItem }) {
             <span
               key={stage}
               title={`${stageNum[stage]}天报告`}
-              className={`inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-[11px] ${
-                item.stage_reports.includes(stage) ? "bg-cyan-600 text-white" : "bg-zinc-100 text-zinc-300"
-              }`}
+              className={
+                item.stage_reports.includes(stage)
+                  ? "inline-flex h-5 min-w-5 items-center justify-center rounded bg-cyan-600 px-1 text-[11px] text-white"
+                  : "inline-flex h-5 min-w-5 items-center justify-center rounded bg-zinc-100 px-1 text-[11px] text-zinc-500"
+              }
             >
               {stageNum[stage]}
             </span>
@@ -535,30 +455,31 @@ function StatCard({
   description: ReactNode;
 }) {
   const Icon = icon;
-  const colorClasses: Record<string, { card: string; icon: string }> = {
-    blue: { card: "border-sky-200 bg-sky-50/70", icon: "bg-white text-sky-700" },
-    cyan: { card: "border-cyan-200 bg-cyan-50/70", icon: "bg-white text-cyan-700" },
-    green: { card: "border-emerald-200 bg-emerald-50/70", icon: "bg-white text-emerald-700" },
-    yellow: { card: "border-amber-200 bg-amber-50/70", icon: "bg-white text-amber-700" },
-    orange: { card: "border-orange-200 bg-orange-50/70", icon: "bg-white text-orange-700" },
-    red: { card: "border-rose-200 bg-rose-50/70", icon: "bg-white text-rose-700" },
+  const colorClasses: Record<string, { card: string; icon: string; marker: string }> = {
+    blue: { card: "border-slate-200 bg-white", icon: "bg-sky-50 text-sky-700 ring-sky-100", marker: "bg-sky-500" },
+    cyan: { card: "border-slate-200 bg-white", icon: "bg-cyan-50 text-cyan-700 ring-cyan-100", marker: "bg-cyan-600" },
+    green: { card: "border-slate-200 bg-white", icon: "bg-emerald-50 text-emerald-700 ring-emerald-100", marker: "bg-emerald-600" },
+    yellow: { card: "border-slate-200 bg-white", icon: "bg-amber-50 text-amber-700 ring-amber-100", marker: "bg-amber-500" },
+    orange: { card: "border-slate-200 bg-white", icon: "bg-orange-50 text-orange-700 ring-orange-100", marker: "bg-orange-500" },
+    red: { card: "border-rose-200 bg-white", icon: "bg-rose-50 text-rose-700 ring-rose-100", marker: "bg-rose-600" },
   };
-  const tone = colorClasses[color] ?? { card: "border-slate-200 bg-white", icon: "bg-slate-50 text-slate-600" };
+  const tone = colorClasses[color] ?? { card: "border-slate-200 bg-white", icon: "bg-slate-50 text-slate-700 ring-slate-100", marker: "bg-slate-400" };
 
   return (
     <Link
       href={href}
       title={typeof description === "string" ? description : undefined}
-      className={`block rounded-xl border p-4 shadow-sm transition-colors duration-200 hover:border-cyan-300 hover:bg-white sm:p-5 ${tone.card}`}
+      className={`group relative block rounded-xl border p-4 transition-colors duration-200 hover:border-cyan-300 hover:bg-slate-50/40 ${tone.card}`}
     >
-      <div className="flex items-center justify-between">
-        <span className={`flex h-10 w-10 items-center justify-center rounded-lg shadow-sm ${tone.icon}`}>
+      <span className={`absolute left-4 top-4 h-2 w-2 rounded-full ${tone.marker}`} />
+      <div className="flex items-start justify-between gap-3 pl-4">
+        <span className={`flex h-9 w-9 items-center justify-center rounded-lg ring-1 ${tone.icon}`}>
           <Icon className="h-5 w-5" />
         </span>
-        <span className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{value}</span>
+        <span className="text-2xl font-black tracking-tight text-slate-950">{value}</span>
       </div>
-      <div className="mt-4 text-sm font-semibold text-slate-700">{label}</div>
-      <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
+      <div className="mt-4 text-sm font-bold text-slate-800">{label}</div>
+      <p className="mt-2 text-xs leading-5 text-slate-600">{description}</p>
     </Link>
   );
 }

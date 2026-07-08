@@ -31,14 +31,21 @@ export default async function CasesPage() {
 
   return (
     <div className="page-stack">
-      <div>
-        <h1 className="page-heading">服务单</h1>
-        <p className="page-subtitle">一个社群对应一个 28 天服务空间。新服务单由群内入营问卷指令自动创建。</p>
+      <div className="page-header">
+        <div className="page-header-row">
+          <div>
+            <h1 className="page-heading">服务单</h1>
+            <p className="page-subtitle">一个社群对应一个 28 天服务空间。新服务单由群内入营问卷指令自动创建。</p>
+          </div>
+          <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">
+            {cases.length} 个服务空间
+          </span>
+        </div>
       </div>
 
       <div className="mobile-card-list">
         {cases.map((item) => (
-          <Link key={item.id} href={`/cases/${item.id}`} className="mobile-record-card transition-colors hover:border-cyan-300 hover:bg-cyan-50/30">
+          <Link key={item.id} href={`/cases/${item.id}`} className="mobile-record-card transition-colors hover:border-cyan-300 hover:bg-white">
             <div className="flex min-w-0 items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-break font-semibold text-slate-950">{item.case_no}</div>
@@ -53,7 +60,7 @@ export default async function CasesPage() {
           </Link>
         ))}
         {cases.length === 0 && (
-          <div className="mobile-record-card py-8 text-center text-sm text-slate-500">暂无服务单</div>
+          <div className="empty-state">暂无服务单</div>
         )}
       </div>
 
@@ -70,16 +77,16 @@ export default async function CasesPage() {
           </thead>
           <tbody>
             {cases.map((item) => (
-              <tr key={item.id} className="border-t border-zinc-100">
-                <td className="px-4 py-3">
+              <tr key={item.id}>
+                <td>
                   <Link className="admin-link text-slate-950" href={`/cases/${item.id}`}>
                     {item.case_no}
                   </Link>
                 </td>
-                <td className="px-4 py-3">{item.user?.name ?? "-"}</td>
-                <td className="px-4 py-3 text-break">{item.group_id}</td>
-                <td className="px-4 py-3"><CaseStatusCell status={item.status} /></td>
-                <td className="px-4 py-3">
+                <td>{item.user?.name ?? "-"}</td>
+                <td className="text-break font-mono text-xs text-slate-500">{item.group_id}</td>
+                <td><CaseStatusCell status={item.status} /></td>
+                <td>
                   <Link className="admin-link" href={`/q/${item.questionnaire_token}`}>
                     打开问卷
                   </Link>
@@ -88,7 +95,7 @@ export default async function CasesPage() {
             ))}
             {cases.length === 0 && (
               <tr>
-                <td className="px-4 py-8 text-center text-zinc-500" colSpan={5}>暂无服务单</td>
+                <td className="px-4 py-8 text-center text-slate-500" colSpan={5}>暂无服务单</td>
               </tr>
             )}
           </tbody>

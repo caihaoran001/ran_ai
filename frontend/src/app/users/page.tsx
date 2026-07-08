@@ -24,23 +24,28 @@ export default async function UsersPage({
 
   return (
     <div className="page-stack">
-      <div className="toolbar-row">
-        <div>
-          <h1 className="page-heading">
-            {showDeleted ? "已删除用户" : "用户管理"}
-          </h1>
-          <p className="page-subtitle">
-            {showDeleted
-              ? "查看已删除用户的历史记录"
-              : filterLabel
-                ? `当前筛选：${filterLabel}`
-                : "一个客户空间对应一个服务单"}
-          </p>
+      <div className="page-header">
+        <div className="page-header-row">
+          <div>
+            <h1 className="page-heading">
+              {showDeleted ? "已删除用户" : "用户管理"}
+            </h1>
+            <p className="page-subtitle">
+              {showDeleted
+                ? "查看已删除用户的历史记录"
+                : filterLabel
+                  ? `当前筛选：${filterLabel}`
+                  : "一个客户空间对应一个服务单"}
+            </p>
+          </div>
+          <span className="status-pill border-slate-200 bg-slate-50 text-slate-700">
+            {showDeleted ? users.length : serviceCases.length} 条记录
+          </span>
         </div>
-        <div className="grid w-full grid-cols-2 rounded-lg border border-slate-200 bg-white p-1 text-sm shadow-sm sm:w-auto">
+        <div className="mt-4 grid w-full grid-cols-2 rounded-lg border border-slate-200 bg-slate-100 p-1 text-sm shadow-inner sm:w-fit">
           <Link
             className={`min-h-10 rounded-md px-4 py-2 text-center font-semibold transition-colors duration-200 ${
-              !showDeleted ? "bg-cyan-700 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"
+              !showDeleted ? "bg-white text-cyan-800 shadow-sm" : "text-slate-700 hover:bg-white/70 hover:text-slate-950"
             }`}
             href="/users"
           >
@@ -48,7 +53,7 @@ export default async function UsersPage({
           </Link>
           <Link
             className={`min-h-10 rounded-md px-4 py-2 text-center font-semibold transition-colors duration-200 ${
-              showDeleted ? "bg-cyan-700 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"
+              showDeleted ? "bg-white text-cyan-800 shadow-sm" : "text-slate-700 hover:bg-white/70 hover:text-slate-950"
             }`}
             href="/users?deleted=1"
           >
@@ -73,7 +78,7 @@ export default async function UsersPage({
           ? users.map((user) => <DeletedUserCard key={user.id} user={user} />)
           : serviceCases.map((serviceCase) => <ServiceCaseCard key={serviceCase.id} serviceCase={serviceCase} />)}
         {(showDeleted ? users.length : serviceCases.length) === 0 && (
-          <div className="panel p-12 text-center text-slate-500">
+          <div className="empty-state">
             {showDeleted ? "暂无已删除用户" : searchQuery ? `未找到匹配「${searchQuery}」的服务单` : "暂无用户"}
           </div>
         )}
@@ -99,9 +104,9 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
   const user = serviceCase.user;
   return (
     <div className="panel transition-colors duration-200 hover:border-cyan-200">
-      <div className="flex flex-col gap-4 border-b border-slate-100 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+      <div className="panel-header-clean flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-cyan-100 bg-cyan-50 text-lg font-bold text-cyan-800 shadow-sm sm:h-12 sm:w-12 sm:text-xl">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-cyan-200 bg-cyan-50 text-lg font-black text-cyan-900 sm:h-12 sm:w-12 sm:text-xl">
             {(user?.name ?? "用").charAt(0)}
           </div>
           <div className="min-w-0">
@@ -137,8 +142,8 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
         )}
       </div>
 
-      <div className="p-4 sm:p-5">
-        <h4 className="mb-3 text-xs font-bold text-slate-400">服务单</h4>
+      <div className="panel-body">
+        <h4 className="section-label mb-3">服务单</h4>
         <ServiceCaseItem serviceCase={serviceCase} />
       </div>
     </div>
@@ -148,7 +153,7 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
 function DeletedUserCard({ user }: { user: User }) {
   return (
     <div className="panel transition-colors duration-200 hover:border-slate-300">
-      <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+      <div className="panel-header-clean flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-lg font-bold text-slate-500 sm:h-12 sm:w-12 sm:text-xl">
             {user.name.charAt(0)}
@@ -176,8 +181,8 @@ function DeletedUserCard({ user }: { user: User }) {
           删除于 {formatChinaShortDateTime(user.deleted_at)}
         </span>
       </div>
-      <div className="p-4 sm:p-5">
-        <h4 className="mb-3 text-xs font-bold text-slate-400">历史服务单</h4>
+      <div className="panel-body">
+        <h4 className="section-label mb-3">历史服务单</h4>
         {user.service_cases?.length ? (
           <div className="space-y-3">
             {user.service_cases.map((serviceCase) => <ServiceCaseItem key={serviceCase.id} serviceCase={serviceCase} />)}
@@ -218,7 +223,7 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
   return (
     <Link
       href={`/cases/${serviceCase.id}`}
-      className="flex flex-col gap-3 rounded-lg border border-slate-200 p-4 transition-colors hover:border-cyan-300 hover:bg-cyan-50/30 sm:flex-row sm:items-center sm:justify-between"
+      className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-4 transition-colors hover:border-cyan-300 hover:bg-white sm:flex-row sm:items-center sm:justify-between"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="text-break text-sm font-semibold text-slate-950">{serviceCase.case_no}</div>

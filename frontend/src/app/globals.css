@@ -3,12 +3,15 @@
 @tailwind utilities;
 
 :root {
-  --background: 210 20% 98%;
+  --background: 210 24% 97%;
   --foreground: 240 10% 4%;
-  --border: 240 6% 88%;
+  --border: 220 13% 88%;
   --brand: 190 91% 33%;
   --brand-strong: 187 100% 24%;
   --success: 160 84% 32%;
+  --surface: 0 0% 100%;
+  --surface-muted: 210 30% 98%;
+  --ink-muted: 215 16% 35%;
 }
 
 html,
@@ -19,9 +22,11 @@ body {
 }
 
 body {
-  background: hsl(var(--background));
+  background:
+    radial-gradient(circle at top left, rgb(236 254 255 / 0.55), transparent 32rem),
+    linear-gradient(180deg, hsl(210 28% 98%), hsl(var(--background)) 16rem);
   color: hsl(var(--foreground));
-  font-family: Inter, "Fira Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   text-rendering: optimizeLegibility;
 }
 
@@ -30,16 +35,28 @@ a {
 }
 
 @layer components {
+  .admin-shell {
+    @apply min-h-screen bg-slate-50 text-slate-950;
+  }
+
   .page-stack {
-    @apply min-w-0 space-y-5 sm:space-y-7;
+    @apply min-w-0 space-y-5 sm:space-y-6;
+  }
+
+  .page-header {
+    @apply min-w-0 rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5 sm:py-5;
+  }
+
+  .page-header-row {
+    @apply flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between;
   }
 
   .page-heading {
-    @apply break-words text-xl font-bold tracking-tight text-slate-950 sm:text-2xl;
+    @apply break-words text-[1.375rem] font-bold leading-8 tracking-tight text-slate-950 sm:text-[1.625rem];
   }
 
   .page-subtitle {
-    @apply mt-1 max-w-[75ch] text-sm leading-6 text-slate-600;
+    @apply mt-1.5 max-w-[75ch] text-sm leading-6 text-slate-600;
   }
 
   .panel {
@@ -47,27 +64,35 @@ a {
   }
 
   .panel-header {
-    @apply border-b border-slate-100 px-4 py-4 sm:px-5;
+    @apply border-b border-slate-200/80 bg-slate-50/60 px-4 py-4 sm:px-5;
+  }
+
+  .panel-header-clean {
+    @apply border-b border-slate-100 bg-white px-4 py-4 sm:px-5;
   }
 
   .panel-title {
-    @apply text-base font-semibold text-slate-950;
+    @apply text-base font-bold leading-6 text-slate-950;
   }
 
   .panel-subtitle {
     @apply mt-1 max-w-[75ch] text-sm leading-6 text-slate-600;
   }
 
+  .section-label {
+    @apply text-xs font-bold leading-4 text-slate-500;
+  }
+
   .status-pill {
-    @apply inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold leading-4;
+    @apply inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold leading-4;
   }
 
   .metric-card {
-    @apply rounded-xl border bg-white p-4 shadow-sm transition-colors duration-200 sm:p-5;
+    @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors duration-200 sm:p-5;
   }
 
   .metric-card:hover {
-    @apply border-cyan-300 bg-cyan-50/30;
+    @apply border-cyan-300 bg-white;
   }
 
   .toolbar-row {
@@ -87,19 +112,19 @@ a {
   }
 
   .data-table thead {
-    @apply bg-slate-50 text-xs font-semibold text-slate-600;
+    @apply border-b border-slate-200 bg-slate-50/90 text-xs font-bold text-slate-600;
   }
 
   .data-table th {
-    @apply px-4 py-3 font-semibold;
+    @apply px-4 py-3 font-bold;
   }
 
   .data-table td {
-    @apply px-4 py-3 align-top text-slate-700;
+    @apply px-4 py-3.5 align-top text-slate-700;
   }
 
   .data-table tbody tr {
-    @apply border-t border-slate-100;
+    @apply border-t border-slate-100 transition-colors hover:bg-slate-50/80;
   }
 
   .mobile-card-list {
@@ -110,8 +135,32 @@ a {
     @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm;
   }
 
+  .empty-state {
+    @apply rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-10 text-center text-sm text-slate-600;
+  }
+
+  .segmented-control {
+    @apply grid rounded-lg border border-slate-200 bg-slate-100 p-1 shadow-inner;
+  }
+
+  .segmented-item {
+    @apply min-h-10 rounded-md px-3 py-2 text-center text-sm font-bold text-slate-600 transition-colors hover:text-slate-950;
+  }
+
+  .segmented-item-active {
+    @apply bg-white text-cyan-800 shadow-sm;
+  }
+
+  .admin-button-secondary {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 transition-colors hover:border-cyan-200 hover:bg-slate-50 hover:text-cyan-800 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .admin-button-danger {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-rose-200 bg-white px-3 text-sm font-bold text-rose-700 transition-colors hover:bg-rose-50 hover:text-rose-800 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
   .admin-link {
-    @apply font-semibold text-cyan-700 transition-colors hover:text-cyan-800 hover:underline;
+    @apply font-bold text-cyan-700 transition-colors hover:text-cyan-900 hover:underline;
   }
 
   .text-break {

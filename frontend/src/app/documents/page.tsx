@@ -58,12 +58,14 @@ export default async function DocumentsListPage() {
 
   return (
     <div className="page-stack">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="page-heading">审核控制台</h1>
-          <p className="page-subtitle">集中管理交付文件与 AI 聊天回复，确保输出安全、准确。</p>
+      <div className="page-header">
+        <div className="page-header-row">
+          <div>
+            <h1 className="page-heading">审核控制台</h1>
+            <p className="page-subtitle">集中处理交付文件、退款确认、AI 回复复核和知识库进化任务。先处理风险，再处理交付。</p>
+          </div>
+          <ReviewConsoleLiveRefresh />
         </div>
-        <ReviewConsoleLiveRefresh />
       </div>
 
       {/* 置顶全局开关 */}
@@ -163,13 +165,13 @@ function RefundReviewGroup({ cases }: { cases: ServiceCase[] }) {
         </div>
         <p className="panel-subtitle">AI 从群聊识别到客户已发起/申请退款，等待运营核实。确认后将停止打卡提醒、阶段报告等产品类主动推送，群内 AI 聊天仍保留。</p>
       </div>
-      <div className="p-5">
+      <div className="panel-body">
         {cases.length > 0 ? (
           <div className="space-y-4">
             {cases.map((item) => {
               const evidence = latestRefundEvidence(item.refund_intent_flags);
               return (
-                <div key={item.id} className="flex flex-col gap-3 rounded-xl border border-rose-100 bg-rose-50/40 px-4 py-4 shadow-sm transition-colors hover:border-rose-200 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+                <div key={item.id} className="flex flex-col gap-3 rounded-xl border border-rose-200 bg-white px-4 py-4 transition-colors hover:bg-rose-50/30 sm:flex-row sm:items-start sm:justify-between sm:px-5">
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
                       <span className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">
@@ -195,9 +197,9 @@ function RefundReviewGroup({ cases }: { cases: ServiceCase[] }) {
             })}
           </div>
         ) : (
-          <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-slate-400">
+          <div className="empty-state">
             <CheckCircle2 className="mx-auto mb-3 h-9 w-9 text-emerald-500" />
-            <p className="text-sm font-medium">暂无待审核退款</p>
+            <p className="text-sm font-bold">暂无待审核退款</p>
           </div>
         )}
       </div>
@@ -223,7 +225,7 @@ function PendingMessageGroup({
         </div>
         <p className="panel-subtitle">触发转人工、@班主任后待复核的 AI 回复。逐条确认是谁、因哪句话触发，再决定发送或不发送。</p>
       </div>
-      <div className="p-5">
+      <div className="panel-body">
         {messages.length > 0 ? (
           <div className="space-y-5">
             {messages.map((message) => {
@@ -231,8 +233,8 @@ function PendingMessageGroup({
               const { reasons, level } = extractTriggerInsight(message.trigger?.analysis_json);
               const triggerAt = message.trigger?.display_at ?? message.trigger?.created_at ?? message.created_at;
               return (
-                <div key={message.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition-colors hover:border-cyan-200">
-                  <div className="flex flex-col gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                <div key={message.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white transition-colors hover:border-cyan-200">
+                  <div className="flex flex-col gap-2 border-b border-slate-200 bg-slate-50/80 px-4 py-3 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span>
                         服务单：
@@ -263,7 +265,7 @@ function PendingMessageGroup({
                     </div>
                   )}
                   <div className="grid divide-y divide-slate-100 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
-                    <div className="bg-slate-50/60 p-5">
+                    <div className="bg-slate-50/70 p-5">
                       <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-slate-400">
                         <MessageCircle className="h-3.5 w-3.5" />
                         客户说
@@ -288,9 +290,9 @@ function PendingMessageGroup({
             })}
           </div>
         ) : (
-          <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-slate-400">
+          <div className="empty-state">
             <CheckCircle2 className="mx-auto mb-3 h-9 w-9 text-emerald-500" />
-            <p className="text-sm font-medium">暂无待审核 AI 回复</p>
+            <p className="text-sm font-bold">暂无待审核 AI 回复</p>
           </div>
         )}
       </div>
