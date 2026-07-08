@@ -943,6 +943,28 @@ class RanrenAIEngine:
                 # 文件本身不触发完整 AI 回复；后续被 @/被问才由 Agent 调 read_group_file 读取
                 return
 
+        # 班主任 @机器人 但本条无正文（问题与@被拆成两条发）：回溯紧邻的班主任发言作为问题，
+        # 使其能像「@和问题同条」一样触发回复。仅限班主任路径；普通用户纯@维持原有上下文回复逻辑。
+        if (
+            is_staff
+            and not should_send_questionnaire
+            and not explicit_bot_query_text
+            and message.message_type == "text"
+            and _message_mentions_bot(message)
+        ):
+            recovered_query = await self._staff_query_from_context(
+                service_case_id=service_case_id,
+                before_message_id=inbound_id,
+            )
+            if recovered_query:
+                explicit_bot_query_text = recovered_query
+                logger.info(
+                    "RanrenAI recovered staff query from context chat_id=%s trigger_id=%s recovered_len=%d",
+                    message.chat_id,
+                    inbound_id,
+                    len(recovered_query),
+                )
+
         if explicit_bot_query_text:
             message.text = explicit_bot_query_text
 
@@ -1834,6 +1856,48 @@ class RanrenAIEngine:
                 .limit(1)
             )
             return staff_id is not None
+
+    async def _staff_query_from_context(
+        self, *, service_case_id: int | None, before_message_id: int | None
+    ) -> str | None:
+        """班主任 @机器人 但那条消息本身无正文时，回溯其紧邻、尚未被 AI 回应的连续发言拼成问题。
+
+        真人班主任常把「问题」和「@机器人」拆成两条发（甚至跨聚合窗口），只@那条去掉@昵称后为空，
+        单看本条无法触发回复。这里从 @这条逆序扫描：遇到出站消息（前文已被回应过）或非班主任/非文本
+        消息即停，只收集连续的班主任文本发言，正序拼成问题。找不到返回 None（维持「班主任未提问不打扰」）。
+        """
+        if not service_case_id or not before_message_id:
+            return None
+        async with SessionLocal() as session:
+            rows = (
+                await session.execute(
+                    select(Message)
+                    .where(
+                        Message.service_case_id == service_case_id,
+                        Message.id < before_message_id,
+                    )
+                    .order_by(Message.id.desc())
+                    .limit(10)
+                )
+            ).scalars().all()
+        parts: list[str] = []
+        for m in rows:
+            # 遇到出站消息，说明更早的发言已被 AI/系统回应过，不再往前回溯
+            if m.direction != MessageDirection.INBOUND:
+                break
+            # 只承接连续的班主任文本发言；遇到用户消息或非文本消息即停
+            if m.sender_type != MessageSenderType.STAFF or m.message_type != "text":
+                break
+            cleaned = re.sub(
+                r"^(?:@\S+\s*)+", "", " ".join((m.content or "").split()).strip()
+            ).strip()
+            if not cleaned:
+                continue
+            parts.append(cleaned)
+        if not parts:
+            return None
+        parts.reverse()
+        return "\n".join(parts)
 
     def _check_is_staff_by_rules(
         self, user_id: str | None, user_name: str | None, rules: list[dict]

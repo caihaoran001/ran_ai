@@ -694,3 +694,72 @@ async def test_group_resume_without_prior_silence_sends_no_receipt(db_session, m
     )
 
     assert _group_bot_control_command(message) is None
+
+
+def _staff_ctx_msg(case_id, group_id, direction, sender, content):
+    return Message(
+        service_case_id=case_id,
+        group_id=group_id,
+        direction=direction,
+        sender_type=sender,
+        message_type="text",
+        content=content,
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+
+
+@pytest.mark.asyncio
+async def test_staff_query_recovered_from_prior_staff_message(db_session, mock_message_channel, cai_haoran_answers):
+    """班主任把「问题」和「@机器人」拆两条发：回溯紧邻的班主任发言拼成问题。"""
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+
+    # 出站(前文已回应过) → 班主任问题 → 班主任只@(trigger 之前一条)
+    db_session.add(_staff_ctx_msg(case_id, group_id, MessageDirection.OUTBOUND, MessageSenderType.BOT, "巴黎水很理想"))
+    await db_session.flush()
+    q = _staff_ctx_msg(case_id, group_id, MessageDirection.INBOUND, MessageSenderType.STAFF, "元气森林 没有它俩好吗 为什么")
+    db_session.add(q)
+    await db_session.flush()
+    at_only = _staff_ctx_msg(case_id, group_id, MessageDirection.INBOUND, MessageSenderType.STAFF, "@郭渊")
+    db_session.add(at_only)
+    await db_session.flush()
+
+    engine = RanrenAIEngine(mock_message_channel)
+    recovered = await engine._staff_query_from_context(service_case_id=case_id, before_message_id=at_only.id)
+    assert recovered == "元气森林 没有它俩好吗 为什么"
+
+
+@pytest.mark.asyncio
+async def test_staff_query_joins_consecutive_staff_and_stops_at_outbound(db_session, mock_message_channel, cai_haoran_answers):
+    """回溯合并连续班主任发言，遇到出站消息即停（不越过已回应的历史）。"""
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+
+    db_session.add(_staff_ctx_msg(case_id, group_id, MessageDirection.OUTBOUND, MessageSenderType.BOT, "上一轮回复"))
+    await db_session.flush()
+    db_session.add(_staff_ctx_msg(case_id, group_id, MessageDirection.INBOUND, MessageSenderType.STAFF, "气泡水哪款好"))
+    await db_session.flush()
+    db_session.add(_staff_ctx_msg(case_id, group_id, MessageDirection.INBOUND, MessageSenderType.STAFF, "元气森林可以吗"))
+    await db_session.flush()
+    at_only = _staff_ctx_msg(case_id, group_id, MessageDirection.INBOUND, MessageSenderType.STAFF, "@郭渊")
+    db_session.add(at_only)
+    await db_session.flush()
+
+    engine = RanrenAIEngine(mock_message_channel)
+    recovered = await engine._staff_query_from_context(service_case_id=case_id, before_message_id=at_only.id)
+    assert recovered == "气泡水哪款好\n元气森林可以吗"
+
+
+@pytest.mark.asyncio
+async def test_staff_query_returns_none_when_prior_is_user_or_empty(db_session, mock_message_channel, cai_haoran_answers):
+    """@之前紧邻是用户发言（或无可承接发言）→ 不回溯，维持「班主任未提问不打扰」。"""
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+
+    db_session.add(_staff_ctx_msg(case_id, group_id, MessageDirection.INBOUND, MessageSenderType.USER, "用户随口一句"))
+    await db_session.flush()
+    at_only = _staff_ctx_msg(case_id, group_id, MessageDirection.INBOUND, MessageSenderType.STAFF, "@郭渊")
+    db_session.add(at_only)
+    await db_session.flush()
+
+    engine = RanrenAIEngine(mock_message_channel)
+    recovered = await engine._staff_query_from_context(service_case_id=case_id, before_message_id=at_only.id)
+    assert recovered is None
