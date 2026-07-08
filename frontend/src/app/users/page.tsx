@@ -14,7 +14,8 @@ export default async function UsersPage({
   const showDeleted = deleted === "1";
   const activeFilter = showDeleted ? undefined : filter;
   const searchQuery = showDeleted ? undefined : q?.trim();
-  const users = await api<User[]>(`/users${showDeleted ? "?deleted=true" : ""}`).catch(() => []);
+  // 正常用户页只展示服务单列表，用户列表仅「已删除」页需要；避免每次切页多打一次无用请求。
+  const users = showDeleted ? await api<User[]>(`/users?deleted=true`).catch(() => []) : [];
   const caseParams = new URLSearchParams();
   if (activeFilter) caseParams.set("filter", activeFilter);
   if (searchQuery) caseParams.set("q", searchQuery);
