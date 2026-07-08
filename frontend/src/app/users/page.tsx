@@ -8,20 +8,24 @@ import { ArrowRight, Clock, LoaderCircle, MessageSquare, Phone } from "lucide-re
 export default async function UsersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ deleted?: string; filter?: string; q?: string }>;
+  searchParams: Promise<{ deleted?: string; active?: string; filter?: string; q?: string }>;
 }) {
-  const { deleted, filter, q } = await searchParams;
+  const { deleted, active, filter, q } = await searchParams;
   const showDeleted = deleted === "1";
-  const activeFilter = showDeleted ? undefined : filter;
+  // 活跃用户 = 近 24 小时内有「用户发言」(inbound) 的服务单；仅在未看已删除时生效。
+  const showActive = !showDeleted && active === "1";
+  // 看板深链筛选(风险/未跟进等)只在「正常用户」下生效；「活跃用户」用固定的 active_24h 筛选。
+  const dashboardFilter = showDeleted || showActive ? undefined : filter;
+  const serviceCaseFilter = showActive ? "active_24h" : dashboardFilter;
   const searchQuery = showDeleted ? undefined : q?.trim();
-  // 正常用户页只展示服务单列表，用户列表仅「已删除」页需要；避免每次切页多打一次无用请求。
+  // 用户列表仅「已删除」页需要；正常/活跃页只展示服务单列表，避免多打一次无用请求。
   const users = showDeleted ? await api<User[]>(`/users?deleted=true`).catch(() => []) : [];
   const caseParams = new URLSearchParams();
-  if (activeFilter) caseParams.set("filter", activeFilter);
+  if (serviceCaseFilter) caseParams.set("filter", serviceCaseFilter);
   if (searchQuery) caseParams.set("q", searchQuery);
   const serviceCasePath = `/service-cases${caseParams.toString() ? `?${caseParams.toString()}` : ""}`;
   const serviceCases = showDeleted ? [] : await api<ServiceCase[]>(serviceCasePath).catch(() => []);
-  const filterLabel = activeFilter ? SERVICE_CASE_FILTER_LABELS[activeFilter] : undefined;
+  const filterLabel = dashboardFilter ? SERVICE_CASE_FILTER_LABELS[dashboardFilter] : undefined;
 
   return (
     <div className="page-stack">
@@ -29,28 +33,38 @@ export default async function UsersPage({
         <div className="page-header-row">
           <div>
             <h1 className="page-heading">
-              {showDeleted ? "已删除用户" : "用户管理"}
+              {showDeleted ? "已删除用户" : showActive ? "活跃用户" : "用户管理"}
             </h1>
             <p className="page-subtitle">
               {showDeleted
                 ? "查看已删除用户的历史记录"
-                : filterLabel
-                  ? `当前筛选：${filterLabel}`
-                  : "一个客户空间对应一个服务单"}
+                : showActive
+                  ? "近 24 小时内有发言的用户"
+                  : filterLabel
+                    ? `当前筛选：${filterLabel}`
+                    : "一个客户空间对应一个服务单"}
             </p>
           </div>
           <span className="status-pill border-slate-200 bg-slate-50 text-slate-700">
             {showDeleted ? users.length : serviceCases.length} 条记录
           </span>
         </div>
-        <div className="mt-4 grid w-full grid-cols-2 rounded-lg border border-slate-200 bg-slate-100 p-1 text-sm shadow-inner sm:w-fit">
+        <div className="mt-4 grid w-full grid-cols-3 rounded-lg border border-slate-200 bg-slate-100 p-1 text-sm shadow-inner sm:w-fit">
           <Link
             className={`min-h-10 rounded-md px-4 py-2 text-center font-semibold transition-colors duration-200 ${
-              !showDeleted ? "bg-white text-cyan-800 shadow-sm" : "text-slate-700 hover:bg-white/70 hover:text-slate-950"
+              !showDeleted && !showActive ? "bg-white text-cyan-800 shadow-sm" : "text-slate-700 hover:bg-white/70 hover:text-slate-950"
             }`}
             href="/users"
           >
             正常用户
+          </Link>
+          <Link
+            className={`min-h-10 rounded-md px-4 py-2 text-center font-semibold transition-colors duration-200 ${
+              showActive ? "bg-white text-cyan-800 shadow-sm" : "text-slate-700 hover:bg-white/70 hover:text-slate-950"
+            }`}
+            href="/users?active=1"
+          >
+            活跃用户
           </Link>
           <Link
             className={`min-h-10 rounded-md px-4 py-2 text-center font-semibold transition-colors duration-200 ${
@@ -61,6 +75,10 @@ export default async function UsersPage({
             已删除
           </Link>
         </div>
+        {/* 给运营的说明：区分「正常用户(全部)」与「活跃用户(近 24h 发言)」两个视图的含义。 */}
+        <p className="mt-2 text-xs leading-relaxed text-slate-500">
+          「正常用户」显示<span className="font-semibold text-slate-700">全部</span>用户；「活跃用户」只显示<span className="font-semibold text-slate-700">近 24 小时内有发言</span>的用户，便于优先处理今天在聊的客户，页面加载也更快。
+        </p>
       </div>
 
       {!showDeleted && <CaseSearchBox />}
@@ -80,7 +98,13 @@ export default async function UsersPage({
           : serviceCases.map((serviceCase) => <ServiceCaseCard key={serviceCase.id} serviceCase={serviceCase} />)}
         {(showDeleted ? users.length : serviceCases.length) === 0 && (
           <div className="empty-state">
-            {showDeleted ? "暂无已删除用户" : searchQuery ? `未找到匹配「${searchQuery}」的服务单` : "暂无用户"}
+            {showDeleted
+              ? "暂无已删除用户"
+              : searchQuery
+                ? `未找到匹配「${searchQuery}」的服务单`
+                : showActive
+                  ? "近 24 小时内暂无用户发言"
+                  : "暂无用户"}
           </div>
         )}
       </div>

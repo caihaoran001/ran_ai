@@ -305,4 +305,17 @@ def _apply_service_case_filter(statement, metric: str | None):
         )
         return statement.join(message_subq, message_subq.c.service_case_id == ServiceCase.id)
 
+    if metric == "active_24h":
+        # 活跃用户：近 24 小时内有「用户发言」(inbound) 的服务单（不含机器人/班主任发出的 outbound）。
+        active_subq = (
+            select(Message.service_case_id)
+            .where(
+                Message.direction == MessageDirection.INBOUND,
+                Message.created_at >= now - timedelta(hours=24),
+            )
+            .distinct()
+            .subquery()
+        )
+        return statement.join(active_subq, active_subq.c.service_case_id == ServiceCase.id)
+
     return statement

@@ -12,6 +12,9 @@ export function CaseSearchBox() {
   const navigate = (q: string) => {
     const params = new URLSearchParams();
     const filter = searchParams.get("filter");
+    const active = searchParams.get("active");
+    // 保留当前所在的标签(活跃用户/筛选)，避免一搜索就跳回「正常用户」全部视图。
+    if (active) params.set("active", active);
     if (filter) params.set("filter", filter);
     if (q.trim()) params.set("q", q.trim());
     const qs = params.toString();
