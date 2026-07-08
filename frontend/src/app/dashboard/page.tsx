@@ -136,6 +136,27 @@ export default async function DashboardPage() {
         </div>
       </div>
 
+      <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-white shadow-sm">
+        <div className="grid gap-0 lg:grid-cols-[1.2fr_2fr]">
+          <div className="border-b border-slate-800 p-5 lg:border-b-0 lg:border-r lg:p-6">
+            <div className="text-sm font-bold text-cyan-300">今日运营指挥台</div>
+            <div className="mt-3 text-3xl font-black tracking-tight">
+              {summary.service_cases_in_service}
+              <span className="ml-2 text-base font-bold text-slate-300">个服务中社群</span>
+            </div>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
+              先看需关注、退款和情绪风险，再处理待审核文件与今日触达。
+            </p>
+          </div>
+          <div className="grid grid-cols-2 divide-x divide-y divide-slate-800 sm:grid-cols-4 sm:divide-y-0">
+            <CommandMetric label="风险待处理" value={(summary.human_intervention_users ?? 0) + (summary.refund_intent_users ?? 0) + (summary.refund_pending_users ?? 0) + (summary.emotional_users_today ?? 0)} tone="risk" />
+            <CommandMetric label="今日消息" value={summary.messages_today} tone="info" />
+            <CommandMetric label="今日打卡" value={summary.checkins_today} tone="work" />
+            <CommandMetric label="待审核文件" value={summary.pending_documents} tone="review" />
+          </div>
+        </div>
+      </section>
+
       <DashboardMetricSection title="风险优先处理" description="这些信号需要运营先看证据，再决定是否介入。">
         <StatCard label="需关注事件" value={summary.human_intervention_users ?? 0} icon={ShieldAlert} color="red" href="/dashboard/attention-events" description="今日触发转人工、@班主任的事件数；点击查看服务单、触发原话和 AI/班主任回复。" />
         <StatCard label="退款/退出意向" value={summary.refund_intent_users ?? 0} icon={RefreshCcw} color="red" href="/dashboard/refund-intents" description="用户聊天中出现退款、退费、不继续、退出、退群等表达；点击查看触发原话。" />
@@ -207,6 +228,29 @@ function CaseHealthTable({ items }: { items: CaseHealthItem[] }) {
         </>
       )}
     </section>
+  );
+}
+
+function CommandMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "risk" | "info" | "work" | "review";
+}) {
+  const toneClass: Record<typeof tone, string> = {
+    risk: "text-rose-300",
+    info: "text-cyan-300",
+    work: "text-emerald-300",
+    review: "text-amber-300",
+  };
+  return (
+    <div className="p-4 sm:p-5">
+      <div className={`text-3xl font-black tracking-tight ${toneClass[tone]}`}>{value}</div>
+      <div className="mt-2 text-xs font-bold text-slate-300">{label}</div>
+    </div>
   );
 }
 

@@ -68,6 +68,22 @@ export default async function DocumentsListPage() {
         </div>
       </div>
 
+      <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-white shadow-sm">
+        <div className="grid divide-y divide-slate-800 md:grid-cols-[1.2fr_2fr] md:divide-x md:divide-y-0">
+          <div className="p-5">
+            <div className="text-sm font-bold text-cyan-300">审核工作队列</div>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              风险确认、AI 回复和知识候选集中在这里处理。先消除高风险，再推进文件交付。
+            </p>
+          </div>
+          <div className="grid grid-cols-3 divide-x divide-slate-800">
+            <ReviewMetric label="退款确认" value={refundPendingCases.length} tone="risk" />
+            <ReviewMetric label="AI 回复" value={pendingMessages.length} tone="review" />
+            <ReviewMetric label="知识候选" value={pendingKnowledgeDrafts.length} tone="info" />
+          </div>
+        </div>
+      </section>
+
       {/* 置顶全局开关 */}
       <div className="grid gap-4 lg:grid-cols-2">
         <AutoSendToggle initialValue={policy.mode === "auto_send"} />
@@ -105,6 +121,28 @@ export default async function DocumentsListPage() {
 }
 
 type RiskItem = { code?: string; level?: string; reason?: string; evidence?: string };
+
+function ReviewMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "risk" | "review" | "info";
+}) {
+  const toneClass: Record<typeof tone, string> = {
+    risk: "text-rose-300",
+    review: "text-amber-300",
+    info: "text-cyan-300",
+  };
+  return (
+    <div className="p-4 sm:p-5">
+      <div className={`text-3xl font-black tracking-tight ${toneClass[tone]}`}>{value}</div>
+      <div className="mt-2 text-xs font-bold text-slate-300">{label}</div>
+    </div>
+  );
+}
 
 // 从触发消息的 analysis_json 提取「转人工原因」与事件风险等级
 function extractTriggerInsight(aj?: Record<string, unknown> | null): { reasons: string[]; level: string | null } {

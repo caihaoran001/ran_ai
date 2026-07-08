@@ -23,8 +23,8 @@ body {
 
 body {
   background:
-    radial-gradient(circle at top left, rgb(236 254 255 / 0.55), transparent 32rem),
-    linear-gradient(180deg, hsl(210 28% 98%), hsl(var(--background)) 16rem);
+    radial-gradient(circle at 18rem 0, rgb(8 145 178 / 0.10), transparent 30rem),
+    linear-gradient(180deg, hsl(210 28% 98%), hsl(var(--background)) 18rem);
   color: hsl(var(--foreground));
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   text-rendering: optimizeLegibility;
@@ -36,7 +36,7 @@ a {
 
 @layer components {
   .admin-shell {
-    @apply min-h-screen bg-slate-50 text-slate-950;
+    @apply min-h-screen bg-slate-100 text-slate-950;
   }
 
   .page-stack {
@@ -44,7 +44,7 @@ a {
   }
 
   .page-header {
-    @apply min-w-0 rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5 sm:py-5;
+    @apply min-w-0 rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm ring-1 ring-white sm:px-6 sm:py-5;
   }
 
   .page-header-row {
@@ -52,7 +52,7 @@ a {
   }
 
   .page-heading {
-    @apply break-words text-[1.375rem] font-bold leading-8 tracking-tight text-slate-950 sm:text-[1.625rem];
+    @apply break-words text-[1.5rem] font-black leading-8 tracking-tight text-slate-950 sm:text-[1.875rem];
   }
 
   .page-subtitle {
@@ -60,15 +60,15 @@ a {
   }
 
   .panel {
-    @apply min-w-0 rounded-xl border border-slate-200 bg-white shadow-sm;
+    @apply min-w-0 rounded-xl border border-slate-200 bg-white shadow-sm ring-1 ring-white;
   }
 
   .panel-header {
-    @apply border-b border-slate-200/80 bg-slate-50/60 px-4 py-4 sm:px-5;
+    @apply border-b border-slate-200/80 bg-slate-100/70 px-4 py-4 sm:px-5;
   }
 
   .panel-header-clean {
-    @apply border-b border-slate-100 bg-white px-4 py-4 sm:px-5;
+    @apply border-b border-slate-200/70 bg-white px-4 py-4 sm:px-5;
   }
 
   .panel-title {
@@ -104,7 +104,7 @@ a {
   }
 
   .table-shell {
-    @apply overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm;
+    @apply overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm ring-1 ring-white;
   }
 
   .data-table {
@@ -112,7 +112,7 @@ a {
   }
 
   .data-table thead {
-    @apply border-b border-slate-200 bg-slate-50/90 text-xs font-bold text-slate-600;
+    @apply border-b border-slate-200 bg-slate-100 text-xs font-black text-slate-700;
   }
 
   .data-table th {
@@ -124,7 +124,7 @@ a {
   }
 
   .data-table tbody tr {
-    @apply border-t border-slate-100 transition-colors hover:bg-slate-50/80;
+    @apply border-t border-slate-100 transition-colors hover:bg-cyan-50/40;
   }
 
   .mobile-card-list {
@@ -132,11 +132,11 @@ a {
   }
 
   .mobile-record-card {
-    @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm;
+    @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm ring-1 ring-white;
   }
 
   .empty-state {
-    @apply rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-10 text-center text-sm text-slate-600;
+    @apply rounded-xl border border-dashed border-slate-300 bg-slate-100/70 px-4 py-10 text-center text-sm font-medium text-slate-600;
   }
 
   .segmented-control {
