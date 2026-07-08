@@ -13,7 +13,7 @@ const navGroups: NavGroup[] = [
   {
     title: "运营",
     items: [
-      { href: "/users", label: "用户管理", icon: Users },
+      { href: "/users?active=1", label: "用户管理", icon: Users },
       { href: "/documents", label: "审核控制台", icon: ShieldCheck },
       { href: "/questionnaire-config", label: "运营规则配置", icon: Settings },
     ],
@@ -36,7 +36,9 @@ const extraRouteLabels: Record<string, string> = {
 };
 
 function isActivePath(pathname: string | null, href: string) {
-  return pathname === href || pathname?.startsWith(`${href}/`) || false;
+  // href 可能带 query(如 /users?active=1)，高亮只按路径部分匹配。
+  const base = href.split("?")[0];
+  return pathname === base || pathname?.startsWith(`${base}/`) || false;
 }
 
 function Brand({ compact = false }: { compact?: boolean }) {

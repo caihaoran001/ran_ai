@@ -33,7 +33,7 @@ export default async function UsersPage({
         <div className="page-header-row">
           <div>
             <h1 className="page-heading">
-              {showDeleted ? "已删除用户" : showActive ? "活跃用户" : "用户管理"}
+              {showDeleted ? "已删除用户" : showActive ? "活跃用户" : "正常用户"}
             </h1>
             <p className="page-subtitle">
               {showDeleted
