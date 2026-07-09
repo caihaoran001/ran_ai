@@ -24,6 +24,7 @@ from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.services.agent.state import AgentRunContext
+from app.services.checkin_queries import recent_checkins
 from app.services.service_case_queries import effective_service_day, effective_start_at, select_active_service_cases
 
 
@@ -283,7 +284,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                     "text": "",
                     "note": "这份文件还没有可读取的解析正文。",
                 }
-            info = target.analysis_json.get("file_info", {})
+            info = target.analysis_json.get("file_info", {}) if isinstance(target.analysis_json, dict) else {}
             text = str(info.get("extracted_text") or "")
             if record["readable"]:
                 return {
@@ -550,13 +551,8 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
 
 
 async def _recent_checkins(session, service_case_id: int, days: int) -> list[Checkin]:
-    result = await session.scalars(
-        select(Checkin)
-        .where(Checkin.service_case_id == service_case_id)
-        .order_by(Checkin.checkin_date.desc(), Checkin.created_at.desc())
-        .limit(days)
-    )
-    return list(reversed(list(result)))
+    # 时间正序（旧→新），便于按顺序算体重趋势。查询主体见 checkin_queries.recent_checkins。
+    return await recent_checkins(session, service_case_id, limit=days, ascending=True)
 
 
 async def _initial_weight_from_profile(session, service_case_id: int) -> float | None:

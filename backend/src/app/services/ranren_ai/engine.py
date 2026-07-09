@@ -27,10 +27,10 @@ from app.models.service_case import ServiceCase
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
-from app.models.checkin import Checkin
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ai_service import AIService
 from app.services.agent import AgentDataUnavailableError, generate_agent_reply
+from app.services.checkin_queries import recent_checkins
 from app.services.channels.base import ChannelMessage, MessageChannel
 from app.services.ranren_ai.attachments import (
     InboundAttachmentProcessor,
@@ -974,6 +974,7 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                     query_speaker=_current_query_speaker(analysis),
                     recent_messages=recent_user_messages,
                     analysis=analysis,
+                    channel=message.channel,
                     settings=settings,
                 )
                 reply = agent_result.reply
@@ -1457,14 +1458,8 @@ async def build_ai_user_context(session, service_case: ServiceCase | None) -> st
 
 
 async def _recent_checkin_context_lines(session, service_case_id: int) -> list[str]:
-    checkins = list(
-        await session.scalars(
-            select(Checkin)
-            .where(Checkin.service_case_id == service_case_id)
-            .order_by(Checkin.checkin_date.desc(), Checkin.created_at.desc())
-            .limit(3)
-        )
-    )
+    # 最新在前（用于画像上下文展示）。查询主体见 checkin_queries.recent_checkins，与 agent 工具共用一处定义。
+    checkins = await recent_checkins(session, service_case_id, limit=3, ascending=False)
     if not checkins:
         return ["- 暂无打卡记录。"]
 
