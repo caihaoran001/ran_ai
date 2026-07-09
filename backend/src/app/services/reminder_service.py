@@ -120,7 +120,7 @@ class ReminderService:
                         if self.settings.agent_reminders_enabled:
                             await self.check_agent_reminder_tasks_once()
                         if self.settings.reminder_enabled:
-                            await self.check_once()
+                            # check_once（12点泛化催打卡）已退役，并入晚间智能追问 check_checkin_followup_once。
                             await self.check_stage_reports_once()
                         await self.check_questionnaire_sends_once()
                         if self.settings.outcome_snapshots_enabled:
@@ -179,6 +179,11 @@ class ReminderService:
                 await session.commit()
 
     async def check_once(self) -> None:
+        """【已退役】12点泛化文字催打卡（"还没收到打卡请补一下"）。
+
+        H5 下线后，只会泛泛催、不问具体字段，且与晚间智能追问 check_checkin_followup_once 重叠且更笨，
+        故已从 _run_loop 摘除调用。方法体暂留以防关联引用，不再被调度。
+        """
         now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
         if now.isoweekday() not in _parse_weekdays(self.settings.reminder_weekdays):
             return
@@ -275,7 +280,11 @@ class ReminderService:
         from app.services.archivist.checkin_projection import (
             mark_contradictions_pending_confirmation,
         )
-        from app.services.archivist.followup import compose_followup_message, detect_followup
+        from app.services.archivist.followup import (
+            compose_followup_message,
+            compose_milestone_followup,
+            detect_followup,
+        )
 
         tz = ZoneInfo(self.settings.reminder_timezone)
         now = datetime.now(tz)
@@ -311,13 +320,34 @@ class ReminderService:
                 if day is None or day > SERVICE_CASE_WINDOW_DAYS:
                     continue
                 detect = await detect_followup(
-                    session, service_case_id=service_case.id, today=today
+                    session, service_case=service_case, now=now, tz=tz
                 )
-                content = compose_followup_message(
-                    missing_slots=detect["missing_slots"],
-                    ask_weight=detect["ask_weight"],
-                    confirmations=detect.get("confirmations"),
-                )
+                milestone = detect.get("milestone")
+                if milestone:
+                    # 里程碑前夕：LLM 复盘追问（失败自回退模板），矛盾核对照旧附上（问了才能标 asked）。
+                    parts = [
+                        await compose_milestone_followup(
+                            service_case=service_case,
+                            milestone_day=milestone["milestone_day"],
+                            need_waist=milestone["need_waist"],
+                        )
+                    ]
+                    conf_msg = compose_followup_message(
+                        missing_slots=[],
+                        ask_weight=False,
+                        confirmations=detect.get("confirmations"),
+                        case_id=service_case.id,
+                    )
+                    if conf_msg:
+                        parts.append(conf_msg)
+                    content = " ".join(parts)
+                else:
+                    content = compose_followup_message(
+                        missing_slots=detect["missing_slots"],
+                        ask_weight=detect["ask_weight"],
+                        confirmations=detect.get("confirmations"),
+                        case_id=service_case.id,
+                    )
                 if not content:
                     continue
                 reminder_event = await _reserve_reminder_event(

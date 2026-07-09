@@ -138,19 +138,21 @@ class Settings(BaseSettings):
         validation_alias="QIWEI_BATCH_WINDOW_SECONDS",
     )
 
+    # 注意：12点泛化文字催打卡(check_once)已退役并入晚间智能追问(check_checkin_followup_once)。
+    # 本开关现仅剩门控阶段报告生成(check_stage_reports_once)，reminder_at/reminder_message 已不再使用。
     reminder_enabled: bool = Field(default=False, validation_alias="REMINDER_ENABLED")
     agent_reminders_enabled: bool = Field(default=True, validation_alias="AGENT_REMINDERS_ENABLED")
     reminder_check_interval_seconds: float = Field(
         default=30.0,
         validation_alias="REMINDER_CHECK_INTERVAL_SECONDS",
     )
-    reminder_at: str = Field(default="12:00", validation_alias="REMINDER_AT")
+    reminder_at: str = Field(default="12:00", validation_alias="REMINDER_AT")  # 已弃用(随 check_once 退役)
     reminder_timezone: str = Field(
         default="Asia/Shanghai",
         validation_alias="REMINDER_TIMEZONE",
     )
     reminder_weekdays: str = Field(default="1,2,3,4,5", validation_alias="REMINDER_WEEKDAYS")
-    reminder_message: str = Field(
+    reminder_message: str = Field(  # 已弃用(随 check_once 退役，不再使用)
         default="现在已经到 {time} 了，还没有收到你的打卡，请补一下。",
         validation_alias="REMINDER_MESSAGE",
     )
@@ -162,7 +164,8 @@ class Settings(BaseSettings):
     # 默认 False=不再推送；如需临时恢复在 compose environment 设 DAILY_CHECKIN_LINK_ENABLED=true。
     # 注：入营问卷走独立命令路径，不受此开关影响。
     daily_checkin_link_enabled: bool = Field(default=False, validation_alias="DAILY_CHECKIN_LINK_ENABLED")
-    # 打卡追问补齐：H5 下线后，对当天仍缺的关键字段(早C/午B/晚A、体重)在群里自然语言追问(不发链接)。
+    # 打卡追问补齐(H5 完整替代)：日常档补当天仍缺字段(早C/午B/晚A、体重、矛盾核对，模板变体)；
+    # 里程碑档在服务第6/13/20/27天晚间发 LLM 复盘追问(腰围+最大变化/卡点/下阶段重点)，为次日阶段报告采集。
     # 会向真实群发消息，默认 False；review 措辞/时机后设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
     checkin_followup_enabled: bool = Field(default=False, validation_alias="CHECKIN_FOLLOWUP_ENABLED")
     # 追问时机：放在晚间，给白天聊天+档案官抽取留足时间，避免刚睡醒就追问当天依从。
