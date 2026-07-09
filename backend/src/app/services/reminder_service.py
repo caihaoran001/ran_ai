@@ -134,6 +134,8 @@ class ReminderService:
                         await self.check_image_cache_cleanup_once()
                         if self.settings.archivist_enabled:
                             await self.check_archivist_once()
+                        if self.settings.checkin_followup_enabled:
+                            await self.check_checkin_followup_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -241,6 +243,87 @@ class ReminderService:
                     date=today.isoformat(),
                     group_id=service_case.group_id,
                 )
+                message = Message(
+                    service_case_id=service_case.id,
+                    group_id=service_case.group_id,
+                    direction=MessageDirection.OUTBOUND,
+                    sender_type=MessageSenderType.SYSTEM,
+                    message_type="markdown",
+                    content=content,
+                    purpose=MessagePurpose.REMINDER,
+                    status=MessageStatus.PENDING,
+                )
+                session.add(message)
+                await session.flush()
+                result = await _send_channel_text_with_retries(service_case.group_id, content)
+                if result.success:
+                    message.status = MessageStatus.SENT
+                    message.wecom_message_id = result.message_id
+                else:
+                    message.status = MessageStatus.FAILED
+                    message.error = result.error
+            await session.commit()
+
+    async def check_checkin_followup_once(self) -> None:
+        """打卡追问补齐：对当天仍缺关键字段(早C/午B/晚A、体重)的在服务单，晚间在群里自然语言追问一次。
+
+        H5 下线后的完整度兜底。会向真实群发消息，受 CHECKIN_FOLLOWUP_ENABLED 门控。
+        每单每天最多一条(rule_id=checkin_followup 去重)，不发链接。
+        """
+        if not self.settings.checkin_followup_enabled:
+            return
+        from app.services.archivist.followup import compose_followup_message, detect_followup
+
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        now = datetime.now(tz)
+        if now.isoweekday() not in _parse_weekdays(self.settings.reminder_weekdays):
+            return
+        if now.time() < _parse_time(self.settings.checkin_followup_at):
+            return
+        today = now.date()
+
+        async with SessionLocal() as session:
+            service_cases = list(
+                await session.scalars(
+                    select_active_service_cases(
+                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE
+                    )
+                )
+            )
+            events = list(
+                await session.scalars(
+                    select(ReminderEvent).where(
+                        ReminderEvent.rule_id == "checkin_followup",
+                        ReminderEvent.event_date == today,
+                        ReminderEvent.event_type == ReminderEventType.REMINDED,
+                    )
+                )
+            )
+            reminded = {e.service_case_id for e in events}
+
+            for service_case in service_cases:
+                if service_case.id in reminded:
+                    continue
+                day = checkin_day(service_case, now, tz)
+                if day is None or day > SERVICE_CASE_WINDOW_DAYS:
+                    continue
+                detect = await detect_followup(
+                    session, service_case_id=service_case.id, today=today
+                )
+                content = compose_followup_message(
+                    missing_slots=detect["missing_slots"], ask_weight=detect["ask_weight"]
+                )
+                if not content:
+                    continue
+                reminder_event = await _reserve_reminder_event(
+                    session,
+                    service_case.id,
+                    rule_id="checkin_followup",
+                    event_date=today,
+                    event_type=ReminderEventType.REMINDED,
+                )
+                if not reminder_event:
+                    continue
                 message = Message(
                     service_case_id=service_case.id,
                     group_id=service_case.group_id,

@@ -162,6 +162,11 @@ class Settings(BaseSettings):
     # 默认 False=不再推送；如需临时恢复在 compose environment 设 DAILY_CHECKIN_LINK_ENABLED=true。
     # 注：入营问卷走独立命令路径，不受此开关影响。
     daily_checkin_link_enabled: bool = Field(default=False, validation_alias="DAILY_CHECKIN_LINK_ENABLED")
+    # 打卡追问补齐：H5 下线后，对当天仍缺的关键字段(早C/午B/晚A、体重)在群里自然语言追问(不发链接)。
+    # 会向真实群发消息，默认 False；review 措辞/时机后设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
+    checkin_followup_enabled: bool = Field(default=False, validation_alias="CHECKIN_FOLLOWUP_ENABLED")
+    # 追问时机：放在晚间，给白天聊天+档案官抽取留足时间，避免刚睡醒就追问当天依从。
+    checkin_followup_at: str = Field(default="20:30", validation_alias="CHECKIN_FOLLOWUP_AT")
 
     auto_send_documents: bool = Field(
         default=False,
