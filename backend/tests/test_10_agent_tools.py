@@ -22,7 +22,7 @@ from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.tools.service_case_tools import build_service_case_tools
 from app.services.agent.tools.web_search_tools import _normalize_current_query_year, build_web_search_tools
 from app.services.channels.base import ChannelMessage
-from app.services.content_policy import set_ai_reply_delivery_mode
+from app.services.content_policy import set_ai_reply_enabled
 from app.services.profile_memory_service import load_profile_memory_context
 from app.services.ranren_ai.engine import RanrenAIEngine
 
@@ -1093,7 +1093,7 @@ async def test_engine_uses_agent_without_global_or_case_toggle(
     mock_message_channel,
     monkeypatch,
 ):
-    await set_ai_reply_delivery_mode("auto_send", db_session)
+    await set_ai_reply_enabled(True, db_session)
     calls: list[int] = []
 
     async def fake_generate_agent_reply(
@@ -1130,7 +1130,7 @@ async def test_engine_uses_agent_without_global_or_case_toggle(
         )
         assert calls == [service_case.id]
     finally:
-        await set_ai_reply_delivery_mode("manual_review", db_session)
+        await set_ai_reply_enabled(True, db_session)
 
 
 @pytest.mark.asyncio

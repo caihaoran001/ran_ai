@@ -15,10 +15,9 @@ from app.models.message import (
     MessageSenderType,
     MessageStatus,
 )
-from app.models.service_case import ServiceCase
-from app.schemas.message import MessageRead, MessageSend, MessageUpdate
+from app.schemas.message import MessageRead, MessageSend
 from app.services.channels import send_channel_text
-from app.services.service_case_queries import active_service_case_condition, get_active_service_case, get_service_case
+from app.services.service_case_queries import get_active_service_case, get_service_case
 
 router = APIRouter()
 
@@ -82,93 +81,6 @@ async def send_case_message(
     else:
         message.status = MessageStatus.FAILED
         message.error = result.error
-    await session.commit()
-    await session.refresh(message)
-    return message
-
-
-@router.get("/messages/pending-ai", response_model=list[MessageRead])
-async def list_pending_ai_messages(
-    session: AsyncSession = Depends(get_session),
-) -> list[Message]:
-    result = await session.scalars(
-        select(Message)
-        .join(ServiceCase, Message.service_case_id == ServiceCase.id)
-        .where(
-            active_service_case_condition(),
-            Message.direction == MessageDirection.OUTBOUND,
-            Message.sender_type == MessageSenderType.BOT,
-            Message.purpose == MessagePurpose.CHAT,
-            Message.status == MessageStatus.PENDING,
-        )
-        .options(selectinload(Message.trigger))
-        .order_by(Message.created_at.desc())
-    )
-    return list(result)
-
-
-@router.post("/messages/{message_id}/send", response_model=MessageRead)
-async def send_pending_message(
-    message_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> Message:
-    message = await session.scalar(
-        select(Message).where(Message.id == message_id).options(selectinload(Message.trigger))
-    )
-    if not message:
-        raise HTTPException(status_code=404, detail="message not found")
-    if message.direction != MessageDirection.OUTBOUND:
-        raise HTTPException(status_code=400, detail="only outbound messages can be sent")
-    if message.status != MessageStatus.PENDING:
-        raise HTTPException(status_code=400, detail="message is not pending")
-    result = await send_channel_text(message.group_id, message.content)
-    if result.success:
-        message.status = MessageStatus.SENT
-        message.wecom_message_id = result.message_id
-        message.error = None
-    else:
-        message.status = MessageStatus.FAILED
-        message.error = result.error
-    await session.commit()
-    await session.refresh(message)
-    return message
-
-
-@router.post("/messages/{message_id}/discard", response_model=MessageRead)
-async def discard_pending_message(
-    message_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> Message:
-    message = await session.scalar(
-        select(Message).where(Message.id == message_id).options(selectinload(Message.trigger))
-    )
-    if not message:
-        raise HTTPException(status_code=404, detail="message not found")
-    if message.status != MessageStatus.PENDING:
-        raise HTTPException(status_code=400, detail="message is not pending")
-    message.status = MessageStatus.FAILED
-    message.error = "已人工驳回，未发送"
-    await session.commit()
-    await session.refresh(message)
-    return message
-
-
-@router.patch("/messages/{message_id}", response_model=MessageRead)
-async def update_message(
-    message_id: int,
-    payload: MessageUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> Message:
-    message = await session.scalar(
-        select(Message).where(Message.id == message_id).options(selectinload(Message.trigger))
-    )
-    if not message:
-        raise HTTPException(status_code=404, detail="message not found")
-    if message.status != MessageStatus.PENDING:
-        raise HTTPException(status_code=400, detail="only pending messages can be edited")
-    data = payload.model_dump(exclude_unset=True)
-    if "content" in data and data["content"] is not None:
-        message.content = data["content"]
     await session.commit()
     await session.refresh(message)
     return message

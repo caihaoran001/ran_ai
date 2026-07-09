@@ -431,13 +431,21 @@ async def test_normal_reply_still_sends_without_marker(
 
 
 @pytest.mark.asyncio
-async def test_agent_error_records_failed_review_without_legacy_fallback(
+async def test_agent_error_is_discarded_without_recording(
     db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch
 ):
+    # AI 生成失败：直接丢弃不发（只记日志），不再落草稿进审核台，也不产生任何出站记录。
     import app.services.ranren_ai.engine as engine_mod
 
     case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
     engine = RanrenAIEngine(mock_message_channel)
+
+    before = await db_session.scalar(
+        select(func.count(Message.id)).where(
+            Message.service_case_id == case_id,
+            Message.direction == MessageDirection.OUTBOUND,
+        )
+    )
 
     async def _fake_agent(**kwargs):
         raise RuntimeError("agent exploded")
@@ -450,16 +458,14 @@ async def test_agent_error_records_failed_review_without_legacy_fallback(
         analysis={},
         trigger_id=None,
     )
-    msg = await db_session.scalar(
-        select(Message)
-        .where(Message.service_case_id == case_id, Message.direction == MessageDirection.OUTBOUND)
-        .order_by(Message.id.desc())
-        .limit(1)
+
+    after = await db_session.scalar(
+        select(func.count(Message.id)).where(
+            Message.service_case_id == case_id,
+            Message.direction == MessageDirection.OUTBOUND,
+        )
     )
-    assert msg is not None
-    assert msg.status == MessageStatus.PENDING
-    assert msg.analysis_json == {"agent": {"enabled": True, "error": "agent_reply_failed"}}
-    assert "班主任" in msg.content
+    assert after == before  # 没有新增任何出站记录
 
 
 @pytest.mark.asyncio

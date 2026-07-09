@@ -40,7 +40,7 @@ from app.services.ranren_ai.attachments import (
     _is_allowed_image_host,
     _strip_image_placeholders,
 )
-from app.services.content_policy import get_ai_reply_delivery_mode
+from app.services.content_policy import get_ai_reply_enabled
 from app.services.short_link import get_or_create_short_link
 from app.services.intervention_service import analyze_intervention, merge_case_insight
 from app.services.outcome_engine import (
@@ -925,7 +925,6 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         should_send = False
         service_case: ServiceCase | None = None
         outbound_analysis: dict | None = None
-        force_review = False
         settings = get_settings()
         async with SessionLocal() as session:
             if service_case_id:
@@ -936,6 +935,25 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                     return
             else:
                 service_case = None
+
+            # 全局「AI 回不回复」总开关：关闭时不回复（生成前早退，省 LLM 调用）。
+            if not await get_ai_reply_enabled(session):
+                logger.info(
+                    "RanrenAI skip AI reply because globally disabled chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id,
+                    trigger_id,
+                    service_case_id,
+                )
+                return
+            # 每单开关作为总闸下的子闸(AND)：该服务单关闭 AI 自动回复 → 不回。
+            if service_case and not service_case.ai_auto_reply_enabled:
+                logger.info(
+                    "RanrenAI skip AI reply because case auto-reply disabled chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id,
+                    trigger_id,
+                    service_case_id,
+                )
+                return
 
             recent_user_messages = (
                 await self._recent_user_messages(
@@ -976,14 +994,13 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 reply = str(exc)
                 outbound_analysis = {"agent": {"enabled": True, "data_unavailable": True}}
             except Exception:
+                # AI 生成失败：直接丢弃不发（只记日志），不再落草稿进审核台。
                 logger.exception(
-                    "Agent reply failed; recording failed review item service_case_id=%s trigger_id=%s",
+                    "Agent reply failed; discarding without sending service_case_id=%s trigger_id=%s",
                     service_case_id,
                     trigger_id,
                 )
-                reply = "抱歉，我刚才处理这条消息时出错了，请班主任稍后帮忙确认。"
-                outbound_analysis = {"agent": {"enabled": True, "error": "agent_reply_failed"}}
-                force_review = True
+                return
         else:
             logger.info(
                 "RanrenAI skip Agent reply because no active service case chat_id=%s trigger_id=%s service_case_id=%s",
@@ -1015,9 +1032,8 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                     service_case_id,
                 )
                 return
-            if not force_review:
-                async with SessionLocal() as session:
-                    should_send = await self._should_send_ai_reply(session, service_case, analysis, message)
+            async with SessionLocal() as session:
+                should_send = await self._should_send_ai_reply(session, service_case, analysis, message)
 
         if should_send:
             if await self._has_newer_inbound_message(service_case_id=service_case_id, trigger_id=trigger_id):
@@ -1061,15 +1077,12 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             )
             return
 
-        await self._record_outbound(
-            message=message,
-            service_case_id=service_case_id,
-            content=reply,
-            message_id=None,
-            status=MessageStatus.PENDING,
-            error="AI reply requires human review",
-            trigger_id=trigger_id,
-            analysis_json=outbound_analysis,
+        # should_send 为 False（防御性兜底命中）→ 直接丢弃，不发送、不落库。
+        logger.info(
+            "RanrenAI discard AI reply because should_send is false chat_id=%s trigger_id=%s service_case_id=%s",
+            message.chat_id,
+            trigger_id,
+            service_case_id,
         )
 
     async def _should_send_ai_reply(
@@ -1079,44 +1092,12 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         analysis: dict | None,
         message: ChannelMessage,
     ) -> bool:
-        if service_case and not service_case.ai_auto_reply_enabled:
-            return False
-        # 兜底：凡需人工介入(requires_human_intervention)的消息，主流程已提前 @班主任转人工并 return，
-        # 正常走不到这里；保留此判断作为防御性兜底，绝不让需介入的消息自动发 AI 回复。
+        # 全局/每单开关已在生成前早退处理。此处仅保留防御性兜底：
+        # 凡需人工介入(requires_human_intervention)的消息，主流程已提前 @班主任转人工并 return，
+        # 正常走不到这里；保留此判断，绝不让需介入的消息自动发 AI 回复。
         if analysis and analysis.get("requires_human_intervention"):
             return False
-        return await get_ai_reply_delivery_mode(session) == "auto_send"
-
-    async def _record_outbound(
-        self,
-        *,
-        message: ChannelMessage,
-        service_case_id: int | None,
-        content: str,
-        message_id: str | None,
-        status: MessageStatus,
-        error: str | None,
-        trigger_id: int | None = None,
-        analysis_json: dict | None = None,
-    ) -> None:
-        async with SessionLocal() as session:
-            session.add(
-                Message(
-                    service_case_id=service_case_id,
-                    group_id=message.chat_id,
-                    wecom_message_id=message_id,
-                    direction=MessageDirection.OUTBOUND,
-                    sender_type=MessageSenderType.BOT,
-                    message_type="markdown",
-                    content=content,
-                    purpose=MessagePurpose.CHAT,
-                    status=status,
-                    error=error,
-                    trigger_id=trigger_id,
-                    analysis_json=analysis_json,
-                )
-            )
-            await session.commit()
+        return True
 
     async def _create_outbound_sending(
         self,

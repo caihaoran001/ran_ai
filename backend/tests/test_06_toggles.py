@@ -14,7 +14,7 @@ from app.models.message import Message, MessageDirection, MessagePurpose, Messag
 from app.models.service_case import ServiceCase
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.channels.base import ChannelMessage
-from app.services.content_policy import set_ai_reply_delivery_mode
+from app.services.content_policy import get_ai_reply_enabled, set_ai_reply_enabled
 from app.services.ranren_ai.engine import RanrenAIEngine, _requires_immediate_handoff
 
 
@@ -345,12 +345,26 @@ async def test_content_delivery_policy_crud(admin_client):
 
 
 @pytest.mark.asyncio
-async def test_ai_reply_policy_crud(admin_client):
-    resp = await admin_client.get("/settings/ai-reply-delivery-policy")
+async def test_ai_reply_enabled_crud(admin_client):
+    # 默认开启（历史默认即自动回复）
+    resp = await admin_client.get("/settings/ai-reply-enabled")
     assert resp.status_code == 200
     data = resp.json()
-    assert "mode" in data
-    assert data["mode"] in ("manual_review", "auto_send")
+    assert data["enabled"] is True
+
+    # 关闭
+    resp = await admin_client.post("/settings/ai-reply-enabled", json={"enabled": False})
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is False
+
+    resp = await admin_client.get("/settings/ai-reply-enabled")
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is False
+
+    # 恢复
+    resp = await admin_client.post("/settings/ai-reply-enabled", json={"enabled": True})
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is True
 
 
 @pytest.mark.asyncio
@@ -428,11 +442,25 @@ async def test_service_case_agent_toggle_field_is_rejected(admin_client, create_
 
 
 @pytest.mark.asyncio
-async def test_qiwe_ai_reply_respects_global_manual_review_policy(admin_client, create_case, db_session):
-    group_id = f"test-qiwe-ai-policy-{secrets.token_hex(6)}"
+async def test_ai_reply_enabled_switch_persists(admin_client, db_session):
+    # 全局「AI 回不回复」总开关的持久化读写。
+    assert await get_ai_reply_enabled(db_session) is True  # 默认开启
+
+    await set_ai_reply_enabled(False, db_session)
+    assert await get_ai_reply_enabled(db_session) is False
+
+    await set_ai_reply_enabled(True, db_session)
+    assert await get_ai_reply_enabled(db_session) is True
+
+
+@pytest.mark.asyncio
+async def test_should_send_ai_reply_only_guards_human_intervention(create_case, db_session):
+    # 全局/每单开关已在 _reply_with_ai 生成前早退处理；_should_send_ai_reply 仅保留
+    # 「需人工介入」的防御性兜底：普通消息 True，需介入 False。
+    group_id = f"test-qiwe-ai-guard-{secrets.token_hex(6)}"
     resp = await create_case({
         "group_id": group_id,
-        "user": {"name": "QiWe审核策略测试"},
+        "user": {"name": "AI兜底判断测试"},
     })
     assert resp.status_code == 201, resp.text
     case_id = resp.json()["id"]
@@ -445,20 +473,17 @@ async def test_qiwe_ai_reply_respects_global_manual_review_policy(admin_client, 
         chat_id=group_id,
         chat_type="group",
         text="今天状态不错",
-        message_id="qiwe-policy-1",
+        message_id="qiwe-guard-1",
         user_id="user-1",
     )
 
-    await set_ai_reply_delivery_mode("manual_review", db_session)
-    try:
-        should_send = await engine._should_send_ai_reply(db_session, service_case, {}, message)
-        assert should_send is False
-
-        await set_ai_reply_delivery_mode("auto_send", db_session)
-        should_send = await engine._should_send_ai_reply(db_session, service_case, {}, message)
-        assert should_send is True
-    finally:
-        await set_ai_reply_delivery_mode("manual_review", db_session)
+    assert await engine._should_send_ai_reply(db_session, service_case, {}, message) is True
+    assert (
+        await engine._should_send_ai_reply(
+            db_session, service_case, {"requires_human_intervention": True}, message
+        )
+        is False
+    )
 
 
 def test_acute_physical_risk_triggers_immediate_handoff():

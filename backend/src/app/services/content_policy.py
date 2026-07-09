@@ -6,7 +6,7 @@ from app.models.app_setting import AppSetting
 
 _mode = "manual_review"
 SETTING_KEY = "content_delivery_policy"
-AI_REPLY_SETTING_KEY = "ai_reply_delivery_policy"
+AI_REPLY_ENABLED_KEY = "ai_reply_enabled"
 
 
 async def get_content_delivery_mode(session: AsyncSession | None = None) -> str:
@@ -34,24 +34,25 @@ def _normalize(value: object) -> str:
     return value if value in {"manual_review", "auto_send"} else "manual_review"
 
 
-async def get_ai_reply_delivery_mode(session: AsyncSession | None = None) -> str:
+async def get_ai_reply_enabled(session: AsyncSession | None = None) -> bool:
+    """全局「AI 回不回复」总开关。默认开启（历史默认即自动回复）。"""
     if session is not None:
-        setting = await session.get(AppSetting, AI_REPLY_SETTING_KEY)
+        setting = await session.get(AppSetting, AI_REPLY_ENABLED_KEY)
         if setting:
-            return _normalize(setting.value_json.get("mode"))
-    return "auto_send"
+            return bool(setting.value_json.get("enabled", True))
+    return True
 
 
-async def set_ai_reply_delivery_mode(value: str, session: AsyncSession | None = None) -> str:
-    mode = _normalize(value)
+async def set_ai_reply_enabled(value: bool, session: AsyncSession | None = None) -> bool:
+    enabled = bool(value)
     if session is not None:
-        setting = await session.get(AppSetting, AI_REPLY_SETTING_KEY)
+        setting = await session.get(AppSetting, AI_REPLY_ENABLED_KEY)
         if setting:
-            setting.value_json = {"mode": mode}
+            setting.value_json = {"enabled": enabled}
         else:
-            session.add(AppSetting(key=AI_REPLY_SETTING_KEY, value_json={"mode": mode}))
+            session.add(AppSetting(key=AI_REPLY_ENABLED_KEY, value_json={"enabled": enabled}))
         await session.commit()
-    return mode
+    return enabled
 
 RISK_REPLY_SETTING_KEY = "risk_fixed_reply"
 DEFAULT_RISK_REPLY = "收到，已呼叫营养师班主任，稍后为您解答哈～"
