@@ -39,7 +39,11 @@ def _is_worthy(analysis_json: object) -> bool:
     if not isinstance(analysis_json, dict):
         return False
     plan = analysis_json.get("archive_plan")
-    return bool(isinstance(plan, dict) and plan.get("worthy"))
+    if isinstance(plan, dict) and plan.get("worthy"):
+        return True
+    # 纯图片单发不走意图识别(视觉不进风控的既有决定)，故无 archive_plan；
+    # 但成功解析的餐食图/体重秤图是打卡主来源，视为可归档，交给档案官抽取判断。
+    return analysis_json.get("image_parse_status") == "ok"
 
 
 async def _candidate_case_ids(session: AsyncSession) -> list[int]:

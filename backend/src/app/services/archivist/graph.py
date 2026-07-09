@@ -109,6 +109,11 @@ class ArchivistGraph:
             watermark_to = max(watermark_to, m.id)
             if not m.created_at:
                 continue
+            aj = m.analysis_json if isinstance(m.analysis_json, dict) else {}
+            # 图片解析失败的消息内容只是占位符（"用户发来一张图片（图片解析失败）。"），
+            # 无信息量，跳过不喂抽取。成功解析的图片描述已写进 content，正常纳入。
+            if aj.get("image_parse_status") == "failed":
+                continue
             text = (m.content or "").strip()
             if not text:
                 continue
