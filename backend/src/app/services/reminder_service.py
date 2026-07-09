@@ -272,6 +272,9 @@ class ReminderService:
         """
         if not self.settings.checkin_followup_enabled:
             return
+        from app.services.archivist.checkin_projection import (
+            mark_contradictions_pending_confirmation,
+        )
         from app.services.archivist.followup import compose_followup_message, detect_followup
 
         tz = ZoneInfo(self.settings.reminder_timezone)
@@ -311,7 +314,9 @@ class ReminderService:
                     session, service_case_id=service_case.id, today=today
                 )
                 content = compose_followup_message(
-                    missing_slots=detect["missing_slots"], ask_weight=detect["ask_weight"]
+                    missing_slots=detect["missing_slots"],
+                    ask_weight=detect["ask_weight"],
+                    confirmations=detect.get("confirmations"),
                 )
                 if not content:
                     continue
@@ -340,6 +345,21 @@ class ReminderService:
                 if result.success:
                     message.status = MessageStatus.SENT
                     message.wecom_message_id = result.message_id
+                    # 追问已发出的矛盾：把这些字段降级为 user_confirmed 并标 asked，
+                    # 使用户随后报的新值覆盖旧表单值、且不再重复追问。
+                    confirmations = detect.get("confirmations") or []
+                    if confirmations:
+                        today_checkin = await session.scalar(
+                            select(Checkin).where(
+                                Checkin.service_case_id == service_case.id,
+                                Checkin.checkin_date == today,
+                                Checkin.deleted_at.is_(None),
+                            )
+                        )
+                        if today_checkin is not None:
+                            mark_contradictions_pending_confirmation(
+                                today_checkin, [c["field"] for c in confirmations]
+                            )
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error

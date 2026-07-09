@@ -28,6 +28,9 @@ _PRODUCT_SCHEDULE_SUBKEYS = ("morning_c", "noon_b", "night_a", "summary")
 
 SOURCE_CHAT = "chat"
 SOURCE_FORM = "form"
+# 用户被追问后亲口确认过的字段：权威高于表单。合并时按"非 form"处理（聊天最新值赢），
+# 使追问后用户报的新值能覆盖原表单值（见 mark_contradictions_pending_confirmation）。
+SOURCE_USER_CONFIRMED = "user_confirmed"
 
 
 @dataclass
@@ -116,6 +119,37 @@ def _merge_product_schedule(
             changed = True
     if changed or cur:
         parsed["product_schedule"] = cur
+
+
+def mark_contradictions_pending_confirmation(checkin: Checkin, field_keys: list[str]) -> bool:
+    """追问矛盾后调用：把这些字段来源降级为 user_confirmed(不再表单权威)，并把对应矛盾标 asked=true(去重)。
+
+    降级后，用户随后在群里报的新值会走 _merge_scalar 的"聊天最新值赢"分支，覆盖原表单值——
+    即"用户被追问确认后可覆盖表单"。返回是否有实际改动。
+    """
+    if not field_keys:
+        return False
+    parsed = dict(checkin.parsed_json or {})
+    meta = dict(parsed.get("_meta") or {})
+    sources = dict(meta.get("sources") or {})
+    contradictions = [dict(c) for c in (meta.get("contradictions") or [])]
+    targets = set(field_keys)
+    changed = False
+    for c in contradictions:
+        if c.get("field") in targets and not c.get("asked"):
+            c["asked"] = True
+            changed = True
+    for fk in field_keys:
+        if sources.get(fk) != SOURCE_USER_CONFIRMED:
+            sources[fk] = SOURCE_USER_CONFIRMED
+            changed = True
+    if not changed:
+        return False
+    meta["sources"] = sources
+    meta["contradictions"] = contradictions
+    parsed["_meta"] = meta
+    checkin.parsed_json = parsed  # 整体重新赋值，确保 SQLAlchemy 捕获 JSON 变更
+    return True
 
 
 async def _find_active_checkin(
