@@ -6,6 +6,7 @@ import {
   KnowledgeIndexStats,
   KnowledgeFAQ,
   KnowledgeEvolutionSetting,
+  DashboardCasePendingDocuments,
 } from "@/lib/api";
 import { AutoSendToggle } from "./auto-send-toggle";
 import { AiReplyToggle } from "./ai-reply-toggle";
@@ -20,6 +21,7 @@ export default async function DocumentsListPage() {
     policy,
     aiReplyEnabled,
     refundPendingCases,
+    pendingDocumentGroups,
     pendingKnowledgeDrafts,
     approvedKnowledgeDrafts,
     knowledgeFaqs,
@@ -29,6 +31,7 @@ export default async function DocumentsListPage() {
     api<{ mode: string }>("/settings/content-delivery-policy").catch(() => ({ mode: "manual_review" })),
     api<{ enabled: boolean }>("/settings/ai-reply-enabled").catch(() => ({ enabled: true })),
     api<ServiceCase[]>("/service-cases?filter=refund_pending").catch(() => []),
+    api<DashboardCasePendingDocuments[]>("/dashboard/pending-documents").catch(() => []),
     api<KnowledgeDraft[]>("/knowledge-drafts?status=pending").catch(() => []),
     api<KnowledgeDraft[]>("/knowledge-drafts?status=approved").catch(() => []),
     api<KnowledgeFAQ[]>("/knowledge-faqs?status=all").catch(() => []),
@@ -47,6 +50,11 @@ export default async function DocumentsListPage() {
       by_source_type: {},
     })),
   ]);
+
+  const pendingDocumentCount = pendingDocumentGroups.reduce(
+    (sum, group) => sum + group.documents.length,
+    0,
+  );
 
   return (
     <div className="page-stack">
@@ -68,8 +76,9 @@ export default async function DocumentsListPage() {
               风险确认与知识候选集中在这里处理。先消除高风险，再推进文件交付。
             </p>
           </div>
-          <div className="grid grid-cols-2 divide-x divide-slate-800">
+          <div className="grid grid-cols-3 divide-x divide-slate-800">
             <ReviewMetric label="退款确认" value={refundPendingCases.length} tone="risk" />
+            <ReviewMetric label="文件待审核" value={pendingDocumentCount} tone="review" />
             <ReviewMetric label="知识候选" value={pendingKnowledgeDrafts.length} tone="info" />
           </div>
         </div>
