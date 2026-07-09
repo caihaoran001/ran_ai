@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Date, ForeignKey, JSON, String, Text
+from sqlalchemy import Date, DateTime, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -28,5 +28,8 @@ class Checkin(TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     raw_message_id: Mapped[str | None] = mapped_column(String(128))
     parsed_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    # 软删除：配合 (service_case_id, checkin_date) WHERE deleted_at IS NULL 条件唯一索引，
+    # 支撑档案官"按天 UPSERT"合并同一天的多次打卡投影。
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     service_case: Mapped[ServiceCase] = relationship(back_populates="checkins")

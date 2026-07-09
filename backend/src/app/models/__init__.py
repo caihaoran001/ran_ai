@@ -1,4 +1,5 @@
 from app.models.agent_reminder_task import AgentReminderTask, AgentReminderTaskStatus
+from app.models.archivist_progress import ArchivistProgress
 from app.models.checkin import Checkin
 from app.models.ai_usage import AIUsageLog
 from app.models.app_setting import AppSetting
@@ -22,6 +23,7 @@ __all__ = [
     "Checkin",
     "AgentReminderTask",
     "AgentReminderTaskStatus",
+    "ArchivistProgress",
     "AIUsageLog",
     "AppSetting",
     "DocumentStatus",
