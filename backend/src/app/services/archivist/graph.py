@@ -16,11 +16,14 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.archivist_progress import ArchivistProgress
 from app.models.message import Message, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.services.archivist.checkin_projection import CheckinUpsertResult, upsert_checkin
+from app.services.archivist.extract_agent import run_extract_agent
 from app.services.archivist.extractor import extract_checkin_fields
+from app.services.archivist.shadow import reconcile_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +39,13 @@ class ArchivistState(TypedDict, total=False):
     watermark_to: int | None
     # {date_iso: [{"id": int, "text": str}]}
     delta_by_date: dict[str, list[dict]]
+    # 本轮增量涉及的全部用户消息 id（扁平，供影子对账按 message_id 取热路径已写事件）
+    delta_message_ids: list[int]
     # {date_iso: {"fields": {...}, "evidence_ids": [int]}}
     day_candidates: dict[str, dict]
+    # 影子模式：Agent 抽出的成效事件/画像信号（累计跨天，只对账不落库）
+    shadow_outcome: list[dict]
+    shadow_signals: list[dict]
     committed: list[dict]
 
 
@@ -49,6 +57,11 @@ class ArchivistRunResult:
     days_processed: int = 0
     upserts: list[dict] = field(default_factory=list)  # [{date, filled, contradictions...}]
     contradictions: list[dict] = field(default_factory=list)
+    # 影子对账（仅 archivist_outcome_shadow_enabled 时有值）
+    shadow_recorded: bool = False
+    shadow_events: list[dict] = field(default_factory=list)
+    shadow_signals: list[dict] = field(default_factory=list)
+    shadow_diff: dict = field(default_factory=dict)
 
 
 def _sh_date(dt: datetime) -> date:
@@ -64,10 +77,14 @@ class ArchivistGraph:
         *,
         service_case: ServiceCase,
         progress: ArchivistProgress,
+        chat_model: object | None = None,
     ) -> None:
         self.session = session
         self.service_case = service_case
         self.progress = progress
+        # chat_model 可注入（测试用 FakeToolCallingModel）；None 时 extract_agent 内部建真实模型。
+        self.chat_model = chat_model
+        self.settings = get_settings()
         self.result = ArchivistRunResult()
         self.graph = self._compile()
 
@@ -108,6 +125,7 @@ class ArchivistGraph:
         ).scalars().all()
 
         delta_by_date: dict[str, list[dict]] = {}
+        delta_message_ids: list[int] = []
         watermark_to = watermark
         for m in rows:
             watermark_to = max(watermark_to, m.id)
@@ -123,6 +141,7 @@ class ArchivistGraph:
                 continue
             key = _sh_date(m.created_at).isoformat()
             delta_by_date.setdefault(key, []).append({"id": m.id, "text": text})
+            delta_message_ids.append(m.id)
 
         self.result.watermark_from = watermark or None
         self.result.watermark_to = watermark_to or None
@@ -131,23 +150,48 @@ class ArchivistGraph:
             "watermark_from": watermark or None,
             "watermark_to": watermark_to or None,
             "delta_by_date": delta_by_date,
+            "delta_message_ids": delta_message_ids,
         }
 
     async def _extract(self, state: ArchivistState) -> dict[str, Any]:
-        """对每个自然日的聊天原文抽取打卡字段（LLM 判断）。"""
+        """对每个自然日的聊天原文抽取打卡字段（LLM 判断）。
+
+        - 影子关（默认）：走 P0 的 extract_checkin_projection 纯 JSON 抽取，行为不变。
+        - 影子开：走 Agent 形态（决策 A），额外累计成效/画像信号供 commit 对账（只抽不落库）。
+        """
         delta_by_date = state.get("delta_by_date") or {}
         day_candidates: dict[str, dict] = {}
+        shadow = self.settings.archivist_outcome_shadow_enabled
+        shadow_outcome: list[dict] = []
+        shadow_signals: list[dict] = []
+
         for date_iso, msgs in delta_by_date.items():
             content = "\n".join(f"- {m['text']}" for m in msgs)
-            fields = await extract_checkin_fields(
-                content=content, service_case_id=self.service_case.id
-            )
+            if shadow:
+                collector = await run_extract_agent(
+                    content=content,
+                    service_case_id=self.service_case.id,
+                    enabled_kinds=["checkin", "outcome", "profile"],
+                    chat_model=self.chat_model,
+                    settings=self.settings,
+                )
+                fields = collector.get("checkin") or {}
+                shadow_outcome.extend(collector.get("outcome") or [])
+                shadow_signals.extend(collector.get("profile") or [])
+            else:
+                fields = await extract_checkin_fields(
+                    content=content, service_case_id=self.service_case.id
+                )
             if fields:
                 day_candidates[date_iso] = {
                     "fields": fields,
                     "evidence_ids": [m["id"] for m in msgs],
                 }
-        return {"day_candidates": day_candidates}
+        return {
+            "day_candidates": day_candidates,
+            "shadow_outcome": shadow_outcome,
+            "shadow_signals": shadow_signals,
+        }
 
     async def _classify(self, state: ArchivistState) -> dict[str, Any]:
         """P0 预留：全局知识 vs 个人处方分流、矛盾检测在后续阶段接入。当前透传。"""
@@ -184,6 +228,25 @@ class ArchivistGraph:
             self.result.contradictions.extend(res.contradictions)
         self.result.days_processed = len(committed)
 
+        # 影子对账（P0.5）：只在开关开时做，且**不写** outcome_events/user_state，只落审计表 + 日志。
+        if self.settings.archivist_outcome_shadow_enabled:
+            shadow_outcome = state.get("shadow_outcome") or []
+            shadow_signals = state.get("shadow_signals") or []
+            row = await reconcile_outcome(
+                self.session,
+                service_case_id=self.service_case.id,
+                delta_message_ids=state.get("delta_message_ids") or [],
+                shadow_events=shadow_outcome,
+                shadow_signals=shadow_signals,
+                watermark_from=state.get("watermark_from"),
+                watermark_to=state.get("watermark_to"),
+            )
+            self.result.shadow_events = shadow_outcome
+            self.result.shadow_signals = shadow_signals
+            if row is not None:
+                self.result.shadow_recorded = True
+                self.result.shadow_diff = row.diff or {}
+
         # 推进水位线（即使本轮没抽到打卡也要推进，避免下轮重复处理同一批增量）
         watermark_to = state.get("watermark_to")
         if watermark_to:
@@ -219,8 +282,17 @@ async def get_or_create_progress(
 
 
 async def run_archivist(
-    session: AsyncSession, *, service_case: ServiceCase, progress: ArchivistProgress
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    progress: ArchivistProgress,
+    chat_model: object | None = None,
 ) -> ArchivistRunResult:
-    """跑一次档案官（不在此 commit，由调用方在持锁事务内提交）。"""
-    graph = ArchivistGraph(session, service_case=service_case, progress=progress)
+    """跑一次档案官（不在此 commit，由调用方在持锁事务内提交）。
+
+    chat_model 可注入（测试用）；生产路径（trigger.run_archivist_scan）不传，走真实模型。
+    """
+    graph = ArchivistGraph(
+        session, service_case=service_case, progress=progress, chat_model=chat_model
+    )
     return await graph.run()
