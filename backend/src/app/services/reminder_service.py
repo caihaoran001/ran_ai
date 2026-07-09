@@ -274,6 +274,8 @@ class ReminderService:
 
         H5 下线后的完整度兜底。会向真实群发消息，受 CHECKIN_FOLLOWUP_ENABLED 门控。
         每单每天最多一条(rule_id=checkin_followup 去重)，不发链接。
+        日常缺失字段走退避(allowed_after_backoff)：同一字段追过冷却几天、追满上限即停，
+        避免天天问同一件事骚扰用户；里程碑复盘、矛盾核对不走退避。
         """
         if not self.settings.checkin_followup_enabled:
             return
@@ -281,6 +283,7 @@ class ReminderService:
             mark_contradictions_pending_confirmation,
         )
         from app.services.archivist.followup import (
+            allowed_after_backoff,
             compose_followup_message,
             compose_milestone_followup,
             detect_followup,
@@ -323,8 +326,10 @@ class ReminderService:
                     session, service_case=service_case, now=now, tz=tz
                 )
                 milestone = detect.get("milestone")
+                asked_field_keys: list[str] = []  # 本次实际追问的字段 key，发送成功后落字段级退避事件
                 if milestone:
                     # 里程碑前夕：LLM 复盘追问（失败自回退模板），矛盾核对照旧附上（问了才能标 asked）。
+                    # 里程碑本身低频（每 7 天一次），不走字段级退避。
                     parts = [
                         await compose_milestone_followup(
                             service_case=service_case,
@@ -342,9 +347,29 @@ class ReminderService:
                         parts.append(conf_msg)
                     content = " ".join(parts)
                 else:
+                    # 日常档：对缺失字段做退避——追过冷却中/追满上限的本次跳过，避免天天问同一件事。
+                    slot_items = detect["missing_slots"]  # [{key,label}]
+                    candidate_keys = [it["key"] for it in slot_items]
+                    if detect["ask_weight"]:
+                        candidate_keys.append("weight")
+                    field_events = list(
+                        await session.scalars(
+                            select(ReminderEvent).where(
+                                ReminderEvent.service_case_id == service_case.id,
+                                ReminderEvent.rule_id.like("checkin_followup:%"),
+                                ReminderEvent.event_type == ReminderEventType.REMINDED,
+                            )
+                        )
+                    )
+                    asked_history = [
+                        (e.rule_id.split(":", 1)[1], e.event_date) for e in field_events
+                    ]
+                    allowed = set(allowed_after_backoff(candidate_keys, asked_history, today))
+                    asked_field_keys = [k for k in candidate_keys if k in allowed]
+                    slot_labels = [it["label"] for it in slot_items if it["key"] in allowed]
                     content = compose_followup_message(
-                        missing_slots=detect["missing_slots"],
-                        ask_weight=detect["ask_weight"],
+                        missing_slots=slot_labels,
+                        ask_weight="weight" in allowed,
                         confirmations=detect.get("confirmations"),
                         case_id=service_case.id,
                     )
@@ -390,6 +415,15 @@ class ReminderService:
                             mark_contradictions_pending_confirmation(
                                 today_checkin, [c["field"] for c in confirmations]
                             )
+                    # 落字段级退避事件：记下"今天追过哪些字段"，供后续冷却/停追判断。
+                    for field_key in asked_field_keys:
+                        await _reserve_reminder_event(
+                            session,
+                            service_case.id,
+                            rule_id=f"checkin_followup:{field_key}",
+                            event_date=today,
+                            event_type=ReminderEventType.REMINDED,
+                        )
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error

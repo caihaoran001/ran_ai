@@ -28,6 +28,7 @@ from app.services.archivist.checkin_projection import (
     upsert_checkin,
 )
 from app.services.archivist.followup import (
+    allowed_after_backoff,
     compose_followup_message,
     compose_milestone_followup,
     detect_followup,
@@ -182,6 +183,41 @@ def test_daily_slot_variants_rotate_by_case_id():
         for i in range(3)
     }
     assert len(variants) >= 2
+
+
+# ---------------------------------------------------------------------------
+# 日常档：退避降频（避免天天问同一件事）
+# ---------------------------------------------------------------------------
+
+
+def test_backoff_allows_first_ask_when_no_history():
+    today = date(2026, 7, 10)
+    assert allowed_after_backoff(["morning_c", "weight"], [], today) == ["morning_c", "weight"]
+
+
+def test_backoff_skips_within_cooldown():
+    today = date(2026, 7, 10)
+    # 昨天刚追过 morning_c（冷却 3 天内）→ 本次跳过；weight 没追过 → 放行。
+    history = [("morning_c", date(2026, 7, 9))]
+    assert allowed_after_backoff(["morning_c", "weight"], history, today) == ["weight"]
+
+
+def test_backoff_reallows_after_cooldown():
+    today = date(2026, 7, 10)
+    # 4 天前追过（超过冷却 3 天）→ 重新放行。
+    history = [("morning_c", date(2026, 7, 6))]
+    assert allowed_after_backoff(["morning_c"], history, today) == ["morning_c"]
+
+
+def test_backoff_stops_after_max_asks():
+    today = date(2026, 7, 20)
+    # 累计追满 3 次（默认上限）→ 永久停追，即使早已过冷却期。
+    history = [
+        ("morning_c", date(2026, 7, 5)),
+        ("morning_c", date(2026, 7, 9)),
+        ("morning_c", date(2026, 7, 13)),
+    ]
+    assert allowed_after_backoff(["morning_c"], history, today) == []
 
 
 # ---------------------------------------------------------------------------

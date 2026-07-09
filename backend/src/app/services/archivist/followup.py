@@ -29,6 +29,11 @@ _PRODUCT_SLOTS = {"morning_c": "早C", "noon_b": "午B", "night_a": "晚A"}
 _WEIGHT_LOOKBACK_DAYS = 3
 _WAIST_LOOKBACK_DAYS = 7  # 腰围一周测一次，避免天天问。
 
+# 追问退避：同一缺失字段追过一次就冷却 _FOLLOWUP_BACKOFF_DAYS 天不再追；
+# 累计追满 _FOLLOWUP_MAX_ASKS 次仍不补 → 认定"这人就是不爱报"，彻底停追，避免天天骚扰。
+_FOLLOWUP_BACKOFF_DAYS = 3
+_FOLLOWUP_MAX_ASKS = 3
+
 # 里程碑前一晚：服务第 N 天 → 即将到来的里程碑天。阶段报告在里程碑当晚 21:00 生成，
 # 故提前一天追问，给用户答复时间。service_day 用 effective_service_day（计划开始当天=第1天）。
 _MILESTONE_EVE = {6: 7, 13: 14, 20: 21, 27: 28}
@@ -70,10 +75,45 @@ def _slot_filled(value: object) -> bool:
     return bool(str(value or "").strip())
 
 
-def _missing_product_slots(parsed_json: dict | None) -> list[str]:
+def _missing_product_slots(parsed_json: dict | None) -> list[dict]:
+    """当天仍缺的产品依从槽位：返回 [{"key","label"}]，key 用于退避、label 用于话术。"""
     ps = (parsed_json or {}).get("product_schedule") if isinstance(parsed_json, dict) else None
     ps = ps if isinstance(ps, dict) else {}
-    return [label for key, label in _PRODUCT_SLOTS.items() if not _slot_filled(ps.get(key))]
+    return [
+        {"key": key, "label": label}
+        for key, label in _PRODUCT_SLOTS.items()
+        if not _slot_filled(ps.get(key))
+    ]
+
+
+def allowed_after_backoff(
+    candidate_keys: list[str],
+    asked_events: list[tuple[str, date]],
+    today: date,
+    *,
+    backoff_days: int = _FOLLOWUP_BACKOFF_DAYS,
+    max_asks: int = _FOLLOWUP_MAX_ASKS,
+) -> list[str]:
+    """退避过滤：从候选缺失字段里筛掉"最近追过还在冷却"或"已追满上限"的，返回本次仍可追的 key。
+
+    asked_events: 该服务单历史"字段级追问"事件 [(key, event_date)]（来自 ReminderEvent
+    rule_id=checkin_followup:{key}）。规则：
+    - 累计追问 >= max_asks 次 → 永久停追（这人就是不爱报该字段）。
+    - 距上次追问 < backoff_days 天 → 冷却中，本次跳过。
+    """
+    history: dict[str, list[date]] = {}
+    for key, event_date in asked_events:
+        history.setdefault(key, []).append(event_date)
+    allowed: list[str] = []
+    for key in candidate_keys:
+        dates = history.get(key, [])
+        if len(dates) >= max_asks:
+            continue
+        last = max(dates) if dates else None
+        if last is not None and (today - last).days < backoff_days:
+            continue
+        allowed.append(key)
+    return allowed
 
 
 def _pending_confirmations(parsed_json: dict | None) -> list[dict]:
@@ -122,11 +162,12 @@ async def detect_followup(
     """判断今天还缺哪些关键字段 / 有哪些数据要确认 / 是否里程碑前夕。
 
     返回 {
-        missing_slots: [中文标签],
+        missing_slots: [{"key","label"}],   # 缺失产品槽位，key 供退避、label 供话术
         ask_weight: bool,
         confirmations: [{field,label,form_value,chat_value}],
         milestone: None | {"milestone_day": int, "need_waist": bool},
     }。
+    退避（同一字段冷却/停追）由调用方用 allowed_after_backoff 处理，detect 只报"当前缺什么"。
     """
     today = now.date()
     today_checkin = await session.scalar(
@@ -235,7 +276,7 @@ async def compose_milestone_followup(
             ai_service = AIService()
         system_prompt = (
             "你是燃人健康管理的贴心助理，在企业微信群里用一句口语化中文向用户发起阶段复盘追问。"
-            "要求：亲切自然、不超过 80 字、不发任何链接、不要罗列编号。"
+            "要求：亲切自然、不超过 80 字、不要罗列编号。"
             "只收集用户自己才知道的信息：这阶段最大的变化、最大的卡点/最难坚持的地方。"
             "不要反问用户『下阶段重点/下阶段想解决什么』——那是助教基于数据给用户的专业建议，不该甩回给用户。"
         )
