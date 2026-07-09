@@ -185,14 +185,16 @@ export function QiweAccountConfig() {
         )}
       </div>
 
-      {/* 历史账号列表 */}
-      {state.history.length > 0 && (
+      {/* 历史账号列表（不含当前账号，只列可切换的其他账号） */}
+      {state.history.filter((e) => !e.is_current).length > 0 && (
         <div className="mb-5">
           <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
             历史账号（点击切换）
           </p>
           <div className="grid gap-2">
-            {state.history.map((entry) => (
+            {state.history
+              .filter((e) => !e.is_current)
+              .map((entry) => (
               <button
                 key={entry.guid}
                 type="button"

@@ -120,23 +120,40 @@ def _mask(token: str) -> str:
 
 
 async def get_qiwe_account_state(session: AsyncSession | None = None) -> dict[str, Any]:
-    """返回给前端的账号状态：当前账号 + 历史账号列表（均脱敏）。"""
+    """返回给前端的账号状态：当前账号 + 历史账号列表（均脱敏）。
+
+    当前账号若还没有昵称（例如 env 配置但从未在后台保存过），会 best-effort
+    调一次 getProfile 补出真实昵称/头像；若该账号已落库则顺带缓存，下次直接命中。
+    """
     state = await _load_state(session)
-    accounts: dict[str, Any] = state.get("accounts", {})
+    from_db = bool(state.get("accounts"))
+    accounts: dict[str, Any] = dict(state.get("accounts", {}))
     current_guid = state.get("current_guid") or ""
 
-    # 没有任何落库账号时，用 env 作为当前账号展示（首次部署）
-    if not accounts:
+    # 没有任何落库账号时，用 env 作为当前账号展示（首次部署，不落库）
+    if not from_db:
         from app.core.config import get_settings
 
         settings = get_settings()
         guid = (settings.qiwei_guid or "").strip()
         token = (settings.qiwei_token or "").strip()
-        if guid and token:
-            env_entry = _public_entry(_empty_account(guid, token), is_current=True)
-            env_entry["nickname"] = env_entry["nickname"] or "（env 配置账号）"
-            return {"current": env_entry, "history": []}
-        return {"current": None, "history": []}
+        if not (guid and token):
+            return {"current": None, "history": []}
+        current_guid = guid
+        accounts = {guid: _empty_account(guid, token)}
+
+    current_raw = accounts.get(current_guid)
+    if current_raw and not (current_raw.get("nickname") or current_raw.get("alias")):
+        fields = _profile_fields(
+            await fetch_account_profile(
+                str(current_raw.get("guid") or ""),
+                str(current_raw.get("token") or ""),
+            )
+        )
+        if fields.get("nickname") or fields.get("alias"):
+            current_raw.update(fields)
+            if from_db and session is not None and hasattr(session, "get"):
+                await _save_state(session, state)
 
     history = [
         _public_entry(acc, is_current=(guid == current_guid))
