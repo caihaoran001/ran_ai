@@ -5,9 +5,9 @@ from pydantic import BaseModel
 
 from app.db.session import get_session
 from app.services.content_policy import (
-    get_ai_reply_delivery_mode,
+    get_ai_reply_enabled,
     get_content_delivery_mode,
-    set_ai_reply_delivery_mode,
+    set_ai_reply_enabled,
     set_content_delivery_mode,
 )
 from app.services.knowledge_evolution_settings import (
@@ -25,6 +25,10 @@ class AutoSendSetting(BaseModel):
 
 class ContentDeliveryPolicy(BaseModel):
     mode: str = "manual_review"
+
+
+class AiReplyEnabled(BaseModel):
+    enabled: bool = True
 
 
 @router.get("/settings/auto-send")
@@ -55,17 +59,17 @@ async def update_content_delivery_policy(
     return ContentDeliveryPolicy(mode=await set_content_delivery_mode(payload.mode, session))
 
 
-@router.get("/settings/ai-reply-delivery-policy", response_model=ContentDeliveryPolicy)
-async def get_ai_reply_delivery_policy(session: AsyncSession = Depends(get_session)) -> ContentDeliveryPolicy:
-    return ContentDeliveryPolicy(mode=await get_ai_reply_delivery_mode(session))
+@router.get("/settings/ai-reply-enabled", response_model=AiReplyEnabled)
+async def get_ai_reply_enabled_setting(session: AsyncSession = Depends(get_session)) -> AiReplyEnabled:
+    return AiReplyEnabled(enabled=await get_ai_reply_enabled(session))
 
 
-@router.post("/settings/ai-reply-delivery-policy", response_model=ContentDeliveryPolicy)
-async def update_ai_reply_delivery_policy(
-    payload: ContentDeliveryPolicy,
+@router.post("/settings/ai-reply-enabled", response_model=AiReplyEnabled)
+async def update_ai_reply_enabled_setting(
+    payload: AiReplyEnabled,
     session: AsyncSession = Depends(get_session),
-) -> ContentDeliveryPolicy:
-    return ContentDeliveryPolicy(mode=await set_ai_reply_delivery_mode(payload.mode, session))
+) -> AiReplyEnabled:
+    return AiReplyEnabled(enabled=await set_ai_reply_enabled(payload.enabled, session))
 
 
 class RiskFixedReply(BaseModel):
@@ -120,6 +124,7 @@ class QiweAccountEntry(BaseModel):
     alias: str = ""
     avatar_url: str = ""
     real_name: str = ""
+    note: str = ""
     last_used_at: str | None = None
     saved_at: str | None = None
     is_current: bool = False
@@ -144,6 +149,11 @@ class QiweAccountUpdate(BaseModel):
 
 class QiweSwitchRequest(BaseModel):
     guid: str
+
+
+class QiweNoteRequest(BaseModel):
+    guid: str
+    note: str = ""
 
 
 @router.get("/settings/qiwe-account", response_model=QiweAccountState)
@@ -180,6 +190,24 @@ async def switch_qiwe_account_api(
 
     try:
         result = await switch_to_account(payload.guid, session)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return QiweAccountResult(**result)
+
+
+@router.post("/settings/qiwe-account/note", response_model=QiweAccountResult)
+async def set_qiwe_account_note_api(
+    payload: QiweNoteRequest,
+    session: AsyncSession = Depends(get_session),
+) -> QiweAccountResult:
+    from fastapi import HTTPException
+
+    from app.services.qiwe_account_settings import set_account_note
+
+    try:
+        result = await set_account_note(payload.guid, payload.note, session)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError as exc:

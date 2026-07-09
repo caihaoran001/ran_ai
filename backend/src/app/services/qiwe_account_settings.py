@@ -35,6 +35,7 @@ def _empty_account(guid: str, token: str) -> dict[str, Any]:
         "alias": "",
         "avatar_url": "",
         "real_name": "",
+        "note": "",
         "saved_at": _now_iso(),
         "last_used_at": None,
     }
@@ -129,6 +130,7 @@ def _public_entry(account: dict[str, Any], *, is_current: bool) -> dict[str, Any
         "alias": str(account.get("alias") or ""),
         "avatar_url": str(account.get("avatar_url") or ""),
         "real_name": str(account.get("real_name") or ""),
+        "note": str(account.get("note") or ""),
         "last_used_at": account.get("last_used_at"),
         "saved_at": account.get("saved_at"),
         "is_current": is_current,
@@ -277,6 +279,32 @@ async def switch_to_account(
     apply_to_live_channel(guid, token)
     result = await get_qiwe_account_state(session)
     return {"state": result, "warning": warning}
+
+
+async def set_account_note(
+    guid: str,
+    note: str,
+    session: AsyncSession | None = None,
+) -> dict[str, Any]:
+    """给历史里已存在的账号设置/更新备注（运营自定义记忆）。不影响收发。"""
+    guid = (guid or "").strip()
+    note = (note or "").strip()
+    if not guid:
+        raise ValueError("guid 不能为空")
+    if session is None or not hasattr(session, "get"):
+        raise ValueError("无法访问账号存储")
+
+    state = await _load_state(session)
+    _seed_env_account(state)  # 保证初始账号也在历史里，可被备注
+    accounts = state.get("accounts", {})
+    account = accounts.get(guid)
+    if not account:
+        raise LookupError("该历史账号不存在")
+
+    account["note"] = note
+    await _save_state(session, state)
+    result = await get_qiwe_account_state(session)
+    return {"state": result, "warning": ""}
 
 
 def apply_to_live_channel(guid: str, token: str) -> None:

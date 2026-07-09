@@ -11,6 +11,7 @@ type QiweEntry = {
   alias: string;
   avatar_url: string;
   real_name: string;
+  note: string;
   last_used_at: string | null;
   saved_at: string | null;
   is_current: boolean;
@@ -66,6 +67,9 @@ export function QiweAccountConfig() {
   const [busy, setBusy] = useState(false);
   const [switchingGuid, setSwitchingGuid] = useState<string | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "warn" | "error"; text: string } | null>(null);
+  const [editingNoteGuid, setEditingNoteGuid] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -142,6 +146,91 @@ export function QiweAccountConfig() {
     }
   }
 
+  function startEditNote(entry: QiweEntry) {
+    setEditingNoteGuid(entry.guid);
+    setNoteDraft(entry.note || "");
+    setMessage(null);
+  }
+
+  function cancelEditNote() {
+    setEditingNoteGuid(null);
+    setNoteDraft("");
+  }
+
+  async function saveNote(entry: QiweEntry) {
+    setSavingNote(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/settings/qiwe-account/note`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ guid: entry.guid, note: noteDraft.trim() }),
+      });
+      if (!res.ok) throw new Error((await res.text()) || "备注保存失败");
+      const data = (await res.json()) as { state: QiweState; warning: string };
+      setState(data.state);
+      setEditingNoteGuid(null);
+      setNoteDraft("");
+      setMessage({ kind: "ok", text: "备注已保存" });
+    } catch (err) {
+      setMessage({ kind: "error", text: err instanceof Error ? err.message : "备注保存失败" });
+    } finally {
+      setSavingNote(false);
+    }
+  }
+
+  function renderNote(entry: QiweEntry) {
+    if (editingNoteGuid === entry.guid) {
+      return (
+        <div className="mt-1.5 flex items-center gap-2">
+          <Input
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            placeholder="填写备注，如「主号-张三的手机」"
+            className="h-7 text-xs"
+            maxLength={40}
+            disabled={savingNote}
+            autoFocus
+          />
+          <button
+            type="button"
+            onClick={() => saveNote(entry)}
+            disabled={savingNote}
+            className="shrink-0 rounded-md bg-cyan-700 px-2 py-1 text-xs font-medium text-white hover:bg-cyan-800 disabled:opacity-50"
+          >
+            {savingNote ? "保存中…" : "保存"}
+          </button>
+          <button
+            type="button"
+            onClick={cancelEditNote}
+            disabled={savingNote}
+            className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:text-slate-700 disabled:opacity-50"
+          >
+            取消
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="mt-1 flex items-center gap-2">
+        {entry.note ? (
+          <span className="truncate rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
+            备注：{entry.note}
+          </span>
+        ) : (
+          <span className="text-xs text-slate-400">暂无备注</span>
+        )}
+        <button
+          type="button"
+          onClick={() => startEditNote(entry)}
+          className="shrink-0 text-xs font-medium text-cyan-700 hover:text-cyan-800"
+        >
+          {entry.note ? "编辑备注" : "添加备注"}
+        </button>
+      </div>
+    );
+  }
+
   if (!loaded) return null;
 
   const messageColor =
@@ -178,6 +267,7 @@ export function QiweAccountConfig() {
               <div className="mt-0.5 truncate text-xs text-slate-500">
                 GUID {shortGuid(state.current.guid)} · Token {state.current.token_masked || "—"}
               </div>
+              {renderNote(state.current)}
             </div>
           </>
         ) : (
@@ -195,16 +285,9 @@ export function QiweAccountConfig() {
             {state.history
               .filter((e) => !e.is_current)
               .map((entry) => (
-              <button
+              <div
                 key={entry.guid}
-                type="button"
-                onClick={() => switchAccount(entry)}
-                disabled={entry.is_current || switchingGuid !== null}
-                className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all ${
-                  entry.is_current
-                    ? "cursor-default border-cyan-300 bg-cyan-50/40"
-                    : "border-slate-200 bg-white hover:border-cyan-400 hover:bg-cyan-50/40 active:scale-[0.995] disabled:opacity-50"
-                }`}
+                className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5"
               >
                 <Avatar entry={entry} />
                 <div className="min-w-0 flex-1">
@@ -212,21 +295,22 @@ export function QiweAccountConfig() {
                     <span className="truncate text-sm font-medium text-slate-900">
                       {displayName(entry)}
                     </span>
-                    {entry.is_current && (
-                      <span className="shrink-0 text-[11px] font-medium text-cyan-700">当前</span>
-                    )}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-slate-500">
                     GUID {shortGuid(entry.guid)}
                     {entry.last_used_at ? ` · 上次使用 ${formatTime(entry.last_used_at)}` : ""}
                   </div>
+                  {renderNote(entry)}
                 </div>
-                {!entry.is_current && (
-                  <span className="shrink-0 text-xs font-medium text-cyan-700">
-                    {switchingGuid === entry.guid ? "切换中…" : "切换"}
-                  </span>
-                )}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => switchAccount(entry)}
+                  disabled={switchingGuid !== null}
+                  className="shrink-0 rounded-md border border-cyan-300 px-2.5 py-1 text-xs font-medium text-cyan-700 transition-all hover:border-cyan-400 hover:bg-cyan-50 active:scale-[0.98] disabled:opacity-50"
+                >
+                  {switchingGuid === entry.guid ? "切换中…" : "切换"}
+                </button>
+              </div>
             ))}
           </div>
         </div>
