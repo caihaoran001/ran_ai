@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, TypedDict
 from zoneinfo import ZoneInfo
 
 from langgraph.graph import END, START, StateGraph
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.archivist_progress import ArchivistProgress
@@ -25,6 +25,10 @@ from app.services.archivist.extractor import extract_checkin_fields
 logger = logging.getLogger(__name__)
 
 _SH_TZ = ZoneInfo("Asia/Shanghai")
+
+# 首次为某服务单建进度行时，把水位线播到 N 天前：只回填最近 N 天，跳过远古历史，
+# 避免存量单第一次被触发就把整段聊天史一次性喂抽取（海量 LLM 调用）。稳态下增量本就很小。
+INITIAL_BACKFILL_DAYS = 3
 
 
 class ArchivistState(TypedDict, total=False):
@@ -197,7 +201,18 @@ async def get_or_create_progress(
         )
     )
     if progress is None:
-        progress = ArchivistProgress(service_case_id=service_case_id)
+        # 播种水位线到 N 天前的最后一条用户消息，只回填最近窗口、跳过远古历史。
+        cutoff = datetime.now(timezone.utc) - timedelta(days=INITIAL_BACKFILL_DAYS)
+        seed = await session.scalar(
+            select(func.max(Message.id)).where(
+                Message.service_case_id == service_case_id,
+                Message.sender_type == MessageSenderType.USER,
+                Message.created_at < cutoff,
+            )
+        )
+        progress = ArchivistProgress(
+            service_case_id=service_case_id, last_archived_message_id=seed
+        )
         session.add(progress)
         await session.flush()
     return progress
