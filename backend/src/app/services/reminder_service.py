@@ -293,11 +293,13 @@ class ReminderService:
 
                 recent_messages = await _recent_chat_lines(session, task.service_case_id)
                 try:
+                    current_channel = get_current_channel()
                     agent_result = await generate_scheduled_reminder_reply(
                         service_case_id=task.service_case_id,
                         trigger_id=task.trigger_message_id,
                         reminder_instruction=task.content,
                         recent_messages=recent_messages,
+                        channel=getattr(current_channel, "name", None),
                         settings=self.settings,
                     )
                     outbound_content = agent_result.reply.strip()
@@ -785,7 +787,11 @@ class ReminderService:
 
         if tasks:
             logger.info(f"Concurrently generating {len(tasks)} stage reports via scheduler")
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # 分批并发：21:00 集中生成时，在服务的用户可能有几十个，一次性 gather 会瞬时打爆 LLM
+            # 并发/限流。阶段报告是多段落生成、比成效快照更重，批量取更小的 3。
+            batch_size = 3
+            for i in range(0, len(tasks), batch_size):
+                await asyncio.gather(*tasks[i:i + batch_size], return_exceptions=True)
 
     async def _generate_outcome_snapshot_for_case_worker(self, case_id: int, milestone: str) -> None:
         async with SessionLocal() as session:
