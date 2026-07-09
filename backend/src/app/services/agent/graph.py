@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -78,6 +79,9 @@ class RanrenAgentGraph:
         self.tools_by_name = {tool.name: tool for tool in self.tools}
         base_model = chat_model or create_agent_chat_model(self.settings)
         self.model = base_model.bind_tools(self.tools) if hasattr(base_model, "bind_tools") else base_model
+        # 单工具超时留在整轮全局超时之内：给足查询/外部请求时间，又不至于一个慢工具占满整轮预算。
+        global_timeout = max(1.0, float(self.settings.agent_timeout_seconds or 40.0))
+        self._tool_timeout_seconds = max(5.0, min(global_timeout - 5.0, global_timeout))
         self.graph = self._compile()
 
     async def run(self, *, user_query: str, recent_messages: list[str], query_speaker: str = "用户") -> AgentReplyResult:
@@ -258,17 +262,42 @@ class RanrenAgentGraph:
         if tool is None:
             content = f"TOOL_NOT_FOUND: {name}"
             trace["error"] = content
+            self._log_tool_result(name, args, trace, elapsed_ms=0.0)
             return ToolMessage(content=content, tool_call_id=call_id), trace
+        start = time.monotonic()
         try:
-            result = await tool.ainvoke(args)
+            # 单个工具套超时，别让某个慢查询/慢外部请求独占整轮的全局预算（graph 层 wait_for）。
+            result = await asyncio.wait_for(tool.ainvoke(args), timeout=self._tool_timeout_seconds)
             trace["ok"] = not _tool_result_failed(result)
             trace["data_tool_failed"] = _is_data_tool(name) and not trace["ok"]
             content = _stringify_tool_result(result)
+        except asyncio.TimeoutError:
+            trace["error"] = f"timeout>{self._tool_timeout_seconds}s"
+            trace["data_tool_failed"] = _is_data_tool(name)
+            content = f"TOOL_ERROR: TimeoutError: 工具 {name} 执行超过 {self._tool_timeout_seconds}s。"
         except Exception as exc:
             trace["error"] = f"{type(exc).__name__}: {exc}"
             trace["data_tool_failed"] = _is_data_tool(name)
             content = f"TOOL_ERROR: {type(exc).__name__}: {exc}"
+        self._log_tool_result(name, args, trace, elapsed_ms=(time.monotonic() - start) * 1000)
         return ToolMessage(content=content, tool_call_id=call_id), trace
+
+    def _log_tool_result(
+        self, name: str, args: dict[str, Any], trace: dict[str, Any], *, elapsed_ms: float
+    ) -> None:
+        """集中记录每次工具调用（case_id/渠道/工具名/参数键/耗时/状态），线上可追溯“为什么没给数据”。"""
+        status = "ok" if trace.get("ok") else "fail"
+        log = logger.info if trace.get("ok") else logger.warning
+        log(
+            "AgentTool case_id=%s channel=%s tool=%s arg_keys=%s status=%s elapsed_ms=%.1f error=%s",
+            self.context.service_case_id,
+            self.context.channel,
+            name,
+            sorted((args or {}).keys()),
+            status,
+            elapsed_ms,
+            trace.get("error"),
+        )
 
     def _reject_tool_call(
         self,
@@ -306,6 +335,7 @@ async def generate_agent_reply(
     query_speaker: str = "用户",
     recent_messages: list[str],
     analysis: dict[str, Any] | None = None,
+    channel: str | None = None,
     settings: Settings | None = None,
 ) -> AgentReplyResult:
     settings = settings or get_settings()
@@ -314,6 +344,7 @@ async def generate_agent_reply(
             service_case_id=service_case_id,
             trigger_id=trigger_id,
             agent_context_plan=_agent_context_plan(analysis),
+            channel=channel,
         ),
         settings=settings,
     ).run(user_query=user_query, recent_messages=recent_messages, query_speaker=query_speaker)
@@ -329,6 +360,7 @@ async def generate_scheduled_reminder_reply(
     trigger_id: int | None,
     reminder_instruction: str,
     recent_messages: list[str],
+    channel: str | None = None,
     settings: Settings | None = None,
 ) -> AgentReplyResult:
     settings = settings or get_settings()
@@ -341,7 +373,7 @@ async def generate_scheduled_reminder_reply(
         f"提醒目标：{reminder_instruction}"
     )
     return await RanrenAgentGraph(
-        context=AgentRunContext(service_case_id=service_case_id, trigger_id=trigger_id),
+        context=AgentRunContext(service_case_id=service_case_id, trigger_id=trigger_id, channel=channel),
         settings=settings,
         include_reminder_tools=False,
     ).run(user_query=user_query, recent_messages=recent_messages, query_speaker="系统定时任务")

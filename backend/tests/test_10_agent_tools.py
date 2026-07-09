@@ -1137,10 +1137,11 @@ async def test_engine_uses_agent_without_global_or_case_toggle(
     calls: list[int] = []
 
     async def fake_generate_agent_reply(
-        *, service_case_id, trigger_id, user_query, query_speaker, recent_messages, analysis, settings
+        *, service_case_id, trigger_id, user_query, query_speaker, recent_messages, analysis, channel=None, settings
     ):
         calls.append(service_case_id)
         assert query_speaker == "用户"
+        assert channel == "qiwe"
         assert analysis == {"requires_human_intervention": False}
         return AgentReplyResult(
             reply="agent reply",

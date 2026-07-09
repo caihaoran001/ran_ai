@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime
 from typing import Any
@@ -10,6 +11,8 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool, StructuredTool
 
 from app.core.config import Settings
+
+logger = logging.getLogger("uvicorn.error")
 
 _DISALLOWED_PATTERNS = [
     r"症状|疾病|诊断|治疗|药|处方|医院|医生|高血压|糖尿病|甲减|怀孕|哺乳",
@@ -49,8 +52,22 @@ def build_web_search_tools(*, settings: Settings) -> list[BaseTool]:
                 )
                 response.raise_for_status()
                 data = response.json()
+        except httpx.TimeoutException as exc:
+            # 超时/限流(429)/网关(5xx) 属于可重试的瞬时故障；4xx(除 429) 是请求本身问题，不该重试。
+            logger.warning("web_search timeout query=%r: %s", clean, exc)
+            return {"ok": False, "retriable": True, "error": "联网搜索超时，可稍后再试。"}
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            retriable = status == 429 or 500 <= status < 600
+            logger.warning("web_search http error status=%s query=%r", status, clean)
+            reason = "搜索服务限流或暂时不可用" if retriable else "搜索请求被拒绝"
+            return {"ok": False, "retriable": retriable, "error": f"{reason}（HTTP {status}）。"}
+        except httpx.RequestError as exc:
+            logger.warning("web_search network error query=%r: %s", clean, exc)
+            return {"ok": False, "retriable": True, "error": "联网搜索网络异常，可稍后再试。"}
         except Exception as exc:
-            return {"ok": False, "error": f"搜索失败：{type(exc).__name__}"}
+            logger.exception("web_search unexpected error query=%r", clean)
+            return {"ok": False, "retriable": False, "error": f"搜索失败：{type(exc).__name__}"}
         return {
             "ok": True,
             "query": clean,

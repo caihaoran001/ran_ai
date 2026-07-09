@@ -24,3 +24,6 @@ class AgentRunContext:
     service_case_id: int
     trigger_id: int | None = None
     agent_context_plan: dict | None = None
+    # 触发本次 Agent 运行的消息渠道名（如 "qiwe"）。用于日志可观测性与多渠道排查；
+    # 按“渠道隔离”铁律，工具/日志需要知道自己服务的是哪个渠道，缺省 None 兼容定时任务等无渠道场景。
+    channel: str | None = None
