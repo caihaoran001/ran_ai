@@ -114,6 +114,59 @@ async def update_knowledge_evolution_setting_api(
     return KnowledgeEvolutionSetting(**config.__dict__)
 
 
+class QiweAccountView(BaseModel):
+    guid: str = ""
+    token_masked: str = ""
+    token_set: bool = False
+
+
+class QiweAccountUpdate(BaseModel):
+    guid: str
+    token: str
+
+
+def _mask_token(token: str) -> str:
+    token = (token or "").strip()
+    if not token:
+        return ""
+    if len(token) <= 4:
+        return "****"
+    return f"****{token[-4:]}"
+
+
+@router.get("/settings/qiwe-account", response_model=QiweAccountView)
+async def get_qiwe_account_api(session: AsyncSession = Depends(get_session)) -> QiweAccountView:
+    from app.services.qiwe_account_settings import get_qiwe_account
+
+    account = await get_qiwe_account(session)
+    token = account.get("token", "")
+    return QiweAccountView(
+        guid=account.get("guid", ""),
+        token_masked=_mask_token(token),
+        token_set=bool(token),
+    )
+
+
+@router.post("/settings/qiwe-account", response_model=QiweAccountView)
+async def update_qiwe_account_api(
+    payload: QiweAccountUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> QiweAccountView:
+    from fastapi import HTTPException
+
+    from app.services.qiwe_account_settings import set_qiwe_account
+
+    try:
+        account = await set_qiwe_account(payload.guid, payload.token, session)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return QiweAccountView(
+        guid=account["guid"],
+        token_masked=_mask_token(account["token"]),
+        token_set=True,
+    )
+
+
 class StaffSenderRule(BaseModel):
     type: str  # "equals" or "contains"
     pattern: str

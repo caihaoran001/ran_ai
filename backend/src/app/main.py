@@ -20,9 +20,19 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     reminder_service = ReminderService(settings)
     qiwe_aggregator: QiWeMessageAggregator | None = None
-    qiwe_should_start = settings.qiwei_enabled or bool(settings.qiwei_token and settings.qiwei_guid)
+    # 运营在后台切换的账号落库 app_settings，优先于 env；重启后据此恢复。
+    from app.db.session import SessionLocal
+    from app.services.qiwe_account_settings import get_qiwe_account
+
+    async with SessionLocal() as _session:
+        qiwe_account = await get_qiwe_account(_session)
+    qiwe_guid = qiwe_account.get("guid", "")
+    qiwe_token = qiwe_account.get("token", "")
+    qiwe_should_start = settings.qiwei_enabled or bool(qiwe_token and qiwe_guid)
     if qiwe_should_start:
         channel = QiWeChannel(settings)
+        if qiwe_guid and qiwe_token:
+            channel.apply_credentials(qiwe_guid, qiwe_token)
         set_current_channel(channel)
         qiwe_aggregator = QiWeMessageAggregator(
             channel,

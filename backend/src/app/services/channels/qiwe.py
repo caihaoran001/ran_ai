@@ -33,6 +33,17 @@ class QiWeChannel:
         self._last_send_time = 0.0
         self._send_lock = asyncio.Lock()
 
+    def apply_credentials(self, guid: str, token: str) -> None:
+        """热切换账号凭证：原地更新 guid/token 并清空进程内昵称缓存。
+
+        send_* / _post_json 每次调用都实时读取 self.guid / self.token，
+        故原地更新即对后续收发生效，无需重启或替换 channel 对象。
+        昵称缓存按账号（企业）维度失效，避免切号后返回旧账号解析到的昵称。
+        """
+        self.guid = (guid or "").strip()
+        self.token = (token or "").strip()
+        type(self)._nickname_cache.clear()
+
     async def send_text(
         self,
         chat_id: str,
