@@ -248,9 +248,11 @@ async def test_milestone_followup_falls_back_on_llm_error(db_session):
     msg = await compose_milestone_followup(
         service_case=case, milestone_day=7, need_waist=True, ai_service=_RaisingAI()
     )
-    # 回退固定模板：含腰围提醒 + 复盘要素。
+    # 回退固定模板：含腰围提醒 + 复盘要素(变化/卡点)。
     assert "腰围" in msg
     assert "变化" in msg and "卡" in msg
+    # 不反问用户"下阶段重点/想解决什么"(交给阶段报告生成)。
+    assert "下阶段" not in msg
 
 
 @pytest.mark.asyncio

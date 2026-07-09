@@ -165,7 +165,7 @@ class Settings(BaseSettings):
     # 注：入营问卷走独立命令路径，不受此开关影响。
     daily_checkin_link_enabled: bool = Field(default=False, validation_alias="DAILY_CHECKIN_LINK_ENABLED")
     # 打卡追问补齐(H5 完整替代)：日常档补当天仍缺字段(早C/午B/晚A、体重、矛盾核对，模板变体)；
-    # 里程碑档在服务第6/13/20/27天晚间发 LLM 复盘追问(腰围+最大变化/卡点/下阶段重点)，为次日阶段报告采集。
+    # 里程碑档在服务第6/13/20/27天晚间发 LLM 复盘追问(腰围+这阶段最大变化+最大卡点)，为次日阶段报告采集。
     # 会向真实群发消息，默认 False；review 措辞/时机后设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
     checkin_followup_enabled: bool = Field(default=False, validation_alias="CHECKIN_FOLLOWUP_ENABLED")
     # 追问时机：放在晚间，给白天聊天+档案官抽取留足时间，避免刚睡醒就追问当天依从。
