@@ -543,6 +543,10 @@ class ReminderService:
             await session.commit()
 
     async def check_questionnaire_sends_once(self) -> None:
+        # 日打卡 H5 已下线：群内反复发外链触发风控，改由档案官从聊天抽取打卡。
+        # 默认不再推送；入营问卷走独立命令路径，不受影响。
+        if not self.settings.daily_checkin_link_enabled:
+            return
         async with SessionLocal() as session:
             schedule = await get_checkin_questionnaire_schedule(session)
             if not schedule.get("enabled", True):

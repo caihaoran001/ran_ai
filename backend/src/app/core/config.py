@@ -158,6 +158,10 @@ class Settings(BaseSettings):
     # 档案官（Archivist）总开关：聊天转打卡的后台扫描。默认开；缺省不注入也为开，
     # 需临时停用时在 compose environment 设 ARCHIVIST_ENABLED=false。
     archivist_enabled: bool = Field(default=True, validation_alias="ARCHIVIST_ENABLED")
+    # 日打卡 H5 链接推送开关：已下线（群内反复发外链触发风控），改由档案官从聊天抽取打卡。
+    # 默认 False=不再推送；如需临时恢复在 compose environment 设 DAILY_CHECKIN_LINK_ENABLED=true。
+    # 注：入营问卷走独立命令路径，不受此开关影响。
+    daily_checkin_link_enabled: bool = Field(default=False, validation_alias="DAILY_CHECKIN_LINK_ENABLED")
 
     auto_send_documents: bool = Field(
         default=False,
