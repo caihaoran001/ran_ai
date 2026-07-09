@@ -29,7 +29,9 @@ export default async function DocumentsListPage() {
     knowledgeIndexStats,
   ] = await Promise.all([
     api<{ mode: string }>("/settings/content-delivery-policy").catch(() => ({ mode: "manual_review" })),
-    api<{ enabled: boolean }>("/settings/ai-reply-enabled").catch(() => ({ enabled: true })),
+    api<{ enabled: boolean; auto_disabled_reason: string | null; auto_disabled_at: string | null }>(
+      "/settings/ai-reply-enabled",
+    ).catch(() => ({ enabled: true, auto_disabled_reason: null, auto_disabled_at: null })),
     api<ServiceCase[]>("/service-cases?filter=refund_pending").catch(() => []),
     api<DashboardCasePendingDocuments[]>("/dashboard/pending-documents").catch(() => []),
     api<KnowledgeDraft[]>("/knowledge-drafts?status=pending").catch(() => []),
@@ -87,7 +89,11 @@ export default async function DocumentsListPage() {
       {/* 置顶全局开关 */}
       <div className="grid gap-4 lg:grid-cols-2">
         <AutoSendToggle initialValue={policy.mode === "auto_send"} />
-        <AiReplyToggle initialValue={aiReplyEnabled.enabled} />
+        <AiReplyToggle
+          initialValue={aiReplyEnabled.enabled}
+          autoDisabledReason={aiReplyEnabled.auto_disabled_reason}
+          autoDisabledAt={aiReplyEnabled.auto_disabled_at}
+        />
       </div>
 
       {/* 1. 交付文件控制台 */}

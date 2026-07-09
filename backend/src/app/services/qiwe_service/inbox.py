@@ -128,7 +128,28 @@ async def process_qiwe_spam_block_event(
     handled = await mark_outbound_blocked_by_channel_id(channel_message_id, reason)
     if handled and event_id is not None:
         await mark_inbound_events_processed([event_id])
+    if handled:
+        await _auto_disable_ai_reply_on_risk(reason)
     return handled
+
+
+async def _auto_disable_ai_reply_on_risk(reason: str) -> None:
+    """企微账号被风控（消息被拦截未送达）→ 自动关闭全局 AI 回复总开关。
+
+    幂等由 disable_ai_reply_due_to_risk 保证（同一次风控期间重复通知不重复改写）。
+    仅记日志，绝不因关开关失败而影响风控对账主流程（防御性编程）。
+    """
+    from app.services.content_policy import disable_ai_reply_due_to_risk
+
+    try:
+        async with SessionLocal() as session:
+            disabled = await disable_ai_reply_due_to_risk(reason, session)
+        if disabled:
+            logger.warning(
+                "AI reply globally auto-disabled due to QiWe risk-control: %s", reason
+            )
+    except Exception:
+        logger.exception("auto-disable AI reply on QiWe risk-control failed")
 
 
 async def mark_inbound_events_processed(event_ids: list[int]) -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.app_setting import AppSetting
@@ -38,21 +40,73 @@ async def get_ai_reply_enabled(session: AsyncSession | None = None) -> bool:
     """全局「AI 回不回复」总开关。默认开启（历史默认即自动回复）。"""
     if session is not None:
         setting = await session.get(AppSetting, AI_REPLY_ENABLED_KEY)
-        if setting:
+        if setting and isinstance(setting.value_json, dict):
             return bool(setting.value_json.get("enabled", True))
     return True
 
 
-async def set_ai_reply_enabled(value: bool, session: AsyncSession | None = None) -> bool:
-    enabled = bool(value)
+async def get_ai_reply_state(session: AsyncSession | None = None) -> dict:
+    """总开关完整状态：enabled + 是否因风控自动关闭（供前端区分「人工关」/「风控自动关」并显示提醒条）。
+
+    auto_disabled_reason/auto_disabled_at 仅在「系统因企微风控自动关闭」时有值；
+    人工手动开/关都会清空这两个字段（见 set_ai_reply_enabled）。
+    """
     if session is not None:
         setting = await session.get(AppSetting, AI_REPLY_ENABLED_KEY)
+        if setting and isinstance(setting.value_json, dict):
+            data = setting.value_json
+            return {
+                "enabled": bool(data.get("enabled", True)),
+                "auto_disabled_reason": data.get("auto_disabled_reason"),
+                "auto_disabled_at": data.get("auto_disabled_at"),
+            }
+    return {"enabled": True, "auto_disabled_reason": None, "auto_disabled_at": None}
+
+
+async def set_ai_reply_enabled(value: bool, session: AsyncSession | None = None) -> bool:
+    """人工设置总开关。手动操作视为「已确认」，一并清空风控自动关闭标记：
+
+    - 手动开启：清除标记 → 提醒条消失，且下次风控可重新触发自动关闭。
+    - 手动关闭：清除标记 → 记为人工关闭，而非风控关闭。
+    """
+    enabled = bool(value)
+    if session is not None:
+        data = {"enabled": enabled, "auto_disabled_reason": None, "auto_disabled_at": None}
+        setting = await session.get(AppSetting, AI_REPLY_ENABLED_KEY)
         if setting:
-            setting.value_json = {"enabled": enabled}
+            setting.value_json = data
         else:
-            session.add(AppSetting(key=AI_REPLY_ENABLED_KEY, value_json={"enabled": enabled}))
+            session.add(AppSetting(key=AI_REPLY_ENABLED_KEY, value_json=data))
         await session.commit()
     return enabled
+
+
+async def disable_ai_reply_due_to_risk(
+    reason: str, session: AsyncSession | None = None
+) -> bool:
+    """企微账号被风控时自动关闭总开关，并记录原因/时间供前端提醒。
+
+    幂等：若当前已因风控关闭（enabled=False 且带 reason），直接跳过、不刷新时间戳，
+    避免同一次风控期间重复的 1011 通知/开机重放反复改写。返回是否本次真正执行了关闭。
+    人工重新开启后（标记被清空），下次风控可再次触发本函数。
+    """
+    if session is None:
+        return False
+    setting = await session.get(AppSetting, AI_REPLY_ENABLED_KEY)
+    current = setting.value_json if setting and isinstance(setting.value_json, dict) else {}
+    if current.get("enabled", True) is False and current.get("auto_disabled_reason"):
+        return False
+    data = {
+        "enabled": False,
+        "auto_disabled_reason": reason or "企业微信账号被风控，消息无法送达",
+        "auto_disabled_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if setting:
+        setting.value_json = data
+    else:
+        session.add(AppSetting(key=AI_REPLY_ENABLED_KEY, value_json=data))
+    await session.commit()
+    return True
 
 RISK_REPLY_SETTING_KEY = "risk_fixed_reply"
 DEFAULT_RISK_REPLY = "收到，已呼叫营养师班主任，稍后为您解答哈～"

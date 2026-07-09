@@ -14,7 +14,12 @@ from app.models.message import Message, MessageDirection, MessagePurpose, Messag
 from app.models.service_case import ServiceCase
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.channels.base import ChannelMessage
-from app.services.content_policy import get_ai_reply_enabled, set_ai_reply_enabled
+from app.services.content_policy import (
+    disable_ai_reply_due_to_risk,
+    get_ai_reply_enabled,
+    get_ai_reply_state,
+    set_ai_reply_enabled,
+)
 from app.services.ranren_ai.engine import RanrenAIEngine, _requires_immediate_handoff
 
 
@@ -451,6 +456,60 @@ async def test_ai_reply_enabled_switch_persists(admin_client, db_session):
 
     await set_ai_reply_enabled(True, db_session)
     assert await get_ai_reply_enabled(db_session) is True
+
+
+@pytest.mark.asyncio
+async def test_ai_reply_auto_disabled_on_risk_control(admin_client, db_session):
+    # 企微风控 → 自动关闭总开关并记录原因/时间，接口把原因透出给前端提醒条。
+    assert await get_ai_reply_enabled(db_session) is True
+
+    disabled = await disable_ai_reply_due_to_risk("企业微信官方风控拦截：账号功能被限制", db_session)
+    assert disabled is True
+    assert await get_ai_reply_enabled(db_session) is False
+
+    state = await get_ai_reply_state(db_session)
+    assert state["enabled"] is False
+    assert "风控" in (state["auto_disabled_reason"] or "")
+    assert state["auto_disabled_at"]
+
+    # 接口透出原因
+    resp = await admin_client.get("/settings/ai-reply-enabled")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] is False
+    assert "风控" in (body["auto_disabled_reason"] or "")
+
+
+@pytest.mark.asyncio
+async def test_risk_disable_is_idempotent_within_outage(db_session):
+    # 同一次风控期间重复通知不刷新时间戳（幂等）。
+    first = await disable_ai_reply_due_to_risk("风控原因A", db_session)
+    assert first is True
+    at_first = (await get_ai_reply_state(db_session))["auto_disabled_at"]
+
+    second = await disable_ai_reply_due_to_risk("风控原因B", db_session)
+    assert second is False  # 已因风控关闭 → 跳过
+    state = await get_ai_reply_state(db_session)
+    assert state["auto_disabled_at"] == at_first
+    assert state["auto_disabled_reason"] == "风控原因A"
+
+
+@pytest.mark.asyncio
+async def test_manual_reenable_clears_risk_flag_and_allows_retrigger(db_session):
+    # 人工手动重开 → 清除风控标记；之后再次风控可重新触发自动关闭。
+    await disable_ai_reply_due_to_risk("风控原因", db_session)
+    assert (await get_ai_reply_state(db_session))["auto_disabled_reason"]
+
+    await set_ai_reply_enabled(True, db_session)
+    state = await get_ai_reply_state(db_session)
+    assert state["enabled"] is True
+    assert state["auto_disabled_reason"] is None
+    assert state["auto_disabled_at"] is None
+
+    # 重开后再次风控 → 能再次自动关闭
+    again = await disable_ai_reply_due_to_risk("再次风控", db_session)
+    assert again is True
+    assert await get_ai_reply_enabled(db_session) is False
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from app.db.session import get_session
 from app.services.content_policy import (
-    get_ai_reply_enabled,
+    get_ai_reply_state,
     get_content_delivery_mode,
     set_ai_reply_enabled,
     set_content_delivery_mode,
@@ -33,6 +33,8 @@ class ContentDeliveryPolicy(BaseModel):
 
 class AiReplyEnabled(BaseModel):
     enabled: bool = True
+    auto_disabled_reason: str | None = None
+    auto_disabled_at: str | None = None
 
 
 @router.get("/settings/auto-send")
@@ -65,7 +67,7 @@ async def update_content_delivery_policy(
 
 @router.get("/settings/ai-reply-enabled", response_model=AiReplyEnabled)
 async def get_ai_reply_enabled_setting(session: AsyncSession = Depends(get_session)) -> AiReplyEnabled:
-    return AiReplyEnabled(enabled=await get_ai_reply_enabled(session))
+    return AiReplyEnabled(**await get_ai_reply_state(session))
 
 
 @router.post("/settings/ai-reply-enabled", response_model=AiReplyEnabled)
@@ -73,7 +75,8 @@ async def update_ai_reply_enabled_setting(
     payload: AiReplyEnabled,
     session: AsyncSession = Depends(get_session),
 ) -> AiReplyEnabled:
-    return AiReplyEnabled(enabled=await set_ai_reply_enabled(payload.enabled, session))
+    await set_ai_reply_enabled(payload.enabled, session)
+    return AiReplyEnabled(**await get_ai_reply_state(session))
 
 
 class RiskFixedReply(BaseModel):
