@@ -39,6 +39,7 @@ from app.services.document_service import (
 from app.services.knowledge_evolution import KnowledgeEvolutionService
 from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
 from app.services.outcome_engine import generate_outcome_snapshot
+from app.services.stage_report_settings import get_stage_report_schedule
 from app.services.service_case_queries import (
     SERVICE_CASE_WINDOW_DAYS,
     active_service_case_condition,
@@ -65,6 +66,9 @@ class ReminderService:
         self._last_knowledge_scan: datetime | None = None
         self._last_room_name_full_refresh: datetime | None = None
         self._last_image_cache_cleanup: datetime | None = None
+        # 阶段报告生成时间配置缓存（5 分钟 TTL，避免白天每 30s 都查一次 DB）
+        self._stage_report_schedule: tuple[int, int] | None = None
+        self._stage_report_schedule_at: datetime | None = None
 
     async def start(self) -> None:
         knowledge_enabled = self.settings.knowledge_evolution_enabled
@@ -718,13 +722,31 @@ class ReminderService:
         if updated:
             logger.info("Refreshed %d service-case group names (full_refresh=%s)", updated, full_refresh)
 
+    async def _resolve_stage_report_time(self, now: datetime) -> tuple[int, int]:
+        """阶段报告生成的 (hour, minute)，来自运营规则配置；带 5 分钟 TTL 缓存。
+
+        缓存是为了保留原设计「白天不碰 DB」的意图——调度每 30s 跑一次，不必每次都查配置。
+        读不到配置时由 get_stage_report_schedule 兜底默认 21:00。
+        """
+        cached_at = self._stage_report_schedule_at
+        if self._stage_report_schedule is not None and cached_at is not None:
+            if (now - cached_at).total_seconds() < 300:
+                return self._stage_report_schedule
+        async with SessionLocal() as session:
+            schedule = await get_stage_report_schedule(session, settings=self.settings)
+        resolved = (schedule.hour, schedule.minute)
+        self._stage_report_schedule = resolved
+        self._stage_report_schedule_at = now
+        return resolved
+
     async def check_stage_reports_once(self, now: datetime | None = None) -> None:
         tz = ZoneInfo(self.settings.reminder_timezone)
         now = now or datetime.now(tz)
-        # 阶段报告固定在每天 23:00（北京时间）集中生成：运营当晚集中审核、用户次日早上看到。
-        # 调度每 30s 跑一次，这一小时会扫到约 120 次，靠下方 existing_reports 去重保证每个 stage 当晚只生成一次。
-        # 非 23 点直接返回（连 DB 都不查），白天不产出。
-        if now.hour != 23:
+        # 阶段报告在运营规则配置的生成时间（默认北京时间 21:00）集中生成：运营当晚集中审核、用户次日早上看到。
+        # 调度每 30s 跑一次，到点这一小时会扫到多次，靠下方 existing_reports 去重保证每个 stage 当晚只生成一次。
+        # 未到点直接返回，白天不产出（配置读取带缓存，不会每 30s 打一次 DB）。
+        gen_hour, gen_minute = await self._resolve_stage_report_time(now)
+        if now.hour != gen_hour or now.minute < gen_minute:
             return
         async with SessionLocal() as session:
             service_cases = list(
@@ -756,7 +778,9 @@ class ReminderService:
         # Define the task list for parallel execution using distinct sessions
         tasks = []
         for service_case in service_cases:
-            for stage in _due_stage_reports(service_case, now, tz, existing_reports):
+            for stage in _due_stage_reports(
+                service_case, now, tz, existing_reports, generate_hour=gen_hour, generate_minute=gen_minute
+            ):
                 tasks.append(self._generate_report_for_case_worker(service_case.id, stage))
 
         if tasks:
@@ -1136,14 +1160,20 @@ def _due_stage_reports(
     now: datetime,
     tz: ZoneInfo,
     existing_reports: set[tuple[int, str]],
+    *,
+    generate_hour: int = 23,
+    generate_minute: int = 0,
 ) -> list[str]:
     """该 case 在 now 时刻应生成、且尚未生成的阶段/毕业报告 stage 列表。
 
-    规则：仅在每天 23:00 集中产出（运营当晚集中审、用户次日早上看到）；「服务第几天」用
+    规则：仅在配置的生成时间集中产出（运营当晚集中审、用户次日早上看到）；「服务第几天」用
     effective_service_day（计划开始日当天=第1天，与看板/AI 口径一致）；service_day >= 里程碑
     且该 (case_id, stage) 未生成过才产出（用 >= 而非 == 提供漏扫/晚激活补偿，existing_reports 去重保证不重复）。
+
+    generate_hour/minute 由 check_stage_reports_once 从运营规则配置注入（生产默认 21:00）；
+    默认值保留 23 供纯函数单测直接调用（勿改，测试依赖）。
     """
-    if now.hour != 23:
+    if now.hour != generate_hour or now.minute < generate_minute:
         return []
     service_day = effective_service_day(service_case, now, tz)
     due: list[str] = []

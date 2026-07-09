@@ -14,6 +14,10 @@ from app.services.knowledge_evolution_settings import (
     get_knowledge_evolution_config,
     set_knowledge_evolution_config,
 )
+from app.services.stage_report_settings import (
+    get_stage_report_schedule,
+    set_stage_report_schedule,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -116,6 +120,27 @@ async def update_knowledge_evolution_setting_api(
 ) -> KnowledgeEvolutionSetting:
     config = await set_knowledge_evolution_config(session, payload.model_dump())
     return KnowledgeEvolutionSetting(**config.__dict__)
+
+
+class StageReportScheduleSetting(BaseModel):
+    generate_at: str = "21:00"
+
+
+@router.get("/settings/stage-report-schedule", response_model=StageReportScheduleSetting)
+async def get_stage_report_schedule_api(
+    session: AsyncSession = Depends(get_session),
+) -> StageReportScheduleSetting:
+    schedule = await get_stage_report_schedule(session)
+    return StageReportScheduleSetting(generate_at=schedule.generate_at)
+
+
+@router.post("/settings/stage-report-schedule", response_model=StageReportScheduleSetting)
+async def update_stage_report_schedule_api(
+    payload: StageReportScheduleSetting,
+    session: AsyncSession = Depends(get_session),
+) -> StageReportScheduleSetting:
+    schedule = await set_stage_report_schedule(session, payload.model_dump())
+    return StageReportScheduleSetting(generate_at=schedule.generate_at)
 
 
 class QiweAccountEntry(BaseModel):

@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import { QuestionnaireConfigEditor } from "./questionnaire-config-editor";
+import { StageReportConfig } from "./stage-report-config";
 import { RiskReplyConfig } from "./risk-reply-config";
 import { StaffFilterConfig } from "./staff-filter-config";
 import { QiweAccountConfig } from "./qiwe-account-config";
@@ -32,6 +33,7 @@ export default async function QuestionnaireConfigPage() {
       
       <div className="border-t border-slate-200 pt-7 grid gap-6">
         <QiweAccountConfig />
+        <StageReportConfig />
         <RiskReplyConfig />
         <StaffFilterConfig />
       </div>
