@@ -40,6 +40,31 @@ def _empty_account(guid: str, token: str) -> dict[str, Any]:
     }
 
 
+def _seed_env_account(state: dict[str, Any]) -> bool:
+    """把 env 配置的账号补录进 accounts（幂等）。
+
+    保证「最初用 .env 配置、从未在后台保存过」的账号也作为一条正式历史记录存在，
+    这样切换到别的账号后仍能在历史里点回来——否则初始账号会凭空消失。
+    返回是否有改动（供调用方决定是否落库）。
+    """
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    guid = (settings.qiwei_guid or "").strip()
+    token = (settings.qiwei_token or "").strip()
+    if not (guid and token):
+        return False
+    accounts = state.setdefault("accounts", {})
+    changed = False
+    if guid not in accounts:
+        accounts[guid] = _empty_account(guid, token)
+        changed = True
+    if not state.get("current_guid"):
+        state["current_guid"] = guid
+        changed = True
+    return changed
+
+
 def _normalize_state(value: Any) -> dict[str, Any]:
     """把落库的 value_json 规整为 {current_guid, accounts} 形状，兼容旧格式。"""
     if not isinstance(value, dict):
@@ -126,21 +151,12 @@ async def get_qiwe_account_state(session: AsyncSession | None = None) -> dict[st
     调一次 getProfile 补出真实昵称/头像；若该账号已落库则顺带缓存，下次直接命中。
     """
     state = await _load_state(session)
-    from_db = bool(state.get("accounts"))
-    accounts: dict[str, Any] = dict(state.get("accounts", {}))
+    # 幂等补录 env 账号，保证初始账号也是一条可切回的历史记录
+    changed = _seed_env_account(state)
+    accounts: dict[str, Any] = state.get("accounts", {})
     current_guid = state.get("current_guid") or ""
-
-    # 没有任何落库账号时，用 env 作为当前账号展示（首次部署，不落库）
-    if not from_db:
-        from app.core.config import get_settings
-
-        settings = get_settings()
-        guid = (settings.qiwei_guid or "").strip()
-        token = (settings.qiwei_token or "").strip()
-        if not (guid and token):
-            return {"current": None, "history": []}
-        current_guid = guid
-        accounts = {guid: _empty_account(guid, token)}
+    if not accounts:
+        return {"current": None, "history": []}
 
     current_raw = accounts.get(current_guid)
     if current_raw and not (current_raw.get("nickname") or current_raw.get("alias")):
@@ -152,8 +168,10 @@ async def get_qiwe_account_state(session: AsyncSession | None = None) -> dict[st
         )
         if fields.get("nickname") or fields.get("alias"):
             current_raw.update(fields)
-            if from_db and session is not None and hasattr(session, "get"):
-                await _save_state(session, state)
+            changed = True
+
+    if changed and session is not None and hasattr(session, "get"):
+        await _save_state(session, state)
 
     history = [
         _public_entry(acc, is_current=(guid == current_guid))
@@ -209,6 +227,7 @@ async def add_and_switch_account(
 
     if session is not None and hasattr(session, "get"):
         state = await _load_state(session)
+        _seed_env_account(state)  # 保证切走前，原初始账号已落库、之后能切回
         accounts = state.setdefault("accounts", {})
         existing = accounts.get(guid) or _empty_account(guid, token)
         existing.update({"guid": guid, "token": token})
@@ -236,6 +255,7 @@ async def switch_to_account(
         raise ValueError("无法访问账号存储")
 
     state = await _load_state(session)
+    _seed_env_account(state)  # 保证初始账号也在历史里，可被切回
     accounts = state.get("accounts", {})
     account = accounts.get(guid)
     if not account or not account.get("token"):
