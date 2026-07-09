@@ -114,10 +114,27 @@ async def update_knowledge_evolution_setting_api(
     return KnowledgeEvolutionSetting(**config.__dict__)
 
 
-class QiweAccountView(BaseModel):
+class QiweAccountEntry(BaseModel):
     guid: str = ""
+    nickname: str = ""
+    alias: str = ""
+    avatar_url: str = ""
+    real_name: str = ""
+    last_used_at: str | None = None
+    saved_at: str | None = None
+    is_current: bool = False
     token_masked: str = ""
     token_set: bool = False
+
+
+class QiweAccountState(BaseModel):
+    current: QiweAccountEntry | None = None
+    history: list[QiweAccountEntry] = []
+
+
+class QiweAccountResult(BaseModel):
+    state: QiweAccountState
+    warning: str = ""
 
 
 class QiweAccountUpdate(BaseModel):
@@ -125,46 +142,49 @@ class QiweAccountUpdate(BaseModel):
     token: str
 
 
-def _mask_token(token: str) -> str:
-    token = (token or "").strip()
-    if not token:
-        return ""
-    if len(token) <= 4:
-        return "****"
-    return f"****{token[-4:]}"
+class QiweSwitchRequest(BaseModel):
+    guid: str
 
 
-@router.get("/settings/qiwe-account", response_model=QiweAccountView)
-async def get_qiwe_account_api(session: AsyncSession = Depends(get_session)) -> QiweAccountView:
-    from app.services.qiwe_account_settings import get_qiwe_account
+@router.get("/settings/qiwe-account", response_model=QiweAccountState)
+async def get_qiwe_account_api(session: AsyncSession = Depends(get_session)) -> QiweAccountState:
+    from app.services.qiwe_account_settings import get_qiwe_account_state
 
-    account = await get_qiwe_account(session)
-    token = account.get("token", "")
-    return QiweAccountView(
-        guid=account.get("guid", ""),
-        token_masked=_mask_token(token),
-        token_set=bool(token),
-    )
+    return QiweAccountState(**await get_qiwe_account_state(session))
 
 
-@router.post("/settings/qiwe-account", response_model=QiweAccountView)
+@router.post("/settings/qiwe-account", response_model=QiweAccountResult)
 async def update_qiwe_account_api(
     payload: QiweAccountUpdate,
     session: AsyncSession = Depends(get_session),
-) -> QiweAccountView:
+) -> QiweAccountResult:
     from fastapi import HTTPException
 
-    from app.services.qiwe_account_settings import set_qiwe_account
+    from app.services.qiwe_account_settings import add_and_switch_account
 
     try:
-        account = await set_qiwe_account(payload.guid, payload.token, session)
+        result = await add_and_switch_account(payload.guid, payload.token, session)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return QiweAccountView(
-        guid=account["guid"],
-        token_masked=_mask_token(account["token"]),
-        token_set=True,
-    )
+    return QiweAccountResult(**result)
+
+
+@router.post("/settings/qiwe-account/switch", response_model=QiweAccountResult)
+async def switch_qiwe_account_api(
+    payload: QiweSwitchRequest,
+    session: AsyncSession = Depends(get_session),
+) -> QiweAccountResult:
+    from fastapi import HTTPException
+
+    from app.services.qiwe_account_settings import switch_to_account
+
+    try:
+        result = await switch_to_account(payload.guid, session)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return QiweAccountResult(**result)
 
 
 class StaffSenderRule(BaseModel):

@@ -105,6 +105,28 @@ class QiWeChannel:
             await self.send_text(chat_id, caption, reply_to=reply_to, reply_context=reply_context)
         return result
 
+    async def get_profile(self) -> dict[str, Any] | None:
+        """查询当前 guid/token 对应企微账号(机器人自身)的资料。
+
+        返回 /user/getProfile 的 data（含 nickname/alias/avatarUrl/realName 等），
+        取不到或凭证无效/设备离线时返回 None——调用方据此判断账号是否可用。
+        """
+        if not self._ready:
+            return None
+        payload = {
+            "method": "/user/getProfile",
+            "params": {"guid": self.guid},
+        }
+        try:
+            res = await self._post_json("/api/qw/doApi", payload, rate_limit=False)
+        except Exception as exc:
+            logger.error("QiWe get_profile failed for guid=%s: %s", self.guid, exc)
+            return None
+        if res.success and isinstance(res.raw_response, dict):
+            data = res.raw_response.get("data")
+            return data if isinstance(data, dict) else None
+        return None
+
     async def get_contact_nickname(self, user_id: str) -> str:
         if not user_id:
             return ""

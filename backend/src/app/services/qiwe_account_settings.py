@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,20 +12,79 @@ logger = logging.getLogger("uvicorn.error")
 
 SETTING_KEY = "qiwe_account"
 
+# app_settings["qiwe_account"].value_json 形状：
+# {
+#   "current_guid": "<guid>",
+#   "accounts": {
+#     "<guid>": {"guid","token","nickname","alias","avatar_url","real_name",
+#                "saved_at","last_used_at"}
+#   }
+# }
+# 兼容旧形状 {"guid","token"}：读取时迁移为单条 history。
 
-async def get_qiwe_account(session: AsyncSession | None = None) -> dict[str, str]:
-    """返回当前生效的企微账号凭证 {"guid", "token"}。
 
-    优先读 app_settings（运营在后台切换后落库的值），没有则回退到 env/settings
-    （首次部署时由 .env / compose 注入）。
-    """
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _empty_account(guid: str, token: str) -> dict[str, Any]:
+    return {
+        "guid": guid,
+        "token": token,
+        "nickname": "",
+        "alias": "",
+        "avatar_url": "",
+        "real_name": "",
+        "saved_at": _now_iso(),
+        "last_used_at": None,
+    }
+
+
+def _normalize_state(value: Any) -> dict[str, Any]:
+    """把落库的 value_json 规整为 {current_guid, accounts} 形状，兼容旧格式。"""
+    if not isinstance(value, dict):
+        return {"current_guid": "", "accounts": {}}
+    if "accounts" in value and isinstance(value["accounts"], dict):
+        return {
+            "current_guid": str(value.get("current_guid") or ""),
+            "accounts": value["accounts"],
+        }
+    # 旧形状 {"guid","token"} → 迁移
+    guid = str(value.get("guid") or "").strip()
+    token = str(value.get("token") or "").strip()
+    if guid and token:
+        return {"current_guid": guid, "accounts": {guid: _empty_account(guid, token)}}
+    return {"current_guid": "", "accounts": {}}
+
+
+async def _load_state(session: AsyncSession | None) -> dict[str, Any]:
     if session is not None and hasattr(session, "get"):
         setting = await session.get(AppSetting, SETTING_KEY)
-        if setting and isinstance(setting.value_json, dict):
-            guid = str(setting.value_json.get("guid") or "").strip()
-            token = str(setting.value_json.get("token") or "").strip()
-            if guid and token:
-                return {"guid": guid, "token": token}
+        if setting:
+            return _normalize_state(setting.value_json)
+    return {"current_guid": "", "accounts": {}}
+
+
+async def _save_state(session: AsyncSession, state: dict[str, Any]) -> None:
+    setting = await session.get(AppSetting, SETTING_KEY)
+    if setting:
+        setting.value_json = state
+    else:
+        session.add(AppSetting(key=SETTING_KEY, value_json=state))
+    await session.commit()
+
+
+async def get_qiwe_account(session: AsyncSession | None = None) -> dict[str, str]:
+    """返回当前生效的企微账号凭证 {"guid","token"}。
+
+    优先读 app_settings 里 current_guid 指向的账号；没有则回退 env/settings。
+    供 lifespan 启动应用与任何需要当前凭证的地方使用。
+    """
+    state = await _load_state(session)
+    current_guid = state.get("current_guid") or ""
+    account = state.get("accounts", {}).get(current_guid)
+    if account and account.get("guid") and account.get("token"):
+        return {"guid": str(account["guid"]).strip(), "token": str(account["token"]).strip()}
 
     from app.core.config import get_settings
 
@@ -34,27 +95,151 @@ async def get_qiwe_account(session: AsyncSession | None = None) -> dict[str, str
     }
 
 
-async def set_qiwe_account(
+def _public_entry(account: dict[str, Any], *, is_current: bool) -> dict[str, Any]:
+    """脱敏后的账号视图（不含明文 token）。"""
+    token = str(account.get("token") or "")
+    return {
+        "guid": str(account.get("guid") or ""),
+        "nickname": str(account.get("nickname") or ""),
+        "alias": str(account.get("alias") or ""),
+        "avatar_url": str(account.get("avatar_url") or ""),
+        "real_name": str(account.get("real_name") or ""),
+        "last_used_at": account.get("last_used_at"),
+        "saved_at": account.get("saved_at"),
+        "is_current": is_current,
+        "token_masked": _mask(token),
+        "token_set": bool(token),
+    }
+
+
+def _mask(token: str) -> str:
+    token = (token or "").strip()
+    if not token:
+        return ""
+    return "****" if len(token) <= 4 else f"****{token[-4:]}"
+
+
+async def get_qiwe_account_state(session: AsyncSession | None = None) -> dict[str, Any]:
+    """返回给前端的账号状态：当前账号 + 历史账号列表（均脱敏）。"""
+    state = await _load_state(session)
+    accounts: dict[str, Any] = state.get("accounts", {})
+    current_guid = state.get("current_guid") or ""
+
+    # 没有任何落库账号时，用 env 作为当前账号展示（首次部署）
+    if not accounts:
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        guid = (settings.qiwei_guid or "").strip()
+        token = (settings.qiwei_token or "").strip()
+        if guid and token:
+            env_entry = _public_entry(_empty_account(guid, token), is_current=True)
+            env_entry["nickname"] = env_entry["nickname"] or "（env 配置账号）"
+            return {"current": env_entry, "history": []}
+        return {"current": None, "history": []}
+
+    history = [
+        _public_entry(acc, is_current=(guid == current_guid))
+        for guid, acc in accounts.items()
+    ]
+    # 最近使用在前
+    history.sort(key=lambda e: (e["is_current"], e.get("last_used_at") or e.get("saved_at") or ""), reverse=True)
+    current = next((e for e in history if e["is_current"]), None)
+    return {"current": current, "history": history}
+
+
+async def fetch_account_profile(guid: str, token: str) -> dict[str, Any] | None:
+    """用给定凭证调用 QiWe /user/getProfile，成功返回账号资料，失败返回 None。"""
+    from app.services.channels.qiwe import QiWeChannel
+
+    channel = QiWeChannel()
+    channel.guid = (guid or "").strip()
+    channel.token = (token or "").strip()
+    return await channel.get_profile()
+
+
+def _profile_fields(profile: dict[str, Any] | None) -> dict[str, str]:
+    if not isinstance(profile, dict):
+        return {}
+    return {
+        "nickname": str(profile.get("nickname") or ""),
+        "alias": str(profile.get("alias") or ""),
+        "avatar_url": str(profile.get("avatarUrl") or ""),
+        "real_name": str(profile.get("realName") or ""),
+    }
+
+
+async def add_and_switch_account(
     guid: str,
     token: str,
     session: AsyncSession | None = None,
-) -> dict[str, str]:
-    """保存新账号凭证并热切换到运行中的 channel（无需重启后端）。"""
+) -> dict[str, Any]:
+    """保存新账号（或更新已有 guid 的 token）并热切换到它。
+
+    返回 {"state": <脱敏状态>, "warning": <可能为空的提示>}。
+    校验为 fail-open：getProfile 失败仍允许切换，但回填 warning 供前端提示。
+    """
     guid = (guid or "").strip()
     token = (token or "").strip()
     if not guid or not token:
-        raise ValueError("guid 和 token 均不能为空")
+        raise ValueError("GUID 和 Token 均不能为空")
+
+    warning = ""
+    profile = await fetch_account_profile(guid, token)
+    fields = _profile_fields(profile)
+    if profile is None:
+        warning = "已保存并切换，但未能获取该账号资料（可能设备未上线或凭证异常），请确认收发是否正常。"
 
     if session is not None and hasattr(session, "get"):
-        setting = await session.get(AppSetting, SETTING_KEY)
-        if setting:
-            setting.value_json = {"guid": guid, "token": token}
-        else:
-            session.add(AppSetting(key=SETTING_KEY, value_json={"guid": guid, "token": token}))
-        await session.commit()
+        state = await _load_state(session)
+        accounts = state.setdefault("accounts", {})
+        existing = accounts.get(guid) or _empty_account(guid, token)
+        existing.update({"guid": guid, "token": token})
+        if fields.get("nickname") or fields.get("alias"):
+            existing.update(fields)
+        existing["last_used_at"] = _now_iso()
+        accounts[guid] = existing
+        state["current_guid"] = guid
+        await _save_state(session, state)
 
     apply_to_live_channel(guid, token)
-    return {"guid": guid, "token": token}
+    result = await get_qiwe_account_state(session)
+    return {"state": result, "warning": warning}
+
+
+async def switch_to_account(
+    guid: str,
+    session: AsyncSession | None = None,
+) -> dict[str, Any]:
+    """切换到历史里已存在的账号（token 从服务端取，不经浏览器）。"""
+    guid = (guid or "").strip()
+    if not guid:
+        raise ValueError("guid 不能为空")
+    if session is None or not hasattr(session, "get"):
+        raise ValueError("无法访问账号存储")
+
+    state = await _load_state(session)
+    accounts = state.get("accounts", {})
+    account = accounts.get(guid)
+    if not account or not account.get("token"):
+        raise LookupError("该历史账号不存在或缺少凭证")
+
+    token = str(account["token"]).strip()
+    warning = ""
+    # 切换时顺带校验+刷新昵称（best-effort，不阻断切换）
+    profile = await fetch_account_profile(guid, token)
+    fields = _profile_fields(profile)
+    if profile is None:
+        warning = "已切换，但未能获取该账号资料（可能设备未上线或凭证异常），请确认收发是否正常。"
+    elif fields.get("nickname") or fields.get("alias"):
+        account.update(fields)
+    account["last_used_at"] = _now_iso()
+    state["current_guid"] = guid
+    await _save_state(session, state)
+
+    apply_to_live_channel(guid, token)
+    result = await get_qiwe_account_state(session)
+    return {"state": result, "warning": warning}
 
 
 def apply_to_live_channel(guid: str, token: str) -> None:
