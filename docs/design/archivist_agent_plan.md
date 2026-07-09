@@ -147,9 +147,11 @@
 > 取舍说明：回复 Agent 是"直线活"，用 `agent↔tools` 循环够了。档案官写的是**业务事实**，要的是**可控**——顺序不能交给大模型临场决定（否则可能没过护栏就把个人处方当全局知识写进 FAQ）。所以做成**顺序焊死的多节点图**：走不到"提交"节点，除非先过"护栏"节点。
 >
 > **LLM 只用在"判断"节点，落库用确定性代码**（呼应项目纪律：判断优先大模型结构化输出，落库确定性兜底）。
+>
+> **决策 A（多类沉淀的形态，2026-07-09 定）**：`extract` 节点做成**一个真 Agent**——单次 LLM 挂 `report_checkin / report_profile_fact / report_outcome / report_correction / report_knowledge_qa` 若干工具，由 LLM **自主决定调哪几个、调几次**（一条消息可同时是打卡+成效）。关键约束：**这些工具"只上报、不落库"**——工具返回值仅是"抽到的结构化意图"，真正的 DB 写（按天 UPSERT、表单权威、补空、矛盾留痕、幂等去重、水位线推进）全部留在 `commit` 节点的确定性代码里。即"LLM 当记录员、代码当档案柜管理员"。**否掉**"工具直接写库的纯 agent"（与重启安全/幂等/合并精细度冲突）和"代码硬路由每类一次抽取"的纯 pipeline（放弃了 agent 的跨类协同）。**P0 只有打卡一类，仍用单抽取器；此形态在落地第 2 类(成效/画像)时才重构 `extract`，届时有真实数据佐证。**
 
 ```
-[load_context] → [extract(LLM)] → [classify(LLM)] → [guardrail(code)] → [commit(code)]
+[load_context] → [extract(Agent: LLM + report-only 工具)] → [classify(LLM)] → [guardrail(code)] → [commit(code)]
 ```
 
 | 节点 | 类型 | 职责 |
@@ -179,7 +181,9 @@ committed / drafts_created   # 供 trace/审计
 
 **读（复用现有 `service_case_tools.py`）**：`get_service_progress` / `get_recent_checkins` / `get_weight_trend` / `list_group_files` / `read_file` 等——回复 Agent 已在用，档案官共享。
 
-**写（新增，确定性代码，供 `commit` 节点调；不做成让 LLM 自由调的写工具）**：
+**LLM 上报工具（决策 A，供 `extract` Agent 自主调；纯上报、无副作用、不碰 DB）**：`report_checkin` / `report_profile_fact` / `report_outcome` / `report_correction` / `report_knowledge_qa`——各自的入参 schema 对应下面一个领域，返回值只是"收到这条意图"，由 `commit` 节点汇总后交给确定性写函数。
+
+**确定性写函数（供 `commit` 节点调；不做成让 LLM 自由调的写工具）**：
 - `upsert_checkin(case_id, date, fields, evidence_msg_ids)`
 - `apply_outcome_events(...)`（复用 `apply_outcome_analysis_plan` / `apply_outcome_events_to_user_state`）
 - `apply_profile_signals(...)`（复用 `apply_profile_signals_to_user_state`）
@@ -280,5 +284,4 @@ committed / drafts_created   # 供 trace/审计
 7. **归档信号 `archive_plan`**：搭车现有意图识别 LLM，加一个独立字段做轻量打标（worthy+kinds），不新开调用、不抽具体值；偏向与风控相反（可能有数据就标）；P0 只用 `checkin` 类（§3.3）。
 8. **日打卡 H5 下线**（已定）：停 `reminder_service` 发链接，打卡改由"聊天抽取 + 自然语言追问补齐（不发链接）"；入营问卷保留；`product_schedule`/体重的追问补齐**不是可选项**（§2.3）。
 9. **触发状态抗重启**：去抖不用内存 timer，全部**从 DB（messages + archivist_progress）派生**，`SELECT ... FOR UPDATE SKIP LOCKED` 防双跑；呼应"重启丢在途"教训。
-
-> 仍需你拍板的少数点：去抖的 2h/24h/20 条三个数值先按此上线边观察？P0 是否就按上面 §11 的范围开工？
+10. **多类沉淀的运行形态（决策 A，2026-07-09 定）**：`extract` 做成"一个 Agent 挂多个 `report_*` 工具，LLM 自主调；工具只上报不落库，写库留给 `commit` 确定性代码"（详见 §5、§6）。否掉"工具直接写库的纯 agent"和"代码硬路由的纯 pipeline"。P0 只有打卡、仍单抽取器；此形态在落地第 2 类时才动手重构。
