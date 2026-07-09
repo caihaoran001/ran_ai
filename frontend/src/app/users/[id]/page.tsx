@@ -26,12 +26,15 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const serviceCase = [...user.service_cases].sort(
     (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
   )[0];
-  const checkins = serviceCase ? await api<Checkin[]>(`/service-cases/${serviceCase.id}/checkins`).catch(() => []) : [];
-  const messages = serviceCase ? await api<Message[]>(`/service-cases/${serviceCase.id}/messages`).catch(() => []) : [];
-  const documents = serviceCase ? await api<UserDocument[]>(`/service-cases/${serviceCase.id}/documents`).catch(() => []) : [];
-  const aiContextPreview = serviceCase
-    ? await api<{ context: string }>(`/service-cases/${serviceCase.id}/ai-context-preview`).catch(() => null)
-    : null;
+  // 四个请求只依赖 serviceCase.id、彼此无依赖，并行发起（原先串行 await 会白白叠加往返时延）。
+  const [checkins, messages, documents, aiContextPreview] = serviceCase
+    ? await Promise.all([
+        api<Checkin[]>(`/service-cases/${serviceCase.id}/checkins`).catch(() => []),
+        api<Message[]>(`/service-cases/${serviceCase.id}/messages`).catch(() => []),
+        api<UserDocument[]>(`/service-cases/${serviceCase.id}/documents`).catch(() => []),
+        api<{ context: string }>(`/service-cases/${serviceCase.id}/ai-context-preview`).catch(() => null),
+      ])
+    : [[] as Checkin[], [] as Message[], [] as UserDocument[], null];
   const latestParsed = checkins[0]?.parsed_json;
   const uniqueCheckinDays = new Set(checkins.map(c => c.checkin_date).filter(Boolean)).size;
   const energyDocument = documents.find((item) => item.document_type === "energy_restart_prescription");
