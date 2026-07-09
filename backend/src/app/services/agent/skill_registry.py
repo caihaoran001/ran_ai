@@ -22,19 +22,24 @@ class SkillRegistry:
     def __init__(self, base_dir: Path | None = None, *, max_file_bytes: int = 40_000):
         self.base_dir = base_dir or Path(__file__).resolve().parents[2] / "agent_skills"
         self.max_file_bytes = max_file_bytes
+        self._skills_cache: list[SkillInfo] | None = None
 
     def list_skills(self) -> list[SkillInfo]:
+        # skill 是随部署一起落盘的静态文件（改代码要 docker restart），进程内缓存一次目录扫描即可，
+        # 避免每次群聊请求都遍历目录读盘解析描述。
+        if self._skills_cache is not None:
+            return self._skills_cache
         skills: list[SkillInfo] = []
-        if not self.base_dir.exists():
-            return skills
-        for path in sorted(self.base_dir.iterdir()):
-            if not path.is_dir():
-                continue
-            skill_md = path / "SKILL.md"
-            if not skill_md.is_file():
-                continue
-            description = self._read_description(skill_md)
-            skills.append(SkillInfo(name=path.name, description=description))
+        if self.base_dir.exists():
+            for path in sorted(self.base_dir.iterdir()):
+                if not path.is_dir():
+                    continue
+                skill_md = path / "SKILL.md"
+                if not skill_md.is_file():
+                    continue
+                description = self._read_description(skill_md)
+                skills.append(SkillInfo(name=path.name, description=description))
+        self._skills_cache = skills
         return skills
 
     def catalog_text(self) -> str:

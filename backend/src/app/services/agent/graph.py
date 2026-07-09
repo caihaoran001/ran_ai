@@ -21,14 +21,31 @@ from app.services.agent.tools import build_agent_tools
 
 logger = logging.getLogger("uvicorn.error")
 
-DATA_QUERY_KEYWORDS = ("第几天", "服务进度", "打卡", "体重", "腰围", "文档", "问卷", "最近变化")
 DATA_UNAVAILABLE_REPLY = "我这边暂时没能查到准确记录，先不乱报数据。稍后再帮你确认一下。"
 WEB_SEARCH_CALL_LIMIT = 2
 TOOL_FAILURE_CIRCUIT_LIMIT = 2
+# 纯文本工具（knowledge/skill）的失败以显式错误前缀判定，避免正文含“失败/错误”被误判为工具失败而误触熔断。
+_STR_TOOL_ERROR_PREFIXES = (
+    "KNOWLEDGE_SEARCH_ERROR",
+    "SKILL_LOAD_ERROR",
+    "SKILL_FILE_ERROR",
+    "TOOL_ERROR",
+    "TOOL_NOT_FOUND",
+)
 
 
 class AgentDataUnavailableError(RuntimeError):
     pass
+
+
+_SHARED_SKILL_REGISTRY: SkillRegistry | None = None
+
+
+def _shared_skill_registry() -> SkillRegistry:
+    global _SHARED_SKILL_REGISTRY
+    if _SHARED_SKILL_REGISTRY is None:
+        _SHARED_SKILL_REGISTRY = SkillRegistry()
+    return _SHARED_SKILL_REGISTRY
 
 
 @dataclass
@@ -50,7 +67,8 @@ class RanrenAgentGraph:
     ):
         self.context = context
         self.settings = settings or get_settings()
-        self.skill_registry = skill_registry or SkillRegistry()
+        # 复用进程级共享 registry，使 skill 目录扫描的缓存能跨请求命中（skill 是静态文件，改动靠 docker restart 失效）。
+        self.skill_registry = skill_registry or _shared_skill_registry()
         self.tools = build_agent_tools(
             context=context,
             settings=self.settings,
@@ -146,27 +164,20 @@ class RanrenAgentGraph:
         tool_calls = list(getattr(last, "tool_calls", None) or [])
         max_tools = max(1, int(self.settings.agent_max_tool_calls or 8))
         current_count = int(state.get("tool_call_count") or 0)
-        remaining = max_tools - current_count
-        if remaining <= 0:
-            return {
-                "messages": [
-                    ToolMessage(
-                        content="TOOL_LIMIT_REACHED: 已达到本轮工具调用上限。",
-                        tool_call_id=_tool_call_id(tool_calls[0]) if tool_calls else "tool-limit",
-                    )
-                ],
-                "tool_call_count": current_count,
-            }
+        remaining = max(0, max_tools - current_count)
 
-        runnable_calls = tool_calls[:remaining]
+        # 预算内的调用参与熔断/限流/执行；预算外(含 remaining==0)的调用一律拒绝，
+        # 但每个 tool_call 都必须补一条 ToolMessage —— 否则 AIMessage 里有 tool_call 缺响应，下一轮 LLM 会 400。
+        within_budget = tool_calls[:remaining]
+        over_budget = tool_calls[remaining:]
         allowed_calls: list[tuple[int, dict[str, Any]]] = []
-        rejected_results: dict[int, tuple[ToolMessage, dict[str, Any]]] = {}
+        prepared: dict[int, tuple[ToolMessage, dict[str, Any]]] = {}
         web_search_seen = int(state.get("web_search_count") or 0)
         failure_counts = dict(state.get("consecutive_tool_failures") or {})
-        for idx, call in enumerate(runnable_calls):
+        for idx, call in enumerate(within_budget):
             name = call.get("name") or ""
             if name and failure_counts.get(name, 0) >= TOOL_FAILURE_CIRCUIT_LIMIT:
-                rejected_results[idx] = self._reject_tool_call(
+                prepared[idx] = self._reject_tool_call(
                     call,
                     f"TOOL_CIRCUIT_OPEN: {name} 连续失败，已停止本轮继续调用。",
                     data_tool_failed=_is_data_tool(name),
@@ -175,22 +186,32 @@ class RanrenAgentGraph:
                 continue
             if name == "web_search_lifestyle":
                 if web_search_seen >= WEB_SEARCH_CALL_LIMIT:
-                    rejected_results[idx] = self._reject_tool_call(
+                    prepared[idx] = self._reject_tool_call(
                         call,
                         f"TOOL_REJECTED: 每次 Agent 运行最多联网搜索 {WEB_SEARCH_CALL_LIMIT} 次。",
                     )
                     continue
                 web_search_seen += 1
             allowed_calls.append((idx, call))
+        for offset, call in enumerate(over_budget):
+            prepared[remaining + offset] = self._reject_tool_call(
+                call, "TOOL_LIMIT_REACHED: 已达到本轮工具调用上限。"
+            )
 
         results = await asyncio.gather(
-            *(self._run_one_tool(call, state) for _, call in allowed_calls),
-            return_exceptions=False,
+            *(self._run_one_tool(call) for _, call in allowed_calls),
+            return_exceptions=True,
         )
-        ordered_results = dict(rejected_results)
-        for (idx, _), result in zip(allowed_calls, results, strict=True):
-            ordered_results[idx] = result
-        ordered = [ordered_results[idx] for idx in range(len(runnable_calls))]
+        for (idx, call), result in zip(allowed_calls, results, strict=True):
+            if isinstance(result, BaseException):
+                prepared[idx] = self._reject_tool_call(
+                    call,
+                    f"TOOL_ERROR: {type(result).__name__}: {result}",
+                    data_tool_failed=_is_data_tool(call.get("name") or ""),
+                )
+            else:
+                prepared[idx] = result
+        ordered = [prepared[idx] for idx in range(len(tool_calls))]
         tool_messages = [item[0] for item in ordered]
         traces = [item[1] for item in ordered]
         web_search_count = int(state.get("web_search_count") or 0) + sum(
@@ -220,7 +241,7 @@ class RanrenAgentGraph:
         return {
             "messages": tool_messages,
             "tool_trace": list(state.get("tool_trace") or []) + traces,
-            "tool_call_count": current_count + len(runnable_calls),
+            "tool_call_count": current_count + len(within_budget),
             "web_search_count": web_search_count,
             "data_tool_failed": data_tool_failed,
             "data_tool_status": data_tool_status,
@@ -228,15 +249,11 @@ class RanrenAgentGraph:
             "loaded_skills": sorted(loaded),
         }
 
-    async def _run_one_tool(self, call: dict[str, Any], state: AgentState) -> tuple[ToolMessage, dict[str, Any]]:
+    async def _run_one_tool(self, call: dict[str, Any]) -> tuple[ToolMessage, dict[str, Any]]:
         name = call.get("name") or ""
         args = call.get("args") or {}
         call_id = _tool_call_id(call)
         trace: dict[str, Any] = {"name": name, "args": args, "ok": False}
-        if name == "web_search_lifestyle" and int(state.get("web_search_count") or 0) >= WEB_SEARCH_CALL_LIMIT:
-            content = f"TOOL_REJECTED: 每次 Agent 运行最多联网搜索 {WEB_SEARCH_CALL_LIMIT} 次。"
-            trace["error"] = content
-            return ToolMessage(content=content, tool_call_id=call_id), trace
         tool = self.tools_by_name.get(name)
         if tool is None:
             content = f"TOOL_NOT_FOUND: {name}"
@@ -300,7 +317,8 @@ async def generate_agent_reply(
         ),
         settings=settings,
     ).run(user_query=user_query, recent_messages=recent_messages, query_speaker=query_speaker)
-    if result.data_tool_failed and _looks_like_data_query(user_query):
+    # Agent 主动调了数据工具且失败，说明它自己判断需要真实数据；直接走安全兜底，不再用关键词二次猜意图。
+    if result.data_tool_failed:
         raise AgentDataUnavailableError(DATA_UNAVAILABLE_REPLY)
     return result
 
@@ -370,7 +388,8 @@ def _tool_result_failed(result: Any) -> bool:
     if isinstance(result, dict):
         return result.get("ok") is False
     if isinstance(result, str):
-        return "ERROR" in result or "未配置" in result or "失败" in result
+        # 只认显式错误前缀，别用“失败/错误”模糊子串——否则知识/skill 正文里出现这些字会被误判为工具失败。
+        return result.lstrip().startswith(_STR_TOOL_ERROR_PREFIXES)
     return False
 
 
@@ -386,10 +405,6 @@ def _is_data_tool(name: str) -> bool:
         "list_group_files",
         "read_group_file",
     }
-
-
-def _looks_like_data_query(text: str) -> bool:
-    return any(keyword in (text or "") for keyword in DATA_QUERY_KEYWORDS)
 
 
 def _current_time_context() -> str:

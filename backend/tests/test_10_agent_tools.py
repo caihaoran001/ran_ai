@@ -1011,6 +1011,46 @@ async def test_graph_circuits_tool_after_two_consecutive_failures(db_session):
 
 
 @pytest.mark.asyncio
+async def test_graph_responds_to_every_tool_call_when_over_budget(db_session):
+    # 一条 AIMessage 里的 tool_call 数超过本轮剩余预算时，超预算的也必须补 ToolMessage，
+    # 否则 tool_call 缺响应会让下一轮 LLM 400。这里断言每个 tool_call 都进了 tool_trace。
+    settings = get_settings()
+    original_max = settings.agent_max_tool_calls
+    settings.agent_max_tool_calls = 1
+    try:
+        service_case = await _case(db_session)
+        model = FakeToolCallingModel(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "get_service_progress", "args": {}, "id": "call-a"},
+                        {"name": "get_recent_checkins", "args": {}, "id": "call-b"},
+                    ],
+                ),
+                AIMessage(content="好的，帮你看过了。"),
+            ]
+        )
+        graph = RanrenAgentGraph(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=settings,
+            chat_model=model,
+        )
+        graph.tools_by_name["get_service_progress"] = FakeSequenceTool([{"ok": True, "status": "in_service"}])
+        graph.tools_by_name["get_recent_checkins"] = FakeSequenceTool([{"ok": True, "items": []}])
+
+        result = await graph.run(user_query="我现在什么情况", recent_messages=[])
+
+        assert result.reply == "好的，帮你看过了。"
+        # 两个 tool_call 都要有 trace（= 都补了 ToolMessage）：一个执行、一个 TOOL_LIMIT_REACHED。
+        assert len(result.tool_trace) == 2
+        errors = [t.get("error") or "" for t in result.tool_trace]
+        assert any("TOOL_LIMIT_REACHED" in e for e in errors)
+    finally:
+        settings.agent_max_tool_calls = original_max
+
+
+@pytest.mark.asyncio
 async def test_web_search_rejects_health_queries_without_network():
     settings = get_settings()
     original_enabled = settings.web_search_enabled
