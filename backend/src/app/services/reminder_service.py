@@ -132,6 +132,8 @@ class ReminderService:
                         await self.check_unsent_channel_messages_once()
                         await self.check_room_names_once()
                         await self.check_image_cache_cleanup_once()
+                        if self.settings.archivist_enabled:
+                            await self.check_archivist_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -143,6 +145,14 @@ class ReminderService:
                 )
             except asyncio.TimeoutError:
                 pass
+
+    async def check_archivist_once(self) -> None:
+        """档案官周期扫描：DB 派生找到点的服务单，跑聊天转打卡。触发/幂等/防双跑见 archivist.trigger。"""
+        from app.services.archivist.trigger import run_archivist_scan
+
+        stats = await run_archivist_scan()
+        if stats.get("ran"):
+            logger.info("Archivist scan stats=%s", stats)
 
     async def check_service_graduations_once(self, now: datetime | None = None) -> None:
         timezone = ZoneInfo(self.settings.reminder_timezone)

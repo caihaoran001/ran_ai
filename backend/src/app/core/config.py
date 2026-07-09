@@ -155,6 +155,9 @@ class Settings(BaseSettings):
         validation_alias="REMINDER_MESSAGE",
     )
     outcome_snapshots_enabled: bool = Field(default=True, validation_alias="OUTCOME_SNAPSHOTS_ENABLED")
+    # 档案官（Archivist）总开关：聊天转打卡的后台扫描。默认开；缺省不注入也为开，
+    # 需临时停用时在 compose environment 设 ARCHIVIST_ENABLED=false。
+    archivist_enabled: bool = Field(default=True, validation_alias="ARCHIVIST_ENABLED")
 
     auto_send_documents: bool = Field(
         default=False,
