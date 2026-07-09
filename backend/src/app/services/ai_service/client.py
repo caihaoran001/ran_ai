@@ -560,6 +560,11 @@ class AIService:
                 '    "tool_hints": ["从以下值中选择：service_case_data / product_rule / web_search / knowledge_base，仅作提示，可为空数组"],\n'
                 '    "reason": "一句话说明为什么选择这些背景"\n'
                 "  },\n"
+                '  "archive_plan": {  // 给档案官(后台归档)用，判断本条是否含值得长期沉淀的信息；与风险/转人工/续购/退款完全独立\n'
+                '    "worthy": boolean,  // 是否含可归档信息\n'
+                '    "kinds": ["从以下值中选择：checkin / profile_fact / outcome / correction / knowledge_qa，无则空数组"],\n'
+                '    "reason": "一句话依据"\n'
+                "  },\n"
                 '  "confidence": number,  // 0.0-1.0，对本次判断的置信度\n'
                 '  "notes": "补充说明"\n'
                 "}\n\n"
@@ -585,6 +590,20 @@ class AIService:
                 "产品规则问题优先选择 current_state/habits/warnings；查服务天数、体重、打卡等实时数据可少带或不带背景，tool_hints 给 service_case_data；"
                 "兴趣闲聊、潮玩、影视、游戏只选择 preferences/recent_topics，不要选择体重、饮食、产品、风险背景；"
                 "用户纠正上一轮或说半句话时用 correction，并优先 recent_topics/preferences。"
+
+                "\n\n【归档信号 archive_plan 判定】\n"
+                "archive_plan 只给后台档案官用，判断本条消息是否含值得长期沉淀的信息，与风险/转人工/续购/退款完全独立"
+                "（一条普通打卡通常 requires_human_intervention=false、risk_flags=[]，但 archive_plan.worthy=true）。\n"
+                "worthy=true 时在 kinds 标出对应类目（可多选）：\n"
+                "- checkin：报告了任何可量化/可结构化的当日执行数据——体重、围度/腰围、喝水量、睡眠(时长或作息时间)、"
+                "饮食(吃了什么/份量)、运动、排便、饥饿感、情绪、身体感受、明日重点等，哪怕只提一项也算。\n"
+                "- profile_fact：透露了相对稳定的个人事实/偏好/习惯/长期约束(口味偏好、忌口、作息类型、职业/工作强度、家庭或生活限制等)。\n"
+                "- outcome：报告了阶段性进展或变化(瘦了X斤、睡眠改善、便秘/腹胀好转、精神体力变化等)。\n"
+                "- correction / knowledge_qa：后续阶段启用，当前可不主动判定。\n"
+                "worthy=false：纯寒暄、表情、“收到/好的/嗯”等无信息量确认、与个人状态无关的纯闲聊——没有任何可归档的数据或事实。\n"
+                "判定偏向（重要，与风控相反）：只要可能含打卡数据或个人事实就 worthy=true，让档案官去看，抽不到也无妨；"
+                "只有明确无信息量的寒暄/确认/表情才 worthy=false。宁可多让档案官空看一次，也别漏掉真实打卡。\n"
+                "只标记当前消息本身含有的可归档信息，不因历史报过而重复标记。"
             ),
             user_prompt=(
                 f"来源：{source}\n"

@@ -49,6 +49,16 @@ VALID_AGENT_TOOL_HINTS = frozenset({
     "knowledge_base",
 })
 
+# 归档信号 archive_plan.kinds 合法取值：给档案官(后台归档)判断本条含哪类可沉淀信息。
+# checkin/profile_fact/outcome 供 P0 起用；correction/knowledge_qa 为后续阶段(P2)预留。
+VALID_ARCHIVE_KINDS = frozenset({
+    "checkin",
+    "profile_fact",
+    "outcome",
+    "correction",
+    "knowledge_qa",
+})
+
 
 async def analyze_intervention(
     *,
@@ -154,6 +164,9 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
     agent_context_plan = _normalize_agent_context_plan(insight.get("agent_context_plan"))
     if agent_context_plan is not None:
         normalized["agent_context_plan"] = agent_context_plan
+    archive_plan = _normalize_archive_plan(insight.get("archive_plan"))
+    if archive_plan is not None:
+        normalized["archive_plan"] = archive_plan
     return normalized
 
 
@@ -235,6 +248,24 @@ def _normalize_agent_context_plan(value: Any) -> dict[str, Any] | None:
         "message_scene": message_scene,
         "memory_scopes": _dedupe_strings(memory_scopes),
         "tool_hints": _dedupe_strings(tool_hints),
+        "reason": _string(value.get("reason"))[:160],
+    }
+
+
+def _normalize_archive_plan(value: Any) -> dict[str, Any] | None:
+    """规范化归档信号。搭车意图识别 LLM，给档案官判断本条是否含可长期沉淀的信息。
+
+    与风险/转人工完全独立，只做轻量打标(worthy+kinds)，不抽具体值。
+    偏向与风控相反：可能含数据/事实即 worthy=true(误报只白跑一次抽取，漏报=打卡继续空)。
+    """
+    if not isinstance(value, dict):
+        return None
+    kinds = [item for item in _string_list(value.get("kinds")) if item in VALID_ARCHIVE_KINDS]
+    kinds = _dedupe_strings(kinds)
+    worthy = bool(value.get("worthy")) or bool(kinds)
+    return {
+        "worthy": worthy,
+        "kinds": kinds,
         "reason": _string(value.get("reason"))[:160],
     }
 
