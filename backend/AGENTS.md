@@ -53,6 +53,34 @@ backend/
 └── pyproject.toml     # 依赖和入口点
 ```
 
+## Architecture — the big picture
+
+改后端业务代码前先读本节，理清上下游数据流，再动局部。
+
+### Messaging is layered (channel-agnostic core)
+Message handling is split into three layers so business logic never touches a specific channel's API:
+```
+app/services/channels/     MessageChannel protocol, channel registry, QiWe adapter
+app/services/ranren_ai/    RanrenAIEngine — channel-agnostic business engine
+app/services/qiwe_service/ QiWe group-message aggregation
+```
+A QiWe callback turns inbound text into a `ChannelMessage`, aggregates consecutive messages from the same user/group over an ~8s window, then hands it to `RanrenAIEngine` (engine.py). The engine handles the intake-questionnaire command, knowledge retrieval, LLM reply, and message persistence. **To send messages, always go through the `channels` abstraction — never call a channel API directly.**
+
+### Knowledge retrieval / RAG (two-tier with fallback)
+Bot replies first query the DB index `knowledge_chunks` (via `knowledge_index.py`), then pass hits to the LLM. The index ingests structured FAQs (`knowledge_faqs`), approved knowledge drafts, and Markdown/TXT chunks, with optional embedding (cosine in app layer; pgvector migration is pre-staged but the default `postgres:15-alpine` image lacks it). If the DB index misses, it **falls back** to local Markdown/LlamaIndex keyword search under `backend/src/app/services/knowledge_base/`. Keyword fallback is limited to the business whitelist `keyword_whitelist.json` — do not query the DB with every jieba token.
+
+### Documents & profiles
+Questionnaire submission → LLM generates a user profile. Service-case detail can generate two delivery docs (处方单, 28天执行单) and stage reports (3/7/14/21/28-day + graduation). Flow: LLM emits **structured JSON** for key fields → backend templates (`document_templates.py`) render editable Markdown → persisted as `content_json`/`content_md` → only at download/send time does `docx_service.py` render a temporary `.docx` (deleted after). **The authoritative system prompts live in `backend/src/app/services/document_service.py`; `手动版提示词.md` is reference only and must not be used at runtime.**
+
+### Outcome tracking
+`outcome_engine.py` extracts structured outcome evidence per chat message into `outcome_events` (deduped by `(service_case_id, message_id, field_key)`), maintains per-milestone `outcome_stage_states`, aggregates `outcome_snapshots` at milestones, and `user_state_profile.py` projects events into a JSONB `user_state_profiles` (action_focus / need_analysis / body_feedback / risk_profile). AI replies cite the current action focus as implicit background.
+
+### Risk control
+MVP risk is identified by **LLM intent/info extraction**, not hardcoded keywords. High-risk users never auto-receive AI content (forced human review); only the preset high-risk safety script may send immediately. Content policy (`content_policy.py`): `manual_review` (default — AI content goes to human review) vs `auto_send` (low-risk auto-sends, high-risk still reviewed).
+
+### Auth model
+Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY`); `/health` and public questionnaire (token-based) are exceptions. The admin key lives **only** between the Next server and FastAPI — never expose it to `NEXT_PUBLIC_*` or browser code. The frontend proxies backend API same-origin.
+
 ## WHERE TO LOOK
 
 | Task | File | Notes |

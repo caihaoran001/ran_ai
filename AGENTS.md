@@ -49,31 +49,17 @@ npm run lint
 npm run test:e2e     # Playwright
 ```
 
-## Architecture — the big picture
+## Architecture — 子系统索引（按需细读）
 
-### Messaging is layered (channel-agnostic core)
-Message handling is split into three layers so business logic never touches a specific channel's API:
-```
-app/services/channels/     MessageChannel protocol, channel registry, QiWe adapter
-app/services/ranren_ai/    RanrenAIEngine — channel-agnostic business engine
-app/services/qiwe_service/ QiWe group-message aggregation
-```
-A QiWe callback turns inbound text into a `ChannelMessage`, aggregates consecutive messages from the same user/group over an ~8s window, then hands it to `RanrenAIEngine` (engine.py). The engine handles the intake-questionnaire command, knowledge retrieval, LLM reply, and message persistence. **To send messages, always go through the `channels` abstraction — never call a channel API directly.**
+系统全景与各子系统的"为什么这么设计"已下沉到 **`backend/AGENTS.md` 的 Architecture 节**（消息分层、RAG、文档/画像、成效追踪、风控）。改动相关代码前先读那一节。这里只留一句话导航：
 
-### Knowledge retrieval / RAG (two-tier with fallback)
-Bot replies first query the DB index `knowledge_chunks` (via `knowledge_index.py`), then pass hits to the LLM. The index ingests structured FAQs (`knowledge_faqs`), approved knowledge drafts, and Markdown/TXT chunks, with optional embedding (cosine in app layer; pgvector migration is pre-staged but the default `postgres:15-alpine` image lacks it). If the DB index misses, it **falls back** to local Markdown/LlamaIndex keyword search under `backend/src/app/services/knowledge_base/`. Keyword fallback is limited to the business whitelist `keyword_whitelist.json` — do not query the DB with every jieba token.
+- **消息分层**（channel-agnostic）：QiWe 回调 → `ChannelMessage` → ~8s 聚合 → `RanrenAIEngine`。发消息一律走 `channels` 抽象，不直连通道 API。
+- **知识检索 / RAG**：DB 索引 `knowledge_chunks` 优先，未命中 fallback 本地 Markdown 关键词（限 `keyword_whitelist.json`）。
+- **文档 / 画像**：LLM 出结构化 JSON → 模板渲 Markdown → 落库 → 下载/发送时才临时渲 `.docx`。运行时系统提示词以 `document_service.py` 为准。
+- **成效追踪**：`outcome_engine.py` 抽取事件 → `user_state_profile.py` 投影为 JSONB 画像。
+- **风控**：LLM 识别风险（非关键词），高风险强制人工审核；策略见 `content_policy.py`。
 
-### Documents & profiles
-Questionnaire submission → LLM generates a user profile. Service-case detail can generate two delivery docs (处方单, 28天执行单) and stage reports (3/7/14/21/28-day + graduation). Flow: LLM emits **structured JSON** for key fields → backend templates (`document_templates.py`) render editable Markdown → persisted as `content_json`/`content_md` → only at download/send time does `docx_service.py` render a temporary `.docx` (deleted after). **The authoritative system prompts live in `backend/src/app/services/document_service.py`; `手动版提示词.md` is reference only and must not be used at runtime.**
-
-### Outcome tracking
-`outcome_engine.py` extracts structured outcome evidence per chat message into `outcome_events` (deduped by `(service_case_id, message_id, field_key)`), maintains per-milestone `outcome_stage_states`, aggregates `outcome_snapshots` at milestones, and `user_state_profile.py` projects events into a JSONB `user_state_profiles` (action_focus / need_analysis / body_feedback / risk_profile). AI replies cite the current action focus as implicit background.
-
-### Risk control
-MVP risk is identified by **LLM intent/info extraction**, not hardcoded keywords. High-risk users never auto-receive AI content (forced human review); only the preset high-risk safety script may send immediately. Content policy (`content_policy.py`): `manual_review` (default — AI content goes to human review) vs `auto_send` (low-risk auto-sends, high-risk still reviewed).
-
-### Auth model
-Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY`); `/health` and public questionnaire (token-based) are exceptions. The admin key lives **only** between the Next server and FastAPI — never expose it to `NEXT_PUBLIC_*` or browser code. The frontend proxies backend API same-origin.
+**鉴权（跨栈安全红线）**：后端 `/api/*` 需 `X-Admin-API-Key`（`BACKEND_ADMIN_API_KEY`），`/health` 与公开问卷（token）例外。该 key **只**存在于 Next 服务端 ↔ FastAPI 之间，**严禁**暴露到 `NEXT_PUBLIC_*` 或浏览器；前端同源代理后端 API。
 
 ## ANTI-PATTERNS (CRITICAL RULES)
 - **禁用同步DB操作**：严禁在后端执行同步数据库操作，全部使用 async，保证高并发性能。
