@@ -22,6 +22,7 @@ from app.db.session import SessionLocal
 from app.models.archivist_progress import ArchivistProgress
 from app.models.message import Message, MessageSenderType
 from app.models.service_case import ServiceCase
+from app.services.archivist.case_memory_service import refresh_case_memory
 from app.services.archivist.graph import get_or_create_progress, run_archivist
 
 logger = logging.getLogger(__name__)
@@ -192,6 +193,12 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                 logger.info(
                     "Archivist ran service_case_id=%s reason=%s delta=%s days=%s contradictions=%s",
                     cid, reason, result.delta_count, result.days_processed, len(result.contradictions),
+                )
+                # 归档已提交成功后再刷新 case_memory（记忆产物,尽力而为,独立事务,失败不影响归档）。
+                await refresh_case_memory(
+                    service_case_id=cid,
+                    run_result=result,
+                    watermark_to=result.watermark_to,
                 )
         except Exception as exc:
             # 归档失败：主事务已回滚（未 commit），水位线保持不动，下轮重试。

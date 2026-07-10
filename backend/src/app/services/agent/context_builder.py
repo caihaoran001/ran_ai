@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.profile_memory_service import load_profile_memory_context
 
 
-MAX_MEMORY_LINES = 8
+MAX_MEMORY_LINES = 10
 MAX_SCOPED_MEMORY_LINES = 6
 
 

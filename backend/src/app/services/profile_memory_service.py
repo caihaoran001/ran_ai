@@ -1,25 +1,30 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.archivist_case_memory import ArchivistCaseMemory
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 
 
 AGENT_MEMORY_SECTIONS: tuple[str, ...] = (
     "stable_facts",
+    "case_summary",
     "preferences",
     "habits",
     "current_state",
+    "recent_topics",
     "warnings",
 )
 
 SECTION_LABELS: dict[str, str] = {
     "stable_facts": "稳定事实",
+    "case_summary": "历程小结",
     "preferences": "长期偏好",
     "habits": "稳定习惯",
     "current_state": "当前状态",
@@ -31,6 +36,7 @@ SECTION_LABELS: dict[str, str] = {
 @dataclass(frozen=True)
 class ProfileMemoryContext:
     stable_facts: list[str] = field(default_factory=list)
+    case_summary: list[str] = field(default_factory=list)
     preferences: list[str] = field(default_factory=list)
     habits: list[str] = field(default_factory=list)
     current_state: list[str] = field(default_factory=list)
@@ -80,19 +86,51 @@ async def load_profile_memory_context(
         .order_by(UserStateProfile.updated_at.desc())
         .limit(1)
     )
+    case_memory = await session.scalar(
+        select(ArchivistCaseMemory).where(
+            ArchivistCaseMemory.service_case_id == service_case_id
+        )
+    )
 
     stable_facts, warnings = _memory_from_profile(profile)
     preferences, habits, current_state, state_warnings = _memory_from_state(
         state_profile.state_json if state_profile else None
     )
     warnings.extend(state_warnings)
+    case_summary, recent_topics = _memory_from_case_memory(case_memory)
     return ProfileMemoryContext(
         stable_facts=_dedupe_keep_order(stable_facts),
+        case_summary=_dedupe_keep_order(case_summary),
         preferences=_dedupe_keep_order(preferences),
         habits=_dedupe_keep_order(habits),
         current_state=_dedupe_keep_order(current_state),
+        recent_topics=_dedupe_keep_order(recent_topics),
         warnings=_dedupe_keep_order(warnings),
     )
+
+
+def _memory_from_case_memory(
+    case_memory: ArchivistCaseMemory | None,
+) -> tuple[list[str], list[str]]:
+    """档案官 case_memory → (历程小结按句拆行, 近期话题)。
+
+    滚动小结拆成短句分行,规避 render 单行 120 字截断导致后半段丢失。
+    """
+    if case_memory is None:
+        return [], []
+    case_summary: list[str] = []
+    summary = (case_memory.summary or "").strip()
+    if summary:
+        for sentence in re.split(r"(?<=[。！？!?；;\n])", summary):
+            text = _short_text(sentence, 110)
+            if text:
+                case_summary.append(text)
+    recent_topics = [
+        text
+        for item in (case_memory.recent_topics or [])
+        if (text := _short_text(item, 60))
+    ]
+    return case_summary, recent_topics
 
 
 def _memory_from_profile(profile: UserProfile | None) -> tuple[list[str], list[str]]:
