@@ -1,14 +1,13 @@
-"""打卡追问（H5 完整替代）——混合架构：日常搭便车 + 里程碑/矛盾单发线 + 档案官关键信息快触发。
+"""打卡追问（H5 完整替代）——外部确定性触发、每 case 每天最多一条 + 档案官关键信息快触发。
 
 覆盖：
 - 档案官触发器：含关键类目(checkin/profile_fact/outcome)且用户停说≥3min → fast 快触发；
   仅闲聊 worthy 且未到 24h → 不触发。
-- 日常搭便车 compute_gap_hint：算出今日缺口→喂聊天机器人「今日待补」；退避(每天最多提一次、
-  连提 3 天不报即停)并落 surface 事件；无缺口/被退避→空串。
-- 里程碑档：服务第 6/13/20/27 天检测出 milestone；LLM 生成复盘追问、失败回退模板；need_waist 按腰围记录决定。
-- 矛盾核对：表单值≠聊天值→记矛盾→单发线自然语言核对→标 asked(去重)+字段降级→用户新值覆盖表单。
-- 门控/退役校验：checkin_followup_enabled 关时搭便车不注入；check_once 不再被 _run_loop 调度；
-  单发线源码不再含日常槽位分支。
+- compose_daily_followup 统一组织：优先级 里程碑 > 矛盾核对 > 日常缺口(早C/午B/晚A、体重合并成一句)；
+  无可问返回 None；LLM 生成复盘/缺口话术、失败回退模板。
+- 里程碑档：服务第 6/13/20/27 天检测出 milestone；need_waist 按腰围记录决定。
+- 矛盾核对：表单值≠聊天值→记矛盾→自然语言核对→标 asked(去重)+字段降级→用户新值覆盖表单。
+- 不活跃兜底辅助：_deterministic_daily_time 同 case 同日恒定且落窗口内；_user_spoke_today 判当天活跃。
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select
 
-from app.core.config import get_settings
 from app.models.checkin import Checkin
 from app.models.message import (
     Message,
@@ -30,11 +28,8 @@ from app.models.message import (
     MessageSenderType,
     MessageStatus,
 )
-from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
-from app.services.agent.graph import RanrenAgentGraph
-from app.services.agent.state import AgentRunContext
 from app.services.archivist.checkin_projection import (
     SOURCE_FORM,
     SOURCE_USER_CONFIRMED,
@@ -42,10 +37,10 @@ from app.services.archivist.checkin_projection import (
     upsert_checkin,
 )
 from app.services.archivist.followup import (
-    allowed_after_backoff,
+    DailyFollowup,
+    compose_daily_followup,
     compose_followup_message,
     compose_milestone_followup,
-    compute_gap_hint,
     detect_followup,
 )
 from app.services.archivist.trigger import (
@@ -184,38 +179,89 @@ async def test_user_confirmed_value_overrides_form(db_session):
 
 
 # ---------------------------------------------------------------------------
-# 退避纯函数（compute_gap_hint 与旧单发线共用）
+# compose_daily_followup 统一组织：优先级 + 合并 + None
 # ---------------------------------------------------------------------------
 
 
-def test_backoff_allows_first_ask_when_no_history():
-    today = date(2026, 7, 10)
-    assert allowed_after_backoff(["morning_c", "weight"], [], today) == ["morning_c", "weight"]
+@pytest.mark.asyncio
+async def test_daily_followup_milestone_wins_over_gap(db_session):
+    # 第6天（里程碑前夕）且今天全缺 → 里程碑优先，忽略日常缺口。
+    case = await _case(db_session, started_days_ago=5)
+    now = datetime.now(_TZ)
+    fake = _FakeAI("复盘一下这周～")
+    fu = await compose_daily_followup(
+        db_session, service_case=case, now=now, tz=_TZ, ai_service=fake
+    )
+    assert isinstance(fu, DailyFollowup)
+    assert fu.kind == "milestone"
 
 
-def test_backoff_skips_within_cooldown():
-    today = date(2026, 7, 10)
-    # 昨天刚追过 morning_c（冷却 3 天内）→ 本次跳过；weight 没追过 → 放行。
-    history = [("morning_c", date(2026, 7, 9))]
-    assert allowed_after_backoff(["morning_c", "weight"], history, today) == ["weight"]
+@pytest.mark.asyncio
+async def test_daily_followup_contradiction_wins_over_gap(db_session):
+    # 非里程碑日，有矛盾 + 有日常缺口 → 矛盾优先。
+    case = await _case(db_session, started_days_ago=3)
+    today = date.today()
+    # 持有 checkin 引用：SQLAlchemy 身份映射用弱引用，upsert 的矛盾靠原地改共享 list，
+    # 不持引用可能被 GC 掉导致矛盾丢失（沿用 test_detect_and_compose_confirmation 的写法）。
+    checkin = await _form_checkin_with_weight(db_session, case, today, "100斤")
+    await upsert_checkin(
+        db_session, service_case=case, checkin_date=today, fields={"weight": "168斤"}
+    )
+    now = datetime.now(_TZ)
+    fu = await compose_daily_followup(db_session, service_case=case, now=now, tz=_TZ)
+    assert checkin is not None  # 保持引用存活至断言之后
+    assert fu is not None and fu.kind == "contradiction"
+    assert fu.confirmation_fields == ["weight"]
+    assert "体重" in fu.text
 
 
-def test_backoff_reallows_after_cooldown():
-    today = date(2026, 7, 10)
-    # 4 天前追过（超过冷却 3 天）→ 重新放行。
-    history = [("morning_c", date(2026, 7, 6))]
-    assert allowed_after_backoff(["morning_c"], history, today) == ["morning_c"]
+@pytest.mark.asyncio
+async def test_daily_followup_merges_gaps_into_one(db_session):
+    # 非里程碑日、无矛盾、今天全缺 → 日常缺口，合并成一句（不逐项拆）。
+    case = await _case(db_session, started_days_ago=3)
+    now = datetime.now(_TZ)
+    fake = _FakeAI("今天早C午B晚A和体重都还没看到哈～")
+    fu = await compose_daily_followup(
+        db_session, service_case=case, now=now, tz=_TZ, ai_service=fake
+    )
+    assert fu is not None and fu.kind == "daily_gap"
+    assert fu.text == fake.text
+    # 只调一次 LLM（合并成一句，不按字段多次调）。
+    assert len(fake.calls) == 1
 
 
-def test_backoff_stops_after_max_asks():
-    today = date(2026, 7, 20)
-    # 累计追满 3 次（默认上限）→ 永久停追，即使早已过冷却期。
-    history = [
-        ("morning_c", date(2026, 7, 5)),
-        ("morning_c", date(2026, 7, 9)),
-        ("morning_c", date(2026, 7, 13)),
-    ]
-    assert allowed_after_backoff(["morning_c"], history, today) == []
+@pytest.mark.asyncio
+async def test_daily_followup_gap_fallback_on_llm_error(db_session):
+    case = await _case(db_session, started_days_ago=3)
+    now = datetime.now(_TZ)
+    fu = await compose_daily_followup(
+        db_session, service_case=case, now=now, tz=_TZ, ai_service=_RaisingAI()
+    )
+    assert fu is not None and fu.kind == "daily_gap"
+    # 兜底模板把所有缺口揉进一句。
+    assert "早C" in fu.text and "体重" in fu.text
+
+
+@pytest.mark.asyncio
+async def test_daily_followup_none_when_all_reported(db_session):
+    case = await _case(db_session, started_days_ago=3)
+    today = date.today()
+    checkin = Checkin(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        user_id=case.user_id,
+        checkin_date=today,
+        content="（全打卡）",
+        parsed_json={
+            "weight": "68kg",
+            "product_schedule": {"morning_c": "已喝", "noon_b": "已喝", "night_a": "已喝"},
+        },
+    )
+    db_session.add(checkin)
+    await db_session.flush()
+    now = datetime.now(_TZ)
+    fu = await compose_daily_followup(db_session, service_case=case, now=now, tz=_TZ)
+    assert fu is None
 
 
 # ---------------------------------------------------------------------------
@@ -312,15 +358,28 @@ def test_check_once_retired_from_run_loop():
     assert "check_stage_reports_once" in src  # 阶段报告仍在调度
 
 
-def test_single_line_no_longer_sends_daily_slots():
-    """单发线源码不应再含日常槽位/字段级退避分支；里程碑 + 矛盾核对仍在。"""
+def test_fallback_line_only_targets_inactive_users():
+    """不活跃兜底：走统一 compose_daily_followup、判活跃跳过、按随机时刻发；不再固定 20:30/限工作日。"""
     from app.services.reminder_service import ReminderService
 
     src = inspect.getsource(ReminderService.check_checkin_followup_once)
-    assert "missing_slots" not in src, "日常槽位追问应已移交搭便车"
-    assert "allowed_after_backoff" not in src, "字段级退避应已移出单发线"
-    assert "compose_milestone_followup" in src  # 里程碑仍在
+    assert "compose_daily_followup" in src  # 统一组织内容
+    assert "_user_spoke_today" in src  # 活跃用户交给 engine 活跃触发
+    assert "_deterministic_daily_time" in src  # 随机时刻替代固定 20:30
+    assert "checkin_followup_at" not in src  # 固定定点已移除
+    assert "reminder_weekdays" not in src  # 工作日限制已移除
     assert "mark_contradictions_pending_confirmation" in src  # 矛盾核对状态机仍在
+
+
+def test_active_followup_hooked_in_engine():
+    """活跃触发：engine 回复成功后调 _maybe_followup_after_reply。"""
+    from app.services.ranren_ai.engine import RanrenAIEngine
+
+    src = inspect.getsource(RanrenAIEngine._reply_with_ai)
+    assert "_maybe_followup_after_reply" in src
+    hook = inspect.getsource(RanrenAIEngine._maybe_followup_after_reply)
+    assert "compose_daily_followup" in hook
+    assert "_reserve_reminder_event" in hook  # 共用天级去重闸
 
 
 # ---------------------------------------------------------------------------
@@ -449,100 +508,46 @@ async def test_trigger_staff_message_as_correction_candidate(db_session):
 
 
 # ---------------------------------------------------------------------------
-# 日常搭便车：compute_gap_hint（今日待补 + 退避）
+# 不活跃兜底辅助：随机时刻 + 当天活跃判定
 # ---------------------------------------------------------------------------
 
 
-async def _surface_events(db_session, case) -> list[str]:
-    rows = (
-        await db_session.scalars(
-            select(ReminderEvent).where(
-                ReminderEvent.service_case_id == case.id,
-                ReminderEvent.rule_id.like("checkin_followup:%"),
-            )
-        )
-    ).all()
-    return sorted(e.rule_id for e in rows)
+def test_deterministic_daily_time_stable_and_within_window():
+    from datetime import time as dtime
+
+    from app.services.reminder_service import _deterministic_daily_time
+
+    day = date(2026, 7, 10)
+    start, end = dtime(9, 0), dtime(21, 0)
+    t1 = _deterministic_daily_time(123, day, start, end)
+    t2 = _deterministic_daily_time(123, day, start, end)
+    assert t1 == t2  # 同 case 同日恒定（轮询不漂移）
+    assert start <= t1 < end  # 落在窗口内
+    # 不同 case 分散（极大概率不同）。
+    others = {_deterministic_daily_time(i, day, start, end) for i in range(20)}
+    assert len(others) > 1
+
+
+def test_deterministic_daily_time_degrades_when_end_le_start():
+    from datetime import time as dtime
+
+    from app.services.reminder_service import _deterministic_daily_time
+
+    day = date(2026, 7, 10)
+    t = _deterministic_daily_time(1, day, dtime(21, 0), dtime(9, 0))
+    assert t == dtime(21, 0)
 
 
 @pytest.mark.asyncio
-async def test_gap_hint_reports_missing_and_records_events(db_session):
+async def test_user_spoke_today_detects_activity(db_session):
+    from app.services.reminder_service import _user_spoke_today
+
     case = await _case(db_session)
     today = date.today()
-    # 今天没有任何打卡 → 早C/午B/晚A + 体重全缺。
-    hint = await compute_gap_hint(db_session, service_case_id=case.id, today=today)
-    assert "早C" in hint and "午B" in hint and "晚A" in hint and "体重" in hint
-    events = await _surface_events(db_session, case)
-    assert "checkin_followup:morning_c" in events
-    assert "checkin_followup:weight" in events
-
-
-@pytest.mark.asyncio
-async def test_gap_hint_backoff_skips_same_day(db_session):
-    case = await _case(db_session)
-    today = date.today()
-    first = await compute_gap_hint(db_session, service_case_id=case.id, today=today)
-    assert first  # 首次有提示
-    # 同一天再问：所有字段昨/今已提示，backoff_days=1 冷却→全跳过→空串。
-    second = await compute_gap_hint(db_session, service_case_id=case.id, today=today)
-    assert second == ""
-
-
-@pytest.mark.asyncio
-async def test_gap_hint_empty_when_all_reported(db_session):
-    case = await _case(db_session)
-    today = date.today()
-    checkin = Checkin(
-        service_case_id=case.id,
-        group_id=case.group_id,
-        user_id=case.user_id,
-        checkin_date=today,
-        content="（全打卡）",
-        parsed_json={
-            "weight": "68kg",
-            "product_schedule": {"morning_c": "已喝", "noon_b": "已喝", "night_a": "已喝"},
-        },
+    # 没说话 → False。
+    assert await _user_spoke_today(db_session, case.id, today, _TZ) is False
+    # 造一条今天的 INBOUND USER 消息 → True。
+    await _user_msg(
+        db_session, case, analysis_json={}, created_at=datetime.now(timezone.utc)
     )
-    db_session.add(checkin)
-    await db_session.flush()
-    hint = await compute_gap_hint(db_session, service_case_id=case.id, today=today)
-    assert hint == ""
-
-
-def test_ride_along_backoff_daily_then_stop():
-    today = date(2026, 7, 20)
-    # 连续 3 天各提示一次(达 max_asks=3) → 今天永久放弃。
-    hist3 = [("weight", date(2026, 7, 17)), ("weight", date(2026, 7, 18)), ("weight", date(2026, 7, 19))]
-    assert allowed_after_backoff(["weight"], hist3, today, backoff_days=1, max_asks=3) == []
-    # 仅昨天提示过(距 1 天，未达上限) → backoff_days=1 下今天可再提。
-    hist1 = [("weight", date(2026, 7, 19))]
-    assert allowed_after_backoff(["weight"], hist1, today, backoff_days=1, max_asks=3) == ["weight"]
-
-
-# ---------------------------------------------------------------------------
-# 搭便车门控：checkin_followup_enabled / 班主任发言
-# ---------------------------------------------------------------------------
-
-
-def _graph(case, *, enabled: bool) -> RanrenAgentGraph:
-    settings = get_settings().model_copy(update={"checkin_followup_enabled": enabled})
-    return RanrenAgentGraph(
-        context=AgentRunContext(service_case_id=case.id),
-        settings=settings,
-        chat_model=object(),  # 不 run，仅测门控；object 无 bind_tools 直接用作 model
-    )
-
-
-@pytest.mark.asyncio
-async def test_gap_hint_gated_off_when_disabled(db_session):
-    case = await _case(db_session)
-    graph = _graph(case, enabled=False)
-    assert await graph._build_checkin_gap_hint(query_speaker="用户") == ""
-
-
-@pytest.mark.asyncio
-async def test_gap_hint_skipped_for_staff(db_session):
-    case = await _case(db_session)
-    graph = _graph(case, enabled=True)
-    # 班主任发言不触发打卡追问（不拆班主任台）。
-    assert await graph._build_checkin_gap_hint(query_speaker="班主任") == ""
+    assert await _user_spoke_today(db_session, case.id, today, _TZ) is True

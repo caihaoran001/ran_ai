@@ -164,13 +164,18 @@ class Settings(BaseSettings):
     # 默认 False=不再推送；如需临时恢复在 compose environment 设 DAILY_CHECKIN_LINK_ENABLED=true。
     # 注：入营问卷走独立命令路径，不受此开关影响。
     daily_checkin_link_enabled: bool = Field(default=False, validation_alias="DAILY_CHECKIN_LINK_ENABLED")
-    # 打卡追问(H5 完整替代)，单一开关门控两档：
-    #  1) 日常搭便车：聊天机器人回复用户时，被喂「今日待补」(早C/午B/晚A、体重缺口)，在话题自然处顺口问一句，不冷推；
-    #  2) 里程碑/矛盾单发线：服务第6/13/20/27天晚间发 LLM 复盘追问(腰围+最大变化+最大卡点)，及矛盾核对。
-    # 两档均会影响/发送真实群消息，默认 False=行为与今天一致；review 措辞后设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
+    # 打卡追问(H5 完整替代)：外部确定性触发、每 case 每天最多一条(合并里程碑/矛盾/日常缺口成一句)。
+    #  - 活跃用户(当天说过话)：agent 回复发送成功后单独补发一条；
+    #  - 不活跃用户：到当天一个确定性随机时刻(下方 window)主动发一条兜底。
+    # 会发送真实群消息，默认 False=不追问；设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
     checkin_followup_enabled: bool = Field(default=False, validation_alias="CHECKIN_FOLLOWUP_ENABLED")
-    # 单发线(里程碑/矛盾)的触发时间，放在晚间给白天聊天+档案官抽取留足时间；日常搭便车不看此值(随对话即时判断)。
-    checkin_followup_at: str = Field(default="20:30", validation_alias="CHECKIN_FOLLOWUP_AT")
+    # 不活跃兜底的随机时段[start,end)：每 case 按 (case_id,日期) 确定性伪随机落一个时刻，规避定点风控。
+    checkin_followup_window_start: str = Field(
+        default="09:00", validation_alias="CHECKIN_FOLLOWUP_WINDOW_START"
+    )
+    checkin_followup_window_end: str = Field(
+        default="21:00", validation_alias="CHECKIN_FOLLOWUP_WINDOW_END"
+    )
 
     auto_send_documents: bool = Field(
         default=False,

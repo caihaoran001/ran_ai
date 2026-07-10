@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
@@ -267,32 +268,26 @@ class ReminderService:
             await session.commit()
 
     async def check_checkin_followup_once(self) -> None:
-        """打卡单发线：只负责需"保证送达"的两件事——里程碑复盘 + 矛盾核对，晚间群内发一次。
+        """打卡追问·不活跃兜底：对当天没说话的用户，到确定性随机时刻主动发一条。
 
-        会向真实群发消息，受 CHECKIN_FOLLOWUP_ENABLED 门控，每单每天最多一条
-        (rule_id=checkin_followup 去重)，不发链接。里程碑复盘在服务第 6/13/20/27 天由 LLM
-        生成(失败自回退模板)，赶在里程碑当晚阶段报告前采集腰围/复盘；矛盾核对含标 asked、
-        降级来源的状态机。日常缺口(早C/午B/晚A、体重)已改由聊天机器人「今日待补」搭便车承担，
-        不再由本单发线冷推(见 archivist.followup.compute_gap_hint)。
+        受 CHECKIN_FOLLOWUP_ENABLED 门控，每 case 每天最多一条（rule_id=checkin_followup 去重，
+        与 engine 活跃触发共用同一天闸，绝不叠加）。内容由 compose_daily_followup 合并里程碑/矛盾/
+        日常缺口成一句。**活跃用户（当天有 INBOUND USER 消息）跳过**，由 engine 回复后补发承担。
+        发送时间按 (case_id,日期) 在 [window_start, window_end) 内确定性伪随机，规避定点风控；每天都追
+        （不再限工作日）。矛盾核对发出后标 asked、降级来源，使用户新值覆盖旧值且不再重复追问。
         """
         if not self.settings.checkin_followup_enabled:
             return
         from app.services.archivist.checkin_projection import (
             mark_contradictions_pending_confirmation,
         )
-        from app.services.archivist.followup import (
-            compose_followup_message,
-            compose_milestone_followup,
-            detect_followup,
-        )
+        from app.services.archivist.followup import compose_daily_followup
 
         tz = ZoneInfo(self.settings.reminder_timezone)
         now = datetime.now(tz)
-        if now.isoweekday() not in _parse_weekdays(self.settings.reminder_weekdays):
-            return
-        if now.time() < _parse_time(self.settings.checkin_followup_at):
-            return
         today = now.date()
+        window_start = _parse_time(self.settings.checkin_followup_window_start)
+        window_end = _parse_time(self.settings.checkin_followup_window_end)
 
         async with SessionLocal() as session:
             service_cases = list(
@@ -319,29 +314,22 @@ class ReminderService:
                 day = checkin_day(service_case, now, tz)
                 if day is None or day > SERVICE_CASE_WINDOW_DAYS:
                     continue
-                detect = await detect_followup(
+                # 未到该 case 当天的随机目标时刻 → 先不发，等下一轮轮询。
+                target = _deterministic_daily_time(
+                    service_case.id, today, window_start, window_end
+                )
+                if now.time() < target:
+                    continue
+                # 活跃用户交给 engine 活跃触发；本兜底只管当天没说话的人。
+                if await _user_spoke_today(session, service_case.id, today, tz):
+                    continue
+
+                followup = await compose_daily_followup(
                     session, service_case=service_case, now=now, tz=tz
                 )
-                milestone = detect.get("milestone")
-                confirmations = detect.get("confirmations") or []
-                # 单发线只负责两件"需保证送达"的事：里程碑复盘（LLM，失败自回退模板）+ 矛盾核对
-                # （需标 asked、降级来源的状态机）。日常缺口（早C/午B/晚A、体重）已改由聊天机器人
-                # 「今日待补」搭便车在自然对话里承担，此处不再冷推。
-                parts: list[str] = []
-                if milestone:
-                    parts.append(
-                        await compose_milestone_followup(
-                            service_case=service_case,
-                            milestone_day=milestone["milestone_day"],
-                            need_waist=milestone["need_waist"],
-                        )
-                    )
-                conf_msg = compose_followup_message(confirmations=confirmations)
-                if conf_msg:
-                    parts.append(conf_msg)
-                content = " ".join(p for p in parts if p)
-                if not content:
+                if followup is None:
                     continue
+                # 先算出有内容再抢名额，避免无内容却占掉当天名额。
                 reminder_event = await _reserve_reminder_event(
                     session,
                     service_case.id,
@@ -357,19 +345,21 @@ class ReminderService:
                     direction=MessageDirection.OUTBOUND,
                     sender_type=MessageSenderType.SYSTEM,
                     message_type="markdown",
-                    content=content,
+                    content=followup.text,
                     purpose=MessagePurpose.REMINDER,
                     status=MessageStatus.PENDING,
                 )
                 session.add(message)
                 await session.flush()
-                result = await _send_channel_text_with_retries(service_case.group_id, content)
+                result = await _send_channel_text_with_retries(
+                    service_case.group_id, followup.text
+                )
                 if result.success:
                     message.status = MessageStatus.SENT
                     message.wecom_message_id = result.message_id
                     # 追问已发出的矛盾：把这些字段降级为 user_confirmed 并标 asked，
                     # 使用户随后报的新值覆盖旧表单值、且不再重复追问。
-                    if confirmations:
+                    if followup.kind == "contradiction" and followup.confirmation_fields:
                         today_checkin = await session.scalar(
                             select(Checkin).where(
                                 Checkin.service_case_id == service_case.id,
@@ -379,7 +369,7 @@ class ReminderService:
                         )
                         if today_checkin is not None:
                             mark_contradictions_pending_confirmation(
-                                today_checkin, [c["field"] for c in confirmations]
+                                today_checkin, followup.confirmation_fields
                             )
                 else:
                     message.status = MessageStatus.FAILED
@@ -1255,6 +1245,46 @@ def _parse_time(value: str) -> time:
 
 def _parse_weekdays(value: str) -> set[int]:
     return {int(item.strip()) for item in value.split(",") if item.strip()}
+
+
+def _deterministic_daily_time(
+    case_id: int, day: date, start: time, end: time
+) -> time:
+    """按 (case_id, 日期) 在 [start, end) 内确定性伪随机出一个时刻。
+
+    同一 case 同一天恒定同一结果（30 秒轮询不漂移），跨 case/跨天分散以规避定点风控。
+    **必须用 hashlib**：Python 内置 hash() 进程间加盐会漂移，破坏"轮询不重算"的幂等性。
+    end <= start 时退化为 start。
+    """
+    start_min = start.hour * 60 + start.minute
+    end_min = end.hour * 60 + end.minute
+    if end_min <= start_min:
+        return time(start.hour, start.minute)
+    digest = hashlib.md5(f"{case_id}:{day.isoformat()}".encode()).hexdigest()
+    offset = int(digest, 16) % (end_min - start_min)
+    total = start_min + offset
+    return time(total // 60, total % 60)
+
+
+async def _user_spoke_today(
+    session, service_case_id: int, day: date, tz: ZoneInfo
+) -> bool:
+    """该 case 今天（tz 本地日）有无用户主动说话（INBOUND USER 消息）。
+
+    created_at 为 UTC，换算本地日范围后比对；用于让不活跃兜底跳过活跃用户。
+    """
+    start_local = datetime.combine(day, time.min, tzinfo=tz)
+    end_local = start_local + timedelta(days=1)
+    row = await session.scalar(
+        select(Message.id).where(
+            Message.service_case_id == service_case_id,
+            Message.direction == MessageDirection.INBOUND,
+            Message.sender_type == MessageSenderType.USER,
+            Message.created_at >= start_local.astimezone(timezone.utc),
+            Message.created_at < end_local.astimezone(timezone.utc),
+        ).limit(1)
+    )
+    return row is not None
 
 
 def _parse_int_list(value: str) -> list[int]:

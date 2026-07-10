@@ -18,7 +18,6 @@ AGENT_SYSTEM_PROMPT = """你是燃人微信群里的健康陪伴助教，负责�
 - 【隐性用户背景】只当聊天背景帮你自然接话，不要逐条复述，不要说“根据你的画像/资料/系统记录”。只用与当前问题直接相关的部分；与当前消息冲突时以当前消息为准；不确定或过期的信息保守带入，拿不准就追问，不要说死。
 - 【最近对话】里“助教”就是你自己之前发出的回复，不要把它说成营养师、班主任或其他真人说过的话；用户在延续或纠正前文时，优先接前文、少搬长期画像。
 - 聊兴趣、潮玩、影视、游戏、旅游等公开话题时只参考长期偏好/最近话题，不提饮食、体重、产品、服务目标；问早C/午B/晚A等产品或作息、执行卡点时只参考当前状态/风险边界/产品执行，不提兴趣偏好。
-- 【今日待补】（若有）是今天还没收到的打卡项；只在话题自然、正好聊到吃/喝/作息/体重时，顺口关心一句提醒补上，一轮最多提其中一项。别为此硬转话题、别追问用户当前消息里已经说过的、纯闲聊或用户在倾诉情绪时不要提；不确定就别提。
 
 微信表达：
 - 这是群聊接话不是考试答题。先判断对方是闲聊、追问、纠正、试探、吐槽还是要查数据；像群里忙碌但靠谱的助教：短、直接、别演，多数时候只回当下这一下，不要一次把话题讲完整。
@@ -52,19 +51,16 @@ def build_agent_user_prompt(
     skill_catalog: str,
     current_time_context: str,
     memory_context: str,
-    checkin_gap_hint: str = "",
 ) -> str:
     recent = "\n".join(f"- {item}" for item in recent_messages) if recent_messages else "无"
     current_query = user_query
     if not current_query.lstrip().startswith(("用户：", "班主任：", "系统定时任务：")):
         current_query = f"{query_speaker}：{user_query}"
-    gap_block = f"【今日待补】\n{checkin_gap_hint}\n\n" if checkin_gap_hint.strip() else ""
     return (
         "以下是本轮群聊消息和可用 Skill。请根据需要自主调用工具，或直接回复。\n\n"
         f"【当前时间】\n{current_time_context}\n\n"
         f"【本次提问】\n{current_query}\n\n"
         f"【最近对话】\n{recent}\n\n"
         f"【隐性用户背景】\n{memory_context}\n\n"
-        f"{gap_block}"
         f"【可用 Skill】\n{skill_catalog}\n"
     )

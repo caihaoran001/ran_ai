@@ -1,33 +1,28 @@
-"""追问补齐：日打卡 H5 下线后的完整度兜底（H5 的完整替代），混合架构分三条路：
+"""追问补齐：日打卡 H5 下线后的完整度兜底（H5 的完整替代）。
 
-H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部来源**。固定时间冷推里程碑/矛盾
-之外的日常缺口既惹企微风控、又像"系统到点了"，故日常缺口改"搭便车"、只把里程碑与矛盾留在单发线：
+H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部来源**。追问统一为"外部确定性触发、
+每 case 每天最多一条"（不再注入系统 prompt 让 agent 自由裁量），由两条链路复用本模块：
 
-- **日常缺口搭便车**（`compute_gap_hint`，零 LLM 罐头句）：算出当天仍缺的产品依从（早C/午B/晚A）
-  与体重，返回一句极简事实串（如"用户今天还没报：早C"）喂给群内聊天机器人当背景；机器人正常
-  回复用户时，在话题自然处顺口关心一句，话术由 LLM 现场生成。退避 backoff_days=1/max_asks=3
-  （每天最多提一次、连提 3 天不报即放弃该字段），提示计数落 ReminderEvent rule_id=checkin_followup:{key}。
-- **里程碑档**（`compose_milestone_followup`，LLM 个性化 + 模板兜底）：day7/14/21/28 阶段报告要用的
-  腰围 + 复盘信息（这阶段最大变化 / 最大卡点），在里程碑**前一晚**（服务第 6/13/20/27 天）经单发线
-  追问，给用户约一天答复，赶在里程碑当晚 21:00 阶段报告/成效快照生成前落库。用户答复经档案官
-  聊天抽取落 checkin.waist（喂快照）+ 进聊天历史（喂阶段报告 LLM）。
-- **矛盾核对**（`compose_followup_message`，零 LLM）：表单值与聊天值对不上时，经单发线向用户核对最新值。
+- **活跃触发**（`ranren_ai/engine.py`）：用户当天在群里说过话时，agent 回复发送成功后单独补发一条。
+- **不活跃兜底**（`reminder_service.check_checkin_followup_once`）：用户当天没说话，到当天一个确定性
+  随机时刻主动发一条。
 
-判定读 checkins 现状 + service_day。搭便车由聊天链路即时调用（见 agent/graph.py）；里程碑与矛盾的
-时机/去重/发送复用 reminder_service（见 check_checkin_followup_once）。
+两条链路共用 `ReminderEvent(rule_id="checkin_followup")` 天级去重闸（唯一约束保证一天一条、绝不叠加），
+统一调 `compose_daily_followup` 组织内容：按优先级只问一个主题，合并成一句自然话——
+里程碑复盘（day7/14/21/28 阶段报告要的腰围+复盘，前一晚追）> 矛盾核对（表单值≠聊天值）>
+日常缺口（早C/午B/晚A、体重合并）。判定读 checkins 现状 + service_day。
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.checkin import Checkin
-from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase
 from app.services.service_case_queries import effective_service_day
 
@@ -35,16 +30,6 @@ from app.services.service_case_queries import effective_service_day
 _PRODUCT_SLOTS = {"morning_c": "早C", "noon_b": "午B", "night_a": "晚A"}
 _WEIGHT_LOOKBACK_DAYS = 3
 _WAIST_LOOKBACK_DAYS = 7  # 腰围一周测一次，避免天天问。
-
-# 追问退避：同一缺失字段追过一次就冷却 _FOLLOWUP_BACKOFF_DAYS 天不再追；
-# 累计追满 _FOLLOWUP_MAX_ASKS 次仍不补 → 认定"这人就是不爱报"，彻底停追，避免天天骚扰。
-_FOLLOWUP_BACKOFF_DAYS = 3
-_FOLLOWUP_MAX_ASKS = 3
-
-# 搭便车「今日待补」退避：每天最多向聊天机器人提示一次某字段(backoff_days=1)，
-# 连续提示 _RIDE_ALONG_MAX_ASKS 天用户仍不报 → 放弃该字段，不再提示，避免天天顺口追。
-_RIDE_ALONG_BACKOFF_DAYS = 1
-_RIDE_ALONG_MAX_ASKS = 3
 
 # 里程碑前一晚：服务第 N 天 → 即将到来的里程碑天。阶段报告在里程碑当晚 21:00 生成，
 # 故提前一天追问，给用户答复时间。service_day 用 effective_service_day（计划开始当天=第1天）。
@@ -84,36 +69,6 @@ def _missing_product_slots(parsed_json: dict | None) -> list[dict]:
         for key, label in _PRODUCT_SLOTS.items()
         if not _slot_filled(ps.get(key))
     ]
-
-
-def allowed_after_backoff(
-    candidate_keys: list[str],
-    asked_events: list[tuple[str, date]],
-    today: date,
-    *,
-    backoff_days: int = _FOLLOWUP_BACKOFF_DAYS,
-    max_asks: int = _FOLLOWUP_MAX_ASKS,
-) -> list[str]:
-    """退避过滤：从候选缺失字段里筛掉"最近追过还在冷却"或"已追满上限"的，返回本次仍可追的 key。
-
-    asked_events: 该服务单历史"字段级追问"事件 [(key, event_date)]（来自 ReminderEvent
-    rule_id=checkin_followup:{key}）。规则：
-    - 累计追问 >= max_asks 次 → 永久停追（这人就是不爱报该字段）。
-    - 距上次追问 < backoff_days 天 → 冷却中，本次跳过。
-    """
-    history: dict[str, list[date]] = {}
-    for key, event_date in asked_events:
-        history.setdefault(key, []).append(event_date)
-    allowed: list[str] = []
-    for key in candidate_keys:
-        dates = history.get(key, [])
-        if len(dates) >= max_asks:
-            continue
-        last = max(dates) if dates else None
-        if last is not None and (today - last).days < backoff_days:
-            continue
-        allowed.append(key)
-    return allowed
 
 
 def _pending_confirmations(parsed_json: dict | None) -> list[dict]:
@@ -167,7 +122,6 @@ async def detect_followup(
         confirmations: [{field,label,form_value,chat_value}],
         milestone: None | {"milestone_day": int, "need_waist": bool},
     }。
-    退避（同一字段冷却/停追）由调用方用 allowed_after_backoff 处理，detect 只报"当前缺什么"。
     """
     today = now.date()
     today_checkin = await session.scalar(
@@ -219,7 +173,6 @@ def compose_followup_message(
 
     刻意做成"跟你核对一下最新数值"，不暴露"系统发现你自相矛盾"，体验更好；
     用户答复的新值会覆盖旧记录（见 mark_contradictions_pending_confirmation）。
-    日常缺口（早C/午B/晚A、体重）已改由聊天机器人「今日待补」搭便车，不再走本函数发罐头句。
     """
     parts: list[str] = []
     for c in confirmations or []:
@@ -296,105 +249,105 @@ async def compose_milestone_followup(
     return _milestone_fallback_message(milestone_day, need_waist)
 
 
-async def _reserve_surface_event(
-    session: AsyncSession, *, service_case_id: int, field_key: str, today: date
-) -> bool:
-    """原子记一条「今日已向聊天机器人提示该字段」事件；已存在(当天重复)返回 False。
+def _daily_gap_fallback_message(labels: list[str]) -> str:
+    """日常缺口的固定模板兜底（LLM 不可用时使用）。合并所有缺口为一句，不逐项拆问。"""
+    return f"今天还没看到你的{('、'.join(labels))}打卡，方便的话跟我说一下哈～"
 
-    与 reminder_service._reserve_reminder_event 同构，但本模块不反向依赖 reminder_service
-    (后者已 import 本模块，避免循环)。唯一约束(case,rule_id,date,type)保证幂等。
+
+async def _compose_daily_gap_message(
+    *,
+    service_case: ServiceCase,
+    missing_slots: list[dict],
+    ask_weight: bool,
+    ai_service: object | None = None,
+) -> str | None:
+    """日常缺口：把当天缺的产品依从 + 体重合并成一句自然口语追问；无缺口返回 None。
+
+    LLM 生成保证自然（参考 compose_milestone_followup 的 LLM+模板兜底模式），失败回退模板。
+    刻意合并成一句、不按字段逐条拆问，避免一天问多次。
     """
-    event = ReminderEvent(
-        service_case_id=service_case_id,
-        rule_id=f"checkin_followup:{field_key}",
-        event_date=today,
-        event_type=ReminderEventType.REMINDED,
-    )
+    labels = [s["label"] for s in (missing_slots or [])]
+    if ask_weight:
+        labels.append("体重")
+    if not labels:
+        return None
     try:
-        async with session.begin_nested():
-            session.add(event)
-            await session.flush()
-    except IntegrityError:
-        return False
-    return True
+        if ai_service is None:
+            from app.services.ai_service.client import AIService
+
+            ai_service = AIService()
+        system_prompt = (
+            "你是燃人微信群里的健康陪伴助教，用一句口语化中文自然地提醒用户补一下今天还没报的打卡项。"
+            "要求：亲切自然、不超过 50 字、只发一句、不要罗列编号、不要用称呼开头、不要用波浪号以外的语气符号堆砌。"
+            "把所有缺口揉进同一句里顺口带过，不要逐项拆开分别问。"
+        )
+        user_prompt = f"今天还没收到的打卡项：{('、'.join(labels))}。请生成一句自然的提醒补打卡的话。"
+        text = await ai_service.generate_text(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            scenario="checkin_followup",
+            service_case_id=service_case.id,
+        )
+        text = (text or "").strip()
+        if text:
+            return text
+    except Exception:  # noqa: BLE001 - 追问失败不能阻塞，回退模板
+        pass
+    return _daily_gap_fallback_message(labels)
 
 
-async def compute_gap_hint(
+@dataclass
+class DailyFollowup:
+    """一条主动追问的组织结果：文本 + 类型 + （矛盾核对时）待标 asked 的字段。
+
+    kind 供调用方在发送成功后做后处理：矛盾核对需调 mark_contradictions_pending_confirmation。
+    """
+
+    text: str
+    kind: str  # "milestone" | "contradiction" | "daily_gap"
+    confirmation_fields: list[str] = field(default_factory=list)
+
+
+async def compose_daily_followup(
     session: AsyncSession,
     *,
-    service_case_id: int,
-    today: date,
-) -> str:
-    """搭便车「今日待补」：算出今天还没收到、且未被退避挡下的打卡缺口，返回极简事实串。
+    service_case: ServiceCase,
+    now: datetime,
+    tz: ZoneInfo,
+    ai_service: object | None = None,
+) -> DailyFollowup | None:
+    """统一「今日主动追问」：按优先级只问一个主题，合并成一句自然话；无可问返回 None。
 
-    供聊天机器人回复时作背景提示，让它在话题自然处顺口关心一句(话术由 LLM 现场生成，
-    非罐头句)。会为纳入本次提示的每个字段落一条 surface 事件(退避计数)，故有副作用、
-    调用方需 commit。无缺口 / 全被退避 → 返回 ""。
-
-    退避：backoff_days=1 每天最多提一次；max_asks=3 连提 3 天不报即放弃该字段。
-    记的是"已提示"而非"agent 确实问了"(不回读出站消息)：提示了但话题没接上就算当天用掉。
+    优先级：里程碑复盘 > 矛盾核对 > 日常缺口（早C/午B/晚A、体重合并）。
+    活跃触发（engine）与不活跃兜底（reminder_service）共用本函数，配合 case 级天闸保证一天一条。
     """
-    today_checkin = await session.scalar(
-        select(Checkin).where(
-            Checkin.service_case_id == service_case_id,
-            Checkin.checkin_date == today,
-            Checkin.deleted_at.is_(None),
+    detect = await detect_followup(session, service_case=service_case, now=now, tz=tz)
+
+    milestone = detect.get("milestone")
+    if milestone:
+        text = await compose_milestone_followup(
+            service_case=service_case,
+            milestone_day=milestone["milestone_day"],
+            need_waist=milestone["need_waist"],
+            ai_service=ai_service,
         )
-    )
-    parsed = today_checkin.parsed_json if today_checkin else None
+        return DailyFollowup(text=text, kind="milestone")
 
-    candidates: list[dict] = list(_missing_product_slots(parsed))  # [{key,label}]
-    weight_missing = not await _has_field_recently(
-        session,
-        service_case_id=service_case_id,
-        field_key="weight",
-        today=today,
-        days=_WEIGHT_LOOKBACK_DAYS,
-    )
-    if weight_missing:
-        candidates.append({"key": "weight", "label": _field_label("weight")})
-    if not candidates:
-        return ""
-
-    asked_events = await _ride_along_asked_events(session, service_case_id=service_case_id)
-    allowed_keys = set(
-        allowed_after_backoff(
-            [c["key"] for c in candidates],
-            asked_events,
-            today,
-            backoff_days=_RIDE_ALONG_BACKOFF_DAYS,
-            max_asks=_RIDE_ALONG_MAX_ASKS,
+    confirmations = detect.get("confirmations") or []
+    conf_msg = compose_followup_message(confirmations=confirmations)
+    if conf_msg:
+        return DailyFollowup(
+            text=conf_msg,
+            kind="contradiction",
+            confirmation_fields=[c["field"] for c in confirmations],
         )
+
+    gap_msg = await _compose_daily_gap_message(
+        service_case=service_case,
+        missing_slots=detect.get("missing_slots") or [],
+        ask_weight=bool(detect.get("ask_weight")),
+        ai_service=ai_service,
     )
-    labels: list[str] = []
-    for c in candidates:
-        if c["key"] not in allowed_keys:
-            continue
-        if await _reserve_surface_event(
-            session, service_case_id=service_case_id, field_key=c["key"], today=today
-        ):
-            labels.append(c["label"])
-    if not labels:
-        return ""
-    return "用户今天还没报：" + "、".join(labels)
-
-
-async def _ride_along_asked_events(
-    session: AsyncSession, *, service_case_id: int
-) -> list[tuple[str, date]]:
-    """取该单历史「字段级追问/提示」事件 [(field_key, event_date)]，供退避判定。"""
-    rows = (
-        await session.execute(
-            select(ReminderEvent.rule_id, ReminderEvent.event_date).where(
-                ReminderEvent.service_case_id == service_case_id,
-                ReminderEvent.rule_id.like("checkin_followup:%"),
-                ReminderEvent.event_type == ReminderEventType.REMINDED,
-            )
-        )
-    ).all()
-    out: list[tuple[str, date]] = []
-    for rule_id, event_date in rows:
-        _, _, key = str(rule_id).partition(":")
-        if key:
-            out.append((key, event_date))
-    return out
+    if gap_msg:
+        return DailyFollowup(text=gap_msg, kind="daily_gap")
+    return None

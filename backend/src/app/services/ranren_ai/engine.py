@@ -1002,6 +1002,12 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 result.message_id,
                 send_elapsed_ms,
             )
+            # 活跃触发·打卡追问：回复成功发出后，若用户当天还有缺口且今天没追过，单独补发一条。
+            # 仅针对用户发言（班主任提问不追打卡）；全程兜底，绝不影响已发出的回复。
+            if result.success and _current_query_speaker(analysis) == "用户":
+                await self._maybe_followup_after_reply(
+                    message=message, service_case_id=service_case_id
+                )
             return
 
         # should_send 为 False（防御性兜底命中）→ 直接丢弃，不发送、不落库。
@@ -1011,6 +1017,95 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             trigger_id,
             service_case_id,
         )
+
+    async def _maybe_followup_after_reply(
+        self, *, message: ChannelMessage, service_case_id: int | None
+    ) -> None:
+        """活跃触发·打卡追问：agent 回复成功后，确定性地补发一条追问（不揉进原回复）。
+
+        每 case 每天最多一条（rule_id=checkin_followup 天闸，与不活跃兜底共用，绝不叠加）。
+        先算出有内容再抢名额，避免无内容却占掉当天名额。全程兜底，任何异常只记日志，
+        绝不影响已发出的正常回复。
+        """
+        settings = get_settings()
+        if not settings.checkin_followup_enabled or not service_case_id:
+            return
+        try:
+            from app.services.archivist.checkin_projection import (
+                mark_contradictions_pending_confirmation,
+            )
+            from app.services.archivist.followup import compose_daily_followup
+            from app.services.reminder_service import _reserve_reminder_event
+            from app.models.reminder import ReminderEventType
+            from app.models.checkin import Checkin
+
+            tz = ZoneInfo(settings.reminder_timezone)
+            now = datetime.now(tz)
+            today = now.date()
+            async with SessionLocal() as session:
+                service_case = await session.scalar(
+                    select_active_service_cases(ServiceCase.id == service_case_id)
+                )
+                if service_case is None:
+                    return
+                followup = await compose_daily_followup(
+                    session, service_case=service_case, now=now, tz=tz
+                )
+                if followup is None:
+                    return
+                reminder_event = await _reserve_reminder_event(
+                    session,
+                    service_case.id,
+                    rule_id="checkin_followup",
+                    event_date=today,
+                    event_type=ReminderEventType.REMINDED,
+                )
+                if not reminder_event:
+                    return  # 今天已被占（活跃再触发/不活跃兜底），不重复
+                row = Message(
+                    service_case_id=service_case.id,
+                    group_id=message.chat_id,
+                    direction=MessageDirection.OUTBOUND,
+                    sender_type=MessageSenderType.SYSTEM,
+                    message_type="markdown",
+                    content=followup.text,
+                    purpose=MessagePurpose.REMINDER,
+                    status=MessageStatus.SENDING,
+                )
+                session.add(row)
+                await session.flush()
+                result = await self.channel.send_text(message.chat_id, followup.text)
+                if result.success:
+                    row.status = MessageStatus.SENT
+                    row.wecom_message_id = result.message_id
+                    row.sent_at = datetime.now(timezone.utc)
+                    if followup.kind == "contradiction" and followup.confirmation_fields:
+                        today_checkin = await session.scalar(
+                            select(Checkin).where(
+                                Checkin.service_case_id == service_case.id,
+                                Checkin.checkin_date == today,
+                                Checkin.deleted_at.is_(None),
+                            )
+                        )
+                        if today_checkin is not None:
+                            mark_contradictions_pending_confirmation(
+                                today_checkin, followup.confirmation_fields
+                            )
+                else:
+                    row.status = MessageStatus.FAILED
+                    row.error = result.error
+                await session.commit()
+                logger.info(
+                    "RanrenAI active checkin followup sent chat_id=%s service_case_id=%s kind=%s success=%s",
+                    message.chat_id,
+                    service_case_id,
+                    followup.kind,
+                    result.success,
+                )
+        except Exception:
+            logger.exception(
+                "Active checkin followup failed service_case_id=%s", service_case_id
+            )
 
     async def _should_send_ai_reply(
         self,
