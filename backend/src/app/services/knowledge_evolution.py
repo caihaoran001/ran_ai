@@ -14,21 +14,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.app_setting import AppSetting
 from app.models.knowledge_draft import KnowledgeDraft
 from app.models.message import Message, MessageDirection, MessagePurpose
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase
 from app.services.ai_service import AIService, parse_json_object
 from app.services.knowledge_faq_service import create_faq
 from app.services.knowledge_index import upsert_text_chunk
 from app.services.knowledge_base import get_knowledge_base
-from app.services.service_case_queries import effective_start_at, select_active_service_cases
 
 
 logger = logging.getLogger(__name__)
-
-DAILY_QA_SCAN_SETTING_KEY = "knowledge_evolution_daily_qa_scans"
-STAGE_CASE_SCAN_SETTING_KEY = "knowledge_evolution_stage_case_scans"
 
 
 class KnowledgeEvolutionService:
@@ -59,91 +54,6 @@ class KnowledgeEvolutionService:
                 "note": "人工触发的 FAQ 草稿提取，只沉淀问答，不沉淀优秀案例。",
             },
         )
-
-    async def scan_stage_cases(
-        self,
-        session: AsyncSession,
-        *,
-        stage_days: list[int],
-        timezone_name: str = "Asia/Shanghai",
-        limit_per_case: int = 200,
-        force: bool = False,
-    ) -> tuple[int, int]:
-        timezone_info = ZoneInfo(timezone_name)
-        now = datetime.now(timezone_info)
-        service_cases = list(
-            await session.scalars(
-                select_active_service_cases(
-                    ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
-                    ServiceCase.started_at.is_not(None),
-                )
-                .options(selectinload(ServiceCase.user))
-            )
-        )
-        created_total = 0
-        skipped_total = 0
-        sorted_stages = sorted({day for day in stage_days if day > 0})
-
-        # Fetch STAGE_CASE_SCAN_SETTING_KEY once to prevent N+1 DB lookups and nested flushes
-        setting = await session.get(AppSetting, STAGE_CASE_SCAN_SETTING_KEY)
-        processed_set = set()
-        if setting and isinstance(setting.value_json, dict):
-            processed_set = {str(item) for item in setting.value_json.get("processed", []) if item}
-
-        for service_case in service_cases:
-            if not service_case.started_at:
-                continue
-            service_day = _service_day(effective_start_at(service_case), now, timezone_info)
-            existing_case_summaries = await _existing_case_summaries(
-                session,
-                service_case_id=service_case.id,
-            )
-            for stage_day in sorted_stages:
-                if service_day < stage_day:
-                    continue
-                scan_key = f"{service_case.id}:day{stage_day}"
-                if not force and scan_key in processed_set:
-                    continue
-                start_at, end_at = _stage_window(service_case.started_at, 0, stage_day, timezone_info)
-                messages = await _case_messages_between(
-                    session,
-                    service_case=service_case,
-                    start_at=start_at,
-                    end_at=end_at,
-                    limit=limit_per_case,
-                )
-                if len(messages) >= 4:
-                    conversation = _render_sanitized_conversation(messages)
-                    created, skipped = await self._create_drafts(
-                        session,
-                        conversation=conversation,
-                        messages=messages,
-                        candidate_kind="case",
-                        scan_context={
-                            "scan_type": "stage_case",
-                            "service_case_id": service_case.id,
-                            "case_no": service_case.case_no,
-                            "stage": f"day{stage_day}",
-                            "stage_day": stage_day,
-                            "window_start": start_at.isoformat(),
-                            "window_end": end_at.isoformat(),
-                            "existing_case_summaries": existing_case_summaries,
-                            "note": "优秀案例按阶段全历史提取，会综合当前阶段之前的完整聊天；若已提供既有案例摘要，请避免重复生成同一案例，只补充新的转折、证据或阶段性突破。",
-                        },
-                    )
-                    created_total += created
-                    skipped_total += skipped
-                processed_set.add(scan_key)
-
-        # Batch persist processed history once to prevent DB lock contention & N+1 writes
-        keys = list(processed_set)[-1000:]
-        if setting:
-            setting.value_json = {"processed": keys}
-        else:
-            session.add(AppSetting(key=STAGE_CASE_SCAN_SETTING_KEY, value_json={"processed": keys}))
-
-        await session.commit()
-        return created_total, skipped_total
 
     async def _create_drafts(
         self,
@@ -523,30 +433,6 @@ async def _chat_messages_between(
     return list(result)
 
 
-async def _case_messages_between(
-    session: AsyncSession,
-    *,
-    service_case: ServiceCase,
-    start_at: datetime,
-    end_at: datetime,
-    limit: int,
-) -> list[Message]:
-    result = await session.scalars(
-        select(Message)
-        .where(
-            Message.service_case_id == service_case.id,
-            Message.created_at >= start_at,
-            Message.created_at < end_at,
-            Message.purpose == MessagePurpose.CHAT,
-            Message.content != "",
-        )
-        .options(selectinload(Message.service_case).selectinload(ServiceCase.user))
-        .order_by(Message.created_at.asc())
-        .limit(limit)
-    )
-    return list(result)
-
-
 async def _existing_case_summaries(
     session: AsyncSession,
     *,
@@ -578,29 +464,6 @@ async def _existing_case_summaries(
             }
         )
     return summaries[-limit:]
-
-
-def _stage_window(
-    started_at: datetime,
-    previous_stage_day: int,
-    stage_day: int,
-    timezone_info: ZoneInfo,
-) -> tuple[datetime, datetime]:
-    if started_at.tzinfo is None:
-        started_at = started_at.replace(tzinfo=timezone.utc)
-    start_local = started_at.astimezone(timezone_info)
-    start_date = start_local.date() + timedelta(days=previous_stage_day)
-    end_date = start_local.date() + timedelta(days=stage_day)
-    start = datetime.combine(start_date, time.min, tzinfo=timezone_info)
-    end = datetime.combine(end_date, time.min, tzinfo=timezone_info)
-    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
-
-
-def _service_day(started_at: datetime, now: datetime, timezone_info: ZoneInfo) -> int:
-    if started_at.tzinfo is None:
-        started_at = started_at.replace(tzinfo=timezone.utc)
-    started_local = started_at.astimezone(timezone_info)
-    return max((now.date() - started_local.date()).days + 1, 1)
 
 
 def _render_sanitized_conversation(messages: list[Message]) -> str:
@@ -637,25 +500,6 @@ def _prompt_data(value: object) -> str:
 async def _has_draft(session: AsyncSession, content_hash: str) -> bool:
     existing = await session.scalar(select(KnowledgeDraft.id).where(KnowledgeDraft.content_hash == content_hash).limit(1))
     return existing is not None
-
-
-async def _is_processed(session: AsyncSession, setting_key: str, scan_key: str) -> bool:
-    setting = await session.get(AppSetting, setting_key)
-    if not setting:
-        return False
-    keys = setting.value_json.get("processed")
-    return isinstance(keys, list) and scan_key in {str(item) for item in keys}
-
-
-async def _mark_processed(session: AsyncSession, setting_key: str, scan_key: str) -> None:
-    setting = await session.get(AppSetting, setting_key)
-    if not setting:
-        session.add(AppSetting(key=setting_key, value_json={"processed": [scan_key]}))
-        return
-    keys = [str(item) for item in setting.value_json.get("processed", []) if str(item)]
-    if scan_key not in keys:
-        keys.append(scan_key)
-    setting.value_json = {"processed": keys[-1000:]}
 
 
 def _normalize_type(value: object) -> str:

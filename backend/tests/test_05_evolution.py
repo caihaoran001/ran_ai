@@ -88,17 +88,22 @@ async def test_evolution_generates_drafts_from_seeded_chat(
     existing_draft_ids = set(await db_session.scalars(select(KnowledgeDraft.id)))
 
     from app.services.knowledge_evolution import KnowledgeEvolutionService
+    from app.services.archivist.case_synthesis import maybe_synthesize_case
+    from tests.conftest import seed_outcome_event
+    from types import SimpleNamespace
+
     service = KnowledgeEvolutionService(ai=mock_ai)
     qa_count, _case_scan = await service.scan_messages(
         db_session, hours=720, limit=200,
     )
-    case_created, _case_skipped = await service.scan_stage_cases(
-        db_session, stage_days=[3, 7, 14, 21, 28], limit_per_case=200, force=True,
+    # 优秀案例改由"成效稳态变化"驱动：先落一条正向成效事件，再触发档案官合成。
+    await seed_outcome_event(db_session, case["id"], event_type="improved")
+    await maybe_synthesize_case(
+        service_case_id=case["id"],
+        run_result=SimpleNamespace(outcome_written=1),
     )
 
-    assert qa_count + case_created > 0, (
-        f"种子数据应产生知识草稿。qa={qa_count} case={case_created}"
-    )
+    assert qa_count > 0, f"种子数据应产生 FAQ 草稿。qa={qa_count}"
 
     drafts = list(await db_session.scalars(
         select(KnowledgeDraft).where(
@@ -121,12 +126,17 @@ async def test_evolution_generates_drafts_from_seeded_chat(
 
 
 @pytest.mark.asyncio
-async def test_stage_case_scan_uses_full_history_and_existing_case_context(
+async def test_outcome_driven_case_synthesis_uses_full_history_and_existing_case_context(
     admin_client,
     create_case,
     db_session,
     mock_ai,
 ):
+    """优秀案例改由成效稳态变化驱动：合成时喂全历史 + 成效时间线，并带上既有案例摘要去重。"""
+    from types import SimpleNamespace
+    from app.services.archivist.case_synthesis import maybe_synthesize_case
+    from tests.conftest import seed_outcome_event
+
     suffix = secrets.token_hex(6)
     group_id = f"test-evo-history-{suffix}"
     resp = await create_case(
@@ -153,26 +163,13 @@ async def test_stage_case_scan_uses_full_history_and_existing_case_context(
         content_json={"service_case_id": case["id"], "stage": "day3"},
     )
     db_session.add(existing)
+    await seed_outcome_event(db_session, case["id"], event_type="improved")
     await db_session.flush()
 
-    from sqlalchemy import update
-    await db_session.execute(
-        update(ServiceCase)
-        .where(ServiceCase.id != case["id"])
-        .values(status=ServiceCaseStatus.CREATED)
+    await maybe_synthesize_case(
+        service_case_id=case["id"],
+        run_result=SimpleNamespace(outcome_written=1),
     )
-    await db_session.flush()
-
-    from app.services.knowledge_evolution import KnowledgeEvolutionService
-
-    service = KnowledgeEvolutionService(ai=mock_ai)
-    created, _skipped = await service.scan_stage_cases(
-        db_session,
-        stage_days=[7],
-        limit_per_case=200,
-        force=True,
-    )
-    assert created > 0
 
     drafts = list(
         await db_session.scalars(
@@ -191,14 +188,14 @@ async def test_stage_case_scan_uses_full_history_and_existing_case_context(
             for draft in drafts
             if isinstance(draft.content_json, dict)
             and draft.content_json.get("service_case_id") == case["id"]
-            and draft.content_json.get("stage") == "day7"
+            and draft.content_json.get("scan_type") == "archivist_outcome_stable"
         ),
         None,
     )
     assert latest is not None
-    assert latest.content_json is not None
-    assert latest.content_json.get("stage") == "day7"
     assert latest.content_json.get("service_case_id") == case["id"]
+    # 成效时间线被喂进合成上下文
+    assert latest.content_json.get("outcome_timeline"), "应把成效时间线传给合成"
     existing_summaries = latest.content_json.get("existing_case_summaries") or []
-    assert existing_summaries, "应把既有案例摘要传给本次阶段扫描"
+    assert existing_summaries, "应把既有案例摘要传给合成以去重"
     assert existing_summaries[0]["title"] == "已沉淀旧案例"

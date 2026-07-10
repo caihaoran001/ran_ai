@@ -23,6 +23,7 @@ from app.models.archivist_progress import ArchivistProgress
 from app.models.message import Message, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.services.archivist.case_memory_service import refresh_case_memory
+from app.services.archivist.case_synthesis import maybe_synthesize_case
 from app.services.archivist.graph import get_or_create_progress, run_archivist
 from app.services.knowledge_evolution import create_qa_drafts_from_archivist
 
@@ -203,6 +204,8 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                     watermark_to=result.watermark_to,
                 )
                 await _persist_faq_candidates(cid, result.faq_candidates)
+                # ③ 成效出现稳态变化时,合成优秀案例草稿（代替原 day3/7/14/21/28 里程碑硬扫）。
+                await maybe_synthesize_case(service_case_id=cid, run_result=result)
         except Exception as exc:
             # 归档失败：主事务已回滚（未 commit），水位线保持不动，下轮重试。
             # 失败留痕走独立事务，避免与已回滚的事务纠缠。

@@ -36,8 +36,7 @@ from app.services.document_service import (
     refresh_profile_for_case,
     retry_degraded_stage_report,
 )
-from app.services.knowledge_evolution import KnowledgeEvolutionService
-from app.services.knowledge_evolution_settings import get_knowledge_evolution_config, parse_case_days
+from app.services.knowledge_evolution_settings import get_knowledge_evolution_config
 from app.services.outcome_engine import generate_outcome_snapshot
 from app.services.stage_report_settings import get_stage_report_schedule
 from app.services.service_case_queries import (
@@ -63,7 +62,6 @@ class ReminderService:
         self.settings = settings or get_settings()
         self._task: asyncio.Task | None = None
         self._stopped = asyncio.Event()
-        self._last_knowledge_scan: datetime | None = None
         self._last_room_name_full_refresh: datetime | None = None
         self._last_image_cache_cleanup: datetime | None = None
         # 阶段报告生成时间配置缓存（5 分钟 TTL，避免白天每 30s 都查一次 DB）
@@ -125,7 +123,6 @@ class ReminderService:
                         await self.check_questionnaire_sends_once()
                         if self.settings.outcome_snapshots_enabled:
                             await self.check_outcome_snapshots_once()
-                        await self.check_knowledge_evolution_once()
                         await self.check_profile_refresh_once()
                         await self.check_stuck_document_generation_once()
                         await self.check_retry_degraded_reports_once()
@@ -1010,33 +1007,6 @@ class ReminderService:
             batch_size = 5
             for i in range(0, len(tasks), batch_size):
                 await asyncio.gather(*tasks[i:i + batch_size], return_exceptions=True)
-
-    async def check_knowledge_evolution_once(self) -> None:
-        now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
-        async with SessionLocal() as session:
-            config = await get_knowledge_evolution_config(session, settings=self.settings)
-            if not config.enabled:
-                return
-            now = datetime.now(ZoneInfo(config.timezone))
-            if self._last_knowledge_scan:
-                elapsed = (now - self._last_knowledge_scan).total_seconds()
-                if elapsed < config.interval_seconds:
-                    return
-            service = KnowledgeEvolutionService()
-            created, skipped = 0, 0
-            # 每日 FAQ 扫描已收编进档案官(delta 抽取时顺手产出 FAQ 候选)，此处不再独立扫。
-            case_created, case_skipped = await service.scan_stage_cases(
-                session,
-                stage_days=parse_case_days(config.case_days),
-                timezone_name=config.timezone,
-                limit_per_case=config.case_limit_per_case,
-            )
-            created += case_created
-            skipped += case_skipped
-            if created or skipped:
-                logger.info("Knowledge evolution scan finished: created=%s skipped=%s", created, skipped)
-        self._last_knowledge_scan = now
-
 
 async def mark_seen(service_case_id: int, event_date: date | None = None) -> None:
     async with SessionLocal() as session:

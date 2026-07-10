@@ -491,6 +491,7 @@ async def mock_session_local(db_session):
         "app.services.agent.tools.knowledge_tools",
         "app.services.reminder_service",
         "app.services.archivist.case_memory_service",
+        "app.services.archivist.case_synthesis",
         "app.services.archivist.trigger",
     ]
     for mod_name in modules_to_patch:
@@ -640,6 +641,32 @@ async def seed_checkins(session, service_case_id, group_id, user_id, days=28):
             )
         )
     await session.flush()
+
+
+async def seed_outcome_event(
+    session,
+    service_case_id,
+    *,
+    field_key="weight_change",
+    event_type="improved",
+    milestone="day7",
+    value_text="瘦了2斤",
+):
+    from app.models.outcome import OutcomeEvent
+
+    event = OutcomeEvent(
+        service_case_id=service_case_id,
+        milestone=milestone,
+        field_key=field_key,
+        event_type=event_type,
+        value_text=value_text,
+        evidence_text="这周瘦了2斤",
+        confidence=0.9,
+        source="archivist",
+    )
+    session.add(event)
+    await session.flush()
+    return event
 
 
 async def seed_chat_messages(session, service_case_id, group_id):
