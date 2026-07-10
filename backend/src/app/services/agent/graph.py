@@ -19,6 +19,7 @@ from app.services.agent.prompts import AGENT_SYSTEM_PROMPT, build_agent_user_pro
 from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.state import AgentRunContext, AgentState
 from app.services.agent.tools import build_agent_tools
+from app.services.archivist.followup import compute_gap_hint
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -86,6 +87,7 @@ class RanrenAgentGraph:
 
     async def run(self, *, user_query: str, recent_messages: list[str], query_speaker: str = "用户") -> AgentReplyResult:
         memory_context = await self._build_memory_context()
+        checkin_gap_hint = await self._build_checkin_gap_hint(query_speaker=query_speaker)
         initial_messages: list[BaseMessage] = [
             SystemMessage(content=AGENT_SYSTEM_PROMPT),
             HumanMessage(
@@ -96,6 +98,7 @@ class RanrenAgentGraph:
                     skill_catalog=self.skill_registry.catalog_text(),
                     current_time_context=_current_time_context(),
                     memory_context=memory_context,
+                    checkin_gap_hint=checkin_gap_hint,
                 )
             ),
         ]
@@ -142,6 +145,33 @@ class RanrenAgentGraph:
         except Exception:
             logger.exception("Failed to build agent memory context service_case_id=%s", self.context.service_case_id)
             return "暂无可用用户背景。"
+
+    async def _build_checkin_gap_hint(self, *, query_speaker: str) -> str:
+        """搭便车「今日待补」：受 checkin_followup_enabled 门控；班主任提问不追打卡。
+
+        全程兜底——任何异常/未启用/无缺口一律返回 ""，绝不阻塞正常回复。会为纳入提示的
+        字段落 surface 事件(退避计数)，故 compute_gap_hint 后需 commit。
+        """
+        if not self.settings.checkin_followup_enabled:
+            return ""
+        if query_speaker != "用户":  # 班主任等非用户发言不触发打卡追问（沿用不拆班主任台）
+            return ""
+        try:
+            tz = ZoneInfo(self.settings.reminder_timezone)
+            today = datetime.now(tz).date()
+            async with db_session_module.SessionLocal() as session:
+                hint = await compute_gap_hint(
+                    session,
+                    service_case_id=self.context.service_case_id,
+                    today=today,
+                )
+                await session.commit()
+                return hint
+        except Exception:
+            logger.exception(
+                "Failed to build checkin gap hint service_case_id=%s", self.context.service_case_id
+            )
+            return ""
 
     def _compile(self):
         builder = StateGraph(AgentState)

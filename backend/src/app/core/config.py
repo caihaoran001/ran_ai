@@ -164,11 +164,12 @@ class Settings(BaseSettings):
     # 默认 False=不再推送；如需临时恢复在 compose environment 设 DAILY_CHECKIN_LINK_ENABLED=true。
     # 注：入营问卷走独立命令路径，不受此开关影响。
     daily_checkin_link_enabled: bool = Field(default=False, validation_alias="DAILY_CHECKIN_LINK_ENABLED")
-    # 打卡追问补齐(H5 完整替代)：日常档补当天仍缺字段(早C/午B/晚A、体重、矛盾核对，模板变体)；
-    # 里程碑档在服务第6/13/20/27天晚间发 LLM 复盘追问(腰围+这阶段最大变化+最大卡点)，为次日阶段报告采集。
-    # 会向真实群发消息，默认 False；review 措辞/时机后设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
+    # 打卡追问(H5 完整替代)，单一开关门控两档：
+    #  1) 日常搭便车：聊天机器人回复用户时，被喂「今日待补」(早C/午B/晚A、体重缺口)，在话题自然处顺口问一句，不冷推；
+    #  2) 里程碑/矛盾单发线：服务第6/13/20/27天晚间发 LLM 复盘追问(腰围+最大变化+最大卡点)，及矛盾核对。
+    # 两档均会影响/发送真实群消息，默认 False=行为与今天一致；review 措辞后设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
     checkin_followup_enabled: bool = Field(default=False, validation_alias="CHECKIN_FOLLOWUP_ENABLED")
-    # 追问时机：放在晚间，给白天聊天+档案官抽取留足时间，避免刚睡醒就追问当天依从。
+    # 单发线(里程碑/矛盾)的触发时间，放在晚间给白天聊天+档案官抽取留足时间；日常搭便车不看此值(随对话即时判断)。
     checkin_followup_at: str = Field(default="20:30", validation_alias="CHECKIN_FOLLOWUP_AT")
     # 成效/画像收编影子对账（P0.5）：开时档案官 extract 走 Agent 形态(report-only 工具)，
     # 额外批量抽成效/画像，但**只对账不落库**(不写 outcome_events/user_state)，把差异记入

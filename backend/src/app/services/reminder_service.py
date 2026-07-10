@@ -270,12 +270,13 @@ class ReminderService:
             await session.commit()
 
     async def check_checkin_followup_once(self) -> None:
-        """打卡追问补齐：对当天仍缺关键字段(早C/午B/晚A、体重)的在服务单，晚间在群里自然语言追问一次。
+        """打卡单发线：只负责需"保证送达"的两件事——里程碑复盘 + 矛盾核对，晚间群内发一次。
 
-        H5 下线后的完整度兜底。会向真实群发消息，受 CHECKIN_FOLLOWUP_ENABLED 门控。
-        每单每天最多一条(rule_id=checkin_followup 去重)，不发链接。
-        日常缺失字段走退避(allowed_after_backoff)：同一字段追过冷却几天、追满上限即停，
-        避免天天问同一件事骚扰用户；里程碑复盘、矛盾核对不走退避。
+        会向真实群发消息，受 CHECKIN_FOLLOWUP_ENABLED 门控，每单每天最多一条
+        (rule_id=checkin_followup 去重)，不发链接。里程碑复盘在服务第 6/13/20/27 天由 LLM
+        生成(失败自回退模板)，赶在里程碑当晚阶段报告前采集腰围/复盘；矛盾核对含标 asked、
+        降级来源的状态机。日常缺口(早C/午B/晚A、体重)已改由聊天机器人「今日待补」搭便车承担，
+        不再由本单发线冷推(见 archivist.followup.compute_gap_hint)。
         """
         if not self.settings.checkin_followup_enabled:
             return
@@ -283,7 +284,6 @@ class ReminderService:
             mark_contradictions_pending_confirmation,
         )
         from app.services.archivist.followup import (
-            allowed_after_backoff,
             compose_followup_message,
             compose_milestone_followup,
             detect_followup,
@@ -326,53 +326,23 @@ class ReminderService:
                     session, service_case=service_case, now=now, tz=tz
                 )
                 milestone = detect.get("milestone")
-                asked_field_keys: list[str] = []  # 本次实际追问的字段 key，发送成功后落字段级退避事件
+                confirmations = detect.get("confirmations") or []
+                # 单发线只负责两件"需保证送达"的事：里程碑复盘（LLM，失败自回退模板）+ 矛盾核对
+                # （需标 asked、降级来源的状态机）。日常缺口（早C/午B/晚A、体重）已改由聊天机器人
+                # 「今日待补」搭便车在自然对话里承担，此处不再冷推。
+                parts: list[str] = []
                 if milestone:
-                    # 里程碑前夕：LLM 复盘追问（失败自回退模板），矛盾核对照旧附上（问了才能标 asked）。
-                    # 里程碑本身低频（每 7 天一次），不走字段级退避。
-                    parts = [
+                    parts.append(
                         await compose_milestone_followup(
                             service_case=service_case,
                             milestone_day=milestone["milestone_day"],
                             need_waist=milestone["need_waist"],
                         )
-                    ]
-                    conf_msg = compose_followup_message(
-                        missing_slots=[],
-                        ask_weight=False,
-                        confirmations=detect.get("confirmations"),
-                        case_id=service_case.id,
                     )
-                    if conf_msg:
-                        parts.append(conf_msg)
-                    content = " ".join(parts)
-                else:
-                    # 日常档：对缺失字段做退避——追过冷却中/追满上限的本次跳过，避免天天问同一件事。
-                    slot_items = detect["missing_slots"]  # [{key,label}]
-                    candidate_keys = [it["key"] for it in slot_items]
-                    if detect["ask_weight"]:
-                        candidate_keys.append("weight")
-                    field_events = list(
-                        await session.scalars(
-                            select(ReminderEvent).where(
-                                ReminderEvent.service_case_id == service_case.id,
-                                ReminderEvent.rule_id.like("checkin_followup:%"),
-                                ReminderEvent.event_type == ReminderEventType.REMINDED,
-                            )
-                        )
-                    )
-                    asked_history = [
-                        (e.rule_id.split(":", 1)[1], e.event_date) for e in field_events
-                    ]
-                    allowed = set(allowed_after_backoff(candidate_keys, asked_history, today))
-                    asked_field_keys = [k for k in candidate_keys if k in allowed]
-                    slot_labels = [it["label"] for it in slot_items if it["key"] in allowed]
-                    content = compose_followup_message(
-                        missing_slots=slot_labels,
-                        ask_weight="weight" in allowed,
-                        confirmations=detect.get("confirmations"),
-                        case_id=service_case.id,
-                    )
+                conf_msg = compose_followup_message(confirmations=confirmations)
+                if conf_msg:
+                    parts.append(conf_msg)
+                content = " ".join(p for p in parts if p)
                 if not content:
                     continue
                 reminder_event = await _reserve_reminder_event(
@@ -402,7 +372,6 @@ class ReminderService:
                     message.wecom_message_id = result.message_id
                     # 追问已发出的矛盾：把这些字段降级为 user_confirmed 并标 asked，
                     # 使用户随后报的新值覆盖旧表单值、且不再重复追问。
-                    confirmations = detect.get("confirmations") or []
                     if confirmations:
                         today_checkin = await session.scalar(
                             select(Checkin).where(
@@ -415,15 +384,6 @@ class ReminderService:
                             mark_contradictions_pending_confirmation(
                                 today_checkin, [c["field"] for c in confirmations]
                             )
-                    # 落字段级退避事件：记下"今天追过哪些字段"，供后续冷却/停追判断。
-                    for field_key in asked_field_keys:
-                        await _reserve_reminder_event(
-                            session,
-                            service_case.id,
-                            rule_id=f"checkin_followup:{field_key}",
-                            event_date=today,
-                            event_type=ReminderEventType.REMINDED,
-                        )
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error

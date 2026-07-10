@@ -2,9 +2,11 @@
 
 闸门（必须先满足）：水位线之后有 ≥1 条 archive_plan.worthy=true 的用户消息。
 三条"或"（满足其一即跑）：
-  A 冷却：最后一条用户消息距今 ≥ 2h；
-  B 最大滞留：距上次归档 ≥ 24h（无归档记录则按最早未归档消息计）；
-  C 累积：未归档用户消息 ≥ 20 条。
+  Fast 关键信息：delta 含关键类目（checkin/profile_fact/outcome）且用户停说 ≥ 3min（去抖批处理）；
+  B 最大滞留：距上次归档 ≥ 24h（无归档记录则按最早未归档消息计）——非关键 worthy 的兜底；
+  C 累积：未归档用户消息 ≥ 20 条——安全阀。
+关键信息快触发替代了原"静默 2h 才抽"：打卡/个人事实/成效在用户停说约 3 分钟后即抽，
+让下游（聊天机器人「今日待补」搭便车）看到的基本是最新数据；纯闲聊仍走 24h 兜底。
 数值先按此上线、边观察边调。
 """
 
@@ -24,9 +26,12 @@ from app.services.archivist.graph import get_or_create_progress, run_archivist
 
 logger = logging.getLogger(__name__)
 
-COOLDOWN_SECONDS = 2 * 3600        # A 冷却：2 小时
-MAX_LATENCY_SECONDS = 24 * 3600    # B 最大滞留：24 小时
-MAX_DELTA_COUNT = 20               # C 累积：20 条用户发言
+KEY_INFO_SETTLE_SECONDS = 3 * 60   # Fast：含关键信息且用户停说 3 分钟即抽（去抖，批处理连发消息）
+MAX_LATENCY_SECONDS = 24 * 3600    # B 最大滞留：24 小时（非关键 worthy 的兜底）
+MAX_DELTA_COUNT = 20               # C 累积：20 条用户发言（安全阀）
+
+# 关键信息类目：可结构化打卡 / 稳定个人事实 / 阶段成效。命中即走 Fast 快触发。
+KEY_ARCHIVE_KINDS = frozenset({"checkin", "profile_fact", "outcome"})
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -43,6 +48,19 @@ def _is_worthy(analysis_json: object) -> bool:
         return True
     # 纯图片单发不走意图识别(视觉不进风控的既有决定)，故无 archive_plan；
     # 但成功解析的餐食图/体重秤图是打卡主来源，视为可归档，交给档案官抽取判断。
+    return analysis_json.get("image_parse_status") == "ok"
+
+
+def _has_key_kind(analysis_json: object) -> bool:
+    """本条是否含"关键信息"(可结构化打卡/稳定个人事实/阶段成效) —— 命中即走 Fast 快触发。"""
+    if not isinstance(analysis_json, dict):
+        return False
+    plan = analysis_json.get("archive_plan")
+    if isinstance(plan, dict):
+        kinds = plan.get("kinds")
+        if isinstance(kinds, list) and any(k in KEY_ARCHIVE_KINDS for k in kinds):
+            return True
+    # 成功解析的餐食图/体重秤图无 archive_plan，但本身就是打卡主来源，比照关键信息。
     return analysis_json.get("image_parse_status") == "ok"
 
 
@@ -97,15 +115,22 @@ async def _evaluate(
     count = len(rows)
     last_user_at = max(created_times) if created_times else None
     first_user_at = min(created_times) if created_times else None
+    key_any = any(_has_key_kind(aj) for _, aj in rows)
 
-    cond_a = last_user_at is not None and (now - last_user_at).total_seconds() >= COOLDOWN_SECONDS
+    # Fast：含关键信息(打卡/个人事实/成效)且用户已停说 KEY_INFO_SETTLE_SECONDS —— 3 分钟去抖，
+    # 把连发的几条批一次抽，既及时(≈3min 而非旧的 2h)又不至于每条都抽。
+    cond_fast = (
+        key_any
+        and last_user_at is not None
+        and (now - last_user_at).total_seconds() >= KEY_INFO_SETTLE_SECONDS
+    )
     anchor = _aware(last_archived_at) or first_user_at
     cond_b = anchor is not None and (now - anchor).total_seconds() >= MAX_LATENCY_SECONDS
     cond_c = count >= MAX_DELTA_COUNT
 
-    if cond_a or cond_b or cond_c:
+    if cond_fast or cond_b or cond_c:
         reason = ",".join(
-            k for k, v in (("A_cooldown", cond_a), ("B_latency", cond_b), ("C_count", cond_c)) if v
+            k for k, v in (("fast_key", cond_fast), ("B_latency", cond_b), ("C_count", cond_c)) if v
         )
         return True, reason
     return False, "not_due"

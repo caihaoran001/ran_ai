@@ -18,9 +18,11 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.checkin import Checkin
+from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase
 from app.services.service_case_queries import effective_service_day
 
@@ -33,6 +35,11 @@ _WAIST_LOOKBACK_DAYS = 7  # 腰围一周测一次，避免天天问。
 # 累计追满 _FOLLOWUP_MAX_ASKS 次仍不补 → 认定"这人就是不爱报"，彻底停追，避免天天骚扰。
 _FOLLOWUP_BACKOFF_DAYS = 3
 _FOLLOWUP_MAX_ASKS = 3
+
+# 搭便车「今日待补」退避：每天最多向聊天机器人提示一次某字段(backoff_days=1)，
+# 连续提示 _RIDE_ALONG_MAX_ASKS 天用户仍不报 → 放弃该字段，不再提示，避免天天顺口追。
+_RIDE_ALONG_BACKOFF_DAYS = 1
+_RIDE_ALONG_MAX_ASKS = 3
 
 # 里程碑前一晚：服务第 N 天 → 即将到来的里程碑天。阶段报告在里程碑当晚 21:00 生成，
 # 故提前一天追问，给用户答复时间。service_day 用 effective_service_day（计划开始当天=第1天）。
@@ -53,18 +60,6 @@ _FIELD_LABELS = {
     "product_schedule.noon_b": "午B",
     "product_schedule.night_a": "晚A",
 }
-
-# 日常追问话术变体：按服务单 id 轮换，避免千人一面。花括号留字段占位。
-_SLOT_VARIANTS = [
-    "今天的{slots}喝了吗？喝了的话跟我说一声就行～",
-    "对了，今天{slots}安排上了没？记得的话回我一下哈。",
-    "今天{slots}别忘了哦，喝了跟我报一声我好记录～",
-]
-_WEIGHT_VARIANTS = [
-    "这几天还没看到你的体重，方便的话早上空腹量一下发我记录一下哈。",
-    "好几天没收到体重啦，明早空腹称一下发我呗，我帮你记上。",
-    "顺便问下体重，这两天还没记录，早上空腹量一量告诉我哈～",
-]
 
 
 def _field_label(field_key: str) -> str:
@@ -213,30 +208,26 @@ async def detect_followup(
 
 def compose_followup_message(
     *,
-    missing_slots: list[str],
-    ask_weight: bool,
     confirmations: list[dict] | None = None,
-    case_id: int = 0,
 ) -> str | None:
-    """日常档：把缺失项/待确认项组织成一句自然语言追问；无内容返回 None。零 LLM。
+    """矛盾核对：把待确认项组织成一句自然语言核对；无内容返回 None。零 LLM。
 
-    话术按 case_id 轮换变体，避免所有用户收到一模一样的话。措辞刻意口语、无链接。
-    矛盾确认刻意做成"跟你核对一下最新数值"，不暴露"系统发现你自相矛盾"，体验更好；
+    刻意做成"跟你核对一下最新数值"，不暴露"系统发现你自相矛盾"，体验更好；
     用户答复的新值会覆盖旧记录（见 mark_contradictions_pending_confirmation）。
+    日常缺口（早C/午B/晚A、体重）已改由聊天机器人「今日待补」搭便车，不再走本函数发罐头句。
     """
     parts: list[str] = []
-    if missing_slots:
-        variant = _SLOT_VARIANTS[case_id % len(_SLOT_VARIANTS)]
-        parts.append(variant.format(slots="/".join(missing_slots)))
-    if ask_weight:
-        parts.append(_WEIGHT_VARIANTS[case_id % len(_WEIGHT_VARIANTS)])
     for c in confirmations or []:
         label = c.get("label") or c.get("field")
         chat_value = c.get("chat_value")
-        parts.append(
-            f"另外跟你核对下{label}，我这边记的和你最近说的对不太上，"
-            f"现在准确是{('多少' if not chat_value else f'{chat_value} 吗')}？我按你说的更新哈。"
-        )
+        if chat_value:
+            parts.append(
+                f"对了{label}是{chat_value}吧？我先前记的跟你后面说的对不上，是的话我就按这个改哈。"
+            )
+        else:
+            parts.append(
+                f"对了你{label}最新是多少呀？我这记的有点对不上，你说个准的我改一下哈。"
+            )
     if not parts:
         return None
     return " ".join(parts)
@@ -298,3 +289,107 @@ async def compose_milestone_followup(
     except Exception:  # noqa: BLE001 - 追问失败不能阻塞，回退模板
         pass
     return _milestone_fallback_message(milestone_day, need_waist)
+
+
+async def _reserve_surface_event(
+    session: AsyncSession, *, service_case_id: int, field_key: str, today: date
+) -> bool:
+    """原子记一条「今日已向聊天机器人提示该字段」事件；已存在(当天重复)返回 False。
+
+    与 reminder_service._reserve_reminder_event 同构，但本模块不反向依赖 reminder_service
+    (后者已 import 本模块，避免循环)。唯一约束(case,rule_id,date,type)保证幂等。
+    """
+    event = ReminderEvent(
+        service_case_id=service_case_id,
+        rule_id=f"checkin_followup:{field_key}",
+        event_date=today,
+        event_type=ReminderEventType.REMINDED,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(event)
+            await session.flush()
+    except IntegrityError:
+        return False
+    return True
+
+
+async def compute_gap_hint(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    today: date,
+) -> str:
+    """搭便车「今日待补」：算出今天还没收到、且未被退避挡下的打卡缺口，返回极简事实串。
+
+    供聊天机器人回复时作背景提示，让它在话题自然处顺口关心一句(话术由 LLM 现场生成，
+    非罐头句)。会为纳入本次提示的每个字段落一条 surface 事件(退避计数)，故有副作用、
+    调用方需 commit。无缺口 / 全被退避 → 返回 ""。
+
+    退避：backoff_days=1 每天最多提一次；max_asks=3 连提 3 天不报即放弃该字段。
+    记的是"已提示"而非"agent 确实问了"(不回读出站消息)：提示了但话题没接上就算当天用掉。
+    """
+    today_checkin = await session.scalar(
+        select(Checkin).where(
+            Checkin.service_case_id == service_case_id,
+            Checkin.checkin_date == today,
+            Checkin.deleted_at.is_(None),
+        )
+    )
+    parsed = today_checkin.parsed_json if today_checkin else None
+
+    candidates: list[dict] = list(_missing_product_slots(parsed))  # [{key,label}]
+    weight_missing = not await _has_field_recently(
+        session,
+        service_case_id=service_case_id,
+        field_key="weight",
+        today=today,
+        days=_WEIGHT_LOOKBACK_DAYS,
+    )
+    if weight_missing:
+        candidates.append({"key": "weight", "label": _field_label("weight")})
+    if not candidates:
+        return ""
+
+    asked_events = await _ride_along_asked_events(session, service_case_id=service_case_id)
+    allowed_keys = set(
+        allowed_after_backoff(
+            [c["key"] for c in candidates],
+            asked_events,
+            today,
+            backoff_days=_RIDE_ALONG_BACKOFF_DAYS,
+            max_asks=_RIDE_ALONG_MAX_ASKS,
+        )
+    )
+    labels: list[str] = []
+    for c in candidates:
+        if c["key"] not in allowed_keys:
+            continue
+        if await _reserve_surface_event(
+            session, service_case_id=service_case_id, field_key=c["key"], today=today
+        ):
+            labels.append(c["label"])
+    if not labels:
+        return ""
+    return "用户今天还没报：" + "、".join(labels)
+
+
+async def _ride_along_asked_events(
+    session: AsyncSession, *, service_case_id: int
+) -> list[tuple[str, date]]:
+    """取该单历史「字段级追问/提示」事件 [(field_key, event_date)]，供退避判定。"""
+    rows = (
+        await session.execute(
+            select(ReminderEvent.rule_id, ReminderEvent.event_date).where(
+                ReminderEvent.service_case_id == service_case_id,
+                ReminderEvent.rule_id.like("checkin_followup:%"),
+                ReminderEvent.event_type == ReminderEventType.REMINDED,
+            )
+        )
+    ).all()
+    out: list[tuple[str, date]] = []
+    for rule_id, event_date in rows:
+        _, _, key = str(rule_id).partition(":")
+        if key:
+            out.append((key, event_date))
+    return out
