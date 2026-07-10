@@ -16,17 +16,19 @@ from typing import Any, Literal
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-# 工具名（extract_agent 按名分流到 collector 的三个桶）。
+# 工具名（extract_agent 按名分流到 collector 的各个桶）。
 REPORT_CHECKIN = "report_checkin"
 REPORT_OUTCOME = "report_outcome"
 REPORT_PROFILE_FACT = "report_profile_fact"
 REPORT_CORRECTION = "report_correction"
+REPORT_FAQ_CANDIDATE = "report_faq_candidate"
 
 # report_* 工具对应 collector 的桶名。
 KIND_CHECKIN = "checkin"
 KIND_OUTCOME = "outcome"
 KIND_PROFILE = "profile"
 KIND_CORRECTION = "correction"
+KIND_FAQ = "faq"
 
 
 class ReportCheckinArgs(BaseModel):
@@ -106,12 +108,35 @@ class ReportCorrectionArgs(BaseModel):
     confidence: float = Field(default=0.0, description="0.0-1.0 置信度")
 
 
+class ReportFaqCandidateArgs(BaseModel):
+    """上报一条可复用的 FAQ 候选（从群聊里的问答对提炼，供知识库沉淀，仍走人工审核）。"""
+
+    question: str = Field(
+        description="标准化、通用、去个人隐私的问题（从用户原话提炼，如'吃了土豆体重上升怎么办'）"
+    )
+    answer: str = Field(
+        description=(
+            "金牌参考回答：先承接情绪、找亮点，再给最小可执行动作、合理追问关键习惯；"
+            "语气温暖坚定、多用短句。严禁医疗诊断/用药建议/疗效承诺。"
+        )
+    )
+    category: str = Field(
+        description="从以下选一：饮食执行 / 体重波动 / 睡眠作息 / 运动打卡 / 心理焦虑 / 产品使用 / 规则咨询"
+    )
+    tags: list[str] | None = Field(default=None, description="2-3 个核心实体标签")
+    evidence_text: str = Field(description="用户提问原话，作为入库证据")
+    source_message_ids: list[int] | None = Field(
+        default=None, description="原文方括号里的相关消息 ID（问句与答句）"
+    )
+
+
 # 工具名 → (Pydantic 模型, collector 桶名)。extract_agent 用它校验入参并归桶。
 REPORT_SPECS: dict[str, tuple[type[BaseModel], str]] = {
     REPORT_CHECKIN: (ReportCheckinArgs, KIND_CHECKIN),
     REPORT_OUTCOME: (ReportOutcomeArgs, KIND_OUTCOME),
     REPORT_PROFILE_FACT: (ReportProfileFactArgs, KIND_PROFILE),
     REPORT_CORRECTION: (ReportCorrectionArgs, KIND_CORRECTION),
+    REPORT_FAQ_CANDIDATE: (ReportFaqCandidateArgs, KIND_FAQ),
 }
 
 
@@ -140,6 +165,12 @@ def build_report_tools(kinds: list[str]) -> list[StructuredTool]:
             KIND_CORRECTION,
             ReportCorrectionArgs,
             "上报一条助教回答后由班主任追加的纠正或补充。",
+        ),
+        (
+            REPORT_FAQ_CANDIDATE,
+            KIND_FAQ,
+            ReportFaqCandidateArgs,
+            "上报一条可复用的 FAQ 候选（群聊问答对提炼，供知识库沉淀）。",
         ),
     ]
     for name, kind, args_model, desc in specs:

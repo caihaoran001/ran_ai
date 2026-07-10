@@ -1024,15 +1024,7 @@ class ReminderService:
                     return
             service = KnowledgeEvolutionService()
             created, skipped = 0, 0
-            qa_at = _parse_time(config.qa_at)
-            if now.time() >= qa_at:
-                qa_created, qa_skipped = await service.scan_daily_qa(
-                    session,
-                    timezone_name=config.timezone,
-                    limit=config.daily_qa_limit,
-                )
-                created += qa_created
-                skipped += qa_skipped
+            # 每日 FAQ 扫描已收编进档案官(delta 抽取时顺手产出 FAQ 候选)，此处不再独立扫。
             case_created, case_skipped = await service.scan_stage_cases(
                 session,
                 stage_days=parse_case_days(config.case_days),

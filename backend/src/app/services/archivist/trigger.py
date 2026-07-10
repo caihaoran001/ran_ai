@@ -24,6 +24,7 @@ from app.models.message import Message, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.services.archivist.case_memory_service import refresh_case_memory
 from app.services.archivist.graph import get_or_create_progress, run_archivist
+from app.services.knowledge_evolution import create_qa_drafts_from_archivist
 
 logger = logging.getLogger(__name__)
 
@@ -194,12 +195,14 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                     "Archivist ran service_case_id=%s reason=%s delta=%s days=%s contradictions=%s",
                     cid, reason, result.delta_count, result.days_processed, len(result.contradictions),
                 )
-                # 归档已提交成功后再刷新 case_memory（记忆产物,尽力而为,独立事务,失败不影响归档）。
+                # 归档已提交成功后再做以下 best-effort 收尾（独立事务,失败不影响归档水位线）：
+                # ① 刷新 case_memory（记忆产物）；② 把 delta 抽出的 FAQ 候选转待审核 qa 草稿。
                 await refresh_case_memory(
                     service_case_id=cid,
                     run_result=result,
                     watermark_to=result.watermark_to,
                 )
+                await _persist_faq_candidates(cid, result.faq_candidates)
         except Exception as exc:
             # 归档失败：主事务已回滚（未 commit），水位线保持不动，下轮重试。
             # 失败留痕走独立事务，避免与已回滚的事务纠缠。
@@ -208,6 +211,31 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
             await _record_failure(cid, reason=str(exc), now=now)
 
     return stats
+
+
+async def _persist_faq_candidates(service_case_id: int, candidates: list[dict] | None) -> None:
+    """把档案官 delta 抽出的 FAQ 候选转待审核 qa 草稿（独立事务,尽力而为）。
+
+    FAQ 是知识沉淀、走人工审核,及时即可、不追求完整;失败只记日志,不影响已提交的归档。
+    """
+    if not candidates:
+        return
+    try:
+        async with SessionLocal() as session:
+            created = await create_qa_drafts_from_archivist(
+                session, service_case_id=service_case_id, candidates=candidates
+            )
+            await session.commit()
+            if created:
+                logger.info(
+                    "Archivist FAQ drafts created=%s service_case_id=%s",
+                    created,
+                    service_case_id,
+                )
+    except Exception:
+        logger.exception(
+            "Archivist FAQ draft persist failed service_case_id=%s", service_case_id
+        )
 
 
 async def _record_failure(service_case_id: int, *, reason: str, now: datetime) -> None:

@@ -50,6 +50,7 @@ class ArchivistState(TypedDict, total=False):
     outcome_candidates: list[dict]
     profile_candidates: list[dict]
     correction_candidates: list[dict]
+    faq_candidates: list[dict]
     committed: list[dict]
 
 
@@ -67,6 +68,9 @@ class ArchivistRunResult:
     personal_corrections_written: int = 0
     qa_drafts_created: int = 0
     corrections_skipped: int = 0
+    # FAQ 候选（LLM 在 delta 抽取中顺手产出）；不在归档事务里落库，
+    # 由 trigger 在归档提交成功后best-effort转成待审核 qa 草稿（走 knowledge_evolution 管线）。
+    faq_candidates: list[dict] = field(default_factory=list)
 
 
 def _sh_date(dt: datetime) -> date:
@@ -244,13 +248,14 @@ class ArchivistGraph:
         outcome_candidates: list[dict] = []
         profile_candidates: list[dict] = []
         correction_candidates: list[dict] = []
+        faq_candidates: list[dict] = []
 
         for date_iso, msgs in delta_by_date.items():
             content = "\n".join(f"[{m['id']}] {m['role']}：{m['text']}" for m in msgs)
             collector = await run_extract_agent(
                 content=content,
                 service_case_id=self.service_case.id,
-                enabled_kinds=["checkin", "outcome", "profile", "correction"],
+                enabled_kinds=["checkin", "outcome", "profile", "correction", "faq"],
                 chat_model=self.chat_model,
                 settings=self.settings,
             )
@@ -258,6 +263,7 @@ class ArchivistGraph:
             outcome_candidates.extend(collector.get("outcome") or [])
             profile_candidates.extend(collector.get("profile") or [])
             correction_candidates.extend(collector.get("correction") or [])
+            faq_candidates.extend(collector.get("faq") or [])
             if fields:
                 day_candidates[date_iso] = {
                     "fields": fields,
@@ -268,6 +274,7 @@ class ArchivistGraph:
             "outcome_candidates": outcome_candidates,
             "profile_candidates": profile_candidates,
             "correction_candidates": correction_candidates,
+            "faq_candidates": faq_candidates,
         }
 
     async def _classify(self, state: ArchivistState) -> dict[str, Any]:
@@ -332,6 +339,9 @@ class ArchivistGraph:
         self.result.personal_corrections_written = correction_result.personal_written
         self.result.qa_drafts_created = correction_result.qa_drafts_created
         self.result.corrections_skipped = correction_result.skipped
+
+        # FAQ 候选不在归档事务落库：交给 result，trigger 在归档提交成功后 best-effort 转 qa 草稿。
+        self.result.faq_candidates = state.get("faq_candidates") or []
 
         # 走到这里说明打卡 upsert、成效/画像写库、纠正落库全部成功（任一步抛错都不会到此，
         # 由 trigger 层回滚、水位线保持不动）。此时才推进水位线并清零失败计数。

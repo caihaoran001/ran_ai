@@ -353,3 +353,56 @@ async def test_archivist_outcome_write_failure_does_not_advance_watermark(
 
     # 水位线保持不动（未推进），成功清零逻辑也未触达。
     assert progress.last_archived_message_id == original_watermark
+
+
+@pytest.mark.asyncio
+async def test_archivist_reports_faq_candidate_into_qa_draft(db_session):
+    """FAQ 折进档案官：delta 抽取产出 report_faq_candidate → result.faq_candidates →
+    create_qa_drafts_from_archivist 转成待审核 qa 草稿（复用 knowledge_evolution 管线）。"""
+    from app.services.knowledge_evolution import create_qa_drafts_from_archivist
+
+    case, msgs, progress = await _setup_case_with_messages(db_session)
+    fake = FakeToolCallingModel([
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "report_faq_candidate",
+                    "args": {
+                        "question": "减肥期间吃了土豆导致体重上升怎么调整？",
+                        "answer": "先别急，一天数字不代表真实脂肪变化。今天不额外吃米饭即可，先菜再肉最后主食。昨晚睡得怎么样？",
+                        "category": "体重波动",
+                        "tags": ["土豆", "体重波动"],
+                        "evidence_text": "吃了土豆体重涨了",
+                        "source_message_ids": [msgs[0].id],
+                    },
+                    "id": "f1",
+                },
+            ],
+        )
+    ])
+
+    result = await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+    await db_session.flush()
+
+    assert len(result.faq_candidates) == 1
+    assert result.faq_candidates[0]["question"].startswith("减肥期间吃了土豆")
+
+    created = await create_qa_drafts_from_archivist(
+        db_session, service_case_id=case.id, candidates=result.faq_candidates
+    )
+    await db_session.flush()
+    assert created == 1
+
+    drafts = list(
+        await db_session.scalars(
+            select(KnowledgeDraft).where(KnowledgeDraft.draft_type == "qa")
+        )
+    )
+    archivist_drafts = [
+        d for d in drafts if (d.content_json or {}).get("scan_type") == "archivist_delta"
+    ]
+    assert len(archivist_drafts) == 1
+    assert archivist_drafts[0].status == "pending"

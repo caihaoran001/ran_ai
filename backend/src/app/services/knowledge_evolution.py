@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from html import escape
 from datetime import date, datetime, time, timedelta, timezone
@@ -23,6 +24,8 @@ from app.services.knowledge_index import upsert_text_chunk
 from app.services.knowledge_base import get_knowledge_base
 from app.services.service_case_queries import effective_start_at, select_active_service_cases
 
+
+logger = logging.getLogger(__name__)
 
 DAILY_QA_SCAN_SETTING_KEY = "knowledge_evolution_daily_qa_scans"
 STAGE_CASE_SCAN_SETTING_KEY = "knowledge_evolution_stage_case_scans"
@@ -56,71 +59,6 @@ class KnowledgeEvolutionService:
                 "note": "人工触发的 FAQ 草稿提取，只沉淀问答，不沉淀优秀案例。",
             },
         )
-
-    async def scan_daily_qa(
-        self,
-        session: AsyncSession,
-        *,
-        target_date: date | None = None,
-        timezone_name: str = "Asia/Shanghai",
-        limit: int = 10000,
-        force: bool = False,
-    ) -> tuple[int, int]:
-        timezone_info = ZoneInfo(timezone_name)
-        local_today = datetime.now(timezone_info).date()
-        target = target_date or (local_today - timedelta(days=1))
-        scan_key = target.isoformat()
-        if not force and await _is_processed(session, DAILY_QA_SCAN_SETTING_KEY, scan_key):
-            return 0, 0
-        start_at, end_at = _date_window(target, timezone_info)
-        
-        # Use a generous limit of at least 10000 to ensure we don't truncate active WeChat groups
-        query_limit = max(limit, 10000)
-        messages = await _chat_messages_between(session, start_at=start_at, end_at=end_at, limit=query_limit)
-        if len(messages) < 4:
-            await _mark_processed(session, DAILY_QA_SCAN_SETTING_KEY, scan_key)
-            await session.commit()
-            return 0, 0
-
-        # Group messages by service_case_id to isolate group conversations and prevent interleaving
-        messages_by_case: dict[int, list[Message]] = {}
-        for m in messages:
-            if m.service_case_id:
-                messages_by_case.setdefault(m.service_case_id, []).append(m)
-
-        created_total = 0
-        skipped_total = 0
-
-        # Process candidate extraction group by group
-        for case_id, case_messages in messages_by_case.items():
-            if len(case_messages) < 4:
-                continue
-            
-            conversation = _render_sanitized_conversation(case_messages)
-            if not conversation.strip():
-                continue
-
-            created, skipped = await self._create_drafts(
-                session,
-                conversation=conversation,
-                messages=case_messages,
-                candidate_kind="qa",
-                scan_context={
-                    "scan_type": "daily_qa",
-                    "target_date": target.isoformat(),
-                    "window_start": start_at.isoformat(),
-                    "window_end": end_at.isoformat(),
-                    "service_case_id": case_id,
-                    "case_no": case_messages[0].service_case.case_no if case_messages[0].service_case else None,
-                    "note": "每日0点附近按群物理隔离提取前一自然日 FAQ 候选。",
-                },
-            )
-            created_total += created
-            skipped_total += skipped
-
-        await _mark_processed(session, DAILY_QA_SCAN_SETTING_KEY, scan_key)
-        await session.commit()
-        return created_total, skipped_total
 
     async def scan_stage_cases(
         self,
@@ -471,6 +409,47 @@ async def create_draft_candidate(
     return draft
 
 
+async def create_qa_drafts_from_archivist(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    candidates: list[dict[str, Any]] | None,
+) -> int:
+    """把档案官在 delta 抽取中产出的 FAQ 候选转成待审核 qa 草稿（复用去重/审核/入库管线）。
+
+    不提交事务，由调用方 commit；返回新建草稿数。检索正文只放问法/参考回复，
+    其余归 content_json（遵守 QA 表四入库限制）。
+    """
+    created = 0
+    for item in candidates or []:
+        if not isinstance(item, dict):
+            continue
+        question = _clean(item.get("question"))
+        answer = _clean(item.get("answer"))
+        if not question or not answer:
+            continue
+        draft = await create_draft_candidate(
+            session,
+            draft_type="qa",
+            title=question[:80] or "知识库候选",
+            question=question,
+            answer=answer,
+            category=_clean(item.get("category"))[:100] or None,
+            tags=_string_list(item.get("tags")),
+            reason="档案官从群聊问答对自动提炼",
+            evidence=_clean(item.get("evidence_text")) or None,
+            source_message_ids=_positive_ids(item.get("source_message_ids")),
+            content_json={
+                **item,
+                "scan_type": "archivist_delta",
+                "service_case_id": service_case_id,
+            },
+        )
+        if draft is not None:
+            created += 1
+    return created
+
+
 async def reject_draft(session: AsyncSession, draft: KnowledgeDraft, reason: str | None = None) -> KnowledgeDraft:
     draft.status = "rejected"
     draft.rejected_at = datetime.now(timezone.utc)
@@ -599,12 +578,6 @@ async def _existing_case_summaries(
             }
         )
     return summaries[-limit:]
-
-
-def _date_window(target: date, timezone_info: ZoneInfo) -> tuple[datetime, datetime]:
-    start = datetime.combine(target, time.min, tzinfo=timezone_info)
-    end = start + timedelta(days=1)
-    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
 def _stage_window(

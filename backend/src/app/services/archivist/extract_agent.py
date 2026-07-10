@@ -21,7 +21,7 @@ from app.services.checkin_service import CHECKIN_KEYS
 
 logger = logging.getLogger(__name__)
 
-_ALL_KINDS = ["checkin", "outcome", "profile", "correction"]
+_ALL_KINDS = ["checkin", "outcome", "profile", "correction", "faq"]
 _PRODUCT_SUBKEYS = ("morning_c", "noon_b", "night_a", "summary")
 
 _SYSTEM_PROMPT = (
@@ -39,7 +39,11 @@ _SYSTEM_PROMPT = (
     "- report_correction：仅当记录中先有【助教】回答，后有【班主任】明确纠正或补充该回答时调用。"
     "必须引用输入中真实存在的助教消息ID和班主任消息ID。个人特殊安排选 personal；所有用户通用的业务事实选 "
     "global_knowledge。回答语气、结构、流程不在群聊里自动沉淀，应留给人工复盘提示词或 Skill。"
-    "普通班主任接话、重复助教答案或无关新话题不算纠正。\n\n"
+    "普通班主任接话、重复助教答案或无关新话题不算纠正。\n"
+    "- report_faq_candidate：当群聊里出现一个**对其他用户也通用、可复用**的问答对（用户提问 + 助教/班主任"
+    "给出的优质回答）时调用，提炼成标准问题 + 金牌参考回答。金牌回答要先承接情绪、找亮点，再给最小可执行"
+    "动作与合理追问；严禁医疗诊断、用药建议、疗效承诺。纯个人化安排、寒暄、无复用价值的对话不报；没有优质"
+    "答案可依据时不报。仍会进人工审核，不直接入库。\n\n"
     "【角色边界】report_checkin/report_outcome/report_profile_fact 只能提取【用户】本人表达的信息；"
     "不得把助教或班主任的话写成用户事实。班主任内容只用于 report_correction。\n"
     "【总纪律】只上报原话或上下文能直接支持的事实；宁缺毋滥；不确定是不是本人的/今天的就不报；"
@@ -86,6 +90,7 @@ async def run_extract_agent(
         "outcome": [],
         "profile": [],
         "correction": [],
+        "faq": [],
     }
     if not content.strip():
         return collector
