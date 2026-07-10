@@ -189,6 +189,7 @@ async def apply_outcome_events_to_user_state(
     message: Message,
     milestone: str,
     created_events: list[dict[str, Any]],
+    source: str = "chat",
 ) -> UserStateProfile | None:
     """Update current-state projection from validated outcome events.
 
@@ -213,7 +214,7 @@ async def apply_outcome_events_to_user_state(
             value=str(event.get("value") or ""),
             event_type=str(event.get("event_type") or "observation"),
             evidence=str(event.get("evidence_text") or ""),
-            source="chat",
+            source=source,
             occurred_at=occurred_at,
             confidence=_float(event.get("confidence")),
             message_id=message.id,
@@ -233,6 +234,7 @@ async def apply_profile_signals_to_user_state(
     service_case: ServiceCase,
     message: Message,
     profile_signals: list[dict[str, Any]],
+    source: str = "chat",
 ) -> UserStateProfile | None:
     """Persist long-lived personal profile signals from chat evidence.
 
@@ -263,7 +265,7 @@ async def apply_profile_signals_to_user_state(
             value=value,
             event_type="profile_signal",
             evidence=evidence,
-            source="chat_profile_signal",
+            source=("chat_profile_signal" if source == "chat" else f"{source}_profile_signal"),
             occurred_at=occurred_at,
             confidence=confidence,
             message_id=message.id,

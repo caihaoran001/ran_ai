@@ -1,7 +1,9 @@
 """档案官运行图：load_context → extract → classify → guardrail → commit。
 
 设计 §5：顺序焊死的多节点流水线，LLM 只用于判断(extract)，落库用确定性代码(commit)。
-P0 只接打卡投影一件事；classify/guardrail 为后续阶段(成效/画像/知识沉淀)预留的轻量节点。
+extract 用 Agent 形态一次性抽出打卡+成效+画像；commit 里打卡按天 upsert、成效/画像经
+apply_archived_outcome 写真表(outcome_events/user_state)。档案官是成效/画像的**唯一**抽取
+入口(聊天热路径已不再实时抽)。classify/guardrail 为知识沉淀等后续阶段预留的轻量节点。
 """
 
 from __future__ import annotations
@@ -22,8 +24,7 @@ from app.models.message import Message, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.services.archivist.checkin_projection import CheckinUpsertResult, upsert_checkin
 from app.services.archivist.extract_agent import run_extract_agent
-from app.services.archivist.extractor import extract_checkin_fields
-from app.services.archivist.shadow import reconcile_outcome
+from app.services.outcome_engine import apply_archived_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,9 @@ class ArchivistState(TypedDict, total=False):
     delta_message_ids: list[int]
     # {date_iso: {"fields": {...}, "evidence_ids": [int]}}
     day_candidates: dict[str, dict]
-    # 影子模式：Agent 抽出的成效事件/画像信号（累计跨天，只对账不落库）
-    shadow_outcome: list[dict]
-    shadow_signals: list[dict]
+    # Agent 抽出的成效事件/画像信号（累计跨整批，commit 里一次性写真表）
+    outcome_candidates: list[dict]
+    profile_candidates: list[dict]
     committed: list[dict]
 
 
@@ -57,11 +58,9 @@ class ArchivistRunResult:
     days_processed: int = 0
     upserts: list[dict] = field(default_factory=list)  # [{date, filled, contradictions...}]
     contradictions: list[dict] = field(default_factory=list)
-    # 影子对账（仅 archivist_outcome_shadow_enabled 时有值）
-    shadow_recorded: bool = False
-    shadow_events: list[dict] = field(default_factory=list)
-    shadow_signals: list[dict] = field(default_factory=list)
-    shadow_diff: dict = field(default_factory=dict)
+    # 成效/画像直写真表结果（Agent 抽出并落库的条数）
+    outcome_written: int = 0
+    profile_written: int = 0
 
 
 def _sh_date(dt: datetime) -> date:
@@ -154,34 +153,28 @@ class ArchivistGraph:
         }
 
     async def _extract(self, state: ArchivistState) -> dict[str, Any]:
-        """对每个自然日的聊天原文抽取打卡字段（LLM 判断）。
+        """对每个自然日的聊天原文用 Agent 一次性抽出打卡+成效+画像（LLM 判断，不落库）。
 
-        - 影子关（默认）：走 P0 的 extract_checkin_projection 纯 JSON 抽取，行为不变。
-        - 影子开：走 Agent 形态（决策 A），额外累计成效/画像信号供 commit 对账（只抽不落库）。
+        打卡按天归入 day_candidates（commit 里按天 upsert）；成效/画像累计跨整批，commit 里
+        经 apply_archived_outcome 一次性写真表。档案官是成效/画像的唯一抽取入口。
         """
         delta_by_date = state.get("delta_by_date") or {}
         day_candidates: dict[str, dict] = {}
-        shadow = self.settings.archivist_outcome_shadow_enabled
-        shadow_outcome: list[dict] = []
-        shadow_signals: list[dict] = []
+        outcome_candidates: list[dict] = []
+        profile_candidates: list[dict] = []
 
         for date_iso, msgs in delta_by_date.items():
             content = "\n".join(f"- {m['text']}" for m in msgs)
-            if shadow:
-                collector = await run_extract_agent(
-                    content=content,
-                    service_case_id=self.service_case.id,
-                    enabled_kinds=["checkin", "outcome", "profile"],
-                    chat_model=self.chat_model,
-                    settings=self.settings,
-                )
-                fields = collector.get("checkin") or {}
-                shadow_outcome.extend(collector.get("outcome") or [])
-                shadow_signals.extend(collector.get("profile") or [])
-            else:
-                fields = await extract_checkin_fields(
-                    content=content, service_case_id=self.service_case.id
-                )
+            collector = await run_extract_agent(
+                content=content,
+                service_case_id=self.service_case.id,
+                enabled_kinds=["checkin", "outcome", "profile"],
+                chat_model=self.chat_model,
+                settings=self.settings,
+            )
+            fields = collector.get("checkin") or {}
+            outcome_candidates.extend(collector.get("outcome") or [])
+            profile_candidates.extend(collector.get("profile") or [])
             if fields:
                 day_candidates[date_iso] = {
                     "fields": fields,
@@ -189,8 +182,8 @@ class ArchivistGraph:
                 }
         return {
             "day_candidates": day_candidates,
-            "shadow_outcome": shadow_outcome,
-            "shadow_signals": shadow_signals,
+            "outcome_candidates": outcome_candidates,
+            "profile_candidates": profile_candidates,
         }
 
     async def _classify(self, state: ArchivistState) -> dict[str, Any]:
@@ -228,24 +221,29 @@ class ArchivistGraph:
             self.result.contradictions.extend(res.contradictions)
         self.result.days_processed = len(committed)
 
-        # 影子对账（P0.5）：只在开关开时做，且**不写** outcome_events/user_state，只落审计表 + 日志。
-        if self.settings.archivist_outcome_shadow_enabled:
-            shadow_outcome = state.get("shadow_outcome") or []
-            shadow_signals = state.get("shadow_signals") or []
-            row = await reconcile_outcome(
-                self.session,
-                service_case_id=self.service_case.id,
-                delta_message_ids=state.get("delta_message_ids") or [],
-                shadow_events=shadow_outcome,
-                shadow_signals=shadow_signals,
-                watermark_from=state.get("watermark_from"),
-                watermark_to=state.get("watermark_to"),
-            )
-            self.result.shadow_events = shadow_outcome
-            self.result.shadow_signals = shadow_signals
-            if row is not None:
-                self.result.shadow_recorded = True
-                self.result.shadow_diff = row.diff or {}
+        # 成效/画像直写真表：用本批最后一条用户消息作 anchor（提供 message_id/occurred_at）。
+        # 包 try/except——一条坏消息不能卡死整单归档与水位线推进。
+        outcome_candidates = state.get("outcome_candidates") or []
+        profile_candidates = state.get("profile_candidates") or []
+        delta_message_ids = state.get("delta_message_ids") or []
+        if (outcome_candidates or profile_candidates) and delta_message_ids:
+            anchor = await self.session.get(Message, max(delta_message_ids))
+            if anchor is not None:
+                try:
+                    result = await apply_archived_outcome(
+                        self.session,
+                        service_case=self.service_case,
+                        anchor_message=anchor,
+                        outcome_events=outcome_candidates,
+                        profile_signals=profile_candidates,
+                    )
+                    self.result.outcome_written = len(result.get("created_events") or [])
+                    self.result.profile_written = len(result.get("profile_signals") or [])
+                except Exception:
+                    logger.exception(
+                        "Archivist apply_archived_outcome failed service_case_id=%s",
+                        self.service_case.id,
+                    )
 
         # 推进水位线（即使本轮没抽到打卡也要推进，避免下轮重复处理同一批增量）
         watermark_to = state.get("watermark_to")

@@ -171,14 +171,6 @@ class Settings(BaseSettings):
     checkin_followup_enabled: bool = Field(default=False, validation_alias="CHECKIN_FOLLOWUP_ENABLED")
     # 单发线(里程碑/矛盾)的触发时间，放在晚间给白天聊天+档案官抽取留足时间；日常搭便车不看此值(随对话即时判断)。
     checkin_followup_at: str = Field(default="20:30", validation_alias="CHECKIN_FOLLOWUP_AT")
-    # 成效/画像收编影子对账（P0.5）：开时档案官 extract 走 Agent 形态(report-only 工具)，
-    # 额外批量抽成效/画像，但**只对账不落库**(不写 outcome_events/user_state)，把差异记入
-    # archivist_shadow_outcomes 表 + 日志。默认 False=行为与 P0 完全一致(纯打卡抽取)，
-    # 部署零风险；staging/灰度观察一致率达标后，下一轮才做真正切换(删热路径调用+建瘦投影)。
-    archivist_outcome_shadow_enabled: bool = Field(
-        default=False,
-        validation_alias="ARCHIVIST_OUTCOME_SHADOW_ENABLED",
-    )
 
     auto_send_documents: bool = Field(
         default=False,

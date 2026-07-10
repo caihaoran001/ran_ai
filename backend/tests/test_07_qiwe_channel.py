@@ -706,7 +706,6 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
     monkeypatch.setattr(RanrenAIEngine, "_latest_active_case", lambda self, session, chat_id: asyncio.sleep(0, result=fake_case))
     monkeypatch.setattr(RanrenAIEngine, "_recent_user_messages", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(RanrenAIEngine, "_store_intervention_analysis", lambda *args, **kwargs: asyncio.sleep(0, result=None))
-    monkeypatch.setattr(RanrenAIEngine, "_run_outcome_analysis", lambda *args, **kwargs: asyncio.sleep(0, result=None))
 
     async def fake_reply_with_ai(self, message, **kwargs):
         trigger_id = kwargs.get("trigger_id")

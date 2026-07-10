@@ -43,11 +43,6 @@ from app.services.ranren_ai.attachments import (
 from app.services.content_policy import get_ai_reply_enabled
 from app.services.short_link import get_or_create_short_link
 from app.services.intervention_service import analyze_intervention, merge_case_insight
-from app.services.outcome_engine import (
-    apply_outcome_analysis_plan,
-    extract_outcome_from_plan,
-    prepare_outcome_extraction,
-)
 from app.services.service_case_queries import effective_start_at, select_active_service_cases
 
 logger = logging.getLogger("uvicorn.error")
@@ -514,15 +509,6 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                             service_case_id,
                         )
                     return
-                outcome_result = await self._run_outcome_analysis(
-                    service_case_id=service_case_id,
-                    inbound_id=inbound_id,
-                    analysis=analysis,
-                    recent_user_messages=recent_user_messages,
-                )
-                if outcome_result is not None:
-                    analysis = {**analysis, "outcome": outcome_result}
-                    await self._update_inbound_analysis(inbound_id, analysis)
 
         if not service_case_id:
             logger.info(
@@ -667,16 +653,6 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 )
             return
 
-        outcome_result = await self._run_outcome_analysis(
-            service_case_id=service_case_id,
-            inbound_id=inbound_id,
-            analysis=analysis,
-            recent_user_messages=recent_user_messages,
-        )
-        if outcome_result is not None:
-            analysis = {**analysis, "outcome": outcome_result}
-            await self._update_inbound_analysis(inbound_id, analysis)
-
         if message.purpose == MessagePurpose.CHAT:
             await self._reply_with_ai(channel_msg, service_case_id=service_case_id, analysis=analysis, trigger_id=inbound_id)
 
@@ -792,56 +768,6 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             if service_case:
                 service_case.last_handoff_at = datetime.now(timezone.utc)
                 await session.commit()
-
-    async def _run_outcome_analysis(
-        self,
-        *,
-        service_case_id: int,
-        inbound_id: int,
-        analysis: dict,
-        recent_user_messages: list[str],
-    ) -> dict | None:
-        try:
-            async with SessionLocal() as session:
-                plan = await prepare_outcome_extraction(
-                    session,
-                    service_case_id=service_case_id,
-                    message_id=inbound_id,
-                    intervention_analysis=analysis,
-                    recent_messages=recent_user_messages,
-                )
-                await session.commit()
-            if plan is None:
-                return None
-            raw = await extract_outcome_from_plan(plan)
-            async with SessionLocal() as session:
-                result = await apply_outcome_analysis_plan(
-                    session,
-                    plan=plan,
-                    raw=raw,
-                    intervention_analysis=analysis,
-                )
-                await session.commit()
-                return result
-        except Exception:
-            logger.exception(
-                "RanrenAI outcome analysis failed service_case_id=%s inbound_id=%s",
-                service_case_id,
-                inbound_id,
-            )
-            return None
-
-    async def _update_inbound_analysis(self, inbound_id: int, analysis: dict) -> None:
-        async with SessionLocal() as session:
-            db_inbound = await session.get(Message, inbound_id)
-            if db_inbound:
-                existing = db_inbound.analysis_json or {}
-                meta = existing.get("_qiwe_meta")
-                new_analysis = dict(analysis)
-                if meta:
-                    new_analysis["_qiwe_meta"] = meta
-                db_inbound.analysis_json = new_analysis
-            await session.commit()
 
     async def _create_case_for_message(
         self, session, message: ChannelMessage, is_staff: bool = False

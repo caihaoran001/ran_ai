@@ -387,6 +387,35 @@ async def apply_outcome_analysis_plan(
     )
 
 
+async def apply_archived_outcome(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    anchor_message: Message,
+    outcome_events: list[dict[str, Any]],
+    profile_signals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """档案官(Archivist)成效/画像落库入口（复用 apply_outcome_analysis 的确定性写入/投影）。
+
+    档案官按天批量抽取、不精确对应单条消息，故用该批**最后一条用户消息**作 anchor：
+    事件 message_id/occurred_at、画像投影 message_id 均归到它，既有真实 message_id 供去重，
+    又符合既有"按当前里程碑归属事件"的语义。source="archivist" 标溯源、并跳过 reply-time 追问。
+    """
+    spec = current_milestone_spec(service_case)
+    state = await get_or_create_stage_state(session, service_case.id, spec)
+    raw = {"outcome_events": outcome_events or [], "profile_signals": profile_signals or []}
+    return await apply_outcome_analysis(
+        session,
+        service_case=service_case,
+        message=anchor_message,
+        spec=spec,
+        state=state,
+        raw=raw,
+        intervention_analysis=None,
+        source="archivist",
+    )
+
+
 async def get_or_create_stage_state(
     session: AsyncSession,
     service_case_id: int,
@@ -482,6 +511,7 @@ async def apply_outcome_analysis(
     raw: dict[str, Any],
     intervention_analysis: dict[str, Any] | None,
     allowed_followup_fields: set[str] | None = None,
+    source: str = "chat",
 ) -> dict[str, Any]:
     valid_fields = {goal.key for goal in spec.goals}
     collected = dict(state.collected_fields or {})
@@ -500,7 +530,7 @@ async def apply_outcome_analysis(
             value_text=item["value"],
             evidence_text=item["evidence_text"],
             confidence=item["confidence"],
-            source="chat",
+            source=source,
             occurred_at=message.created_at,
             metadata_json={"message_channel": message.message_type},
         )
@@ -519,20 +549,25 @@ async def apply_outcome_analysis(
     state.collected_fields = collected
     state.missing_fields = missing
 
-    followup_plan = _plan_followup(
-        service_case=service_case,
-        message=message,
-        state=state,
-        missing_fields=missing,
-        created_events=created_events,
-        intervention_analysis=intervention_analysis,
-        allowed_followup_fields=allowed_followup_fields,
-    )
-    if followup_plan.get("should_ask"):
-        state.last_followup_field = followup_plan["field_key"]
-        state.last_followup_question = followup_plan["question"]
-        state.last_followup_at = datetime.now(timezone.utc)
-        state.followup_count = int(state.followup_count or 0) + 1
+    # 成效追问是"回复时顺手追问"机制，只对聊天热路径有意义；档案官(source=archivist)不产生即时
+    # 回复，不应设置 reply-time 追问状态，否则会留下永远发不出去的 last_followup_question。
+    if source == "chat":
+        followup_plan = _plan_followup(
+            service_case=service_case,
+            message=message,
+            state=state,
+            missing_fields=missing,
+            created_events=created_events,
+            intervention_analysis=intervention_analysis,
+            allowed_followup_fields=allowed_followup_fields,
+        )
+        if followup_plan.get("should_ask"):
+            state.last_followup_field = followup_plan["field_key"]
+            state.last_followup_question = followup_plan["question"]
+            state.last_followup_at = datetime.now(timezone.utc)
+            state.followup_count = int(state.followup_count or 0) + 1
+    else:
+        followup_plan = {"should_ask": False, "field_key": "", "question": "", "reason": "档案官抽取不做即时追问。"}
 
     await apply_outcome_events_to_user_state(
         session,
@@ -540,12 +575,14 @@ async def apply_outcome_analysis(
         message=message,
         milestone=spec.milestone,
         created_events=created_events,
+        source=source,
     )
     await apply_profile_signals_to_user_state(
         session,
         service_case=service_case,
         message=message,
         profile_signals=profile_signals,
+        source=source,
     )
     action_focus = await score_action_focus(
         session,
