@@ -2,11 +2,9 @@
 
 import { useState } from "react";
 import { API_BASE } from "@/lib/api";
-import { Bot, CalendarCheck, Send } from "lucide-react";
+import { Bot, Send } from "lucide-react";
 
-type ToggleKey =
-  | "ai_auto_reply_enabled"
-  | "checkin_link_enabled";
+type ToggleKey = "ai_auto_reply_enabled";
 
 function Row({
   serviceCaseId,
@@ -117,28 +115,15 @@ function AgentReceiptButton({ serviceCaseId }: { serviceCaseId: number }) {
 export function CaseAutomationToggles({
   serviceCaseId,
   aiAutoReplyEnabled,
-  checkinLinkEnabled,
-  serviceWindowEnded = false,
-  refunded = false,
 }: {
   serviceCaseId: number;
   aiAutoReplyEnabled: boolean;
-  checkinLinkEnabled: boolean;
-  serviceWindowEnded?: boolean;
-  refunded?: boolean;
 }) {
-  // 退款客户与服务到期一样：停掉产品类定时推送（打卡链接），仅保留群内 AI 聊天。
-  const pushDisabled = serviceWindowEnded || refunded;
-
   return (
     <div className="panel p-5">
       <h3 className="font-semibold text-slate-950">自动化设置（仅本服务单）</h3>
       <p className="mt-1 text-xs leading-5 text-slate-500">
-        {refunded
-          ? "该客户已退款，打卡链接及阶段报告已停用，仅保留群内 AI 聊天。"
-          : serviceWindowEnded
-            ? "该服务单已满 28 天毕业，打卡链接已由系统自动停用。"
-            : "定时推送还需对应全局开关开启才会真正发送；此处只能在全局已开的基础上，单独关掉本服务单。"}
+        以下设置仅对本服务单生效，不影响其他服务单。
       </p>
 
       <div className="mt-3 divide-y divide-slate-100">
@@ -152,17 +137,6 @@ export function CaseAutomationToggles({
           desc="关闭后机器人在群里完全不说话（等同群内「@机器人 退下」）；开启等同「回来」。"
         />
         <AgentReceiptButton serviceCaseId={serviceCaseId} />
-
-        <div className="pb-1 pt-3 text-xs font-medium text-slate-400">定时推送</div>
-        <Row
-          serviceCaseId={serviceCaseId}
-          field="checkin_link_enabled"
-          initial={checkinLinkEnabled}
-          icon={CalendarCheck}
-          title="打卡链接"
-          desc="晚间定时发送的每日打卡链接。"
-          disabled={pushDisabled}
-        />
       </div>
     </div>
   );
