@@ -16,6 +16,8 @@ from app.core.config import get_settings
 from app.db.session import get_session
 from app.services.ai_service import AIService
 from app.models.ai_usage import AIUsageLog
+from app.models.archivist_progress import ArchivistProgress
+from app.models.service_case import ServiceCase
 
 router = APIRouter()
 _DIAGNOSTICS_RUN_LOCK = asyncio.Lock()
@@ -120,6 +122,54 @@ HEALTH_TEST_SUITES = [suite for suite in TEST_SUITES if suite["included_in_healt
 async def get_test_suites():
     """获取所有系统自测套件的元数据"""
     return TEST_SUITES
+
+
+@router.get("/archivist-failures")
+async def get_archivist_failures(
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """运营可见的档案官失败入口：列出当前有连续失败（水位线卡住、未推进）的服务单。
+
+    档案官一轮归档若 LLM 抽取或成效/画像写库抛错，不推进水位线、下轮自动重试，
+    并在 archivist_progress 记连续失败计数与最后失败原因。这里把这些卡住的单暴露出来，
+    便于运营发现并排查（只读，不触发任何写操作）。
+    """
+    rows = (
+        await session.execute(
+            select(ArchivistProgress, ServiceCase.case_no)
+            .outerjoin(ServiceCase, ServiceCase.id == ArchivistProgress.service_case_id)
+            .where(ArchivistProgress.consecutive_failures > 0)
+            .order_by(
+                ArchivistProgress.consecutive_failures.desc(),
+                ArchivistProgress.last_failure_at.desc(),
+            )
+            .limit(limit)
+        )
+    ).all()
+    total_failing = await session.scalar(
+        select(func.count(ArchivistProgress.id)).where(
+            ArchivistProgress.consecutive_failures > 0
+        )
+    )
+    items = [
+        {
+            "service_case_id": progress.service_case_id,
+            "case_no": case_no,
+            "consecutive_failures": progress.consecutive_failures,
+            "failure_count": progress.failure_count,
+            "last_failure_at": progress.last_failure_at.isoformat()
+            if progress.last_failure_at
+            else None,
+            "last_failure_reason": progress.last_failure_reason,
+            "last_archived_message_id": progress.last_archived_message_id,
+            "last_archived_at": progress.last_archived_at.isoformat()
+            if progress.last_archived_at
+            else None,
+        }
+        for progress, case_no in rows
+    ]
+    return {"total_failing": int(total_failing or 0), "items": items}
 
 
 @router.get("/summary")

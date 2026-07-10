@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -35,3 +35,16 @@ class ArchivistProgress(TimestampMixin, Base):
     # 认领时间：扫描器用 SELECT ... FOR UPDATE SKIP LOCKED 认领本行防双跑，
     # 跑完清空。残留的 claimed_at 由超时兜底回收。
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # 可靠性：一轮归档失败（LLM 抽取或成效/画像写库抛错）时**不推进水位线**，
+    # 由独立事务在这里记账并留痕，供运营发现卡住的单、支持重试。
+    # 连续失败计数：成功归档后清零；用于识别"反复失败"的单。
+    consecutive_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0
+    )
+    # 累计失败次数：只增不减，运行统计用。
+    failure_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0
+    )
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_failure_reason: Mapped[str | None] = mapped_column(String(500))

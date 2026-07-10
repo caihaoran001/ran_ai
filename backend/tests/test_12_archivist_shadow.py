@@ -307,3 +307,49 @@ async def test_archivist_routes_staff_corrections_back_to_chat_agent(db_session)
     ]
     assert {draft.draft_type for draft in drafts} == {"qa"}
     assert all(draft.status == "pending" for draft in drafts)
+
+
+@pytest.mark.asyncio
+async def test_archivist_outcome_write_failure_does_not_advance_watermark(
+    db_session, monkeypatch
+):
+    """成效/画像写库失败时：run_archivist 抛错、水位线**不推进**，防止那批信号随水位前移永久丢失。
+
+    这是可靠性核心保证——trigger 层据此回滚事务、不 commit，下轮重跑（幂等保证安全）。
+    """
+    case, msgs, progress = await _setup_case_with_messages(db_session)
+    original_watermark = progress.last_archived_message_id
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("simulated outcome write failure")
+
+    monkeypatch.setattr(
+        "app.services.archivist.graph.apply_archived_outcome", _boom
+    )
+
+    fake = FakeToolCallingModel([
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "report_outcome",
+                    "args": {
+                        "field_key": "weight_change",
+                        "event_type": "improved",
+                        "value": "瘦了2斤",
+                        "evidence_text": "这周瘦了2斤",
+                        "confidence": 0.9,
+                    },
+                    "id": "o1",
+                },
+            ],
+        )
+    ])
+
+    with pytest.raises(RuntimeError, match="simulated outcome write failure"):
+        await run_archivist(
+            db_session, service_case=case, progress=progress, chat_model=fake
+        )
+
+    # 水位线保持不动（未推进），成功清零逻辑也未触达。
+    assert progress.last_archived_message_id == original_watermark

@@ -306,28 +306,23 @@ class ArchivistGraph:
         self.result.days_processed = len(committed)
 
         # 成效/画像直写真表：用本批最后一条用户消息作 anchor（提供 message_id/occurred_at）。
-        # 包 try/except——一条坏消息不能卡死整单归档与水位线推进。
+        # **不再吞异常**：写库失败必须抛出，让 trigger 层回滚事务、不推进水位线、下轮重试，
+        # 否则成效/画像会随水位线前移而永久丢失（幂等由 apply_archived_outcome 去重保证重跑安全）。
         outcome_candidates = state.get("outcome_candidates") or []
         profile_candidates = state.get("profile_candidates") or []
         delta_user_message_ids = state.get("delta_user_message_ids") or []
         if (outcome_candidates or profile_candidates) and delta_user_message_ids:
             anchor = await self.session.get(Message, max(delta_user_message_ids))
             if anchor is not None:
-                try:
-                    result = await apply_archived_outcome(
-                        self.session,
-                        service_case=self.service_case,
-                        anchor_message=anchor,
-                        outcome_events=outcome_candidates,
-                        profile_signals=profile_candidates,
-                    )
-                    self.result.outcome_written = len(result.get("created_events") or [])
-                    self.result.profile_written = len(result.get("profile_signals") or [])
-                except Exception:
-                    logger.exception(
-                        "Archivist apply_archived_outcome failed service_case_id=%s",
-                        self.service_case.id,
-                    )
+                result = await apply_archived_outcome(
+                    self.session,
+                    service_case=self.service_case,
+                    anchor_message=anchor,
+                    outcome_events=outcome_candidates,
+                    profile_signals=profile_candidates,
+                )
+                self.result.outcome_written = len(result.get("created_events") or [])
+                self.result.profile_written = len(result.get("profile_signals") or [])
 
         correction_result = await apply_reported_corrections(
             self.session,
@@ -338,11 +333,15 @@ class ArchivistGraph:
         self.result.qa_drafts_created = correction_result.qa_drafts_created
         self.result.corrections_skipped = correction_result.skipped
 
-        # 推进水位线（即使本轮没抽到打卡也要推进，避免下轮重复处理同一批增量）
+        # 走到这里说明打卡 upsert、成效/画像写库、纠正落库全部成功（任一步抛错都不会到此，
+        # 由 trigger 层回滚、水位线保持不动）。此时才推进水位线并清零失败计数。
+        # 即使本轮没抽到打卡也要推进，避免下轮重复处理同一批增量。
         watermark_to = state.get("watermark_to")
         if watermark_to:
             self.progress.last_archived_message_id = watermark_to
         self.progress.last_archived_at = datetime.now(timezone.utc)
+        self.progress.consecutive_failures = 0
+        self.progress.last_failure_reason = None
         return {"committed": committed}
 
 

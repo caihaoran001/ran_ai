@@ -143,7 +143,14 @@ async def _evaluate(
 async def run_archivist_scan(now: datetime | None = None) -> dict:
     """扫一遍候选服务单，对到点的跑档案官。返回统计。供 scheduler 周期调用。"""
     now = now or datetime.now(timezone.utc)
-    stats = {"candidates": 0, "ran": 0, "skipped_gate": 0, "skipped_not_due": 0, "contended": 0}
+    stats = {
+        "candidates": 0,
+        "ran": 0,
+        "skipped_gate": 0,
+        "skipped_not_due": 0,
+        "contended": 0,
+        "failed": 0,
+    }
 
     async with SessionLocal() as session:
         candidate_ids = await _candidate_case_ids(session)
@@ -186,7 +193,36 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                     "Archivist ran service_case_id=%s reason=%s delta=%s days=%s contradictions=%s",
                     cid, reason, result.delta_count, result.days_processed, len(result.contradictions),
                 )
-        except Exception:
+        except Exception as exc:
+            # 归档失败：主事务已回滚（未 commit），水位线保持不动，下轮重试。
+            # 失败留痕走独立事务，避免与已回滚的事务纠缠。
             logger.exception("Archivist run failed service_case_id=%s", cid)
+            stats["failed"] += 1
+            await _record_failure(cid, reason=str(exc), now=now)
 
     return stats
+
+
+async def _record_failure(service_case_id: int, *, reason: str, now: datetime) -> None:
+    """在独立事务里累加失败计数并留痕（主事务已回滚，水位线保持不动）。
+
+    尽力而为：记账本身再失败也只记日志，不影响其余候选单继续扫描。
+    """
+    try:
+        async with SessionLocal() as session:
+            progress = await session.scalar(
+                select(ArchivistProgress).where(
+                    ArchivistProgress.service_case_id == service_case_id
+                )
+            )
+            if progress is None:
+                return
+            progress.consecutive_failures = (progress.consecutive_failures or 0) + 1
+            progress.failure_count = (progress.failure_count or 0) + 1
+            progress.last_failure_at = now
+            progress.last_failure_reason = (reason or "")[:500]
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "Archivist failure bookkeeping failed service_case_id=%s", service_case_id
+        )
