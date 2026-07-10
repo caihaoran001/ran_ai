@@ -21,3 +21,6 @@ backend/paramiko.log
 scratch/
 .codex/
 docs/wip/
+
+# 部署制品压缩包(严禁提交,曾导致公司仓库 push 413)
+*.tar.gz
