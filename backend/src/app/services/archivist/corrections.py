@@ -5,10 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.knowledge_draft import KnowledgeDraft
 from app.models.message import Message, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.services.knowledge_evolution import create_draft_candidate
@@ -19,7 +17,6 @@ from app.services.user_state_profile import apply_staff_correction_to_user_state
 class CorrectionApplyResult:
     personal_written: int = 0
     qa_drafts_created: int = 0
-    agent_rule_drafts_created: int = 0
     skipped: int = 0
 
 
@@ -66,10 +63,6 @@ async def apply_reported_corrections(
             question = _text(item.get("question"), 1000) or applicability
             draft_type = "qa"
             category = "员工纠正沉淀"
-        elif scope == "agent_behavior":
-            question = applicability
-            draft_type = "agent_rule"
-            category = "Chat Agent 回答规则"
         else:
             result.skipped += 1
             continue
@@ -99,37 +92,9 @@ async def apply_reported_corrections(
         )
         if draft is None:
             result.skipped += 1
-        elif draft_type == "qa":
-            result.qa_drafts_created += 1
         else:
-            result.agent_rule_drafts_created += 1
+            result.qa_drafts_created += 1
     return result
-
-
-async def load_approved_agent_rule_context(
-    session: AsyncSession,
-    *,
-    limit: int = 6,
-) -> str:
-    """返回经人工审核的回答规则，作为受控上下文注入 Chat Agent。"""
-
-    drafts = list(
-        await session.scalars(
-            select(KnowledgeDraft)
-            .where(
-                KnowledgeDraft.draft_type == "agent_rule",
-                KnowledgeDraft.status == "approved",
-            )
-            .order_by(KnowledgeDraft.approved_at.desc(), KnowledgeDraft.id.desc())
-            .limit(max(1, min(limit, 12)))
-        )
-    )
-    if not drafts:
-        return ""
-    return "\n".join(
-        f"- 适用场景：{_text(draft.question, 240)}；回答规则：{_text(draft.answer, 500)}"
-        for draft in drafts
-    )
 
 
 def _valid_pair(service_case_id: int, bot: Message | None, staff: Message | None) -> bool:

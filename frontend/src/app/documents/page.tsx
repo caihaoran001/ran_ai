@@ -10,7 +10,7 @@ import {
 } from "@/lib/api";
 import { AutoSendToggle } from "./auto-send-toggle";
 import { AiReplyToggle } from "./ai-reply-toggle";
-import { AgentRuleEvolutionCenter, FAQEvolutionCenter, ExcellentCaseEvolutionCenter } from "./knowledge-draft-group";
+import { FAQEvolutionCenter, ExcellentCaseEvolutionCenter } from "./knowledge-draft-group";
 import { DocumentSearchList } from "./document-search-list";
 import { ReviewConsoleLiveRefresh } from "./review-console-live-refresh";
 import { RefundReviewActions } from "./refund-review-actions";
@@ -81,7 +81,7 @@ export default async function DocumentsListPage() {
           <div className="grid grid-cols-3 divide-x divide-slate-800">
             <ReviewMetric label="退款确认" value={refundPendingCases.length} tone="risk" />
             <ReviewMetric label="文件待审核" value={pendingDocumentCount} tone="review" />
-            <ReviewMetric label="知识/规则候选" value={pendingKnowledgeDrafts.length} tone="info" />
+            <ReviewMetric label="知识候选" value={pendingKnowledgeDrafts.length} tone="info" />
           </div>
         </div>
       </section>
@@ -111,13 +111,7 @@ export default async function DocumentsListPage() {
         evolutionConfig={knowledgeEvolutionConfig}
       />
 
-      {/* 4. Chat Agent 回答规则纠正 */}
-      <AgentRuleEvolutionCenter
-        pendingDrafts={pendingKnowledgeDrafts}
-        approvedDrafts={approvedKnowledgeDrafts}
-      />
-
-      {/* 5. 优秀标杆案例库进化工作台 */}
+      {/* 4. 优秀标杆案例库进化工作台 */}
       <ExcellentCaseEvolutionCenter
         pendingDrafts={pendingKnowledgeDrafts}
         approvedDrafts={approvedKnowledgeDrafts}

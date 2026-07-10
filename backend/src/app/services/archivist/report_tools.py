@@ -84,10 +84,10 @@ class ReportProfileFactArgs(BaseModel):
 class ReportCorrectionArgs(BaseModel):
     """上报一条“助教回答后，班主任追加纠正/补充”的监督信号。"""
 
-    scope: Literal["personal", "global_knowledge", "agent_behavior"] = Field(
+    scope: Literal["personal", "global_knowledge"] = Field(
         description=(
             "personal=仅当前用户的个性化安排；global_knowledge=所有用户适用的业务事实；"
-            "agent_behavior=回答方式、语气或流程规则"
+            "回答方式或语气不属于群聊自动归档范围"
         )
     )
     summary: str = Field(description="纠正后的简短事实或规则")
@@ -98,7 +98,7 @@ class ReportCorrectionArgs(BaseModel):
     )
     corrected_answer: str | None = Field(
         default=None,
-        description="员工确认后的标准答案或回答规则；personal 可与 summary 相同",
+        description="员工确认后的事实或标准答案；personal 可与 summary 相同",
     )
     bot_message_id: int = Field(gt=0, description="被纠正的助教消息 ID")
     staff_message_id: int = Field(gt=0, description="追加纠正的班主任消息 ID")

@@ -22,7 +22,6 @@ import {
   Settings2,
   RefreshCw,
   Check,
-  ShieldCheck,
   ChevronDown,
   ChevronUp
 } from "lucide-react";
@@ -599,76 +598,6 @@ export function ExcellentCaseEvolutionCenter({
                 </div>
               )}
             </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-export function AgentRuleEvolutionCenter({
-  pendingDrafts,
-  approvedDrafts,
-}: {
-  pendingDrafts: KnowledgeDraft[];
-  approvedDrafts: KnowledgeDraft[];
-}) {
-  const pending = pendingDrafts.filter((draft) => draft.draft_type === "agent_rule");
-  const approved = approvedDrafts.filter((draft) => draft.draft_type === "agent_rule");
-
-  return (
-    <section className="panel overflow-hidden">
-      <div className="panel-header">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <ShieldCheck className="h-5 w-5 text-emerald-700" />
-            <div>
-              <h2 className="panel-title">Chat Agent 回答规则纠正</h2>
-              <p className="panel-subtitle">班主任纠正出的回答方式先经人工审核，通过后才会注入群聊 Agent。</p>
-            </div>
-          </div>
-          <div className="flex gap-2 text-xs font-semibold">
-            <span className="status-pill border-amber-200 bg-amber-50 text-amber-700">待审核 {pending.length}</span>
-            <span className="status-pill border-emerald-200 bg-emerald-50 text-emerald-700">已生效 {approved.length}</span>
-          </div>
-        </div>
-      </div>
-      <div className="panel-body grid gap-5 lg:grid-cols-2">
-        <div>
-          <h3 className="mb-3 text-sm font-bold text-slate-800">待审核</h3>
-          <div className="space-y-4">
-            {pending.map((draft) => (
-              <div key={draft.id} className="border-b border-slate-200 py-4 first:pt-0 last:border-b-0 last:pb-0">
-                {draft.evidence && (
-                  <div className="mb-3 whitespace-pre-wrap text-xs leading-5 text-slate-700">{draft.evidence}</div>
-                )}
-                <KnowledgeDraftActions
-                  draftId={draft.id}
-                  draftType="agent_rule"
-                  initialTitle={draft.title}
-                  initialQuestion={draft.question}
-                  initialAnswer={draft.answer}
-                  initialCategory={draft.category}
-                  initialTags={draft.tags}
-                />
-              </div>
-            ))}
-            {pending.length === 0 && <p className="text-sm text-slate-500">暂无待审核回答规则。</p>}
-          </div>
-        </div>
-        <div>
-          <h3 className="mb-3 text-sm font-bold text-slate-800">已生效规则</h3>
-          <div className="space-y-3">
-            {approved.map((draft) => (
-              <div key={draft.id} className="border-b border-slate-200 py-4 first:pt-0 last:border-b-0 last:pb-0">
-                <div className="text-sm font-bold text-slate-900">{draft.title}</div>
-                <div className="mt-2 text-xs text-slate-500">适用场景</div>
-                <div className="mt-1 text-sm text-slate-700">{draft.question}</div>
-                <div className="mt-2 text-xs text-slate-500">回答规则</div>
-                <div className="mt-1 text-sm text-slate-700">{draft.answer}</div>
-              </div>
-            ))}
-            {approved.length === 0 && <p className="text-sm text-slate-500">暂无已生效回答规则。</p>}
           </div>
         </div>
       </div>

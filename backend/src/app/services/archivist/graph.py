@@ -66,7 +66,6 @@ class ArchivistRunResult:
     profile_written: int = 0
     personal_corrections_written: int = 0
     qa_drafts_created: int = 0
-    agent_rule_drafts_created: int = 0
     corrections_skipped: int = 0
 
 
@@ -337,7 +336,6 @@ class ArchivistGraph:
         )
         self.result.personal_corrections_written = correction_result.personal_written
         self.result.qa_drafts_created = correction_result.qa_drafts_created
-        self.result.agent_rule_drafts_created = correction_result.agent_rule_drafts_created
         self.result.corrections_skipped = correction_result.skipped
 
         # 推进水位线（即使本轮没抽到打卡也要推进，避免下轮重复处理同一批增量）

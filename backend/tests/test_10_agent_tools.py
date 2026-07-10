@@ -10,7 +10,6 @@ from docx import Document
 
 from app.core.config import get_settings
 from app.models.checkin import Checkin
-from app.models.knowledge_draft import KnowledgeDraft
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
@@ -861,18 +860,6 @@ async def test_graph_runs_agent_tools_loop(db_session):
             generated_by_model="test",
         )
     )
-    db_session.add(
-        KnowledgeDraft(
-            draft_type="agent_rule",
-            status="approved",
-            title="先核对个性化安排",
-            question="用户询问产品使用次数时",
-            answer="先读取当前用户安排，有个人安排时以个人安排为准。",
-            content_hash=secrets.token_hex(32),
-            approved_at=datetime.now(timezone.utc),
-            published_to="agent_rule:test",
-        )
-    )
     await db_session.flush()
     model = FakeToolCallingModel(
         [
@@ -902,8 +889,6 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "【当前时间】" in model.calls[0][1].content
     assert "【隐性用户背景】" in model.calls[0][1].content
     assert "用户晚餐容易拖晚" in model.calls[0][1].content
-    assert "【已审核回答规则】" in model.calls[0][1].content
-    assert "有个人安排时以个人安排为准" in model.calls[0][1].content
     assert "现在、最近、最新、今年" in model.calls[0][1].content
     assert "短、直接、别演" in model.calls[0][0].content
     assert "让我想想" in model.calls[0][0].content

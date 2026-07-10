@@ -31,8 +31,6 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_state_profile import UserStateProfile
 from app.services.archivist.graph import run_archivist
-from app.services.archivist.corrections import load_approved_agent_rule_context
-from app.services.knowledge_evolution import approve_draft
 from app.services.profile_memory_service import load_profile_memory_context
 
 
@@ -277,20 +275,6 @@ async def test_archivist_routes_staff_corrections_back_to_chat_agent(db_session)
                         },
                         "id": "knowledge",
                     },
-                    {
-                        "name": "report_correction",
-                        "args": {
-                            "scope": "agent_behavior",
-                            "summary": "回答产品次数前先核对用户个人安排",
-                            "applicability": "用户询问产品用量或次数时",
-                            "corrected_answer": "先读取当前用户的产品安排；有个人安排时以个人安排为准。",
-                            "bot_message_id": bot.id,
-                            "staff_message_id": staff.id,
-                            "evidence_text": "班主任纠正了助教套用通用次数的回答",
-                            "confidence": 0.9,
-                        },
-                        "id": "behavior",
-                    },
                 ],
             )
         ]
@@ -310,7 +294,6 @@ async def test_archivist_routes_staff_corrections_back_to_chat_agent(db_session)
     assert f"[{staff.id}] 班主任" in prompt
     assert result.personal_corrections_written == 1
     assert result.qa_drafts_created == 1
-    assert result.agent_rule_drafts_created == 1
     assert progress.last_archived_message_id == staff.id
 
     memory = await load_profile_memory_context(db_session, service_case_id=case.id)
@@ -322,12 +305,5 @@ async def test_archivist_routes_staff_corrections_back_to_chat_agent(db_session)
         for draft in await db_session.scalars(select(KnowledgeDraft).order_by(KnowledgeDraft.id.asc()))
         if (draft.content_json or {}).get("source") == "archivist_staff_correction"
     ]
-    assert {draft.draft_type for draft in drafts} == {"qa", "agent_rule"}
+    assert {draft.draft_type for draft in drafts} == {"qa"}
     assert all(draft.status == "pending" for draft in drafts)
-    assert await load_approved_agent_rule_context(db_session) == ""
-
-    agent_rule = next(draft for draft in drafts if draft.draft_type == "agent_rule")
-    await approve_draft(db_session, agent_rule)
-    rule_context = await load_approved_agent_rule_context(db_session)
-    assert "用户询问产品用量或次数时" in rule_context
-    assert "先读取当前用户的产品安排" in rule_context

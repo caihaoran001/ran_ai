@@ -95,7 +95,7 @@ export function KnowledgeDraftActions({
         <div className="group rounded-xl bg-slate-50 border border-slate-200/60 p-3.5 shadow-3xs hover:bg-slate-50/80 hover:border-slate-300 transition-all duration-200">
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
             <Compass className="h-3.5 w-3.5 text-blue-500" />
-            <span>{draftType === "case" ? "案例背景与适用场景" : draftType === "agent_rule" ? "规则适用场景" : "用户常见提问方式"}</span>
+            <span>{draftType === "case" ? "案例背景与适用场景" : "用户常见提问方式"}</span>
           </div>
           <p className="text-sm text-slate-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-slate-200">
             {question}
@@ -106,7 +106,7 @@ export function KnowledgeDraftActions({
         <div className="group rounded-xl bg-blue-50/10 border border-blue-100/60 p-3.5 shadow-3xs hover:bg-blue-50/20 hover:border-blue-200 transition-all duration-200">
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-blue-700/60 uppercase tracking-wider mb-2">
             <Sparkles className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
-            <span>{draftType === "case" ? "金牌服务过程与改善结果" : draftType === "agent_rule" ? "Chat Agent 回答规则" : "推荐业务标准回复"}</span>
+            <span>{draftType === "case" ? "金牌服务过程与改善结果" : "推荐业务标准回复"}</span>
           </div>
           <p className="text-sm text-slate-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-blue-200">
             {answer}
@@ -158,7 +158,7 @@ export function KnowledgeDraftActions({
               ) : (
                 <>
                   <Check className="h-3.5 w-3.5" />
-                  <span>{draftType === "agent_rule" ? "审核并启用" : "批准入库"}</span>
+                  <span>批准入库</span>
                 </>
               )}
             </Button>
@@ -274,7 +274,7 @@ export function KnowledgeDraftActions({
             ) : (
               <>
                 <Check className="h-3.5 w-3.5" />
-                <span>{draftType === "agent_rule" ? "保存、审核并启用" : "保存并批准入库"}</span>
+                <span>保存并批准入库</span>
               </>
             )}
           </Button>

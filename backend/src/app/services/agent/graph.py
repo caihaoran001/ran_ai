@@ -20,7 +20,6 @@ from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.state import AgentRunContext, AgentState
 from app.services.agent.tools import build_agent_tools
 from app.services.archivist.followup import compute_gap_hint
-from app.services.archivist.corrections import load_approved_agent_rule_context
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -88,7 +87,6 @@ class RanrenAgentGraph:
 
     async def run(self, *, user_query: str, recent_messages: list[str], query_speaker: str = "用户") -> AgentReplyResult:
         memory_context = await self._build_memory_context()
-        agent_rule_context = await self._build_agent_rule_context()
         checkin_gap_hint = await self._build_checkin_gap_hint(query_speaker=query_speaker)
         initial_messages: list[BaseMessage] = [
             SystemMessage(content=AGENT_SYSTEM_PROMPT),
@@ -101,7 +99,6 @@ class RanrenAgentGraph:
                     current_time_context=_current_time_context(),
                     memory_context=memory_context,
                     checkin_gap_hint=checkin_gap_hint,
-                    agent_rule_context=agent_rule_context,
                 )
             ),
         ]
@@ -174,14 +171,6 @@ class RanrenAgentGraph:
             logger.exception(
                 "Failed to build checkin gap hint service_case_id=%s", self.context.service_case_id
             )
-            return ""
-
-    async def _build_agent_rule_context(self) -> str:
-        try:
-            async with db_session_module.SessionLocal() as session:
-                return await load_approved_agent_rule_context(session)
-        except Exception:
-            logger.exception("Failed to load approved agent rules")
             return ""
 
     def _compile(self):

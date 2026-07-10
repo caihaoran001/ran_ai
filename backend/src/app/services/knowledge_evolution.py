@@ -402,8 +402,6 @@ async def approve_draft(session: AsyncSession, draft: KnowledgeDraft) -> Knowled
         return draft
     if draft.draft_type == "case":
         target = await _publish_case(session, draft)
-    elif draft.draft_type == "agent_rule":
-        target = f"agent_rule:{draft.id}"
     else:
         faq = await create_faq(
             session,
@@ -444,7 +442,7 @@ async def create_draft_candidate(
     """创建待审核草稿，不提交事务；供知识扫描和档案官共用。"""
 
     clean_type = str(draft_type).strip().lower()
-    if clean_type not in {"qa", "case", "agent_rule"}:
+    if clean_type not in {"qa", "case"}:
         raise ValueError(f"unsupported knowledge draft type: {draft_type}")
     clean_question = _clean(question)
     clean_answer = _clean(answer)
