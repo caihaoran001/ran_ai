@@ -95,7 +95,7 @@ export function KnowledgeDraftActions({
         <div className="group rounded-xl bg-slate-50 border border-slate-200/60 p-3.5 shadow-3xs hover:bg-slate-50/80 hover:border-slate-300 transition-all duration-200">
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
             <Compass className="h-3.5 w-3.5 text-blue-500" />
-            <span>{draftType === "case" ? "案例背景与适用场景" : "用户常见提问方式"}</span>
+            <span>{draftType === "case" ? "案例背景与适用场景" : draftType === "agent_rule" ? "规则适用场景" : "用户常见提问方式"}</span>
           </div>
           <p className="text-sm text-slate-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-slate-200">
             {question}
@@ -106,7 +106,7 @@ export function KnowledgeDraftActions({
         <div className="group rounded-xl bg-blue-50/10 border border-blue-100/60 p-3.5 shadow-3xs hover:bg-blue-50/20 hover:border-blue-200 transition-all duration-200">
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-blue-700/60 uppercase tracking-wider mb-2">
             <Sparkles className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
-            <span>{draftType === "case" ? "金牌服务过程与改善结果" : "推荐业务标准回复"}</span>
+            <span>{draftType === "case" ? "金牌服务过程与改善结果" : draftType === "agent_rule" ? "Chat Agent 回答规则" : "推荐业务标准回复"}</span>
           </div>
           <p className="text-sm text-slate-700 leading-relaxed font-normal whitespace-pre-wrap pl-3.5 border-l-2 border-blue-200">
             {answer}
@@ -124,7 +124,7 @@ export function KnowledgeDraftActions({
               {tags.split(/[、,，]/).map((item) => item.trim()).filter(Boolean).map((tag, idx) => (
                 <span 
                   key={idx} 
-                  className="rounded-full bg-slate-100 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-150 px-2.5 py-0.5 text-2xs font-semibold text-slate-600 border border-slate-200/60 transition-all duration-150 cursor-default"
+                  className="rounded-full bg-slate-100 px-2.5 py-0.5 text-2xs font-semibold text-slate-700 border border-slate-200/60 cursor-default"
                 >
                   #{tag}
                 </span>
@@ -158,13 +158,13 @@ export function KnowledgeDraftActions({
               ) : (
                 <>
                   <Check className="h-3.5 w-3.5" />
-                  <span>批准入库</span>
+                  <span>{draftType === "agent_rule" ? "审核并启用" : "批准入库"}</span>
                 </>
               )}
             </Button>
             <Button
               type="button"
-              className="text-xs border border-slate-200 bg-white text-slate-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 transition-all duration-205 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
+              className="text-xs border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 hover:border-rose-300 transition-all duration-205 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
               onClick={reject}
               disabled={busy}
             >
@@ -274,13 +274,13 @@ export function KnowledgeDraftActions({
             ) : (
               <>
                 <Check className="h-3.5 w-3.5" />
-                <span>保存并批准入库</span>
+                <span>{draftType === "agent_rule" ? "保存、审核并启用" : "保存并批准入库"}</span>
               </>
             )}
           </Button>
           <Button
             type="button"
-            className="text-xs border border-slate-200 bg-white text-slate-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 transition-all duration-200 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
+            className="text-xs border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 hover:border-rose-300 transition-all duration-200 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
             onClick={reject}
             disabled={busy}
           >
@@ -637,8 +637,8 @@ function KnowledgeFAQRow({
   return (
     <div className={`rounded-xl border p-4 shadow-3xs transition-all duration-200 ${
       faq.status === "active" 
-        ? "border-l-4 border-l-emerald-500 border-slate-200 bg-white hover:border-slate-300" 
-        : "border-l-4 border-l-slate-300 border-slate-200 bg-slate-50/40 opacity-80 hover:opacity-100 hover:border-slate-300"
+        ? "border-emerald-300 bg-white hover:border-emerald-400"
+        : "border-slate-200 bg-slate-50/40 opacity-80 hover:opacity-100 hover:border-slate-300"
     }`}>
       {/* Row Header Info */}
       <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -787,7 +787,7 @@ function KnowledgeFAQRow({
               {faq.tags.map((tag, idx) => (
                 <span 
                   key={idx} 
-                  className="rounded bg-slate-100 hover:bg-blue-50/50 px-2 py-0.5 text-2xs font-semibold text-slate-500 border border-slate-200/40 transition-all duration-150 cursor-default"
+                  className="rounded bg-slate-100 px-2 py-0.5 text-2xs font-semibold text-slate-700 border border-slate-200/40 cursor-default"
                 >
                   #{tag}
                 </span>

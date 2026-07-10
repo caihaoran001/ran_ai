@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -20,11 +20,13 @@ from pydantic import BaseModel, Field
 REPORT_CHECKIN = "report_checkin"
 REPORT_OUTCOME = "report_outcome"
 REPORT_PROFILE_FACT = "report_profile_fact"
+REPORT_CORRECTION = "report_correction"
 
 # report_* 工具对应 collector 的桶名。
 KIND_CHECKIN = "checkin"
 KIND_OUTCOME = "outcome"
 KIND_PROFILE = "profile"
+KIND_CORRECTION = "correction"
 
 
 class ReportCheckinArgs(BaseModel):
@@ -79,11 +81,37 @@ class ReportProfileFactArgs(BaseModel):
     confidence: float = Field(default=0.0, description="0.0-1.0 置信度")
 
 
+class ReportCorrectionArgs(BaseModel):
+    """上报一条“助教回答后，班主任追加纠正/补充”的监督信号。"""
+
+    scope: Literal["personal", "global_knowledge", "agent_behavior"] = Field(
+        description=(
+            "personal=仅当前用户的个性化安排；global_knowledge=所有用户适用的业务事实；"
+            "agent_behavior=回答方式、语气或流程规则"
+        )
+    )
+    summary: str = Field(description="纠正后的简短事实或规则")
+    applicability: str = Field(description="这条纠正在什么用户/问题/场景下适用")
+    question: str | None = Field(
+        default=None,
+        description="global_knowledge 时填写可复用的标准问题；其他类型可留空",
+    )
+    corrected_answer: str | None = Field(
+        default=None,
+        description="员工确认后的标准答案或回答规则；personal 可与 summary 相同",
+    )
+    bot_message_id: int = Field(gt=0, description="被纠正的助教消息 ID")
+    staff_message_id: int = Field(gt=0, description="追加纠正的班主任消息 ID")
+    evidence_text: str = Field(description="助教原话与班主任纠正原话的简短证据")
+    confidence: float = Field(default=0.0, description="0.0-1.0 置信度")
+
+
 # 工具名 → (Pydantic 模型, collector 桶名)。extract_agent 用它校验入参并归桶。
 REPORT_SPECS: dict[str, tuple[type[BaseModel], str]] = {
     REPORT_CHECKIN: (ReportCheckinArgs, KIND_CHECKIN),
     REPORT_OUTCOME: (ReportOutcomeArgs, KIND_OUTCOME),
     REPORT_PROFILE_FACT: (ReportProfileFactArgs, KIND_PROFILE),
+    REPORT_CORRECTION: (ReportCorrectionArgs, KIND_CORRECTION),
 }
 
 
@@ -95,7 +123,7 @@ def _noop(**_: Any) -> str:
 def build_report_tools(kinds: list[str]) -> list[StructuredTool]:
     """按启用的 kinds 构建 report-only 工具（仅供 bind_tools 让 LLM 看到 schema）。
 
-    kinds 取值：checkin / outcome / profile。
+    kinds 取值：checkin / outcome / profile / correction。
     """
     tools: list[StructuredTool] = []
     specs = [
@@ -106,6 +134,12 @@ def build_report_tools(kinds: list[str]) -> list[StructuredTool]:
             KIND_PROFILE,
             ReportProfileFactArgs,
             "上报一条长期画像信号（稳定偏好/习惯）。",
+        ),
+        (
+            REPORT_CORRECTION,
+            KIND_CORRECTION,
+            ReportCorrectionArgs,
+            "上报一条助教回答后由班主任追加的纠正或补充。",
         ),
     ]
     for name, kind, args_model, desc in specs:

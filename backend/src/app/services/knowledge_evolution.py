@@ -241,27 +241,24 @@ class KnowledgeEvolutionService:
             if not question or not answer:
                 skipped += 1
                 continue
-            content_hash = _content_hash(draft_type, question, answer)
-            if await _has_draft(session, content_hash):
-                skipped += 1
-                continue
-            draft = KnowledgeDraft(
+            draft = await create_draft_candidate(
+                session,
                 draft_type=draft_type,
-                status="pending",
-                title=title[:200],
+                title=title,
                 question=question,
                 answer=answer,
                 category=_clean(item.get("category"))[:100] or None,
                 tags=_string_list(item.get("tags")),
                 reason=_clean(item.get("reason")) or None,
                 evidence=_clean(item.get("evidence")) or None,
-                sanitized_text=conversation[:8000],
+                sanitized_text=conversation,
                 source_message_ids=_message_ids(item.get("source_message_ids"), messages),
                 content_json={**item, **scan_context},
-                content_hash=content_hash,
             )
-            session.add(draft)
-            created += 1
+            if draft is None:
+                skipped += 1
+            else:
+                created += 1
         await session.commit()
         return created, skipped
 
@@ -405,6 +402,8 @@ async def approve_draft(session: AsyncSession, draft: KnowledgeDraft) -> Knowled
         return draft
     if draft.draft_type == "case":
         target = await _publish_case(session, draft)
+    elif draft.draft_type == "agent_rule":
+        target = f"agent_rule:{draft.id}"
     else:
         faq = await create_faq(
             session,
@@ -424,6 +423,53 @@ async def approve_draft(session: AsyncSession, draft: KnowledgeDraft) -> Knowled
     await session.commit()
     await session.refresh(draft)
     get_knowledge_base.cache_clear()
+    return draft
+
+
+async def create_draft_candidate(
+    session: AsyncSession,
+    *,
+    draft_type: str,
+    title: str,
+    question: str,
+    answer: str,
+    category: str | None = None,
+    tags: list[str] | None = None,
+    reason: str | None = None,
+    evidence: str | None = None,
+    sanitized_text: str | None = None,
+    source_message_ids: list[int] | None = None,
+    content_json: dict[str, Any] | None = None,
+) -> KnowledgeDraft | None:
+    """创建待审核草稿，不提交事务；供知识扫描和档案官共用。"""
+
+    clean_type = str(draft_type).strip().lower()
+    if clean_type not in {"qa", "case", "agent_rule"}:
+        raise ValueError(f"unsupported knowledge draft type: {draft_type}")
+    clean_question = _clean(question)
+    clean_answer = _clean(answer)
+    if not clean_question or not clean_answer:
+        return None
+    content_hash = _content_hash(clean_type, clean_question, clean_answer)
+    if await _has_draft(session, content_hash):
+        return None
+    draft = KnowledgeDraft(
+        draft_type=clean_type,
+        status="pending",
+        title=(_clean(title) or clean_question[:80] or "知识库候选")[:200],
+        question=clean_question,
+        answer=clean_answer,
+        category=_clean(category)[:100] or None,
+        tags=_string_list(tags),
+        reason=_clean(reason) or None,
+        evidence=_clean(evidence) or None,
+        sanitized_text=_clean(sanitized_text)[:8000] or None,
+        source_message_ids=_positive_ids(source_message_ids),
+        content_json=content_json or {},
+        content_hash=content_hash,
+    )
+    session.add(draft)
+    await session.flush()
     return draft
 
 
@@ -664,6 +710,18 @@ def _message_ids(value: object, messages: list[Message]) -> list[int]:
         if ids:
             return ids[:20]
     return [item.id for item in messages[-20:]]
+
+
+def _positive_ids(values: list[int] | None) -> list[int]:
+    result: list[int] = []
+    for item in values or []:
+        try:
+            parsed = int(item)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            result.append(parsed)
+    return result[:20]
 
 
 def _content_hash(draft_type: str, question: str, answer: str) -> str:

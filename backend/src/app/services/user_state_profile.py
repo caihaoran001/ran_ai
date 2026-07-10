@@ -25,6 +25,7 @@ STATE_DOMAIN_LABELS: dict[str, str] = {
     "body_feedback": "体感反馈",
     "risk_profile": "风险信息",
     "outcome_changes": "成效变化",
+    "staff_guidance": "班主任确认的个性化安排",
 }
 
 PROFILE_SIGNAL_DOMAIN_LABELS = {
@@ -279,6 +280,44 @@ async def apply_profile_signals_to_user_state(
     return state_profile
 
 
+async def apply_staff_correction_to_user_state(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    staff_message: Message,
+    summary: str,
+    evidence: str,
+    confidence: float,
+) -> UserStateProfile | None:
+    """把班主任确认的个人安排写进当前用户背景，只影响本服务单。"""
+
+    summary = summary.strip()
+    evidence = evidence.strip()
+    confidence = _float(confidence)
+    if not summary or not evidence or confidence < 0.7:
+        return None
+    state_profile = await get_or_create_user_state_profile(session, service_case.id)
+    state = _ensure_state_shape(state_profile.state_json)
+    _update_domain_from_event(
+        state,
+        "staff_guidance",
+        field_key=f"staff_correction_{staff_message.id}",
+        value=summary,
+        event_type="staff_correction",
+        evidence=evidence,
+        source="archivist_staff_correction",
+        occurred_at=_datetime_iso(staff_message.created_at),
+        confidence=confidence,
+        message_id=staff_message.id,
+        milestone="correction",
+    )
+    state_profile.state_json = state
+    flag_modified(state_profile, "state_json")
+    state_profile.summary = _state_summary(state)
+    state_profile.source = "dynamic"
+    return state_profile
+
+
 async def get_or_create_user_state_profile(
     session: AsyncSession,
     service_case_id: int,
@@ -431,6 +470,7 @@ def _state_summary(state: dict[str, Any]) -> str:
         "product_usage",
         "body_feedback",
         "outcome_changes",
+        "staff_guidance",
         "risk_profile",
     ):
         domain = domains.get(key) if isinstance(domains.get(key), dict) else {}

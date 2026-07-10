@@ -419,6 +419,35 @@ async def test_trigger_gate_no_worthy(db_session):
     assert should is False and reason == "gate_no_worthy"
 
 
+@pytest.mark.asyncio
+async def test_trigger_staff_message_as_correction_candidate(db_session):
+    case = await _case(db_session)
+    base = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+    staff = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        content="这个用户不是三次，是个性化五次。",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {"sender_type": "staff"}},
+        created_at=base,
+    )
+    db_session.add(staff)
+    await db_session.flush()
+
+    should, reason = await _evaluate(
+        db_session,
+        service_case_id=case.id,
+        watermark=0,
+        last_archived_at=None,
+        now=base + timedelta(seconds=KEY_INFO_SETTLE_SECONDS + 1),
+    )
+    assert should is True
+    assert "fast_key" in reason
+
+
 # ---------------------------------------------------------------------------
 # 日常搭便车：compute_gap_hint（今日待补 + 退避）
 # ---------------------------------------------------------------------------

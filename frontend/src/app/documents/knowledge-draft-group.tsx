@@ -22,6 +22,7 @@ import {
   Settings2,
   RefreshCw,
   Check,
+  ShieldCheck,
   ChevronDown,
   ChevronUp
 } from "lucide-react";
@@ -44,8 +45,8 @@ export function FAQEvolutionCenter({
   const [showConfig, setShowConfig] = useState(false);
   const router = useRouter();
 
-  const qaPending = pendingDrafts.filter((d) => d.draft_type !== "case");
-  const qaApproved = approvedDrafts.filter((d) => d.draft_type !== "case");
+  const qaPending = pendingDrafts.filter((d) => d.draft_type === "qa");
+  const qaApproved = approvedDrafts.filter((d) => d.draft_type === "qa");
 
   const [config, setConfig] = useState(evolutionConfig);
   const [saveBusy, setSaveBusy] = useState(false);
@@ -91,7 +92,7 @@ export function FAQEvolutionCenter({
               <Settings2 className="h-3.5 w-3.5 text-slate-500" />
               <span>FAQ 自动提取配置</span>
               <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold border ${
-                config.enabled ? "bg-emerald-50 text-emerald-700 border-emerald-100/60" : "bg-slate-100 text-slate-500 border-slate-200/60"
+                config.enabled ? "pill-ok" : "pill-neutral"
               }`}>
                 {config.enabled ? "● 自动运行中" : "○ 已暂停"}
               </span>
@@ -199,7 +200,7 @@ export function FAQEvolutionCenter({
               }`}
             >
               待审核参考问答
-              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "pending" ? "bg-blue-50 text-blue-600" : "bg-slate-100 text-slate-500"}`}>
+              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "pending" ? "pill-info" : "pill-neutral"}`}>
                 {qaPending.length}
               </span>
               {activeTab === "pending" && (
@@ -216,7 +217,7 @@ export function FAQEvolutionCenter({
               }`}
             >
               已审核历史
-              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "approved" ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
+              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "approved" ? "pill-ok" : "pill-neutral"}`}>
                 {qaApproved.length}
               </span>
               {activeTab === "approved" && (
@@ -246,7 +247,7 @@ export function FAQEvolutionCenter({
                       </div>
                       
                       {draft.reason && (
-                        <div className="mb-3 text-xs text-slate-500 bg-amber-50/40 border border-amber-100/60 p-2.5 rounded-lg">
+                        <div className="mb-3 text-xs text-amber-950 bg-amber-50/40 border border-amber-100/60 p-2.5 rounded-lg">
                           <span className="font-semibold text-amber-800">推荐原因：</span>
                           {draft.reason}
                         </div>
@@ -368,7 +369,7 @@ export function ExcellentCaseEvolutionCenter({
               <Settings2 className="h-3.5 w-3.5 text-cyan-700" />
               <span>案例自动提取配置</span>
               <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold border ${
-                config.enabled ? "bg-emerald-50 text-emerald-700 border-emerald-100/60" : "bg-slate-100 text-slate-500 border-slate-200/60"
+                config.enabled ? "pill-ok" : "pill-neutral"
               }`}>
                 {config.enabled ? "● 自动运行中" : "○ 已暂停"}
               </span>
@@ -469,11 +470,11 @@ export function ExcellentCaseEvolutionCenter({
               }`}
             >
               待审核标杆案例
-              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "pending" ? "bg-purple-50 text-purple-600" : "bg-slate-100 text-slate-500"}`}>
+              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "pending" ? "pill-info" : "pill-neutral"}`}>
                 {casePending.length}
               </span>
               {activeTab === "pending" && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-600 rounded-full" />
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-cyan-700 rounded-full" />
               )}
             </button>
             <button
@@ -486,7 +487,7 @@ export function ExcellentCaseEvolutionCenter({
               }`}
             >
               已审核历史
-              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "approved" ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
+              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "approved" ? "pill-ok" : "pill-neutral"}`}>
                 {caseApproved.length}
               </span>
               {activeTab === "approved" && (
@@ -516,7 +517,7 @@ export function ExcellentCaseEvolutionCenter({
                       </div>
                       
                       {draft.reason && (
-                        <div className="mb-3 text-xs text-slate-500 bg-amber-50/40 border border-amber-100/60 p-2.5 rounded-lg">
+                        <div className="mb-3 text-xs text-amber-950 bg-amber-50/40 border border-amber-100/60 p-2.5 rounded-lg">
                           <span className="font-semibold text-amber-800">入选原因：</span>
                           {draft.reason}
                         </div>
@@ -598,6 +599,76 @@ export function ExcellentCaseEvolutionCenter({
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function AgentRuleEvolutionCenter({
+  pendingDrafts,
+  approvedDrafts,
+}: {
+  pendingDrafts: KnowledgeDraft[];
+  approvedDrafts: KnowledgeDraft[];
+}) {
+  const pending = pendingDrafts.filter((draft) => draft.draft_type === "agent_rule");
+  const approved = approvedDrafts.filter((draft) => draft.draft_type === "agent_rule");
+
+  return (
+    <section className="panel overflow-hidden">
+      <div className="panel-header">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <ShieldCheck className="h-5 w-5 text-emerald-700" />
+            <div>
+              <h2 className="panel-title">Chat Agent 回答规则纠正</h2>
+              <p className="panel-subtitle">班主任纠正出的回答方式先经人工审核，通过后才会注入群聊 Agent。</p>
+            </div>
+          </div>
+          <div className="flex gap-2 text-xs font-semibold">
+            <span className="status-pill border-amber-200 bg-amber-50 text-amber-700">待审核 {pending.length}</span>
+            <span className="status-pill border-emerald-200 bg-emerald-50 text-emerald-700">已生效 {approved.length}</span>
+          </div>
+        </div>
+      </div>
+      <div className="panel-body grid gap-5 lg:grid-cols-2">
+        <div>
+          <h3 className="mb-3 text-sm font-bold text-slate-800">待审核</h3>
+          <div className="space-y-4">
+            {pending.map((draft) => (
+              <div key={draft.id} className="border-b border-slate-200 py-4 first:pt-0 last:border-b-0 last:pb-0">
+                {draft.evidence && (
+                  <div className="mb-3 whitespace-pre-wrap text-xs leading-5 text-slate-700">{draft.evidence}</div>
+                )}
+                <KnowledgeDraftActions
+                  draftId={draft.id}
+                  draftType="agent_rule"
+                  initialTitle={draft.title}
+                  initialQuestion={draft.question}
+                  initialAnswer={draft.answer}
+                  initialCategory={draft.category}
+                  initialTags={draft.tags}
+                />
+              </div>
+            ))}
+            {pending.length === 0 && <p className="text-sm text-slate-500">暂无待审核回答规则。</p>}
+          </div>
+        </div>
+        <div>
+          <h3 className="mb-3 text-sm font-bold text-slate-800">已生效规则</h3>
+          <div className="space-y-3">
+            {approved.map((draft) => (
+              <div key={draft.id} className="border-b border-slate-200 py-4 first:pt-0 last:border-b-0 last:pb-0">
+                <div className="text-sm font-bold text-slate-900">{draft.title}</div>
+                <div className="mt-2 text-xs text-slate-500">适用场景</div>
+                <div className="mt-1 text-sm text-slate-700">{draft.question}</div>
+                <div className="mt-2 text-xs text-slate-500">回答规则</div>
+                <div className="mt-1 text-sm text-slate-700">{draft.answer}</div>
+              </div>
+            ))}
+            {approved.length === 0 && <p className="text-sm text-slate-500">暂无已生效回答规则。</p>}
           </div>
         </div>
       </div>

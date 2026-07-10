@@ -20,9 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.archivist_progress import ArchivistProgress
-from app.models.message import Message, MessageSenderType
+from app.models.message import Message, MessagePurpose, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.services.archivist.checkin_projection import CheckinUpsertResult, upsert_checkin
+from app.services.archivist.corrections import apply_reported_corrections
 from app.services.archivist.extract_agent import run_extract_agent
 from app.services.outcome_engine import apply_archived_outcome
 
@@ -38,15 +39,17 @@ INITIAL_BACKFILL_DAYS = 3
 class ArchivistState(TypedDict, total=False):
     watermark_from: int | None
     watermark_to: int | None
-    # {date_iso: [{"id": int, "text": str}]}
+    # {date_iso: [{"id": int, "text": str, "role": str, "sender_type": str}]}
     delta_by_date: dict[str, list[dict]]
-    # 本轮增量涉及的全部用户消息 id（扁平，供影子对账按 message_id 取热路径已写事件）
+    # 本轮推动水位线的用户/员工入站消息，以及成效 anchor 专用用户消息。
     delta_message_ids: list[int]
+    delta_user_message_ids: list[int]
     # {date_iso: {"fields": {...}, "evidence_ids": [int]}}
     day_candidates: dict[str, dict]
     # Agent 抽出的成效事件/画像信号（累计跨整批，commit 里一次性写真表）
     outcome_candidates: list[dict]
     profile_candidates: list[dict]
+    correction_candidates: list[dict]
     committed: list[dict]
 
 
@@ -61,6 +64,10 @@ class ArchivistRunResult:
     # 成效/画像直写真表结果（Agent 抽出并落库的条数）
     outcome_written: int = 0
     profile_written: int = 0
+    personal_corrections_written: int = 0
+    qa_drafts_created: int = 0
+    agent_rule_drafts_created: int = 0
+    corrections_skipped: int = 0
 
 
 def _sh_date(dt: datetime) -> date:
@@ -109,47 +116,122 @@ class ArchivistGraph:
     # --- 节点 ---
 
     async def _load_context(self, state: ArchivistState) -> dict[str, Any]:
-        """读水位线，拉水位线之后的用户增量消息，按上海自然日分组。"""
+        """读水位线，拉用户/员工增量，并带上其间助教消息作为纠正上下文。"""
         watermark = self.progress.last_archived_message_id or 0
-        rows = (
+        delta_rows = (
             await self.session.execute(
                 select(Message)
                 .where(
                     Message.service_case_id == self.service_case.id,
                     Message.id > watermark,
-                    Message.sender_type == MessageSenderType.USER,
+                    Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
+                    Message.purpose == MessagePurpose.CHAT,
                 )
                 .order_by(Message.id.asc())
             )
         ).scalars().all()
 
+        watermark_to = max((m.id for m in delta_rows), default=watermark)
+        if watermark_to > watermark:
+            rows = (
+                await self.session.execute(
+                    select(Message)
+                    .where(
+                        Message.service_case_id == self.service_case.id,
+                        Message.id > watermark,
+                        Message.id <= watermark_to,
+                        Message.sender_type.in_(
+                            [MessageSenderType.USER, MessageSenderType.STAFF, MessageSenderType.BOT]
+                        ),
+                        Message.purpose == MessagePurpose.CHAT,
+                    )
+                    .order_by(Message.id.asc())
+                )
+            ).scalars().all()
+        else:
+            rows = []
+
+        # 员工消息可能晚于上一轮水位线，而被纠正的助教回复位于水位线之前。
+        # 仅补最近 48 小时内、员工消息之前的最后一条助教回复作为有界上下文；是否构成纠正仍由模型判断。
+        staff_rows = [m for m in delta_rows if m.sender_type == MessageSenderType.STAFF]
+        if staff_rows:
+            first_staff = min(staff_rows, key=lambda item: item.id)
+            if not any(m.sender_type == MessageSenderType.BOT and m.id < first_staff.id for m in rows):
+                staff_at = first_staff.created_at or datetime.now(timezone.utc)
+                context_bot = await self.session.scalar(
+                    select(Message)
+                    .where(
+                        Message.service_case_id == self.service_case.id,
+                        Message.id < first_staff.id,
+                        Message.sender_type == MessageSenderType.BOT,
+                        Message.purpose == MessagePurpose.CHAT,
+                        Message.created_at >= staff_at - timedelta(hours=48),
+                    )
+                    .order_by(Message.id.desc())
+                    .limit(1)
+                )
+                if context_bot is not None:
+                    rows.append(context_bot)
+                    rows.sort(key=lambda item: item.id)
+
         delta_by_date: dict[str, list[dict]] = {}
-        delta_message_ids: list[int] = []
-        watermark_to = watermark
+        delta_message_ids = [m.id for m in delta_rows]
+        delta_user_message_ids = [m.id for m in delta_rows if m.sender_type == MessageSenderType.USER]
+        role_labels = {
+            MessageSenderType.USER: "用户",
+            MessageSenderType.STAFF: "班主任",
+            MessageSenderType.BOT: "助教",
+        }
         for m in rows:
-            watermark_to = max(watermark_to, m.id)
             if not m.created_at:
                 continue
             aj = m.analysis_json if isinstance(m.analysis_json, dict) else {}
             # 图片解析失败的消息内容只是占位符（"用户发来一张图片（图片解析失败）。"），
             # 无信息量，跳过不喂抽取。成功解析的图片描述已写进 content，正常纳入。
-            if aj.get("image_parse_status") == "failed":
+            if m.sender_type == MessageSenderType.USER and aj.get("image_parse_status") == "failed":
                 continue
             text = (m.content or "").strip()
             if not text:
                 continue
             key = _sh_date(m.created_at).isoformat()
-            delta_by_date.setdefault(key, []).append({"id": m.id, "text": text})
-            delta_message_ids.append(m.id)
+            delta_by_date.setdefault(key, []).append(
+                {
+                    "id": m.id,
+                    "text": text,
+                    "role": role_labels[m.sender_type],
+                    "sender_type": m.sender_type.value,
+                }
+            )
+
+        # 跨午夜的“助教回复→班主任纠正”仍需在同一次 extract 输入中出现。
+        bot_rows = [m for m in rows if m.sender_type == MessageSenderType.BOT]
+        for staff in staff_rows:
+            preceding = [bot for bot in bot_rows if bot.id < staff.id]
+            if not preceding or not staff.created_at:
+                continue
+            bot = max(preceding, key=lambda item: item.id)
+            staff_key = _sh_date(staff.created_at).isoformat()
+            if any(item["id"] == bot.id for item in delta_by_date.get(staff_key, [])):
+                continue
+            delta_by_date.setdefault(staff_key, []).insert(
+                0,
+                {
+                    "id": bot.id,
+                    "text": (bot.content or "").strip(),
+                    "role": "助教",
+                    "sender_type": bot.sender_type.value,
+                },
+            )
 
         self.result.watermark_from = watermark or None
         self.result.watermark_to = watermark_to or None
-        self.result.delta_count = len(rows)
+        self.result.delta_count = len(delta_rows)
         return {
             "watermark_from": watermark or None,
             "watermark_to": watermark_to or None,
             "delta_by_date": delta_by_date,
             "delta_message_ids": delta_message_ids,
+            "delta_user_message_ids": delta_user_message_ids,
         }
 
     async def _extract(self, state: ArchivistState) -> dict[str, Any]:
@@ -162,36 +244,39 @@ class ArchivistGraph:
         day_candidates: dict[str, dict] = {}
         outcome_candidates: list[dict] = []
         profile_candidates: list[dict] = []
+        correction_candidates: list[dict] = []
 
         for date_iso, msgs in delta_by_date.items():
-            content = "\n".join(f"- {m['text']}" for m in msgs)
+            content = "\n".join(f"[{m['id']}] {m['role']}：{m['text']}" for m in msgs)
             collector = await run_extract_agent(
                 content=content,
                 service_case_id=self.service_case.id,
-                enabled_kinds=["checkin", "outcome", "profile"],
+                enabled_kinds=["checkin", "outcome", "profile", "correction"],
                 chat_model=self.chat_model,
                 settings=self.settings,
             )
             fields = collector.get("checkin") or {}
             outcome_candidates.extend(collector.get("outcome") or [])
             profile_candidates.extend(collector.get("profile") or [])
+            correction_candidates.extend(collector.get("correction") or [])
             if fields:
                 day_candidates[date_iso] = {
                     "fields": fields,
-                    "evidence_ids": [m["id"] for m in msgs],
+                    "evidence_ids": [m["id"] for m in msgs if m["sender_type"] == "user"],
                 }
         return {
             "day_candidates": day_candidates,
             "outcome_candidates": outcome_candidates,
             "profile_candidates": profile_candidates,
+            "correction_candidates": correction_candidates,
         }
 
     async def _classify(self, state: ArchivistState) -> dict[str, Any]:
-        """P0 预留：全局知识 vs 个人处方分流、矛盾检测在后续阶段接入。当前透传。"""
+        """候选类型由 report 工具 schema 收紧；更复杂的跨候选分类仍预留在此节点。"""
         return {}
 
     async def _guardrail(self, state: ArchivistState) -> dict[str, Any]:
-        """P0：打卡字段无受保护字段风险，仅剔除空候选（受保护字段/知识发布护栏后续阶段接入）。"""
+        """剔除空打卡；纠正候选在 commit 中校验消息角色、服务单归属和置信度。"""
         candidates = state.get("day_candidates") or {}
         kept = {k: v for k, v in candidates.items() if v.get("fields")}
         return {"day_candidates": kept}
@@ -225,9 +310,9 @@ class ArchivistGraph:
         # 包 try/except——一条坏消息不能卡死整单归档与水位线推进。
         outcome_candidates = state.get("outcome_candidates") or []
         profile_candidates = state.get("profile_candidates") or []
-        delta_message_ids = state.get("delta_message_ids") or []
-        if (outcome_candidates or profile_candidates) and delta_message_ids:
-            anchor = await self.session.get(Message, max(delta_message_ids))
+        delta_user_message_ids = state.get("delta_user_message_ids") or []
+        if (outcome_candidates or profile_candidates) and delta_user_message_ids:
+            anchor = await self.session.get(Message, max(delta_user_message_ids))
             if anchor is not None:
                 try:
                     result = await apply_archived_outcome(
@@ -244,6 +329,16 @@ class ArchivistGraph:
                         "Archivist apply_archived_outcome failed service_case_id=%s",
                         self.service_case.id,
                     )
+
+        correction_result = await apply_reported_corrections(
+            self.session,
+            service_case=self.service_case,
+            corrections=state.get("correction_candidates") or [],
+        )
+        self.result.personal_corrections_written = correction_result.personal_written
+        self.result.qa_drafts_created = correction_result.qa_drafts_created
+        self.result.agent_rule_drafts_created = correction_result.agent_rule_drafts_created
+        self.result.corrections_skipped = correction_result.skipped
 
         # 推进水位线（即使本轮没抽到打卡也要推进，避免下轮重复处理同一批增量）
         watermark_to = state.get("watermark_to")
@@ -267,7 +362,7 @@ async def get_or_create_progress(
         seed = await session.scalar(
             select(func.max(Message.id)).where(
                 Message.service_case_id == service_case_id,
-                Message.sender_type == MessageSenderType.USER,
+                Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
                 Message.created_at < cutoff,
             )
         )

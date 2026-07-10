@@ -40,7 +40,9 @@ def _aware(dt: datetime | None) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
-def _is_worthy(analysis_json: object) -> bool:
+def _is_worthy(analysis_json: object, sender_type: MessageSenderType) -> bool:
+    if sender_type == MessageSenderType.STAFF:
+        return True
     if not isinstance(analysis_json, dict):
         return False
     plan = analysis_json.get("archive_plan")
@@ -51,8 +53,10 @@ def _is_worthy(analysis_json: object) -> bool:
     return analysis_json.get("image_parse_status") == "ok"
 
 
-def _has_key_kind(analysis_json: object) -> bool:
+def _has_key_kind(analysis_json: object, sender_type: MessageSenderType = MessageSenderType.USER) -> bool:
     """本条是否含"关键信息"(可结构化打卡/稳定个人事实/阶段成效) —— 命中即走 Fast 快触发。"""
+    if sender_type == MessageSenderType.STAFF:
+        return True
     if not isinstance(analysis_json, dict):
         return False
     plan = analysis_json.get("archive_plan")
@@ -76,7 +80,7 @@ async def _candidate_case_ids(session: AsyncSession) -> list[int]:
         .where(
             ServiceCase.deleted_at.is_(None),
             Message.service_case_id.is_not(None),
-            Message.sender_type == MessageSenderType.USER,
+            Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
             Message.id > func.coalesce(ArchivistProgress.last_archived_message_id, 0),
         )
         .group_by(Message.service_case_id)
@@ -95,10 +99,10 @@ async def _evaluate(
     """闸门 + A/B/C 判定。返回 (是否触发, 原因)。"""
     rows = (
         await session.execute(
-            select(Message.created_at, Message.analysis_json)
+            select(Message.created_at, Message.analysis_json, Message.sender_type)
             .where(
                 Message.service_case_id == service_case_id,
-                Message.sender_type == MessageSenderType.USER,
+                Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
                 Message.id > watermark,
             )
             .order_by(Message.id.asc())
@@ -107,15 +111,15 @@ async def _evaluate(
     if not rows:
         return False, "no_delta"
 
-    worthy_any = any(_is_worthy(aj) for _, aj in rows)
+    worthy_any = any(_is_worthy(aj, sender_type) for _, aj, sender_type in rows)
     if not worthy_any:
         return False, "gate_no_worthy"
 
-    created_times = [_aware(ct) for ct, _ in rows if ct is not None]
+    created_times = [_aware(ct) for ct, _, _ in rows if ct is not None]
     count = len(rows)
     last_user_at = max(created_times) if created_times else None
     first_user_at = min(created_times) if created_times else None
-    key_any = any(_has_key_kind(aj) for _, aj in rows)
+    key_any = any(_has_key_kind(aj, sender_type) for _, aj, sender_type in rows)
 
     # Fast：含关键信息(打卡/个人事实/成效)且用户已停说 KEY_INFO_SETTLE_SECONDS —— 3 分钟去抖，
     # 把连发的几条批一次抽，既及时(≈3min 而非旧的 2h)又不至于每条都抽。

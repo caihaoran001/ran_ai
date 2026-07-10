@@ -137,6 +137,7 @@ def _memory_from_state(state_json: object) -> tuple[list[str], list[str], list[s
         ("body_feedback", "近期体感"),
         ("product_usage", "产品执行"),
         ("outcome_changes", "成效变化"),
+        ("staff_guidance", "班主任确认安排"),
     ):
         current_state.extend(_domain_lines(domains.get(key), label=label, action_focus=(key == "action_focus")))
     warnings = _domain_lines(domains.get("risk_profile"), label="风险信息")
