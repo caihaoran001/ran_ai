@@ -90,7 +90,7 @@ async def _ingest_and_analyze(db_session, case_id, group_id, content, mock_ai):
     return insight
 
 
-def test_format_chat_history_line_labels_bot_as_ai_assistant():
+def test_format_chat_history_line_labels_bot_as_assistant():
     message = Message(
         service_case_id=1,
         group_id="test-group",
@@ -105,7 +105,7 @@ def test_format_chat_history_line_labels_bot_as_ai_assistant():
 
     line = _format_chat_history_line(message)
 
-    assert "AI助教: 排时间线是我刚才整理的" in line
+    assert "助教: 排时间线是我刚才整理的" in line
     assert "营养师:" not in line
 
 
@@ -500,7 +500,7 @@ async def test_recent_chat_history_includes_document_delivery(db_session, mock_m
     engine = RanrenAIEngine(mock_message_channel)
     lines = await engine._recent_user_messages(db_session, case_id)
 
-    assert any("AI助教: 两份专属文件已生成，请查收" in line for line in lines)
+    assert any("助教: 两份专属文件已生成，请查收" in line for line in lines)
     assert not any("营养师:" in line for line in lines)
     assert any("用户: 收到" in line for line in lines)
 

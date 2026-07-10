@@ -1770,7 +1770,7 @@ def _action_focus_prompt_value(value: dict) -> str:
 
 def _format_chat_history_line(message: Message) -> str:
     if message.sender_type == MessageSenderType.BOT:
-        speaker = "AI助教"
+        speaker = "助教"
     elif message.sender_type == MessageSenderType.STAFF:
         speaker = "班主任"
     else:
