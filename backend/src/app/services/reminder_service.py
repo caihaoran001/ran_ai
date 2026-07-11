@@ -682,6 +682,8 @@ class ReminderService:
                     select_active_service_cases(
                         ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
                         ServiceCase.started_at.is_not(None),
+                        # 「退下」的单不主动推送打卡问卷链接。
+                        ServiceCase.ai_auto_reply_enabled == True,
                     )
                 )
             )
