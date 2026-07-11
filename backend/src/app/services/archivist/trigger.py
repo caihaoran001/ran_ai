@@ -53,6 +53,10 @@ def _aware(dt: datetime | None) -> datetime | None:
 
 
 def _is_worthy(analysis_json: object, sender_type: MessageSenderType) -> bool:
+    # archive_plan（入营层顺手产出）在此**只当触发闸门**：决定本单要不要跑、跑多快
+    # （worthy→闸门放行，kinds∈KEY_ARCHIVE_KINDS→走 Fast 快触发）；**不决定抽什么**。
+    # 它刻意宁滥勿缺（gate 提示词明说"抽不到也无妨"），真抽由 graph._extract 恒抽全类、独立判定，
+    # 二者结论不必一致——分工使然。改这里前先看 graph._extract 的注释。
     if sender_type == MessageSenderType.STAFF:
         return True
     if not isinstance(analysis_json, dict):

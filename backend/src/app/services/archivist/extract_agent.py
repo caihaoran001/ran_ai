@@ -84,6 +84,10 @@ async def run_extract_agent(
     """跑一轮 Agent 抽取，按 checkin/outcome/profile/correction 四类归桶。
 
     失败（模型异常/无 key 等）返回空 collector，不抛出——不阻塞归档 checkin live 落库。
+
+    enabled_kinds 只控制"挂哪些 report_* 工具"，用于分阶段灰度；生产恒传全类。
+    **它不是入营层 archive_plan.kinds**——extract 是唯一权威、从原文独立重抽，
+    刻意不采信 gate 的 kinds（理由见 graph._extract 注释）。
     """
     collector: dict[str, Any] = {
         "checkin": {},

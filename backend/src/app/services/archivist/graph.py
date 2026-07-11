@@ -257,6 +257,11 @@ class ArchivistGraph:
 
         for date_iso, msgs in delta_by_date.items():
             content = "\n".join(f"[{m['id']}] {m['role']}：{m['text']}" for m in msgs)
+            # extract 是成效/画像/打卡的唯一权威，恒抽全类：这里写死全部 5 类，
+            # **故意不采信入营层 archive_plan.kinds**。archive_plan 只是档案官触发闸门
+            # （trigger.py 用它判本单要不要跑/跑多快），刻意宁滥勿缺（gate 提示词明说"抽不到也无妨"）；
+            # 若让 extract 照 gate 的 kinds 裁剪，就会把可靠的真抽绑死在不可靠的闸门上、gate 漏标即漏抽，
+            # 违反"禁止软硬并行、要能定位"。两处 worthy 判断本就不必一致——这是分工，不是 bug。
             collector = await run_extract_agent(
                 content=content,
                 service_case_id=self.service_case.id,
