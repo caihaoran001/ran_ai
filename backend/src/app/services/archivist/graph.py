@@ -87,12 +87,15 @@ class ArchivistGraph:
         service_case: ServiceCase,
         progress: ArchivistProgress,
         chat_model: object | None = None,
+        batch_cap: int | None = None,
     ) -> None:
         self.session = session
         self.service_case = service_case
         self.progress = progress
         # chat_model 可注入（测试用 FakeToolCallingModel）；None 时 extract_agent 内部建真实模型。
         self.chat_model = chat_model
+        # batch_cap：只处理最老 N 条增量（None=全量）。恢复期缩到 1 条以定位毒消息，见 trigger 的隔离逻辑。
+        self.batch_cap = batch_cap
         self.settings = get_settings()
         self.result = ArchivistRunResult()
         self.graph = self._compile()
@@ -121,18 +124,20 @@ class ArchivistGraph:
     async def _load_context(self, state: ArchivistState) -> dict[str, Any]:
         """读水位线，拉用户/员工增量，并带上其间助教消息作为纠正上下文。"""
         watermark = self.progress.last_archived_message_id or 0
-        delta_rows = (
-            await self.session.execute(
-                select(Message)
-                .where(
-                    Message.service_case_id == self.service_case.id,
-                    Message.id > watermark,
-                    Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
-                    Message.purpose == MessagePurpose.CHAT,
-                )
-                .order_by(Message.id.asc())
+        delta_stmt = (
+            select(Message)
+            .where(
+                Message.service_case_id == self.service_case.id,
+                Message.id > watermark,
+                Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
+                Message.purpose == MessagePurpose.CHAT,
             )
-        ).scalars().all()
+            .order_by(Message.id.asc())
+        )
+        # 恢复期缩批：只取最老 N 条增量，把失败范围收敛到单条以定位毒消息（正常路径 batch_cap=None）。
+        if self.batch_cap is not None:
+            delta_stmt = delta_stmt.limit(self.batch_cap)
+        delta_rows = (await self.session.execute(delta_stmt)).scalars().all()
 
         watermark_to = max((m.id for m in delta_rows), default=watermark)
         if watermark_to > watermark:
@@ -387,12 +392,18 @@ async def run_archivist(
     service_case: ServiceCase,
     progress: ArchivistProgress,
     chat_model: object | None = None,
+    batch_cap: int | None = None,
 ) -> ArchivistRunResult:
     """跑一次档案官（不在此 commit，由调用方在持锁事务内提交）。
 
     chat_model 可注入（测试用）；生产路径（trigger.run_archivist_scan）不传，走真实模型。
+    batch_cap：恢复期只处理最老 N 条增量以定位毒消息（None=全量）。
     """
     graph = ArchivistGraph(
-        session, service_case=service_case, progress=progress, chat_model=chat_model
+        session,
+        service_case=service_case,
+        progress=progress,
+        chat_model=chat_model,
+        batch_cap=batch_cap,
     )
     return await graph.run()

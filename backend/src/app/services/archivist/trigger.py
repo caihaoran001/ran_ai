@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal
 from app.models.archivist_progress import ArchivistProgress
-from app.models.message import Message, MessageSenderType
+from app.models.message import Message, MessagePurpose, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.services.archivist.case_memory_service import refresh_case_memory
 from app.services.archivist.case_synthesis import maybe_synthesize_case
@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 KEY_INFO_SETTLE_SECONDS = 3 * 60   # Fast：含关键信息且用户停说 3 分钟即抽（去抖，批处理连发消息）
 MAX_LATENCY_SECONDS = 24 * 3600    # B 最大滞留：24 小时（非关键 worthy 的兜底）
 MAX_DELTA_COUNT = 20               # C 累积：20 条用户发言（安全阀）
+
+# 毒消息自愈（防单条稳定报错永久卡死水位线，连累群聊 Agent 画像永不刷新）：
+# 连续失败达 SINGLE_STEP 时把批次缩到最老 1 条，将失败范围收敛到单条以定位毒消息；
+# 仍连续失败达 QUARANTINE 时判定最老那条为毒消息，告警 + 跳过它推进水位线 + 清零失败计数。
+# 单条模式下若最老那条其实无毒会成功推进，逐条自愈直到走到真正的毒消息才隔离（罕见路径，可接受少量重试）。
+SINGLE_STEP_AFTER_FAILURES = 3
+QUARANTINE_AFTER_FAILURES = 6
 
 # 关键信息类目：可结构化打卡 / 稳定个人事实 / 阶段成效。命中即走 Fast 快触发。
 KEY_ARCHIVE_KINDS = frozenset({"checkin", "profile_fact", "outcome"})
@@ -153,6 +160,7 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
         "skipped_not_due": 0,
         "contended": 0,
         "failed": 0,
+        "quarantined": 0,
     }
 
     async with SessionLocal() as session:
@@ -189,7 +197,19 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                 service_case = await session.get(ServiceCase, cid)
                 if service_case is None:
                     continue
-                result = await run_archivist(session, service_case=service_case, progress=progress)
+                failures = progress.consecutive_failures or 0
+                # 毒消息自愈：反复失败到阈值先缩批定位、再隔离，避免单条报错永久卡死水位线。
+                if failures >= QUARANTINE_AFTER_FAILURES:
+                    quarantined = await _quarantine_oldest_message(
+                        session, service_case_id=cid, progress=progress, now=now
+                    )
+                    await session.commit()
+                    stats["quarantined" if quarantined else "skipped_not_due"] += 1
+                    continue
+                batch_cap = 1 if failures >= SINGLE_STEP_AFTER_FAILURES else None
+                result = await run_archivist(
+                    session, service_case=service_case, progress=progress, batch_cap=batch_cap
+                )
                 await session.commit()
                 stats["ran"] += 1
                 logger.info(
@@ -239,6 +259,53 @@ async def _persist_faq_candidates(service_case_id: int, candidates: list[dict] |
         logger.exception(
             "Archivist FAQ draft persist failed service_case_id=%s", service_case_id
         )
+
+
+async def _quarantine_oldest_message(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    progress: ArchivistProgress,
+    now: datetime,
+) -> bool:
+    """隔离最老一条未归档消息：判定其为毒消息，告警留痕 + 推进水位线跳过它 + 清零失败计数。
+
+    仅在连续失败达 QUARANTINE_AFTER_FAILURES（此前已缩到单条重试、失败范围收敛到这一条）时调用。
+    在持锁事务内执行，由调用方 commit。返回是否确实隔离了一条。
+    """
+    watermark = progress.last_archived_message_id or 0
+    suspect = await session.scalar(
+        select(Message)
+        .where(
+            Message.service_case_id == service_case_id,
+            Message.id > watermark,
+            Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
+            Message.purpose == MessagePurpose.CHAT,
+        )
+        .order_by(Message.id.asc())
+        .limit(1)
+    )
+    if suspect is None:
+        # 没有可疑消息可跳过（增量已被清空/软删）：清零失败计数避免空转，不动水位线。
+        progress.consecutive_failures = 0
+        return False
+
+    prev_reason = progress.last_failure_reason or ""
+    logger.error(
+        "ARCHIVIST_QUARANTINE service_case_id=%s message_id=%s failures=%s created_at=%s "
+        "prev_reason=%s content=%r",
+        service_case_id,
+        suspect.id,
+        progress.consecutive_failures,
+        suspect.created_at.isoformat() if suspect.created_at else None,
+        prev_reason,
+        (suspect.content or "")[:200],
+    )
+    progress.last_archived_message_id = suspect.id
+    progress.last_archived_at = now
+    progress.consecutive_failures = 0
+    progress.last_failure_reason = f"QUARANTINED msg={suspect.id}: {prev_reason}"[:500]
+    return True
 
 
 async def _record_failure(service_case_id: int, *, reason: str, now: datetime) -> None:
