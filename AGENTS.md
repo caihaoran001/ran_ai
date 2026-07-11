@@ -51,12 +51,13 @@ npm run test:e2e     # Playwright
 
 ## Architecture — 子系统索引（按需细读）
 
-系统全景与各子系统的"为什么这么设计"已下沉到 **`backend/AGENTS.md` 的 Architecture 节**（消息分层、RAG、文档/画像、成效追踪、风控）。改动相关代码前先读那一节。这里只留一句话导航：
+系统全景与各子系统的"为什么这么设计"已下沉到 **`backend/AGENTS.md` 的 Architecture 节**（消息分层、回复 Agent、RAG、文档/画像、档案官/成效、风控）。改动相关代码前先读那一节。这里只留一句话导航：
 
-- **消息分层**（channel-agnostic）：QiWe 回调 → `ChannelMessage` → ~8s 聚合 → `RanrenAIEngine`。发消息一律走 `channels` 抽象，不直连通道 API。
+- **消息分层**（channel-agnostic）：QiWe 回调 → `ChannelMessage` → ~8s 聚合 → `RanrenAIEngine`（风控/入库/守卫）。发消息一律走 `channels` 抽象，不直连通道 API。
+- **回复生成**：引擎把回复委托给 **LangGraph ReAct Agent**（`agent/graph.py::generate_agent_reply` + `agent/tools/`）；知识检索等都在 agent 的工具里。
 - **知识检索 / RAG**：DB 索引 `knowledge_chunks` 优先，未命中 fallback 本地 Markdown 关键词（限 `keyword_whitelist.json`）。
 - **文档 / 画像**：LLM 出结构化 JSON → 模板渲 Markdown → 落库 → 下载/发送时才临时渲 `.docx`。运行时系统提示词以 `document_service.py` 为准。
-- **成效追踪**：`outcome_engine.py` 抽取事件 → `user_state_profile.py` 投影为 JSONB 画像。
+- **成效 / 结构化抽取（档案官）**：**不在消息路径实时跑**。`archivist/` 在 scheduler 里周期扫描（DB 派生 + 行锁，去抖 ~3min），LangGraph 抽 delta → 刷新案例记忆 / 转 FAQ 草稿 /（成效稳态变化时）合成优秀案例草稿；`outcome_engine.py` 退为其调用的抽取工具，`user_state_profile.py` 投影 JSONB 画像。
 - **风控**：LLM 识别风险（非关键词），高风险强制人工审核；策略见 `content_policy.py`。
 
 **鉴权（跨栈安全红线）**：后端 `/api/*` 需 `X-Admin-API-Key`（`BACKEND_ADMIN_API_KEY`），`/health` 与公开问卷（token）例外。该 key **只**存在于 Next 服务端 ↔ FastAPI 之间，**严禁**暴露到 `NEXT_PUBLIC_*` 或浏览器；前端同源代理后端 API。

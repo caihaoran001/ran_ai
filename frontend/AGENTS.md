@@ -14,10 +14,14 @@ frontend/
 │   ├── questionnaire-config/ # 问卷配置
 │   ├── checkins/           # 打卡记录
 │   ├── dashboard/          # 基础看板
+│   ├── login/             # 登录页
+│   ├── s/                 # 短链公开路由 (无侧边栏，需 middleware 白名单)
+│   ├── system-diagnostics/ # 系统诊断页
 │   └── api/                # Next.js API 路由 (代理)
 ├── src/components/
 │   ├── ui/                 # 基础 UI 组件 (shadcn/ui 风格)
 │   └── layout-shell.tsx    # 布局壳组件 (隔离问卷页面)
+├── src/middleware.ts       # 鉴权/路由中间件 (公开路由如 /q /s 需在白名单，否则跳 /login)
 ├── src/lib/                # 工具函数和 API 客户端
 └── package.json
 ```
