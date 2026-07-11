@@ -892,11 +892,12 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             )
 
         if service_case_id and service_case:
+            user_query = _current_query_body(analysis, message.text)
             try:
                 agent_result = await generate_agent_reply(
                     service_case_id=service_case_id,
                     trigger_id=trigger_id,
-                    user_query=_current_query_body(analysis, message.text),
+                    user_query=user_query,
                     query_speaker=_current_query_speaker(analysis),
                     recent_messages=recent_user_messages,
                     analysis=analysis,
@@ -904,14 +905,21 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                     settings=settings,
                 )
                 reply = agent_result.reply
-                outbound_analysis = {
-                    "agent": {
-                        "enabled": True,
-                        "context_plan": analysis.get("agent_context_plan") if isinstance(analysis, dict) else None,
-                        "tool_trace": agent_result.tool_trace,
-                        "data_tool_failed": agent_result.data_tool_failed,
-                    }
+                agent_meta = {
+                    "enabled": True,
+                    "context_plan": analysis.get("agent_context_plan") if isinstance(analysis, dict) else None,
+                    "tool_trace": agent_result.tool_trace,
+                    "data_tool_failed": agent_result.data_tool_failed,
                 }
+                # 缺口留痕(第2点):有工具失败但仍答上了时,把缺口结构化落库供下游按需消费。
+                info_gap = _build_agent_info_gap(
+                    query=user_query,
+                    tool_trace=agent_result.tool_trace,
+                    data_unavailable=agent_result.data_tool_failed,
+                )
+                if info_gap is not None:
+                    agent_meta["info_gap"] = info_gap
+                outbound_analysis = {"agent": agent_meta}
             except AgentDataUnavailableError as exc:
                 logger.warning(
                     "Agent data unavailable; using safe fixed reply service_case_id=%s trigger_id=%s",
@@ -919,7 +927,16 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                     trigger_id,
                 )
                 reply = str(exc)
-                outbound_analysis = {"agent": {"enabled": True, "data_unavailable": True}}
+                # 数据查不到走安全兜底:同样把缺口结构化留痕(topic=用户原问),供下游消费。
+                outbound_analysis = {
+                    "agent": {
+                        "enabled": True,
+                        "data_unavailable": True,
+                        "info_gap": _build_agent_info_gap(
+                            query=user_query, tool_trace=None, data_unavailable=True
+                        ),
+                    }
+                }
             except Exception:
                 # AI 生成失败：直接丢弃不发（只记日志），不再落草稿进审核台。
                 logger.exception(
@@ -1798,6 +1815,44 @@ def _format_chat_history_line(message: Message) -> str:
         speaker = "用户"
     content = " ".join((message.content or "").split())
     return f"[{_chat_history_time_label(message.created_at)}] {speaker}: {content}"
+
+
+def _agent_gap_failed_tools(tool_trace: list[dict] | None) -> list[str]:
+    """从 tool_trace 里挑出失败/熔断的工具名(去重保序),供缺口留痕。"""
+    names: list[str] = []
+    for trace in tool_trace or []:
+        if isinstance(trace, dict) and trace.get("ok") is False:
+            name = trace.get("name")
+            if isinstance(name, str) and name and name not in names:
+                names.append(name)
+    return names
+
+
+def _build_agent_info_gap(
+    *, query: str, tool_trace: list[dict] | None, data_unavailable: bool
+) -> dict[str, Any] | None:
+    """把 Agent 当轮暴露的"信息缺口"结构化留痕(供下游按需消费;本版只写不读)。
+
+    背景:第 2 点——Agent 命中"查不到数据/工具熔断"时当场就知道有缺口,信号原本只有零散布尔旗、
+    无人消费。这里统一沉淀成 analysis_json.agent.info_gap,让"知识库缺口发现/运营排查"等消费方
+    以后按需接入,把单向协作补成有反馈。**topic 取触发本轮的用户原问(已在手,零额外 LLM 调用)**,
+    刻意不在热路径为打 topic 再调一次模型。type 区分"我们数据查不到"(data_unavailable)与
+    "有工具失败但仍答上了"(tool_failed)。无缺口返回 None。
+    """
+    tools = _agent_gap_failed_tools(tool_trace)
+    if data_unavailable:
+        gap_type = "data_unavailable"
+    elif tools:
+        gap_type = "tool_failed"
+    else:
+        return None
+    gap: dict[str, Any] = {"type": gap_type}
+    topic = (query or "").strip()
+    if topic:
+        gap["query"] = topic[:200]  # 截断,防超长撑爆 analysis_json
+    if tools:
+        gap["tools"] = tools
+    return gap
 
 
 def _current_query_speaker(analysis: dict | None) -> str:

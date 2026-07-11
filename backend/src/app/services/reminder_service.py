@@ -293,7 +293,9 @@ class ReminderService:
             service_cases = list(
                 await session.scalars(
                     select_active_service_cases(
-                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE
+                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                        # 「退下」的单不主动推送打卡追问（active 条件不含此开关，需在此显式过滤）。
+                        ServiceCase.ai_auto_reply_enabled == True,
                     )
                 )
             )
@@ -401,6 +403,9 @@ class ReminderService:
                 if service_case is None:
                     task.status = AgentReminderTaskStatus.FAILED
                     task.error = "service case not found or deleted"
+                    continue
+                if not service_case.ai_auto_reply_enabled:
+                    # 「退下」期间不主动发提醒；保持 PENDING 跳过本轮，用户「回来」后到点仍可补发。
                     continue
                 if service_case.status in {ServiceCaseStatus.COMPLETED, ServiceCaseStatus.REFUNDED}:
                     task.status = AgentReminderTaskStatus.FAILED
