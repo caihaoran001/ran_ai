@@ -37,8 +37,10 @@ MAX_DELTA_COUNT = 20               # C 累积：20 条用户发言（安全阀�
 # 连续失败达 SINGLE_STEP 时把批次缩到最老 1 条，将失败范围收敛到单条以定位毒消息；
 # 仍连续失败达 QUARANTINE 时判定最老那条为毒消息，告警 + 跳过它推进水位线 + 清零失败计数。
 # 单条模式下若最老那条其实无毒会成功推进，逐条自愈直到走到真正的毒消息才隔离（罕见路径，可接受少量重试）。
-SINGLE_STEP_AFTER_FAILURES = 3
-QUARANTINE_AFTER_FAILURES = 6
+# 两者必须差 ≥1：先单条验证最老那条确实自己会炸，再隔离，避免误伤同批的好消息。
+# 任意一次成功即清零，故连炸到阈值基本可排除偶发抖动（LLM 超时等）。
+SINGLE_STEP_AFTER_FAILURES = 2
+QUARANTINE_AFTER_FAILURES = 3
 
 # 关键信息类目：可结构化打卡 / 稳定个人事实 / 阶段成效。命中即走 Fast 快触发。
 KEY_ARCHIVE_KINDS = frozenset({"checkin", "profile_fact", "outcome"})
