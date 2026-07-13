@@ -47,6 +47,12 @@ export function FAQEvolutionCenter({
   const qaPending = pendingDrafts.filter((d) => d.draft_type === "qa");
   const qaApproved = approvedDrafts.filter((d) => d.draft_type === "qa");
 
+  function draftSource(draft: KnowledgeDraft) {
+    return draft.content_json?.source === "archivist_staff_correction"
+      ? "班主任纠偏"
+      : "群聊问答";
+  }
+
   const [config, setConfig] = useState(evolutionConfig);
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
@@ -235,6 +241,9 @@ export function FAQEvolutionCenter({
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="rounded-md bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 text-xs font-semibold">
                             📖 参考问答
+                          </span>
+                          <span className="rounded-md bg-violet-50 text-violet-700 border border-violet-100 px-2 py-0.5 text-xs font-medium">
+                            {draftSource(draft)}
                           </span>
                           {draft.category && (
                             <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 border border-slate-200/50">

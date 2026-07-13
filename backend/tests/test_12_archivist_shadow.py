@@ -263,13 +263,14 @@ async def test_archivist_routes_staff_corrections_back_to_chat_agent(db_session)
                     {
                         "name": "report_correction",
                         "args": {
-                            "scope": "global_knowledge",
+                            "scope": "global_faq",
                             "summary": "产品使用次数需先核对个性化安排",
                             "applicability": "用户询问产品每天使用次数",
                             "question": "产品每天应该使用几次？",
                             "corrected_answer": "先核对该用户的个性化安排，不能直接套用通用次数。",
                             "bot_message_id": bot.id,
                             "staff_message_id": staff.id,
+                            "user_message_id": user_msgs[-1].id,
                             "evidence_text": "班主任指出存在个性化次数",
                             "confidence": 0.9,
                         },
@@ -369,6 +370,7 @@ async def test_archivist_reports_faq_candidate_into_qa_draft(db_session):
                 {
                     "name": "report_faq_candidate",
                     "args": {
+                        "scope": "general",
                         "question": "减肥期间吃了土豆导致体重上升怎么调整？",
                         "answer": "先别急，一天数字不代表真实脂肪变化。今天不额外吃米饭即可，先菜再肉最后主食。昨晚睡得怎么样？",
                         "category": "体重波动",
@@ -406,3 +408,126 @@ async def test_archivist_reports_faq_candidate_into_qa_draft(db_session):
     ]
     assert len(archivist_drafts) == 1
     assert archivist_drafts[0].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_archivist_personal_faq_writes_staff_guidance_without_draft(db_session):
+    from app.services.knowledge_evolution import create_qa_drafts_from_archivist
+
+    case, msgs, progress = await _setup_case_with_messages(db_session)
+    staff = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="text",
+        content="你今天晚餐按半份主食加蛋白质执行，明天再反馈。",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(staff)
+    await db_session.flush()
+    fake = FakeToolCallingModel([
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "report_faq_candidate",
+                    "args": {
+                        "scope": "personal",
+                        "question": "我今天晚餐怎么安排？",
+                        "answer": "今天晚餐按半份主食加蛋白质执行，明天再反馈。",
+                        "category": "饮食执行",
+                        "evidence_text": "用户询问今天晚餐怎么安排，班主任给出具体安排。",
+                        "source_message_ids": [msgs[-1].id],
+                        "staff_message_id": staff.id,
+                    },
+                    "id": "personal-faq",
+                },
+            ],
+        )
+    ])
+
+    result = await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+    created = await create_qa_drafts_from_archivist(
+        db_session, service_case_id=case.id, candidates=result.faq_candidates
+    )
+    await db_session.flush()
+
+    assert created == 0
+    drafts = [
+        draft
+        for draft in await db_session.scalars(select(KnowledgeDraft))
+        if (draft.content_json or {}).get("service_case_id") == case.id
+    ]
+    assert drafts == []
+    memory = await load_profile_memory_context(db_session, service_case_id=case.id)
+    assert "半份主食加蛋白质" in memory.render_for_agent()
+
+
+@pytest.mark.asyncio
+async def test_archivist_does_not_create_faq_for_correction_without_user_question(db_session):
+    case, user_msgs, progress = await _setup_case_with_messages(db_session)
+    bot = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.BOT,
+        message_type="text",
+        content="这碗是中药吗？",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.SENT,
+        trigger_id=user_msgs[-1].id,
+    )
+    db_session.add(bot)
+    await db_session.flush()
+    staff = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="text",
+        content="这是晚A，注意不要认错。",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(staff)
+    await db_session.flush()
+    fake = FakeToolCallingModel([
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "report_correction",
+                    "args": {
+                        "scope": "global_faq",
+                        "summary": "深色液体是晚A",
+                        "applicability": "识别产品图片",
+                        "question": "这碗深色液体是什么产品？",
+                        "corrected_answer": "这是晚A。",
+                        "bot_message_id": bot.id,
+                        "staff_message_id": staff.id,
+                        "user_message_id": bot.id,
+                        "evidence_text": "助教认错，班主任纠正。",
+                        "confidence": 0.95,
+                    },
+                    "id": "not-a-faq",
+                },
+            ],
+        )
+    ])
+
+    result = await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+    await db_session.flush()
+
+    assert result.qa_drafts_created == 0
+    drafts = [
+        draft
+        for draft in await db_session.scalars(select(KnowledgeDraft))
+        if (draft.content_json or {}).get("service_case_id") == case.id
+    ]
+    assert drafts == []

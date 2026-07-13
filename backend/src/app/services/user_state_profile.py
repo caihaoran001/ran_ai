@@ -318,6 +318,44 @@ async def apply_staff_correction_to_user_state(
     return state_profile
 
 
+async def apply_staff_guidance_to_user_state(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    staff_message: Message,
+    guidance: str,
+    evidence: str,
+    confidence: float,
+) -> UserStateProfile | None:
+    """把班主任确认的专属指导写进当前用户背景，只影响本服务单。"""
+
+    guidance = guidance.strip()
+    evidence = evidence.strip()
+    confidence = _float(confidence)
+    if not guidance or not evidence or confidence < 0.7:
+        return None
+    state_profile = await get_or_create_user_state_profile(session, service_case.id)
+    state = _ensure_state_shape(state_profile.state_json)
+    _update_domain_from_event(
+        state,
+        "staff_guidance",
+        field_key=f"staff_guidance_{staff_message.id}",
+        value=guidance,
+        event_type="staff_guidance",
+        evidence=evidence,
+        source="archivist_staff_guidance",
+        occurred_at=_datetime_iso(staff_message.created_at),
+        confidence=confidence,
+        message_id=staff_message.id,
+        milestone="guidance",
+    )
+    state_profile.state_json = state
+    flag_modified(state_profile, "state_json")
+    state_profile.summary = _state_summary(state)
+    state_profile.source = "dynamic"
+    return state_profile
+
+
 async def get_or_create_user_state_profile(
     session: AsyncSession,
     service_case_id: int,

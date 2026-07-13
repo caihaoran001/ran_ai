@@ -15,12 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.knowledge_draft import KnowledgeDraft
-from app.models.message import Message, MessageDirection, MessagePurpose
+from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.services.ai_service import AIService, parse_json_object
 from app.services.knowledge_faq_service import create_faq
 from app.services.knowledge_index import upsert_text_chunk
 from app.services.knowledge_base import get_knowledge_base
+from app.services.user_state_profile import apply_staff_guidance_to_user_state
 
 
 logger = logging.getLogger(__name__)
@@ -325,7 +326,7 @@ async def create_qa_drafts_from_archivist(
     service_case_id: int,
     candidates: list[dict[str, Any]] | None,
 ) -> int:
-    """把档案官在 delta 抽取中产出的 FAQ 候选转成待审核 qa 草稿（复用去重/审核/入库管线）。
+    """把档案官候选分流为待审核通用 FAQ 或班主任确认的个人指导。
 
     不提交事务，由调用方 commit；返回新建草稿数。检索正文只放问法/参考回复，
     其余归 content_json（遵守 QA 表四入库限制）。
@@ -338,6 +339,32 @@ async def create_qa_drafts_from_archivist(
         answer = _clean(item.get("answer"))
         if not question or not answer:
             continue
+        source_message_ids = _positive_ids(item.get("source_message_ids"))
+        user_message = await _user_question_evidence(session, service_case_id, source_message_ids)
+        if user_message is None:
+            continue
+        scope = str(item.get("scope") or "general")
+        if scope == "personal":
+            staff_ids = _positive_ids([item.get("staff_message_id")])
+            staff = await session.get(Message, staff_ids[0]) if staff_ids else None
+            service_case = await session.get(ServiceCase, service_case_id)
+            if (
+                service_case is None
+                or not _is_staff_message_for_case(staff, service_case_id)
+                or staff.id <= user_message.id
+            ):
+                continue
+            await apply_staff_guidance_to_user_state(
+                session,
+                service_case=service_case,
+                staff_message=staff,
+                guidance=answer,
+                evidence=_clean(item.get("evidence_text")) or question,
+                confidence=1.0,
+            )
+            continue
+        if scope != "general":
+            continue
         draft = await create_draft_candidate(
             session,
             draft_type="qa",
@@ -348,7 +375,7 @@ async def create_qa_drafts_from_archivist(
             tags=_string_list(item.get("tags")),
             reason="档案官从群聊问答对自动提炼",
             evidence=_clean(item.get("evidence_text")) or None,
-            source_message_ids=_positive_ids(item.get("source_message_ids")),
+            source_message_ids=source_message_ids,
             content_json={
                 **item,
                 "scan_type": "archivist_delta",
@@ -358,6 +385,31 @@ async def create_qa_drafts_from_archivist(
         if draft is not None:
             created += 1
     return created
+
+
+async def _user_question_evidence(
+    session: AsyncSession,
+    service_case_id: int,
+    message_ids: list[int],
+) -> Message | None:
+    for message_id in message_ids:
+        message = await session.get(Message, message_id)
+        if (
+            message
+            and message.service_case_id == service_case_id
+            and message.sender_type == MessageSenderType.USER
+            and _clean(message.content)
+        ):
+            return message
+    return None
+
+
+def _is_staff_message_for_case(message: Message | None, service_case_id: int) -> bool:
+    return bool(
+        message
+        and message.service_case_id == service_case_id
+        and message.sender_type == MessageSenderType.STAFF
+    )
 
 
 async def reject_draft(session: AsyncSession, draft: KnowledgeDraft, reason: str | None = None) -> KnowledgeDraft:

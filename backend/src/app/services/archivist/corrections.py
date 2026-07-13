@@ -59,8 +59,12 @@ async def apply_reported_corrections(
             result.personal_written += int(profile is not None)
             continue
 
-        if scope == "global_knowledge":
-            question = _text(item.get("question"), 1000) or applicability
+        if scope == "global_faq":
+            user = await session.get(Message, _positive_int(item.get("user_message_id")))
+            question = _text(item.get("question"), 1000)
+            if not question or not _valid_user_question(service_case.id, user, bot):
+                result.skipped += 1
+                continue
             draft_type = "qa"
             category = "员工纠正沉淀"
         else:
@@ -76,9 +80,12 @@ async def apply_reported_corrections(
             category=category,
             tags=["员工纠正", scope],
             reason="班主任在群内对助教回答进行了明确纠正或补充。",
-            evidence=evidence,
+            evidence=(
+                f"用户[{user.id}]：{_text(user.content, 800)}\n"
+                f"{evidence}"
+            ),
             sanitized_text=evidence,
-            source_message_ids=[bot.id, staff.id],
+            source_message_ids=[user.id, bot.id, staff.id],
             content_json={
                 "source": "archivist_staff_correction",
                 "service_case_id": service_case.id,
@@ -87,6 +94,7 @@ async def apply_reported_corrections(
                 "applicability": applicability,
                 "bot_message_id": bot.id,
                 "staff_message_id": staff.id,
+                "user_message_id": user.id,
                 "confidence": confidence,
             },
         )
@@ -106,6 +114,20 @@ def _valid_pair(service_case_id: int, bot: Message | None, staff: Message | None
         and bot.sender_type == MessageSenderType.BOT
         and staff.sender_type == MessageSenderType.STAFF
         and bot.id < staff.id
+    )
+
+
+def _valid_user_question(
+    service_case_id: int,
+    user: Message | None,
+    bot: Message,
+) -> bool:
+    return bool(
+        user
+        and user.service_case_id == service_case_id
+        and user.sender_type == MessageSenderType.USER
+        and user.id < bot.id
+        and str(user.content or "").strip()
     )
 
 

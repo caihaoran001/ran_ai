@@ -86,17 +86,17 @@ class ReportProfileFactArgs(BaseModel):
 class ReportCorrectionArgs(BaseModel):
     """上报一条“助教回答后，班主任追加纠正/补充”的监督信号。"""
 
-    scope: Literal["personal", "global_knowledge"] = Field(
+    scope: Literal["personal", "global_faq"] = Field(
         description=(
-            "personal=仅当前用户的个性化安排；global_knowledge=所有用户适用的业务事实；"
-            "回答方式或语气不属于群聊自动归档范围"
+            "personal=仅当前用户的个性化安排；global_faq=能独立回答其他用户真实提问的通用 FAQ。"
+            "纯助教操作失误、回答语气或无用户问题的纠正不应上报"
         )
     )
     summary: str = Field(description="纠正后的简短事实或规则")
     applicability: str = Field(description="这条纠正在什么用户/问题/场景下适用")
     question: str | None = Field(
         default=None,
-        description="global_knowledge 时填写可复用的标准问题；其他类型可留空",
+        description="global_faq 时填写从用户原话提炼出的可复用标准问题；personal 可留空",
     )
     corrected_answer: str | None = Field(
         default=None,
@@ -104,15 +104,28 @@ class ReportCorrectionArgs(BaseModel):
     )
     bot_message_id: int = Field(gt=0, description="被纠正的助教消息 ID")
     staff_message_id: int = Field(gt=0, description="追加纠正的班主任消息 ID")
+    user_message_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="global_faq 必填：提出该问题的用户消息 ID；personal 可留空",
+    )
     evidence_text: str = Field(description="助教原话与班主任纠正原话的简短证据")
     confidence: float = Field(default=0.0, description="0.0-1.0 置信度")
 
 
 class ReportFaqCandidateArgs(BaseModel):
-    """上报一条可复用的 FAQ 候选（从群聊里的问答对提炼，供知识库沉淀，仍走人工审核）。"""
+    """上报一条通用 FAQ 或班主任确认的个人指导。"""
+
+    scope: Literal["general", "personal"] = Field(
+        default="general",
+        description=(
+            "general=其他用户也可复用，进入人工审核；personal=只适用于当前用户，"
+            "必须有班主任确认，直接写入该用户档案"
+        ),
+    )
 
     question: str = Field(
-        description="标准化、通用、去个人隐私的问题（从用户原话提炼，如'吃了土豆体重上升怎么办'）"
+        description="从用户原话提炼的问题；general 必须通用、去个人隐私"
     )
     answer: str = Field(
         description=(
@@ -127,6 +140,11 @@ class ReportFaqCandidateArgs(BaseModel):
     evidence_text: str = Field(description="用户提问原话，作为入库证据")
     source_message_ids: list[int] | None = Field(
         default=None, description="原文方括号里的相关消息 ID（问句与答句）"
+    )
+    staff_message_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="personal 必填：明确确认该指导的班主任消息 ID；general 可留空",
     )
 
 
