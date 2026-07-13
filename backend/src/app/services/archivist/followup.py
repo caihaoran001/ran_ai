@@ -10,7 +10,10 @@ H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部
 两条链路共用 `ReminderEvent(rule_id="checkin_followup")` 天级去重闸（唯一约束保证一天一条、绝不叠加），
 统一调 `compose_daily_followup` 组织内容：按优先级只问一个主题，合并成一句自然话——
 里程碑复盘（day7/14/21/28 阶段报告要的腰围+复盘，前一晚追）> 矛盾核对（表单值≠聊天值）>
-日常缺口（早C/午B/晚A、体重合并）。判定读 checkins 现状 + service_day。
+日常缺口（早C/午B、体重合并；晚A 睡前那顿不主动追）。判定读 checkins 现状 + service_day。
+
+日常缺口追问统一在傍晚（`CHECKIN_FOLLOWUP_WINDOW_*`，默认 19:30~20:30）发一次：时间闸放在调用方
+（engine 活跃触发 / reminder 不活跃兜底），本模块只负责组织内容、不做发送时机裁量。
 """
 
 from __future__ import annotations
@@ -27,7 +30,11 @@ from app.models.service_case import ServiceCase
 from app.services.service_case_queries import effective_service_day
 
 # 早C/午B/晚A 三段产品依从：最不会自然出现在聊天里、又是阶段报告核心指标。
+# （仅作矛盾核对等的字段标签来源，见 _FIELD_LABELS；主动缺口追问的覆盖范围见 _DAILY_GAP_SLOTS。）
 _PRODUCT_SLOTS = {"morning_c": "早C", "noon_b": "午B", "night_a": "晚A"}
+# 主动「日常缺口」追问只覆盖早C/午B：缺口追问统一在傍晚(见 CHECKIN_FOLLOWUP_WINDOW_*)发一次，
+# 那时晚A(睡前那顿)还没到点，主动追只会变成"没到点就催晚A"，故不纳入——晚A 靠聊天抽取/次日补齐。
+_DAILY_GAP_SLOTS = {"morning_c": "早C", "noon_b": "午B"}
 _WEIGHT_LOOKBACK_DAYS = 3
 _WAIST_LOOKBACK_DAYS = 7  # 腰围一周测一次，避免天天问。
 
@@ -61,12 +68,15 @@ def _slot_filled(value: object) -> bool:
 
 
 def _missing_product_slots(parsed_json: dict | None) -> list[dict]:
-    """当天仍缺的产品依从槽位：返回 [{"key","label"}]，key 用于退避、label 用于话术。"""
+    """当天仍缺、且可主动追问的产品依从槽位：返回 [{"key","label"}]。
+
+    只看 _DAILY_GAP_SLOTS（早C/午B）；晚A 不主动追（见其定义处说明）。
+    """
     ps = (parsed_json or {}).get("product_schedule") if isinstance(parsed_json, dict) else None
     ps = ps if isinstance(ps, dict) else {}
     return [
         {"key": key, "label": label}
-        for key, label in _PRODUCT_SLOTS.items()
+        for key, label in _DAILY_GAP_SLOTS.items()
         if not _slot_filled(ps.get(key))
     ]
 

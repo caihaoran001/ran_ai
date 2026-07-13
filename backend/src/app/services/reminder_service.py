@@ -268,13 +268,14 @@ class ReminderService:
             await session.commit()
 
     async def check_checkin_followup_once(self) -> None:
-        """打卡追问·不活跃兜底：对当天没说话的用户，到确定性随机时刻主动发一条。
+        """打卡追问·不活跃兜底：到确定性随机时刻为当天还没被追过的单主动发一条。
 
         受 CHECKIN_FOLLOWUP_ENABLED 门控，每 case 每天最多一条（rule_id=checkin_followup 去重，
-        与 engine 活跃触发共用同一天闸，绝不叠加）。内容由 compose_daily_followup 合并里程碑/矛盾/
-        日常缺口成一句。**活跃用户（当天有 INBOUND USER 消息）跳过**，由 engine 回复后补发承担。
-        发送时间按 (case_id,日期) 在 [window_start, window_end) 内确定性伪随机，规避定点风控；每天都追
-        （不再限工作日）。矛盾核对发出后标 asked、降级来源，使用户新值覆盖旧值且不再重复追问。
+        与 engine 活跃触发共用同一天闸，绝不叠加——故不再单独跳过"当天说过话"的活跃用户，靠天闸去重）。
+        内容由 compose_daily_followup 按优先级组织（里程碑>矛盾核对>日常缺口）。发送时刻按 (case_id,日期)
+        在 [window_start, window_end)（默认傍晚 19:30~20:30）内确定性伪随机，规避定点风控；每天都追。
+        其中**日常缺口(早C/午B)只在该傍晚窗口内发**（晚A 不主动追）；里程碑/矛盾核对不受窗口约束。
+        矛盾核对发出后标 asked、降级来源，使用户新值覆盖旧值且不再重复追问。
         """
         if not self.settings.checkin_followup_enabled:
             return
@@ -322,14 +323,17 @@ class ReminderService:
                 )
                 if now.time() < target:
                     continue
-                # 活跃用户交给 engine 活跃触发；本兜底只管当天没说话的人。
-                if await _user_spoke_today(session, service_case.id, today, tz):
-                    continue
 
                 followup = await compose_daily_followup(
                     session, service_case=service_case, now=now, tz=tz
                 )
                 if followup is None:
+                    continue
+                # 日常缺口(早C/午B)只在傍晚窗口内发；此刻已过窗口(轮询滞后)→不发、不占名额。
+                # 里程碑/矛盾核对该发就发，不受此窗口约束。
+                if followup.kind == "daily_gap" and not (
+                    window_start <= now.time() < window_end
+                ):
                     continue
                 # 先算出有内容再抢名额，避免无内容却占掉当天名额。
                 reminder_event = await _reserve_reminder_event(
@@ -1271,27 +1275,6 @@ def _deterministic_daily_time(
     offset = int(digest, 16) % (end_min - start_min)
     total = start_min + offset
     return time(total // 60, total % 60)
-
-
-async def _user_spoke_today(
-    session, service_case_id: int, day: date, tz: ZoneInfo
-) -> bool:
-    """该 case 今天（tz 本地日）有无用户主动说话（INBOUND USER 消息）。
-
-    created_at 为 UTC，换算本地日范围后比对；用于让不活跃兜底跳过活跃用户。
-    """
-    start_local = datetime.combine(day, time.min, tzinfo=tz)
-    end_local = start_local + timedelta(days=1)
-    row = await session.scalar(
-        select(Message.id).where(
-            Message.service_case_id == service_case_id,
-            Message.direction == MessageDirection.INBOUND,
-            Message.sender_type == MessageSenderType.USER,
-            Message.created_at >= start_local.astimezone(timezone.utc),
-            Message.created_at < end_local.astimezone(timezone.utc),
-        ).limit(1)
-    )
-    return row is not None
 
 
 def _parse_int_list(value: str) -> list[int]:

@@ -3,11 +3,11 @@
 覆盖：
 - 档案官触发器：含关键类目(checkin/profile_fact/outcome)且用户停说≥3min → fast 快触发；
   仅闲聊 worthy 且未到 24h → 不触发。
-- compose_daily_followup 统一组织：优先级 里程碑 > 矛盾核对 > 日常缺口(早C/午B/晚A、体重合并成一句)；
-  无可问返回 None；LLM 生成复盘/缺口话术、失败回退模板。
+- compose_daily_followup 统一组织：优先级 里程碑 > 矛盾核对 > 日常缺口(早C/午B、体重合并成一句；
+  晚A 睡前那顿不主动追)；无可问返回 None；LLM 生成复盘/缺口话术、失败回退模板。
 - 里程碑档：服务第 6/13/20/27 天检测出 milestone；need_waist 按腰围记录决定。
 - 矛盾核对：表单值≠聊天值→记矛盾→自然语言核对→标 asked(去重)+字段降级→用户新值覆盖表单。
-- 不活跃兜底辅助：_deterministic_daily_time 同 case 同日恒定且落窗口内；_user_spoke_today 判当天活跃。
+- 不活跃兜底辅助：_deterministic_daily_time 同 case 同日恒定且落窗口内；日常缺口受傍晚窗口闸。
 """
 
 from __future__ import annotations
@@ -264,6 +264,31 @@ async def test_daily_followup_none_when_all_reported(db_session):
     assert fu is None
 
 
+@pytest.mark.asyncio
+async def test_daily_gap_excludes_night_a(db_session):
+    # 早C已报、午B/晚A未报 → 日常缺口只追午B(+体重)，晚A 睡前那顿不主动追、已报的早C不追。
+    case = await _case(db_session, started_days_ago=3)
+    today = date.today()
+    checkin = Checkin(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        user_id=case.user_id,
+        checkin_date=today,
+        content="（部分打卡）",
+        parsed_json={"product_schedule": {"morning_c": "已喝"}},
+    )
+    db_session.add(checkin)
+    await db_session.flush()
+    now = datetime.now(_TZ)
+    fu = await compose_daily_followup(
+        db_session, service_case=case, now=now, tz=_TZ, ai_service=_RaisingAI()
+    )
+    assert fu is not None and fu.kind == "daily_gap"
+    assert "午B" in fu.text  # 未报的午B要追
+    assert "晚A" not in fu.text  # 睡前那顿不主动追
+    assert "早C" not in fu.text  # 已报的不追
+
+
 # ---------------------------------------------------------------------------
 # 里程碑档：检测
 # ---------------------------------------------------------------------------
@@ -358,13 +383,14 @@ def test_check_once_retired_from_run_loop():
     assert "check_stage_reports_once" in src  # 阶段报告仍在调度
 
 
-def test_fallback_line_only_targets_inactive_users():
-    """不活跃兜底：走统一 compose_daily_followup、判活跃跳过、按随机时刻发；不再固定 20:30/限工作日。"""
+def test_fallback_line_composition_and_window_gate():
+    """不活跃兜底：统一 compose、随机时刻、日常缺口受傍晚窗口闸；不再单独跳过活跃用户(靠天闸去重)。"""
     from app.services.reminder_service import ReminderService
 
     src = inspect.getsource(ReminderService.check_checkin_followup_once)
     assert "compose_daily_followup" in src  # 统一组织内容
-    assert "_user_spoke_today" in src  # 活跃用户交给 engine 活跃触发
+    assert "_user_spoke_today" not in src  # 不再单独跳过活跃用户，靠 checkin_followup 天闸去重
+    assert '"daily_gap"' in src  # 日常缺口受傍晚窗口闸（里程碑/矛盾不受约束）
     assert "_deterministic_daily_time" in src  # 随机时刻替代固定 20:30
     assert "checkin_followup_at" not in src  # 固定定点已移除
     assert "reminder_weekdays" not in src  # 工作日限制已移除
@@ -380,6 +406,7 @@ def test_active_followup_hooked_in_engine():
     hook = inspect.getsource(RanrenAIEngine._maybe_followup_after_reply)
     assert "compose_daily_followup" in hook
     assert "_reserve_reminder_event" in hook  # 共用天级去重闸
+    assert '"daily_gap"' in hook  # 日常缺口只在傍晚窗口发，早上聊天不顺手补缺口追问
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +535,7 @@ async def test_trigger_staff_message_as_correction_candidate(db_session):
 
 
 # ---------------------------------------------------------------------------
-# 不活跃兜底辅助：随机时刻 + 当天活跃判定
+# 不活跃兜底辅助：随机时刻
 # ---------------------------------------------------------------------------
 
 
@@ -536,18 +563,3 @@ def test_deterministic_daily_time_degrades_when_end_le_start():
     day = date(2026, 7, 10)
     t = _deterministic_daily_time(1, day, dtime(21, 0), dtime(9, 0))
     assert t == dtime(21, 0)
-
-
-@pytest.mark.asyncio
-async def test_user_spoke_today_detects_activity(db_session):
-    from app.services.reminder_service import _user_spoke_today
-
-    case = await _case(db_session)
-    today = date.today()
-    # 没说话 → False。
-    assert await _user_spoke_today(db_session, case.id, today, _TZ) is False
-    # 造一条今天的 INBOUND USER 消息 → True。
-    await _user_msg(
-        db_session, case, analysis_json={}, created_at=datetime.now(timezone.utc)
-    )
-    assert await _user_spoke_today(db_session, case.id, today, _TZ) is True

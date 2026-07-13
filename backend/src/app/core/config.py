@@ -170,16 +170,17 @@ class Settings(BaseSettings):
     # 注：入营问卷走独立命令路径，不受此开关影响。
     daily_checkin_link_enabled: bool = Field(default=False, validation_alias="DAILY_CHECKIN_LINK_ENABLED")
     # 打卡追问(H5 完整替代)：外部确定性触发、每 case 每天最多一条(合并里程碑/矛盾/日常缺口成一句)。
-    #  - 活跃用户(当天说过话)：agent 回复发送成功后单独补发一条；
-    #  - 不活跃用户：到当天一个确定性随机时刻(下方 window)主动发一条兜底。
+    #  - 里程碑复盘/矛盾核对：活跃时 agent 回复后即补发，不活跃时兜底轮询到点发。
+    #  - 日常缺口(早C/午B)：统一在下方傍晚窗口内发一次(晚A 不主动追)；早上聊天不再顺手补缺口追问。
     # 会发送真实群消息，默认 False=不追问；设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
     checkin_followup_enabled: bool = Field(default=False, validation_alias="CHECKIN_FOLLOWUP_ENABLED")
-    # 不活跃兜底的随机时段[start,end)：每 case 按 (case_id,日期) 确定性伪随机落一个时刻，规避定点风控。
+    # 傍晚窗口[start,end)：① 不活跃兜底按 (case_id,日期) 在窗口内确定性伪随机落一个发送时刻(规避定点风控)；
+    # ② 日常缺口追问的发送时间闸——仅当当前时刻落在此窗口内才发缺口追问(早C/午B 此时必已过点、晚A 未到点)。
     checkin_followup_window_start: str = Field(
-        default="09:00", validation_alias="CHECKIN_FOLLOWUP_WINDOW_START"
+        default="19:30", validation_alias="CHECKIN_FOLLOWUP_WINDOW_START"
     )
     checkin_followup_window_end: str = Field(
-        default="21:00", validation_alias="CHECKIN_FOLLOWUP_WINDOW_END"
+        default="20:30", validation_alias="CHECKIN_FOLLOWUP_WINDOW_END"
     )
 
     auto_send_documents: bool = Field(

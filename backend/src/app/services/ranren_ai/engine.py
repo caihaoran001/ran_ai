@@ -1019,8 +1019,9 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 result.message_id,
                 send_elapsed_ms,
             )
-            # 活跃触发·打卡追问：回复成功发出后，若用户当天还有缺口且今天没追过，单独补发一条。
-            # 仅针对用户发言（班主任提问不追打卡）；全程兜底，绝不影响已发出的回复。
+            # 活跃触发·打卡追问：回复成功发出后，若今天没追过则按优先级补发一条(里程碑>矛盾>日常缺口)。
+            # 仅针对用户发言（班主任提问不追打卡）；日常缺口只在傍晚窗口发(见 _maybe_followup_after_reply)，
+            # 早上聊天不会顺手补缺口追问；全程兜底，绝不影响已发出的回复。
             if result.success and _current_query_speaker(analysis) == "用户":
                 await self._maybe_followup_after_reply(
                     message=message, service_case_id=service_case_id
@@ -1052,7 +1053,7 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 mark_contradictions_pending_confirmation,
             )
             from app.services.archivist.followup import compose_daily_followup
-            from app.services.reminder_service import _reserve_reminder_event
+            from app.services.reminder_service import _parse_time, _reserve_reminder_event
             from app.models.reminder import ReminderEventType
             from app.models.checkin import Checkin
 
@@ -1070,6 +1071,13 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 )
                 if followup is None:
                     return
+                # 日常缺口(早C/午B)只在傍晚窗口发；此刻不在窗口→不发、不占天闸(晚上兜底轮询会补)。
+                # 里程碑/矛盾核对不受窗口约束，活跃时即时补发。
+                if followup.kind == "daily_gap":
+                    start = _parse_time(settings.checkin_followup_window_start)
+                    end = _parse_time(settings.checkin_followup_window_end)
+                    if not (start <= now.time() < end):
+                        return
                 reminder_event = await _reserve_reminder_event(
                     session,
                     service_case.id,
