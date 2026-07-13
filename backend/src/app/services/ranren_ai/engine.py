@@ -1670,16 +1670,20 @@ def _requires_health_handoff(analysis: dict | None, risk_level: str | None) -> b
 
 
 # AI 可主动选择沉默：模型输出该标记表示本轮无需回复，后端据此不发送、也不入聊天记录。
-_NO_REPLY_MARKER = "<no_reply>"
+# 用正则容忍模型的常见格式漂移：<no_reply>、<no_reply/>、< no_reply />、大小写混写等，
+# 避免自闭合等变体漏判后把内部信号词当正文发进群。
+_NO_REPLY_RE = re.compile(r"<\s*no_reply\s*/?\s*>", re.IGNORECASE)
 
 
 def _reply_is_no_reply(reply: str) -> bool:
-    """模型输出中包含 <no_reply> 标记即视为选择不回复（大小写不敏感）。"""
-    return _NO_REPLY_MARKER in (reply or "").lower()
+    """模型输出中包含 <no_reply>（含 <no_reply/> 等变体）标记即视为选择不回复。"""
+    return bool(_NO_REPLY_RE.search(reply or ""))
 
 
 def _sanitize_ai_reply(reply: str, settings: Settings) -> str:
     text = (reply or "").strip()
+    # 防御性兜底：即便 no-reply 判断被绕过（如夹带正文的变体），也不把内部信号词当正文发出去。
+    text = _NO_REPLY_RE.sub("", text).strip()
     for marker in ("**", "__", "###", "##", "#"):
         text = text.replace(marker, "")
     online_claim_patterns = (

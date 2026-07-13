@@ -342,10 +342,11 @@ async def _count_outbound_bot(db_session, case_id) -> int:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("marker", ["<no_reply>", "<no_reply/>", "< no_reply />", "<NO_REPLY>"])
 async def test_no_reply_marker_agent_path_suppresses_reply_without_toggle(
-    db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch
+    db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch, marker
 ):
-    """Agent 输出 <no_reply> 时：不发送、不入库、不进待审核。"""
+    """Agent 输出 <no_reply>（含 <no_reply/> 等格式变体）时：不发送、不入库、不进待审核。"""
     from app.services.agent.graph import AgentReplyResult
     import app.services.ranren_ai.engine as engine_mod
 
@@ -353,7 +354,7 @@ async def test_no_reply_marker_agent_path_suppresses_reply_without_toggle(
     engine = RanrenAIEngine(mock_message_channel)
 
     async def _fake_agent(**kwargs):
-        return AgentReplyResult(reply="<no_reply>")
+        return AgentReplyResult(reply=marker)
 
     monkeypatch.setattr(engine_mod, "generate_agent_reply", _fake_agent)
 
@@ -365,7 +366,7 @@ async def test_no_reply_marker_agent_path_suppresses_reply_without_toggle(
         trigger_id=None,
     )
     after = await _count_outbound_bot(db_session, case_id)
-    assert after == before, "含 <no_reply> 标记的回复不应产生任何出站消息"
+    assert after == before, f"含 {marker} 标记的回复不应产生任何出站消息"
 
 
 @pytest.mark.asyncio
