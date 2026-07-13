@@ -363,6 +363,18 @@ async def test_archivist_reports_faq_candidate_into_qa_draft(db_session):
     from app.services.knowledge_evolution import create_qa_drafts_from_archivist
 
     case, msgs, progress = await _setup_case_with_messages(db_session)
+    staff = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="text",
+        content="土豆可以当主食，今天不额外吃米饭就行。",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(staff)
+    await db_session.flush()
     fake = FakeToolCallingModel([
         AIMessage(
             content="",
@@ -376,7 +388,8 @@ async def test_archivist_reports_faq_candidate_into_qa_draft(db_session):
                         "category": "体重波动",
                         "tags": ["土豆", "体重波动"],
                         "evidence_text": "吃了土豆体重涨了",
-                        "source_message_ids": [msgs[0].id],
+                        "source_message_ids": [msgs[0].id, staff.id],
+                        "staff_message_id": staff.id,
                     },
                     "id": "f1",
                 },
@@ -408,6 +421,48 @@ async def test_archivist_reports_faq_candidate_into_qa_draft(db_session):
     ]
     assert len(archivist_drafts) == 1
     assert archivist_drafts[0].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_archivist_does_not_create_faq_from_user_and_bot_only(db_session):
+    from app.services.knowledge_evolution import create_qa_drafts_from_archivist
+
+    case, msgs, progress = await _setup_case_with_messages(db_session)
+    fake = FakeToolCallingModel([
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "report_faq_candidate",
+                    "args": {
+                        "scope": "general",
+                        "question": "减肥期间能吃土豆吗？",
+                        "answer": "可以，控制总量即可。",
+                        "category": "饮食执行",
+                        "evidence_text": "用户问减肥期间能不能吃土豆。",
+                        "source_message_ids": [msgs[0].id],
+                    },
+                    "id": "bot-only-faq",
+                },
+            ],
+        )
+    ])
+
+    result = await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+    created = await create_qa_drafts_from_archivist(
+        db_session, service_case_id=case.id, candidates=result.faq_candidates
+    )
+    await db_session.flush()
+
+    assert created == 0
+    drafts = [
+        draft
+        for draft in await db_session.scalars(select(KnowledgeDraft))
+        if (draft.content_json or {}).get("service_case_id") == case.id
+    ]
+    assert drafts == []
 
 
 @pytest.mark.asyncio

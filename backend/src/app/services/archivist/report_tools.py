@@ -119,8 +119,8 @@ class ReportFaqCandidateArgs(BaseModel):
     scope: Literal["general", "personal"] = Field(
         default="general",
         description=(
-            "general=其他用户也可复用，进入人工审核；personal=只适用于当前用户，"
-            "必须有班主任确认，直接写入该用户档案"
+            "general=班主任确认、其他用户也可复用，进入人工审核；personal=只适用于当前用户，"
+            "直接写入该用户档案"
         ),
     )
 
@@ -144,7 +144,7 @@ class ReportFaqCandidateArgs(BaseModel):
     staff_message_id: int | None = Field(
         default=None,
         gt=0,
-        description="personal 必填：明确确认该指导的班主任消息 ID；general 可留空",
+        description="必填：直接回答或确认该问答的班主任消息 ID",
     )
 
 

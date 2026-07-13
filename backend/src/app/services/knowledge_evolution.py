@@ -344,15 +344,18 @@ async def create_qa_drafts_from_archivist(
         if user_message is None:
             continue
         scope = str(item.get("scope") or "general")
+        staff_ids = _positive_ids([item.get("staff_message_id")])
+        staff = await session.get(Message, staff_ids[0]) if staff_ids else None
+        if (
+            not _is_staff_message_for_case(staff, service_case_id)
+            or staff.id <= user_message.id
+        ):
+            continue
+        if staff.id not in source_message_ids:
+            source_message_ids.append(staff.id)
         if scope == "personal":
-            staff_ids = _positive_ids([item.get("staff_message_id")])
-            staff = await session.get(Message, staff_ids[0]) if staff_ids else None
             service_case = await session.get(ServiceCase, service_case_id)
-            if (
-                service_case is None
-                or not _is_staff_message_for_case(staff, service_case_id)
-                or staff.id <= user_message.id
-            ):
+            if service_case is None:
                 continue
             await apply_staff_guidance_to_user_state(
                 session,
