@@ -27,6 +27,25 @@ def main():
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     archive_path = os.path.join(project_root, "ran_ai_deploy.tar.gz")
 
+    # 0. Capture the git commit being deployed (记录本次上线截止到哪个 commit)。
+    #    .git 不进 tar 包，服务器上无 git 历史，故在本地取好版本信息，
+    #    随代码一起写到 ECS 的 /root/ran_ai/DEPLOYED_VERSION，方便日后追溯线上版本。
+    def _git(cmd):
+        r = subprocess.run(cmd, shell=True, cwd=project_root, capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else "unknown"
+    git_sha = _git("git rev-parse HEAD")
+    git_branch = _git("git rev-parse --abbrev-ref HEAD")
+    git_subject = _git("git log -1 --pretty=%s")
+    git_dirty = _git("git status --porcelain")
+    deploy_ts = time.strftime("%Y-%m-%d %H:%M:%S %z")
+    version_line = (
+        f"commit: {git_sha}\nbranch: {git_branch}\nsubject: {git_subject}\n"
+        f"deployed_at: {deploy_ts}\nworktree_dirty: {'yes' if git_dirty else 'no'}\n"
+    )
+    print(f"🏷️ Deploying commit {git_sha[:12]} ({git_branch}) — {git_subject}")
+    if git_dirty:
+        print("  ⚠️ 警告：工作区有未提交改动，本次上线的代码与该 commit 不完全一致。")
+
     # 1. Compile Next.js locally
     print("🛠️ Step 1: Compiling Next.js frontend locally...")
     frontend_dir = os.path.join(project_root, "frontend")
@@ -81,11 +100,15 @@ def main():
 
     # 5. Extract and Clear Diagnostics History
     print("\n📂 Step 5: Extracting files and clearing diagnostics history on remote ECS...")
+    import base64
+    version_b64 = base64.b64encode(version_line.encode("utf-8")).decode("ascii")
     commands = [
         "mkdir -p /root/ran_ai",
         "tar -xzf /root/ran_ai_deploy.tar.gz -C /root/ran_ai",
         "rm /root/ran_ai_deploy.tar.gz",
-        "echo '[]' > /root/ran_ai/diagnostics/diagnostics_history.json"  # Clear the logs to verify updates
+        "echo '[]' > /root/ran_ai/diagnostics/diagnostics_history.json",  # Clear the logs to verify updates
+        # 记录本次上线版本（base64 传输避免中文提交标题的 shell 转义问题）
+        f"echo '{version_b64}' | base64 -d > /root/ran_ai/DEPLOYED_VERSION",
     ]
     
     for cmd in commands:
