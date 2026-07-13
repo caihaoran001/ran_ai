@@ -20,9 +20,6 @@ logger = logging.getLogger("uvicorn.error")
 
 _LIMITERS: dict[int, asyncio.Semaphore] = {}
 _LOW_CONFIDENCE_IMAGE_MARKERS = (
-    "置信度：低",
-    "置信度:低",
-    "置信度低",
     "不够清楚",
     "看不清",
     "无法确认",
