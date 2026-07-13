@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -12,13 +11,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.models.checkin import Checkin
-from app.models.message import (
-    Message,
-    MessageDirection,
-    MessagePurpose,
-    MessageSenderType,
-    MessageStatus,
-)
+from app.models.message import Message
 from app.models.service_case import ServiceCase
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
@@ -80,10 +73,6 @@ _MAX_TOOL_DOCUMENT_CHARS = 6000
 _MAX_FILE_SCAN = 20
 # 列表/定位时最多回溯的交付文档条数。
 _MAX_DOCUMENT_SCAN = 30
-# 一次最多回溯的已发打卡链接条数（一个服务窗口最多 28 天，留足余量）。
-_MAX_CHECKIN_LINK_ROWS = 40
-# 从提醒正文里抽取打卡/问卷短链（形如 https://admin.humanburning.ai/s/xxxx）。
-_CHECKIN_LINK_RE = re.compile(r"https?://\S+/s/\S+")
 
 _DOCUMENT_TYPE_LABELS: dict[DocumentType, str] = {
     DocumentType.ENERGY_RESTART_PRESCRIPTION: "能量重启处方单",
@@ -409,51 +398,6 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                 "truncated": len(text) > _MAX_TOOL_DOCUMENT_CHARS,
             }
 
-    async def get_sent_checkin_links() -> dict[str, Any]:
-        """查本服务单已经发出去的打卡/问卷链接：哪天、几点发的、链接是什么、是否成功。
-        用于用户问“昨天打卡你发了吗/打卡链接是不是你发的”时核实，别推给班主任也别猜。"""
-        async with SessionLocal() as session:
-            service_case = await session.scalar(
-                select_active_service_cases(ServiceCase.id == context.service_case_id)
-            )
-            if service_case is None:
-                return {"ok": False, "error": "当前服务单不存在或已删除。"}
-            tz = ZoneInfo(settings.reminder_timezone)
-            rows = await session.scalars(
-                select(Message)
-                .where(
-                    Message.service_case_id == context.service_case_id,
-                    Message.direction == MessageDirection.OUTBOUND,
-                    Message.sender_type == MessageSenderType.SYSTEM,
-                    Message.purpose == MessagePurpose.REMINDER,
-                    Message.status == MessageStatus.SENT,
-                    Message.content.like("%/s/%"),
-                )
-                .order_by(Message.created_at.asc())
-                .limit(_MAX_CHECKIN_LINK_ROWS)
-            )
-            items: list[dict[str, Any]] = []
-            for row in rows:
-                link_match = _CHECKIN_LINK_RE.search(row.content or "")
-                sent_at = row.created_at
-                sent_local = sent_at.astimezone(tz) if sent_at else None
-                day = effective_service_day(service_case, sent_local, tz) if sent_local else None
-                items.append(
-                    {
-                        "service_day": day,
-                        "service_day_text": f"第 {day} 天" if isinstance(day, int) and day >= 1 else None,
-                        "sent_date": sent_local.date().isoformat() if sent_local else None,
-                        "sent_time": sent_local.strftime("%H:%M") if sent_local else None,
-                        "link": link_match.group(0) if link_match else None,
-                    }
-                )
-            return {
-                "ok": True,
-                "count": len(items),
-                "items": items,
-                "note": "本服务单还没发过打卡链接。" if not items else "",
-            }
-
     async def get_user_state_profile() -> dict[str, Any]:
         async with SessionLocal() as session:
             row = await session.scalar(
@@ -488,17 +432,6 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             coroutine=get_user_state_profile,
             name="get_user_state_profile",
             description="Read the latest dynamic user state profile for the current service case only.",
-        ),
-        StructuredTool.from_function(
-            coroutine=get_sent_checkin_links,
-            name="get_sent_checkin_links",
-            description=(
-                "List the check-in / questionnaire links THIS service case has already sent (these are sent "
-                "automatically by you/the system, not by human staff). Returns for each: service_day, sent_date, "
-                "sent_time, link. Call this when the user asks whether/when a check-in link was sent (e.g. "
-                "'did you send yesterday's check-in', 'wasn't the check-in link from you'); answer from the "
-                "records, do not attribute it to human staff and do not guess."
-            ),
         ),
         StructuredTool.from_function(
             coroutine=list_delivery_documents,
