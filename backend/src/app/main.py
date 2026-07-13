@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
-from app.core.config import get_settings
+from app.core.config import configure_logging, get_settings
 from app.services.channels import set_current_channel
 from app.services.channels.qiwe import QiWeChannel
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator
@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(settings)
     docs_enabled = settings.environment != "production"
     app = FastAPI(
         title=settings.app_name,

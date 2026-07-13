@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 
 from pydantic import Field
@@ -16,6 +17,10 @@ class Settings(BaseSettings):
     app_name: str = "燃人AI 1.0"
     api_prefix: str = "/api"
     environment: str = "development"
+    # 应用日志级别。默认 INFO：不配这个的话，uvicorn 不给 root logger 挂 handler，
+    # app 自己 logger.info(...) 会被 Python 兜底逻辑丢弃(只剩 WARNING+)，
+    # 导致档案官/提醒等后台任务的运行日志在生产完全不可见。
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     frontend_public_base_url: str = Field(
         default="http://localhost:3002",
         validation_alias="FRONTEND_PUBLIC_BASE_URL",
@@ -194,3 +199,20 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def configure_logging(settings: Settings | None = None) -> None:
+    """给 root logger 挂一个 handler，让 app 自身的 logger.info(...) 能真正输出。
+
+    幂等：已配过 handler(如 uvicorn 已接管或重复调用)则只调级别，不重复加 handler。
+    两个入口都要调用——API(app.main:create_app) 与 scheduler(app.workers.scheduler)。
+    """
+    settings = settings or get_settings()
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    root = logging.getLogger()
+    root.setLevel(level)
+    if not root.handlers:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        )
