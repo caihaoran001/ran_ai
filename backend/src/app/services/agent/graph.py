@@ -430,7 +430,6 @@ def _is_data_tool(name: str) -> bool:
         "get_service_progress",
         "get_recent_checkins",
         "get_weight_trend",
-        "get_user_state_profile",
         "list_delivery_documents",
         "read_delivery_document",
         "list_group_files",

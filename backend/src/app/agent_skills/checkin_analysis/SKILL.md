@@ -22,6 +22,5 @@
 - `get_service_progress()`
 - `get_weight_trend(days=7)`
 - `get_recent_checkins(days=7)`
-- `get_user_state_profile()`
 
 详细指标解释见 `references/metric_rules.md`。

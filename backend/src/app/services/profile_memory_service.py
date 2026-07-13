@@ -203,7 +203,8 @@ def _domain_lines(domain: object, *, label: str, action_focus: bool = False) -> 
         return [f"{label}：{text}"] if text else []
 
     values = []
-    for value in list(current.values())[:5]:
+    # 取最新 5 条（value 字典按写入顺序，末尾即最近的纠正/信号），避免新写入被旧值挤出注入。
+    for value in list(current.values())[-5:]:
         text = _memory_value_text(value, 80)
         if text:
             values.append(text)

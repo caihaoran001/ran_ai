@@ -15,7 +15,6 @@ from app.models.message import Message
 from app.models.service_case import ServiceCase
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
-from app.models.user_state_profile import UserStateProfile
 from app.services.agent.state import AgentRunContext
 from app.services.checkin_queries import recent_checkins
 from app.services.service_case_queries import effective_service_day, effective_start_at, select_active_service_cases
@@ -398,18 +397,6 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                 "truncated": len(text) > _MAX_TOOL_DOCUMENT_CHARS,
             }
 
-    async def get_user_state_profile() -> dict[str, Any]:
-        async with SessionLocal() as session:
-            row = await session.scalar(
-                select(UserStateProfile)
-                .where(UserStateProfile.service_case_id == context.service_case_id)
-                .order_by(UserStateProfile.updated_at.desc())
-                .limit(1)
-            )
-            if row is None:
-                return {"ok": True, "state": None, "note": "暂无用户动态状态画像。"}
-            return {"ok": True, "summary": row.summary, "state": row.state_json or {}}
-
     return [
         StructuredTool.from_function(
             coroutine=get_service_progress,
@@ -427,11 +414,6 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             name="get_weight_trend",
             description="Calculate recent weight trend from structured check-in records for the current service case only.",
             args_schema=DaysArgs,
-        ),
-        StructuredTool.from_function(
-            coroutine=get_user_state_profile,
-            name="get_user_state_profile",
-            description="Read the latest dynamic user state profile for the current service case only.",
         ),
         StructuredTool.from_function(
             coroutine=list_delivery_documents,
