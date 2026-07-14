@@ -733,6 +733,8 @@ async def test_group_silence_still_parses_images_and_files(
 
     class FakeFileResponse:
         content = b"plain text"
+        status_code = 200
+        headers: dict[str, str] = {}
 
         def raise_for_status(self):
             return None

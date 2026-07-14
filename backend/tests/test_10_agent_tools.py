@@ -75,6 +75,8 @@ class FakeSequenceTool:
 class FakeFileResponse:
     def __init__(self, content: bytes):
         self.content = content
+        self.status_code = 200
+        self.headers: dict[str, str] = {}
 
     def raise_for_status(self):
         return None
