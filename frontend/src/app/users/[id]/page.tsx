@@ -44,6 +44,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const profileSource = text(refreshedFrom.stage)
     ? `来源：进展刷新（${stageLabel(text(refreshedFrom.stage))}）`
     : "来源：问卷自动生成";
+  const customerType = text((profile?.profile_json as Record<string, unknown> | undefined)?.customer_type);
 
   return (
     <div className="page-stack">
@@ -58,9 +59,11 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
               </p>
             )}
           </div>
-          <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">
-            用户档案
-          </span>
+          {customerType ? (
+            <CustomerTypeBadge type={customerType} />
+          ) : (
+            <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">用户档案</span>
+          )}
         </div>
       </div>
 
@@ -76,27 +79,21 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
       )}
 
       <section className="panel overflow-hidden">
-        <div className="panel-header-clean">
-          <h2 className="panel-title">基本信息</h2>
-        </div>
-        <div className="grid gap-3 p-4 text-sm sm:p-5 md:grid-cols-4">
-          <Info label="用户ID" value={String(user.id)} />
-          <Info label="真实姓名" value={user.name} />
-          <Info label="手机号" value={user.phone ?? "暂无数据"} />
-          <Info label="聊天用户ID" value={user.wecom_user_id ?? "暂无数据"} />
-          <Info label="性别/年龄" value={text(overview.gender_age) || "暂无数据"} />
-          <Info label="身高/体重" value={text(overview.height_weight) || "暂无数据"} />
-          <Info label="BMI" value={text(overview.bmi) || "暂无数据"} />
-          <Info label="腰围" value={text(overview.waist) || text(overview.waist_bodyfat) || "暂无数据"} />
-        </div>
-      </section>
-
-      <section className="panel overflow-hidden">
         <div className="panel-header-clean flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="panel-title">用户画像</h2>
-          <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-600">{profileSource}</span>
+          <div>
+            <h2 className="panel-title">用户画像</h2>
+            <p className="panel-subtitle">{profileSource}</p>
+          </div>
+          <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-600">建档基础信息</span>
         </div>
-        <div className="panel-body">
+        <div className="panel-body space-y-4">
+          <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
+            <Info label="性别/年龄" value={text(overview.gender_age) || "暂无数据"} />
+            <Info label="身高/体重" value={text(overview.height_weight) || "暂无数据"} />
+            <Info label="BMI" value={text(overview.bmi) || "暂无数据"} />
+            <Info label="腰围" value={text(overview.waist) || text(overview.waist_bodyfat) || "暂无数据"} />
+            <Info label="减重带" value={profileText(profile?.profile_json, "weight_loss_band") || "暂无数据"} />
+          </div>
           {profile ? (
             <ProfileView profile={profile.profile_json} fallback={profile.summary} serviceCase={serviceCase} />
           ) : (
@@ -104,114 +101,132 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           )}
         </div>
       </section>
+
       {stateProfile && (
-        <section className="panel overflow-hidden">
-          <div className="panel-header-clean flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="panel-title">当前用户状态</h2>
-            <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">证据驱动更新</span>
-          </div>
-          <div className="panel-body">
-            <LongTermMemoryView state={stateProfile.state_json} />
-            <StateProfileView state={stateProfile.state_json} updatedAt={stateProfile.updated_at} />
-          </div>
-        </section>
+        <CollapsibleSection title="当前用户状态" subtitle="证据驱动的动态状态，默认收起">
+          <LongTermMemoryView state={stateProfile.state_json} />
+          <StateProfileView state={stateProfile.state_json} updatedAt={stateProfile.updated_at} />
+        </CollapsibleSection>
       )}
-      {(energyDocument || executionDocument) && (
-        <section className="panel overflow-hidden">
-          <div className="panel-header-clean">
-            <h2 className="panel-title">交付文件摘要</h2>
-          </div>
-          <div className="panel-body">
-            <DocumentHighlights energyDocument={energyDocument} executionDocument={executionDocument} />
-          </div>
-        </section>
-      )}
+
       {serviceCase && (
-        <section className="panel overflow-hidden">
-          <div className="panel-header-clean">
-            <h2 className="panel-title">正在进行的方案</h2>
-          </div>
-          <div className="panel-body">
-          <Link className="text-break block rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm font-bold text-slate-900 hover:border-cyan-300 hover:bg-white" href={`/cases/${serviceCase.id}`}>
-            {serviceCase.case_no} · {statusLabel(serviceCase.status)}
-          </Link>
-          <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
-            <Info label="人工介入" value={serviceCase.needs_human_intervention ? reasonText(serviceCase.intervention_reasons) : "暂无"} />
-            <Info label="风险原因" value={serviceCase.risk_level === "high" ? reasonText(serviceCase.risk_flags) : "暂无"} />
-            <Info label="AI自动回复" value={serviceCase.ai_auto_reply_enabled === false ? "关闭" : "开启"} />
-            <Info label="续购意向" value={intentText(serviceCase.renewal_intent_flags)} />
-            <Info label="退款/退出意向" value={intentText(serviceCase.refund_intent_flags)} />
-          </div>
-          </div>
-        </section>
-      )}
-      <section className="panel overflow-hidden">
-        <div className="panel-header-clean">
-          <h2 className="panel-title">打卡数据</h2>
-        </div>
-        <div className="grid gap-3 p-4 text-sm sm:p-5 md:grid-cols-3">
-          <Info label="体重变化" value={weightTrend(checkins)} />
-          <Info label="睡眠变化" value={latestParsed?.sleep || "暂无数据"} />
-          <Info label="情绪变化" value={latestParsed?.mood || "暂无数据"} />
-          <Info label="饮水" value={latestParsed?.water || "暂无数据"} />
-          <Info label="运动" value={latestParsed?.exercise || "暂无数据"} />
-          <Info label="打卡天数" value={`${uniqueCheckinDays} 天`} />
-        </div>
-      </section>
-      <section className="panel overflow-hidden">
-        <div className="panel-header-clean">
-          <h2 className="panel-title">购买与复购</h2>
-          <p className="panel-subtitle">订单数据尚未接入，仅预留展示位。</p>
-        </div>
-        <div className="grid gap-3 p-4 text-sm sm:p-5 md:grid-cols-3">
-          <Info label="购买记录" value="未接入" muted />
-          <Info label="复购记录" value="未接入" muted />
-          <Info label="客单价" value="未接入" muted />
-        </div>
-      </section>
-      <section className="panel overflow-hidden">
-        <div className="panel-header-clean">
-          <h2 className="panel-title">历史聊天摘要</h2>
-          <p className="panel-subtitle">{chatSummary(messages)}</p>
-        </div>
-        <div className="max-h-48 space-y-2 overflow-y-auto p-4 pr-2 text-sm sm:p-5">
-          {messages.slice(-5).map((message) => (
-            <div key={message.id} className="rounded-md border border-slate-200 bg-slate-50/60 p-2.5">
-              <span className="font-bold text-slate-600">{
-                message.sender_type === "bot" ? "燃人.AI"
-                  : message.sender_type === "staff" ? (message.display_sender_name || "班主任")
-                  : message.direction === "outbound" ? "运营"
-                  : (message.display_sender_name || "客户")
-              }：</span>
-              <span className="text-break whitespace-pre-wrap">{message.content}</span>
+        <CollapsibleSection title="运营明细" subtitle="方案 · 打卡 · 交付文件 · 聊天 · 服务单">
+          <div className="space-y-5">
+            <div>
+              <SubHeading>正在进行的方案</SubHeading>
+              <Link className="text-break block rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm font-bold text-slate-900 hover:border-cyan-300 hover:bg-white" href={`/cases/${serviceCase.id}`}>
+                {serviceCase.case_no} · {statusLabel(serviceCase.status)}
+              </Link>
+              <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
+                <Info label="人工介入" value={serviceCase.needs_human_intervention ? reasonText(serviceCase.intervention_reasons) : "暂无"} />
+                <Info label="风险原因" value={serviceCase.risk_level === "high" ? reasonText(serviceCase.risk_flags) : "暂无"} />
+                <Info label="AI自动回复" value={serviceCase.ai_auto_reply_enabled === false ? "关闭" : "开启"} />
+                <Info label="续购意向" value={intentText(serviceCase.renewal_intent_flags)} />
+                <Info label="退款/退出意向" value={intentText(serviceCase.refund_intent_flags)} />
+              </div>
             </div>
-          ))}
-        </div>
-      </section>
-      <section className="panel overflow-hidden">
-        <div className="panel-header-clean">
-          <h2 className="panel-title">服务单</h2>
-        </div>
-        <div className="grid max-h-48 gap-2 overflow-y-auto p-4 pr-2 text-sm sm:p-5">
-          {user.service_cases.map((item) => (
-            <Link key={item.id} className="text-break rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2 font-bold text-slate-900 hover:border-cyan-300 hover:bg-white" href={`/cases/${item.id}`}>
-              {item.case_no} · {item.group_id} · {statusLabel(item.status)}
-            </Link>
-          ))}
-        </div>
-      </section>
+
+            <div>
+              <SubHeading>打卡数据</SubHeading>
+              <div className="grid gap-3 text-sm md:grid-cols-3">
+                <Info label="体重变化" value={weightTrend(checkins)} />
+                <Info label="睡眠变化" value={latestParsed?.sleep || "暂无数据"} />
+                <Info label="情绪变化" value={latestParsed?.mood || "暂无数据"} />
+                <Info label="饮水" value={latestParsed?.water || "暂无数据"} />
+                <Info label="运动" value={latestParsed?.exercise || "暂无数据"} />
+                <Info label="打卡天数" value={`${uniqueCheckinDays} 天`} />
+              </div>
+            </div>
+
+            {(energyDocument || executionDocument) && (
+              <div>
+                <SubHeading>交付文件摘要</SubHeading>
+                <DocumentHighlights energyDocument={energyDocument} executionDocument={executionDocument} />
+              </div>
+            )}
+
+            <div>
+              <SubHeading>历史聊天摘要（{chatSummary(messages)}）</SubHeading>
+              <div className="max-h-48 space-y-2 overflow-y-auto pr-2 text-sm">
+                {messages.slice(-5).map((message) => (
+                  <div key={message.id} className="rounded-md border border-slate-200 bg-slate-50/60 p-2.5">
+                    <span className="font-bold text-slate-600">{
+                      message.sender_type === "bot" ? "燃人.AI"
+                        : message.sender_type === "staff" ? (message.display_sender_name || "班主任")
+                        : message.direction === "outbound" ? "运营"
+                        : (message.display_sender_name || "客户")
+                    }：</span>
+                    <span className="text-break whitespace-pre-wrap">{message.content}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <SubHeading>全部服务单</SubHeading>
+              <div className="grid max-h-48 gap-2 overflow-y-auto pr-2 text-sm">
+                {user.service_cases.map((item) => (
+                  <Link key={item.id} className="text-break rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2 font-bold text-slate-900 hover:border-cyan-300 hover:bg-white" href={`/cases/${item.id}`}>
+                    {item.case_no} · {item.group_id} · {statusLabel(item.status)}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          </div>
+        </CollapsibleSection>
+      )}
+
       {profile && (
-        <section className="panel overflow-hidden">
-          <div className="panel-header-clean">
-            <h2 className="panel-title">调试信息</h2>
-            <p className="panel-subtitle">供排查 AI 回复上下文使用，日常运营可忽略。</p>
+        <CollapsibleSection title="调试信息" subtitle="AI 提示词上下文预览，日常运营可忽略">
+          <div className="text-break max-w-full overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-6 text-slate-600 select-all">
+            {aiContextPreview?.context || "暂无 AI 上下文。"}
           </div>
-          <div className="panel-body">
-            <AiContextPreview context={aiContextPreview?.context} />
-          </div>
-        </section>
+        </CollapsibleSection>
       )}
     </div>
+  );
+}
+
+const CUSTOMER_TYPE_STYLE: Record<string, string> = {
+  疾病管理型: "border-rose-200 bg-rose-50 text-rose-700",
+  减重攻坚型: "border-amber-200 bg-amber-50 text-amber-800",
+  健康投资型: "border-emerald-200 bg-emerald-50 text-emerald-700",
+};
+
+function CustomerTypeBadge({ type }: { type: string }) {
+  const style = CUSTOMER_TYPE_STYLE[type] ?? "border-slate-200 bg-slate-50 text-slate-700";
+  return (
+    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-sm font-bold ${style}`}>
+      {type}
+    </span>
+  );
+}
+
+function SubHeading({ children }: { children: React.ReactNode }) {
+  return <div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">{children}</div>;
+}
+
+function CollapsibleSection({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="panel group overflow-hidden">
+      <summary className="panel-header-clean flex cursor-pointer select-none items-center justify-between">
+        <div>
+          <h2 className="panel-title">{title}</h2>
+          {subtitle && <p className="panel-subtitle">{subtitle}</p>}
+        </div>
+        <span className="text-xs text-slate-400 group-open:hidden">展开</span>
+        <span className="hidden text-xs text-slate-400 group-open:inline">收起</span>
+      </summary>
+      <div className="panel-body">{children}</div>
+    </details>
   );
 }
 
@@ -473,25 +488,6 @@ function NeedList({ label, items }: { label: string; items: unknown }) {
         <div className="mt-1 text-slate-400">暂无数据</div>
       )}
     </div>
-  );
-}
-
-function AiContextPreview({ context }: { context?: string }) {
-  const contextText = context || "暂无 AI 上下文。";
-  return (
-    <details className="group mt-3 rounded-lg border border-slate-200 bg-slate-50 text-slate-900">
-      <summary className="flex cursor-pointer items-center justify-between px-4 py-3 select-none font-semibold focus:outline-none">
-        <span className="flex items-center gap-2 text-sm text-slate-700">
-          <span className="h-2 w-2 rounded-full bg-slate-400" />
-          AI 视角：真实提示词上下文预览
-        </span>
-        <span className="text-xs text-slate-500 group-open:hidden">点击展开</span>
-        <span className="text-xs text-slate-500 hidden group-open:inline">点击收起</span>
-      </summary>
-      <div className="text-break max-w-full overflow-x-auto whitespace-pre-wrap border-t border-slate-200 px-4 py-4 font-mono text-xs leading-6 text-slate-600 select-all">
-        {contextText}
-      </div>
-    </details>
   );
 }
 
