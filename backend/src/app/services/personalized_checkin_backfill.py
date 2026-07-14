@@ -27,6 +27,7 @@ class PersonalizedCheckinBackfillResult:
     submissions_matched: int = 0
     answers_planned: int = 0
     answers_written: int = 0
+    answers_updated: int = 0
     skipped: Counter[str] = field(default_factory=Counter)
 
     def as_dict(self) -> dict[str, object]:
@@ -35,6 +36,7 @@ class PersonalizedCheckinBackfillResult:
             "submissions_matched": self.submissions_matched,
             "answers_planned": self.answers_planned,
             "answers_written": self.answers_written,
+            "answers_updated": self.answers_updated,
             "skipped": dict(sorted(self.skipped.items())),
         }
 
@@ -106,7 +108,7 @@ async def backfill_personalized_h5_checkins(
         await session.scalars(
             select(QuestionnaireSubmission)
             .where(QuestionnaireSubmission.template_key == "personalized_checkin")
-            .order_by(QuestionnaireSubmission.id.asc())
+            .order_by(QuestionnaireSubmission.created_at.asc(), QuestionnaireSubmission.id.asc())
         )
     )
     for submission in submissions:
@@ -148,8 +150,15 @@ async def backfill_personalized_h5_checkins(
             item_id = f"document:{document.id}:{index}"
             existing = custom.get(item_id)
             if isinstance(existing, dict) and str(existing.get("answer") or "").strip():
-                result.skipped["existing_custom_answer"] += 1
-                continue
+                existing_submission_id = existing.get("questionnaire_submission_id")
+                is_older_h5_value = (
+                    existing.get("source") == "historical_h5"
+                    and isinstance(existing_submission_id, int)
+                    and existing_submission_id < submission.id
+                )
+                if not is_older_h5_value:
+                    result.skipped["existing_custom_answer"] += 1
+                    continue
             result.answers_planned += 1
             if apply:
                 custom[item_id] = {
@@ -159,7 +168,10 @@ async def backfill_personalized_h5_checkins(
                     "questionnaire_submission_id": submission.id,
                 }
                 changed = True
-                result.answers_written += 1
+                if existing:
+                    result.answers_updated += 1
+                else:
+                    result.answers_written += 1
         if apply and changed:
             parsed["custom_checkin"] = custom
             checkin.parsed_json = parsed

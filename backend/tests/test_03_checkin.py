@@ -144,28 +144,36 @@ async def test_backfill_historical_personalized_h5_answers_keeps_question_snapsh
             "personalized_checkin_3": "否",
         },
     )
-    db_session.add_all([document, checkin, submission])
+    later_submission = QuestionnaireSubmission(
+        service_case_id=service_case.id,
+        template_key="personalized_checkin",
+        created_at=now + timedelta(minutes=1),
+        answers_json={"personalized_checkin_2": "否"},
+    )
+    db_session.add_all([document, checkin, submission, later_submission])
     await db_session.flush()
 
     preview = await backfill_personalized_h5_checkins(db_session, apply=False)
-    assert preview.answers_planned == 2
+    assert preview.answers_planned == 3
     assert preview.answers_written == 0
     assert "custom_checkin" not in (checkin.parsed_json or {})
 
     applied = await backfill_personalized_h5_checkins(db_session, apply=True)
     assert applied.answers_written == 2
+    assert applied.answers_updated == 1
     parsed = checkin.parsed_json or {}
     item = parsed["custom_checkin"][f"document:{document.id}:2"]
     assert item == {
         "question": "今天是否在23:30前上床？",
-        "answer": "是",
+        "answer": "否",
         "source": "historical_h5",
-        "questionnaire_submission_id": submission.id,
+        "questionnaire_submission_id": later_submission.id,
     }
 
     rerun = await backfill_personalized_h5_checkins(db_session, apply=True)
     assert rerun.answers_written == 0
-    assert rerun.skipped["existing_custom_answer"] == 2
+    assert rerun.answers_updated == 0
+    assert rerun.skipped["existing_custom_answer"] == 3
 
 
 @pytest.mark.asyncio
