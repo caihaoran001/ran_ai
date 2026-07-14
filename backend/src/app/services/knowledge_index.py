@@ -201,6 +201,7 @@ async def retrieve_indexed_knowledge(
     query: str,
     *,
     settings: Settings | None = None,
+    exclude_source_types: set[str] | None = None,
 ) -> str:
     settings = settings or get_settings()
     query = query.strip()
@@ -208,10 +209,17 @@ async def retrieve_indexed_knowledge(
         return ""
     vec_results: list[tuple[int, str]] = []
     text_results: list[tuple[int, str]] = []
-    
+
     if settings.embedding_api_key:
-        vec_results = await _retrieve_by_embedding(session, query, settings=settings)
-    text_results = await _retrieve_by_text(session, query, top_k=settings.knowledge_base_top_k * 2)
+        vec_results = await _retrieve_by_embedding(
+            session, query, settings=settings, exclude_source_types=exclude_source_types
+        )
+    text_results = await _retrieve_by_text(
+        session,
+        query,
+        top_k=settings.knowledge_base_top_k * 2,
+        exclude_source_types=exclude_source_types,
+    )
 
     # Reciprocal Rank Fusion (RRF)
     # RRF Score = 1 / (rank + k), typical k=60
@@ -332,6 +340,7 @@ async def _retrieve_by_embedding(
     query: str,
     *,
     settings: Settings,
+    exclude_source_types: set[str] | None = None,
 ) -> list[tuple[int, str]]:
     if not await _pgvector_available(session):
         raise RuntimeError(
@@ -359,30 +368,41 @@ async def _retrieve_by_embedding(
         await embedding_service.close()
 
     qv_str = "[" + ",".join(str(x) for x in query_vector) + "]"
+    params: dict[str, Any] = {
+        "model": settings.embedding_model,
+        "qv": qv_str,
+        "max_distance": settings.faq_vector_distance_threshold,
+        "limit": settings.knowledge_base_top_k * 2,
+    }
+    exclude_clause = ""
+    if exclude_source_types:
+        params["exclude_types"] = list(exclude_source_types)
+        exclude_clause = "AND source_type <> ALL(:exclude_types)\n              "
     res = await session.execute(
         sql_text(
-            """
+            f"""
             SELECT id, content
             FROM knowledge_chunks
             WHERE status = 'active'
               AND embedding_vector IS NOT NULL
               AND embedding_model = :model
-              AND embedding_vector <=> CAST(:qv AS vector) < :max_distance
+              {exclude_clause}AND embedding_vector <=> CAST(:qv AS vector) < :max_distance
             ORDER BY embedding_vector <=> CAST(:qv AS vector)
             LIMIT :limit
             """
         ),
-        {
-            "model": settings.embedding_model,
-            "qv": qv_str,
-            "max_distance": settings.faq_vector_distance_threshold,
-            "limit": settings.knowledge_base_top_k * 2,
-        },
+        params,
     )
     return [(row[0], row[1].strip()) for row in res.all()]
 
 
-async def _retrieve_by_text(session: AsyncSession, query: str, *, top_k: int) -> list[tuple[int, str]]:
+async def _retrieve_by_text(
+    session: AsyncSession,
+    query: str,
+    *,
+    top_k: int,
+    exclude_source_types: set[str] | None = None,
+) -> list[tuple[int, str]]:
     """Keyword fallback retrieval backed by the pg_trgm GIN index.
 
     Scores each active chunk by how many query terms appear in its content using
@@ -406,10 +426,13 @@ async def _retrieve_by_text(session: AsyncSession, query: str, *, top_k: int) ->
     score_expr = reduce(_op.add, score_parts)
     any_match = or_(*(KnowledgeChunk.content.ilike(f"%{term}%") for term in query_terms))
 
+    conditions = [KnowledgeChunk.status == "active", any_match]
+    if exclude_source_types:
+        conditions.append(KnowledgeChunk.source_type.notin_(exclude_source_types))
     rows = list(
         await session.execute(
             select(KnowledgeChunk.id, KnowledgeChunk.content, score_expr.label("score"))
-            .where(KnowledgeChunk.status == "active", any_match)
+            .where(*conditions)
             .order_by(sa_text("score DESC"))
             .limit(top_k)
         )

@@ -19,6 +19,7 @@ from app.services.agent.prompts import AGENT_SYSTEM_PROMPT, build_agent_user_pro
 from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.state import AgentRunContext, AgentState
 from app.services.agent.tools import build_agent_tools
+from app.services.knowledge_index import retrieve_indexed_knowledge
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -27,7 +28,6 @@ WEB_SEARCH_CALL_LIMIT = 2
 TOOL_FAILURE_CIRCUIT_LIMIT = 2
 # 纯文本工具（knowledge/skill）的失败以显式错误前缀判定，避免正文含“失败/错误”被误判为工具失败而误触熔断。
 _STR_TOOL_ERROR_PREFIXES = (
-    "KNOWLEDGE_SEARCH_ERROR",
     "SKILL_LOAD_ERROR",
     "SKILL_FILE_ERROR",
     "TOOL_ERROR",
@@ -86,6 +86,7 @@ class RanrenAgentGraph:
 
     async def run(self, *, user_query: str, recent_messages: list[str], query_speaker: str = "用户") -> AgentReplyResult:
         memory_context = await self._build_memory_context()
+        knowledge_context = await self._build_knowledge_context(user_query)
         initial_messages: list[BaseMessage] = [
             SystemMessage(content=AGENT_SYSTEM_PROMPT),
             HumanMessage(
@@ -96,6 +97,7 @@ class RanrenAgentGraph:
                     skill_catalog=self.skill_registry.catalog_text(),
                     current_time_context=_current_time_context(),
                     memory_context=memory_context,
+                    knowledge_context=knowledge_context,
                 )
             ),
         ]
@@ -142,6 +144,30 @@ class RanrenAgentGraph:
         except Exception:
             logger.exception("Failed to build agent memory context service_case_id=%s", self.context.service_case_id)
             return "暂无可用用户背景。"
+
+    async def _build_knowledge_context(self, query: str) -> str:
+        """每轮按本轮问题预检索知识库(FAQ/markdown)注入提示词。
+
+        排除 source_type='case'——优秀案例只走 search_success_case 情绪触发工具,
+        不在普通问答里冒出来。检索失败/无命中一律给占位串,绝不因知识检索拖垮回复。
+        """
+        clean = (query or "").strip()
+        if not clean:
+            return "暂无相关参考问答。"
+        try:
+            async with db_session_module.SessionLocal() as session:
+                result = await retrieve_indexed_knowledge(
+                    session,
+                    clean,
+                    settings=self.settings,
+                    exclude_source_types={"case"},
+                )
+            return result or "暂无相关参考问答。"
+        except Exception:
+            logger.exception(
+                "Failed to build agent knowledge context service_case_id=%s", self.context.service_case_id
+            )
+            return "暂无相关参考问答。"
 
     def _compile(self):
         builder = StateGraph(AgentState)

@@ -15,6 +15,7 @@ AGENT_SYSTEM_PROMPT = """你是燃人微信群里的健康陪伴助教，负责�
 用户背景使用：
 - 【本次提问】用“用户：”或“班主任：”标明发送者，“图片内容：”是系统识别出的图片描述（不是用户原话）；班主任提问时只回答问题，不当作用户画像或状态。
 - 【隐性用户背景】只当聊天背景帮你自然接话，不要逐条复述，不要说“根据你的画像/资料/系统记录”。只用与当前问题直接相关的部分；与当前消息冲突时以当前消息为准；不确定或过期的信息保守带入，拿不准就追问，不要说死。
+- 【参考问答】是系统按本轮问题预检索的知识库素材（已有的问法/参考回复），当作参考自然融进回复，不要逐条复述、不要说“根据知识库/资料”；与当前消息冲突以当前消息为准；显示“暂无相关参考问答”或内容与本轮无关时，就正常凭常识或其它工具回答，不要硬套。
 - 【最近对话】里“助教”就是你自己之前发出的回复，不要把它说成营养师、班主任或其他真人说过的话；用户在延续或纠正前文时，优先接前文、少搬长期画像。
 - 聊兴趣、潮玩、影视、游戏、旅游等公开话题时只参考长期偏好/最近话题，不提饮食、体重、产品、服务目标；问早C/午B/晚A等产品或作息、执行卡点时只参考当前状态/风险边界/产品执行，不提兴趣偏好。
 
@@ -50,6 +51,7 @@ def build_agent_user_prompt(
     skill_catalog: str,
     current_time_context: str,
     memory_context: str,
+    knowledge_context: str,
 ) -> str:
     recent = "\n".join(f"- {item}" for item in recent_messages) if recent_messages else "无"
     current_query = user_query
@@ -61,5 +63,6 @@ def build_agent_user_prompt(
         f"【本次提问】\n{current_query}\n\n"
         f"【最近对话】\n{recent}\n\n"
         f"【隐性用户背景】\n{memory_context}\n\n"
+        f"【参考问答】\n{knowledge_context}\n\n"
         f"【可用 Skill】\n{skill_catalog}\n"
     )
