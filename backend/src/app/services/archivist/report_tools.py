@@ -60,6 +60,14 @@ class ReportCheckinArgs(BaseModel):
             "target_date(YYYY-MM-DD)、answer、evidence_message_id；只能记录用户对该追问的直接回答。"
         ),
     )
+    checklist_answers: list[dict[str, str]] | None = Field(
+        default=None,
+        description=(
+            "根据已发送执行单的每日五项，把用户在普通聊天中明确回答的个性化项上报。"
+            "每项包含 item_id、target_date(YYYY-MM-DD)、answer、evidence_message_id；"
+            "只填上下文中给出的题目，未明确回答不得猜测。"
+        ),
+    )
 
 
 class ReportOutcomeArgs(BaseModel):

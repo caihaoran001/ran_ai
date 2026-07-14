@@ -359,14 +359,24 @@ async def get_sent_daily_checklist(
     return (document.id, items) if len(items) == 5 else None
 
 
-def _answered_document_items(checkin: Checkin | None) -> set[str]:
+def _answered_document_items(checkin: Checkin | None, items: list[dict[str, str]]) -> set[str]:
     parsed = checkin.parsed_json if checkin and isinstance(checkin.parsed_json, dict) else {}
     answers = parsed.get("custom_checkin") if isinstance(parsed, dict) else None
-    return {
+    answered = {
         str(item_id)
         for item_id, answer in (answers or {}).items()
         if isinstance(answer, dict) and str(answer.get("answer") or "").strip()
     }
+    # The first delivered question is always the combined three-product check-in.
+    # It is already a stable structured field, so ordinary chat extraction must
+    # suppress it even when the user never replied to a bot prompt.
+    product_schedule = parsed.get("product_schedule") if isinstance(parsed, dict) else None
+    if items and isinstance(product_schedule, dict) and all(
+        _slot_filled(product_schedule.get(key))
+        for key in ("morning_c", "noon_b", "night_a")
+    ):
+        answered.add(items[0]["id"])
+    return answered
 
 
 async def compose_document_checklist_followup(
@@ -388,7 +398,7 @@ async def compose_document_checklist_followup(
             Checkin.deleted_at.is_(None),
         )
     )
-    answered = _answered_document_items(checkin)
+    answered = _answered_document_items(checkin, items)
     missing = [item for item in items if item["id"] not in answered]
     if not missing:
         return None
@@ -530,6 +540,30 @@ async def mark_followup_answers(
             row.answered_item_ids = answered
         row.status = "answered"
         row.finalized_at = datetime.now(tz=ZoneInfo("UTC"))
+
+
+async def mark_latest_followup_cycle_answered(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    item_ids: list[str],
+) -> None:
+    """任一正常打卡回答都恢复追问；没有历史追问周期时无需写入。"""
+    row = await session.scalar(
+        select(CheckinFollowupCycle)
+        .where(CheckinFollowupCycle.service_case_id == service_case_id)
+        .order_by(CheckinFollowupCycle.cycle_date.desc())
+        .limit(1)
+    )
+    if row is None:
+        return
+    answered = list(row.answered_item_ids or [])
+    for item_id in item_ids:
+        if item_id and item_id not in answered:
+            answered.append(item_id)
+    row.answered_item_ids = answered
+    row.status = "answered"
+    row.finalized_at = datetime.now(tz=ZoneInfo("UTC"))
 
 
 async def compose_daily_followup(

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -29,6 +30,7 @@ from app.models.message import (
 from app.models.outcome import OutcomeEvent, OutcomeStageState
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_state_profile import UserStateProfile
 from app.services.archivist.graph import run_archivist
 from app.services.profile_memory_service import load_profile_memory_context
@@ -51,6 +53,80 @@ class FakeToolCallingModel:
         if not self.responses:
             return AIMessage(content="")
         return self.responses.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_archivist_maps_normal_chat_to_delivered_checklist_item(db_session):
+    """不是回复机器人提醒的普通聊天，也必须进入执行单对应题目并恢复追问资格。"""
+    case, msgs, progress = await _setup_case_with_messages(db_session)
+    document = UserDocument(
+        service_case_id=case.id,
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28天执行标准与打卡要求",
+        content_md="test",
+        content_json={
+            "blocks": [
+                {"key": "daily_checkin", "items": [
+                    "早C/午B/晚A是否全部完成",
+                    "今天是否至少吃到2拳蔬菜",
+                    "今天是否完成计划内快走",
+                    "睡眠是否按计划收口",
+                    "情绪稳定度评分",
+                ]}
+            ]
+        },
+        status=DocumentStatus.SENT,
+        sent_at=datetime.now(timezone.utc),
+    )
+    db_session.add(document)
+    normal_chat = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="今天蔬菜吃够两拳了。",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(normal_chat)
+    await db_session.flush()
+    target_date = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    item_id = f"document:{document.id}:2"
+    fake = FakeToolCallingModel([
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "report_checkin",
+                    "args": {
+                        "checklist_answers": [
+                            {
+                                "item_id": item_id,
+                                "target_date": target_date,
+                                "answer": "蔬菜吃够两拳",
+                                "evidence_message_id": str(normal_chat.id),
+                            }
+                        ]
+                    },
+                    "id": "normal-checklist-answer",
+                }
+            ],
+        )
+    ])
+
+    await run_archivist(db_session, service_case=case, progress=progress, chat_model=fake)
+    await db_session.flush()
+
+    checkin = await db_session.scalar(
+        select(Checkin).where(
+            Checkin.service_case_id == case.id,
+            Checkin.checkin_date == datetime.fromisoformat(target_date).date(),
+        )
+    )
+    assert checkin is not None
+    assert checkin.parsed_json["custom_checkin"][item_id]["answer"] == "蔬菜吃够两拳"
+    assert "<daily_checklist_context>" in fake.calls[0][1].content
 
 
 async def _setup_case_with_messages(db_session):

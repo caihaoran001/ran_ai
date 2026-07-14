@@ -197,11 +197,13 @@ async def upsert_checkin(
                 _merge_product_schedule(incoming=value, parsed=parsed, meta=meta, result=result)
             else:
                 _merge_scalar(key=key, incoming=value, parsed=parsed, meta=meta, result=result)
-        if not parsed:
-            return result
         if result.contradictions:
             meta["contradictions"].extend(result.contradictions)
         _merge_custom_answers(parsed, custom_answers)
+        # 个性化执行单题目的回答本身也应能创建当天打卡；它不一定同时能映射到
+        # 固定的 CHECKIN_KEYS（例如“今天午餐有没有按计划吃”）。
+        if not parsed:
+            return result
         parsed["_meta"] = meta
         checkin = Checkin(
             service_case_id=service_case.id,

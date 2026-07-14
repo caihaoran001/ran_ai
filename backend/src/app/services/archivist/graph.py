@@ -23,7 +23,11 @@ from app.models.archivist_progress import ArchivistProgress
 from app.models.message import Message, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase
 from app.services.archivist.checkin_projection import CheckinUpsertResult, upsert_checkin
-from app.services.archivist.followup import mark_followup_answers
+from app.services.archivist.followup import (
+    get_sent_daily_checklist,
+    mark_followup_answers,
+    mark_latest_followup_cycle_answered,
+)
 from app.services.archivist.corrections import apply_reported_corrections
 from app.services.archivist.extract_agent import run_extract_agent
 from app.services.outcome_engine import apply_archived_outcome
@@ -52,6 +56,9 @@ class ArchivistState(TypedDict, total=False):
     profile_candidates: list[dict]
     correction_candidates: list[dict]
     faq_candidates: list[dict]
+    followup_answers: list[dict]
+    checklist_answers: list[dict]
+    has_checkin_activity: bool
     committed: list[dict]
 
 
@@ -282,7 +289,12 @@ class ArchivistGraph:
         correction_candidates: list[dict] = []
         faq_candidates: list[dict] = []
         followup_answers: list[dict] = []
+        checklist_answers: list[dict] = []
+        has_checkin_activity = False
         followup_context_by_date = state.get("followup_context_by_date") or {}
+        checklist = await get_sent_daily_checklist(
+            self.session, service_case_id=self.service_case.id
+        )
 
         for date_iso, msgs in delta_by_date.items():
             content = "\n".join(f"[{m['id']}] {m['role']}：{m['text']}" for m in msgs)
@@ -298,8 +310,17 @@ class ArchivistGraph:
                 chat_model=self.chat_model,
                 settings=self.settings,
                 followup_context=followup_context_by_date.get(date_iso) or [],
+                checklist_context=(
+                    [
+                        {"item_id": item["id"], "label": item["label"], "target_date": date_iso}
+                        for item in checklist[1]
+                    ]
+                    if checklist is not None
+                    else []
+                ),
             )
             fields = collector.get("checkin") or {}
+            has_checkin_activity = has_checkin_activity or bool(fields)
             outcome_candidates.extend(collector.get("outcome") or [])
             profile_candidates.extend(collector.get("profile") or [])
             correction_candidates.extend(collector.get("correction") or [])
@@ -317,6 +338,14 @@ class ArchivistGraph:
                     target_date, {"fields": {}, "evidence_ids": evidence_ids, "custom_answers": []}
                 )
                 payload["custom_answers"].append(answer)
+            for answer in collector.get("checklist_answers") or []:
+                checklist_answers.append(answer)
+                has_checkin_activity = True
+                target_date = str(answer.get("target_date") or date_iso)
+                payload = day_candidates.setdefault(
+                    target_date, {"fields": {}, "evidence_ids": evidence_ids, "custom_answers": []}
+                )
+                payload["custom_answers"].append(answer)
         return {
             "day_candidates": day_candidates,
             "outcome_candidates": outcome_candidates,
@@ -324,6 +353,8 @@ class ArchivistGraph:
             "correction_candidates": correction_candidates,
             "faq_candidates": faq_candidates,
             "followup_answers": followup_answers,
+            "checklist_answers": checklist_answers,
+            "has_checkin_activity": has_checkin_activity,
         }
 
     async def _classify(self, state: ArchivistState) -> dict[str, Any]:
@@ -372,6 +403,18 @@ class ArchivistGraph:
                 if item.get("cycle_date") and item.get("item_id")
             ],
         )
+        # 不只“直接回复提醒”才算有效打卡：用户在普通聊天中报早C/午B/晚A、
+        # 体重或执行单个性化题目，同样应解除连续无回应的暂停状态。
+        if state.get("has_checkin_activity"):
+            await mark_latest_followup_cycle_answered(
+                self.session,
+                service_case_id=self.service_case.id,
+                item_ids=[
+                    str(item.get("item_id") or "")
+                    for item in (state.get("checklist_answers") or [])
+                ]
+                or ["chat_checkin"],
+            )
 
         # 成效/画像直写真表：用本批最后一条用户消息作 anchor（提供 message_id/occurred_at）。
         # **不再吞异常**：写库失败必须抛出，让 trigger 层回滚事务、不推进水位线、下轮重试，

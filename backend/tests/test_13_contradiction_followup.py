@@ -48,6 +48,7 @@ from app.services.archivist.followup import (
     finalize_checkin_followup_cycles,
     is_followup_paused,
     mark_followup_answers,
+    mark_latest_followup_cycle_answered,
 )
 from app.services.archivist.trigger import (
     KEY_INFO_SETTLE_SECONDS,
@@ -440,7 +441,10 @@ async def test_document_checklist_reviews_yesterday_and_only_missing_items(db_se
     checkin = Checkin(
         service_case_id=case.id, group_id=case.group_id, user_id=case.user_id,
         checkin_date=yesterday, content="已答一项",
-        parsed_json={"custom_checkin": {f"document:{document.id}:2": {"answer": "完成"}}},
+        parsed_json={
+            "product_schedule": {"morning_c": "已喝", "noon_b": "已喝", "night_a": "已喝"},
+            "custom_checkin": {f"document:{document.id}:2": {"answer": "完成"}},
+        },
     )
     db_session.add(checkin)
     await db_session.flush()
@@ -450,9 +454,9 @@ async def test_document_checklist_reviews_yesterday_and_only_missing_items(db_se
     assert followup is not None
     assert followup.target_date == yesterday
     assert [item["id"] for item in followup.expected_items] == [
-        f"document:{document.id}:1", f"document:{document.id}:3", f"document:{document.id}:4", f"document:{document.id}:5"
+        f"document:{document.id}:3", f"document:{document.id}:4", f"document:{document.id}:5"
     ]
-    assert "早C" in followup.text
+    assert "早C" not in followup.text
 
 
 @pytest.mark.asyncio
@@ -474,6 +478,41 @@ async def test_two_unanswered_cycles_pause_and_valid_answer_reopens(db_session):
         cycle_dates_and_items=[(today - timedelta(days=1), "weight")],
     )
     assert await is_followup_paused(db_session, service_case_id=case.id) is False
+
+
+@pytest.mark.asyncio
+async def test_normal_chat_checkin_reopens_latest_paused_cycle(db_session):
+    connection = await db_session.connection()
+    await connection.run_sync(
+        lambda sync_connection: CheckinFollowupCycle.__table__.create(sync_connection, checkfirst=True)
+    )
+    case = await _case(db_session)
+    today = date.today()
+    for offset in (2, 1):
+        db_session.add(
+            CheckinFollowupCycle(
+                service_case_id=case.id,
+                cycle_date=today - timedelta(days=offset),
+                status="unanswered",
+            )
+        )
+    await db_session.flush()
+    assert await is_followup_paused(db_session, service_case_id=case.id) is True
+
+    await mark_latest_followup_cycle_answered(
+        db_session,
+        service_case_id=case.id,
+        item_ids=["document:99:2"],
+    )
+
+    assert await is_followup_paused(db_session, service_case_id=case.id) is False
+    latest = await db_session.scalar(
+        select(CheckinFollowupCycle)
+        .where(CheckinFollowupCycle.service_case_id == case.id)
+        .order_by(CheckinFollowupCycle.cycle_date.desc())
+    )
+    assert latest.status == "answered"
+    assert latest.answered_item_ids == ["document:99:2"]
 
 
 # ---------------------------------------------------------------------------

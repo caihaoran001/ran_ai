@@ -82,6 +82,7 @@ async def run_extract_agent(
     chat_model: Any = None,
     settings: Settings | None = None,
     followup_context: list[dict[str, Any]] | None = None,
+    checklist_context: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """跑一轮 Agent 抽取，按 checkin/outcome/profile/correction 四类归桶。
 
@@ -94,6 +95,7 @@ async def run_extract_agent(
     collector: dict[str, Any] = {
         "checkin": {},
         "followup_answers": [],
+        "checklist_answers": [],
         "outcome": [],
         "profile": [],
         "correction": [],
@@ -113,6 +115,7 @@ async def run_extract_agent(
         tools = build_report_tools(kinds)
         bound = chat_model.bind_tools(tools)
         followup_context = followup_context or []
+        checklist_context = checklist_context or []
         context_text = ""
         if followup_context:
             context_text = (
@@ -121,6 +124,14 @@ async def run_extract_agent(
                 + "\n</followup_context>\n"
                 + "若用户直接回答其中待答项，请随 report_checkin 的 followup_answers 上报；"
                 "item_id、cycle_date、target_date 必须与上下文完全一致，否则不要上报。"
+            )
+        if checklist_context:
+            context_text += (
+                "\n\n<daily_checklist_context>\n"
+                + json.dumps(checklist_context, ensure_ascii=False)
+                + "\n</daily_checklist_context>\n"
+                + "用户即使不是在回复提醒，只要明确回答了其中一项，也请随 report_checkin 的 "
+                "checklist_answers 上报；item_id 和 target_date 必须完全一致。"
             )
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
@@ -169,6 +180,14 @@ async def run_extract_agent(
                 )
                 if key in allowed and str(answer.get("answer") or "").strip():
                     collector["followup_answers"].append(answer)
+            checklist_allowed = {
+                (str(item.get("item_id")), str(item.get("target_date")))
+                for item in checklist_context
+            }
+            for answer in validated.get("checklist_answers") or []:
+                key = (str(answer.get("item_id") or ""), str(answer.get("target_date") or ""))
+                if key in checklist_allowed and str(answer.get("answer") or "").strip():
+                    collector["checklist_answers"].append(answer)
         else:
             collector[kind].append(validated)
 
