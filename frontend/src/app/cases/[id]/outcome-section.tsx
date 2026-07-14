@@ -69,7 +69,7 @@ export function OutcomeSection({
         <div>
           <h2 className="font-semibold text-slate-900">客户成效引擎</h2>
           <p className="mt-1 text-sm text-slate-500">
-            自动从聊天与打卡中沉淀成效证据，记录阶段缺口，并辅助机器人自然追问。
+            自动从聊天与打卡中沉淀正向进展，客观指标看趋势去噪、主观体感看多次印证。
           </p>
         </div>
         <div className="grid grid-cols-3 gap-2 text-center text-xs">
@@ -156,16 +156,9 @@ function StageStateCard({ state }: { state: OutcomeStageState }) {
             已收集 {collectedEntries.length} 项，仍缺 {missing.length} 项。
           </p>
         </div>
-        {!isComplete && state.last_followup_question && (
-          <div className="max-w-md rounded-lg border border-blue-100 bg-white px-3 py-2 text-xs text-slate-600">
-            <p className="text-slate-400">最近追问</p>
-            <p className="mt-1 text-slate-700">{state.last_followup_question}</p>
-            <p className="mt-1 text-slate-400">{formatDateTime(state.last_followup_at)}</p>
-          </div>
-        )}
         {isComplete && (
           <div className="max-w-md rounded-lg border border-emerald-100 bg-white px-3 py-2 text-xs text-emerald-700">
-            当前阶段关键证据已收集完整，机器人不会为了本阶段继续硬追问。
+            当前阶段关键证据已收集完整。
           </div>
         )}
       </div>
@@ -224,6 +217,8 @@ function SnapshotSummary({ snapshot, state }: { snapshot: OutcomeSnapshot; state
         <MetricPill label="打卡" value={metricValue(metrics.checkin_days, "天")} />
         <MetricPill label="已收集" value={metricValue(metrics.collected_count, "项")} />
         <MetricPill label="缺失" value={metricValue(metrics.missing_count, "项")} />
+        {trendLabel(metrics.weight_trend) && <MetricPill label="体重趋势" value={trendLabel(metrics.weight_trend)} />}
+        {trendLabel(metrics.waist_trend) && <MetricPill label="腰围趋势" value={trendLabel(metrics.waist_trend)} />}
       </div>
       <p className="text-slate-400">{formatDateTime(snapshot.generated_at)}</p>
     </div>
@@ -290,6 +285,19 @@ function MetricPill({ label, value }: { label: string; value: string }) {
 
 function metricValue(value: unknown, suffix: string) {
   return typeof value === "number" ? `${value}${suffix}` : "暂无";
+}
+
+function trendLabel(trend: unknown): string {
+  if (!trend || typeof trend !== "object") return "";
+  const { direction, net, consistent } = trend as {
+    direction?: string;
+    net?: number;
+    consistent?: boolean;
+  };
+  const arrow = direction === "down" ? "↓" : direction === "up" ? "↑" : "持平";
+  const magnitude = typeof net === "number" ? Math.abs(net) : "";
+  const steadiness = consistent ? "稳" : "波动";
+  return `${arrow}${magnitude} ${steadiness}`.trim();
 }
 
 function milestoneName(key: string) {

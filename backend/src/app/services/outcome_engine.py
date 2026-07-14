@@ -70,7 +70,6 @@ MILESTONE_SPECS: tuple[OutcomeMilestoneSpec, ...] = (
         goals=(
             OutcomeGoal("started_execution", "是否开始执行", ("今天开始喝了", "还没开始")),
             OutcomeGoal("product_schedule", "早C/午B/晚A是否能跟上", ("午B忘了", "三杯都完成")),
-            OutcomeGoal("discomfort_feedback", "是否有不适反馈", ("有点心慌", "睡不着", "没有不舒服")),
             OutcomeGoal("rhythm_understood", "是否理解执行节奏", ("几点喝", "随餐怎么喝")),
         ),
     ),
@@ -91,9 +90,7 @@ MILESTONE_SPECS: tuple[OutcomeMilestoneSpec, ...] = (
         day=14,
         name="第14天平台期与调方案",
         goals=(
-            OutcomeGoal("plateau_signal", "是否疑似平台期", ("体重卡住", "一周没变化")),
             OutcomeGoal("execution_rate_signal", "执行率是否够", ("这周漏了几次", "基本都完成")),
-            OutcomeGoal("adjustment_need", "是否需要调整方案", ("晚A喝不下", "晚餐总收不住")),
             OutcomeGoal("positive_body_signal", "是否有正向体感", ("腰腹松了", "精神变好")),
         ),
     ),

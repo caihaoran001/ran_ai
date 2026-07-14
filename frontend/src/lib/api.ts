@@ -232,10 +232,6 @@ export type OutcomeStageState = {
   status: string;
   collected_fields?: Record<string, OutcomeCollectedField> | null;
   missing_fields?: string[] | null;
-  last_followup_field?: string | null;
-  last_followup_question?: string | null;
-  last_followup_at?: string | null;
-  followup_count: number;
   created_at: string;
   updated_at: string;
 };
