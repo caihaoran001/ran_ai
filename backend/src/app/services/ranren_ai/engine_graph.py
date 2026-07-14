@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.models.message import (
     Message,
     MessageDirection,
@@ -27,15 +29,21 @@ from app.models.message import (
 from app.models.service_case import ServiceCase
 from app.models.user import User
 from app.services.channels.base import ChannelMessage
-# 通过 engine 模块引用 SessionLocal / analyze_intervention：测试把补丁打在 engine 模块上
+# 通过 engine 模块引用 SessionLocal / analyze_intervention / generate_agent_reply /
+# get_ai_reply_enabled / AgentDataUnavailableError：测试把补丁打在 engine 模块上
 # （conftest 全局 + 个别用例 per-test），经此引用才能命中，行为与旧 handle_message 一致。
 from app.services.ranren_ai import engine as engine_mod
 from app.services.ranren_ai.engine import (
+    _build_agent_info_gap,
+    _current_query_body,
+    _current_query_speaker,
     _explicit_bot_query_text,
     _group_bot_control_command,
     _message_already_processed_or_claimed,
     _message_mentions_bot,
+    _reply_is_no_reply,
     _requires_health_handoff,
+    _sanitize_ai_reply,
 )
 from app.services.service_case_queries import select_active_service_cases
 
@@ -600,6 +608,267 @@ class EngineGraph:
             trigger_id=state.get("inbound_id"),
         )
         return {}
+
+
+class ReplyState(TypedDict, total=False):
+    # 输入
+    message: ChannelMessage
+    service_case_id: int | None
+    analysis: dict | None
+    trigger_id: int | None
+    # 计算态
+    service_case: Any
+    recent_user_messages: list
+    reply: str
+    outbound_analysis: dict | None
+    should_send: bool
+    _halt: bool
+
+
+class ReplyGraph:
+    """_reply_with_ai 的子图（Phase 2）：把回复半程的守卫拆成显式节点。
+
+    prep（开关/存活）→ gen（生成+异常）→ guards（no_reply/净化/不拆台/should_send）→ send（新消息/队列守卫 + record-first 发送）。
+    与旧 _reply_with_ai 逐段等价：早退→到 END 的条件边；异常语义不变——
+    generate_agent_reply 的通用异常在 gen 内吞掉并到 END（方法整体正常返回），
+    发送等非生成异常照旧冒出（send 节点抛出 → ainvoke 抛出 → 方法抛出）。
+    """
+
+    def __init__(self, engine: "RanrenAIEngine") -> None:
+        self.engine = engine
+        self.graph = self._compile()
+
+    def _compile(self):
+        b = StateGraph(ReplyState)
+        b.add_node("prep", self._prep)
+        b.add_node("gen", self._gen)
+        b.add_node("guards", self._guards)
+        b.add_node("send", self._send)
+        b.add_edge(START, "prep")
+        b.add_conditional_edges("prep", self._route_after_prep, {"gen": "gen", END: END})
+        b.add_conditional_edges("gen", self._route_after_gen, {"guards": "guards", END: END})
+        b.add_conditional_edges("guards", self._route_after_guards, {"send": "send", END: END})
+        b.add_edge("send", END)
+        return b.compile()
+
+    async def run(self, state: ReplyState) -> None:
+        await self.graph.ainvoke(state)
+
+    # ---------- 路由 ----------
+
+    def _route_after_prep(self, state: ReplyState) -> str:
+        return "gen" if not state.get("_halt") else END
+
+    def _route_after_gen(self, state: ReplyState) -> str:
+        return "guards" if not state.get("_halt") else END
+
+    def _route_after_guards(self, state: ReplyState) -> str:
+        if state.get("_halt"):
+            return END
+        return "send" if state.get("should_send") else END
+
+    # ---------- 节点 ----------
+
+    async def _prep(self, state: ReplyState) -> dict[str, Any]:
+        """对应 401–438 + 494–501：开关/存活检查 + recent；任一早退 → _halt。"""
+        message: ChannelMessage = state["message"]
+        service_case_id = state.get("service_case_id")
+        trigger_id = state.get("trigger_id")
+        service_case: ServiceCase | None = None
+        async with engine_mod.SessionLocal() as session:
+            if service_case_id:
+                stmt = select_active_service_cases(ServiceCase.id == service_case_id).options(
+                    selectinload(ServiceCase.user)
+                )
+                service_case = await session.scalar(stmt)
+                if service_case is None:
+                    logger.info(
+                        "RanrenAI skip reply because service case is inactive service_case_id=%s",
+                        service_case_id,
+                    )
+                    return {"_halt": True}
+            else:
+                service_case = None
+
+            if not await engine_mod.get_ai_reply_enabled(session):
+                logger.info(
+                    "RanrenAI skip AI reply because globally disabled chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id, trigger_id, service_case_id,
+                )
+                return {"_halt": True}
+            if service_case and not service_case.ai_auto_reply_enabled:
+                logger.info(
+                    "RanrenAI skip AI reply because case auto-reply disabled chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id, trigger_id, service_case_id,
+                )
+                return {"_halt": True}
+
+            recent_user_messages = (
+                await self.engine._recent_user_messages(
+                    session, service_case.id, exclude_message_id=trigger_id
+                )
+                if service_case
+                else []
+            )
+
+        if not (service_case_id and service_case):
+            logger.info(
+                "RanrenAI skip Agent reply because no active service case chat_id=%s trigger_id=%s service_case_id=%s",
+                message.chat_id, trigger_id, service_case_id,
+            )
+            return {"_halt": True, "service_case": service_case, "recent_user_messages": recent_user_messages}
+
+        return {"service_case": service_case, "recent_user_messages": recent_user_messages}
+
+    async def _gen(self, state: ReplyState) -> dict[str, Any]:
+        """对应 440–493：generate_agent_reply + 异常处理。通用异常 → _halt(丢弃)。"""
+        message: ChannelMessage = state["message"]
+        service_case_id = state.get("service_case_id")
+        trigger_id = state.get("trigger_id")
+        analysis = state.get("analysis")
+        recent_user_messages = state.get("recent_user_messages") or []
+        settings = get_settings()
+        user_query = _current_query_body(analysis, message.text)
+        try:
+            agent_result = await engine_mod.generate_agent_reply(
+                service_case_id=service_case_id,
+                trigger_id=trigger_id,
+                user_query=user_query,
+                query_speaker=_current_query_speaker(analysis),
+                recent_messages=recent_user_messages,
+                analysis=analysis,
+                channel=message.channel,
+                settings=settings,
+            )
+            reply = agent_result.reply
+            agent_meta = {
+                "enabled": True,
+                "context_plan": analysis.get("agent_context_plan") if isinstance(analysis, dict) else None,
+                "tool_trace": agent_result.tool_trace,
+                "data_tool_failed": agent_result.data_tool_failed,
+            }
+            info_gap = _build_agent_info_gap(
+                query=user_query,
+                tool_trace=agent_result.tool_trace,
+                data_unavailable=agent_result.data_tool_failed,
+            )
+            if info_gap is not None:
+                agent_meta["info_gap"] = info_gap
+            outbound_analysis = {"agent": agent_meta}
+        except engine_mod.AgentDataUnavailableError as exc:
+            logger.warning(
+                "Agent data unavailable; using safe fixed reply service_case_id=%s trigger_id=%s",
+                service_case_id, trigger_id,
+            )
+            reply = str(exc)
+            outbound_analysis = {
+                "agent": {
+                    "enabled": True,
+                    "data_unavailable": True,
+                    "info_gap": _build_agent_info_gap(
+                        query=user_query, tool_trace=None, data_unavailable=True
+                    ),
+                }
+            }
+        except Exception:
+            logger.exception(
+                "Agent reply failed; discarding without sending service_case_id=%s trigger_id=%s",
+                service_case_id, trigger_id,
+            )
+            return {"_halt": True}
+        return {"reply": reply, "outbound_analysis": outbound_analysis}
+
+    async def _guards(self, state: ReplyState) -> dict[str, Any]:
+        """对应 503–526 + 572–578：no_reply/净化/不拆台/should_send;should_send False → 丢弃日志。"""
+        message: ChannelMessage = state["message"]
+        service_case_id = state.get("service_case_id")
+        trigger_id = state.get("trigger_id")
+        analysis = state.get("analysis")
+        service_case = state.get("service_case")
+        reply = state.get("reply") or ""
+
+        if reply and _reply_is_no_reply(reply):
+            logger.info(
+                "RanrenAI skip AI reply because model chose no-reply chat_id=%s trigger_id=%s service_case_id=%s",
+                message.chat_id, trigger_id, service_case_id,
+            )
+            return {"_halt": True}
+
+        should_send = False
+        if reply:
+            reply = _sanitize_ai_reply(reply, self.engine.settings)
+            if await self.engine._staff_replied_after(service_case_id=service_case_id, trigger_id=trigger_id):
+                logger.info(
+                    "RanrenAI skip AI reply because staff already replied chat_id=%s trigger_id=%s service_case_id=%s",
+                    message.chat_id, trigger_id, service_case_id,
+                )
+                return {"_halt": True}
+            async with engine_mod.SessionLocal() as session:
+                should_send = await self.engine._should_send_ai_reply(session, service_case, analysis, message)
+
+        if not should_send:
+            logger.info(
+                "RanrenAI discard AI reply because should_send is false chat_id=%s trigger_id=%s service_case_id=%s",
+                message.chat_id, trigger_id, service_case_id,
+            )
+        return {"reply": reply, "should_send": should_send}
+
+    async def _send(self, state: ReplyState) -> dict[str, Any]:
+        """对应 528–570：新消息/队列守卫 + record-first 发送。"""
+        message: ChannelMessage = state["message"]
+        service_case_id = state.get("service_case_id")
+        trigger_id = state.get("trigger_id")
+        reply = state.get("reply")
+        outbound_analysis = state.get("outbound_analysis")
+
+        if await self.engine._has_newer_inbound_message(service_case_id=service_case_id, trigger_id=trigger_id):
+            logger.info(
+                "RanrenAI skip stale AI reply chat_id=%s trigger_id=%s service_case_id=%s",
+                message.chat_id, trigger_id, service_case_id,
+            )
+            return {}
+        if self.engine.has_pending_newer_message and await self.engine.has_pending_newer_message(message):
+            logger.info(
+                "RanrenAI skip AI reply because newer raw messages are queued chat_id=%s trigger_id=%s service_case_id=%s",
+                message.chat_id, trigger_id, service_case_id,
+            )
+            return {}
+        send_started_at = time.monotonic()
+        result = await self.engine._send_and_record(
+            message=message,
+            service_case_id=service_case_id,
+            content=reply,
+            trigger_id=trigger_id,
+            analysis_json=outbound_analysis,
+            send=lambda: self.engine.channel.send_text(
+                message.chat_id, reply,
+                reply_to=message.message_id, reply_context=message.raw_payload,
+            ),
+        )
+        send_elapsed_ms = (time.monotonic() - send_started_at) * 1000
+        logger.info(
+            "RanrenAI AI reply sent chat_id=%s trigger_id=%s success=%s channel_message_id=%s send_elapsed_ms=%.1f",
+            message.chat_id, trigger_id, result.success, result.message_id, send_elapsed_ms,
+        )
+        return {}
+
+
+async def run_reply_with_ai(
+    engine: "RanrenAIEngine",
+    message: ChannelMessage,
+    *,
+    service_case_id: int | None,
+    analysis: dict | None,
+    trigger_id: int | None = None,
+) -> None:
+    """_reply_with_ai 薄封装：构造 ReplyState 后跑 reply 子图。"""
+    state: ReplyState = {
+        "message": message,
+        "service_case_id": service_case_id,
+        "analysis": analysis,
+        "trigger_id": trigger_id,
+    }
+    await ReplyGraph(engine).run(state)
 
 
 async def run_handle_message(engine: "RanrenAIEngine", message: ChannelMessage) -> None:
