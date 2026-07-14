@@ -32,6 +32,10 @@ PROFILE_SIGNAL_DOMAIN_LABELS = {
     "lifestyle_habits": "稳定习惯与生活约束",
 }
 
+# 只把正向进展投影进状态背景；负向信号交给风控与案例记忆。与 outcome_engine 的
+# VALID_EVENT_TYPES 语义一致（此处独立定义，避免与 outcome_engine 形成循环导入）。
+_POSITIVE_OUTCOME_EVENT_TYPES = frozenset({"improved", "completed"})
+
 
 OUTCOME_FIELD_DOMAIN_MAP: dict[str, str] = {
     "profile_completed": "goals",
@@ -39,16 +43,13 @@ OUTCOME_FIELD_DOMAIN_MAP: dict[str, str] = {
     "documents_received": "goals",
     "started_execution": "product_usage",
     "product_schedule": "product_usage",
-    "discomfort_feedback": "body_feedback",
     "rhythm_understood": "rhythm_structure",
     "weight_change": "outcome_changes",
     "waist_or_body_change": "outcome_changes",
     "energy_change": "body_feedback",
     "sleep_change": "body_feedback",
     "bowel_change": "body_feedback",
-    "plateau_signal": "outcome_changes",
     "execution_rate_signal": "product_usage",
-    "adjustment_need": "goals",
     "positive_body_signal": "body_feedback",
     "challenge_goal_result": "outcome_changes",
     "weight_result": "outcome_changes",
@@ -205,6 +206,10 @@ async def apply_outcome_events_to_user_state(
     occurred_at = _datetime_iso(message.created_at)
 
     for event in created_events:
+        event_type = str(event.get("event_type") or "")
+        # 防御性兜底：即使有旁路写入，也只把正向进展投影进状态背景。
+        if event_type not in _POSITIVE_OUTCOME_EVENT_TYPES:
+            continue
         field_key = str(event.get("field_key") or "")
         domain = OUTCOME_FIELD_DOMAIN_MAP.get(field_key, "outcome_changes")
         _update_domain_from_event(
@@ -212,7 +217,7 @@ async def apply_outcome_events_to_user_state(
             domain,
             field_key=field_key,
             value=str(event.get("value") or ""),
-            event_type=str(event.get("event_type") or "observation"),
+            event_type=event_type,
             evidence=str(event.get("evidence_text") or ""),
             source=source,
             occurred_at=occurred_at,

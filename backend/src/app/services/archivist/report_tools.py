@@ -71,11 +71,14 @@ class ReportCheckinArgs(BaseModel):
 
 
 class ReportOutcomeArgs(BaseModel):
-    """上报一条成效事件（阶段性进展/变化）。每条事件调用一次。"""
+    """上报一条正向成效进展（用户变好了/达成了）。每条事件调用一次。
+
+    只上报正向进展；变差/无变化/未完成/不适等负向信号不在此上报（交给风控与案例记忆）。
+    """
 
     field_key: str = Field(description="成效字段 key（如 weight_change/sleep_change/energy_change 等）")
     event_type: str = Field(
-        description="必须从以下值中选择：improved / worsened / unchanged / completed / not_completed / feedback / discomfort"
+        description="必须从以下值中选择：improved（有改善）/ completed（已达成/已完成）"
     )
     value: str = Field(description="提取出的简短事实")
     evidence_text: str = Field(description="用户原话证据")

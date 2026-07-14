@@ -14,16 +14,21 @@ from app.models.message import Message
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot, OutcomeStageState
 from app.models.service_case import ServiceCase
 from app.services.user_state_profile import (
+    OUTCOME_FIELD_DOMAIN_MAP,
     apply_outcome_events_to_user_state,
     apply_profile_signals_to_user_state,
 )
 
 logger = logging.getLogger(__name__)
 
-VALID_EVENT_TYPES = frozenset({
-    "improved", "worsened", "unchanged", "completed", "not_completed",
-    "feedback", "discomfort",
-})
+# 成效只记"变好"：正向进展。负向/无变化/未完成/不适不进成效表——那些交给风控与
+# 案例记忆。事件类型收窄为与 case_synthesis._POSITIVE_EVENT_TYPES 对齐的两个。
+VALID_EVENT_TYPES = frozenset({"improved", "completed"})
+
+# 已知成效维度：不再按当前里程碑限制，修复"跨里程碑正向被静默丢弃"的问题
+# （如第3天用户提前反馈睡眠变好=day7 的 sleep_change 曾被丢）。与 OUTCOME_FIELD_DOMAIN_MAP
+# 同源（该 map 已排除偏负向的 discomfort_feedback/plateau_signal/adjustment_need），避免漂移。
+KNOWN_OUTCOME_FIELDS = frozenset(OUTCOME_FIELD_DOMAIN_MAP)
 
 
 @dataclass(frozen=True)
@@ -246,12 +251,11 @@ async def apply_outcome_analysis(
     raw: dict[str, Any],
     source: str = "chat",
 ) -> dict[str, Any]:
-    valid_fields = {goal.key for goal in spec.goals}
     collected = dict(state.collected_fields or {})
     created_events: list[dict[str, Any]] = []
     profile_signals = _normalize_profile_signals(raw.get("profile_signals"))
 
-    for item in _normalize_events(raw.get("outcome_events"), valid_fields):
+    for item in _normalize_events(raw.get("outcome_events"), KNOWN_OUTCOME_FIELDS):
         if await _event_exists(session, service_case.id, message.id, item):
             continue
         event = OutcomeEvent(
@@ -396,7 +400,9 @@ def service_day(service_case: ServiceCase) -> int:
     return max(delta.days + 1, 1)
 
 
-def _normalize_events(value: Any, valid_fields: set[str]) -> list[dict[str, Any]]:
+def _normalize_events(value: Any, known_fields: frozenset[str]) -> list[dict[str, Any]]:
+    """校验并过滤成效事件。兜底闸门：只保留已知维度 + 正向事件类型（improved/completed）；
+    负向/无变化/未完成/不适一律丢弃，不进成效表。"""
     if not isinstance(value, list):
         return []
     events: list[dict[str, Any]] = []
@@ -407,10 +413,15 @@ def _normalize_events(value: Any, valid_fields: set[str]) -> list[dict[str, Any]
         evidence_text = _string(item.get("evidence_text"))
         fact_value = _string(item.get("value"))
         confidence = _confidence(item.get("confidence"))
-        if field_key not in valid_fields or not evidence_text or not fact_value or confidence < 0.55:
+        event_type = _string(item.get("event_type"))
+        if (
+            field_key not in known_fields
+            or event_type not in VALID_EVENT_TYPES
+            or not evidence_text
+            or not fact_value
+            or confidence < 0.55
+        ):
             continue
-        raw_event_type = _string(item.get("event_type"))
-        event_type = raw_event_type if raw_event_type in VALID_EVENT_TYPES else "observation"
         events.append(
             {
                 "field_key": field_key,
