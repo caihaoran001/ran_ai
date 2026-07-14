@@ -403,7 +403,7 @@ async def compose_document_checklist_followup(
     if not missing:
         return None
     labels = "；".join(item["label"] for item in missing)
-    fallback = f"早上好，补一下昨天的打卡：{labels}。"
+    fallback = f"早上好，补一下昨天的打卡：{labels}。回我一句，我记上，后面好帮你调整～"
     try:
         if ai_service is None:
             from app.services.ai_service.client import AIService
@@ -413,6 +413,7 @@ async def compose_document_checklist_followup(
             system_prompt=(
                 "你是燃人微信群健康助教。用一句不超过100字、口语化的中文，请用户回顾昨天尚未回答的打卡项。"
                 "可将多个问题自然合并，但不得增加清单外的问题，不要使用编号。"
+                "结尾自然说明用户回一句即可，助教会记上并据此帮助后续调整；简短、不施压。"
             ),
             user_prompt=f"昨天尚未回答的打卡项：{labels}",
             scenario="checkin_followup",

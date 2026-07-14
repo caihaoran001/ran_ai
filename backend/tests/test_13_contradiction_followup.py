@@ -457,6 +457,13 @@ async def test_document_checklist_reviews_yesterday_and_only_missing_items(db_se
         f"document:{document.id}:3", f"document:{document.id}:4", f"document:{document.id}:5"
     ]
     assert "早C" not in followup.text
+    assert "回我一句，我记上，后面好帮你调整～" in followup.text
+
+    fake = _FakeAI("早上好，补一下昨天的运动和睡眠～回我一句，我记上，后面好帮你调整～")
+    await compose_document_checklist_followup(
+        db_session, service_case=case, target_date=yesterday, ai_service=fake
+    )
+    assert "助教会记上并据此帮助后续调整" in fake.calls[0]["system"]
 
 
 @pytest.mark.asyncio
