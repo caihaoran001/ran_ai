@@ -21,6 +21,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models.checkin import Checkin
+from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.message import (
     Message,
     MessageDirection,
@@ -30,6 +31,7 @@ from app.models.message import (
 )
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.archivist.checkin_projection import (
     SOURCE_FORM,
     SOURCE_USER_CONFIRMED,
@@ -42,6 +44,10 @@ from app.services.archivist.followup import (
     compose_followup_message,
     compose_milestone_followup,
     detect_followup,
+    compose_document_checklist_followup,
+    finalize_checkin_followup_cycles,
+    is_followup_paused,
+    mark_followup_answers,
 )
 from app.services.archivist.trigger import (
     KEY_INFO_SETTLE_SECONDS,
@@ -383,30 +389,91 @@ def test_check_once_retired_from_run_loop():
     assert "check_stage_reports_once" in src  # 阶段报告仍在调度
 
 
-def test_fallback_line_composition_and_window_gate():
-    """不活跃兜底：统一 compose、随机时刻、日常缺口受傍晚窗口闸；不再单独跳过活跃用户(靠天闸去重)。"""
+def test_followup_v2_scheduler_has_cycle_cap_and_silence_brake():
     from app.services.reminder_service import ReminderService
 
-    src = inspect.getsource(ReminderService.check_checkin_followup_once)
-    assert "compose_daily_followup" in src  # 统一组织内容
-    assert "_user_spoke_today" not in src  # 不再单独跳过活跃用户，靠 checkin_followup 天闸去重
-    assert '"daily_gap"' in src  # 日常缺口受傍晚窗口闸（里程碑/矛盾不受约束）
-    assert "_deterministic_daily_time" in src  # 随机时刻替代固定 20:30
-    assert "checkin_followup_at" not in src  # 固定定点已移除
-    assert "reminder_weekdays" not in src  # 工作日限制已移除
-    assert "mark_contradictions_pending_confirmation" in src  # 矛盾核对状态机仍在
+    src = inspect.getsource(ReminderService.check_checkin_followup_v2_once)
+    assert "compose_scheduled_followups" in src
+    assert "is_followup_paused" in src
+    assert "len(sent_kinds) >= 3" in src
+    assert "checkin_followup:" in src
 
 
-def test_active_followup_hooked_in_engine():
-    """活跃触发：engine 回复成功后调 _maybe_followup_after_reply。"""
+def test_active_followup_is_not_sent_from_chat_reply():
+    """Only the scheduler may enforce cross-day checklist and cycle limits."""
     from app.services.ranren_ai.engine import RanrenAIEngine
 
     src = inspect.getsource(RanrenAIEngine._reply_with_ai)
-    assert "_maybe_followup_after_reply" in src
-    hook = inspect.getsource(RanrenAIEngine._maybe_followup_after_reply)
-    assert "compose_daily_followup" in hook
-    assert "_reserve_reminder_event" in hook  # 共用天级去重闸
-    assert '"daily_gap"' in hook  # 日常缺口只在傍晚窗口发，早上聊天不顺手补缺口追问
+    assert "_maybe_followup_after_reply" not in src
+
+
+async def _sent_execution_document(db_session, case: ServiceCase) -> UserDocument:
+    document = UserDocument(
+        service_case_id=case.id,
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28天执行标准与打卡要求",
+        content_md="test",
+        content_json={
+            "blocks": [
+                {"key": "daily_checkin", "items": [
+                    "早C/午B/晚A是否全部完成",
+                    "今天是否至少吃到2拳蔬菜",
+                    "今天是否完成计划内快走",
+                    "睡眠是否按计划收口",
+                    "情绪稳定度评分",
+                ]}
+            ]
+        },
+        status=DocumentStatus.SENT,
+        sent_at=datetime.now(timezone.utc),
+    )
+    db_session.add(document)
+    await db_session.flush()
+    return document
+
+
+@pytest.mark.asyncio
+async def test_document_checklist_reviews_yesterday_and_only_missing_items(db_session):
+    case = await _case(db_session)
+    document = await _sent_execution_document(db_session, case)
+    yesterday = date.today() - timedelta(days=1)
+    checkin = Checkin(
+        service_case_id=case.id, group_id=case.group_id, user_id=case.user_id,
+        checkin_date=yesterday, content="已答一项",
+        parsed_json={"custom_checkin": {f"document:{document.id}:2": {"answer": "完成"}}},
+    )
+    db_session.add(checkin)
+    await db_session.flush()
+    followup = await compose_document_checklist_followup(
+        db_session, service_case=case, target_date=yesterday, ai_service=_RaisingAI()
+    )
+    assert followup is not None
+    assert followup.target_date == yesterday
+    assert [item["id"] for item in followup.expected_items] == [
+        f"document:{document.id}:1", f"document:{document.id}:3", f"document:{document.id}:4", f"document:{document.id}:5"
+    ]
+    assert "早C" in followup.text
+
+
+@pytest.mark.asyncio
+async def test_two_unanswered_cycles_pause_and_valid_answer_reopens(db_session):
+    # The shared developer test database may lag Alembic head; CI applies migrations.
+    connection = await db_session.connection()
+    await connection.run_sync(
+        lambda sync_connection: CheckinFollowupCycle.__table__.create(sync_connection, checkfirst=True)
+    )
+    case = await _case(db_session)
+    today = date.today()
+    for offset in (2, 1):
+        db_session.add(CheckinFollowupCycle(service_case_id=case.id, cycle_date=today - timedelta(days=offset), status="open"))
+    await db_session.flush()
+    await finalize_checkin_followup_cycles(db_session, today=today)
+    assert await is_followup_paused(db_session, service_case_id=case.id) is True
+    await mark_followup_answers(
+        db_session, service_case_id=case.id,
+        cycle_dates_and_items=[(today - timedelta(days=1), "weight")],
+    )
+    assert await is_followup_paused(db_session, service_case_id=case.id) is False
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +518,37 @@ async def test_trigger_fast_on_key_info_after_settle(db_session):
     now = base + timedelta(seconds=KEY_INFO_SETTLE_SECONDS + 60)  # 停说超过去抖窗口
     should, reason = await _evaluate(
         db_session, service_case_id=case.id, watermark=0, last_archived_at=None, now=now
+    )
+    assert should is True
+    assert "fast_key" in reason
+
+
+@pytest.mark.asyncio
+async def test_trigger_accepts_terse_reply_after_structured_followup(db_session):
+    case = await _case(db_session)
+    base = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+    db_session.add(
+        Message(
+            service_case_id=case.id,
+            group_id=case.group_id,
+            direction=MessageDirection.OUTBOUND,
+            sender_type=MessageSenderType.SYSTEM,
+            content="补一下昨天的打卡",
+            purpose=MessagePurpose.REMINDER,
+            status=MessageStatus.SENT,
+            analysis_json={"checkin_followup": {"items": []}},
+            created_at=base,
+        )
+    )
+    await db_session.flush()
+    await _user_msg(
+        db_session, case,
+        analysis_json={"archive_plan": {"worthy": False, "kinds": []}},
+        created_at=base + timedelta(minutes=1),
+    )
+    should, reason = await _evaluate(
+        db_session, service_case_id=case.id, watermark=0, last_archived_at=None,
+        now=base + timedelta(minutes=1, seconds=KEY_INFO_SETTLE_SECONDS + 10),
     )
     assert should is True
     assert "fast_key" in reason

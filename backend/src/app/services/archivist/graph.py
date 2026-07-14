@@ -20,9 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.archivist_progress import ArchivistProgress
-from app.models.message import Message, MessagePurpose, MessageSenderType
+from app.models.message import Message, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase
 from app.services.archivist.checkin_projection import CheckinUpsertResult, upsert_checkin
+from app.services.archivist.followup import mark_followup_answers
 from app.services.archivist.corrections import apply_reported_corrections
 from app.services.archivist.extract_agent import run_extract_agent
 from app.services.outcome_engine import apply_archived_outcome
@@ -233,6 +234,31 @@ class ArchivistGraph:
 
         self.result.watermark_from = watermark or None
         self.result.watermark_to = watermark_to or None
+        followup_context_by_date: dict[str, list[dict]] = {}
+        if delta_by_date:
+            first_day = min(date.fromisoformat(value) for value in delta_by_date)
+            reminder_rows = list(
+                await self.session.scalars(
+                    select(Message).where(
+                        Message.service_case_id == self.service_case.id,
+                        Message.purpose == MessagePurpose.REMINDER,
+                        Message.sender_type == MessageSenderType.SYSTEM,
+                        Message.status == MessageStatus.SENT,
+                        Message.created_at >= datetime.combine(first_day - timedelta(days=2), datetime.min.time(), tzinfo=timezone.utc),
+                    )
+                )
+            )
+            for date_iso in delta_by_date:
+                day = date.fromisoformat(date_iso)
+                for reminder in reminder_rows:
+                    meta = reminder.analysis_json if isinstance(reminder.analysis_json, dict) else {}
+                    context = meta.get("checkin_followup") if isinstance(meta, dict) else None
+                    if not isinstance(context, dict) or not reminder.created_at:
+                        continue
+                    local_day = _sh_date(reminder.created_at)
+                    if local_day <= day and local_day >= day - timedelta(days=2):
+                        followup_context_by_date.setdefault(date_iso, []).append(context)
+
         self.result.delta_count = len(delta_rows)
         return {
             "watermark_from": watermark or None,
@@ -240,6 +266,7 @@ class ArchivistGraph:
             "delta_by_date": delta_by_date,
             "delta_message_ids": delta_message_ids,
             "delta_user_message_ids": delta_user_message_ids,
+            "followup_context_by_date": followup_context_by_date,
         }
 
     async def _extract(self, state: ArchivistState) -> dict[str, Any]:
@@ -254,6 +281,8 @@ class ArchivistGraph:
         profile_candidates: list[dict] = []
         correction_candidates: list[dict] = []
         faq_candidates: list[dict] = []
+        followup_answers: list[dict] = []
+        followup_context_by_date = state.get("followup_context_by_date") or {}
 
         for date_iso, msgs in delta_by_date.items():
             content = "\n".join(f"[{m['id']}] {m['role']}：{m['text']}" for m in msgs)
@@ -268,23 +297,33 @@ class ArchivistGraph:
                 enabled_kinds=["checkin", "outcome", "profile", "correction", "faq"],
                 chat_model=self.chat_model,
                 settings=self.settings,
+                followup_context=followup_context_by_date.get(date_iso) or [],
             )
             fields = collector.get("checkin") or {}
             outcome_candidates.extend(collector.get("outcome") or [])
             profile_candidates.extend(collector.get("profile") or [])
             correction_candidates.extend(collector.get("correction") or [])
             faq_candidates.extend(collector.get("faq") or [])
+            evidence_ids = [m["id"] for m in msgs if m["sender_type"] == "user"]
             if fields:
-                day_candidates[date_iso] = {
-                    "fields": fields,
-                    "evidence_ids": [m["id"] for m in msgs if m["sender_type"] == "user"],
-                }
+                day_candidates.setdefault(date_iso, {"fields": {}, "evidence_ids": evidence_ids, "custom_answers": []})["fields"].update(fields)
+            for answer in collector.get("followup_answers") or []:
+                followup_answers.append(answer)
+                item_id = str(answer.get("item_id") or "")
+                target_date = str(answer.get("target_date") or date_iso)
+                if not item_id.startswith("document:"):
+                    continue
+                payload = day_candidates.setdefault(
+                    target_date, {"fields": {}, "evidence_ids": evidence_ids, "custom_answers": []}
+                )
+                payload["custom_answers"].append(answer)
         return {
             "day_candidates": day_candidates,
             "outcome_candidates": outcome_candidates,
             "profile_candidates": profile_candidates,
             "correction_candidates": correction_candidates,
             "faq_candidates": faq_candidates,
+            "followup_answers": followup_answers,
         }
 
     async def _classify(self, state: ArchivistState) -> dict[str, Any]:
@@ -294,7 +333,7 @@ class ArchivistGraph:
     async def _guardrail(self, state: ArchivistState) -> dict[str, Any]:
         """剔除空打卡；纠正候选在 commit 中校验消息角色、服务单归属和置信度。"""
         candidates = state.get("day_candidates") or {}
-        kept = {k: v for k, v in candidates.items() if v.get("fields")}
+        kept = {k: v for k, v in candidates.items() if v.get("fields") or v.get("custom_answers")}
         return {"day_candidates": kept}
 
     async def _commit(self, state: ArchivistState) -> dict[str, Any]:
@@ -309,6 +348,7 @@ class ArchivistGraph:
                 checkin_date=checkin_date,
                 fields=payload["fields"],
                 evidence_msg_ids=payload.get("evidence_ids"),
+                custom_answers=payload.get("custom_answers"),
             )
             entry = {
                 "date": date_iso,
@@ -321,6 +361,17 @@ class ArchivistGraph:
             self.result.upserts.append(entry)
             self.result.contradictions.extend(res.contradictions)
         self.result.days_processed = len(committed)
+
+        followup_answers = state.get("followup_answers") or []
+        await mark_followup_answers(
+            self.session,
+            service_case_id=self.service_case.id,
+            cycle_dates_and_items=[
+                (date.fromisoformat(str(item["cycle_date"])), str(item["item_id"]))
+                for item in followup_answers
+                if item.get("cycle_date") and item.get("item_id")
+            ],
+        )
 
         # 成效/画像直写真表：用本批最后一条用户消息作 anchor（提供 message_id/occurred_at）。
         # **不再吞异常**：写库失败必须抛出，让 trigger 层回滚事务、不推进水位线、下轮重试，

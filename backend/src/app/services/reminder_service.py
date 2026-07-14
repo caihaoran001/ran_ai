@@ -22,6 +22,7 @@ from app.models.message import (
     MessageStatus,
 )
 from app.models.checkin import Checkin
+from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.outcome import OutcomeSnapshot, OutcomeStageState
 from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
@@ -56,6 +57,12 @@ logger = logging.getLogger(__name__)
 SCHEDULER_ADVISORY_LOCK_KEY = 2026051901
 CHANNEL_SEND_MAX_ATTEMPTS = 3
 CHANNEL_SEND_RETRY_DELAY_SECONDS = 1.0
+_CHECKIN_FOLLOWUP_WINDOWS = {
+    "daily_checklist": (time(9, 30), time(10, 30)),
+    "weight": (time(13, 30), time(14, 30)),
+    "contradiction": (time(16, 0), time(17, 0)),
+    "milestone": (time(19, 30), time(20, 30)),
+}
 
 
 class ReminderService:
@@ -90,6 +97,7 @@ class ReminderService:
             and not knowledge_enabled
             and not self.settings.outcome_snapshots_enabled
             and not questionnaire_schedule_enabled
+            and not self.settings.checkin_followup_enabled
         ):
             logger.info("Reminder, agent reminder, outcome snapshot, knowledge evolution and questionnaire schedule services disabled")
             return
@@ -133,7 +141,7 @@ class ReminderService:
                         if self.settings.archivist_enabled:
                             await self.check_archivist_once()
                         if self.settings.checkin_followup_enabled:
-                            await self.check_checkin_followup_once()
+                            await self.check_checkin_followup_v2_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -380,6 +388,115 @@ class ReminderService:
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error
+            await session.commit()
+
+    async def check_checkin_followup_v2_once(self) -> None:
+        """Five-item daily review plus low-frequency measurements, capped at three sends per cycle."""
+        if not self.settings.checkin_followup_enabled:
+            return
+        from app.services.archivist.checkin_projection import mark_contradictions_pending_confirmation
+        from app.services.archivist.followup import (
+            compose_scheduled_followups,
+            finalize_checkin_followup_cycles,
+            is_followup_paused,
+        )
+
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        now = datetime.now(tz)
+        today = now.date()
+        async with SessionLocal() as session:
+            await finalize_checkin_followup_cycles(session, today=today)
+            service_cases = list(
+                await session.scalars(
+                    select_active_service_cases(
+                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                        ServiceCase.ai_auto_reply_enabled.is_(True),
+                    )
+                )
+            )
+            for service_case in service_cases:
+                if checkin_day(service_case, now, tz) is None:
+                    continue
+                if await is_followup_paused(session, service_case_id=service_case.id):
+                    continue
+                cycle = await session.scalar(
+                    select(CheckinFollowupCycle).where(
+                        CheckinFollowupCycle.service_case_id == service_case.id,
+                        CheckinFollowupCycle.cycle_date == today,
+                    )
+                )
+                sent_kinds = list(cycle.sent_kinds or []) if cycle is not None else []
+                candidates = await compose_scheduled_followups(
+                    session, service_case=service_case, now=now, tz=tz
+                )
+                for followup in candidates:
+                    if len(sent_kinds) >= 3 or followup.kind in sent_kinds:
+                        continue
+                    start, end = _CHECKIN_FOLLOWUP_WINDOWS[followup.kind]
+                    target = _deterministic_followup_time(
+                        service_case.id, today, followup.kind, start, end
+                    )
+                    if not (start <= now.time() < end) or now.time() < target:
+                        continue
+                    event = await _reserve_reminder_event(
+                        session,
+                        service_case.id,
+                        rule_id=f"checkin_followup:{followup.kind}",
+                        event_date=today,
+                        event_type=ReminderEventType.REMINDED,
+                    )
+                    if event is None:
+                        continue
+                    if cycle is None:
+                        cycle = CheckinFollowupCycle(service_case_id=service_case.id, cycle_date=today)
+                        session.add(cycle)
+                        await session.flush()
+                    context = {
+                        "cycle_date": today.isoformat(),
+                        "target_date": followup.target_date.isoformat(),
+                        "kind": followup.kind,
+                        "items": [
+                            {
+                                "item_id": item["id"],
+                                "label": item["label"],
+                                "cycle_date": today.isoformat(),
+                                "target_date": followup.target_date.isoformat(),
+                            }
+                            for item in followup.expected_items
+                        ],
+                    }
+                    message = Message(
+                        service_case_id=service_case.id,
+                        group_id=service_case.group_id,
+                        direction=MessageDirection.OUTBOUND,
+                        sender_type=MessageSenderType.SYSTEM,
+                        message_type="markdown",
+                        content=followup.text,
+                        purpose=MessagePurpose.REMINDER,
+                        status=MessageStatus.PENDING,
+                        analysis_json={"checkin_followup": context},
+                    )
+                    session.add(message)
+                    await session.flush()
+                    result = await _send_channel_text_with_retries(service_case.group_id, followup.text)
+                    if not result.success:
+                        message.status, message.error = MessageStatus.FAILED, result.error
+                        continue
+                    message.status, message.wecom_message_id = MessageStatus.SENT, result.message_id
+                    sent_kinds.append(followup.kind)
+                    cycle.sent_kinds = sent_kinds
+                    cycle.message_ids = list(cycle.message_ids or []) + [message.id]
+                    if followup.kind == "contradiction" and followup.confirmation_fields:
+                        today_checkin = await session.scalar(
+                            select(Checkin).where(
+                                Checkin.service_case_id == service_case.id,
+                                Checkin.checkin_date == today,
+                                Checkin.deleted_at.is_(None),
+                            )
+                        )
+                        if today_checkin is not None:
+                            mark_contradictions_pending_confirmation(
+                                today_checkin, followup.confirmation_fields)
             await session.commit()
 
     async def check_agent_reminder_tasks_once(self, now: datetime | None = None) -> None:
@@ -1274,6 +1391,19 @@ def _deterministic_daily_time(
     digest = hashlib.md5(f"{case_id}:{day.isoformat()}".encode()).hexdigest()
     offset = int(digest, 16) % (end_min - start_min)
     total = start_min + offset
+    return time(total // 60, total % 60)
+
+
+def _deterministic_followup_time(
+    case_id: int, day: date, kind: str, start: time, end: time
+) -> time:
+    """Like the legacy slot function, but independent categories must not all land together."""
+    start_min = start.hour * 60 + start.minute
+    end_min = end.hour * 60 + end.minute
+    if end_min <= start_min:
+        return start
+    digest = hashlib.md5(f"{case_id}:{day.isoformat()}:{kind}".encode()).hexdigest()
+    total = start_min + int(digest, 16) % (end_min - start_min)
     return time(total // 60, total % 60)
 
 

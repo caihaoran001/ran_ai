@@ -26,7 +26,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.checkin import Checkin
+from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.service_case import ServiceCase
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
+from app.services.intake_generation import personalized_checkin_fields_from_document_payloads
 from app.services.service_case_queries import effective_service_day
 
 # 早C/午B/晚A 三段产品依从：最不会自然出现在聊天里、又是阶段报告核心指标。
@@ -316,6 +319,217 @@ class DailyFollowup:
     text: str
     kind: str  # "milestone" | "contradiction" | "daily_gap"
     confirmation_fields: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ScheduledFollowup:
+    """A separately sendable proactive prompt, with auditable expected answers."""
+
+    kind: str
+    text: str
+    target_date: date
+    expected_items: list[dict[str, str]] = field(default_factory=list)
+    confirmation_fields: list[str] = field(default_factory=list)
+
+
+async def get_sent_daily_checklist(
+    session: AsyncSession, *, service_case_id: int
+) -> tuple[int, list[dict[str, str]]] | None:
+    """Return the five questions from the latest document actually delivered to the user."""
+    document = await session.scalar(
+        select(UserDocument)
+        .where(
+            UserDocument.service_case_id == service_case_id,
+            UserDocument.document_type == DocumentType.DAY28_EXECUTION_STANDARD,
+            UserDocument.status == DocumentStatus.SENT,
+        )
+        .order_by(UserDocument.sent_at.desc(), UserDocument.id.desc())
+        .limit(1)
+    )
+    if document is None or not isinstance(document.content_json, dict):
+        return None
+    fields = personalized_checkin_fields_from_document_payloads(
+        {DocumentType.DAY28_EXECUTION_STANDARD.value: document.content_json}
+    )
+    items = [
+        {"id": f"document:{document.id}:{index}", "label": str(field["title"]).strip()}
+        for index, field in enumerate(fields[:5], start=1)
+        if str(field.get("title") or "").strip()
+    ]
+    return (document.id, items) if len(items) == 5 else None
+
+
+def _answered_document_items(checkin: Checkin | None) -> set[str]:
+    parsed = checkin.parsed_json if checkin and isinstance(checkin.parsed_json, dict) else {}
+    answers = parsed.get("custom_checkin") if isinstance(parsed, dict) else None
+    return {
+        str(item_id)
+        for item_id, answer in (answers or {}).items()
+        if isinstance(answer, dict) and str(answer.get("answer") or "").strip()
+    }
+
+
+async def compose_document_checklist_followup(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    target_date: date,
+    ai_service: object | None = None,
+) -> ScheduledFollowup | None:
+    """Ask only unanswered items from yesterday's delivered five-item checklist."""
+    checklist = await get_sent_daily_checklist(session, service_case_id=service_case.id)
+    if checklist is None:
+        return None
+    _, items = checklist
+    checkin = await session.scalar(
+        select(Checkin).where(
+            Checkin.service_case_id == service_case.id,
+            Checkin.checkin_date == target_date,
+            Checkin.deleted_at.is_(None),
+        )
+    )
+    answered = _answered_document_items(checkin)
+    missing = [item for item in items if item["id"] not in answered]
+    if not missing:
+        return None
+    labels = "；".join(item["label"] for item in missing)
+    fallback = f"早上好，补一下昨天的打卡：{labels}。"
+    try:
+        if ai_service is None:
+            from app.services.ai_service.client import AIService
+
+            ai_service = AIService()
+        text = await ai_service.generate_text(
+            system_prompt=(
+                "你是燃人微信群健康助教。用一句不超过100字、口语化的中文，请用户回顾昨天尚未回答的打卡项。"
+                "可将多个问题自然合并，但不得增加清单外的问题，不要使用编号。"
+            ),
+            user_prompt=f"昨天尚未回答的打卡项：{labels}",
+            scenario="checkin_followup",
+            service_case_id=service_case.id,
+        )
+        text = (text or "").strip() or fallback
+    except Exception:  # noqa: BLE001 - proactive reminder must never stop the scheduler
+        text = fallback
+    return ScheduledFollowup(
+        kind="daily_checklist", text=text, target_date=target_date, expected_items=missing
+    )
+
+
+async def compose_scheduled_followups(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    now: datetime,
+    tz: ZoneInfo,
+    ai_service: object | None = None,
+) -> list[ScheduledFollowup]:
+    """Build independent candidates; the scheduler applies time windows and the three-message cap."""
+    detect = await detect_followup(session, service_case=service_case, now=now, tz=tz)
+    candidates: list[ScheduledFollowup] = []
+    confirmations = detect.get("confirmations") or []
+    confirmation_text = compose_followup_message(confirmations=confirmations)
+    if confirmation_text:
+        candidates.append(
+            ScheduledFollowup(
+                kind="contradiction",
+                text=confirmation_text,
+                target_date=now.date(),
+                expected_items=[{"id": f"contradiction:{item['field']}", "label": item["label"]} for item in confirmations],
+                confirmation_fields=[item["field"] for item in confirmations],
+            )
+        )
+    milestone = detect.get("milestone")
+    if milestone:
+        candidates.append(
+            ScheduledFollowup(
+                kind="milestone",
+                text=await compose_milestone_followup(
+                    service_case=service_case,
+                    milestone_day=milestone["milestone_day"],
+                    need_waist=milestone["need_waist"],
+                    ai_service=ai_service,
+                ),
+                target_date=now.date(),
+                expected_items=[{"id": "milestone", "label": "阶段复盘"}],
+            )
+        )
+    daily = await compose_document_checklist_followup(
+        session,
+        service_case=service_case,
+        target_date=now.date() - timedelta(days=1),
+        ai_service=ai_service,
+    )
+    if daily:
+        candidates.append(daily)
+    if detect.get("ask_weight"):
+        candidates.append(
+            ScheduledFollowup(
+                kind="weight",
+                text="方便的话报一下最近一次晨起体重，我帮你把趋势记上～",
+                target_date=now.date(),
+                expected_items=[{"id": "weight", "label": "体重"}],
+            )
+        )
+    return candidates
+
+
+async def finalize_checkin_followup_cycles(session: AsyncSession, *, today: date) -> None:
+    """Close older open cycles; only a completed calendar cycle counts as one silence."""
+    rows = list(
+        await session.scalars(
+            select(CheckinFollowupCycle).where(
+                CheckinFollowupCycle.cycle_date < today,
+                CheckinFollowupCycle.status == "open",
+            )
+        )
+    )
+    now = datetime.now(tz=ZoneInfo("UTC"))
+    for row in rows:
+        row.status = "answered" if row.answered_item_ids else "unanswered"
+        row.finalized_at = now
+
+
+async def is_followup_paused(
+    session: AsyncSession, *, service_case_id: int
+) -> bool:
+    """Pause after two consecutive finished cycles without a valid expected answer."""
+    rows = list(
+        await session.scalars(
+            select(CheckinFollowupCycle)
+            .where(
+                CheckinFollowupCycle.service_case_id == service_case_id,
+                CheckinFollowupCycle.status.in_(["answered", "unanswered"]),
+            )
+            .order_by(CheckinFollowupCycle.cycle_date.desc())
+            .limit(2)
+        )
+    )
+    return len(rows) == 2 and all(row.status == "unanswered" for row in rows)
+
+
+async def mark_followup_answers(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    cycle_dates_and_items: list[tuple[date, str]],
+) -> None:
+    """Late answers may reopen a paused case by changing the original cycle to answered."""
+    for cycle_date, item_id in cycle_dates_and_items:
+        row = await session.scalar(
+            select(CheckinFollowupCycle).where(
+                CheckinFollowupCycle.service_case_id == service_case_id,
+                CheckinFollowupCycle.cycle_date == cycle_date,
+            )
+        )
+        if row is None:
+            continue
+        answered = list(row.answered_item_ids or [])
+        if item_id not in answered:
+            answered.append(item_id)
+            row.answered_item_ids = answered
+        row.status = "answered"
+        row.finalized_at = datetime.now(tz=ZoneInfo("UTC"))
 
 
 async def compose_daily_followup(

@@ -53,6 +53,13 @@ class ReportCheckinArgs(BaseModel):
     sensation: str | None = Field(default=None, description="身体感受")
     discomfort: str | None = Field(default=None, description="不适")
     tomorrow_focus: str | None = Field(default=None, description="明日重点")
+    followup_answers: list[dict[str, str]] | None = Field(
+        default=None,
+        description=(
+            "仅当追问上下文明确列出了待答 item_id 时填写。每项包含 item_id、cycle_date(YYYY-MM-DD)、"
+            "target_date(YYYY-MM-DD)、answer、evidence_message_id；只能记录用户对该追问的直接回答。"
+        ),
+    )
 
 
 class ReportOutcomeArgs(BaseModel):

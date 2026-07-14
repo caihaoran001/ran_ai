@@ -13,14 +13,14 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal
 from app.models.archivist_progress import ArchivistProgress
-from app.models.message import Message, MessagePurpose, MessageSenderType
+from app.models.message import Message, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase
 from app.services.archivist.case_memory_service import refresh_case_memory
 from app.services.archivist.case_synthesis import maybe_synthesize_case
@@ -115,7 +115,7 @@ async def _evaluate(
     """闸门 + A/B/C 判定。返回 (是否触发, 原因)。"""
     rows = (
         await session.execute(
-            select(Message.created_at, Message.analysis_json, Message.sender_type)
+            select(Message.id, Message.created_at, Message.analysis_json, Message.sender_type)
             .where(
                 Message.service_case_id == service_case_id,
                 Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
@@ -127,15 +127,35 @@ async def _evaluate(
     if not rows:
         return False, "no_delta"
 
-    worthy_any = any(_is_worthy(aj, sender_type) for _, aj, sender_type in rows)
+    created_times = [_aware(ct) for _, ct, _, _ in rows if ct is not None]
+    last_user_at = max(created_times) if created_times else None
+    # A terse response such as “完成” is normally not archive-worthy on its own,
+    # but it may be the direct answer to a structured follow-up. Let the extractor
+    # decide whether it really answers an expected item; without this exception the
+    # silence brake could never be released by concise users.
+    followup_reply_possible = False
+    if last_user_at is not None:
+        followup_reply_possible = bool(
+            await session.scalar(
+                select(Message.id)
+                .where(
+                    Message.service_case_id == service_case_id,
+                    Message.sender_type == MessageSenderType.SYSTEM,
+                    Message.purpose == MessagePurpose.REMINDER,
+                    Message.status == MessageStatus.SENT,
+                    Message.created_at <= last_user_at,
+                    Message.created_at >= last_user_at - timedelta(hours=48),
+                )
+                .limit(1)
+            )
+        )
+    worthy_any = followup_reply_possible or any(_is_worthy(aj, sender_type) for _, _, aj, sender_type in rows)
     if not worthy_any:
         return False, "gate_no_worthy"
 
-    created_times = [_aware(ct) for ct, _, _ in rows if ct is not None]
     count = len(rows)
-    last_user_at = max(created_times) if created_times else None
     first_user_at = min(created_times) if created_times else None
-    key_any = any(_has_key_kind(aj, sender_type) for _, aj, sender_type in rows)
+    key_any = followup_reply_possible or any(_has_key_kind(aj, sender_type) for _, _, aj, sender_type in rows)
 
     # Fast：含关键信息(打卡/个人事实/成效)且用户已停说 KEY_INFO_SETTLE_SECONDS —— 3 分钟去抖，
     # 把连发的几条批一次抽，既及时(≈3min 而非旧的 2h)又不至于每条都抽。

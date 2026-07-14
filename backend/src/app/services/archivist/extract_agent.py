@@ -10,6 +10,7 @@ chat_model 可注入（默认 create_agent_chat_model），镜像 RanrenAgentGra
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -80,6 +81,7 @@ async def run_extract_agent(
     enabled_kinds: list[str] | None = None,
     chat_model: Any = None,
     settings: Settings | None = None,
+    followup_context: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """跑一轮 Agent 抽取，按 checkin/outcome/profile/correction 四类归桶。
 
@@ -91,6 +93,7 @@ async def run_extract_agent(
     """
     collector: dict[str, Any] = {
         "checkin": {},
+        "followup_answers": [],
         "outcome": [],
         "profile": [],
         "correction": [],
@@ -109,9 +112,19 @@ async def run_extract_agent(
             chat_model = create_agent_chat_model(settings)
         tools = build_report_tools(kinds)
         bound = chat_model.bind_tools(tools)
+        followup_context = followup_context or []
+        context_text = ""
+        if followup_context:
+            context_text = (
+                "\n\n<followup_context>\n"
+                + json.dumps(followup_context, ensure_ascii=False)
+                + "\n</followup_context>\n"
+                + "若用户直接回答其中待答项，请随 report_checkin 的 followup_answers 上报；"
+                "item_id、cycle_date、target_date 必须与上下文完全一致，否则不要上报。"
+            )
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
-            HumanMessage(content=f"群聊记录：\n<messages>\n{content}\n</messages>"),
+            HumanMessage(content=f"群聊记录：\n<messages>\n{content}\n</messages>{context_text}"),
         ]
         response = await bound.ainvoke(messages)
     except Exception:
@@ -143,6 +156,19 @@ async def run_extract_agent(
                 # 同一天多次 report_checkin：后填的补进来（不覆盖已填的非空值）。
                 for k, v in fields.items():
                     collector["checkin"].setdefault(k, v)
+            allowed = {
+                (str(item.get("item_id")), str(item.get("cycle_date")), str(item.get("target_date")))
+                for item in (followup_context or [])
+                for item in item.get("items", [])
+            }
+            for answer in validated.get("followup_answers") or []:
+                key = (
+                    str(answer.get("item_id") or ""),
+                    str(answer.get("cycle_date") or ""),
+                    str(answer.get("target_date") or ""),
+                )
+                if key in allowed and str(answer.get("answer") or "").strip():
+                    collector["followup_answers"].append(answer)
         else:
             collector[kind].append(validated)
 

@@ -1019,13 +1019,8 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 result.message_id,
                 send_elapsed_ms,
             )
-            # 活跃触发·打卡追问：回复成功发出后，若今天没追过则按优先级补发一条(里程碑>矛盾>日常缺口)。
-            # 仅针对用户发言（班主任提问不追打卡）；日常缺口只在傍晚窗口发(见 _maybe_followup_after_reply)，
-            # 早上聊天不会顺手补缺口追问；全程兜底，绝不影响已发出的回复。
-            if result.success and _current_query_speaker(analysis) == "用户":
-                await self._maybe_followup_after_reply(
-                    message=message, service_case_id=service_case_id
-                )
+            # 打卡追问由 ReminderService 统一调度：它需要跨日五项、日上限和沉默周期状态，
+            # 不能再在每次聊天回复后顺手补发，否则会绕过三条上限和暂停机制。
             return
 
         # should_send 为 False（防御性兜底命中）→ 直接丢弃，不发送、不落库。

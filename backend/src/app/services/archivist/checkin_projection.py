@@ -172,6 +172,7 @@ async def upsert_checkin(
     fields: dict,
     evidence_msg_ids: list[int] | None = None,
     content_hint: str = "",
+    custom_answers: list[dict] | None = None,
 ) -> CheckinUpsertResult:
     """把聊天抽取的打卡字段(`fields`)合并进 (service_case, checkin_date) 当天一行。
 
@@ -180,7 +181,8 @@ async def upsert_checkin(
     result = CheckinUpsertResult()
     # 只保留合法 CHECKIN_KEYS
     clean = {k: v for k, v in (fields or {}).items() if k in CHECKIN_KEYS and not _is_empty(v)}
-    if not clean:
+    custom_answers = [item for item in (custom_answers or []) if item.get("item_id") and item.get("answer")]
+    if not clean and not custom_answers:
         return result
 
     checkin = await _find_active_checkin(
@@ -199,6 +201,7 @@ async def upsert_checkin(
             return result
         if result.contradictions:
             meta["contradictions"].extend(result.contradictions)
+        _merge_custom_answers(parsed, custom_answers)
         parsed["_meta"] = meta
         checkin = Checkin(
             service_case_id=service_case.id,
@@ -231,8 +234,30 @@ async def upsert_checkin(
             checkin_date,
             result.contradictions,
         )
+    custom_changed = _merge_custom_answers(parsed, custom_answers)
     parsed["_meta"] = meta
     # 只有真正有变化才写(补空/更新/矛盾)，避免无谓 UPDATE
-    if result.filled or result.contradictions:
+    if result.filled or result.contradictions or custom_changed:
         checkin.parsed_json = parsed
     return result
+
+
+def _merge_custom_answers(parsed: dict, answers: list[dict]) -> bool:
+    """Store answers to the delivered document's dynamic questions without polluting fixed fields."""
+    changed = False
+    current = dict(parsed.get("custom_checkin") or {})
+    for item in answers:
+        item_id = str(item["item_id"])
+        answer = str(item["answer"]).strip()
+        if not answer:
+            continue
+        value = {
+            "answer": answer,
+            "evidence_message_id": item.get("evidence_message_id"),
+        }
+        if current.get(item_id) != value:
+            current[item_id] = value
+            changed = True
+    if changed:
+        parsed["custom_checkin"] = current
+    return changed

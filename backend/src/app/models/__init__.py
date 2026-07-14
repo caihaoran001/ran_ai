@@ -3,6 +3,7 @@ from app.models.archivist_case_memory import ArchivistCaseMemory
 from app.models.archivist_progress import ArchivistProgress
 from app.models.archivist_shadow_outcome import ArchivistShadowOutcome
 from app.models.checkin import Checkin
+from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.ai_usage import AIUsageLog
 from app.models.app_setting import AppSetting
 from app.models.inbound_event import InboundEvent
@@ -23,6 +24,7 @@ from app.models.user_state_profile import UserStateProfile
 
 __all__ = [
     "Checkin",
+    "CheckinFollowupCycle",
     "AgentReminderTask",
     "AgentReminderTaskStatus",
     "ArchivistCaseMemory",
