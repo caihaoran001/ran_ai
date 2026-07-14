@@ -3,24 +3,19 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.checkin import Checkin
 from app.models.message import Message
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot, OutcomeStageState
 from app.models.service_case import ServiceCase
-from app.models.user_state_profile import UserStateProfile
-from app.services.ai_service import AIService
 from app.services.user_state_profile import (
     apply_outcome_events_to_user_state,
     apply_profile_signals_to_user_state,
-    get_or_create_user_state_profile,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,129 +24,6 @@ VALID_EVENT_TYPES = frozenset({
     "improved", "worsened", "unchanged", "completed", "not_completed",
     "feedback", "discomfort",
 })
-
-FOLLOWUP_COOLDOWN = timedelta(hours=12)
-ACTION_FOCUS_THRESHOLD = 0.85
-ACTION_FOCUS_LEAD_MARGIN = 0.2
-ACTION_FOCUS_SOFT_LOCK = timedelta(days=3)
-ACTION_FOCUS_DECAY_PER_DAY = 0.08
-CHINA_TZ = ZoneInfo("Asia/Shanghai")
-
-
-ACTION_FOCUS_DEFINITIONS: dict[str, dict[str, str]] = {
-    "sleep_wind_down": {
-        "label": "睡眠收口",
-        "action": "接下来先抓睡前流程和晚间节律，不额外增加任务。",
-    },
-    "evening_control": {
-        "label": "晚间收口",
-        "action": "接下来先抓晚餐后不加餐、晚A时机和睡前边界。",
-    },
-    "product_timing": {
-        "label": "产品时机调优",
-        "action": "接下来先复核早C/午B/晚A的分时安排、随餐或减量安排；晚A默认仍是晚间/睡前，不前移到午餐。",
-    },
-    "bowel_rhythm": {
-        "label": "排便与肠道节律",
-        "action": "接下来先观察排便、水分、蔬菜和轻运动的连续性。",
-    },
-    "meal_structure": {
-        "label": "饮食结构",
-        "action": "接下来先抓主食、蛋白、蔬菜和加餐边界。",
-    },
-    "execution_simplify": {
-        "label": "低摩擦执行",
-        "action": "接下来先减少任务数量，只保留最容易完成的一两个动作。",
-    },
-    "body_feedback_care": {
-        "label": "体感观察",
-        "action": "接下来先记录不适、降低执行强度，产品时机和用量按保守节奏复核。",
-    },
-    "motivation_support": {
-        "label": "鼓励与陪跑",
-        "action": "接下来先降低压力，多给正反馈和可完成的小动作。",
-    },
-}
-
-
-FIELD_ACTION_RULES: dict[str, tuple[tuple[str, float], ...]] = {
-    "sleep_change": (("sleep_wind_down", 0.35),),
-    "bowel_change": (("bowel_rhythm", 0.35),),
-    "discomfort_feedback": (("body_feedback_care", 0.9), ("product_timing", 0.45), ("execution_simplify", 0.25)),
-    "product_schedule": (("product_timing", 0.35), ("execution_simplify", 0.2)),
-    "rhythm_understood": (("product_timing", 0.25),),
-    "started_execution": (("execution_simplify", 0.2),),
-    "plan_understood": (("execution_simplify", 0.2),),
-    "execution_rate_signal": (("execution_simplify", 0.45),),
-    "adjustment_need": (("evening_control", 0.35), ("product_timing", 0.25)),
-    "plateau_signal": (("meal_structure", 0.35), ("execution_simplify", 0.2)),
-    "energy_change": (("sleep_wind_down", 0.2), ("product_timing", 0.15)),
-    "positive_body_signal": (("motivation_support", 0.2),),
-    "habit_stability": (("execution_simplify", 0.2),),
-    "next_stage_intent": (("motivation_support", 0.2),),
-}
-
-FOLLOWUP_QUESTIONS: dict[str, str] = {
-    "profile_completed": "问卷和基础资料这块还有哪里需要我帮你确认吗？",
-    "plan_understood": "现在方案里还有哪一步不太确定吗？",
-    "documents_received": "方案文件你这边看到了吗，有没有哪块需要我帮你拎一下？",
-    "started_execution": "今天已经开始按方案走了吗？",
-    "product_schedule": "今天早C、午B、晚A这几个时间点跟得上吗？",
-    "rhythm_understood": "几个产品分别什么时候喝，现在清楚了吗？",
-    "weight_change": "今早体重有记录吗，和前两天比怎么样？",
-    "waist_or_body_change": "这两天裤腰或肚子体感有没有一点变化？",
-    "energy_change": "今天白天精神状态怎么样，比前两天稳一点吗？",
-    "sleep_change": "昨晚睡得怎么样，有没有比前几天稳一点？",
-    "bowel_change": "今天排便怎么样，顺不顺？",
-    "plateau_signal": "这几天体重整体是卡住了，还是还有一点波动？",
-    "execution_rate_signal": "这两天执行大概能做到几成？",
-    "adjustment_need": "现在最卡的是产品时间、晚餐，还是别的地方？",
-    "positive_body_signal": "除了精神状态，腰腹或身体轻松感有没有变化？",
-    "challenge_goal_result": "这 28 天目标你自己感觉达成到几成？",
-    "weight_result": "这 28 天体重最终大概变化了多少？",
-    "waist_result": "腰围或裤腰这 28 天有没有明显变化？",
-    "habit_stability": "现在这些动作不提醒也能自然做到一部分了吗？",
-    "next_stage_intent": "后面你更想继续稳住，还是先调整一下节奏？",
-    "lifestyle_habit": "现在有没有哪一个习惯已经比较自然了？",
-    "long_term_weight_stability": "最近体重整体算稳定，还是又有反复？",
-    "self_management": "遇到出差或聚餐时，你现在大概知道怎么调整了吗？",
-    "long_term_membership": "后面你更想继续跟着，还是先自己稳一阵？",
-    "referral_signal": "身边有人问过你这段时间的变化吗？",
-    "brand_advocacy": "这套方法里有没有哪一点是你觉得最适合自己的？",
-}
-
-FOLLOWUP_FIELD_PRIORITY: tuple[str, ...] = (
-    "sleep_change",
-    "bowel_change",
-    "energy_change",
-    "product_schedule",
-    "rhythm_understood",
-    "started_execution",
-    "adjustment_need",
-    "execution_rate_signal",
-    "positive_body_signal",
-    "weight_change",
-    "waist_or_body_change",
-    "plan_understood",
-    "documents_received",
-    "profile_completed",
-    "habit_stability",
-    "next_stage_intent",
-    "self_management",
-    "lifestyle_habit",
-    "long_term_weight_stability",
-)
-
-RELATED_FOLLOWUP_FIELDS: dict[str, tuple[str, ...]] = {
-    "energy_change": ("sleep_change", "bowel_change"),
-    "sleep_change": ("energy_change",),
-    "bowel_change": ("energy_change",),
-    "product_schedule": ("rhythm_understood", "execution_rate_signal"),
-    "rhythm_understood": ("product_schedule",),
-    "execution_rate_signal": ("adjustment_need", "product_schedule"),
-    "adjustment_need": ("product_schedule", "execution_rate_signal"),
-    "positive_body_signal": ("energy_change", "waist_or_body_change"),
-}
 
 
 @dataclass(frozen=True)
@@ -167,15 +39,6 @@ class OutcomeMilestoneSpec:
     day: int
     name: str
     goals: tuple[OutcomeGoal, ...]
-
-
-@dataclass(frozen=True)
-class OutcomeExtractionPlan:
-    service_case_id: int
-    message_id: int
-    milestone: str
-    content: str
-    context: dict[str, Any]
 
 
 MILESTONE_SPECS: tuple[OutcomeMilestoneSpec, ...] = (
@@ -261,132 +124,6 @@ MILESTONE_SPECS: tuple[OutcomeMilestoneSpec, ...] = (
 MILESTONE_BY_KEY = {spec.milestone: spec for spec in MILESTONE_SPECS}
 
 
-async def analyze_and_update_outcomes(
-    session: AsyncSession,
-    *,
-    service_case: ServiceCase,
-    message: Message,
-    intervention_analysis: dict[str, Any] | None,
-    recent_messages: list[str] | None = None,
-) -> dict[str, Any]:
-    """Extract outcome evidence from one chat message and update stage state.
-
-    This is intentionally a controlled sidecar: the LLM proposes structured facts,
-    and this service validates/dedupes before writing state.
-    """
-
-    if not message.content.strip():
-        return {}
-
-    spec = current_milestone_spec(service_case)
-    state = await get_or_create_stage_state(session, service_case.id, spec)
-    followup_time_context = await _build_followup_time_context(
-        session,
-        service_case=service_case,
-        spec=spec,
-        state=state,
-    )
-    context = _analysis_context(
-        service_case=service_case,
-        spec=spec,
-        state=state,
-        intervention_analysis=intervention_analysis,
-        recent_messages=recent_messages or [],
-        followup_time_context=followup_time_context,
-    )
-    context["message_id"] = message.id
-
-    raw = await _extract_outcome_safely(message.content, context)
-    result = await apply_outcome_analysis(
-        session,
-        service_case=service_case,
-        message=message,
-        spec=spec,
-        state=state,
-        raw=raw,
-        intervention_analysis=intervention_analysis,
-        allowed_followup_fields=_allowed_followup_fields_from_context(context),
-    )
-    return result
-
-
-async def prepare_outcome_extraction(
-    session: AsyncSession,
-    *,
-    service_case_id: int,
-    message_id: int,
-    intervention_analysis: dict[str, Any] | None,
-    recent_messages: list[str] | None = None,
-) -> OutcomeExtractionPlan | None:
-    service_case = await session.scalar(
-        select(ServiceCase).where(
-            ServiceCase.id == service_case_id,
-            ServiceCase.deleted_at.is_(None),
-        )
-    )
-    message = await session.get(Message, message_id)
-    if not service_case or not message or not message.content.strip():
-        return None
-    spec = current_milestone_spec(service_case)
-    state = await get_or_create_stage_state(session, service_case.id, spec)
-    followup_time_context = await _build_followup_time_context(
-        session,
-        service_case=service_case,
-        spec=spec,
-        state=state,
-    )
-    context = _analysis_context(
-        service_case=service_case,
-        spec=spec,
-        state=state,
-        intervention_analysis=intervention_analysis,
-        recent_messages=recent_messages or [],
-        followup_time_context=followup_time_context,
-    )
-    context["message_id"] = message.id
-    return OutcomeExtractionPlan(
-        service_case_id=service_case.id,
-        message_id=message.id,
-        milestone=spec.milestone,
-        content=message.content,
-        context=context,
-    )
-
-
-async def extract_outcome_from_plan(plan: OutcomeExtractionPlan) -> dict[str, Any]:
-    return await _extract_outcome_safely(plan.content, plan.context)
-
-
-async def apply_outcome_analysis_plan(
-    session: AsyncSession,
-    *,
-    plan: OutcomeExtractionPlan,
-    raw: dict[str, Any],
-    intervention_analysis: dict[str, Any] | None,
-) -> dict[str, Any]:
-    service_case = await session.scalar(
-        select(ServiceCase).where(
-            ServiceCase.id == plan.service_case_id,
-            ServiceCase.deleted_at.is_(None),
-        )
-    )
-    message = await session.get(Message, plan.message_id)
-    spec = MILESTONE_BY_KEY.get(plan.milestone)
-    if not service_case or not message or spec is None:
-        return {}
-    state = await get_or_create_stage_state(session, service_case.id, spec)
-    return await apply_outcome_analysis(
-        session,
-        service_case=service_case,
-        message=message,
-        spec=spec,
-        state=state,
-        raw=raw,
-        intervention_analysis=intervention_analysis,
-        allowed_followup_fields=_allowed_followup_fields_from_context(plan.context),
-    )
-
-
 async def apply_archived_outcome(
     session: AsyncSession,
     *,
@@ -399,7 +136,7 @@ async def apply_archived_outcome(
 
     档案官按天批量抽取、不精确对应单条消息，故用该批**最后一条用户消息**作 anchor：
     事件 message_id/occurred_at、画像投影 message_id 均归到它，既有真实 message_id 供去重，
-    又符合既有"按当前里程碑归属事件"的语义。source="archivist" 标溯源、并跳过 reply-time 追问。
+    又符合既有"按当前里程碑归属事件"的语义。source="archivist" 标溯源。
     """
     spec = current_milestone_spec(service_case)
     state = await get_or_create_stage_state(session, service_case.id, spec)
@@ -411,7 +148,6 @@ async def apply_archived_outcome(
         spec=spec,
         state=state,
         raw=raw,
-        intervention_analysis=None,
         source="archivist",
     )
 
@@ -435,7 +171,6 @@ async def get_or_create_stage_state(
         status="active",
         collected_fields={},
         missing_fields=[goal.key for goal in spec.goals],
-        followup_count=0,
     )
     session.add(state)
     await session.flush()
@@ -509,8 +244,6 @@ async def apply_outcome_analysis(
     spec: OutcomeMilestoneSpec,
     state: OutcomeStageState,
     raw: dict[str, Any],
-    intervention_analysis: dict[str, Any] | None,
-    allowed_followup_fields: set[str] | None = None,
     source: str = "chat",
 ) -> dict[str, Any]:
     valid_fields = {goal.key for goal in spec.goals}
@@ -549,26 +282,6 @@ async def apply_outcome_analysis(
     state.collected_fields = collected
     state.missing_fields = missing
 
-    # 成效追问是"回复时顺手追问"机制，只对聊天热路径有意义；档案官(source=archivist)不产生即时
-    # 回复，不应设置 reply-time 追问状态，否则会留下永远发不出去的 last_followup_question。
-    if source == "chat":
-        followup_plan = _plan_followup(
-            service_case=service_case,
-            message=message,
-            state=state,
-            missing_fields=missing,
-            created_events=created_events,
-            intervention_analysis=intervention_analysis,
-            allowed_followup_fields=allowed_followup_fields,
-        )
-        if followup_plan.get("should_ask"):
-            state.last_followup_field = followup_plan["field_key"]
-            state.last_followup_question = followup_plan["question"]
-            state.last_followup_at = datetime.now(timezone.utc)
-            state.followup_count = int(state.followup_count or 0) + 1
-    else:
-        followup_plan = {"should_ask": False, "field_key": "", "question": "", "reason": "档案官抽取不做即时追问。"}
-
     await apply_outcome_events_to_user_state(
         session,
         service_case=service_case,
@@ -584,13 +297,6 @@ async def apply_outcome_analysis(
         profile_signals=profile_signals,
         source=source,
     )
-    action_focus = await score_action_focus(
-        session,
-        service_case=service_case,
-        message=message,
-        created_events=created_events,
-        intervention_analysis=intervention_analysis,
-    )
 
     await session.flush()
     return {
@@ -601,8 +307,6 @@ async def apply_outcome_analysis(
         "profile_signals": profile_signals,
         "collected_fields": collected,
         "missing_fields": missing,
-        "followup_plan": followup_plan,
-        "action_focus": action_focus,
         "notes": str(raw.get("notes") or ""),
     }
 
@@ -692,399 +396,6 @@ def service_day(service_case: ServiceCase) -> int:
     return max(delta.days + 1, 1)
 
 
-def outcome_followup_prompt(outcome_result: dict[str, Any] | None) -> str:
-    if not outcome_result:
-        return "无"
-    action_focus = outcome_result.get("action_focus")
-    action_text = ""
-    if isinstance(action_focus, dict) and action_focus.get("changed"):
-        current = action_focus.get("current_focus")
-        if isinstance(current, dict):
-            evidence = action_focus.get("change_evidence")
-            if isinstance(evidence, list):
-                evidence_text = "；".join(str(item) for item in evidence[:2] if str(item).strip())
-            else:
-                evidence_text = ""
-            action_text = (
-                f"本轮当前行动重点已调整为：{current.get('label')}。\n"
-                f"建议动作：{current.get('action')}\n"
-                f"触发依据：{evidence_text or current.get('reason') or '用户刚刚提供了新的执行反馈'}\n"
-                "请像真人班主任一样自然说明：先承接用户当前内容，再用一句话说明接下来先抓这个重点；不要说系统分数或阈值。"
-            )
-    plan = outcome_result.get("followup_plan")
-    followup_text = ""
-    if isinstance(plan, dict) and plan.get("should_ask"):
-        followup_text = (
-            f"本轮可以自然顺带追问 1 个成效问题：{plan.get('question')}\n"
-            f"追问目标字段：{plan.get('field_key')}\n"
-            f"原因：{plan.get('reason') or '当前阶段成效证据缺失'}\n"
-            "请先回应用户当前内容，再自然补这一句；如果用户只是确认、感谢、闲聊或语境突然不合适，可以不问。"
-        )
-    return "\n\n".join(item for item in (action_text, followup_text) if item) or "无"
-
-
-async def score_action_focus(
-    session: AsyncSession,
-    *,
-    service_case: ServiceCase,
-    message: Message,
-    created_events: list[dict[str, Any]],
-    intervention_analysis: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Score finite action-focus candidates from validated facts.
-
-    The LLM extracts open-ended facts. This deterministic layer only maps
-    high-confidence structured facts to a small set of service actions, so
-    unrecognized observations remain evidence without shaking the plan.
-    """
-
-    state_profile = await get_or_create_user_state_profile(session, service_case.id)
-    state = state_profile.state_json
-    domain = state["domains"]["action_focus"]
-    current_value = domain.get("current", {}).get("value")
-    focus_state = current_value if isinstance(current_value, dict) else {}
-    candidates = _decayed_candidates(focus_state.get("candidates"), now=datetime.now(timezone.utc))
-    current_focus = focus_state.get("current_focus") if isinstance(focus_state.get("current_focus"), dict) else {}
-    increments: list[dict[str, Any]] = []
-
-    for event in created_events:
-        increments.extend(_increments_from_event(event))
-
-    for increment in increments:
-        key = increment["key"]
-        candidate = candidates.get(key) if isinstance(candidates.get(key), dict) else {}
-        definition = ACTION_FOCUS_DEFINITIONS[key]
-        score = min(1.0, float(candidate.get("score") or 0.0) + float(increment["delta"]))
-        evidence = list(candidate.get("evidence") or [])
-        evidence.append(
-                {
-                    "text": increment["evidence"],
-                    "reason": increment["reason"],
-                    "message_id": message.id,
-                    "occurred_at": _event_time_iso(message.created_at),
-                }
-            )
-        candidates[key] = {
-            "key": key,
-            "label": definition["label"],
-            "action": definition["action"],
-            "score": round(score, 3),
-            "last_seen_at": datetime.now(timezone.utc).isoformat(),
-            "evidence": evidence[-5:],
-        }
-
-    top_candidate = _top_candidate(candidates)
-    changed = False
-    change_reason = ""
-    current_focus = _valid_current_focus(current_focus)
-    if top_candidate and _should_switch_action_focus(current_focus, top_candidate):
-        changed = True
-        change_reason = "候选行动累计分达到阈值"
-        now = datetime.now(timezone.utc)
-        current_focus = {
-            "key": top_candidate["key"],
-            "label": top_candidate["label"],
-            "action": top_candidate["action"],
-            "score": top_candidate["score"],
-            "started_at": now.isoformat(),
-            "soft_lock_until": (now + ACTION_FOCUS_SOFT_LOCK).isoformat(),
-            "reason": change_reason,
-            "evidence": list(top_candidate.get("evidence") or [])[-3:],
-        }
-
-    focus_state = {
-        "current_focus": current_focus,
-        "candidates": candidates,
-        "last_scored_at": datetime.now(timezone.utc).isoformat(),
-        "last_change": {
-            "changed": changed,
-            "reason": change_reason,
-            "message_id": message.id,
-        },
-    }
-    domain["current"] = {
-        "value": focus_state,
-        "source": "outcome_rule_score",
-        "evidence": _action_focus_evidence_text(current_focus, changed),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "confidence": float(current_focus.get("score") or 0.0) if current_focus else 0.0,
-    }
-    if changed:
-        history = list(domain.get("history") or [])
-        history.append(
-            {
-                "value": current_focus,
-                "source": "outcome_rule_score",
-                "evidence": _action_focus_evidence_text(current_focus, changed),
-                "occurred_at": datetime.now(timezone.utc).isoformat(),
-                "confidence": float(current_focus.get("score") or 0.0),
-                "message_id": message.id,
-            }
-        )
-        domain["history"] = history[-30:]
-    state_profile.state_json = state
-    state_profile.source = "dynamic"
-    flag_modified(state_profile, "state_json")
-    await session.flush()
-
-    return {
-        "changed": changed,
-        "current_focus": current_focus,
-        "top_candidate": top_candidate,
-        "increments": increments,
-        "change_evidence": [
-            item.get("text")
-            for item in list(current_focus.get("evidence") or [])[-2:]
-            if isinstance(item, dict) and item.get("text")
-        ],
-    }
-
-
-def _analysis_context(
-    *,
-    service_case: ServiceCase,
-    spec: OutcomeMilestoneSpec,
-    state: OutcomeStageState,
-    intervention_analysis: dict[str, Any] | None,
-    recent_messages: list[str],
-    followup_time_context: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    collected = state.collected_fields or {}
-    missing = state.missing_fields or [goal.key for goal in spec.goals if goal.key not in collected]
-    return {
-        "service_case_id": service_case.id,
-        "case_no": service_case.case_no,
-        "service_day": service_day(service_case),
-        "milestone": spec.milestone,
-        "milestone_name": spec.name,
-        "collect_goals": [
-            {
-                "key": goal.key,
-                "label": goal.label,
-                "evidence_examples": list(goal.evidence_examples),
-            }
-            for goal in spec.goals
-        ],
-        "already_collected": collected,
-        "missing_fields": missing,
-        "last_followup": {
-            "field_key": state.last_followup_field,
-            "question": state.last_followup_question,
-            "asked_at": state.last_followup_at.isoformat() if state.last_followup_at else None,
-            "count": state.followup_count or 0,
-        },
-        "safety_context": {
-            "requires_human_intervention": bool(
-                (intervention_analysis or {}).get("requires_human_intervention")
-            ),
-            "persistent_risk_level": service_case.risk_level,
-            "risk_flags": (intervention_analysis or {}).get("risk_flags") or [],
-            "refund_intent": (intervention_analysis or {}).get("refund_intent") or {},
-            "emotion_signal": (intervention_analysis or {}).get("emotion_signal") or {},
-        },
-        "recent_messages": recent_messages[-6:],
-        "followup_time_context": followup_time_context or {},
-    }
-
-
-async def _build_followup_time_context(
-    session: AsyncSession,
-    *,
-    service_case: ServiceCase,
-    spec: OutcomeMilestoneSpec,
-    state: OutcomeStageState,
-    now: datetime | None = None,
-) -> dict[str, Any]:
-    """Summarize what is sensible to ask right now.
-
-    The LLM should not infer meal timing from scratch. This deterministic
-    context tells it which milestone fields are both still missing and
-    reasonable to ask at the current local time, after today's check-ins.
-    """
-
-    local_now = _local_now(now)
-    today = local_now.date()
-    checkins = list(
-        await session.scalars(
-            select(Checkin)
-            .where(
-                Checkin.service_case_id == service_case.id,
-                Checkin.checkin_date == today,
-            )
-            .order_by(Checkin.created_at.asc())
-        )
-    )
-    answered_today = _answered_today_from_checkins(checkins)
-    collected = state.collected_fields or {}
-    missing = state.missing_fields or [goal.key for goal in spec.goals if goal.key not in collected]
-    allowed_by_time = set(_time_allowed_field_keys(local_now.hour))
-    answered_field_keys = set(_answered_field_keys(answered_today))
-    allowed = [
-        field_key
-        for field_key in missing
-        if field_key in allowed_by_time and field_key not in answered_field_keys
-    ]
-    return {
-        "timezone": "Asia/Shanghai",
-        "local_time": local_now.isoformat(),
-        "local_hour": local_now.hour,
-        "answered_today": answered_today,
-        "allowed_field_keys": allowed,
-        "blocked_field_keys": [
-            field_key
-            for field_key in missing
-            if field_key not in allowed
-        ],
-        "rule": "只能围绕 allowed_field_keys 追问；如果为空，本轮不要追问。",
-    }
-
-
-def _local_now(value: datetime | None) -> datetime:
-    now = value or datetime.now(timezone.utc)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    return now.astimezone(CHINA_TZ)
-
-
-def _answered_today_from_checkins(checkins: list[Checkin]) -> dict[str, Any]:
-    answered = {
-        "morning_c": False,
-        "noon_b": False,
-        "night_a": False,
-        "product_schedule": False,
-        "sleep": False,
-        "weight": False,
-        "waist": False,
-        "water": False,
-        "diet": False,
-        "bowel": False,
-        "exercise": False,
-        "body_feedback": False,
-        "discomfort": False,
-    }
-    for checkin in checkins:
-        parsed = checkin.parsed_json if isinstance(checkin.parsed_json, dict) else {}
-        schedule = parsed.get("product_schedule")
-        if isinstance(schedule, dict):
-            for key in ("morning_c", "noon_b", "night_a"):
-                if _has_value(schedule.get(key)):
-                    answered[key] = True
-            answered["product_schedule"] = any(answered[key] for key in ("morning_c", "noon_b", "night_a"))
-        for source_key, target_key in (
-            ("sleep", "sleep"),
-            ("weight", "weight"),
-            ("waist", "waist"),
-            ("water", "water"),
-            ("diet", "diet"),
-            ("bowel", "bowel"),
-            ("exercise", "exercise"),
-            ("sensation", "body_feedback"),
-            ("mood", "body_feedback"),
-            ("discomfort", "discomfort"),
-        ):
-            if _has_value(parsed.get(source_key)):
-                answered[target_key] = True
-    return answered
-
-
-def _answered_field_keys(answered_today: dict[str, Any]) -> tuple[str, ...]:
-    fields: list[str] = []
-    if answered_today.get("product_schedule"):
-        fields.extend(["product_schedule", "rhythm_understood", "started_execution", "execution_rate_signal"])
-    if answered_today.get("sleep"):
-        fields.append("sleep_change")
-    if answered_today.get("weight"):
-        fields.extend(["weight_change", "weight_result", "challenge_goal_result"])
-    if answered_today.get("waist"):
-        fields.extend(["waist_or_body_change", "waist_result"])
-    if answered_today.get("bowel"):
-        fields.append("bowel_change")
-    if answered_today.get("body_feedback"):
-        fields.extend(["energy_change", "positive_body_signal"])
-    if answered_today.get("discomfort"):
-        fields.append("discomfort_feedback")
-    return tuple(dict.fromkeys(fields))
-
-
-def _time_allowed_field_keys(hour: int) -> tuple[str, ...]:
-    if 6 <= hour < 10:
-        return (
-            "sleep_change",
-            "weight_change",
-            "bowel_change",
-            "energy_change",
-            "profile_completed",
-            "documents_received",
-            "plan_understood",
-            "started_execution",
-            "product_schedule",
-        )
-    if 10 <= hour < 14:
-        return (
-            "plan_understood",
-            "started_execution",
-            "product_schedule",
-            "rhythm_understood",
-            "documents_received",
-            "profile_completed",
-            "bowel_change",
-            "energy_change",
-        )
-    if 14 <= hour < 18:
-        return (
-            "product_schedule",
-            "rhythm_understood",
-            "energy_change",
-            "positive_body_signal",
-            "execution_rate_signal",
-            "adjustment_need",
-            "bowel_change",
-        )
-    if 18 <= hour < 22:
-        return (
-            "product_schedule",
-            "adjustment_need",
-            "execution_rate_signal",
-            "positive_body_signal",
-            "habit_stability",
-            "next_stage_intent",
-            "energy_change",
-        )
-    return (
-        "energy_change",
-        "sleep_change",
-        "bowel_change",
-        "habit_stability",
-        "next_stage_intent",
-        "self_management",
-        "lifestyle_habit",
-        "long_term_weight_stability",
-    )
-
-
-def _has_value(value: Any) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, str):
-        text = value.strip()
-        return bool(text) and text not in {"未记录", "暂无", "无", "None"}
-    if isinstance(value, (list, tuple, set, dict)):
-        return bool(value)
-    return True
-
-
-async def _extract_outcome_safely(content: str, context: dict[str, Any]) -> dict[str, Any]:
-    try:
-        return await AIService().extract_outcome_insight(content=content, context=context)
-    except Exception:
-        logger.exception("Failed to extract outcome insight")
-        return {
-            "outcome_events": [],
-            "followup_plan": {"should_ask": False, "field_key": "", "question": "", "reason": "成效提取失败"},
-            "notes": "成效提取失败，已跳过本轮状态更新。",
-        }
-
-
 def _normalize_events(value: Any, valid_fields: set[str]) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -1139,78 +450,6 @@ def _normalize_profile_signals(value: Any) -> list[dict[str, Any]]:
     return signals[:5]
 
 
-def _plan_followup(
-    *,
-    service_case: ServiceCase,
-    message: Message,
-    state: OutcomeStageState,
-    missing_fields: list[str],
-    created_events: list[dict[str, Any]],
-    intervention_analysis: dict[str, Any] | None,
-    allowed_followup_fields: set[str] | None,
-) -> dict[str, Any]:
-    if service_case.risk_level == "high" or _must_suppress_followup(intervention_analysis):
-        return {"should_ask": False, "field_key": "", "question": "", "reason": "风险或人工介入场景，暂停成效追问。"}
-    if _is_followup_in_cooldown(state):
-        return {
-            "should_ask": False,
-            "field_key": "",
-            "question": "",
-            "reason": "上一轮成效追问仍在冷却期，避免连续追问造成回复疲劳。",
-        }
-    if _is_followup_context_unsuitable(message.content, created_events):
-        return {
-            "should_ask": False,
-            "field_key": "",
-            "question": "",
-            "reason": "本轮不是成效采集语境，避免在确认、闲聊或流程问题后硬追问。",
-        }
-
-    created_keys = {str(item.get("field_key") or "") for item in created_events}
-    candidates = [
-        field
-        for field in missing_fields
-        if field not in created_keys
-        and field in FOLLOWUP_QUESTIONS
-        and (allowed_followup_fields is None or field in allowed_followup_fields)
-    ]
-    field_key = _select_followup_field(candidates, created_events)
-    if not field_key:
-        return {"should_ask": False, "field_key": "", "question": "", "reason": "当前时段没有适合顺手追问的缺失字段。"}
-    return {
-        "should_ask": True,
-        "field_key": field_key,
-        "question": FOLLOWUP_QUESTIONS[field_key],
-        "reason": "后端根据阶段缺口、当前时段和本轮语境选择的顺手追问。",
-    }
-
-
-def _select_followup_field(candidates: list[str], created_events: list[dict[str, Any]]) -> str:
-    candidate_set = set(candidates)
-    if not candidate_set:
-        return ""
-    for event in created_events:
-        for related in RELATED_FOLLOWUP_FIELDS.get(str(event.get("field_key") or ""), ()):
-            if related in candidate_set:
-                return related
-    for field in FOLLOWUP_FIELD_PRIORITY:
-        if field in candidate_set:
-            return field
-    return candidates[0]
-
-
-def _allowed_followup_fields_from_context(context: Any) -> set[str] | None:
-    if not isinstance(context, dict):
-        return None
-    followup_context = context.get("followup_time_context")
-    if not isinstance(followup_context, dict):
-        return None
-    allowed = followup_context.get("allowed_field_keys")
-    if not isinstance(allowed, list):
-        return None
-    return {_string(item) for item in allowed if _string(item)}
-
-
 async def _event_exists(
     session: AsyncSession,
     service_case_id: int,
@@ -1227,201 +466,6 @@ async def _event_exists(
         statement = statement.where(OutcomeEvent.evidence_text == item["evidence_text"])
     existing = await session.scalar(statement.limit(1))
     return existing is not None
-
-
-def _must_suppress_followup(intervention_analysis: dict[str, Any] | None) -> bool:
-    if not intervention_analysis:
-        return False
-    if intervention_analysis.get("requires_human_intervention"):
-        return True
-    reasons = intervention_analysis.get("intervention_reasons")
-    if isinstance(reasons, list) and any(
-        isinstance(item, dict) and item.get("code") in {"complaint", "robot_stop", "refund_request"}
-        for item in reasons
-    ):
-        return True
-    refund = intervention_analysis.get("refund_intent")
-    if isinstance(refund, dict) and refund.get("detected"):
-        return True
-    emotion = intervention_analysis.get("emotion_signal")
-    if isinstance(emotion, dict) and emotion.get("detected") and emotion.get("level") in {"medium", "high"}:
-        return True
-    return False
-
-
-def _is_followup_context_unsuitable(content: str | None, created_events: list[dict[str, Any]]) -> bool:
-    """Avoid metric follow-ups after acknowledgements, tests, and service-flow questions.
-
-    The outcome extractor is intentionally broad so it does not miss useful
-    evidence. This guard only controls whether to ask an extra follow-up in the
-    chat reply. It does not block evidence already extracted from the message.
-    """
-    text = (content or "").strip()
-    if not text:
-        return True
-    compact = re.sub(r"\s+", "", text)
-    if len(compact) <= 6 and not created_events:
-        return True
-    service_flow_markers = (
-        "测试",
-        "你干啥",
-        "在吗",
-        "收到",
-        "好的",
-        "谢谢",
-        "文件",
-        "问卷",
-        "链接",
-        "发了吗",
-        "提醒",
-        "下一步",
-        "怎么做",
-    )
-    if not created_events and any(marker in compact for marker in service_flow_markers):
-        return True
-    return False
-
-
-def _is_followup_in_cooldown(state: OutcomeStageState) -> bool:
-    if not state.last_followup_at:
-        return False
-    last = state.last_followup_at
-    if last.tzinfo is None:
-        last = last.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - last.astimezone(timezone.utc) < FOLLOWUP_COOLDOWN
-
-
-def _increments_from_event(event: dict[str, Any]) -> list[dict[str, Any]]:
-    field_key = str(event.get("field_key") or "")
-    event_type = str(event.get("event_type") or "").lower()
-    confidence = _confidence(event.get("confidence"))
-    evidence = str(event.get("evidence_text") or event.get("value") or "").strip()
-    if not field_key or confidence < 0.65 or event_type in {"none", "resolved"}:
-        return []
-    if event_type in {"improved", "positive"}:
-        if field_key in {"energy_change", "positive_body_signal", "habit_stability"}:
-            return [_action_increment("motivation_support", 0.1 * confidence, "正向反馈可用于鼓励陪跑", evidence)]
-        return []
-    rules = FIELD_ACTION_RULES.get(field_key, ())
-    return [
-        _action_increment(action_key, delta * confidence, f"{field_key} 触发 {ACTION_FOCUS_DEFINITIONS[action_key]['label']}", evidence)
-        for action_key, delta in rules
-        if action_key in ACTION_FOCUS_DEFINITIONS
-    ]
-
-
-def _action_increment(
-    key: str,
-    delta: float,
-    reason: str,
-    evidence: str,
-    *,
-    forced: bool = False,
-) -> dict[str, Any]:
-    return {
-        "key": key,
-        "delta": round(max(delta, 0.0), 3),
-        "reason": reason,
-        "evidence": evidence[:160],
-        "forced": forced,
-    }
-
-
-def _decayed_candidates(value: Any, *, now: datetime) -> dict[str, dict[str, Any]]:
-    if not isinstance(value, dict):
-        return {}
-    result: dict[str, dict[str, Any]] = {}
-    for key, candidate in value.items():
-        if key not in ACTION_FOCUS_DEFINITIONS or not isinstance(candidate, dict):
-            continue
-        score = float(candidate.get("score") or 0.0)
-        last_seen = _parse_datetime(candidate.get("last_seen_at"))
-        if last_seen:
-            days = max((now - last_seen).total_seconds() / 86400, 0.0)
-            score = max(0.0, score - days * ACTION_FOCUS_DECAY_PER_DAY)
-        if score <= 0.05:
-            continue
-        definition = ACTION_FOCUS_DEFINITIONS[key]
-        result[key] = {
-            **candidate,
-            "key": key,
-            "label": definition["label"],
-            "action": definition["action"],
-            "score": round(score, 3),
-        }
-    return result
-
-
-def _top_candidate(candidates: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
-    if not candidates:
-        return None
-    return max(candidates.values(), key=lambda item: float(item.get("score") or 0.0))
-
-
-def _valid_current_focus(current_focus: dict[str, Any]) -> dict[str, Any]:
-    """Drop legacy/non-operational focus keys so they do not block new scoring."""
-
-    if not isinstance(current_focus, dict):
-        return {}
-    key = current_focus.get("key")
-    return current_focus if isinstance(key, str) and key in ACTION_FOCUS_DEFINITIONS else {}
-
-
-def _should_switch_action_focus(
-    current_focus: dict[str, Any],
-    candidate: dict[str, Any],
-) -> bool:
-    candidate_score = float(candidate.get("score") or 0.0)
-    if candidate_score < ACTION_FOCUS_THRESHOLD:
-        return False
-    if not current_focus:
-        return True
-    if candidate.get("key") == current_focus.get("key"):
-        return False
-    current_score = float(current_focus.get("score") or 0.0)
-    if _is_action_focus_locked(current_focus):
-        return candidate_score >= max(0.98, current_score + ACTION_FOCUS_LEAD_MARGIN)
-    return candidate_score >= current_score + ACTION_FOCUS_LEAD_MARGIN
-
-
-def _is_action_focus_locked(current_focus: dict[str, Any]) -> bool:
-    locked_until = _parse_datetime(current_focus.get("soft_lock_until"))
-    return bool(locked_until and datetime.now(timezone.utc) < locked_until)
-
-
-def _action_focus_evidence_text(current_focus: dict[str, Any], changed: bool) -> str:
-    if not current_focus:
-        return "暂无当前行动重点"
-    prefix = "行动重点已调整" if changed else "行动重点评分已更新"
-    evidence = current_focus.get("evidence")
-    if isinstance(evidence, list) and evidence:
-        latest = evidence[-1]
-        if isinstance(latest, dict) and latest.get("text"):
-            return f"{prefix}：{latest['text']}"
-    return f"{prefix}：{current_focus.get('label') or '待观察'}"
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    if isinstance(value, datetime):
-        dt = value
-    elif isinstance(value, str) and value:
-        try:
-            dt = datetime.fromisoformat(value)
-        except ValueError:
-            return None
-    else:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
-def _event_time_iso(value: datetime | None) -> str:
-    if not value:
-        return datetime.now(timezone.utc).isoformat()
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
 
 
 def _snapshot_metrics(

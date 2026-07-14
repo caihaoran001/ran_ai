@@ -18,7 +18,6 @@ STATE_DOMAIN_LABELS: dict[str, str] = {
     "need_analysis": "健康需求识别",
     "personal_preferences": "个人喜好与偏好",
     "lifestyle_habits": "稳定习惯与生活约束",
-    "action_focus": "当前行动重点",
     "diet_structure": "饮食结构",
     "rhythm_structure": "节律结构",
     "product_usage": "产品使用",

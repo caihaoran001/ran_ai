@@ -905,17 +905,6 @@ async def test_agent_memory_context_compacts_profile_and_state(db_session):
             service_case_id=service_case.id,
             state_json={
                 "domains": {
-                    "action_focus": {
-                        "current": {
-                            "value": {
-                                "current_focus": {
-                                    "label": "晚餐节律",
-                                    "action": "先保证晚餐不拖太晚",
-                                    "reason": "近期加班影响执行",
-                                }
-                            }
-                        }
-                    },
                     "personal_preferences": {
                         "current": {
                             "value": {
@@ -946,7 +935,6 @@ async def test_agent_memory_context_compacts_profile_and_state(db_session):
     memory = await build_agent_memory_context(db_session, service_case_id=service_case.id)
 
     assert "画像摘要：用户经常加班" in memory
-    assert "当前行动重点：晚餐节律" in memory
     assert "个人偏好：喜欢潮玩" in memory
     assert "稳定习惯：工作日晚间经常加班" in memory
 

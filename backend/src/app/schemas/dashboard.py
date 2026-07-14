@@ -58,7 +58,6 @@ class CaseHealthItem(BaseModel):
     service_day: int
     last_checkin_date: str | None = None
     days_since_checkin: int | None = None
-    action_focus: str | None = None
     risk_level: str | None = None
     needs_human_intervention: bool = False
     stage_reports: list[str] = Field(default_factory=list)

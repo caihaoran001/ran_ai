@@ -170,38 +170,21 @@ def _memory_from_state(state_json: object) -> tuple[list[str], list[str], list[s
     habits = _domain_lines(domains.get("lifestyle_habits"), label="稳定习惯")
     current_state: list[str] = []
     for key, label in (
-        ("action_focus", "当前行动重点"),
         ("need_analysis", "当前需求"),
         ("body_feedback", "近期体感"),
         ("product_usage", "产品执行"),
         ("outcome_changes", "成效变化"),
         ("staff_guidance", "班主任确认安排"),
     ):
-        current_state.extend(_domain_lines(domains.get(key), label=label, action_focus=(key == "action_focus")))
+        current_state.extend(_domain_lines(domains.get(key), label=label))
     warnings = _domain_lines(domains.get("risk_profile"), label="风险信息")
     return preferences, habits, current_state, warnings
 
 
-def _domain_lines(domain: object, *, label: str, action_focus: bool = False) -> list[str]:
+def _domain_lines(domain: object, *, label: str) -> list[str]:
     current = _domain_current(domain)
     if not current:
         return []
-    if action_focus:
-        focus = current.get("current_focus")
-        if isinstance(focus, dict):
-            text = _join_parts(
-                _short_text(focus.get("label"), 32),
-                _short_text(focus.get("action"), 70),
-                _short_text(focus.get("reason"), 70),
-            )
-        else:
-            text = _join_parts(
-                _short_text(current.get("label"), 32),
-                _short_text(current.get("action"), 70),
-                _short_text(current.get("reason"), 70),
-            )
-        return [f"{label}：{text}"] if text else []
-
     values = []
     # 取最新 5 条（value 字典按写入顺序，末尾即最近的纠正/信号），避免新写入被旧值挤出注入。
     for value in list(current.values())[-5:]:
@@ -245,10 +228,6 @@ def _short_text(value: object, limit: int) -> str:
     if not text or text in {"未提供", "暂无数据", "None", "null"}:
         return ""
     return text[:limit]
-
-
-def _join_parts(*parts: str) -> str:
-    return "；".join(part for part in parts if part)
 
 
 def _dedupe_keep_order(lines: Iterable[str]) -> list[str]:

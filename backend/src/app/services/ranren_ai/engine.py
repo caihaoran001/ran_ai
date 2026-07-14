@@ -1396,22 +1396,11 @@ class RanrenAIEngine(InboundAttachmentProcessor):
     async def _build_intervention_context(self, session, *, service_case: ServiceCase | None) -> dict:
         if not service_case:
             return {}
-        context: dict[str, object] = {
+        return {
             "current_risk_level": service_case.risk_level,
             "intervention_reasons": service_case.intervention_reasons or [],
             "risk_flags": service_case.risk_flags or [],
         }
-        state_profile = await session.scalar(
-            select(UserStateProfile)
-            .where(UserStateProfile.service_case_id == service_case.id)
-            .order_by(UserStateProfile.updated_at.desc())
-            .limit(1)
-        )
-        if state_profile:
-            action_focus = _state_action_focus(state_profile.state_json)
-            if action_focus:
-                context["current_action_focus"] = action_focus
-        return context
 
 
 async def build_ai_user_context(session, service_case: ServiceCase | None) -> str:
@@ -1748,7 +1737,6 @@ def _compact_state_profile_for_prompt(state_json: object) -> str:
         return "暂无动态状态"
     lines: list[str] = []
     for key in (
-        "action_focus",
         "need_analysis",
         "personal_preferences",
         "lifestyle_habits",
@@ -1768,42 +1756,14 @@ def _compact_state_profile_for_prompt(state_json: object) -> str:
         value = current.get("value")
         if not isinstance(value, dict) or not value:
             continue
-        if key == "action_focus":
-            compact = _action_focus_prompt_value(value)
-        else:
-            compact = "；".join(
-                f"{field}: {_short_prompt_value(field_value)}"
-                for field, field_value in list(value.items())[:5]
-                if _short_prompt_value(field_value)
-            )
+        compact = "；".join(
+            f"{field}: {_short_prompt_value(field_value)}"
+            for field, field_value in list(value.items())[:5]
+            if _short_prompt_value(field_value)
+        )
         if compact:
             lines.append(f"- {label}：{compact}")
     return "\n".join(lines) if lines else "暂无动态状态"
-
-
-def _state_action_focus(state_json: object) -> dict[str, object] | None:
-    if not isinstance(state_json, dict):
-        return None
-    domains = state_json.get("domains")
-    if not isinstance(domains, dict):
-        return None
-    action_focus = domains.get("action_focus")
-    if not isinstance(action_focus, dict):
-        return None
-    current = action_focus.get("current")
-    if not isinstance(current, dict):
-        return None
-    value = current.get("value")
-    if not isinstance(value, dict) or not value:
-        return None
-    return {
-        "key": value.get("key") or "",
-        "label": value.get("label") or "",
-        "action": value.get("action") or "",
-        "reason": value.get("reason") or "",
-        "score": value.get("score") or 0,
-        "evidence": value.get("evidence") or [],
-    }
 
 
 def _short_prompt_value(value: object) -> str:
@@ -1821,16 +1781,6 @@ def _short_prompt_value(value: object) -> str:
     if text in {"未提供", "暂无数据", "None"}:
         return ""
     return text[:160]
-
-
-def _action_focus_prompt_value(value: dict) -> str:
-    focus = value.get("current_focus")
-    if not isinstance(focus, dict) or not focus:
-        return ""
-    label = str(focus.get("label") or "").strip()
-    action = str(focus.get("action") or "").strip()
-    reason = str(focus.get("reason") or "").strip()
-    return "；".join(item for item in (f"当前重点: {label}" if label else "", f"建议动作: {action}" if action else "", f"原因: {reason}" if reason else "") if item)[:260]
 
 
 def _format_chat_history_line(message: Message) -> str:
