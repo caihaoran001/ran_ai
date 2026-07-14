@@ -127,6 +127,8 @@ async def test_archivist_maps_normal_chat_to_delivered_checklist_item(db_session
     )
     assert checkin is not None
     assert checkin.parsed_json["custom_checkin"][item_id]["answer"] == "蔬菜吃够两拳"
+    assert checkin.parsed_json["custom_checkin"][item_id]["question"] == "今天是否至少吃到2拳蔬菜"
+    assert checkin.parsed_json["custom_checkin"][item_id]["source"] == "chat"
     assert "<daily_checklist_context>" in fake.calls[0][1].content
 
 

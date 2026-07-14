@@ -13,6 +13,11 @@ from app.services.intake_generation import personalized_checkin_fields_from_docu
 _DOCUMENT_ITEM_ID = re.compile(r"^document:(\d+):(\d+)$")
 
 
+def personalized_checkin_document_id(item_id: object) -> int | None:
+    match = _DOCUMENT_ITEM_ID.match(str(item_id))
+    return int(match.group(1)) if match else None
+
+
 def personalized_checkin_document_ids(parsed_json: dict[str, Any] | None) -> set[int]:
     """Return execution-document ids referenced by a check-in's dynamic answers."""
     if not isinstance(parsed_json, dict):
@@ -22,9 +27,9 @@ def personalized_checkin_document_ids(parsed_json: dict[str, Any] | None) -> set
         return set()
     ids: set[int] = set()
     for item_id in answers:
-        match = _DOCUMENT_ITEM_ID.match(str(item_id))
-        if match:
-            ids.add(int(match.group(1)))
+        document_id = personalized_checkin_document_id(item_id)
+        if document_id is not None:
+            ids.add(document_id)
     return ids
 
 
@@ -66,10 +71,11 @@ def personalized_checkin_answers(
         item_id_text = str(item_id)
         match = _DOCUMENT_ITEM_ID.match(item_id_text)
         fallback = f"专属第 {match.group(2)} 项" if match else "专属执行项"
+        question = str(value.get("question") or "").strip() if isinstance(value, dict) else ""
         items.append(
             {
                 "item_id": item_id_text,
-                "label": labels_by_id.get(item_id_text, fallback),
+                "label": question or labels_by_id.get(item_id_text, fallback),
                 "answer": answer,
             }
         )

@@ -19,6 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.checkin import Checkin
 from app.models.service_case import ServiceCase
+from app.models.user_document import UserDocument
+from app.services.checkin_presentation import (
+    personalized_checkin_document_id,
+    personalized_checkin_labels,
+)
 from app.services.checkin_service import CHECKIN_KEYS
 
 logger = logging.getLogger(__name__)
@@ -181,7 +186,11 @@ async def upsert_checkin(
     result = CheckinUpsertResult()
     # 只保留合法 CHECKIN_KEYS
     clean = {k: v for k, v in (fields or {}).items() if k in CHECKIN_KEYS and not _is_empty(v)}
-    custom_answers = [item for item in (custom_answers or []) if item.get("item_id") and item.get("answer")]
+    custom_answers = await _with_question_snapshots(
+        session,
+        service_case_id=service_case.id,
+        answers=custom_answers or [],
+    )
     if not clean and not custom_answers:
         return result
 
@@ -244,8 +253,40 @@ async def upsert_checkin(
     return result
 
 
+async def _with_question_snapshots(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    answers: list[dict],
+) -> list[dict]:
+    """Resolve every dynamic item against its exact execution document before persisting it."""
+    valid = [item for item in answers if item.get("item_id") and item.get("answer")]
+    document_ids = {
+        document_id
+        for item in valid
+        if (document_id := personalized_checkin_document_id(item["item_id"])) is not None
+    }
+    documents = list(
+        await session.scalars(
+            select(UserDocument).where(
+                UserDocument.service_case_id == service_case_id,
+                UserDocument.id.in_(document_ids),
+            )
+        )
+    ) if document_ids else []
+    labels_by_id = personalized_checkin_labels(documents)
+    return [
+        {
+            **item,
+            "question": str(item.get("question") or labels_by_id.get(str(item["item_id"])) or "").strip(),
+            "source": str(item.get("source") or "chat").strip() or "chat",
+        }
+        for item in valid
+    ]
+
+
 def _merge_custom_answers(parsed: dict, answers: list[dict]) -> bool:
-    """Store answers to the delivered document's dynamic questions without polluting fixed fields."""
+    """Store answers and immutable question snapshots without polluting fixed fields."""
     changed = False
     current = dict(parsed.get("custom_checkin") or {})
     for item in answers:
@@ -256,7 +297,12 @@ def _merge_custom_answers(parsed: dict, answers: list[dict]) -> bool:
         value = {
             "answer": answer,
             "evidence_message_id": item.get("evidence_message_id"),
+            "question": str(item.get("question") or "").strip(),
+            "source": str(item.get("source") or "chat").strip() or "chat",
         }
+        # 旧聊天归档只有 answer/evidence；新写入补齐快照。空问题不落无意义字段。
+        if not value["question"]:
+            value.pop("question")
         if current.get(item_id) != value:
             current[item_id] = value
             changed = True

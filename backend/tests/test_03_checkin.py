@@ -1,10 +1,14 @@
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from app.models.checkin import Checkin
+from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
+from app.services.personalized_checkin_backfill import backfill_personalized_h5_checkins
 from tests.conftest import seed_checkins
 
 
@@ -88,6 +92,80 @@ async def test_graduated_case_rejects_new_checkin(admin_client, public_client, d
         params={"template": "personalized_checkin"},
     )
     assert questionnaire_resp.status_code == 410
+
+
+@pytest.mark.asyncio
+async def test_backfill_historical_personalized_h5_answers_keeps_question_snapshot(db_session):
+    now = datetime.now(timezone.utc)
+    user = User(name="历史H5打卡用户")
+    db_session.add(user)
+    await db_session.flush()
+    service_case = ServiceCase(
+        case_no=f"H5-BACKFILL-{uuid.uuid4().hex[:8]}",
+        user_id=user.id,
+        group_id=f"h5-backfill-{uuid.uuid4().hex[:8]}",
+        questionnaire_token=uuid.uuid4().hex,
+        status=ServiceCaseStatus.IN_SERVICE,
+    )
+    db_session.add(service_case)
+    await db_session.flush()
+    document = UserDocument(
+        service_case_id=service_case.id,
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28天执行标准与打卡要求",
+        content_md="ok",
+        content_json={
+            "daily_checkin": [
+                "今天是否完成早C/午B/晚A？",
+                "今天是否在23:30前上床？",
+                "今天蔬菜是否达到两拳？",
+                "今天是否完成7000步？",
+                "今天情绪评分（1-5分）",
+            ]
+        },
+        status=DocumentStatus.SENT,
+        created_at=now - timedelta(minutes=2),
+        sent_at=now - timedelta(minutes=1),
+    )
+    checkin = Checkin(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        user_id=user.id,
+        checkin_date=now.date(),
+        content="历史H5打卡",
+        parsed_json={"weight": "65"},
+    )
+    submission = QuestionnaireSubmission(
+        service_case_id=service_case.id,
+        template_key="personalized_checkin",
+        created_at=now,
+        answers_json={
+            "personalized_checkin_2": "是",
+            "personalized_checkin_3": "否",
+        },
+    )
+    db_session.add_all([document, checkin, submission])
+    await db_session.flush()
+
+    preview = await backfill_personalized_h5_checkins(db_session, apply=False)
+    assert preview.answers_planned == 2
+    assert preview.answers_written == 0
+    assert "custom_checkin" not in (checkin.parsed_json or {})
+
+    applied = await backfill_personalized_h5_checkins(db_session, apply=True)
+    assert applied.answers_written == 2
+    parsed = checkin.parsed_json or {}
+    item = parsed["custom_checkin"][f"document:{document.id}:2"]
+    assert item == {
+        "question": "今天是否在23:30前上床？",
+        "answer": "是",
+        "source": "historical_h5",
+        "questionnaire_submission_id": submission.id,
+    }
+
+    rerun = await backfill_personalized_h5_checkins(db_session, apply=True)
+    assert rerun.answers_written == 0
+    assert rerun.skipped["existing_custom_answer"] == 2
 
 
 @pytest.mark.asyncio

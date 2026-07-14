@@ -295,6 +295,10 @@ class ArchivistGraph:
         checklist = await get_sent_daily_checklist(
             self.session, service_case_id=self.service_case.id
         )
+        checklist_labels = {
+            str(item["id"]): str(item["label"])
+            for item in (checklist[1] if checklist is not None else [])
+        }
 
         for date_iso, msgs in delta_by_date.items():
             content = "\n".join(f"[{m['id']}] {m['role']}：{m['text']}" for m in msgs)
@@ -329,8 +333,13 @@ class ArchivistGraph:
             if fields:
                 day_candidates.setdefault(date_iso, {"fields": {}, "evidence_ids": evidence_ids, "custom_answers": []})["fields"].update(fields)
             for answer in collector.get("followup_answers") or []:
-                followup_answers.append(answer)
                 item_id = str(answer.get("item_id") or "")
+                answer = {
+                    **answer,
+                    "question": checklist_labels.get(item_id, ""),
+                    "source": "chat",
+                }
+                followup_answers.append(answer)
                 target_date = str(answer.get("target_date") or date_iso)
                 if not item_id.startswith("document:"):
                     continue
@@ -339,6 +348,12 @@ class ArchivistGraph:
                 )
                 payload["custom_answers"].append(answer)
             for answer in collector.get("checklist_answers") or []:
+                item_id = str(answer.get("item_id") or "")
+                answer = {
+                    **answer,
+                    "question": checklist_labels.get(item_id, ""),
+                    "source": "chat",
+                }
                 checklist_answers.append(answer)
                 has_checkin_activity = True
                 target_date = str(answer.get("target_date") or date_iso)
