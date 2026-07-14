@@ -30,6 +30,7 @@ from app.services.document_templates import (
 )
 from app.services.user_state_profile import initialize_user_state_from_intake
 from app.services.risk_service import is_high_risk
+from app.services.intake_facts import customer_type_for_profile
 from app.services.service_case_queries import get_active_service_case
 
 from app.services.document_common import (
@@ -120,6 +121,11 @@ async def generate_profile_and_documents(
     intake_facts = package.get("intake_facts") if isinstance(package.get("intake_facts"), dict) else {}
     legal_name = str(intake_facts.get("legal_name") or user_name or "未提供").strip()
     display_name = str(intake_facts.get("recipient_name") or user_name or "未提供").strip()
+    # 客户分型标签：在带位 + 风控风险等级上做确定性投影，供运营“定调”与群体聚合。
+    if isinstance(package.get("profile_json"), dict):
+        package["profile_json"]["customer_type"] = customer_type_for_profile(
+            package["profile_json"], service_case.risk_level
+        )
     profile = UserProfile(
         service_case_id=service_case.id,
         profile_json=package["profile_json"],
@@ -261,6 +267,11 @@ async def _refresh_profile_from_progress(
             new_profile["personalized_checkin_fields"] = base.get("personalized_checkin_fields")
         if "tags" in base:
             new_profile["tags"] = base.get("tags")
+        # 每次刷新重推客户分型（带位/风险变了标签应跟着变，不冻结）。
+        service_case = await get_active_service_case(session, service_case_id)
+        new_profile["customer_type"] = customer_type_for_profile(
+            new_profile, service_case.risk_level if service_case else None
+        )
         new_profile["refreshed_from"] = {"stage": stage, "source": "stage_progress"}
         summary = str(new_profile.get("summary") or base.get("summary") or "")[:2000]
         session.add(

@@ -113,6 +113,50 @@ def _weight_loss_band(bmi: float | None) -> str:
     return "20斤及以上带（D带）"
 
 
+# 客户分型标签：单标签、互斥、带优先级。这是在两个已有大模型结构化产出之上
+# （风控 LLM 判 risk_level、画像 LLM 定 weight_loss_band）做确定性投影，
+# 不是关键词硬编码规则；用于运营快速“定调”当前用户。
+CUSTOMER_TYPE_DISEASE = "疾病管理型"
+CUSTOMER_TYPE_WEIGHT_LOSS = "减重攻坚型"
+CUSTOMER_TYPE_HEALTH_INVEST = "健康投资型"
+CUSTOMER_TYPES = (
+    CUSTOMER_TYPE_DISEASE,
+    CUSTOMER_TYPE_WEIGHT_LOSS,
+    CUSTOMER_TYPE_HEALTH_INVEST,
+)
+
+
+def derive_customer_type(risk_level: str | None, weight_loss_band: str | None) -> str:
+    """按优先级把用户投影到唯一客户分型。
+
+    优先级：疾病管理型(高风险) > 减重攻坚型(C/D 带，BMI≥28) > 健康投资型(兜底)。
+    带位缺失且非高风险时兜底为健康投资型，避免出现空标签。
+    """
+    if (risk_level or "").strip().lower() == "high":
+        return CUSTOMER_TYPE_DISEASE
+    band = weight_loss_band or ""
+    if "C带" in band or "D带" in band:
+        return CUSTOMER_TYPE_WEIGHT_LOSS
+    return CUSTOMER_TYPE_HEALTH_INVEST
+
+
+def weight_loss_band_from_profile(profile_json: Any) -> str | None:
+    """从画像 JSON 读减重带（顶层优先，回落 overview）。"""
+    if not isinstance(profile_json, dict):
+        return None
+    band = profile_json.get("weight_loss_band")
+    if not band:
+        overview = profile_json.get("overview")
+        if isinstance(overview, dict):
+            band = overview.get("weight_loss_band")
+    return band if isinstance(band, str) and band.strip() else None
+
+
+def customer_type_for_profile(profile_json: Any, risk_level: str | None) -> str:
+    """便捷组合：从画像 JSON + 服务单风险等级推导客户分型。"""
+    return derive_customer_type(risk_level, weight_loss_band_from_profile(profile_json))
+
+
 def _format_number(value: float) -> str:
     return str(int(value)) if value.is_integer() else f"{value:g}"
 
