@@ -83,6 +83,7 @@ npm run test:e2e     # Playwright
   - `scratch/query_latest_messages.py` 等直连 `SessionLocal()` 的脚本连的是**本地库**，仅用于纯本地开发自测，不能当线上真实记录。
 - **企微接口调试指南**：关于如何与 QiWe API 网关交互（包括拉取群成员、获取用户昵称等）、排查 `QIWEI_GUID` 等凭证问题、以及连接远程数据库运行诊断脚本的详细指引，请参考文档 [docs/qiwe_debugging_guide.md](file:///home/chr/桌面/ran_ai/docs/qiwe_debugging_guide.md)。
 - **修改后端代码后必须重启**：修改 `backend/src/` 下的 Python 文件后，**必须**运行 `docker restart ran-ai-backend` 重启后端服务，否则改动不会生效。这是最容易忘记的步骤，每次修改后端代码后都要检查是否需要重启。
+- **企微媒体下载单次限 512KB，必须 Range 续传**：企微媒体网关(`tpdownloadmedia`)单次响应最多返回 512KB，以 `206 Partial Content` + `Content-Range: bytes 0-524287/<total>` 分片返回（`206` 是成功码，`raise_for_status()` 不拦，截断会静默发生）。下载入站图片/文件必须按 `Range` 循环续传拼齐整份（见 `ranren_ai/attachments.py::_download_media_bytes`），否则大于 512KB 的图片（≈每张手机照片）只下到开头一截，解码后下半部渲染成灰块，视觉模型会误判"图片没传完整"。
 
 ## DEPLOYMENT & PRODUCTION UPDATES (部署与发布规范)
 - **代码部署 vs 配置变更（必须分开）**：部署代码跑 `scratch/local_prebuilt_deploy.py`，它**只更新代码、不碰生产 `.env` 与 `docker-compose.prod.yml`**（打包已排除，解压不覆盖）；要改生产配置（密钥/数据库/QiWe guid 等）才单独跑 `scratch/configure_remote_files.py`（先改其内置模板再跑）。**严禁**在部署脚本里加回"覆盖 `.env`/`docker-compose.prod.yml`"的步骤，否则服务器上的手改配置会被覆盖、可能搞坏线上。详见 `docs/deployment.md` 1.5 节。
