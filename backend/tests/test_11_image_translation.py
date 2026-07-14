@@ -9,6 +9,81 @@ from app.services.ai_service.client import (
     _image_description_needs_fallback,
     _normalized_image_timeout,
 )
+from app.services.ranren_ai.attachments import _download_media_bytes
+
+
+class _FakeResp:
+    def __init__(self, status_code: int, content: bytes, headers: dict | None = None) -> None:
+        self.status_code = status_code
+        self.content = content
+        self.headers = headers or {}
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _ChunkingClient:
+    """模拟企微媒体网关：单次响应最多 chunk 字节，>chunk 时以 206 + Content-Range 分片返回。"""
+
+    def __init__(self, full: bytes, chunk: int = 512 * 1024) -> None:
+        self.full = full
+        self.chunk = chunk
+        self.calls: list[tuple[int, int]] = []
+
+    async def get(self, url: str, headers: dict | None = None) -> _FakeResp:
+        headers = headers or {}
+        start = 0
+        rng = headers.get("Range")
+        if rng:  # 形如 "bytes=524288-"
+            start = int(rng.split("=", 1)[1].split("-", 1)[0])
+        end = min(start + self.chunk, len(self.full))
+        body = self.full[start:end]
+        self.calls.append((start, end))
+        total = len(self.full)
+        if total <= self.chunk:
+            # 小文件：一次性 200 全量返回
+            return _FakeResp(200, body, {"accept-ranges": "bytes"})
+        return _FakeResp(
+            206,
+            body,
+            {"accept-ranges": "bytes", "content-range": f"bytes {start}-{end - 1}/{total}"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_download_media_bytes_reassembles_chunked_response() -> None:
+    # ~1.3MB → 需要 3 个 512KB 分片；构造末尾带 JPEG EOI，验证不再被截断
+    full = (bytes(range(256)) * 5200) + b"\xff\xd9"
+    client = _ChunkingClient(full)
+
+    result = await _download_media_bytes(client, "http://x/img", {}, max_bytes=8 * 1024 * 1024)
+
+    assert result == full
+    assert result[-2:] == b"\xff\xd9"  # EOI 完整
+    assert len(client.calls) >= 3  # 确实做了多次 Range 续传
+
+
+@pytest.mark.asyncio
+async def test_download_media_bytes_small_file_single_request() -> None:
+    full = b"\x89PNG\r\n\x1a\n" + b"a" * (100 * 1024)  # <512KB，单次 200
+    client = _ChunkingClient(full)
+
+    result = await _download_media_bytes(client, "http://x/img", {}, max_bytes=8 * 1024 * 1024)
+
+    assert result == full
+    assert len(client.calls) == 1  # 未触发续传
+
+
+@pytest.mark.asyncio
+async def test_download_media_bytes_rejects_oversize_before_full_download() -> None:
+    full = b"z" * (9 * 1024 * 1024)  # 9MB > 8MB 上限
+    client = _ChunkingClient(full)
+
+    with pytest.raises(ValueError, match="too large"):
+        await _download_media_bytes(client, "http://x/img", {}, max_bytes=8 * 1024 * 1024)
+
+    assert len(client.calls) == 1  # 读到 Content-Range 总大小即 fail-fast，不再续传
 
 
 def test_image_description_needs_fallback_for_uncertain_text() -> None:

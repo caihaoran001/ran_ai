@@ -143,6 +143,62 @@ def _decrypt_image_bytes(encrypted_data: bytes, aes_key_str: str) -> bytes:
     return decrypted
 
 
+async def _download_media_bytes(client: Any, url: str, headers: dict[str, str], *, max_bytes: int) -> bytes:
+    """下载企微媒体，按需 Range 续传直到取满整份。
+
+    企微媒体网关(tpdownloadmedia)单次响应最多返回 512KB，以 `206 Partial Content` +
+    `Content-Range: bytes 0-524287/<total>` 分片返回。若只做一次 GET，就只拿到首片(512KB)，
+    大于 512KB 的图片/文件会被截断（图片解码后下半部分渲染成灰块）。这里检测 Content-Range
+    的总大小并按 Range 循环续传，把整份拼齐再返回。
+
+    - 首个响应非 206 / 无 Content-Range：视为一次拿全（服务端不分片），直接返回。
+    - total 超过 max_bytes：提前 fail-fast，不再续传，避免拖垮带宽/内存。
+    - 防御：Range 被忽略(返回 200)按完整处理；空分片/长度对不上/死循环 guard 均显式报错。
+    """
+    resp = await client.get(url, headers=headers)
+    resp.raise_for_status()
+    data = bytearray(resp.content)
+
+    total: int | None = None
+    content_range = resp.headers.get("content-range")
+    if resp.status_code == 206 and content_range and "/" in content_range:
+        tail = content_range.rsplit("/", 1)[-1].strip()
+        if tail.isdigit():
+            total = int(tail)
+
+    if total is None:
+        # 服务端一次返回完整内容（或不支持分片）
+        if len(data) > max_bytes:
+            raise ValueError(f"inbound media too large: {len(data)} bytes")
+        return bytes(data)
+
+    if total > max_bytes:
+        raise ValueError(f"inbound media too large (declared in Content-Range): {total} bytes")
+
+    guard = 0
+    while len(data) < total:
+        guard += 1
+        if guard > 64:
+            # 5.4MB/512KB≈11 片；64 是安全上限，防服务端异常导致的死循环
+            raise ValueError(f"inbound media chunk loop exceeded guard at {len(data)}/{total} bytes")
+        range_headers = dict(headers)
+        range_headers["Range"] = f"bytes={len(data)}-"
+        chunk_resp = await client.get(url, headers=range_headers)
+        chunk_resp.raise_for_status()
+        if chunk_resp.status_code == 200:
+            # 服务端忽略了 Range，直接返回完整文件
+            data = bytearray(chunk_resp.content)
+            break
+        chunk = chunk_resp.content
+        if not chunk:
+            raise ValueError(f"inbound media truncated: got {len(data)}/{total} bytes, server returned empty chunk")
+        data.extend(chunk)
+
+    if len(data) != total:
+        raise ValueError(f"inbound media size mismatch: got {len(data)} bytes, expected {total}")
+    return bytes(data)
+
+
 def _file_extension(filename: str) -> str:
     """从文件名取小写扩展名(含点)，取不到返回空串。"""
     name = (filename or "").strip().lower()
@@ -223,14 +279,12 @@ class InboundAttachmentProcessor:
             if file_auth_key:
                 headers["authkey"] = file_auth_key.replace("\n", "").replace("\r", "").strip()
 
+            # 企微媒体网关单次仅返回 512KB 分片(206)，_download_media_bytes 按 Range 续传拼齐整图，
+            # 否则大于 512KB 的图片会被截断成"上方一角+下方灰块"。大图保护在 helper 内按 total 提前 fail-fast。
             async with self._attachment_http_client_cls()(timeout=30.0, follow_redirects=True) as client:
-                response = await client.get(file_url, headers=headers)
-                response.raise_for_status()
-                encrypted_bytes = response.content
-
-            # 大图保护：超过上限放弃识别(走下方 except 的降级)，避免拖垮带宽/内存/token
-            if len(encrypted_bytes) > _MAX_INBOUND_IMAGE_BYTES:
-                raise ValueError(f"inbound image too large: {len(encrypted_bytes)} bytes")
+                encrypted_bytes = await _download_media_bytes(
+                    client, file_url, headers, max_bytes=_MAX_INBOUND_IMAGE_BYTES
+                )
 
             if file_aes_key:
                 logger.info("Decrypting inbound image for message_id=%s", message_id)
@@ -439,13 +493,11 @@ class InboundAttachmentProcessor:
                 headers["authkey"] = file_auth_key.replace("\n", "").replace("\r", "").strip()
 
             logger.info("Downloading inbound file message_id=%s filename=%s from: %s", message_id, filename, file_url)
+            # 同图片：媒体网关分片返回，需 Range 续传拼齐整份文件(如 docx>512KB)。
             async with self._attachment_http_client_cls()(timeout=60.0, follow_redirects=True) as client:
-                response = await client.get(file_url, headers=headers)
-                response.raise_for_status()
-                encrypted_bytes = response.content
-
-            if len(encrypted_bytes) > _MAX_INBOUND_FILE_BYTES:
-                raise ValueError(f"inbound file too large: {len(encrypted_bytes)} bytes")
+                encrypted_bytes = await _download_media_bytes(
+                    client, file_url, headers, max_bytes=_MAX_INBOUND_FILE_BYTES
+                )
 
             # 文件回调与图片同样是 AES-ECB 加密，_decrypt_image_bytes 末尾的 PKCS#7 去填充对 docx(ZIP) 同样适用。
             file_bytes = _decrypt_image_bytes(encrypted_bytes, file_aes_key) if file_aes_key else encrypted_bytes
