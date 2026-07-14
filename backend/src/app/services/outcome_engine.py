@@ -30,6 +30,12 @@ VALID_EVENT_TYPES = frozenset({"improved", "completed"})
 # 同源（该 map 已排除偏负向的 discomfort_feedback/plateau_signal/adjustment_need），避免漂移。
 KNOWN_OUTCOME_FIELDS = frozenset(OUTCOME_FIELD_DOMAIN_MAP)
 
+# 主观体感维度（睡眠/精神/排便等）：无数值序列，只能靠用户口述，单次提及有偶然性。
+# 用"同一维度不同日≥2 次正向"作为"已确立改善"的结构化线索，交给 case_synthesis 的 LLM 终判。
+SUBJECTIVE_FIELDS = frozenset(
+    key for key, domain in OUTCOME_FIELD_DOMAIN_MAP.items() if domain == "body_feedback"
+)
+
 
 @dataclass(frozen=True)
 class OutcomeGoal:
@@ -342,6 +348,12 @@ async def generate_outcome_snapshot(
             .order_by(Checkin.checkin_date.asc(), Checkin.created_at.asc())
         )
     )
+    # 主观印证看全量（跨里程碑）事件：同一体感维度需在不同日多次出现才算"已确立"。
+    all_events = list(
+        await session.scalars(
+            select(OutcomeEvent).where(OutcomeEvent.service_case_id == service_case.id)
+        )
+    )
     state = await get_or_create_stage_state(session, service_case.id, spec)
     metrics = _snapshot_metrics(service_case, spec, checkins, state)
     evidence = {
@@ -355,6 +367,7 @@ async def generate_outcome_snapshot(
             }
             for item in events
         ],
+        "subjective_signals": _subjective_signals(all_events),
         "collected_fields": state.collected_fields or {},
         "missing_fields": state.missing_fields or [],
     }
@@ -498,6 +511,74 @@ def _snapshot_metrics(
         "missing_count": len(state.missing_fields or []),
         "weight_change": round(weights[-1] - weights[0], 2) if len(weights) >= 2 else None,
         "waist_change": round(waists[-1] - waists[0], 2) if len(waists) >= 2 else None,
+        "weight_trend": _series_trend(weights),
+        "waist_trend": _series_trend(waists),
+    }
+
+
+def _series_trend(values: list[float]) -> dict[str, Any] | None:
+    """客观指标趋势去噪：先 3 日滑动吸收单天反弹，再看净变化方向与一致性。
+
+    不设"显著"阈值——net/consistent 交给 case_synthesis 的 LLM 解读。单天体重波动
+    （如某天掉一斤第二天弹回）被平滑吸收，不会被误判为向下趋势。
+    """
+    if len(values) < 2:
+        return None
+    smoothed = _moving_average(values, window=3)
+    net = round(smoothed[-1] - smoothed[0], 2)
+    eps = 0.05
+    if net <= -eps:
+        direction = "down"
+    elif net >= eps:
+        direction = "up"
+    else:
+        direction = "flat"
+    diffs = [round(b - a, 4) for a, b in zip(smoothed, smoothed[1:])]
+    if direction == "flat":
+        consistent = all(abs(d) < eps for d in diffs)
+    else:
+        # 平滑后仍与净方向相反、且幅度超过 eps 的步数即"反弹"；容忍 ≤1/4 的反弹，
+        # 单天波动被吸收判为一致，纯噪声（反弹占比高）判为不一致。
+        opposing = sum(
+            1 for d in diffs
+            if (direction == "down" and d > eps) or (direction == "up" and d < -eps)
+        )
+        consistent = opposing <= max(1, len(diffs) // 4)
+    return {
+        "direction": direction,
+        "net": net,
+        "consistent": bool(consistent),
+        "points": len(values),
+    }
+
+
+def _moving_average(values: list[float], *, window: int) -> list[float]:
+    out: list[float] = []
+    for i in range(len(values)):
+        chunk = values[max(0, i - window + 1): i + 1]
+        out.append(sum(chunk) / len(chunk))
+    return out
+
+
+def _subjective_signals(all_events: list[OutcomeEvent]) -> dict[str, dict[str, Any]]:
+    """按体感维度统计"不同日的正向提及次数"：≥2 天=已确立改善(established)，单次=候选线索(candidate)。
+
+    这是给 case_synthesis LLM 的结构化线索，本身不做硬阈值拦截。
+    """
+    days_by_field: dict[str, set[str]] = {}
+    for event in all_events:
+        if event.field_key not in SUBJECTIVE_FIELDS or event.event_type not in VALID_EVENT_TYPES:
+            continue
+        occurred = event.occurred_at or event.created_at
+        if occurred is None:
+            continue
+        days_by_field.setdefault(event.field_key, set()).add(occurred.date().isoformat())
+    return {
+        field: {
+            "distinct_days": len(days),
+            "status": "established" if len(days) >= 2 else "candidate",
+        }
+        for field, days in days_by_field.items()
     }
 
 
