@@ -30,10 +30,6 @@ class OutcomeStageStateRead(Timestamped):
     status: str
     collected_fields: dict[str, Any] | None = None
     missing_fields: list[str] | None = None
-    last_followup_field: str | None = None
-    last_followup_question: str | None = None
-    last_followup_at: datetime | None = None
-    followup_count: int = 0
 
 
 class OutcomeSnapshotRead(Timestamped):

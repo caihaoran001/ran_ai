@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Index, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -50,10 +50,6 @@ class OutcomeStageState(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     collected_fields: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     missing_fields: Mapped[list[str] | None] = mapped_column(JSON)
-    last_followup_field: Mapped[str | None] = mapped_column(String(64))
-    last_followup_question: Mapped[str | None] = mapped_column(Text)
-    last_followup_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    followup_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     service_case: Mapped[ServiceCase] = relationship(back_populates="outcome_stage_states")
 
