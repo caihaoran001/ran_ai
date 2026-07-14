@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { api, Checkin, Message, User, UserDocument, UserProfile, UserStateProfile } from "@/lib/api";
+import { api, Checkin, Message, User, UserDocument, UserStateProfile } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
 
 const SERVICE_STATUS_LABELS: Record<string, string> = {
@@ -40,10 +40,6 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const energyDocument = documents.find((item) => item.document_type === "energy_restart_prescription");
   const executionDocument = documents.find((item) => item.document_type === "day28_execution_standard");
   const overview = recordValue(profile?.profile_json?.overview);
-  const refreshedFrom = recordValue(profile?.profile_json?.refreshed_from);
-  const profileSource = text(refreshedFrom.stage)
-    ? `来源：进展刷新（${stageLabel(text(refreshedFrom.stage))}）`
-    : "来源：问卷自动生成";
   const customerType = text((profile?.profile_json as Record<string, unknown> | undefined)?.customer_type);
 
   return (
@@ -70,37 +66,19 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
       {serviceCase && (
         <OperationsSummary
           serviceCase={serviceCase}
-          profile={profile}
           stateProfile={stateProfile || undefined}
           checkins={checkins}
-          documents={documents}
           uniqueCheckinDays={uniqueCheckinDays}
         />
       )}
 
-      <section className="panel overflow-hidden">
-        <div className="panel-header-clean flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="panel-title">用户画像</h2>
-            <p className="panel-subtitle">{profileSource}</p>
-          </div>
-          <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-600">建档基础信息</span>
-        </div>
-        <div className="panel-body space-y-4">
-          <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
-            <Info label="性别/年龄" value={text(overview.gender_age) || "暂无数据"} />
-            <Info label="身高/体重" value={text(overview.height_weight) || "暂无数据"} />
-            <Info label="BMI" value={text(overview.bmi) || "暂无数据"} />
-            <Info label="腰围" value={text(overview.waist) || text(overview.waist_bodyfat) || "暂无数据"} />
-            <Info label="减重带" value={profileText(profile?.profile_json, "weight_loss_band") || "暂无数据"} />
-          </div>
-          {profile ? (
-            <ProfileView profile={profile.profile_json} fallback={profile.summary} serviceCase={serviceCase} />
-          ) : (
-            <p className="empty-state">尚未生成用户画像。用户提交入营问卷后，系统会自动生成画像和交付文件。</p>
-          )}
-        </div>
-      </section>
+      {profile ? (
+        <CollapsibleSection title="建档底稿" subtitle="入营问卷生成的基础判断；服务期内不再重复改写">
+          <BaselineProfile profile={profile.profile_json} overview={overview} />
+        </CollapsibleSection>
+      ) : (
+        <p className="empty-state">尚未生成建档底稿。用户提交入营问卷后，系统会自动生成交付文件。</p>
+      )}
 
       {stateProfile && (
         <CollapsibleSection title="当前用户状态" subtitle="证据驱动的动态状态，默认收起">
@@ -241,80 +219,72 @@ function Info({ label, value, muted = false }: { label: string; value: string; m
 
 function OperationsSummary({
   serviceCase,
-  profile,
   stateProfile,
   checkins,
-  documents,
   uniqueCheckinDays,
 }: {
   serviceCase: User["service_cases"][number];
-  profile?: UserProfile | null;
   stateProfile?: UserStateProfile;
   checkins: Checkin[];
-  documents: UserDocument[];
   uniqueCheckinDays: number;
 }) {
-  const profileJson = profile?.profile_json || {};
   const domains = recordValue(stateProfile?.state_json?.domains);
   const focus = currentActionFocus(domains);
-  const riskText = serviceCase.needs_human_intervention
+  const attentionText = serviceCase.needs_human_intervention
     ? reasonText(serviceCase.intervention_reasons) || "存在待关注事项"
     : serviceCase.risk_level === "high"
       ? reasonText(serviceCase.risk_flags)
-      : "暂无高风险";
+      : "";
   const latestChange = latestStateChange(domains) || latestCheckinSignal(checkins);
-  const nextAction =
-    text(focus.action)
-    || firstText(recordValue(profileJson.need_analysis).next_actions)
-    || text(profileJson.notes)
-    || "按当前方案继续观察，优先保持打卡与反馈连续。";
-  const sentDocs = documents.filter((document) => document.status === "sent").length;
+  const latestChangeAt = latestStateChangeAt(domains) || stateProfile?.updated_at;
+  const nextAction = text(focus.action) || "等待新的有效反馈后由档案官确定下一步。";
 
   return (
-    <section className="overflow-hidden rounded-xl border border-cyan-200 bg-cyan-50/60">
-      <div className="border-b border-cyan-100 px-5 py-4">
+    <section className="panel overflow-hidden">
+      <div className="panel-header-clean">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-slate-950">运营摘要</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-600">系统综合画像、打卡、聊天和文档后的运营视图，不是新的独立 AI 诊断。</p>
+            <h2 className="panel-title">当前运营状态</h2>
+            <p className="panel-subtitle">档案官基于有效聊天、打卡和班主任纠正持续维护。</p>
           </div>
-          <span className="rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs font-semibold text-cyan-800">
+          <span className="status-pill pill-info">
             {serviceStageText(serviceCase)}
           </span>
         </div>
       </div>
-      <div className="grid gap-3 p-5 lg:grid-cols-5">
-        <SummaryMetric label="当前重点" value={text(focus.label) || "暂无明确重点"} tone="cyan" />
-        <SummaryMetric label="关键风险" value={riskText} tone={riskText === "暂无高风险" ? "slate" : "rose"} />
-        <SummaryMetric label="最近变化" value={latestChange || "暂无新变化"} tone="emerald" />
-        <SummaryMetric label="交付/打卡" value={`${sentDocs}/${documents.length} 份已发 · 打卡 ${uniqueCheckinDays} 天`} tone="blue" />
-        <SummaryMetric label="下一步动作" value={nextAction} tone="amber" />
-      </div>
+      <dl className="grid divide-y divide-slate-200 text-sm sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+        <OperationItem label="当前要抓" value={text(focus.label) || "暂无明确重点"} />
+        <OperationItem label="下一步" value={nextAction} emphasis />
+        <OperationItem
+          label="最近变化"
+          value={latestChange || "暂无新变化"}
+          meta={latestChangeAt ? `更新于 ${formatDateTime(latestChangeAt)}` : undefined}
+        />
+        <OperationItem label="打卡" value={`已打卡 ${uniqueCheckinDays} 天`} />
+        {attentionText && <OperationItem label="需要关注" value={attentionText} tone="risk" />}
+      </dl>
     </section>
   );
 }
 
-function SummaryMetric({
+function OperationItem({
   label,
   value,
-  tone,
+  meta,
+  emphasis = false,
+  tone = "default",
 }: {
   label: string;
   value: string;
-  tone: "cyan" | "rose" | "emerald" | "blue" | "amber" | "slate";
+  meta?: string;
+  emphasis?: boolean;
+  tone?: "default" | "risk";
 }) {
-  const toneClass: Record<"cyan" | "rose" | "emerald" | "blue" | "amber" | "slate", string> = {
-    cyan: "border-cyan-100 bg-cyan-50 text-cyan-950",
-    rose: "border-rose-100 bg-rose-50 text-rose-900",
-    emerald: "border-emerald-100 bg-emerald-50 text-emerald-950",
-    blue: "border-blue-100 bg-blue-50 text-blue-950",
-    amber: "border-amber-100 bg-amber-50 text-amber-950",
-    slate: "border-slate-100 bg-slate-50 text-slate-900",
-  };
   return (
-    <div className={`rounded-lg border p-3 ${toneClass[tone]}`}>
-      <div className="text-xs font-medium opacity-70">{label}</div>
-      <div className="text-break mt-1 line-clamp-4 text-sm font-semibold leading-6">{value}</div>
+    <div className={`min-w-0 px-5 py-4 ${tone === "risk" ? "bg-rose-50/70 sm:col-span-2" : ""}`}>
+      <dt className={`text-xs font-bold ${tone === "risk" ? "text-rose-700" : "text-slate-500"}`}>{label}</dt>
+      <dd className={`text-break mt-1.5 max-w-[68ch] text-sm leading-6 ${emphasis ? "font-bold text-cyan-900" : tone === "risk" ? "font-semibold text-rose-900" : "font-medium text-slate-900"}`}>{value}</dd>
+      {meta && <div className="mt-1 text-xs text-slate-500">{meta}</div>}
     </div>
   );
 }
@@ -359,6 +329,15 @@ function latestStateChange(domains: Record<string, unknown>) {
   return "";
 }
 
+function latestStateChangeAt(domains: Record<string, unknown>) {
+  for (const key of ["outcome_changes", "body_feedback", "product_usage", "risk_profile"]) {
+    const domain = recordValue(domains[key]);
+    const current = recordValue(domain.current);
+    if (text(current.updated_at)) return text(current.updated_at);
+  }
+  return "";
+}
+
 function latestCheckinSignal(checkins: Checkin[]) {
   const latest = checkins[0]?.parsed_json;
   if (!latest) return "";
@@ -370,123 +349,47 @@ function latestCheckinSignal(checkins: Checkin[]) {
   return parts.join(" · ");
 }
 
-function firstText(value: unknown) {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item).trim()).find(Boolean) || "";
-  }
-  return text(value);
-}
-
-function ProfileView({
+function BaselineProfile({
   profile,
-  fallback,
-  serviceCase,
+  overview,
 }: {
   profile: Record<string, unknown>;
-  fallback: string;
-  serviceCase?: User["service_cases"][number];
+  overview: Record<string, unknown>;
 }) {
-  const summary = text(profile.summary) || fallback;
-  const tags = Array.isArray(profile.tags) ? profile.tags.filter(Boolean) : [];
   const needAnalysis = recordValue(profile.need_analysis);
-  const hasNeedAnalysis = Object.keys(needAnalysis).length > 0;
-  const baseFacts = [
-    ["减重带", profileText(profile, "weight_loss_band") || text(profile.weight_loss_band) || "暂无数据"],
-    ["28天目标", text(profile.day28_goal) || "暂无数据"],
-    ["画像标签", tags.length ? tags.map(String).join("、") : arrayText(profile.tags) || "暂无数据"],
-  ];
-  const serviceJudgement = [
-    ["当前状态", text(profile.state) || "暂无数据"],
-    ["核心问题", text(profile.main_problem) || "暂无数据"],
-    ["风控风险", serviceCase?.risk_level === "high" ? reasonText(serviceCase.risk_flags) : "暂无明确风险"],
-  ];
-  const coachingFocus = [
-    ["优先需求", text(needAnalysis.priority_need) || "暂无数据"],
-    ["下一步动作", firstText(needAnalysis.next_actions) || text(profile.notes) || "暂无数据"],
-    ["陪跑建议", text(profile.notes) || "暂无数据"],
-  ];
+  const tags = Array.isArray(profile.tags) ? profile.tags.map(String).filter(Boolean) : [];
 
   return (
-    <div className="mt-3 space-y-4 text-sm leading-6">
-      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-        <div className="text-xs font-medium text-slate-500">一句话画像</div>
-        <p className="text-break mt-2 text-sm leading-7 text-slate-800">{summary}</p>
-        {tags.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {tags.map((tag) => (
-              <span key={String(tag)} className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 ring-1 ring-inset ring-blue-700/10">
-                {String(tag)}
-              </span>
-            ))}
-          </div>
-        )}
+    <div className="space-y-5 text-sm">
+      <dl className="grid gap-x-8 gap-y-4 md:grid-cols-2">
+        <BaselineItem label="28 天目标" value={text(profile.day28_goal) || "暂无数据"} />
+        <BaselineItem label="入营核心问题" value={text(profile.main_problem) || "暂无数据"} />
+        <BaselineItem label="初始优先需求" value={text(needAnalysis.priority_need) || "暂无数据"} />
+        <BaselineItem label="减重带" value={profileText(profile, "weight_loss_band") || "暂无数据"} />
+      </dl>
+      <div className="border-t border-slate-200 pt-4">
+        <div className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <BaselineItem label="性别/年龄" value={text(overview.gender_age) || "暂无数据"} compact />
+          <BaselineItem label="身高/体重" value={text(overview.height_weight) || "暂无数据"} compact />
+          <BaselineItem label="BMI" value={text(overview.bmi) || "暂无数据"} compact />
+          <BaselineItem label="腰围" value={text(overview.waist) || text(overview.waist_bodyfat) || "暂无数据"} compact />
+        </div>
       </div>
-
-      <div className="grid gap-3 lg:grid-cols-3">
-        <ProfileGroup title="基础事实" items={baseFacts} />
-        <ProfileGroup title="服务判断" items={serviceJudgement} />
-        <ProfileGroup title="陪跑重点" items={coachingFocus} />
-      </div>
-
-      {hasNeedAnalysis && (
-        <details className="mt-4 rounded-lg border border-slate-200 bg-slate-50">
-          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-slate-700">
-            <span>完整健康需求识别</span>
-            <span className="text-xs font-normal text-slate-400">展开查看表层需求、深层需求和证据</span>
-          </summary>
-          <div className="border-t border-slate-200 p-4">
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-3">
-              <NeedList label="表层表达需求" items={needAnalysis.surface_needs} />
-              <NeedList label="深层服务需求" items={needAnalysis.deep_needs} />
-              <div className="rounded-md border border-slate-200 bg-white p-3">
-                <div className="text-xs font-medium text-slate-500">最优先满足需求</div>
-                <div className="mt-1 font-semibold text-cyan-900">{String(needAnalysis.priority_need || "暂无")}</div>
-              </div>
-            </div>
-            <div className="space-y-3">
-              <NeedList label="系统交付方案/动作" items={needAnalysis.system_outputs} />
-              <NeedList label="接下来最该推进动作" items={needAnalysis.next_actions} />
-              <NeedList label="依据/判定证据" items={needAnalysis.evidence_notes} />
-            </div>
-          </div>
-          </div>
-        </details>
+      {tags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-4">
+          <span className="text-xs font-bold text-slate-500">建档标签</span>
+          {tags.map((tag) => <span key={tag} className="status-pill pill-neutral">{tag}</span>)}
+        </div>
       )}
     </div>
   );
 }
 
-function ProfileGroup({ title, items }: { title: string; items: string[][] }) {
+function BaselineItem({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3">
-      <div className="text-xs font-semibold text-slate-500">{title}</div>
-      <div className="mt-2 space-y-2">
-        {items.map(([label, value]) => (
-          <div key={label}>
-            <div className="text-[11px] text-slate-400">{label}</div>
-            <div className="text-break mt-0.5 text-sm font-medium leading-6 text-slate-900">{value}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function NeedList({ label, items }: { label: string; items: unknown }) {
-  const list = Array.isArray(items) ? items.filter(Boolean) : [];
-  return (
-    <div className="rounded-md border border-slate-200 bg-white p-3">
-      <div className="text-xs font-medium text-slate-500">{label}</div>
-      {list.length > 0 ? (
-        <ul className="mt-1 space-y-1 text-sm list-disc pl-4 text-slate-700">
-          {list.map((item, idx) => (
-            <li key={idx} className="text-break">{String(item)}</li>
-          ))}
-        </ul>
-      ) : (
-        <div className="mt-1 text-slate-400">暂无数据</div>
-      )}
+    <div className="min-w-0">
+      <dt className="text-xs font-bold text-slate-500">{label}</dt>
+      <dd className={`text-break mt-1 ${compact ? "font-medium text-slate-800" : "max-w-[68ch] leading-6 text-slate-900"}`}>{value}</dd>
     </div>
   );
 }
@@ -776,10 +679,6 @@ function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function arrayText(value: unknown) {
-  return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean).join("、") : "";
-}
-
 function profileText(profile: Record<string, unknown> | undefined, key: string) {
   if (!profile) return "";
   const overview = profile.overview;
@@ -787,15 +686,6 @@ function profileText(profile: Record<string, unknown> | undefined, key: string) 
     return text((overview as Record<string, unknown>)[key]);
   }
   return text(profile[key]);
-}
-
-function stageLabel(stage: string) {
-  const map: Record<string, string> = {
-    day3: "第3天", day7: "第7天", day14: "第14天", day21: "第21天", day28: "第28天",
-  };
-  if (map[stage]) return map[stage];
-  const m = stage.match(/^day(\d+)$/);
-  return m ? `第${m[1]}天` : stage;
 }
 
 function recordValue(value: unknown): Record<string, unknown> {

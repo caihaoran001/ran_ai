@@ -251,6 +251,52 @@ async def test_stage_report_retries_when_llm_fields_missing():
 
 
 @pytest.mark.asyncio
+async def test_stage_report_includes_current_archivist_state():
+    ai = _SequenceAI(
+        [
+            json.dumps(
+                {
+                    "stage_summary": "本阶段执行稳定，已根据最近反馈调整重点。",
+                    "risk_reminder": "暂无明显不适，继续观察。",
+                    "adjustment_advice": "晚间饮用按当前重点连续完成5天。",
+                    "followup_advice": "先稳住本阶段节奏，再复盘执行反馈。",
+                },
+                ensure_ascii=False,
+            )
+        ]
+    )
+
+    await _generate_stage_payload(
+        ai=ai,
+        service_case=SimpleNamespace(id=1, case_no="TEST-STAGE-STATE"),
+        user_name="测试用户",
+        stage="day14",
+        title="14天阶段报告",
+        latest_profile=None,
+        checkins=[_fake_checkin()],
+        messages=[],
+        state_json={
+            "domains": {
+                "action_focus": {
+                    "label": "当前行动重点",
+                    "current": {
+                        "value": {"current_focus": {"label": "晚间执行", "action": "连续完成晚A"}},
+                        "evidence": "用户反馈晚间容易漏做",
+                        "updated_at": "2026-07-14T09:30:00+00:00",
+                    },
+                    "history": [{"evidence": "不应进入阶段报告上下文"}],
+                }
+            }
+        },
+    )
+
+    prompt = ai.requests[0]["user_prompt"]
+    assert "档案官当前状态" in prompt
+    assert "连续完成晚A" in prompt
+    assert "不应进入阶段报告上下文" not in prompt
+
+
+@pytest.mark.asyncio
 async def test_stage_report_marks_degraded_after_unusable_retries():
     ai = _SequenceAI([json.dumps({"summary": "字段不对"}, ensure_ascii=False)] * 3)
 
@@ -386,9 +432,11 @@ class _SequenceAI:
     def __init__(self, responses: list[str]):
         self._responses = list(responses)
         self.calls = 0
+        self.requests: list[dict] = []
 
     async def generate_text(self, **kwargs):
         self.calls += 1
+        self.requests.append(kwargs)
         return self._responses[min(self.calls - 1, len(self._responses) - 1)]
 
 
