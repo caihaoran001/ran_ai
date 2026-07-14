@@ -30,6 +30,10 @@ from app.models.user_state_profile import UserStateProfile
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ai_service import AIService
 from app.services.agent import AgentDataUnavailableError, generate_agent_reply
+from app.services.checkin_presentation import (
+    personalized_checkin_answers,
+    personalized_checkin_labels,
+)
 from app.services.checkin_queries import recent_checkins
 from app.services.channels.base import ChannelMessage, MessageChannel
 from app.services.ranren_ai.attachments import (
@@ -1464,7 +1468,6 @@ async def build_ai_user_context(session, service_case: ServiceCase | None) -> st
         else "暂无动态状态"
     )
 
-    checkin_texts = await _recent_checkin_context_lines(session, service_case.id)
     documents = list(
         await session.scalars(
             select(UserDocument)
@@ -1475,6 +1478,12 @@ async def build_ai_user_context(session, service_case: ServiceCase | None) -> st
     latest_by_type: dict[DocumentType, UserDocument] = {}
     for document in documents:
         latest_by_type.setdefault(document.document_type, document)
+
+    checkin_texts = await _recent_checkin_context_lines(
+        session,
+        service_case.id,
+        documents=documents,
+    )
 
     document_lines = _document_status_lines(latest_by_type)
     document_core_lines = _document_core_context_lines(latest_by_type)
@@ -1498,12 +1507,18 @@ async def build_ai_user_context(session, service_case: ServiceCase | None) -> st
     )
 
 
-async def _recent_checkin_context_lines(session, service_case_id: int) -> list[str]:
+async def _recent_checkin_context_lines(
+    session,
+    service_case_id: int,
+    *,
+    documents: list[UserDocument] | None = None,
+) -> list[str]:
     # 最新在前（用于画像上下文展示）。查询主体见 checkin_queries.recent_checkins，与 agent 工具共用一处定义。
     checkins = await recent_checkins(session, service_case_id, limit=3, ascending=False)
     if not checkins:
         return ["- 暂无打卡记录。"]
 
+    labels_by_id = personalized_checkin_labels(documents or [])
     lines: list[str] = []
     for checkin in checkins:
         date_str = checkin.checkin_date.strftime("%Y-%m-%d")
@@ -1525,7 +1540,12 @@ async def _recent_checkin_context_lines(session, service_case_id: int) -> list[s
             f"食欲/饥饿感：{pj.get('hunger') or '未记录'} ｜ 体感：{pj.get('sensation') or '未记录'} ｜ "
             f"不适：{pj.get('discomfort') or '无'}"
         )
-        lines.append(f"- [{date_str}] {detail}")
+        personalized = personalized_checkin_answers(pj, labels_by_id=labels_by_id)
+        personalized_text = "；".join(
+            f"{item['label']}＝{item['answer']}" for item in personalized
+        )
+        suffix = f" ｜ 专属执行项：{personalized_text}" if personalized_text else ""
+        lines.append(f"- [{date_str}] {detail}{suffix}")
     return lines
 
 

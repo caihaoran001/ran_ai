@@ -16,7 +16,13 @@ from app.models.service_case import ServiceCase
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.agent.state import AgentRunContext
+from app.services.checkin_presentation import (
+    personalized_checkin_answers,
+    personalized_checkin_document_ids,
+    personalized_checkin_labels,
+)
 from app.services.checkin_queries import recent_checkins
+from app.services.checkin_service import CHECKIN_KEYS
 from app.services.service_case_queries import effective_service_day, effective_start_at, select_active_service_cases
 
 
@@ -151,18 +157,42 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
         days = _clamp_days(days)
         async with SessionLocal() as session:
             rows = await _recent_checkins(session, context.service_case_id, days)
+            document_ids = set().union(
+                *(personalized_checkin_document_ids(row.parsed_json) for row in rows)
+            ) if rows else set()
+            documents = list(
+                await session.scalars(
+                    select(UserDocument).where(
+                        UserDocument.service_case_id == context.service_case_id,
+                        UserDocument.id.in_(document_ids),
+                    )
+                )
+            ) if document_ids else []
+            labels_by_id = personalized_checkin_labels(documents)
+            items = []
+            for row in rows:
+                parsed = row.parsed_json or {}
+                items.append(
+                    {
+                        "date": row.checkin_date.isoformat(),
+                        "content": row.content[:300],
+                        "general": {
+                            key: parsed[key]
+                            for key in CHECKIN_KEYS
+                            if parsed.get(key) not in (None, "")
+                        },
+                        "personalized": personalized_checkin_answers(
+                            parsed,
+                            labels_by_id=labels_by_id,
+                        ),
+                        "parsed": parsed,
+                    }
+                )
             return {
                 "ok": True,
                 "days": days,
                 "count": len(rows),
-                "items": [
-                    {
-                        "date": row.checkin_date.isoformat(),
-                        "content": row.content[:300],
-                        "parsed": row.parsed_json or {},
-                    }
-                    for row in rows
-                ],
+                "items": items,
                 "note": "数据不足，不能判断趋势。" if len(rows) < 2 else "",
             }
 
@@ -406,7 +436,11 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
         StructuredTool.from_function(
             coroutine=get_recent_checkins,
             name="get_recent_checkins",
-            description="Read recent structured check-in records for the current service case only.",
+            description=(
+                "Read recent structured check-in records for the current service case only. "
+                "Each day separates general metrics (weight, sleep, diet, etc.) from "
+                "personalized execution-item answers."
+            ),
             args_schema=DaysArgs,
         ),
         StructuredTool.from_function(
