@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import secrets
 from io import BytesIO
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 from langchain_core.messages import AIMessage
 from docx import Document
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.models.checkin import Checkin
+from app.models.checkin_followup_preference import CheckinFollowupPreference
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
@@ -20,6 +22,7 @@ from app.services.agent.context_builder import build_agent_memory_context
 from app.services.agent.graph import AgentReplyResult, AgentRunContext, RanrenAgentGraph
 from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.tools.service_case_tools import build_service_case_tools
+from app.services.agent.tools.followup_preference_tools import build_followup_preference_tools
 from app.services.agent.tools.web_search_tools import _normalize_current_query_year, build_web_search_tools
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_enabled
@@ -172,6 +175,56 @@ async def test_service_progress_tool_only_uses_bound_context(db_session):
     assert result["ok"] is True
     assert result["status"] == "in_service"
     assert "service_day" in result
+
+
+@pytest.mark.asyncio
+async def test_agent_can_read_and_update_bound_checkin_followup_preferences(db_session):
+    """The chat Agent can change only the current user's case, with current message evidence."""
+    connection = await db_session.connection()
+    await connection.run_sync(
+        lambda sync_connection: CheckinFollowupPreference.__table__.create(
+            sync_connection, checkfirst=True
+        )
+    )
+    await db_session.commit()
+    service_case = await _case(db_session)
+    inbound = await _inbound(db_session, service_case, "别再问我体重和腰围了")
+    # Tool implementation intentionally opens its own transaction, like production.
+    await db_session.commit()
+    tools = {
+        tool.name: tool
+        for tool in build_followup_preference_tools(
+            context=AgentRunContext(
+                service_case_id=service_case.id,
+                trigger_id=inbound.id,
+            )
+        )
+    }
+
+    initial = await tools["get_checkin_followup_preferences"].ainvoke({})
+    assert all(item["enabled"] for item in initial["preferences"])
+
+    updated = await tools["update_checkin_followup_preferences"].ainvoke(
+        {"topics": ["weight", "waist"], "enabled": False}
+    )
+    assert updated["ok"] is True
+    states = {item["topic"]: item["enabled"] for item in updated["preferences"]}
+    assert states["weight"] is False
+    assert states["waist"] is False
+    assert states["daily_checklist"] is True
+
+    rows = list(await db_session.scalars(select(CheckinFollowupPreference)))
+    assert {(row.topic, row.enabled, row.source_message_id) for row in rows} == {
+        ("weight", False, inbound.id),
+        ("waist", False, inbound.id),
+    }
+
+    restored = await tools["update_checkin_followup_preferences"].ainvoke(
+        {"topics": ["weight"], "enabled": True}
+    )
+    restored_states = {item["topic"]: item["enabled"] for item in restored["preferences"]}
+    assert restored_states["weight"] is True
+    assert restored_states["waist"] is False
 
 
 @pytest.mark.asyncio
@@ -909,6 +962,48 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "咒术回战：节奏快" in model.calls[0][0].content
     assert "今天没排便体重还涨了" in model.calls[0][0].content
     assert "晚餐能吃荞麦面吗" in model.calls[0][0].content
+
+
+@pytest.mark.asyncio
+async def test_graph_can_call_followup_preference_tool_without_bot_mention(db_session):
+    connection = await db_session.connection()
+    await connection.run_sync(
+        lambda sync_connection: CheckinFollowupPreference.__table__.create(
+            sync_connection, checkfirst=True
+        )
+    )
+    service_case = await _case(db_session)
+    inbound = await _inbound(db_session, service_case, "别再问我体重和腰围了")
+    model = FakeToolCallingModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "update_checkin_followup_preferences",
+                        "args": {"topics": ["weight", "waist"], "enabled": False},
+                        "id": "call-followup-preference",
+                    }
+                ],
+            ),
+            AIMessage(content="好的，后续不再主动问体重和腰围；想恢复时告诉我就行。"),
+        ]
+    )
+
+    result = await RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=service_case.id, trigger_id=inbound.id),
+        settings=get_settings(),
+        chat_model=model,
+    ).run(user_query=inbound.content, recent_messages=[])
+
+    assert "不再主动问体重和腰围" in result.reply
+    assert result.tool_trace[0]["name"] == "update_checkin_followup_preferences"
+    assert "无需用户 @ 你或回复你的上一条消息" in model.calls[0][0].content
+    rows = list(await db_session.scalars(select(CheckinFollowupPreference)))
+    assert {(row.topic, row.enabled, row.source_message_id) for row in rows} == {
+        ("weight", False, inbound.id),
+        ("waist", False, inbound.id),
+    }
 
 
 @pytest.mark.asyncio

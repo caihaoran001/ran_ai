@@ -19,6 +19,7 @@ from sqlalchemy import select
 from app.models.archivist_progress import ArchivistProgress
 from app.models.archivist_shadow_outcome import ArchivistShadowOutcome
 from app.models.checkin import Checkin
+from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.knowledge_draft import KnowledgeDraft
 from app.models.message import (
     Message,
@@ -130,6 +131,13 @@ async def test_archivist_maps_normal_chat_to_delivered_checklist_item(db_session
 
 
 async def _setup_case_with_messages(db_session):
+    # Shared developer test DB can lag migration head; production applies this table.
+    connection = await db_session.connection()
+    await connection.run_sync(
+        lambda sync_connection: CheckinFollowupCycle.__table__.create(
+            sync_connection, checkfirst=True
+        )
+    )
     user = User(name="档案官直写测试用户")
     db_session.add(user)
     await db_session.flush()

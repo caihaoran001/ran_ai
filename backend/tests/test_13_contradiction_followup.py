@@ -22,6 +22,7 @@ from sqlalchemy import select
 
 from app.models.checkin import Checkin
 from app.models.checkin_followup_cycle import CheckinFollowupCycle
+from app.models.checkin_followup_preference import CheckinFollowupPreference
 from app.models.message import (
     Message,
     MessageDirection,
@@ -49,7 +50,9 @@ from app.services.archivist.followup import (
     is_followup_paused,
     mark_followup_answers,
     mark_latest_followup_cycle_answered,
+    compose_scheduled_followups,
 )
+from app.services.checkin_followup_preferences import set_followup_preference_states
 from app.services.archivist.trigger import (
     KEY_INFO_SETTLE_SECONDS,
     _evaluate,
@@ -520,6 +523,42 @@ async def test_normal_chat_checkin_reopens_latest_paused_cycle(db_session):
     )
     assert latest.status == "answered"
     assert latest.answered_item_ids == ["document:99:2"]
+
+
+@pytest.mark.asyncio
+async def test_followup_preferences_filter_proactive_topics(db_session):
+    connection = await db_session.connection()
+    await connection.run_sync(
+        lambda sync_connection: CheckinFollowupPreference.__table__.create(
+            sync_connection, checkfirst=True
+        )
+    )
+    now = datetime.now(_TZ)
+    case = await _case(db_session, started_days_ago=5)  # service day 6 → milestone day 7
+
+    await set_followup_preference_states(
+        db_session,
+        service_case_id=case.id,
+        topics=["daily_checklist", "weight", "waist", "milestone_review", "contradiction"],
+        enabled=False,
+        source_message_id=None,
+    )
+    assert await compose_scheduled_followups(
+        db_session, service_case=case, now=now, tz=_TZ, ai_service=_RaisingAI()
+    ) == []
+
+    await set_followup_preference_states(
+        db_session,
+        service_case_id=case.id,
+        topics=["milestone_review"],
+        enabled=True,
+        source_message_id=None,
+    )
+    candidates = await compose_scheduled_followups(
+        db_session, service_case=case, now=now, tz=_TZ, ai_service=_RaisingAI()
+    )
+    assert [item.kind for item in candidates] == ["milestone"]
+    assert "腰围" not in candidates[0].text
 
 
 # ---------------------------------------------------------------------------

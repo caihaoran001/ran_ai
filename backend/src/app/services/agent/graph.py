@@ -75,6 +75,7 @@ class RanrenAgentGraph:
             settings=self.settings,
             skill_registry=self.skill_registry,
             include_reminder_tools=include_reminder_tools,
+            include_followup_preference_tools=include_reminder_tools,
         )
         self.tools_by_name = {tool.name: tool for tool in self.tools}
         base_model = chat_model or create_agent_chat_model(self.settings)
@@ -460,6 +461,7 @@ def _is_data_tool(name: str) -> bool:
         "read_delivery_document",
         "list_group_files",
         "read_group_file",
+        "get_checkin_followup_preferences",
     }
 
 

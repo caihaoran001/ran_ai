@@ -30,6 +30,7 @@ from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.service_case import ServiceCase
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.intake_generation import personalized_checkin_fields_from_document_payloads
+from app.services.checkin_followup_preferences import get_followup_preference_states
 from app.services.service_case_queries import effective_service_day
 
 # 早C/午B/晚A 三段产品依从：最不会自然出现在聊天里、又是阶段报告核心指标。
@@ -437,10 +438,11 @@ async def compose_scheduled_followups(
 ) -> list[ScheduledFollowup]:
     """Build independent candidates; the scheduler applies time windows and the three-message cap."""
     detect = await detect_followup(session, service_case=service_case, now=now, tz=tz)
+    preferences = await get_followup_preference_states(session, service_case_id=service_case.id)
     candidates: list[ScheduledFollowup] = []
     confirmations = detect.get("confirmations") or []
     confirmation_text = compose_followup_message(confirmations=confirmations)
-    if confirmation_text:
+    if confirmation_text and preferences["contradiction"]:
         candidates.append(
             ScheduledFollowup(
                 kind="contradiction",
@@ -451,29 +453,30 @@ async def compose_scheduled_followups(
             )
         )
     milestone = detect.get("milestone")
-    if milestone:
+    if milestone and preferences["milestone_review"]:
         candidates.append(
             ScheduledFollowup(
                 kind="milestone",
                 text=await compose_milestone_followup(
                     service_case=service_case,
                     milestone_day=milestone["milestone_day"],
-                    need_waist=milestone["need_waist"],
+                    need_waist=bool(milestone["need_waist"] and preferences["waist"]),
                     ai_service=ai_service,
                 ),
                 target_date=now.date(),
                 expected_items=[{"id": "milestone", "label": "阶段复盘"}],
             )
         )
-    daily = await compose_document_checklist_followup(
-        session,
-        service_case=service_case,
-        target_date=now.date() - timedelta(days=1),
-        ai_service=ai_service,
-    )
-    if daily:
-        candidates.append(daily)
-    if detect.get("ask_weight"):
+    if preferences["daily_checklist"]:
+        daily = await compose_document_checklist_followup(
+            session,
+            service_case=service_case,
+            target_date=now.date() - timedelta(days=1),
+            ai_service=ai_service,
+        )
+        if daily:
+            candidates.append(daily)
+    if detect.get("ask_weight") and preferences["weight"]:
         candidates.append(
             ScheduledFollowup(
                 kind="weight",
