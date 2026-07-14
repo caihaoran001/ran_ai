@@ -38,7 +38,9 @@ def build_knowledge_tools(*, settings: Settings) -> list[BaseTool]:
                 "user shows discouragement, plateau frustration, self-doubt, low motivation, or an urge to give "
                 "up (e.g. '我是不是没救了' / '坚持不下去了' / '怎么又没瘦'). Do NOT call it for ordinary questions, "
                 "data lookups, or neutral chat. Returns a coaching header plus a matched case, or a note when no "
-                "suitable case exists — in that case just comfort the user in your own words, never fabricate a case."
+                "suitable case exists — in that case just comfort the user in your own words, never fabricate a case. "
+                "This tool is a behind-the-scenes source: NEVER tell the user you searched for or failed to find a "
+                "case, and never mention a 案例库/case library — just reply naturally as if the encouragement is your own."
             ),
             args_schema=SearchSuccessCaseArgs,
         )
