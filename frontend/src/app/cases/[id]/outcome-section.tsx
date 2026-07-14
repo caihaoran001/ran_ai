@@ -167,36 +167,20 @@ function StageStateCard({ state }: { state: OutcomeStageState }) {
         <div className="h-full rounded-full bg-blue-500" style={{ width: `${progress}%` }} />
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <div>
-          <p className="mb-2 text-xs font-medium text-slate-500">已收集</p>
-          {collectedEntries.length > 0 ? (
-            <div className="space-y-2">
-              {collectedEntries.slice(0, 5).map(([field, value]) => (
-                <div key={field} className="rounded-lg bg-white px-3 py-2 text-sm">
-                  <p className="font-medium text-slate-900">{fieldLabel(field)}</p>
-                  <p className="mt-1 text-slate-600">{value?.value || value?.evidence_text || "已记录"}</p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-400">暂无</p>
-          )}
-        </div>
-        <div>
-          <p className="mb-2 text-xs font-medium text-slate-500">仍缺字段</p>
-          {missing.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {missing.map((field) => (
-                <span key={field} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
-                  {fieldLabel(field)}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-emerald-600">当前阶段证据已收集完整</p>
-          )}
-        </div>
+      <div className="mt-4">
+        <p className="mb-2 text-xs font-medium text-slate-500">已收集</p>
+        {collectedEntries.length > 0 ? (
+          <div className="grid gap-2 md:grid-cols-2">
+            {collectedEntries.slice(0, 6).map(([field, value]) => (
+              <div key={field} className="rounded-lg bg-white px-3 py-2 text-sm">
+                <p className="font-medium text-slate-900">{fieldLabel(field)}</p>
+                <p className="mt-1 text-slate-600">{value?.value || value?.evidence_text || "已记录"}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400">暂无</p>
+        )}
       </div>
     </div>
   );
