@@ -1198,7 +1198,6 @@ async def _build_outcome_summary(
             "positive_body_signal",
         },
     )
-    discomfort_cases = await _outcome_event_case_count(session, {"discomfort_feedback"})
     referral_cases = await _outcome_event_case_count(session, {"referral_signal"})
     day28_weight_avg, day28_weight_count, day28_waist_avg, day28_waist_count = await _day28_change_averages(
         session,
@@ -1251,13 +1250,6 @@ async def _build_outcome_summary(
                 numerator=body_feedback_cases,
                 denominator=active_cases,
                 description="已收集到睡眠、排便、精神能量等体感反馈证据的用户占比。",
-            ),
-            _rate_metric(
-                key="discomfort_feedback_rate",
-                label="不适反馈率",
-                numerator=discomfort_cases,
-                denominator=active_cases,
-                description="用户明确反馈心慌、失眠、不舒服等不适线索的占比，越高越需要人工关注。",
             ),
             _rate_metric(
                 key="renewal_intent_rate",
