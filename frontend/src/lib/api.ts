@@ -345,3 +345,22 @@ export type DiagnosticsSummary = {
   };
   checked_at: number;
 };
+
+export type PopulationDistributionBucket = {
+  label: string;
+  count: number;
+};
+
+export type PopulationDistribution = {
+  key: string;
+  label: string;
+  description: string;
+  total: number;
+  unknown: number;
+  buckets: PopulationDistributionBucket[];
+};
+
+export type PopulationPortrait = {
+  total_users: number;
+  distributions: PopulationDistribution[];
+};
