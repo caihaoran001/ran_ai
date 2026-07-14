@@ -165,10 +165,6 @@ class Settings(BaseSettings):
     # 档案官（Archivist）总开关：聊天转打卡的后台扫描。默认开；缺省不注入也为开，
     # 需临时停用时在 compose environment 设 ARCHIVIST_ENABLED=false。
     archivist_enabled: bool = Field(default=True, validation_alias="ARCHIVIST_ENABLED")
-    # 日打卡 H5 链接推送开关：已下线（群内反复发外链触发风控），改由档案官从聊天抽取打卡。
-    # 默认 False=不再推送；如需临时恢复在 compose environment 设 DAILY_CHECKIN_LINK_ENABLED=true。
-    # 注：入营问卷走独立命令路径，不受此开关影响。
-    daily_checkin_link_enabled: bool = Field(default=False, validation_alias="DAILY_CHECKIN_LINK_ENABLED")
     # 打卡追问(H5 完整替代)：外部确定性触发、每 case 每天最多一条(合并里程碑/矛盾/日常缺口成一句)。
     #  - 里程碑复盘/矛盾核对：活跃时 agent 回复后即补发，不活跃时兜底轮询到点发。
     #  - 日常缺口(早C/午B)：统一在下方傍晚窗口内发一次(晚A 不主动追)；早上聊天不再顺手补缺口追问。

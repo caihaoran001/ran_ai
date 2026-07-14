@@ -26,7 +26,6 @@ from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.outcome import OutcomeSnapshot, OutcomeStageState
 from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
-from app.models.user import User
 from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.agent import generate_scheduled_reminder_reply
@@ -50,7 +49,6 @@ from app.services.service_case_queries import (
     service_graduation_at,
     service_window_ended,
 )
-from app.services.short_link import get_or_create_short_link
 
 
 logger = logging.getLogger(__name__)
@@ -129,7 +127,6 @@ class ReminderService:
                         if self.settings.reminder_enabled:
                             # check_once（12点泛化催打卡）已退役，并入晚间智能追问 check_checkin_followup_once。
                             await self.check_stage_reports_once()
-                        await self.check_questionnaire_sends_once()
                         if self.settings.outcome_snapshots_enabled:
                             await self.check_outcome_snapshots_once()
                         await self.check_profile_refresh_once()
@@ -782,122 +779,6 @@ class ReminderService:
                 await refresh_profile_for_case(session, service_case, stage=f"day{day}")
             await session.commit()
 
-    async def check_questionnaire_sends_once(self) -> None:
-        # 日打卡 H5 已下线：群内反复发外链触发风控，改由档案官从聊天抽取打卡。
-        # 默认不再推送；入营问卷走独立命令路径，不受影响。
-        if not self.settings.daily_checkin_link_enabled:
-            return
-        async with SessionLocal() as session:
-            schedule = await get_checkin_questionnaire_schedule(session)
-            if not schedule.get("enabled", True):
-                return
-            timezone = ZoneInfo(str(schedule.get("timezone") or self.settings.reminder_timezone))
-            now = datetime.now(timezone)
-            send_at_val = str(schedule.get("send_at") or "09:00")
-            if send_at_val not in ("随时", "anytime", "immediate"):
-                if now.time() < _parse_time(send_at_val):
-                    return
-
-            service_cases = list(
-                await session.scalars(
-                    select_active_service_cases(
-                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
-                        ServiceCase.started_at.is_not(None),
-                        # 「退下」的单不主动推送打卡问卷链接。
-                        ServiceCase.ai_auto_reply_enabled == True,
-                    )
-                )
-            )
-            # Pre-fetch today's questionnaire reminder events to check in memory
-            today = now.date()
-            reminder_events = list(
-                await session.scalars(
-                    select(ReminderEvent).where(
-                        ReminderEvent.rule_id.like("questionnaire:%"),
-                        ReminderEvent.event_date == today,
-                        ReminderEvent.event_type == ReminderEventType.REMINDED,
-                    )
-                )
-            )
-            reminded_questionnaires = {(e.service_case_id, e.rule_id) for e in reminder_events}
-
-            for service_case in service_cases:
-                if not service_case.checkin_link_enabled:
-                    continue  # 单服务单关闭了打卡链接推送
-                day = checkin_day(service_case, now, timezone)
-                # 第1天日期当天发；存量未填计划日→沿用旧"次日=第1天"，天数号不变、不会重发；未到则不发
-                if day is None:
-                    continue
-                if day > SERVICE_CASE_WINDOW_DAYS:
-                    continue
-                rule = _questionnaire_rule_for_day(schedule, day)
-                if not rule:
-                    continue
-                template_key = str(rule.get("template_key") or "")
-                if not template_key:
-                    continue
-                rule_id = f"questionnaire:{template_key}:day{day}"
-                if (service_case.id, rule_id) in reminded_questionnaires:
-                    continue
-                reminder_event = await _reserve_reminder_event(
-                    session,
-                    service_case.id,
-                    rule_id=rule_id,
-                    event_date=today,
-                    event_type=ReminderEventType.REMINDED,
-                )
-                if not reminder_event:
-                    continue
-
-                user = await session.get(User, service_case.user_id) if service_case.user_id else None
-                base = self.settings.frontend_public_base_url.rstrip("/")
-                q_code = await get_or_create_short_link(
-                    session,
-                    service_case_id=service_case.id,
-                    template_key=template_key,
-                    target_path=f"/q/{service_case.questionnaire_token}?template={template_key}",
-                )
-                questionnaire_link = f"{base}/s/{q_code}"
-                p_code = await get_or_create_short_link(
-                    session,
-                    service_case_id=service_case.id,
-                    template_key="personalized_checkin",
-                    target_path=f"/q/{service_case.questionnaire_token}?template=personalized_checkin",
-                )
-                personalized_link = f"{base}/s/{p_code}"
-                content = _format_template(
-                    str(rule.get("message") or "请完成今日问卷：\n{questionnaire_link}"),
-                    {
-                        "questionnaire_link": questionnaire_link,
-                        "personalized_link": personalized_link,
-                        "day": day,
-                        "case_no": service_case.case_no,
-                        "group_id": service_case.group_id,
-                        "user_name": user.name if user else "",
-                        "template_key": template_key,
-                    },
-                )
-                message = Message(
-                    service_case_id=service_case.id,
-                    group_id=service_case.group_id,
-                    direction=MessageDirection.OUTBOUND,
-                    sender_type=MessageSenderType.SYSTEM,
-                    message_type="markdown",
-                    content=content,
-                    purpose=MessagePurpose.REMINDER,
-                    status=MessageStatus.PENDING,
-                )
-                session.add(message)
-                await session.flush()
-                result = await _send_channel_text_with_retries(service_case.group_id, content)
-                if result.success:
-                    message.status = MessageStatus.SENT
-                    message.wecom_message_id = result.message_id
-                else:
-                    message.status = MessageStatus.FAILED
-                    message.error = result.error
-            await session.commit()
-
     async def _generate_report_for_case_worker(self, case_id: int, stage: str) -> None:
         async with SessionLocal() as session:
             service_case = await session.get(ServiceCase, case_id)
@@ -1467,10 +1348,3 @@ def _questionnaire_rule_for_day(schedule: dict, day: int) -> dict | None:
         if isinstance(value, int) or str(value).isdigit()
     }
     return None if day in skip_days else daily_rule
-
-
-def _format_template(template: str, values: dict[str, object]) -> str:
-    try:
-        return template.format(**values)
-    except Exception:
-        return template + "\n" + str(values.get("questionnaire_link") or "")
