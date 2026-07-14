@@ -17,6 +17,7 @@ from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
+from app.models.questionnaire import QuestionnaireSubmission
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
@@ -38,7 +39,16 @@ from app.schemas.dashboard import (
     EmotionalAlertCaseItem,
     EmotionalAlertMessage,
     OutcomeDashboardSummary,
+    PopulationDistribution,
+    PopulationDistributionBucket,
+    PopulationPortrait,
 )
+from app.services.intake_facts import (
+    build_intake_fact_summary,
+    customer_type_for_profile,
+    weight_loss_band_from_profile,
+)
+from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.service_case_queries import active_service_case_condition, effective_start_at
 
 router = APIRouter()
@@ -255,6 +265,211 @@ async def dashboard_summary(
         emotional_users_today=emotional_users_today or 0,
         outcome_summary=outcome_summary,
         ai_cost_summary=ai_cost_summary,
+    )
+
+
+@router.get("/population-portrait", response_model=PopulationPortrait)
+async def dashboard_population_portrait(
+    session: AsyncSession = Depends(get_session),
+) -> PopulationPortrait:
+    """群体画像：活跃服务单的量化区间分布 + 客户分型占比。
+
+    数据来源：每个活跃服务单取最新画像(customer_type/减重带) + 最新入营问卷(年龄/BMI/体脂/腰围/身高)。
+    每个分布都返回有效样本与『未采集』计数，绝不静默丢弃缺失。饮食/睡眠/地域习惯维度二期接入。
+    """
+    # 活跃服务单 id → risk_level
+    case_rows = (
+        await session.execute(
+            select(ServiceCase.id, ServiceCase.risk_level).where(active_service_case_condition())
+        )
+    ).all()
+    risk_by_case = {cid: risk for cid, risk in case_rows}
+    active_ids = list(risk_by_case.keys())
+    if not active_ids:
+        return PopulationPortrait(total_users=0, distributions=[])
+
+    # 每个 case 最新画像（只统计已建档的活跃单，未建档空单不计入，避免兜底标签虚高）
+    latest_profile_json: dict[int, dict] = {}
+    for profile in await session.scalars(
+        select(UserProfile)
+        .where(UserProfile.service_case_id.in_(active_ids))
+        .order_by(UserProfile.service_case_id, UserProfile.created_at.desc())
+        .distinct(UserProfile.service_case_id)
+    ):
+        latest_profile_json[profile.service_case_id] = profile.profile_json or {}
+
+    case_ids = list(latest_profile_json.keys())
+    total_users = len(case_ids)
+    if not case_ids:
+        return PopulationPortrait(total_users=0, distributions=[])
+
+    # 每个 case 最新入营问卷提交
+    latest_submission: dict[int, QuestionnaireSubmission] = {}
+    for submission in await session.scalars(
+        select(QuestionnaireSubmission)
+        .where(
+            QuestionnaireSubmission.service_case_id.in_(case_ids),
+            QuestionnaireSubmission.template_key == "intake",
+        )
+        .order_by(QuestionnaireSubmission.service_case_id, QuestionnaireSubmission.created_at.desc())
+        .distinct(QuestionnaireSubmission.service_case_id)
+    ):
+        latest_submission[submission.service_case_id] = submission
+
+    fields = await get_active_questionnaire_fields(session, "intake")
+
+    customer_types: list[str] = []
+    bands: list[str] = []
+    ages: list[float | None] = []
+    bmis: list[float | None] = []
+    bodyfats: list[float | None] = []
+    whtrs: list[float | None] = []
+
+    for cid in case_ids:
+        profile_json = latest_profile_json.get(cid) or {}
+        risk_level = risk_by_case.get(cid)
+        # 客户分型：优先已落库标签，缺失则即时推导（兜底）
+        ctype = profile_json.get("customer_type")
+        if not isinstance(ctype, str) or not ctype.strip():
+            ctype = customer_type_for_profile(profile_json, risk_level)
+        customer_types.append(ctype)
+        bands.append(weight_loss_band_from_profile(profile_json) or "未采集")
+
+        submission = latest_submission.get(cid)
+        facts = build_intake_fact_summary(fields, submission.answers_json) if submission else {}
+        ages.append(_num(facts.get("age")))
+        bmis.append(_num(facts.get("bmi")))
+        bodyfats.append(_num(facts.get("bodyfat")))
+        waist = _num(facts.get("waist"))
+        height = _num(facts.get("height_cm"))
+        whtrs.append(round(waist / height, 3) if waist and height else None)
+
+    distributions = [
+        _category_distribution(
+            key="customer_type",
+            label="客户分型",
+            description="按风险与减重带确定性投影的单一分型标签，用于快速定调。",
+            values=customer_types,
+        ),
+        _category_distribution(
+            key="weight_loss_band",
+            label="减重带分布",
+            description="按 BMI 划分的减重目标带位。",
+            values=[_band_short(b) for b in bands],
+        ),
+        _numeric_distribution(
+            key="age",
+            label="年龄段",
+            description="入营问卷填报年龄。",
+            values=ages,
+            edges=[25, 35, 45, 55],
+            labels=["<25 岁", "25-34 岁", "35-44 岁", "45-54 岁", "55 岁以上"],
+        ),
+        _numeric_distribution(
+            key="bmi",
+            label="BMI 区间",
+            description="由身高体重计算，阈值与减重带一致。",
+            values=bmis,
+            edges=[18.5, 24, 28, 32],
+            labels=["偏瘦 <18.5", "正常 18.5-24", "超重 24-28", "肥胖 28-32", "重度 ≥32"],
+        ),
+        _numeric_distribution(
+            key="bodyfat",
+            label="体脂率区间",
+            description="入营问卷填报体脂率（%），部分用户未测量。",
+            values=bodyfats,
+            edges=[20, 25, 30, 35],
+            labels=["<20%", "20-25%", "25-30%", "30-35%", "≥35%"],
+        ),
+        _numeric_distribution(
+            key="waist_height_ratio",
+            label="腰高比区间",
+            description="腰围/身高，>0.5 提示中心性肥胖风险。",
+            values=whtrs,
+            edges=[0.4, 0.5, 0.6],
+            labels=["<0.4", "0.4-0.5 健康", "0.5-0.6 偏高", "≥0.6 偏高风险"],
+        ),
+    ]
+    return PopulationPortrait(total_users=total_users, distributions=distributions)
+
+
+def _num(value: Any) -> float | None:
+    """从事实字段（可能是 '34岁' / '21.2' / '未提供' / '暂无数据'）解析出数值。"""
+    if value is None:
+        return None
+    import re
+
+    match = re.search(r"\d+(?:\.\d+)?", str(value))
+    return float(match.group()) if match else None
+
+
+def _band_short(band: str) -> str:
+    """把完整带位名压成短标签，便于分布展示。"""
+    if band == "未采集":
+        return "未采集"
+    for tag in ("增肌增能带", "A带", "B带", "C带", "D带"):
+        if tag in band:
+            return "增肌增能带" if tag == "增肌增能带" else tag
+    return "待完善"
+
+
+def _category_distribution(
+    *, key: str, label: str, description: str, values: list[str]
+) -> PopulationDistribution:
+    counts: dict[str, int] = {}
+    unknown = 0
+    for value in values:
+        if not value or value in {"未采集", "待完善", "需补充身高体重后判断"}:
+            unknown += 1
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    buckets = [
+        PopulationDistributionBucket(label=name, count=count)
+        for name, count in sorted(counts.items(), key=lambda kv: -kv[1])
+    ]
+    return PopulationDistribution(
+        key=key,
+        label=label,
+        description=description,
+        total=sum(counts.values()),
+        unknown=unknown,
+        buckets=buckets,
+    )
+
+
+def _numeric_distribution(
+    *,
+    key: str,
+    label: str,
+    description: str,
+    values: list[float | None],
+    edges: list[float],
+    labels: list[str],
+) -> PopulationDistribution:
+    """把数值按升序 edges 分桶；len(labels) 必须为 len(edges)+1。缺失计入 unknown。"""
+    counts = [0] * len(labels)
+    unknown = 0
+    for value in values:
+        if value is None:
+            unknown += 1
+            continue
+        index = len(edges)
+        for i, edge in enumerate(edges):
+            if value < edge:
+                index = i
+                break
+        counts[index] += 1
+    buckets = [
+        PopulationDistributionBucket(label=labels[i], count=counts[i])
+        for i in range(len(labels))
+    ]
+    return PopulationDistribution(
+        key=key,
+        label=label,
+        description=description,
+        total=sum(counts),
+        unknown=unknown,
+        buckets=buckets,
     )
 
 

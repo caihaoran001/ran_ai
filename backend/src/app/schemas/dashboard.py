@@ -157,6 +157,25 @@ class DashboardCasePendingDocuments(BaseModel):
     documents: list[DashboardPendingDocument] = Field(default_factory=list)
 
 
+class PopulationDistributionBucket(BaseModel):
+    label: str
+    count: int
+
+
+class PopulationDistribution(BaseModel):
+    key: str
+    label: str
+    description: str = ""
+    total: int  # 有效样本数（不含未采集）
+    unknown: int = 0  # 未采集/无法解析的用户数
+    buckets: list[PopulationDistributionBucket] = Field(default_factory=list)
+
+
+class PopulationPortrait(BaseModel):
+    total_users: int  # 纳入统计的活跃服务单数
+    distributions: list[PopulationDistribution] = Field(default_factory=list)
+
+
 class DashboardSummary(BaseModel):
     service_cases_total: int
     service_cases_in_service: int
