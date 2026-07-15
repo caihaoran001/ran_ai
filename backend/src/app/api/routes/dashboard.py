@@ -446,7 +446,7 @@ async def _compute_case_portrait_labels(
         labels: dict[str, str] = {
             "customer_type": _category_label(ctype),
             "weight_loss_band": _category_label(band),
-            "city": _category_label(facts.get("city")),
+            "city": _category_label(_normalize_city(facts.get("city"))),
         }
         for dim in _PORTRAIT_DIMENSIONS:
             if dim["numeric"]:
@@ -508,6 +508,14 @@ def _band_short(band: str) -> str:
         if tag in band:
             return "增肌增能带" if tag == "增肌增能带" else tag
     return "待完善"
+
+
+def _normalize_city(value: Any) -> str:
+    """归一城市写法：去掉结尾的"市"，让"北京"与"北京市"落入同一桶（去后为空则保留原值）。"""
+    text = str(value or "").strip()
+    if len(text) > 1 and text.endswith("市"):
+        return text[:-1]
+    return text
 
 
 def _category_label(value: str | None) -> str:

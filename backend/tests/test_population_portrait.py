@@ -8,6 +8,7 @@ from app.api.routes.dashboard import (
     _bucket_numeric,
     _build_distribution,
     _category_label,
+    _normalize_city,
     _num,
 )
 
@@ -38,6 +39,15 @@ def test_category_label_normalizes_unknowns():
     assert _category_label("  北京 ") == "北京"
     for sentinel in ("", None, "未采集", "未提供", "待完善", "需补充身高体重后判断"):
         assert _category_label(sentinel) == UNKNOWN_LABEL
+
+
+def test_normalize_city_strips_trailing_shi():
+    assert _normalize_city("北京市") == "北京"
+    assert _normalize_city("北京") == "北京"
+    assert _normalize_city(" 杭州市 ") == "杭州"
+    # 去掉后为空则保留原值，不产生空标签
+    assert _normalize_city("市") == "市"
+    assert _normalize_city(None) == ""
 
 
 def test_bucket_numeric_buckets_and_unknown():
