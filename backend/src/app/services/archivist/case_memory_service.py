@@ -1,10 +1,9 @@
-"""档案官 case_memory：为每个服务单维护自由文本滚动小结 + 近期话题。
+"""档案官 case_memory：为每个服务单维护自由文本滚动小结。
 
-定位:**记忆产物**,不是权威事实源——供 Chat Agent 了解用户背景(重要经历/阶段转折/近期话题)。
+定位:**记忆产物**,不是权威事实源——供 Chat Agent 了解用户背景(重要经历/阶段转折)。
 因此对归档主流程是**尽力而为**:由 trigger 在归档事务成功提交后、用独立 session 调用;
 本模块所有异常内部吞掉只记日志,绝不回滚归档水位线。
 
-- recent_topics:确定性维护(取最近几条用户发言短摘要),不烧 LLM。
 - summary:仅当本轮**有新沉淀**(打卡/成效/画像/纠正落库)时,才追加一次轻量 LLM 调用刷新;
   纯闲聊轮不刷,控制成本。摘要文本 LLM 产出后原样落 archivist_case_memory,不写领域事实表。
 """
@@ -24,8 +23,6 @@ from app.models.message import Message, MessagePurpose, MessageSenderType
 
 logger = logging.getLogger(__name__)
 
-_MAX_RECENT_TOPICS = 5
-_TOPIC_SNIPPET_CHARS = 40
 _SUMMARY_MAX_CHARS = 800
 _CONVO_MSG_LIMIT = 25
 _CONVO_MSG_CHARS = 200
@@ -74,11 +71,13 @@ async def refresh_case_memory(
     chat_model: object | None = None,
     settings: Settings | None = None,
 ) -> None:
-    """归档成功后刷新该单的 case_memory(尽力而为,独立事务)。
+    """归档成功后刷新该单的 case_memory 滚动小结(尽力而为,独立事务)。
 
-    recent_topics 每轮都确定性更新;summary 仅在本轮有新沉淀时经 LLM 刷新。
+    summary 仅在本轮有新沉淀时经 LLM 刷新;纯闲聊轮直接跳过(不建空行、不烧 LLM)。
     任何异常只记日志,不向上抛(不影响已提交的归档)。
     """
+    if not _had_precipitation(run_result):
+        return
     try:
         settings = settings or get_settings()
         async with SessionLocal() as session:
@@ -88,65 +87,26 @@ async def refresh_case_memory(
                 )
             )
             if memory is None:
-                memory = ArchivistCaseMemory(
-                    service_case_id=service_case_id, recent_topics=[]
-                )
+                memory = ArchivistCaseMemory(service_case_id=service_case_id)
                 session.add(memory)
 
-            recent_msgs = await _recent_user_messages(session, service_case_id, watermark_to)
-            memory.recent_topics = _build_recent_topics(recent_msgs)
-
-            if _had_precipitation(run_result):
-                new_summary = await _generate_summary(
-                    session,
-                    service_case_id=service_case_id,
-                    watermark_to=watermark_to,
-                    existing_summary=memory.summary,
-                    chat_model=chat_model,
-                    settings=settings,
-                )
-                if new_summary:
-                    memory.summary = new_summary[:_SUMMARY_MAX_CHARS]
-                    memory.summary_watermark_message_id = watermark_to
+            new_summary = await _generate_summary(
+                session,
+                service_case_id=service_case_id,
+                watermark_to=watermark_to,
+                existing_summary=memory.summary,
+                chat_model=chat_model,
+                settings=settings,
+            )
+            if new_summary:
+                memory.summary = new_summary[:_SUMMARY_MAX_CHARS]
+                memory.summary_watermark_message_id = watermark_to
 
             await session.commit()
     except Exception:
         logger.exception(
             "case_memory refresh failed service_case_id=%s", service_case_id
         )
-
-
-async def _recent_user_messages(
-    session, service_case_id: int, watermark_to: int | None
-) -> list[Message]:
-    conditions = [
-        Message.service_case_id == service_case_id,
-        Message.sender_type == MessageSenderType.USER,
-        Message.purpose == MessagePurpose.CHAT,
-        Message.content != "",
-    ]
-    if watermark_to:
-        conditions.append(Message.id <= watermark_to)
-    rows = (
-        await session.execute(
-            select(Message)
-            .where(*conditions)
-            .order_by(Message.id.desc())
-            .limit(_MAX_RECENT_TOPICS)
-        )
-    ).scalars().all()
-    return list(rows)
-
-
-def _build_recent_topics(recent_msgs: list[Message]) -> list[str]:
-    topics: list[str] = []
-    seen: set[str] = set()
-    for m in recent_msgs:  # 已按 id 降序(最新在前)
-        snippet = _snippet(m.content or "", _TOPIC_SNIPPET_CHARS)
-        if snippet and snippet not in seen:
-            seen.add(snippet)
-            topics.append(snippet)
-    return topics[:_MAX_RECENT_TOPICS]
 
 
 async def _generate_summary(

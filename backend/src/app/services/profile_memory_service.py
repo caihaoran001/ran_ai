@@ -18,7 +18,6 @@ AGENT_MEMORY_SECTIONS: tuple[str, ...] = (
     "preferences",
     "habits",
     "current_state",
-    "recent_topics",
     "warnings",
 )
 
@@ -28,7 +27,6 @@ SECTION_LABELS: dict[str, str] = {
     "preferences": "长期偏好",
     "habits": "稳定习惯",
     "current_state": "当前状态",
-    "recent_topics": "最近话题",
     "warnings": "风险边界",
 }
 
@@ -40,7 +38,6 @@ class ProfileMemoryContext:
     preferences: list[str] = field(default_factory=list)
     habits: list[str] = field(default_factory=list)
     current_state: list[str] = field(default_factory=list)
-    recent_topics: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     def render_for_agent(
@@ -97,27 +94,26 @@ async def load_profile_memory_context(
         state_profile.state_json if state_profile else None
     )
     warnings.extend(state_warnings)
-    case_summary, recent_topics = _memory_from_case_memory(case_memory)
+    case_summary = _memory_from_case_memory(case_memory)
     return ProfileMemoryContext(
         stable_facts=_dedupe_keep_order(stable_facts),
         case_summary=_dedupe_keep_order(case_summary),
         preferences=_dedupe_keep_order(preferences),
         habits=_dedupe_keep_order(habits),
         current_state=_dedupe_keep_order(current_state),
-        recent_topics=_dedupe_keep_order(recent_topics),
         warnings=_dedupe_keep_order(warnings),
     )
 
 
 def _memory_from_case_memory(
     case_memory: ArchivistCaseMemory | None,
-) -> tuple[list[str], list[str]]:
-    """档案官 case_memory → (历程小结按句拆行, 近期话题)。
+) -> list[str]:
+    """档案官 case_memory → 历程小结(按句拆行)。
 
     滚动小结拆成短句分行,规避 render 单行 120 字截断导致后半段丢失。
     """
     if case_memory is None:
-        return [], []
+        return []
     case_summary: list[str] = []
     summary = (case_memory.summary or "").strip()
     if summary:
@@ -125,12 +121,7 @@ def _memory_from_case_memory(
             text = _short_text(sentence, 110)
             if text:
                 case_summary.append(text)
-    recent_topics = [
-        text
-        for item in (case_memory.recent_topics or [])
-        if (text := _short_text(item, 60))
-    ]
-    return case_summary, recent_topics
+    return case_summary
 
 
 def _memory_from_profile(profile: UserProfile | None) -> tuple[list[str], list[str]]:

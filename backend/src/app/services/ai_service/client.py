@@ -553,7 +553,7 @@ class AIService:
                 '  "health_consultation": boolean,  // 当前消息是否在咨询需专业健康判断的建议(饮食方案/份量、运动建议、用药、产品能否用/用量、体感如何处理等);纯打卡数据上报/闲聊/感谢/确认/非健康群务为false。只看当前消息话题本身,与风险等级和 requires_human_intervention 相互独立\n'
                 '  "agent_context_plan": {  // 给后续 Agent 选择用户背景用，不是工具调用命令\n'
                 '    "message_scene": "必须从以下值中选择：product_rule / data_query / diet_advice / body_feedback / emotion_support / casual_interest / correction / unknown",\n'
-                '    "memory_scopes": ["从以下值中选择：stable_facts / case_summary / preferences / habits / current_state / recent_topics / warnings，可为空数组"],\n'
+                '    "memory_scopes": ["从以下值中选择：stable_facts / case_summary / preferences / habits / current_state / warnings，可为空数组"],\n'
                 '    "tool_hints": ["从以下值中选择：service_case_data / product_rule / web_search / knowledge_base，仅作提示，可为空数组"],\n'
                 '    "reason": "一句话说明为什么选择这些背景"\n'
                 "  },\n"
@@ -585,8 +585,8 @@ class AIService:
                 "仅当当前消息本身明确出现新的急性体感、用药问题、诊疗请求，或针对自身孕期/疾病的具体医学咨询时，才按等级标记并转人工。"
                 "\n7. agent_context_plan 只负责建议后续 Agent 应该带哪些用户背景，不控制 Agent 调用工具。"
                 "产品规则问题优先选择 current_state/habits/warnings；查服务天数、体重、打卡等实时数据可少带或不带背景，tool_hints 给 service_case_data；"
-                "兴趣闲聊、潮玩、影视、游戏只选择 preferences/recent_topics，不要选择体重、饮食、产品、风险背景；"
-                "用户纠正上一轮或说半句话时用 correction，并优先 recent_topics/preferences。"
+                "兴趣闲聊、潮玩、影视、游戏只选择 preferences，不要选择体重、饮食、产品、风险背景；"
+                "用户纠正上一轮或说半句话时用 correction，并优先 preferences。"
 
                 "\n\n【归档信号 archive_plan 判定】\n"
                 "archive_plan 只给后台档案官用，判断本条消息是否含值得长期沉淀的信息，与风险/转人工/续购/退款完全独立"

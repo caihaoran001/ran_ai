@@ -38,7 +38,6 @@ VALID_AGENT_MEMORY_SCOPES = frozenset({
     "preferences",
     "habits",
     "current_state",
-    "recent_topics",
     "warnings",
 })
 

@@ -1,9 +1,9 @@
-"""档案官 case_memory 健康自测：滚动小结 + 近期话题 + Chat Agent 记忆注入。
+"""档案官 case_memory 健康自测：滚动小结 + Chat Agent 记忆注入。
 
 验证：
-- 有新沉淀时,refresh_case_memory 用(注入的)模型刷新 summary,并确定性维护 recent_topics;
-- 无新沉淀时,summary 不刷(保持原值),recent_topics 仍更新;
-- load_profile_memory_context 能把 case_memory 注入 Chat Agent 上下文(历程小结/最近话题)。
+- 有新沉淀时,refresh_case_memory 用(注入的)模型刷新 summary;
+- 无新沉淀时,直接跳过(不建行、不烧 LLM);
+- load_profile_memory_context 能把 case_memory 注入 Chat Agent 上下文(历程小结)。
 """
 
 from __future__ import annotations
@@ -111,15 +111,11 @@ async def test_case_memory_refresh_with_precipitation(db_session):
     assert fake.calls == 1  # 有新沉淀 → 触发一次摘要 LLM
     assert memory.summary and "睡眠改善" in memory.summary
     assert memory.summary_watermark_message_id == watermark
-    # 近期话题确定性维护：包含最近的用户发言短摘要（最新在前）。
-    assert memory.recent_topics
-    assert any("168斤" in t for t in memory.recent_topics)
 
-    # 注入 Chat Agent：历程小结 + 最近话题出现在渲染结果里。
+    # 注入 Chat Agent：历程小结出现在渲染结果里。
     ctx = await load_profile_memory_context(db_session, service_case_id=case.id)
     rendered = ctx.render_for_agent(max_lines=10)
     assert "历程小结" in rendered
-    assert "最近话题" in rendered
 
 
 @pytest.mark.asyncio
@@ -147,7 +143,5 @@ async def test_case_memory_no_precipitation_skips_summary(db_session):
             ArchivistCaseMemory.service_case_id == case.id
         )
     )
-    assert memory is not None
     assert fake.calls == 0  # 无新沉淀 → 不烧摘要 LLM
-    assert memory.summary is None
-    assert memory.recent_topics  # 近期话题仍更新
+    assert memory is None  # 无新沉淀 → 直接跳过，不建空行

@@ -221,7 +221,8 @@ def test_intervention_normalizes_agent_context_plan():
 
     assert insight["agent_context_plan"] == {
         "message_scene": "casual_interest",
-        "memory_scopes": ["preferences", "recent_topics", "warnings"],
+        # recent_topics 已下线 → 从合法 memory_scopes 过滤掉。
+        "memory_scopes": ["preferences", "warnings"],
         "tool_hints": ["web_search", "service_case_data"],
         "reason": "用户在聊潮玩兴趣，后续只需要兴趣和最近话题。",
     }
