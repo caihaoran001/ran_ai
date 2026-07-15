@@ -5,9 +5,10 @@ from statistics import mean
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
 from app.db.session import get_session
@@ -42,6 +43,7 @@ from app.schemas.dashboard import (
     PopulationDistributionBucket,
     PopulationPortrait,
 )
+from app.schemas.service_case import ServiceCaseRead
 from app.services.intake_facts import (
     build_intake_fact_summary,
     customer_type_for_profile,
@@ -267,14 +269,116 @@ async def dashboard_summary(
     )
 
 
+# 缺失/未采集统一归一到该标签；画像分布计入 unknown，下钻端点也按它命中"未采集"桶。
+UNKNOWN_LABEL = "未采集"
+# 分类维度的历史哨兵值（含各处"未提供/待完善"等），一律视为未采集。
+_CATEGORY_UNKNOWNS = {"", "未采集", "未提供", "待完善", "需补充身高体重后判断"}
+
+# 群体画像维度元数据：画像端点与下钻端点共用，保证顺序/标签/分桶完全一致。
+# numeric=True 的维度带 edges/labels（升序左闭分桶，含 0 计数桶）；分类维度按计数降序。
+_PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
+    {
+        "key": "customer_type",
+        "label": "客户分型",
+        "description": "按风险与减重带确定性投影的单一分型标签，用于快速定调。",
+        "numeric": False,
+    },
+    {
+        "key": "weight_loss_band",
+        "label": "减重带分布",
+        "description": "按 BMI 划分的减重目标带位。",
+        "numeric": False,
+    },
+    {
+        "key": "city",
+        "label": "地域分布",
+        "description": "入营问卷填报的所在城市，未填报计入未采集。",
+        "numeric": False,
+    },
+    {
+        "key": "age",
+        "label": "年龄段",
+        "description": "入营问卷填报年龄。",
+        "numeric": True,
+        "edges": [25, 35, 45, 55],
+        "labels": ["<25 岁", "25-34 岁", "35-44 岁", "45-54 岁", "55 岁以上"],
+    },
+    {
+        "key": "bmi",
+        "label": "BMI 区间",
+        "description": "由身高体重计算，阈值与减重带一致。",
+        "numeric": True,
+        "edges": [18.5, 24, 28, 32],
+        "labels": ["偏瘦 <18.5", "正常 18.5-24", "超重 24-28", "肥胖 28-32", "重度 ≥32"],
+    },
+    {
+        "key": "bodyfat",
+        "label": "体脂率区间",
+        "description": "入营问卷填报体脂率（%），部分用户未测量。",
+        "numeric": True,
+        "edges": [20, 25, 30, 35],
+        "labels": ["<20%", "20-25%", "25-30%", "30-35%", "≥35%"],
+    },
+    {
+        "key": "waist_height_ratio",
+        "label": "腰高比区间",
+        "description": "腰围/身高，>0.5 提示中心性肥胖风险。",
+        "numeric": True,
+        "edges": [0.4, 0.5, 0.6],
+        "labels": ["<0.4", "0.4-0.5 健康", "0.5-0.6 偏高", "≥0.6 偏高风险"],
+    },
+]
+_DIMENSION_BY_KEY = {dim["key"]: dim for dim in _PORTRAIT_DIMENSIONS}
+
+
 @router.get("/population-portrait", response_model=PopulationPortrait)
 async def dashboard_population_portrait(
     session: AsyncSession = Depends(get_session),
 ) -> PopulationPortrait:
-    """群体画像：活跃服务单的量化区间分布 + 客户分型占比。
+    """群体画像：活跃服务单的量化区间分布 + 客户分型/地域占比。
 
-    数据来源：每个活跃服务单取最新画像(customer_type/减重带) + 最新入营问卷(年龄/BMI/体脂/腰围/身高)。
-    每个分布都返回有效样本与『未采集』计数，绝不静默丢弃缺失。饮食/睡眠/地域习惯维度二期接入。
+    数据来源：每个活跃服务单取最新画像(customer_type/减重带) + 最新入营问卷(城市/年龄/BMI/体脂/腰围/身高)。
+    每个分布都返回有效样本与『未采集』计数，绝不静默丢弃缺失。分桶逻辑与下钻端点共用同一套 case 标签。
+    """
+    total_users, case_labels = await _compute_case_portrait_labels(session)
+    if total_users == 0:
+        return PopulationPortrait(total_users=0, distributions=[])
+    distributions = [_build_distribution(dim, case_labels) for dim in _PORTRAIT_DIMENSIONS]
+    return PopulationPortrait(total_users=total_users, distributions=distributions)
+
+
+@router.get("/population-portrait/members", response_model=list[ServiceCaseRead])
+async def dashboard_population_portrait_members(
+    key: str,
+    bucket: str,
+    session: AsyncSession = Depends(get_session),
+) -> list[ServiceCase]:
+    """群体画像下钻：返回某维度某分桶下的服务单（bucket 传『未采集』也能命中未采集桶）。
+
+    与画像端点复用同一份 case 标签，保证条形图数字与下钻列表一一对应。返回结构同 /service-cases。
+    """
+    if key not in _DIMENSION_BY_KEY:
+        raise HTTPException(status_code=404, detail=f"未知画像维度: {key}")
+    _, case_labels = await _compute_case_portrait_labels(session)
+    matched_ids = [cid for cid, labels in case_labels.items() if labels.get(key) == bucket]
+    if not matched_ids:
+        return []
+    result = await session.scalars(
+        select(ServiceCase)
+        .where(ServiceCase.id.in_(matched_ids))
+        .options(selectinload(ServiceCase.user))
+        .order_by(ServiceCase.created_at.desc())
+    )
+    return list(result)
+
+
+async def _compute_case_portrait_labels(
+    session: AsyncSession,
+) -> tuple[int, dict[int, dict[str, str]]]:
+    """逐服务单算出各画像维度的分桶标签（画像端点与下钻端点共用，保证一致）。
+
+    只统计已建档的活跃服务单（未建档空单不计入，避免兜底标签虚高）。
+    返回 (total_users, {case_id: {dimension_key: bucket_label}})；缺失统一归一为 UNKNOWN_LABEL。
     """
     # 活跃服务单 id → risk_level
     case_rows = (
@@ -285,9 +389,9 @@ async def dashboard_population_portrait(
     risk_by_case = {cid: risk for cid, risk in case_rows}
     active_ids = list(risk_by_case.keys())
     if not active_ids:
-        return PopulationPortrait(total_users=0, distributions=[])
+        return 0, {}
 
-    # 每个 case 最新画像（只统计已建档的活跃单，未建档空单不计入，避免兜底标签虚高）
+    # 每个 case 最新画像
     latest_profile_json: dict[int, dict] = {}
     for profile in await session.scalars(
         select(UserProfile)
@@ -298,9 +402,8 @@ async def dashboard_population_portrait(
         latest_profile_json[profile.service_case_id] = profile.profile_json or {}
 
     case_ids = list(latest_profile_json.keys())
-    total_users = len(case_ids)
     if not case_ids:
-        return PopulationPortrait(total_users=0, distributions=[])
+        return 0, {}
 
     # 每个 case 最新入营问卷提交
     latest_submission: dict[int, QuestionnaireSubmission] = {}
@@ -317,13 +420,7 @@ async def dashboard_population_portrait(
 
     fields = await get_active_questionnaire_fields(session, "intake")
 
-    customer_types: list[str] = []
-    bands: list[str] = []
-    ages: list[float | None] = []
-    bmis: list[float | None] = []
-    bodyfats: list[float | None] = []
-    whtrs: list[float | None] = []
-
+    case_labels: dict[int, dict[str, str]] = {}
     for cid in case_ids:
         profile_json = latest_profile_json.get(cid) or {}
         risk_level = risk_by_case.get(cid)
@@ -331,65 +428,66 @@ async def dashboard_population_portrait(
         ctype = profile_json.get("customer_type")
         if not isinstance(ctype, str) or not ctype.strip():
             ctype = customer_type_for_profile(profile_json, risk_level)
-        customer_types.append(ctype)
-        bands.append(weight_loss_band_from_profile(profile_json) or "未采集")
+        band = _band_short(weight_loss_band_from_profile(profile_json) or "未采集")
 
         submission = latest_submission.get(cid)
         facts = build_intake_fact_summary(fields, submission.answers_json) if submission else {}
-        ages.append(_num(facts.get("age")))
-        bmis.append(_num(facts.get("bmi")))
-        bodyfats.append(_num(facts.get("bodyfat")))
+        numeric_values = {
+            "age": _num(facts.get("age")),
+            "bmi": _num(facts.get("bmi")),
+            "bodyfat": _num(facts.get("bodyfat")),
+        }
         waist = _num(facts.get("waist"))
         height = _num(facts.get("height_cm"))
-        whtrs.append(round(waist / height, 3) if waist and height else None)
+        numeric_values["waist_height_ratio"] = (
+            round(waist / height, 3) if waist and height else None
+        )
 
-    distributions = [
-        _category_distribution(
-            key="customer_type",
-            label="客户分型",
-            description="按风险与减重带确定性投影的单一分型标签，用于快速定调。",
-            values=customer_types,
-        ),
-        _category_distribution(
-            key="weight_loss_band",
-            label="减重带分布",
-            description="按 BMI 划分的减重目标带位。",
-            values=[_band_short(b) for b in bands],
-        ),
-        _numeric_distribution(
-            key="age",
-            label="年龄段",
-            description="入营问卷填报年龄。",
-            values=ages,
-            edges=[25, 35, 45, 55],
-            labels=["<25 岁", "25-34 岁", "35-44 岁", "45-54 岁", "55 岁以上"],
-        ),
-        _numeric_distribution(
-            key="bmi",
-            label="BMI 区间",
-            description="由身高体重计算，阈值与减重带一致。",
-            values=bmis,
-            edges=[18.5, 24, 28, 32],
-            labels=["偏瘦 <18.5", "正常 18.5-24", "超重 24-28", "肥胖 28-32", "重度 ≥32"],
-        ),
-        _numeric_distribution(
-            key="bodyfat",
-            label="体脂率区间",
-            description="入营问卷填报体脂率（%），部分用户未测量。",
-            values=bodyfats,
-            edges=[20, 25, 30, 35],
-            labels=["<20%", "20-25%", "25-30%", "30-35%", "≥35%"],
-        ),
-        _numeric_distribution(
-            key="waist_height_ratio",
-            label="腰高比区间",
-            description="腰围/身高，>0.5 提示中心性肥胖风险。",
-            values=whtrs,
-            edges=[0.4, 0.5, 0.6],
-            labels=["<0.4", "0.4-0.5 健康", "0.5-0.6 偏高", "≥0.6 偏高风险"],
-        ),
-    ]
-    return PopulationPortrait(total_users=total_users, distributions=distributions)
+        labels: dict[str, str] = {
+            "customer_type": _category_label(ctype),
+            "weight_loss_band": _category_label(band),
+            "city": _category_label(facts.get("city")),
+        }
+        for dim in _PORTRAIT_DIMENSIONS:
+            if dim["numeric"]:
+                labels[dim["key"]] = _bucket_numeric(
+                    numeric_values[dim["key"]], dim["edges"], dim["labels"]
+                )
+        case_labels[cid] = labels
+
+    return len(case_ids), case_labels
+
+
+def _build_distribution(
+    dim: dict[str, Any], case_labels: dict[int, dict[str, str]]
+) -> PopulationDistribution:
+    """从逐-case 标签统计单个维度的分布。数值维度按固定顺序（含 0 桶），分类维度按计数降序。"""
+    counts: dict[str, int] = {}
+    unknown = 0
+    for labels in case_labels.values():
+        value = labels.get(dim["key"], UNKNOWN_LABEL)
+        if value == UNKNOWN_LABEL:
+            unknown += 1
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    if dim["numeric"]:
+        buckets = [
+            PopulationDistributionBucket(label=name, count=counts.get(name, 0))
+            for name in dim["labels"]
+        ]
+    else:
+        buckets = [
+            PopulationDistributionBucket(label=name, count=count)
+            for name, count in sorted(counts.items(), key=lambda kv: -kv[1])
+        ]
+    return PopulationDistribution(
+        key=dim["key"],
+        label=dim["label"],
+        description=dim["description"],
+        total=sum(counts.values()),
+        unknown=unknown,
+        buckets=buckets,
+    )
 
 
 def _num(value: Any) -> float | None:
@@ -412,64 +510,22 @@ def _band_short(band: str) -> str:
     return "待完善"
 
 
-def _category_distribution(
-    *, key: str, label: str, description: str, values: list[str]
-) -> PopulationDistribution:
-    counts: dict[str, int] = {}
-    unknown = 0
-    for value in values:
-        if not value or value in {"未采集", "待完善", "需补充身高体重后判断"}:
-            unknown += 1
-            continue
-        counts[value] = counts.get(value, 0) + 1
-    buckets = [
-        PopulationDistributionBucket(label=name, count=count)
-        for name, count in sorted(counts.items(), key=lambda kv: -kv[1])
-    ]
-    return PopulationDistribution(
-        key=key,
-        label=label,
-        description=description,
-        total=sum(counts.values()),
-        unknown=unknown,
-        buckets=buckets,
-    )
+def _category_label(value: str | None) -> str:
+    """分类维度的单值归一：空/历史哨兵值 → UNKNOWN_LABEL，否则原样（去空白）。"""
+    text = (value or "").strip()
+    return UNKNOWN_LABEL if text in _CATEGORY_UNKNOWNS else text
 
 
-def _numeric_distribution(
-    *,
-    key: str,
-    label: str,
-    description: str,
-    values: list[float | None],
-    edges: list[float],
-    labels: list[str],
-) -> PopulationDistribution:
-    """把数值按升序 edges 分桶；len(labels) 必须为 len(edges)+1。缺失计入 unknown。"""
-    counts = [0] * len(labels)
-    unknown = 0
-    for value in values:
-        if value is None:
-            unknown += 1
-            continue
-        index = len(edges)
-        for i, edge in enumerate(edges):
-            if value < edge:
-                index = i
-                break
-        counts[index] += 1
-    buckets = [
-        PopulationDistributionBucket(label=labels[i], count=counts[i])
-        for i in range(len(labels))
-    ]
-    return PopulationDistribution(
-        key=key,
-        label=label,
-        description=description,
-        total=sum(counts),
-        unknown=unknown,
-        buckets=buckets,
-    )
+def _bucket_numeric(value: float | None, edges: list[float], labels: list[str]) -> str:
+    """把数值按升序 edges 左闭分桶为标签；len(labels) 必须为 len(edges)+1。缺失 → UNKNOWN_LABEL。"""
+    if value is None:
+        return UNKNOWN_LABEL
+    index = len(edges)
+    for i, edge in enumerate(edges):
+        if value < edge:
+            index = i
+            break
+    return labels[index]
 
 
 @router.get("/emotional-alerts", response_model=list[EmotionalAlertCaseItem])

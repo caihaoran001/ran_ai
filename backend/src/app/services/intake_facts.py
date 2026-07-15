@@ -22,6 +22,7 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
     preferred_name = value_for("抖音昵称") or value_for("常用称呼") or value_for("称呼")
     gender = value_for("性别")
     age = value_for("年龄")
+    city = value_for("所在的城市") or value_for("城市")
     height_raw = value_for("身高")
     weight_raw = value_for("当前体重") or value_for("体重")
     waist = value_for("腰围")
@@ -45,6 +46,7 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
         "recipient_name": _recipient_name(preferred_name or legal_name, legal_name, gender),
         "gender": gender or "未提供",
         "age": age or "未提供",
+        "city": city or "未提供",
         "height_cm": _format_number(height) if height else "未提供",
         "weight_kg": _format_number(weight) if weight else "未提供",
         "bmi": f"{bmi:.1f}" if bmi else "暂无数据",

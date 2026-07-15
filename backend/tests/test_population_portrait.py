@@ -3,10 +3,12 @@ from __future__ import annotations
 import pytest
 
 from app.api.routes.dashboard import (
+    UNKNOWN_LABEL,
     _band_short,
-    _category_distribution,
+    _bucket_numeric,
+    _build_distribution,
+    _category_label,
     _num,
-    _numeric_distribution,
 )
 
 
@@ -31,50 +33,71 @@ def test_band_short():
     assert _band_short("未采集") == "未采集"
 
 
-def test_numeric_distribution_buckets_and_unknown():
-    dist = _numeric_distribution(
-        key="bmi",
-        label="BMI 区间",
-        description="",
-        values=[17.0, 21.0, 26.0, 30.0, 40.0, None],
-        edges=[18.5, 24, 28, 32],
-        labels=["偏瘦 <18.5", "正常 18.5-24", "超重 24-28", "肥胖 28-32", "重度 ≥32"],
-    )
-    assert dist.unknown == 1
-    assert dist.total == 5
-    counts = {b.label: b.count for b in dist.buckets}
-    assert counts == {
-        "偏瘦 <18.5": 1,
-        "正常 18.5-24": 1,
-        "超重 24-28": 1,
-        "肥胖 28-32": 1,
-        "重度 ≥32": 1,
-    }
+def test_category_label_normalizes_unknowns():
+    assert _category_label("疾病管理型") == "疾病管理型"
+    assert _category_label("  北京 ") == "北京"
+    for sentinel in ("", None, "未采集", "未提供", "待完善", "需补充身高体重后判断"):
+        assert _category_label(sentinel) == UNKNOWN_LABEL
 
 
-def test_numeric_distribution_boundary_is_left_closed():
+def test_bucket_numeric_buckets_and_unknown():
+    edges = [18.5, 24, 28, 32]
+    labels = ["偏瘦 <18.5", "正常 18.5-24", "超重 24-28", "肥胖 28-32", "重度 ≥32"]
+    assert _bucket_numeric(17.0, edges, labels) == "偏瘦 <18.5"
+    assert _bucket_numeric(21.0, edges, labels) == "正常 18.5-24"
+    assert _bucket_numeric(26.0, edges, labels) == "超重 24-28"
+    assert _bucket_numeric(30.0, edges, labels) == "肥胖 28-32"
+    assert _bucket_numeric(40.0, edges, labels) == "重度 ≥32"
+    assert _bucket_numeric(None, edges, labels) == UNKNOWN_LABEL
+
+
+def test_bucket_numeric_boundary_is_left_closed():
     # 值恰好等于 edge 落入右侧桶（value < edge 才归左桶）
-    dist = _numeric_distribution(
-        key="whtr",
-        label="腰高比",
-        description="",
-        values=[0.5],
-        edges=[0.4, 0.5, 0.6],
-        labels=["<0.4", "0.4-0.5", "0.5-0.6", "≥0.6"],
-    )
+    edges = [0.4, 0.5, 0.6]
+    labels = ["<0.4", "0.4-0.5", "0.5-0.6", "≥0.6"]
+    assert _bucket_numeric(0.5, edges, labels) == "0.5-0.6"
+
+
+def test_build_numeric_distribution_fixed_order_with_zero_buckets():
+    dim = {
+        "key": "bmi",
+        "label": "BMI 区间",
+        "description": "",
+        "numeric": True,
+        "edges": [18.5, 24, 28, 32],
+        "labels": ["偏瘦 <18.5", "正常 18.5-24", "超重 24-28", "肥胖 28-32", "重度 ≥32"],
+    }
+    # 逐-case 标签：一个已分桶到"超重"，一个未采集
+    case_labels = {
+        1: {"bmi": "超重 24-28"},
+        2: {"bmi": UNKNOWN_LABEL},
+    }
+    dist = _build_distribution(dim, case_labels)
+    assert dist.unknown == 1
+    assert dist.total == 1
+    # 固定顺序、含 0 计数桶
+    assert [b.label for b in dist.buckets] == dim["labels"]
     counts = {b.label: b.count for b in dist.buckets}
-    assert counts["0.5-0.6"] == 1
-    assert counts["0.4-0.5"] == 0
+    assert counts["超重 24-28"] == 1
+    assert counts["偏瘦 <18.5"] == 0
 
 
-def test_category_distribution_counts_and_unknown_sorted():
-    dist = _category_distribution(
-        key="customer_type",
-        label="客户分型",
-        description="",
-        values=["健康投资型", "健康投资型", "疾病管理型", "未采集", "待完善"],
-    )
-    assert dist.unknown == 2  # 未采集 + 待完善
+def test_build_category_distribution_counts_and_unknown_sorted():
+    dim = {
+        "key": "customer_type",
+        "label": "客户分型",
+        "description": "",
+        "numeric": False,
+    }
+    case_labels = {
+        1: {"customer_type": "健康投资型"},
+        2: {"customer_type": "健康投资型"},
+        3: {"customer_type": "疾病管理型"},
+        4: {"customer_type": UNKNOWN_LABEL},
+        5: {"customer_type": UNKNOWN_LABEL},
+    }
+    dist = _build_distribution(dim, case_labels)
+    assert dist.unknown == 2
     assert dist.total == 3
     # 按计数降序
     assert dist.buckets[0].label == "健康投资型"
@@ -91,6 +114,7 @@ async def test_population_portrait_endpoint_shape(admin_client):
     assert keys == {
         "customer_type",
         "weight_loss_band",
+        "city",
         "age",
         "bmi",
         "bodyfat",
