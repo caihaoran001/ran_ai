@@ -20,7 +20,7 @@ from app.schemas.service_case import (
     ServiceCaseStats,
     ServiceCaseUpdate,
 )
-from app.services.ranren_ai.engine import build_ai_user_context
+from app.services.agent.context_builder import build_agent_memory_context
 from app.services.service_case_queries import (
     active_service_case_condition,
     get_active_service_case,
@@ -173,7 +173,13 @@ async def get_service_case_ai_context_preview(
     service_case = await get_service_case_any(session, service_case_id)
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
-    return ServiceCaseAIContextPreview(context=await build_ai_user_context(session, service_case))
+    # 预览 AI 每轮回复真实携带的「隐性用户背景」（profile_memory：稳定事实/历程小结/偏好/
+    # 习惯/当前状态/最近话题/风险边界）。放宽行数以便运营看全，不做 agent 端的按需截断。
+    memory = await build_agent_memory_context(
+        session, service_case_id=service_case.id, max_lines=50
+    )
+    context = f"### AI 每轮携带的隐性用户背景\n{memory}"
+    return ServiceCaseAIContextPreview(context=context)
 
 
 @router.patch("/{service_case_id}", response_model=ServiceCaseRead)

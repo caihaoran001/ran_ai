@@ -155,7 +155,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
       )}
 
       {profile && (
-        <CollapsibleSection title="调试信息" subtitle="AI 提示词上下文预览，日常运营可忽略">
+        <CollapsibleSection title="调试信息" subtitle="AI 每轮回复携带的隐性用户背景，日常运营可忽略">
           <div className="text-break max-w-full overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-6 text-slate-600 select-all">
             {aiContextPreview?.context || "暂无 AI 上下文。"}
           </div>
