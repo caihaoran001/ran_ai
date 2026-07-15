@@ -470,6 +470,35 @@ async def test_document_checklist_reviews_yesterday_and_only_missing_items(db_se
 
 
 @pytest.mark.asyncio
+async def test_document_checklist_first_item_only_asks_missing_products(db_session):
+    """第1项三合一：只报了早C时，追问只列午B/晚A，不再把已报的早C拖着重问。"""
+    case = await _case(db_session)
+    document = await _sent_execution_document(db_session, case)
+    yesterday = date.today() - timedelta(days=1)
+    checkin = Checkin(
+        service_case_id=case.id, group_id=case.group_id, user_id=case.user_id,
+        checkin_date=yesterday, content="只报了早C",
+        parsed_json={
+            "product_schedule": {"morning_c": "已喝"},  # 仅早C，午B/晚A 未报
+            "custom_checkin": {
+                f"document:{document.id}:{i}": {"answer": "完成"} for i in (2, 3, 4, 5)
+            },
+        },
+    )
+    db_session.add(checkin)
+    await db_session.flush()
+    followup = await compose_document_checklist_followup(
+        db_session, service_case=case, target_date=yesterday, ai_service=_RaisingAI()
+    )
+    assert followup is not None
+    # 只剩第1项，且 label 只含午B/晚A、不含早C
+    assert [item["id"] for item in followup.expected_items] == [f"document:{document.id}:1"]
+    assert followup.expected_items[0]["label"] == "午B、晚A"
+    assert "早C" not in followup.text
+    assert "午B" in followup.text and "晚A" in followup.text
+
+
+@pytest.mark.asyncio
 async def test_two_unanswered_cycles_pause_and_valid_answer_reopens(db_session):
     # The shared developer test database may lag Alembic head; CI applies migrations.
     connection = await db_session.connection()

@@ -361,23 +361,40 @@ async def get_sent_daily_checklist(
 
 
 def _answered_document_items(checkin: Checkin | None, items: list[dict[str, str]]) -> set[str]:
+    """已答的自定义清单项（custom_checkin）。
+
+    第1项是早C/午B/晚A三合一，不在此判定——它按子产品逐项判缺，见 `_first_item_missing_label`。
+    """
     parsed = checkin.parsed_json if checkin and isinstance(checkin.parsed_json, dict) else {}
     answers = parsed.get("custom_checkin") if isinstance(parsed, dict) else None
-    answered = {
+    return {
         str(item_id)
         for item_id, answer in (answers or {}).items()
         if isinstance(answer, dict) and str(answer.get("answer") or "").strip()
     }
-    # The first delivered question is always the combined three-product check-in.
-    # It is already a stable structured field, so ordinary chat extraction must
-    # suppress it even when the user never replied to a bot prompt.
+
+
+def _first_item_missing_label(checkin: Checkin | None, items: list[dict[str, str]]) -> str | None:
+    """第1项(早C/午B/晚A三合一)要追问的标签；三项都已上报则返回 None(不追)。
+
+    按 `_PRODUCT_SLOTS` 逐个子产品判缺：全缺时用清单原始题面，部分缺时只列尚未上报的子产品
+    (如"午B、晚A")。这样只报了早C、午B/晚A没报时，已报的早C不会被拖着一起重复追问。
+    """
+    if not items:
+        return None
+    parsed = checkin.parsed_json if checkin and isinstance(checkin.parsed_json, dict) else {}
     product_schedule = parsed.get("product_schedule") if isinstance(parsed, dict) else None
-    if items and isinstance(product_schedule, dict) and all(
-        _slot_filled(product_schedule.get(key))
-        for key in ("morning_c", "noon_b", "night_a")
-    ):
-        answered.add(items[0]["id"])
-    return answered
+    product_schedule = product_schedule if isinstance(product_schedule, dict) else {}
+    missing_slots = [
+        label
+        for key, label in _PRODUCT_SLOTS.items()
+        if not _slot_filled(product_schedule.get(key))
+    ]
+    if not missing_slots:
+        return None
+    if len(missing_slots) == len(_PRODUCT_SLOTS):
+        return items[0]["label"]
+    return "、".join(missing_slots)
 
 
 async def compose_document_checklist_followup(
@@ -400,7 +417,15 @@ async def compose_document_checklist_followup(
         )
     )
     answered = _answered_document_items(checkin, items)
-    missing = [item for item in items if item["id"] not in answered]
+    missing: list[dict[str, str]] = []
+    for index, item in enumerate(items):
+        if index == 0:
+            # 第1项三合一：只追尚未上报的子产品（早C/午B/晚A），已报的不重复问。
+            first_label = _first_item_missing_label(checkin, items)
+            if first_label is not None:
+                missing.append({"id": item["id"], "label": first_label})
+        elif item["id"] not in answered:
+            missing.append(item)
     if not missing:
         return None
     labels = "；".join(item["label"] for item in missing)
