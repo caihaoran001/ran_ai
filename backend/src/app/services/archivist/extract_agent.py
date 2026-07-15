@@ -136,6 +136,8 @@ async def run_extract_agent(
                 + "\n</daily_checklist_context>\n"
                 + "用户即使不是在回复提醒，只要明确回答了其中一项，也请随 report_checkin 的 "
                 "checklist_answers 上报；item_id 和 target_date 必须完全一致。"
+                "注意：同一句话既是自由打卡字段（如饮食/运动/睡眠），又能对应上面某道清单题时，"
+                "两者都要填——内容既写进对应字段，也随 checklist_answers 上报那道 item_id，不要二选一。"
             )
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
