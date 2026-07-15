@@ -707,12 +707,17 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
     monkeypatch.setattr(RanrenAIEngine, "_recent_user_messages", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(RanrenAIEngine, "_store_intervention_analysis", lambda *args, **kwargs: asyncio.sleep(0, result=None))
 
-    async def fake_reply_with_ai(self, message, **kwargs):
-        trigger_id = kwargs.get("trigger_id")
-        trigger = added_messages[(trigger_id or 1) - 1]
-        reply_inputs.append((message.text, trigger.sender_type))
+    # reply 子图以「子图即节点」原生挂载后，主流程不再经过 _reply_with_ai；观测钩子随缝
+    # 平移到子图入口节点 _prep：记录 (text, trigger.sender_type) 后 _halt 短路（等价旧 fake 的 no-op）。
+    from app.services.ranren_ai.engine_graph import ReplyGraph
 
-    monkeypatch.setattr(RanrenAIEngine, "_reply_with_ai", fake_reply_with_ai)
+    async def fake_reply_prep(self, state):
+        trigger_id = state.get("trigger_id")
+        trigger = added_messages[(trigger_id or 1) - 1]
+        reply_inputs.append((state["message"].text, trigger.sender_type))
+        return {"_halt": True}
+
+    monkeypatch.setattr(ReplyGraph, "_prep", fake_reply_prep)
 
     engine = RanrenAIEngine(FakeChannel())
 

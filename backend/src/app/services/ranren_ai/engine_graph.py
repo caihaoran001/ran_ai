@@ -71,6 +71,7 @@ class EngineState(TypedDict, total=False):
     resume_takeover_receipt: bool
     analysis: dict | None
     inbound_id: int | None
+    trigger_id: int | None  # = inbound_id；原生挂载的 reply 子图按键名读取，桥接给它
     recent_user_messages: list
     image_analysis_content: str | None
     file_processed: bool
@@ -99,7 +100,9 @@ class EngineGraph:
         b.add_node("reprocess_head", self._reprocess_head)
         b.add_node("risk", self._risk)
         b.add_node("handoff", self._handoff)
-        b.add_node("reply", self._reply)
+        # reply 子图以「子图即节点」的原生形态挂载：LangGraph 按同名键在父/子 state 间通信
+        # （message/service_case_id/analysis/trigger_id 均已在父 state 就位）。异常照旧冒出 ainvoke。
+        b.add_node("reply", ReplyGraph(self.engine).graph)
 
         b.add_conditional_edges(
             START, self._route_start,
@@ -315,6 +318,7 @@ class EngineGraph:
             "resume_takeover_receipt": resume_takeover_receipt,
             "analysis": analysis,
             "inbound_id": inbound_id,
+            "trigger_id": inbound_id,
             "recent_user_messages": recent_user_messages,
             "purpose": purpose,
         }
@@ -521,6 +525,7 @@ class EngineGraph:
             "message": channel_msg,
             "service_case_id": service_case_id,
             "inbound_id": inbound_id,
+            "trigger_id": inbound_id,
             "recent_user_messages": recent_user_messages,
             "purpose": db_message.purpose,
             "is_staff": False,
@@ -597,16 +602,6 @@ class EngineGraph:
                 "RanrenAI skip duplicate handoff within 30min chat_id=%s trigger_id=%s service_case_id=%s",
                 message.chat_id, inbound_id, service_case_id,
             )
-        return {}
-
-    async def _reply(self, state: EngineState) -> dict[str, Any]:
-        """对应 527–528 / 660–661：委托现有 _reply_with_ai（其内部守卫/异常语义原样保留）。"""
-        await self.engine._reply_with_ai(
-            state["message"],
-            service_case_id=state.get("service_case_id"),
-            analysis=state.get("analysis"),
-            trigger_id=state.get("inbound_id"),
-        )
         return {}
 
 
