@@ -151,6 +151,12 @@ class Settings(BaseSettings):
         default=30.0,
         validation_alias="REMINDER_CHECK_INTERVAL_SECONDS",
     )
+    # 定时提醒「过点即弃」阈值：PENDING 提醒的 remind_at 已过去超过这么多分钟，就不再补发
+    # （退下期间到点 / 部署重启补跑积压），标 SKIPPED 并把循环序列顺延到下一次。
+    reminder_stale_after_minutes: float = Field(
+        default=20.0,
+        validation_alias="REMINDER_STALE_AFTER_MINUTES",
+    )
     reminder_at: str = Field(default="12:00", validation_alias="REMINDER_AT")  # 已弃用(随 check_once 退役)
     reminder_timezone: str = Field(
         default="Asia/Shanghai",

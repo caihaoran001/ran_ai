@@ -21,6 +21,9 @@ class AgentReminderTaskStatus(str, enum.Enum):
     SENT = "sent"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # 过点太久被自动跳过的这一次（退下期间到点 / 重启补跑积压）。区别于用户主动 CANCELLED；
+    # 循环序列不因此终止——跳过的同时会顺延下一次。
+    SKIPPED = "skipped"
 
 
 class AgentReminderTask(TimestampMixin, Base):

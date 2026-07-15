@@ -380,6 +380,93 @@ async def test_reminder_service_schedules_next_recurrence(db_session, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_reminder_service_skips_stale_one_shot_task(db_session, monkeypatch):
+    """过点太久的单次提醒不再补发：标 SKIPPED、不生成文案、不新排。"""
+    service_case = await _case(db_session)
+    task = AgentReminderTask(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        remind_at=datetime.now(timezone.utc) - timedelta(hours=3),
+        content="该吃午饭了",
+        status=AgentReminderTaskStatus.PENDING,
+    )
+    db_session.add(task)
+    await db_session.flush()
+
+    called = False
+
+    async def fake_generate_scheduled_reminder_reply(**kwargs):
+        nonlocal called
+        called = True
+        return AgentReplyResult(reply="不该被调用", tool_trace=[])
+
+    monkeypatch.setattr(
+        "app.services.reminder_service.generate_scheduled_reminder_reply",
+        fake_generate_scheduled_reminder_reply,
+    )
+
+    await ReminderService(get_settings()).check_agent_reminder_tasks_once(now=datetime.now(timezone.utc))
+
+    assert called is False
+    assert task.status == AgentReminderTaskStatus.SKIPPED
+    assert task.sent_message_id is None
+    assert "stale" in (task.error or "")
+    # 单次提醒序列到此结束，不应新排 PENDING
+    pending = list(
+        await db_session.scalars(
+            select(AgentReminderTask).where(
+                AgentReminderTask.service_case_id == service_case.id,
+                AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+            )
+        )
+    )
+    assert pending == []
+
+
+@pytest.mark.asyncio
+async def test_reminder_service_stale_daily_task_skips_but_rolls_forward(db_session, monkeypatch):
+    """过点太久的每日提醒：这一次标 SKIPPED、不发，但把序列顺延到下一次，避免断链。"""
+    service_case = await _case(db_session)
+    task = AgentReminderTask(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        remind_at=datetime.now(timezone.utc) - timedelta(hours=3),
+        content="吃午饭",
+        recurrence="daily",
+        status=AgentReminderTaskStatus.PENDING,
+    )
+    db_session.add(task)
+    await db_session.flush()
+
+    async def fake_generate_scheduled_reminder_reply(**kwargs):
+        raise AssertionError("stale reminder should not generate content")
+
+    monkeypatch.setattr(
+        "app.services.reminder_service.generate_scheduled_reminder_reply",
+        fake_generate_scheduled_reminder_reply,
+    )
+
+    await ReminderService(get_settings()).check_agent_reminder_tasks_once(now=datetime.now(timezone.utc))
+
+    assert task.status == AgentReminderTaskStatus.SKIPPED
+    assert task.sent_message_id is None
+    pending = list(
+        await db_session.scalars(
+            select(AgentReminderTask).where(
+                AgentReminderTask.service_case_id == service_case.id,
+                AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+            )
+        )
+    )
+    assert len(pending) == 1
+    nxt = pending[0]
+    assert nxt.id != task.id
+    assert nxt.recurrence == "daily"
+    assert nxt.content == "吃午饭"
+    assert nxt.remind_at > datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
 async def test_list_group_reminders_tool(db_session):
     service_case = await _case(db_session)
     for offset, content in ((10, "做饭"), (20, "喝水")):

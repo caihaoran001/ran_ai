@@ -520,8 +520,18 @@ class ReminderService:
                     task.status = AgentReminderTaskStatus.FAILED
                     task.error = "service case not found or deleted"
                     continue
+                # 「过点即弃」：提醒是时点绑定的，过点太久（退下期间到点 / 重启补跑积压）迟发反而
+                # 内容过期、突然炸群打断当前对话，不如不发。丢弃这一次，但把循环序列顺延到下一次，
+                # 避免 daily/weekly 因跳过而断链（单次 none 则序列自然结束）。
+                stale_minutes = self.settings.reminder_stale_after_minutes
+                if now_utc - task.remind_at > timedelta(minutes=stale_minutes):
+                    task.status = AgentReminderTaskStatus.SKIPPED
+                    task.error = f"stale: remind_at past by >{int(stale_minutes)}min, skipped"
+                    await _schedule_next_recurrence(session, task, service_case, now, tz)
+                    continue
                 if not service_case.ai_auto_reply_enabled:
-                    # 「退下」期间不主动发提醒；保持 PENDING 跳过本轮，用户「回来」后到点仍可补发。
+                    # 「退下」期间不主动发提醒；阈值内保持 PENDING 跳过本轮，用户「回来」后仍可准点补发；
+                    # 若退下持续到过点太久，则下一轮由上面的「过点即弃」丢弃并顺延。
                     continue
                 if service_case.status in {ServiceCaseStatus.COMPLETED, ServiceCaseStatus.REFUNDED}:
                     task.status = AgentReminderTaskStatus.FAILED
