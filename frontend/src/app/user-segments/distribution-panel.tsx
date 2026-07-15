@@ -2,9 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowRight, Phone, X } from "lucide-react";
+import { ArrowRight, ChevronDown, Phone, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { PopulationDistribution, ServiceCase } from "@/lib/api";
+
+// 默认最多展示的分桶数（与年龄段等固定 5 桶的维度保持一致高度）；超出的收起，可点开。
+const DEFAULT_VISIBLE_BUCKETS = 5;
 
 // 分型标签配色，与单人画像页顶部标签保持一致。
 const CUSTOMER_TYPE_COLORS: Record<string, string> = {
@@ -35,9 +38,13 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function DistributionPanel({ dist }: { dist: PopulationDistribution }) {
   const denom = dist.total + dist.unknown; // 展示占比的分母含未采集，避免误导
-  const maxCount = Math.max(1, ...dist.buckets.map((b) => b.count));
+  const maxCount = Math.max(1, ...dist.buckets.map((b) => b.count)); // 用全量算条宽，展开/收起时比例一致
   // 当前下钻选中的分桶标签（null 表示抽屉关闭）。
   const [activeBucket, setActiveBucket] = useState<string | null>(null);
+  // 分桶过多时默认收起，只显示前若干条，避免页面某一块过长、与相邻框高度不齐。
+  const [expanded, setExpanded] = useState(false);
+  const overflow = dist.buckets.length - DEFAULT_VISIBLE_BUCKETS;
+  const visibleBuckets = expanded ? dist.buckets : dist.buckets.slice(0, DEFAULT_VISIBLE_BUCKETS);
 
   return (
     <>
@@ -56,7 +63,7 @@ export function DistributionPanel({ dist }: { dist: PopulationDistribution }) {
           {dist.buckets.length === 0 ? (
             <div className="empty-state">暂无有效样本</div>
           ) : (
-            dist.buckets.map((bucket, index) => {
+            visibleBuckets.map((bucket, index) => {
               const pct = denom > 0 ? Math.round((bucket.count * 100) / denom) : 0;
               const widthPct = Math.round((bucket.count * 100) / maxCount);
               return (
@@ -80,6 +87,16 @@ export function DistributionPanel({ dist }: { dist: PopulationDistribution }) {
                 </button>
               );
             })
+          )}
+          {overflow > 0 && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="flex w-full items-center justify-center gap-1 rounded-md py-1.5 text-sm font-semibold text-cyan-700 transition-colors hover:bg-cyan-50"
+            >
+              {expanded ? "收起" : `展开全部 ${dist.buckets.length} 项`}
+              <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+            </button>
           )}
         </div>
       </section>

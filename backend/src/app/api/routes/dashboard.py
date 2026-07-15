@@ -510,11 +510,45 @@ def _band_short(band: str) -> str:
     return "待完善"
 
 
+# 省 / 自治区 / 直辖市名（长名优先匹配，避免"黑龙江"被"黑"类前缀误伤）。
+# 用于把"浙江湖州""新疆阿勒泰"这类"省+市"写法剥成城市名归组；这是确定性文本清洗
+# 的参考数据，不是业务判断，无需上 LLM。
+_MUNICIPALITIES = {"北京", "上海", "天津", "重庆", "香港", "澳门"}
+_PROVINCES = sorted(
+    [
+        "北京", "上海", "天津", "重庆", "香港", "澳门",
+        "内蒙古", "黑龙江", "广西", "西藏", "宁夏", "新疆",
+        "河北", "山西", "辽宁", "吉林", "江苏", "浙江", "安徽", "福建", "江西",
+        "山东", "河南", "湖北", "湖南", "广东", "海南", "四川", "贵州", "云南",
+        "陕西", "甘肃", "青海", "台湾",
+    ],
+    key=len,
+    reverse=True,
+)
+
+
 def _normalize_city(value: Any) -> str:
-    """归一城市写法：去掉结尾的"市"，让"北京"与"北京市"落入同一桶（去后为空则保留原值）。"""
+    """归一城市写法，让同一地点的不同写法落入同一桶。
+
+    - 剥掉省/自治区前缀："浙江湖州"→湖州、"新疆阿勒泰"→阿勒泰、"河北保定"→保定；
+      "浙江省湖州市"→湖州。直辖市（北京/上海等）保留本身，不下钻到区。
+    - 去掉结尾的"市"："北京市"→北京、"湖州市"→湖州。
+    - 剥离后为空则回退到省/原文，绝不产生空标签。
+    """
     text = str(value or "").strip()
+    if not text:
+        return ""
+    for prov in _PROVINCES:
+        for form in (prov + "省", prov + "自治区", prov + "市", prov):
+            if text.startswith(form):
+                rest = text[len(form):].strip()
+                text = prov if prov in _MUNICIPALITIES else (rest or prov)
+                break
+        else:
+            continue
+        break
     if len(text) > 1 and text.endswith("市"):
-        return text[:-1]
+        text = text[:-1]
     return text
 
 

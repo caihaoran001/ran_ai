@@ -50,6 +50,21 @@ def test_normalize_city_strips_trailing_shi():
     assert _normalize_city(None) == ""
 
 
+def test_normalize_city_strips_province_prefix():
+    assert _normalize_city("浙江湖州") == "湖州"
+    assert _normalize_city("新疆阿勒泰") == "阿勒泰"
+    assert _normalize_city("河北保定") == "保定"
+    assert _normalize_city("浙江省湖州市") == "湖州"
+    assert _normalize_city("内蒙古呼和浩特") == "呼和浩特"
+    # 直辖市保留本身，不下钻到区
+    assert _normalize_city("北京市朝阳区") == "北京"
+    assert _normalize_city("上海") == "上海"
+    # 仅给省名时回退为省名，不产生空标签
+    assert _normalize_city("浙江省") == "浙江"
+    # 不带省前缀的城市与"省+市"写法归到同一桶
+    assert _normalize_city("湖州") == "湖州"
+
+
 def test_bucket_numeric_buckets_and_unknown():
     edges = [18.5, 24, 28, 32]
     labels = ["偏瘦 <18.5", "正常 18.5-24", "超重 24-28", "肥胖 28-32", "重度 ≥32"]
