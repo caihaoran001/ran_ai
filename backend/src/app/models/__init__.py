@@ -1,5 +1,6 @@
 from app.models.agent_reminder_task import AgentReminderTask, AgentReminderTaskStatus
 from app.models.archivist_case_memory import ArchivistCaseMemory
+from app.models.archivist_extract_trace import ArchivistExtractTrace
 from app.models.archivist_progress import ArchivistProgress
 from app.models.archivist_shadow_outcome import ArchivistShadowOutcome
 from app.models.checkin import Checkin
@@ -30,6 +31,7 @@ __all__ = [
     "AgentReminderTask",
     "AgentReminderTaskStatus",
     "ArchivistCaseMemory",
+    "ArchivistExtractTrace",
     "ArchivistProgress",
     "ArchivistShadowOutcome",
     "AIUsageLog",

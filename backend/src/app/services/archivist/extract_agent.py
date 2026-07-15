@@ -101,6 +101,9 @@ async def run_extract_agent(
         "profile": [],
         "correction": [],
         "faq": [],
+        # 观测留痕(R1):LLM 原始 emit + 过滤后存活 + 被丢弃及原因;
+        # graph.commit 落 archivist_extract_traces。纯观测,不影响归桶。
+        "_trace": {"emitted": [], "kept": {}, "dropped": []},
     }
     if not content.strip():
         return collector
@@ -145,12 +148,19 @@ async def run_extract_agent(
         )
         return collector
 
+    trace = collector["_trace"]
+    dropped = trace["dropped"]
     tool_calls = getattr(response, "tool_calls", None) or []
+    # emitted：原样记录 LLM 每次 tool_call（name+args），这是当初缺失、最难复盘的一半。
+    trace["emitted"] = [
+        {"name": call.get("name"), "args": call.get("args") or {}} for call in tool_calls
+    ]
     for call in tool_calls:
         name = call.get("name")
         raw_args = call.get("args") or {}
         spec = REPORT_SPECS.get(name)
         if spec is None:
+            dropped.append({"bucket": str(name), "reason": "unknown_tool"})
             continue
         args_model, kind = spec
         try:
@@ -161,6 +171,7 @@ async def run_extract_agent(
                 name,
                 service_case_id,
             )
+            dropped.append({"bucket": kind, "reason": "bad_args"})
             continue
         if kind == "checkin":
             fields = _collect_checkin(validated)
@@ -179,7 +190,13 @@ async def run_extract_agent(
                     str(answer.get("cycle_date") or ""),
                     str(answer.get("target_date") or ""),
                 )
-                if key in allowed and str(answer.get("answer") or "").strip():
+                if not str(answer.get("answer") or "").strip():
+                    dropped.append({"bucket": "followup", "item_id": key[0],
+                                    "target_date": key[2], "reason": "followup_empty_answer"})
+                elif key not in allowed:
+                    dropped.append({"bucket": "followup", "item_id": key[0],
+                                    "target_date": key[2], "reason": "followup_not_in_whitelist"})
+                else:
                     collector["followup_answers"].append(answer)
             checklist_allowed = {
                 (str(item.get("item_id")), str(item.get("target_date")))
@@ -187,9 +204,25 @@ async def run_extract_agent(
             }
             for answer in validated.get("checklist_answers") or []:
                 key = (str(answer.get("item_id") or ""), str(answer.get("target_date") or ""))
-                if key in checklist_allowed and str(answer.get("answer") or "").strip():
+                if not str(answer.get("answer") or "").strip():
+                    dropped.append({"bucket": "checklist", "item_id": key[0],
+                                    "target_date": key[1], "reason": "checklist_empty_answer"})
+                elif key not in checklist_allowed:
+                    dropped.append({"bucket": "checklist", "item_id": key[0],
+                                    "target_date": key[1], "reason": "checklist_not_in_whitelist"})
+                else:
                     collector["checklist_answers"].append(answer)
         else:
             collector[kind].append(validated)
 
+    # kept：过滤后存活的摘要，供事后一眼看清"抽到了什么"。
+    trace["kept"] = {
+        "checkin_fields": sorted(collector["checkin"].keys()),
+        "checklist_item_ids": [str(a.get("item_id") or "") for a in collector["checklist_answers"]],
+        "followup_item_ids": [str(a.get("item_id") or "") for a in collector["followup_answers"]],
+        "outcome": len(collector["outcome"]),
+        "profile": len(collector["profile"]),
+        "correction": len(collector["correction"]),
+        "faq": len(collector["faq"]),
+    }
     return collector

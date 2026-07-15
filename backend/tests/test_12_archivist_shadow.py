@@ -16,6 +16,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from sqlalchemy import select
 
+from app.models.archivist_extract_trace import ArchivistExtractTrace
 from app.models.archivist_progress import ArchivistProgress
 from app.models.archivist_shadow_outcome import ArchivistShadowOutcome
 from app.models.checkin import Checkin
@@ -137,6 +138,12 @@ async def _setup_case_with_messages(db_session):
     connection = await db_session.connection()
     await connection.run_sync(
         lambda sync_connection: CheckinFollowupCycle.__table__.create(
+            sync_connection, checkfirst=True
+        )
+    )
+    # 抽取观测留痕表（R1）：commit 节点凡有 emit/丢弃就写，故所有档案官测试都需它存在。
+    await connection.run_sync(
+        lambda sync_connection: ArchivistExtractTrace.__table__.create(
             sync_connection, checkfirst=True
         )
     )
@@ -672,3 +679,119 @@ async def test_archivist_does_not_create_faq_for_correction_without_user_questio
         if (draft.content_json or {}).get("service_case_id") == case.id
     ]
     assert drafts == []
+
+
+@pytest.mark.asyncio
+async def test_archivist_extract_trace_records_kept_and_dropped(db_session):
+    """R1 观测性：抽取留痕记 LLM 原始 emit、存活项、越界丢弃项及原因。"""
+    case, msgs, progress = await _setup_case_with_messages(db_session)
+    document = UserDocument(
+        service_case_id=case.id,
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28天执行标准与打卡要求",
+        content_md="test",
+        content_json={
+            "blocks": [
+                {"key": "daily_checkin", "items": [
+                    "早C/午B/晚A是否全部完成",
+                    "今天是否至少吃到2拳蔬菜",
+                    "今天是否完成计划内快走",
+                    "睡眠是否按计划收口",
+                    "情绪稳定度评分",
+                ]}
+            ]
+        },
+        status=DocumentStatus.SENT,
+        sent_at=datetime.now(timezone.utc),
+    )
+    db_session.add(document)
+    normal_chat = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="今天蔬菜吃够两拳了。",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(normal_chat)
+    await db_session.flush()
+    target_date = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    kept_id = f"document:{document.id}:2"       # 在已发执行单白名单内 → 存活
+    dropped_id = f"document:{document.id}:99"   # 越界 → 丢弃
+    fake = FakeToolCallingModel([
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "report_checkin",
+                    "args": {
+                        "checklist_answers": [
+                            {
+                                "item_id": kept_id,
+                                "target_date": target_date,
+                                "answer": "蔬菜吃够两拳",
+                                "evidence_message_id": str(normal_chat.id),
+                            },
+                            {
+                                "item_id": dropped_id,
+                                "target_date": target_date,
+                                "answer": "越界题目",
+                                "evidence_message_id": str(normal_chat.id),
+                            },
+                        ]
+                    },
+                    "id": "checklist-with-oob",
+                }
+            ],
+        )
+    ])
+
+    await run_archivist(db_session, service_case=case, progress=progress, chat_model=fake)
+    await db_session.flush()
+
+    traces = list(
+        await db_session.scalars(
+            select(ArchivistExtractTrace).where(
+                ArchivistExtractTrace.service_case_id == case.id
+            )
+        )
+    )
+    assert len(traces) == 1
+    trace = traces[0]
+    # emitted：LLM 原始 tool_call 原样落库（含被丢弃那条）。
+    assert len(trace.emitted_json) == 1
+    assert trace.emitted_json[0]["name"] == "report_checkin"
+    emitted_ids = {
+        a.get("item_id")
+        for a in trace.emitted_json[0]["args"]["checklist_answers"]
+    }
+    assert emitted_ids == {kept_id, dropped_id}
+    # kept：命中白名单的项存活。
+    assert kept_id in trace.kept_json["checklist_item_ids"]
+    assert dropped_id not in trace.kept_json["checklist_item_ids"]
+    # dropped：越界项被记，且带精确原因。
+    dropped = [d for d in trace.dropped_json if d.get("item_id") == dropped_id]
+    assert len(dropped) == 1
+    assert dropped[0]["reason"] == "checklist_not_in_whitelist"
+    assert dropped[0]["bucket"] == "checklist"
+
+
+@pytest.mark.asyncio
+async def test_archivist_extract_trace_skips_noop_extraction(db_session):
+    """无可上报（空 tool_calls）时不产生 trace 行，避免噪声。"""
+    case, msgs, progress = await _setup_case_with_messages(db_session)
+    fake = FakeToolCallingModel([AIMessage(content="", tool_calls=[])])
+
+    await run_archivist(db_session, service_case=case, progress=progress, chat_model=fake)
+    await db_session.flush()
+
+    traces = list(
+        await db_session.scalars(
+            select(ArchivistExtractTrace).where(
+                ArchivistExtractTrace.service_case_id == case.id
+            )
+        )
+    )
+    assert traces == []

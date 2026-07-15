@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.models.archivist_extract_trace import ArchivistExtractTrace
 from app.models.archivist_progress import ArchivistProgress
 from app.models.message import Message, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase
@@ -59,6 +60,8 @@ class ArchivistState(TypedDict, total=False):
     followup_answers: list[dict]
     checklist_answers: list[dict]
     has_checkin_activity: bool
+    # 抽取观测留痕(R1):每个自然日一条 {target_date, emitted, kept, dropped}
+    extract_traces: list[dict]
     committed: list[dict]
 
 
@@ -290,6 +293,7 @@ class ArchivistGraph:
         faq_candidates: list[dict] = []
         followup_answers: list[dict] = []
         checklist_answers: list[dict] = []
+        extract_traces: list[dict] = []
         has_checkin_activity = False
         followup_context_by_date = state.get("followup_context_by_date") or {}
         checklist = await get_sent_daily_checklist(
@@ -323,6 +327,10 @@ class ArchivistGraph:
                     else []
                 ),
             )
+            # 抽取观测留痕：仅在 LLM 确有 emit 或有丢弃时记，跳过纯 no-op 抽取避免噪声。
+            trace = collector.get("_trace") or {}
+            if trace.get("emitted") or trace.get("dropped"):
+                extract_traces.append({"target_date": date_iso, **trace})
             fields = collector.get("checkin") or {}
             has_checkin_activity = has_checkin_activity or bool(fields)
             outcome_candidates.extend(collector.get("outcome") or [])
@@ -369,6 +377,7 @@ class ArchivistGraph:
             "faq_candidates": faq_candidates,
             "followup_answers": followup_answers,
             "checklist_answers": checklist_answers,
+            "extract_traces": extract_traces,
             "has_checkin_activity": has_checkin_activity,
         }
 
@@ -462,10 +471,23 @@ class ArchivistGraph:
         # FAQ 候选不在归档事务落库：交给 result，trigger 在归档提交成功后 best-effort 转 qa 草稿。
         self.result.faq_candidates = state.get("faq_candidates") or []
 
+        # 抽取观测留痕(R1)：与打卡 upsert/水位线同一事务落库，痕迹始终与已提交状态强一致。
+        watermark_to = state.get("watermark_to")
+        for tr in state.get("extract_traces") or []:
+            self.session.add(
+                ArchivistExtractTrace(
+                    service_case_id=self.service_case.id,
+                    target_date=date.fromisoformat(str(tr["target_date"])),
+                    watermark_to=watermark_to,
+                    emitted_json=tr.get("emitted") or [],
+                    kept_json=tr.get("kept") or {},
+                    dropped_json=tr.get("dropped") or [],
+                )
+            )
+
         # 走到这里说明打卡 upsert、成效/画像写库、纠正落库全部成功（任一步抛错都不会到此，
         # 由 trigger 层回滚、水位线保持不动）。此时才推进水位线并清零失败计数。
         # 即使本轮没抽到打卡也要推进，避免下轮重复处理同一批增量。
-        watermark_to = state.get("watermark_to")
         if watermark_to:
             self.progress.last_archived_message_id = watermark_to
         self.progress.last_archived_at = datetime.now(timezone.utc)
