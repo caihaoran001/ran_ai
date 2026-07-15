@@ -27,7 +27,7 @@ from app.services.agent.tools.web_search_tools import _normalize_current_query_y
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_enabled
 from app.services.profile_memory_service import load_profile_memory_context
-from app.services.ranren_ai.engine import RanrenAIEngine, _recent_checkin_context_lines
+from app.services.ranren_ai.engine import RanrenAIEngine
 
 
 class FakeToolCallingModel:
@@ -319,53 +319,6 @@ async def test_recent_checkins_separate_general_and_personalized_items(db_sessio
             "answer": "4",
         },
     ]
-
-
-@pytest.mark.asyncio
-async def test_recent_checkin_context_includes_three_day_personalized_summary(db_session):
-    service_case = await _case(db_session)
-    document = UserDocument(
-        service_case_id=service_case.id,
-        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
-        title="28天执行标准与打卡要求",
-        content_md="ok",
-        content_json={
-            "daily_checkin": [
-                "今天是否完成早C/午B/晚A？",
-                "今天是否在23:30前上床？",
-                "今天蔬菜是否达到两拳？",
-                "今天是否完成7000步？",
-                "今天情绪评分（1-5分）",
-            ]
-        },
-    )
-    db_session.add(document)
-    await db_session.flush()
-    db_session.add(
-        Checkin(
-            service_case_id=service_case.id,
-            group_id=service_case.group_id,
-            checkin_date=date.today(),
-            content="已答",
-            parsed_json={
-                "weight": "65",
-                "custom_checkin": {
-                    f"document:{document.id}:3": {"answer": "否"},
-                },
-            },
-        )
-    )
-    await db_session.flush()
-
-    lines = await _recent_checkin_context_lines(
-        db_session,
-        service_case.id,
-        documents=[document],
-    )
-
-    assert len(lines) == 1
-    assert "体重：65" in lines[0]
-    assert "专属执行项：今天蔬菜是否达到两拳？＝否" in lines[0]
 
 
 @pytest.mark.asyncio

@@ -25,16 +25,8 @@ from app.models.message import (
 )
 from app.models.service_case import ServiceCase
 from app.models.user import User
-from app.models.user_profile import UserProfile
-from app.models.user_state_profile import UserStateProfile
-from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ai_service import AIService
 from app.services.agent import AgentDataUnavailableError, generate_agent_reply
-from app.services.checkin_presentation import (
-    personalized_checkin_answers,
-    personalized_checkin_labels,
-)
-from app.services.checkin_queries import recent_checkins
 from app.services.channels.base import ChannelMessage, MessageChannel
 from app.services.ranren_ai.attachments import (
     InboundAttachmentProcessor,
@@ -47,7 +39,7 @@ from app.services.ranren_ai.attachments import (
 from app.services.content_policy import get_ai_reply_enabled
 from app.services.short_link import get_or_create_short_link
 from app.services.intervention_service import analyze_intervention, merge_case_insight
-from app.services.service_case_queries import effective_start_at, select_active_service_cases
+from app.services.service_case_queries import select_active_service_cases
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -758,9 +750,6 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         )
         return [_format_chat_history_line(item) for item in reversed(list(result))]
 
-    async def _build_user_context(self, session, service_case: ServiceCase | None) -> str:
-        return await build_ai_user_context(session, service_case)
-
     async def _build_intervention_context(self, session, *, service_case: ServiceCase | None) -> dict:
         if not service_case:
             return {}
@@ -769,226 +758,6 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             "intervention_reasons": service_case.intervention_reasons or [],
             "risk_flags": service_case.risk_flags or [],
         }
-
-
-async def build_ai_user_context(session, service_case: ServiceCase | None) -> str:
-    """Build the exact customer context injected into chat AI replies.
-
-    This function is also exposed to the admin UI as a preview endpoint. Keep it
-    as the single source of truth so operators see the same context that the
-    model receives, instead of a frontend approximation that can drift.
-    """
-
-    if not service_case:
-        return "未知用户，无历史档案。"
-
-    days_text = "服务准备中"
-    start = effective_start_at(service_case)
-    if start:
-        now = datetime.now(start.tzinfo)
-        days = (now - start).days + 1
-        days_text = f"第 {days} 天" if days >= 1 else "服务尚未正式开始（计划开始日未到）"
-
-    profile = await session.scalar(
-        select(UserProfile)
-        .where(UserProfile.service_case_id == service_case.id)
-        .order_by(UserProfile.created_at.desc())
-        .limit(1)
-    )
-    profile_json = profile.profile_json if profile and isinstance(profile.profile_json, dict) else {}
-    overview = profile_json.get("overview") if isinstance(profile_json.get("overview"), dict) else {}
-    need_analysis = profile_json.get("need_analysis") if isinstance(profile_json.get("need_analysis"), dict) else {}
-    profile_summary = str(profile.summary or profile_json.get("summary") or "暂无详细画像") if profile else "暂无详细画像"
-
-    stable_lines = [
-        f"- 身体状况及方案总结：{profile_summary}",
-        f"- 性别/年龄：{_context_value(overview.get('gender_age'))}",
-        f"- 身高/体重：{_context_value(overview.get('height_weight'))}",
-        f"- BMI：{_context_value(overview.get('bmi'))}",
-        f"- 腰围：{_context_value(overview.get('waist') or overview.get('waist_bodyfat'))}",
-        f"- 减重带：{_context_value(overview.get('weight_loss_band') or profile_json.get('weight_loss_band'))}",
-        f"- 核心问题：{_context_value(profile_json.get('main_problem'))}",
-        f"- 28天目标：{_context_value(profile_json.get('day28_goal'))}",
-        f"- 明确风险：{_context_value(profile_json.get('risks'))}",
-        f"- 真实需求：{_context_value(need_analysis.get('priority_need'))}",
-    ]
-
-    state_profile = await session.scalar(
-        select(UserStateProfile)
-        .where(UserStateProfile.service_case_id == service_case.id)
-        .order_by(UserStateProfile.updated_at.desc())
-        .limit(1)
-    )
-    state_summary = (
-        _compact_state_profile_for_prompt(state_profile.state_json)
-        if state_profile
-        else "暂无动态状态"
-    )
-
-    documents = list(
-        await session.scalars(
-            select(UserDocument)
-            .where(UserDocument.service_case_id == service_case.id)
-            .order_by(UserDocument.created_at.desc())
-        )
-    )
-    latest_by_type: dict[DocumentType, UserDocument] = {}
-    for document in documents:
-        latest_by_type.setdefault(document.document_type, document)
-
-    checkin_texts = await _recent_checkin_context_lines(
-        session,
-        service_case.id,
-        documents=documents,
-    )
-
-    document_lines = _document_status_lines(latest_by_type)
-    document_core_lines = _document_core_context_lines(latest_by_type)
-    latest_delivery_text = await _latest_delivery_context(session, service_case.id)
-
-    return (
-        f"### 稳定画像与基础事实（{days_text}）\n"
-        + "\n".join(stable_lines)
-        + "\n\n"
-        "### 当前动态状态与真实需求\n"
-        f"{state_summary}\n\n"
-        "### 交付文件核心口径\n"
-        + ("\n".join(document_core_lines) if document_core_lines else "- 暂无交付文件核心内容。")
-        + "\n\n"
-        "### 服务进度与交付状态\n"
-        f"- 当前服务单状态：{service_case.status.value}\n"
-        + ("\n".join(document_lines) + "\n" if document_lines else "- 暂无交付文件。\n")
-        + f"- 最近一次交付动作：{latest_delivery_text}\n\n"
-        "### 最近打卡趋势（近3次记录）\n"
-        + "\n".join(checkin_texts)
-    )
-
-
-async def _recent_checkin_context_lines(
-    session,
-    service_case_id: int,
-    *,
-    documents: list[UserDocument] | None = None,
-) -> list[str]:
-    # 最新在前（用于画像上下文展示）。查询主体见 checkin_queries.recent_checkins，与 agent 工具共用一处定义。
-    checkins = await recent_checkins(session, service_case_id, limit=3, ascending=False)
-    if not checkins:
-        return ["- 暂无打卡记录。"]
-
-    labels_by_id = personalized_checkin_labels(documents or [])
-    lines: list[str] = []
-    for checkin in checkins:
-        date_str = checkin.checkin_date.strftime("%Y-%m-%d")
-        if not checkin.parsed_json:
-            short_content = checkin.content.replace("\n", " ").strip()[:60]
-            lines.append(f"- [{date_str}] {short_content}...")
-            continue
-        pj = checkin.parsed_json
-        ps = pj.get("product_schedule") or {}
-        cba = (
-            f"早C:{ps.get('morning_c') or '未记录'}/"
-            f"午B:{ps.get('noon_b') or '未记录'}/"
-            f"晚A:{ps.get('night_a') or '未记录'}"
-        )
-        detail = (
-            f"体重：{pj.get('weight') or '未记录'} ｜ 腰围：{pj.get('waist') or '未记录'} ｜ {cba} ｜ "
-            f"睡眠：{pj.get('sleep') or '未记录'} ｜ 饮食：{pj.get('diet') or '未记录'} ｜ "
-            f"饮水：{pj.get('water') or '未记录'} ｜ 排便：{pj.get('bowel') or '未记录'} ｜ "
-            f"食欲/饥饿感：{pj.get('hunger') or '未记录'} ｜ 体感：{pj.get('sensation') or '未记录'} ｜ "
-            f"不适：{pj.get('discomfort') or '无'}"
-        )
-        personalized = personalized_checkin_answers(pj, labels_by_id=labels_by_id)
-        personalized_text = "；".join(
-            f"{item['label']}＝{item['answer']}" for item in personalized
-        )
-        suffix = f" ｜ 专属执行项：{personalized_text}" if personalized_text else ""
-        lines.append(f"- [{date_str}] {detail}{suffix}")
-    return lines
-
-
-async def _latest_delivery_context(session, service_case_id: int) -> str:
-    latest_delivery = await session.scalar(
-        select(Message)
-        .where(
-            Message.service_case_id == service_case_id,
-            Message.purpose == MessagePurpose.DOCUMENT_DELIVERY,
-            Message.direction == MessageDirection.OUTBOUND,
-            Message.sender_type == MessageSenderType.BOT,
-            Message.status == MessageStatus.SENT,
-        )
-        .order_by(Message.created_at.desc())
-        .limit(1)
-    )
-    if not latest_delivery:
-        return "暂无交付发送记录。"
-    return (
-        f"{latest_delivery.content} "
-        f"（{latest_delivery.created_at.astimezone().strftime('%Y-%m-%d %H:%M')}）"
-    )
-
-
-def _document_status_lines(latest_by_type: dict[DocumentType, UserDocument]) -> list[str]:
-    status_labels = {
-        DocumentStatus.DRAFT: "草稿",
-        DocumentStatus.REVIEWING: "待审核",
-        DocumentStatus.APPROVED: "已审核",
-        DocumentStatus.SENT: "已发送",
-        DocumentStatus.ARCHIVED: "未发送归档",
-    }
-    title_labels = {
-        DocumentType.ENERGY_RESTART_PRESCRIPTION: "个人能量重启处方单",
-        DocumentType.DAY28_EXECUTION_STANDARD: "28天执行标准与打卡要求",
-        DocumentType.STAGE_REPORT: "阶段报告",
-        DocumentType.GRADUATION_REPORT: "毕业报告",
-    }
-    lines: list[str] = []
-    for document_type in title_labels:
-        document = latest_by_type.get(document_type)
-        if not document:
-            continue
-        status = status_labels.get(document.status, document.status.value)
-        sent_suffix = (
-            f"（发送于 {document.sent_at.astimezone().strftime('%Y-%m-%d %H:%M')}）"
-            if document.sent_at
-            else ""
-        )
-        lines.append(f"- {title_labels[document_type]}：{status}{sent_suffix}")
-    return lines
-
-
-def _document_core_context_lines(latest_by_type: dict[DocumentType, UserDocument]) -> list[str]:
-    energy = latest_by_type.get(DocumentType.ENERGY_RESTART_PRESCRIPTION)
-    execution = latest_by_type.get(DocumentType.DAY28_EXECUTION_STANDARD)
-    items = [
-        ("一句话结论", _document_block_text(energy, "one_sentence")),
-        ("当前最该先抓方向", _document_block_text(energy, "priority_direction")),
-        ("最不能打折的一件事", _document_block_text(energy, "non_negotiable")),
-        ("执行总原则", _document_block_text(execution, "principle")),
-        ("每日打卡项", _document_block_text(execution, "daily_checkin")),
-    ]
-    return [f"- {label}：{_short_prompt_value(value)}" for label, value in items if _short_prompt_value(value)]
-
-
-def _document_block_text(document: UserDocument | None, key: str) -> str:
-    if not document or not isinstance(document.content_json, dict):
-        return ""
-    blocks = document.content_json.get("blocks")
-    if not isinstance(blocks, list):
-        return ""
-    for block in blocks:
-        if not isinstance(block, dict) or block.get("key") != key:
-            continue
-        content = block.get("content")
-        if isinstance(content, str) and content.strip():
-            return content.strip()
-        items = block.get("items")
-        if isinstance(items, list):
-            return "；".join(str(item).strip() for item in items if str(item).strip())
-    return ""
-
-
-def _context_value(value: object) -> str:
-    return _short_prompt_value(value) or "未提供"
 
 
 def _prompt_data(value: object) -> str:
@@ -1095,60 +864,6 @@ def _sanitize_ai_reply(reply: str, settings: Settings) -> str:
     if len(text) > AI_REPLY_MAX_CHARS:
         text = text[:AI_REPLY_MAX_CHARS].rstrip() + "\n\n（内容较长，我先保留重点，其余部分可由班主任补充。）"
     return text
-
-
-def _compact_state_profile_for_prompt(state_json: object) -> str:
-    if not isinstance(state_json, dict):
-        return "暂无动态状态"
-    domains = state_json.get("domains")
-    if not isinstance(domains, dict):
-        return "暂无动态状态"
-    lines: list[str] = []
-    for key in (
-        "need_analysis",
-        "personal_preferences",
-        "lifestyle_habits",
-        "goals",
-        "body_feedback",
-        "product_usage",
-        "risk_profile",
-        "outcome_changes",
-    ):
-        domain = domains.get(key)
-        if not isinstance(domain, dict):
-            continue
-        label = str(domain.get("label") or key)
-        current = domain.get("current")
-        if not isinstance(current, dict):
-            continue
-        value = current.get("value")
-        if not isinstance(value, dict) or not value:
-            continue
-        compact = "；".join(
-            f"{field}: {_short_prompt_value(field_value)}"
-            for field, field_value in list(value.items())[:5]
-            if _short_prompt_value(field_value)
-        )
-        if compact:
-            lines.append(f"- {label}：{compact}")
-    return "\n".join(lines) if lines else "暂无动态状态"
-
-
-def _short_prompt_value(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, list):
-        return "、".join(str(item).strip() for item in value if str(item).strip())[:160]
-    if isinstance(value, dict):
-        return "；".join(
-            str(item).strip()
-            for item in value.values()
-            if str(item).strip()
-        )[:160]
-    text = str(value).strip()
-    if text in {"未提供", "暂无数据", "None"}:
-        return ""
-    return text[:160]
 
 
 def _format_chat_history_line(message: Message) -> str:

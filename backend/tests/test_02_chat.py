@@ -513,57 +513,6 @@ async def test_recent_chat_history_includes_document_delivery(db_session, mock_m
     assert any("用户: 收到" in line for line in lines)
 
 
-@pytest.mark.asyncio
-async def test_user_context_mentions_document_progress(db_session, mock_message_channel, cai_haoran_answers):
-    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
-    case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
-    assert case is not None
-    case.status = ServiceCaseStatus.IN_SERVICE
-    db_session.add(
-        UserDocument(
-            service_case_id=case_id,
-            document_type=DocumentType.ENERGY_RESTART_PRESCRIPTION,
-            title="个人能量重启处方单",
-            content_md="ok",
-            content_json={},
-            file_path="/tmp/a.docx",
-            status=DocumentStatus.SENT,
-        )
-    )
-    db_session.add(
-        UserDocument(
-            service_case_id=case_id,
-            document_type=DocumentType.DAY28_EXECUTION_STANDARD,
-            title="28天执行标准与打卡要求",
-            content_md="ok",
-            content_json={},
-            file_path="/tmp/b.docx",
-            status=DocumentStatus.REVIEWING,
-        )
-    )
-    db_session.add(
-        Message(
-            service_case_id=case_id,
-            group_id=group_id,
-            direction=MessageDirection.OUTBOUND,
-            sender_type=MessageSenderType.BOT,
-            message_type="document",
-            content="已发送文件：个人能量重启处方单.docx",
-            purpose=MessagePurpose.DOCUMENT_DELIVERY,
-            status=MessageStatus.SENT,
-        )
-    )
-    await db_session.flush()
-
-    engine = RanrenAIEngine(mock_message_channel)
-    user_context = await engine._build_user_context(db_session, case)
-
-    assert "当前服务单状态：in_service" in user_context
-    assert "个人能量重启处方单：已发送" in user_context
-    assert "28天执行标准与打卡要求：待审核" in user_context
-    assert "最近一次交付动作：已发送文件：个人能量重启处方单.docx" in user_context
-
-
 def _age_case() -> ServiceCase:
     return ServiceCase(case_no="TEST-AGE", group_id="g", questionnaire_token="t")
 
