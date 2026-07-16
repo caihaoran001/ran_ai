@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-07-08T00:00:00Z",
+  "generatedAt": "2026-07-16T15:57:35Z",
   "title": "Design System: 燃人AI 1.0",
   "extensions": {
     "colorMeta": {
@@ -85,6 +85,14 @@
       "description": "Active navigation on the dark shell — the loudest, rarest accent use.",
       "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item ds-nav-item--active\">审核控制台</a><a class=\"ds-nav-item\">数据看板</a></nav>",
       "css": ".ds-nav { display: flex; flex-direction: column; gap: 6px; padding: 12px; background: #020617; border-radius: 12px; } .ds-nav-item { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 10px 14px; border-radius: 8px; font-size: 0.875rem; font-weight: 700; color: #cbd5e1; text-decoration: none; cursor: pointer; transition: background-color 0.2s, color 0.2s; } .ds-nav-item:hover { background: #0f172a; color: #fff; } .ds-nav-item--active { background: #22d3ee; color: #020617; } .ds-nav-item--active:hover { background: #22d3ee; color: #020617; }"
+    },
+    {
+      "name": "Operations Summary Rail",
+      "kind": "custom",
+      "refersTo": "panel",
+      "description": "A single evidence-first summary surface with three linked operational conclusions; use instead of a row of oversized KPI cards.",
+      "html": "<section class=\"ds-summary\"><header class=\"ds-summary-head\"><strong>运营快照</strong><span>111 位用户</span></header><div class=\"ds-summary-grid\"><a href=\"#\">主力人群<br><strong>健康投资型</strong></a><a href=\"#\">主要健康关注<br><strong>代谢健康</strong></a><a href=\"#\">首要数据缺口<br><strong>体脂率待补</strong></a></div></section>",
+      "css": ".ds-summary { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); } .ds-summary-head { display: flex; min-height: 48px; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid #e2e8f0; color: #020617; font-size: 0.875rem; } .ds-summary-head span { color: #0e7490; font-size: 0.75rem; } .ds-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); } .ds-summary-grid a { min-height: 92px; padding: 16px 20px; border-right: 1px solid #e2e8f0; color: #475569; font-size: 0.75rem; line-height: 1.5; text-decoration: none; transition: background-color 0.2s; } .ds-summary-grid a:last-child { border-right: 0; } .ds-summary-grid a:hover { background: #f8fafc; } .ds-summary-grid a:focus-visible { outline: 3px solid rgb(34 211 238 / 0.55); outline-offset: -3px; } .ds-summary-grid strong { color: #020617; font-size: 1rem; }"
     },
     {
       "name": "Status Pill",

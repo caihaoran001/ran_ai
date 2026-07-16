@@ -10,7 +10,6 @@ from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
@@ -333,7 +332,7 @@ _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
     {
         "key": "weight_loss_band",
         "label": "减重带分布",
-        "description": "按 BMI 划分的减重目标带位。",
+        "description": "综合身体指标、近期变化与生活状态判断的最终减重层级。",
         "numeric": False,
     },
     {

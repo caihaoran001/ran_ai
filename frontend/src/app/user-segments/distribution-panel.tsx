@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { ArrowRight, ChevronDown, Phone, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowRight, ChevronDown, Phone, RotateCw, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { PopulationDistribution, ServiceCase } from "@/lib/api";
 
@@ -16,12 +16,11 @@ const CUSTOMER_TYPE_COLORS: Record<string, string> = {
   健康投资型: "bg-emerald-500",
 };
 
-function barColor(distKey: string, label: string, index: number): string {
+function barColor(distKey: string, label: string): string {
   if (distKey === "customer_type" && CUSTOMER_TYPE_COLORS[label]) {
     return CUSTOMER_TYPE_COLORS[label];
   }
-  const palette = ["bg-cyan-500", "bg-sky-500", "bg-indigo-500", "bg-violet-500", "bg-fuchsia-500"];
-  return palette[index % palette.length];
+  return "bg-cyan-600";
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -44,7 +43,6 @@ export function DistributionPanel({
   embedded?: boolean;
 }) {
   const denom = dist.total + dist.unknown; // 展示占比的分母含未采集，避免误导
-  const maxCount = Math.max(1, ...dist.buckets.map((b) => b.count)); // 用全量算条宽，展开/收起时比例一致
   // 当前下钻选中的分桶标签（null 表示抽屉关闭）。
   const [activeBucket, setActiveBucket] = useState<string | null>(null);
   // 分桶过多时默认收起，只显示前若干条，避免页面某一块过长、与相邻框高度不齐。
@@ -63,8 +61,9 @@ export function DistributionPanel({
 
   const status = (
     <span className="status-pill pill-neutral shrink-0 self-start">
-      {dist.multi_select ? `覆盖 ${dist.total} · 可多选` : `有效 ${dist.total}`}
-      {dist.unknown > 0 ? ` · 未采集 ${dist.unknown}` : ""}
+      {`有数据 ${dist.total}`}
+      {dist.multi_select ? " · 可多选" : ""}
+      {dist.unknown > 0 ? ` · 未采集 ${dist.unknown}` : " · 已完整"}
     </span>
   );
 
@@ -73,26 +72,26 @@ export function DistributionPanel({
       {dist.buckets.length === 0 ? (
         <div className="empty-state">暂无有效样本</div>
       ) : (
-        visibleBuckets.map((bucket, index) => {
+        visibleBuckets.map((bucket) => {
           const pct = denom > 0 ? Math.round((bucket.count * 100) / denom) : 0;
-          const widthPct = Math.round((bucket.count * 100) / maxCount);
           return (
             <button
               type="button"
               key={bucket.label}
               onClick={() => setActiveBucket(bucket.label)}
-              className="flex w-full items-center gap-3 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-slate-50"
+              className="grid min-h-12 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:ring-offset-1 sm:grid-cols-[8rem_minmax(0,1fr)_6.5rem]"
               title={`查看「${bucket.label}」的用户`}
+              aria-label={`查看${bucket.label}用户，共${bucket.count}人，占全部纳入用户${pct}%`}
             >
-              <div className="w-32 shrink-0 truncate text-sm text-slate-700">{bucket.label}</div>
-              <div className="relative h-6 flex-1 overflow-hidden rounded-md bg-slate-100">
-                <div
-                  className={`h-full rounded-md ${barColor(dist.key, bucket.label, index)}`}
-                  style={{ width: `${Math.max(widthPct, bucket.count > 0 ? 4 : 0)}%` }}
-                />
-              </div>
-              <div className="w-24 shrink-0 text-right text-sm tabular-nums text-slate-600">
+              <div className="min-w-0 truncate text-sm font-medium text-slate-700 sm:col-start-1 sm:row-start-1">{bucket.label}</div>
+              <div className="shrink-0 text-right text-sm tabular-nums text-slate-600 sm:col-start-3 sm:row-start-1">
                 {bucket.count} 人 · {pct}%
+              </div>
+              <div className="relative col-span-2 row-start-2 h-2.5 overflow-hidden rounded-full bg-slate-100 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:h-5 sm:rounded-md">
+                <div
+                  className={`h-full rounded-[inherit] ${barColor(dist.key, bucket.label)}`}
+                  style={{ width: `${Math.max(pct, bucket.count > 0 ? 2 : 0)}%` }}
+                />
               </div>
             </button>
           );
@@ -123,7 +122,7 @@ export function DistributionPanel({
         </section>
       ) : (
         <section className="panel overflow-hidden" aria-labelledby={`distribution-title-${dist.key}`}>
-          <div className="panel-header-clean">
+          <div className="panel-header-clean sm:flex-row sm:items-start sm:justify-between">
             {header}
             {status}
           </div>
@@ -157,18 +156,47 @@ export function MembersDrawer({
   const [loading, setLoading] = useState(true);
   const [members, setMembers] = useState<ServiceCase[]>([]);
   const [error, setError] = useState<string | null>(null);
-
-  const escHandler = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    },
-    [onClose],
-  );
+  const [reloadKey, setReloadKey] = useState(0);
+  const drawerRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    document.addEventListener("keydown", escHandler);
-    return () => document.removeEventListener("keydown", escHandler);
-  }, [escHandler]);
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    requestAnimationFrame(() => closeButtonRef.current?.focus());
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !drawerRef.current) return;
+      const focusable = Array.from(
+        drawerRef.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, [onClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -188,7 +216,7 @@ export function MembersDrawer({
     return () => {
       cancelled = true;
     };
-  }, [distKey, bucketLabel]);
+  }, [distKey, bucketLabel, reloadKey]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -197,19 +225,27 @@ export function MembersDrawer({
         onClick={onClose}
         aria-hidden="true"
       />
-      <aside className="relative flex h-full w-full max-w-md flex-col bg-white shadow-xl">
+      <aside
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="population-members-drawer-title"
+        aria-describedby="population-members-drawer-status"
+        className="relative flex h-full w-full max-w-md flex-col bg-white shadow-xl"
+      >
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <div className="min-w-0">
             <p className="text-xs font-semibold text-slate-400">{distLabel}</p>
-            <h3 className="text-break text-lg font-bold text-slate-900">{bucketLabel}</h3>
-            <p className="mt-0.5 text-sm text-slate-500">
+            <h3 id="population-members-drawer-title" className="text-break text-lg font-bold text-slate-900">{bucketLabel}</h3>
+            <p id="population-members-drawer-status" className="mt-0.5 text-sm text-slate-500" aria-live="polite">
               {loading ? "加载中…" : `共 ${members.length} 位用户`}
             </p>
           </div>
           <button
             type="button"
+            ref={closeButtonRef}
             onClick={onClose}
-            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
             aria-label="关闭"
           >
             <X className="h-5 w-5" />
@@ -224,7 +260,17 @@ export function MembersDrawer({
               ))}
             </div>
           ) : error ? (
-            <div className="empty-state">{error}</div>
+            <div className="empty-state" role="alert">
+              <p>{error}</p>
+              <button
+                type="button"
+                className="admin-button-secondary"
+                onClick={() => setReloadKey((value) => value + 1)}
+              >
+                <RotateCw className="h-4 w-4" aria-hidden="true" />
+                重新加载
+              </button>
+            </div>
           ) : members.length === 0 ? (
             <div className="empty-state">该分桶下暂无用户</div>
           ) : (
