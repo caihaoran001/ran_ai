@@ -170,9 +170,27 @@ class PopulationDistribution(BaseModel):
     buckets: list[PopulationDistributionBucket] = Field(default_factory=list)
 
 
+class PopulationGeoCity(BaseModel):
+    city: str
+    count: int
+
+
+class PopulationGeoProvince(BaseModel):
+    province: str
+    count: int
+    cities: list[PopulationGeoCity] = Field(default_factory=list)
+
+
+class PopulationGeography(BaseModel):
+    total: int  # 已匹配到市的用户数
+    unknown: int = 0  # 未采集或未能匹配到城市的用户数
+    provinces: list[PopulationGeoProvince] = Field(default_factory=list)
+
+
 class PopulationPortrait(BaseModel):
     total_users: int  # 纳入统计的活跃服务单数
     distributions: list[PopulationDistribution] = Field(default_factory=list)
+    geography: PopulationGeography | None = None
 
 
 class DashboardSummary(BaseModel):

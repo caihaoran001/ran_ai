@@ -2,8 +2,9 @@ import { api } from "@/lib/api";
 import type { PopulationPortrait } from "@/lib/api";
 import { PieChart } from "lucide-react";
 import { DistributionPanel } from "./distribution-panel";
+import { GeographyPanel } from "./geography-panel";
 
-const EMPTY: PopulationPortrait = { total_users: 0, distributions: [] };
+const EMPTY: PopulationPortrait = { total_users: 0, distributions: [], geography: null };
 
 export default async function UserSegmentsPage() {
   const portrait = await api<PopulationPortrait>("/dashboard/population-portrait").catch(() => EMPTY);
@@ -30,6 +31,11 @@ export default async function UserSegmentsPage() {
         <div className="empty-state">暂无已建档用户，群体画像将在建档后自动生成。</div>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {portrait.geography && (
+            <div className="lg:col-span-2">
+              <GeographyPanel geography={portrait.geography} />
+            </div>
+          )}
           {portrait.distributions.map((dist) => (
             <DistributionPanel key={dist.key} dist={dist} />
           ))}
@@ -38,7 +44,7 @@ export default async function UserSegmentsPage() {
 
       <p className="text-xs text-slate-400">
         说明：客户分型按“疾病管理 &gt; 减重攻坚 &gt; 健康投资”优先级由风险等级与减重带确定性推导；体脂率、腰围为选填，
-        未采集用户单独计数，占比以全体已建档用户为分母。地域按入营问卷填报城市统计。点击任意分布条可查看该分型 / 分桶下的用户列表。
+        未采集用户单独计数，占比以全体已建档用户为分母。地域按入营问卷填报城市归一为省→市层级；点击省份查看城市，点击城市或任意分布条查看用户列表。
       </p>
     </div>
   );

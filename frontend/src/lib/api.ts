@@ -355,7 +355,25 @@ export type PopulationDistribution = {
   buckets: PopulationDistributionBucket[];
 };
 
+export type PopulationGeoCity = {
+  city: string;
+  count: number;
+};
+
+export type PopulationGeoProvince = {
+  province: string;
+  count: number;
+  cities: PopulationGeoCity[];
+};
+
+export type PopulationGeography = {
+  total: number;
+  unknown: number;
+  provinces: PopulationGeoProvince[];
+};
+
 export type PopulationPortrait = {
   total_users: number;
   distributions: PopulationDistribution[];
+  geography: PopulationGeography | null;
 };

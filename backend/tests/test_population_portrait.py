@@ -7,10 +7,11 @@ from app.api.routes.dashboard import (
     _band_short,
     _bucket_numeric,
     _build_distribution,
+    _build_geography,
     _category_label,
-    _normalize_city,
     _num,
 )
+from app.services.china_regions import match_city
 
 
 @pytest.mark.parametrize(
@@ -41,28 +42,21 @@ def test_category_label_normalizes_unknowns():
         assert _category_label(sentinel) == UNKNOWN_LABEL
 
 
-def test_normalize_city_strips_trailing_shi():
-    assert _normalize_city("北京市") == "北京"
-    assert _normalize_city("北京") == "北京"
-    assert _normalize_city(" 杭州市 ") == "杭州"
-    # 去掉后为空则保留原值，不产生空标签
-    assert _normalize_city("市") == "市"
-    assert _normalize_city(None) == ""
-
-
-def test_normalize_city_strips_province_prefix():
-    assert _normalize_city("浙江湖州") == "湖州"
-    assert _normalize_city("新疆阿勒泰") == "阿勒泰"
-    assert _normalize_city("河北保定") == "保定"
-    assert _normalize_city("浙江省湖州市") == "湖州"
-    assert _normalize_city("内蒙古呼和浩特") == "呼和浩特"
-    # 直辖市保留本身，不下钻到区
-    assert _normalize_city("北京市朝阳区") == "北京"
-    assert _normalize_city("上海") == "上海"
-    # 仅给省名时回退为省名，不产生空标签
-    assert _normalize_city("浙江省") == "浙江"
-    # 不带省前缀的城市与"省+市"写法归到同一桶
-    assert _normalize_city("湖州") == "湖州"
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("湖州", ("浙江", "湖州")),
+        ("浙江湖州", ("浙江", "湖州")),
+        ("湖州市", ("浙江", "湖州")),
+        ("浙江省湖州市吴兴区", ("浙江", "湖州")),
+        ("新疆阿勒泰", ("新疆", "阿勒泰")),
+        ("北京市朝阳区", ("北京", "北京")),
+        ("未知地址", (None, None)),
+        (None, (None, None)),
+    ],
+)
+def test_match_city_uses_longest_city_name(raw, expected):
+    assert match_city(raw) == expected
 
 
 def test_bucket_numeric_buckets_and_unknown():
@@ -129,6 +123,21 @@ def test_build_category_distribution_counts_and_unknown_sorted():
     assert dist.buckets[0].count == 2
 
 
+def test_build_geography_groups_cities_under_provinces_and_keeps_unknown():
+    geography = _build_geography(
+        {
+            1: {"province": "浙江", "city": "杭州"},
+            2: {"province": "浙江", "city": "湖州"},
+            3: {"province": "浙江", "city": "杭州"},
+            4: {"province": UNKNOWN_LABEL, "city": UNKNOWN_LABEL},
+        }
+    )
+    assert geography.total == 3
+    assert geography.unknown == 1
+    assert [(province.province, province.count) for province in geography.provinces] == [("浙江", 3)]
+    assert [(city.city, city.count) for city in geography.provinces[0].cities] == [("杭州", 2), ("湖州", 1)]
+
+
 @pytest.mark.asyncio
 async def test_population_portrait_endpoint_shape(admin_client):
     resp = await admin_client.get("/dashboard/population-portrait")
@@ -139,9 +148,19 @@ async def test_population_portrait_endpoint_shape(admin_client):
     assert keys == {
         "customer_type",
         "weight_loss_band",
-        "city",
         "age",
         "bmi",
         "bodyfat",
         "waist_height_ratio",
     }
+    assert "geography" in data
+    assert {"total", "unknown", "provinces"} <= set(data["geography"])
+
+
+@pytest.mark.asyncio
+async def test_population_portrait_members_accepts_city_and_province_keys(admin_client):
+    for key, bucket in (("city", "杭州"), ("province", "浙江")):
+        resp = await admin_client.get(
+            "/dashboard/population-portrait/members", params={"key": key, "bucket": bucket}
+        )
+        assert resp.status_code == 200

@@ -41,8 +41,12 @@ from app.schemas.dashboard import (
     OutcomeDashboardSummary,
     PopulationDistribution,
     PopulationDistributionBucket,
+    PopulationGeography,
+    PopulationGeoCity,
+    PopulationGeoProvince,
     PopulationPortrait,
 )
+from app.services.china_regions import match_city
 from app.schemas.service_case import ServiceCaseRead
 from app.services.intake_facts import (
     build_intake_fact_summary,
@@ -290,12 +294,6 @@ _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
         "numeric": False,
     },
     {
-        "key": "city",
-        "label": "地域分布",
-        "description": "入营问卷填报的所在城市，未填报计入未采集。",
-        "numeric": False,
-    },
-    {
         "key": "age",
         "label": "年龄段",
         "description": "入营问卷填报年龄。",
@@ -335,16 +333,20 @@ _DIMENSION_BY_KEY = {dim["key"]: dim for dim in _PORTRAIT_DIMENSIONS}
 async def dashboard_population_portrait(
     session: AsyncSession = Depends(get_session),
 ) -> PopulationPortrait:
-    """群体画像：活跃服务单的量化区间分布 + 客户分型/地域占比。
+    """群体画像：活跃服务单的量化区间分布 + 省→市地域层级。
 
     数据来源：每个活跃服务单取最新画像(customer_type/减重带) + 最新入营问卷(城市/年龄/BMI/体脂/腰围/身高)。
     每个分布都返回有效样本与『未采集』计数，绝不静默丢弃缺失。分桶逻辑与下钻端点共用同一套 case 标签。
     """
     total_users, case_labels = await _compute_case_portrait_labels(session)
     if total_users == 0:
-        return PopulationPortrait(total_users=0, distributions=[])
+        return PopulationPortrait(total_users=0, distributions=[], geography=None)
     distributions = [_build_distribution(dim, case_labels) for dim in _PORTRAIT_DIMENSIONS]
-    return PopulationPortrait(total_users=total_users, distributions=distributions)
+    return PopulationPortrait(
+        total_users=total_users,
+        distributions=distributions,
+        geography=_build_geography(case_labels),
+    )
 
 
 @router.get("/population-portrait/members", response_model=list[ServiceCaseRead])
@@ -357,7 +359,7 @@ async def dashboard_population_portrait_members(
 
     与画像端点复用同一份 case 标签，保证条形图数字与下钻列表一一对应。返回结构同 /service-cases。
     """
-    if key not in _DIMENSION_BY_KEY:
+    if key not in _DIMENSION_BY_KEY and key not in {"city", "province"}:
         raise HTTPException(status_code=404, detail=f"未知画像维度: {key}")
     _, case_labels = await _compute_case_portrait_labels(session)
     matched_ids = [cid for cid, labels in case_labels.items() if labels.get(key) == bucket]
@@ -443,10 +445,12 @@ async def _compute_case_portrait_labels(
             round(waist / height, 3) if waist and height else None
         )
 
+        province, city = match_city(facts.get("city"))
         labels: dict[str, str] = {
             "customer_type": _category_label(ctype),
             "weight_loss_band": _category_label(band),
-            "city": _category_label(_normalize_city(facts.get("city"))),
+            "city": _category_label(city),
+            "province": _category_label(province),
         }
         for dim in _PORTRAIT_DIMENSIONS:
             if dim["numeric"]:
@@ -456,6 +460,36 @@ async def _compute_case_portrait_labels(
         case_labels[cid] = labels
 
     return len(case_ids), case_labels
+
+
+def _build_geography(case_labels: dict[int, dict[str, str]]) -> PopulationGeography:
+    """从逐 case 城市标签构造省→市树；未匹配地址单独计数，绝不静默丢弃。"""
+    cities_by_province: dict[str, dict[str, int]] = {}
+    unknown = 0
+    for labels in case_labels.values():
+        province = labels.get("province", UNKNOWN_LABEL)
+        city = labels.get("city", UNKNOWN_LABEL)
+        if province == UNKNOWN_LABEL or city == UNKNOWN_LABEL:
+            unknown += 1
+            continue
+        province_cities = cities_by_province.setdefault(province, {})
+        province_cities[city] = province_cities.get(city, 0) + 1
+
+    provinces = [
+        PopulationGeoProvince(
+            province=province,
+            count=sum(cities.values()),
+            cities=[
+                PopulationGeoCity(city=city, count=count)
+                for city, count in sorted(cities.items(), key=lambda item: (-item[1], item[0]))
+            ],
+        )
+        for province, cities in cities_by_province.items()
+    ]
+    provinces.sort(key=lambda item: (-item.count, item.province))
+    return PopulationGeography(
+        total=sum(province.count for province in provinces), unknown=unknown, provinces=provinces
+    )
 
 
 def _build_distribution(
@@ -508,48 +542,6 @@ def _band_short(band: str) -> str:
         if tag in band:
             return "增肌增能带" if tag == "增肌增能带" else tag
     return "待完善"
-
-
-# 省 / 自治区 / 直辖市名（长名优先匹配，避免"黑龙江"被"黑"类前缀误伤）。
-# 用于把"浙江湖州""新疆阿勒泰"这类"省+市"写法剥成城市名归组；这是确定性文本清洗
-# 的参考数据，不是业务判断，无需上 LLM。
-_MUNICIPALITIES = {"北京", "上海", "天津", "重庆", "香港", "澳门"}
-_PROVINCES = sorted(
-    [
-        "北京", "上海", "天津", "重庆", "香港", "澳门",
-        "内蒙古", "黑龙江", "广西", "西藏", "宁夏", "新疆",
-        "河北", "山西", "辽宁", "吉林", "江苏", "浙江", "安徽", "福建", "江西",
-        "山东", "河南", "湖北", "湖南", "广东", "海南", "四川", "贵州", "云南",
-        "陕西", "甘肃", "青海", "台湾",
-    ],
-    key=len,
-    reverse=True,
-)
-
-
-def _normalize_city(value: Any) -> str:
-    """归一城市写法，让同一地点的不同写法落入同一桶。
-
-    - 剥掉省/自治区前缀："浙江湖州"→湖州、"新疆阿勒泰"→阿勒泰、"河北保定"→保定；
-      "浙江省湖州市"→湖州。直辖市（北京/上海等）保留本身，不下钻到区。
-    - 去掉结尾的"市"："北京市"→北京、"湖州市"→湖州。
-    - 剥离后为空则回退到省/原文，绝不产生空标签。
-    """
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    for prov in _PROVINCES:
-        for form in (prov + "省", prov + "自治区", prov + "市", prov):
-            if text.startswith(form):
-                rest = text[len(form):].strip()
-                text = prov if prov in _MUNICIPALITIES else (rest or prov)
-                break
-        else:
-            continue
-        break
-    if len(text) > 1 and text.endswith("市"):
-        text = text[:-1]
-    return text
 
 
 def _category_label(value: str | None) -> str:
@@ -1694,5 +1686,4 @@ def _case_service_day(service_case, today, tz: ZoneInfo) -> int:
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
     return (today - start.astimezone(tz).date()).days + 1
-
 

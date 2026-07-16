@@ -113,7 +113,7 @@ export function DistributionPanel({ dist }: { dist: PopulationDistribution }) {
   );
 }
 
-function MembersDrawer({
+export function MembersDrawer({
   distKey,
   distLabel,
   bucketLabel,
