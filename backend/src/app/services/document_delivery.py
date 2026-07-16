@@ -25,7 +25,6 @@ from app.services.channels import send_channel_document, send_channel_text
 from app.services.content_policy import get_content_delivery_mode
 from app.services.risk_service import is_high_risk
 from app.services.service_case_queries import get_active_service_case
-from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
 from app.services.docx_service import (
     safe_filename,
     write_markdown_docx,
@@ -35,17 +34,12 @@ from app.services.document_common import DOCUMENT_DEFINITIONS, _user_name
 
 
 async def _send_document_reading_reminder(session: AsyncSession, service_case: ServiceCase) -> None:
-    """两份文件发送后，提醒用户先阅读、随时答疑，并预告次日开始发打卡链接。"""
-    try:
-        schedule = await get_checkin_questionnaire_schedule(session)
-        send_at = str(schedule.get("send_at") or "09:00")
-    except Exception:
-        send_at = "09:00"
+    """两份文件发送后，提醒用户先阅读、随时答疑。"""
     content = (
         "两份专属文件都发给您啦 📄\n\n"
         "请先花几分钟仔细阅读《个人能量重启处方单》和《28天执行标准与打卡要求》，把今天的方案看明白；"
         "任何有疑问的地方都可以随时在群里提出来，我和班主任都会帮您解答。\n\n"
-        f"今天先安心熟悉文件、不用急着执行；从明天 {send_at} 起，我会每天给您发送打卡链接，陪您一步步落地 🌟"
+        "今天先安心熟悉文件、不用急着执行，我们一步步来，陪您把这 28 天走扎实 🌟"
     )
     result = await send_channel_text(service_case.group_id, content)
     session.add(
