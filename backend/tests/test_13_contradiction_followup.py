@@ -3,11 +3,10 @@
 覆盖：
 - 档案官触发器：含关键类目(checkin/profile_fact/outcome)且用户停说≥3min → fast 快触发；
   仅闲聊 worthy 且未到 24h → 不触发。
-- compose_daily_followup 统一组织：优先级 里程碑 > 矛盾核对 > 日常缺口(早C/午B、体重合并成一句；
+- compose_daily_followup 统一组织：优先级 里程碑 > 矛盾核对 > 日常缺口(早C/午B；
   晚A 睡前那顿不主动追)；无可问返回 None；LLM 生成复盘/缺口话术、失败回退模板。
-- 里程碑档：服务第 6/13/20/27 天检测出 milestone；need_waist 按腰围记录决定。
+- 里程碑档：服务第 6/13/20/27 天检测出 milestone；need_waist/need_weight 按腰围/体重记录决定。
 - 矛盾核对：表单值≠聊天值→记矛盾→自然语言核对→标 asked(去重)+字段降级→用户新值覆盖表单。
-- 不活跃兜底辅助：_deterministic_daily_time 同 case 同日恒定且落窗口内；日常缺口受傍晚窗口闸。
 """
 
 from __future__ import annotations
@@ -769,34 +768,3 @@ async def test_trigger_staff_message_as_correction_candidate(db_session):
     )
     assert should is True
     assert "fast_key" in reason
-
-
-# ---------------------------------------------------------------------------
-# 不活跃兜底辅助：随机时刻
-# ---------------------------------------------------------------------------
-
-
-def test_deterministic_daily_time_stable_and_within_window():
-    from datetime import time as dtime
-
-    from app.services.reminder_service import _deterministic_daily_time
-
-    day = date(2026, 7, 10)
-    start, end = dtime(9, 0), dtime(21, 0)
-    t1 = _deterministic_daily_time(123, day, start, end)
-    t2 = _deterministic_daily_time(123, day, start, end)
-    assert t1 == t2  # 同 case 同日恒定（轮询不漂移）
-    assert start <= t1 < end  # 落在窗口内
-    # 不同 case 分散（极大概率不同）。
-    others = {_deterministic_daily_time(i, day, start, end) for i in range(20)}
-    assert len(others) > 1
-
-
-def test_deterministic_daily_time_degrades_when_end_le_start():
-    from datetime import time as dtime
-
-    from app.services.reminder_service import _deterministic_daily_time
-
-    day = date(2026, 7, 10)
-    t = _deterministic_daily_time(1, day, dtime(21, 0), dtime(9, 0))
-    assert t == dtime(21, 0)

@@ -143,7 +143,7 @@ class Settings(BaseSettings):
         validation_alias="QIWEI_BATCH_WINDOW_SECONDS",
     )
 
-    # 注意：12点泛化文字催打卡(check_once)已退役并入晚间智能追问(check_checkin_followup_once)。
+    # 注意：12点泛化文字催打卡(check_once)已退役并入打卡追问(check_checkin_followup_v2_once)。
     # 本开关现仅剩门控阶段报告生成(check_stage_reports_once)，reminder_at/reminder_message 已不再使用。
     reminder_enabled: bool = Field(default=False, validation_alias="REMINDER_ENABLED")
     agent_reminders_enabled: bool = Field(default=True, validation_alias="AGENT_REMINDERS_ENABLED")

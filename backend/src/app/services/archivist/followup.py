@@ -4,7 +4,7 @@ H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部
 每 case 每天最多一条"（不再注入系统 prompt 让 agent 自由裁量），由两条链路复用本模块：
 
 - **活跃触发**（`ranren_ai/engine.py`）：用户当天在群里说过话时，agent 回复发送成功后单独补发一条。
-- **不活跃兜底**（`reminder_service.check_checkin_followup_once`）：用户当天没说话，到当天一个确定性
+- **不活跃兜底**（`reminder_service.check_checkin_followup_v2_once`）：用户当天没说话，到当天一个确定性
   随机时刻主动发一条。
 
 两条链路共用 `ReminderEvent(rule_id="checkin_followup")` 天级去重闸（唯一约束保证一天一条、绝不叠加），
