@@ -36,7 +36,13 @@ const STATUS_LABELS: Record<string, string> = {
   refunded: "已退款",
 };
 
-export function DistributionPanel({ dist }: { dist: PopulationDistribution }) {
+export function DistributionPanel({
+  dist,
+  embedded = false,
+}: {
+  dist: PopulationDistribution;
+  embedded?: boolean;
+}) {
   const denom = dist.total + dist.unknown; // 展示占比的分母含未采集，避免误导
   const maxCount = Math.max(1, ...dist.buckets.map((b) => b.count)); // 用全量算条宽，展开/收起时比例一致
   // 当前下钻选中的分桶标签（null 表示抽屉关闭）。
@@ -46,60 +52,84 @@ export function DistributionPanel({ dist }: { dist: PopulationDistribution }) {
   const overflow = dist.buckets.length - DEFAULT_VISIBLE_BUCKETS;
   const visibleBuckets = expanded ? dist.buckets : dist.buckets.slice(0, DEFAULT_VISIBLE_BUCKETS);
 
-  return (
-    <>
-      <section className="panel overflow-hidden">
-        <div className="panel-header-clean">
-          <div>
-            <h2 className="panel-title">{dist.label}</h2>
-            <p className="panel-subtitle">{dist.description}</p>
-          </div>
-          <span className="status-pill pill-neutral">
-            {dist.multi_select ? `覆盖 ${dist.total} · 可多选` : `有效 ${dist.total}`}
-            {dist.unknown > 0 ? ` · 未采集 ${dist.unknown}` : ""}
-          </span>
-        </div>
-        <div className="panel-body space-y-3">
-          {dist.buckets.length === 0 ? (
-            <div className="empty-state">暂无有效样本</div>
-          ) : (
-            visibleBuckets.map((bucket, index) => {
-              const pct = denom > 0 ? Math.round((bucket.count * 100) / denom) : 0;
-              const widthPct = Math.round((bucket.count * 100) / maxCount);
-              return (
-                <button
-                  type="button"
-                  key={bucket.label}
-                  onClick={() => setActiveBucket(bucket.label)}
-                  className="flex w-full items-center gap-3 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-slate-50"
-                  title={`查看「${bucket.label}」的用户`}
-                >
-                  <div className="w-32 shrink-0 truncate text-sm text-slate-700">{bucket.label}</div>
-                  <div className="relative h-6 flex-1 overflow-hidden rounded-md bg-slate-100">
-                    <div
-                      className={`h-full rounded-md ${barColor(dist.key, bucket.label, index)}`}
-                      style={{ width: `${Math.max(widthPct, bucket.count > 0 ? 4 : 0)}%` }}
-                    />
-                  </div>
-                  <div className="w-24 shrink-0 text-right text-sm tabular-nums text-slate-600">
-                    {bucket.count} 人 · {pct}%
-                  </div>
-                </button>
-              );
-            })
-          )}
-          {overflow > 0 && (
+  const header = (
+    <div className="min-w-0">
+      <h2 id={`distribution-title-${dist.key}`} className="panel-title">
+        {dist.label}
+      </h2>
+      <p className="panel-subtitle">{dist.description}</p>
+    </div>
+  );
+
+  const status = (
+    <span className="status-pill pill-neutral shrink-0 self-start">
+      {dist.multi_select ? `覆盖 ${dist.total} · 可多选` : `有效 ${dist.total}`}
+      {dist.unknown > 0 ? ` · 未采集 ${dist.unknown}` : ""}
+    </span>
+  );
+
+  const buckets = (
+    <div className="space-y-3">
+      {dist.buckets.length === 0 ? (
+        <div className="empty-state">暂无有效样本</div>
+      ) : (
+        visibleBuckets.map((bucket, index) => {
+          const pct = denom > 0 ? Math.round((bucket.count * 100) / denom) : 0;
+          const widthPct = Math.round((bucket.count * 100) / maxCount);
+          return (
             <button
               type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="flex w-full items-center justify-center gap-1 rounded-md py-1.5 text-sm font-semibold text-cyan-700 transition-colors hover:bg-cyan-50"
+              key={bucket.label}
+              onClick={() => setActiveBucket(bucket.label)}
+              className="flex w-full items-center gap-3 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-slate-50"
+              title={`查看「${bucket.label}」的用户`}
             >
-              {expanded ? "收起" : `展开全部 ${dist.buckets.length} 项`}
-              <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+              <div className="w-32 shrink-0 truncate text-sm text-slate-700">{bucket.label}</div>
+              <div className="relative h-6 flex-1 overflow-hidden rounded-md bg-slate-100">
+                <div
+                  className={`h-full rounded-md ${barColor(dist.key, bucket.label, index)}`}
+                  style={{ width: `${Math.max(widthPct, bucket.count > 0 ? 4 : 0)}%` }}
+                />
+              </div>
+              <div className="w-24 shrink-0 text-right text-sm tabular-nums text-slate-600">
+                {bucket.count} 人 · {pct}%
+              </div>
             </button>
-          )}
-        </div>
-      </section>
+          );
+        })
+      )}
+      {overflow > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex w-full items-center justify-center gap-1 rounded-md py-1.5 text-sm font-semibold text-cyan-700 transition-colors hover:bg-cyan-50"
+        >
+          {expanded ? "收起" : `展开全部 ${dist.buckets.length} 项`}
+          <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <>
+      {embedded ? (
+        <section className="min-w-0" aria-labelledby={`distribution-title-${dist.key}`}>
+          <div className="flex min-w-0 flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-start sm:justify-between">
+            {header}
+            {status}
+          </div>
+          <div className="pt-4">{buckets}</div>
+        </section>
+      ) : (
+        <section className="panel overflow-hidden" aria-labelledby={`distribution-title-${dist.key}`}>
+          <div className="panel-header-clean">
+            {header}
+            {status}
+          </div>
+          <div className="panel-body">{buckets}</div>
+        </section>
+      )}
 
       {activeBucket !== null && (
         <MembersDrawer

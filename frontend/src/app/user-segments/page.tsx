@@ -3,11 +3,26 @@ import type { PopulationPortrait } from "@/lib/api";
 import { PieChart } from "lucide-react";
 import { DistributionPanel } from "./distribution-panel";
 import { GeographyPanel } from "./geography-panel";
+import { HealthDistributionsPanel } from "./health-distributions-panel";
 
 const EMPTY: PopulationPortrait = { total_users: 0, distributions: [], geography: null };
+const HEALTH_DISTRIBUTION_KEYS = new Set([
+  "health_domain",
+  "health_condition",
+  "medication_category",
+  "special_stage",
+  "pending_condition",
+  "allergy_category",
+]);
+const PRIMARY_DISTRIBUTION_KEYS = new Set(["customer_type", "weight_loss_band"]);
 
 export default async function UserSegmentsPage() {
   const portrait = await api<PopulationPortrait>("/dashboard/population-portrait").catch(() => EMPTY);
+  const healthDistributions = portrait.distributions.filter((dist) => HEALTH_DISTRIBUTION_KEYS.has(dist.key));
+  const primaryDistributions = portrait.distributions.filter((dist) => PRIMARY_DISTRIBUTION_KEYS.has(dist.key));
+  const bodyDistributions = portrait.distributions.filter(
+    (dist) => !HEALTH_DISTRIBUTION_KEYS.has(dist.key) && !PRIMARY_DISTRIBUTION_KEYS.has(dist.key),
+  );
 
   return (
     <div className="page-stack">
@@ -30,15 +45,28 @@ export default async function UserSegmentsPage() {
       {portrait.total_users === 0 ? (
         <div className="empty-state">暂无已建档用户，群体画像将在建档后自动生成。</div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {portrait.geography && (
-            <div className="lg:col-span-2">
-              <GeographyPanel geography={portrait.geography} />
+        <div className="space-y-4">
+          {portrait.geography && <GeographyPanel geography={portrait.geography} />}
+
+          {primaryDistributions.length > 0 && (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {primaryDistributions.map((dist) => (
+                <DistributionPanel key={dist.key} dist={dist} />
+              ))}
             </div>
           )}
-          {portrait.distributions.map((dist) => (
-            <DistributionPanel key={dist.key} dist={dist} />
-          ))}
+
+          {healthDistributions.length > 0 && (
+            <HealthDistributionsPanel distributions={healthDistributions} />
+          )}
+
+          {bodyDistributions.length > 0 && (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {bodyDistributions.map((dist) => (
+                <DistributionPanel key={dist.key} dist={dist} />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
