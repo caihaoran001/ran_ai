@@ -58,7 +58,7 @@ def checkin_day(service_case: ServiceCase, now: datetime, tz: ZoneInfo) -> int |
 
 
 def service_graduation_date(service_case: ServiceCase, tz: ZoneInfo) -> _date | None:
-    """28 天服务窗口的毕业日期：第 28 天当天仍在服务内，次日开始停止打卡/提醒。"""
+    """28 天服务窗口的毕业日期：第 28 天当天仍在服务内，次日停止打卡等周期内任务。"""
     first = checkin_first_day(service_case, tz)
     if first is None:
         return None

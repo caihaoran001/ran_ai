@@ -12,9 +12,9 @@ from langchain_core.tools import BaseTool, StructuredTool
 from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.models.agent_reminder_task import AgentReminderTask, AgentReminderTaskStatus
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase
 from app.services.agent.state import AgentRunContext
-from app.services.service_case_queries import select_active_service_cases, service_window_ended
+from app.services.service_case_queries import select_active_service_cases
 
 _MAX_REMINDER_INSTRUCTION_CHARS = 240
 _MAX_REMINDER_DAYS_AHEAD = 30
@@ -40,8 +40,8 @@ class CreateReminderArgs(BaseModel):
         description=(
             "Recurrence rule: 'none' (one-time, default), 'daily' (every day at the same time), "
             "or 'weekly' (every week on the same weekday/time). For a recurring reminder, remind_at "
-            "is the first occurrence; the series auto-stops when the 28-day service window ends and "
-            "can be cancelled anytime via cancel_group_reminder."
+            "is the first occurrence; the series continues until it is cancelled via "
+            "cancel_group_reminder."
         ),
     )
 
@@ -82,10 +82,6 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
             service_case = await session.scalar(select_active_service_cases(ServiceCase.id == context.service_case_id))
             if service_case is None:
                 return {"ok": False, "error": "当前服务单不存在或已删除，不能创建提醒。"}
-            if service_case.status in {ServiceCaseStatus.COMPLETED, ServiceCaseStatus.REFUNDED}:
-                return {"ok": False, "error": "当前服务单已结束，不能创建提醒。"}
-            if service_window_ended(service_case, now_local, tz):
-                return {"ok": False, "error": "当前服务窗口已结束，不能创建提醒。"}
 
             # 幂等去重：同一服务单在目标时间 ±120s 内已有待发提醒时，不重复创建。
             # 防 Agent 对同一意图连发两次（如用户说一次、随后确认一次各建一条，导致到点重复提醒）。
@@ -127,8 +123,8 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
 
         recur_note = {
             "none": "已创建一次性群提醒；到点后会先由 Agent 结合当时上下文生成最终提醒文案。",
-            "daily": "已创建每天循环群提醒；服务期结束会自动停止，用户可随时取消。",
-            "weekly": "已创建每周循环群提醒；服务期结束会自动停止，用户可随时取消。",
+            "daily": "已创建每天循环群提醒；将持续到用户主动取消。",
+            "weekly": "已创建每周循环群提醒；将持续到用户主动取消。",
         }
         return {
             "ok": True,
@@ -226,8 +222,8 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
                 "user explicitly asks the bot to remind, advise, suggest, or proactively say something at a "
                 "specific future date/time. The remind_at argument must be a concrete ISO-8601 datetime; if the "
                 "time is vague, ask one clarification before calling this tool. Set recurrence to 'daily' or "
-                "'weekly' for repeating reminders (remind_at is the first occurrence); recurring series auto-stop "
-                "when the 28-day service window ends and can be cancelled anytime."
+                "'weekly' for repeating reminders (remind_at is the first occurrence); recurring series continue "
+                "until cancelled, including after the service case is completed or refunded."
             ),
             args_schema=CreateReminderArgs,
         ),

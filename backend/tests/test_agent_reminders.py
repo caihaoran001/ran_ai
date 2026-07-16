@@ -111,6 +111,57 @@ async def test_create_group_reminder_tool_creates_pending_task(db_session):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("case_status", [ServiceCaseStatus.COMPLETED, ServiceCaseStatus.REFUNDED])
+async def test_create_group_reminder_tool_allows_closed_case(db_session, case_status):
+    service_case = await _case(
+        db_session,
+        status=case_status,
+        started_at=datetime.now(timezone.utc) - timedelta(days=40),
+    )
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+    remind_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+
+    result = await tools["create_group_reminder"].ainvoke(
+        {"remind_at": remind_at, "content": "提醒我称体重"}
+    )
+
+    assert result["ok"] is True
+    task = await db_session.get(AgentReminderTask, result["task_id"])
+    assert task is not None
+    assert task.status == AgentReminderTaskStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_create_group_reminder_tool_rejects_deleted_case(db_session):
+    service_case = await _case(db_session, status=ServiceCaseStatus.COMPLETED)
+    service_case.deleted_at = datetime.now(timezone.utc)
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+    remind_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+
+    result = await tools["create_group_reminder"].ainvoke(
+        {"remind_at": remind_at, "content": "提醒我称体重"}
+    )
+
+    assert result["ok"] is False
+    assert "已删除" in result["error"]
+    tasks = list(await db_session.scalars(select(AgentReminderTask)))
+    assert tasks == []
+
+
+@pytest.mark.asyncio
 async def test_create_group_reminder_tool_strips_schedule_time_from_instruction(db_session):
     service_case = await _case(db_session)
     tools = {
@@ -380,6 +431,49 @@ async def test_reminder_service_schedules_next_recurrence(db_session, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_reminder_service_keeps_recurrence_after_service_window(db_session, monkeypatch):
+    service_case = await _case(
+        db_session,
+        status=ServiceCaseStatus.COMPLETED,
+        started_at=datetime.now(timezone.utc) - timedelta(days=40),
+    )
+    task = AgentReminderTask(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        remind_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        content="吃午饭",
+        recurrence="daily",
+        status=AgentReminderTaskStatus.PENDING,
+    )
+    db_session.add(task)
+    await db_session.flush()
+
+    async def fake_generate_scheduled_reminder_reply(**kwargs):
+        return AgentReplyResult(reply="到点吃午饭啦。", tool_trace=[])
+
+    monkeypatch.setattr(
+        "app.services.reminder_service.generate_scheduled_reminder_reply",
+        fake_generate_scheduled_reminder_reply,
+    )
+
+    await ReminderService(get_settings()).check_agent_reminder_tasks_once(
+        now=datetime.now(timezone.utc)
+    )
+
+    assert task.status == AgentReminderTaskStatus.SENT
+    pending = list(
+        await db_session.scalars(
+            select(AgentReminderTask).where(
+                AgentReminderTask.service_case_id == service_case.id,
+                AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+            )
+        )
+    )
+    assert len(pending) == 1
+    assert pending[0].recurrence == "daily"
+
+
+@pytest.mark.asyncio
 async def test_reminder_service_skips_stale_one_shot_task(db_session, monkeypatch):
     """过点太久的单次提醒不再补发：标 SKIPPED、不生成文案、不新排。"""
     service_case = await _case(db_session)
@@ -610,8 +704,13 @@ async def test_cancel_group_reminder_tool_cancel_all(db_session):
 
 
 @pytest.mark.asyncio
-async def test_reminder_service_marks_completed_case_task_failed(db_session):
-    service_case = await _case(db_session, status=ServiceCaseStatus.COMPLETED)
+@pytest.mark.parametrize("case_status", [ServiceCaseStatus.COMPLETED, ServiceCaseStatus.REFUNDED])
+async def test_reminder_service_sends_closed_case_task(db_session, monkeypatch, case_status):
+    service_case = await _case(
+        db_session,
+        status=case_status,
+        started_at=datetime.now(timezone.utc) - timedelta(days=40),
+    )
     task = AgentReminderTask(
         service_case_id=service_case.id,
         group_id=service_case.group_id,
@@ -622,10 +721,20 @@ async def test_reminder_service_marks_completed_case_task_failed(db_session):
     db_session.add(task)
     await db_session.flush()
 
-    await ReminderService(get_settings()).check_agent_reminder_tasks_once(now=datetime.now(timezone.utc))
+    async def fake_generate_scheduled_reminder_reply(**kwargs):
+        return AgentReplyResult(reply="该称体重啦。", tool_trace=[])
 
-    assert task.status == AgentReminderTaskStatus.FAILED
-    assert "completed" in (task.error or "")
+    monkeypatch.setattr(
+        "app.services.reminder_service.generate_scheduled_reminder_reply",
+        fake_generate_scheduled_reminder_reply,
+    )
+
+    await ReminderService(get_settings()).check_agent_reminder_tasks_once(
+        now=datetime.now(timezone.utc)
+    )
+
+    assert task.status == AgentReminderTaskStatus.SENT
+    assert task.error is None
     messages = list(
         await db_session.scalars(
             select(Message).where(
@@ -634,4 +743,5 @@ async def test_reminder_service_marks_completed_case_task_failed(db_session):
             )
         )
     )
-    assert messages == []
+    assert len(messages) == 1
+    assert messages[0].status == MessageStatus.SENT

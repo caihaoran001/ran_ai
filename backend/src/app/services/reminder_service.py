@@ -310,21 +310,12 @@ class ReminderService:
                 if now_utc - task.remind_at > timedelta(minutes=stale_minutes):
                     task.status = AgentReminderTaskStatus.SKIPPED
                     task.error = f"stale: remind_at past by >{int(stale_minutes)}min, skipped"
-                    await _schedule_next_recurrence(session, task, service_case, now, tz)
+                    await _schedule_next_recurrence(session, task, now, tz)
                     continue
                 if not service_case.ai_auto_reply_enabled:
                     # 「退下」期间不主动发提醒；阈值内保持 PENDING 跳过本轮，用户「回来」后仍可准点补发；
                     # 若退下持续到过点太久，则下一轮由上面的「过点即弃」丢弃并顺延。
                     continue
-                if service_case.status in {ServiceCaseStatus.COMPLETED, ServiceCaseStatus.REFUNDED}:
-                    task.status = AgentReminderTaskStatus.FAILED
-                    task.error = f"service case is {service_case.status.value}"
-                    continue
-                if service_window_ended(service_case, now, tz):
-                    task.status = AgentReminderTaskStatus.FAILED
-                    task.error = "service window ended"
-                    continue
-
                 task.status = AgentReminderTaskStatus.SENDING
                 task.error = None
                 await session.flush()
@@ -388,9 +379,9 @@ class ReminderService:
                     task.status = AgentReminderTaskStatus.SENT
                     task.sent_message_id = message.id
                     task.sent_at = message.sent_at
-                    # 循环提醒：本次成功发出后，若下一次仍落在服务窗口内，排下一条待发任务。
+                    # 循环提醒：本次成功发出后排下一条待发任务。
                     # 每条循环序列任一时刻只有 1 条 PENDING，用户取消这条即终止整个序列。
-                    await _schedule_next_recurrence(session, task, service_case, now, tz)
+                    await _schedule_next_recurrence(session, task, now, tz)
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error if result else "channel send failed"
@@ -846,15 +837,13 @@ def _next_recurrence_at(remind_at: datetime, recurrence: str, now: datetime, tz:
     return None
 
 
-async def _schedule_next_recurrence(session, task, service_case, now: datetime, tz: ZoneInfo) -> None:
-    """循环提醒成功发出后，若下一次仍在服务窗口内，新建一条 PENDING 续排；否则序列自然结束。"""
+async def _schedule_next_recurrence(session, task, now: datetime, tz: ZoneInfo) -> None:
+    """循环提醒成功发出或过点跳过后，新建一条 PENDING 续排。"""
     if task.recurrence not in {"daily", "weekly"}:
         return
     next_at = _next_recurrence_at(task.remind_at, task.recurrence, now, tz)
     if next_at is None:
         return
-    if service_window_ended(service_case, next_at, tz):
-        return  # 下一次已越过服务窗口，停止循环
     session.add(
         AgentReminderTask(
             service_case_id=task.service_case_id,
@@ -1032,5 +1021,3 @@ def _service_day(started_at: datetime | None, now: datetime, timezone: ZoneInfo)
         started_at = started_at.replace(tzinfo=ZoneInfo("UTC"))
     started_local = started_at.astimezone(timezone)
     return max((now.date() - started_local.date()).days + 1, 1)
-
-
