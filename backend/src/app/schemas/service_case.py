@@ -48,6 +48,7 @@ class ServiceCaseRead(Timestamped):
     ai_auto_reply_enabled: bool = True
     risk_level: str = "normal"
     risk_flags: list[dict] | None = None
+    health_profile: dict | None = None
     intervention_reasons: list[dict] | None = None
     renewal_intent_flags: list[dict] | None = None
     refund_intent_flags: list[dict] | None = None

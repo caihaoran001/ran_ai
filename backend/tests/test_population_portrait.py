@@ -123,6 +123,27 @@ def test_build_category_distribution_counts_and_unknown_sorted():
     assert dist.buckets[0].count == 2
 
 
+def test_build_multi_select_distribution_counts_each_case_once_per_bucket():
+    dim = {
+        "key": "health_domain",
+        "label": "健康领域",
+        "description": "",
+        "numeric": False,
+        "multi_select": True,
+    }
+    case_labels = {
+        1: {"health_domain": ["心血管", "肝胆", "心血管"]},
+        2: {"health_domain": ["心血管"]},
+        3: {"health_domain": []},
+    }
+
+    dist = _build_distribution(dim, case_labels)
+    assert dist.multi_select is True
+    assert dist.total == 2
+    assert dist.unknown == 1
+    assert {bucket.label: bucket.count for bucket in dist.buckets} == {"心血管": 2, "肝胆": 1}
+
+
 def test_build_geography_groups_cities_under_provinces_and_keeps_unknown():
     geography = _build_geography(
         {
@@ -147,6 +168,12 @@ async def test_population_portrait_endpoint_shape(admin_client):
     keys = {d["key"] for d in data["distributions"]}
     assert keys == {
         "customer_type",
+        "health_domain",
+        "health_condition",
+        "medication_category",
+        "special_stage",
+        "pending_condition",
+        "allergy_category",
         "weight_loss_band",
         "age",
         "bmi",

@@ -44,6 +44,7 @@ export type ServiceCase = {
   questionnaire_to_llm_output_ms?: number | null;
   risk_level?: string;
   risk_flags?: Array<Record<string, string>> | null;
+  health_profile?: import("@/lib/health-taxonomy").HealthProfile | null;
   intervention_reasons?: Array<Record<string, string>> | null;
   renewal_intent_flags?: Array<Record<string, string | boolean>> | null;
   refund_intent_flags?: Array<Record<string, string | boolean>> | null;
@@ -349,6 +350,7 @@ export type PopulationDistribution = {
   key: string;
   label: string;
   description: string;
+  multi_select: boolean;
   total: number;
   unknown: number;
   buckets: PopulationDistributionBucket[];

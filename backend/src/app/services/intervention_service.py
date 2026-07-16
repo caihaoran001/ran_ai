@@ -6,6 +6,11 @@ from typing import Any
 
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.ai_service import AIService
+from app.services.health_taxonomy import (
+    health_profile_supports_risk,
+    merge_health_profiles,
+    normalize_health_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +132,7 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
     renewal_intent = _normalize_intent(insight.get("renewal_intent"), source=source)
     refund_intent = _normalize_intent(insight.get("refund_intent"), source=source)
     emotion_signal = _normalize_emotion_signal(insight.get("emotion_signal"), source=source)
+    health_profile = normalize_health_profile(insight.get("health_profile"), source=source)
 
     if risk_flags:
         intervention_reasons.extend(
@@ -174,6 +180,8 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
         "confidence": _number(insight.get("confidence"), default=0.0),
         "notes": _string(insight.get("notes")),
     }
+    if isinstance(insight.get("health_profile"), dict):
+        normalized["health_profile"] = health_profile
     if "requires_immediate_safety_reply" in insight:
         normalized["requires_immediate_safety_reply"] = bool(insight.get("requires_immediate_safety_reply"))
     normalized["health_consultation"] = bool(insight.get("health_consultation"))
@@ -187,9 +195,27 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
 
 
 def merge_case_insight(service_case: ServiceCase, insight: dict[str, Any]) -> None:
+    has_health_profile_payload = isinstance(insight.get("health_profile"), dict)
+    health_profile = normalize_health_profile(insight.get("health_profile"), source="")
+    if any(health_profile.values()):
+        service_case.health_profile = merge_health_profiles(service_case.health_profile, health_profile)
+
     risks = _normalize_items(insight.get("risk_flags"), source="")
     if risks:
-        has_high_risk = any(_is_persistent_high_risk(r) for r in risks)
+        if has_health_profile_payload:
+            risks = [
+                {**risk, "level": "medium"}
+                if (
+                    risk.get("level") == "high"
+                    and _is_persistent_high_risk(risk)
+                    and not health_profile_supports_risk(health_profile, risk.get("code", ""))
+                )
+                else risk
+                for risk in risks
+            ]
+        has_high_risk = any(
+            r.get("level") == "high" and _is_persistent_high_risk(r) for r in risks
+        )
         has_medium_risk = any(r.get("level") == "medium" for r in risks)
         if has_high_risk:
             service_case.risk_level = "high"

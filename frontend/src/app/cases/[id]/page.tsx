@@ -12,6 +12,8 @@ import { RetryGenerateDocuments } from "./retry-generate-documents";
 import { CaseAutomationToggles } from "./case-automation-toggles";
 import { StageReportActions } from "./stage-report-actions";
 import { OutcomeSection } from "./outcome-section";
+import { HealthProfilePanel } from "@/components/health-profile-panel";
+import { healthProfileHeadline } from "@/lib/health-taxonomy";
 import {
   AlertTriangle,
   BarChart3,
@@ -85,6 +87,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const serviceWindowEnded = Boolean(serviceGraduationDate && chinaDateKey(new Date()) > serviceGraduationDate);
   const refunded = serviceCase.status === "refunded";
   const highRiskFlag = persistentHighRiskFlag(serviceCase.risk_flags);
+  const structuredHealthHeadline = healthProfileHeadline(serviceCase.health_profile);
   const generationError =
     serviceCase.status === "questionnaire_submitted" && documents.length === 0
       ? extractGenerationError(serviceCase.notes)
@@ -120,11 +123,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
               </p>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              {serviceCase.risk_level === "high" && highRiskFlag && (
+              {serviceCase.risk_level === "high" && (structuredHealthHeadline || highRiskFlag) && (
                 <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
                   <AlertTriangle className="h-3.5 w-3.5" />
                   高风险
-                  <span className="opacity-80">· {riskLabel(highRiskFlag)}</span>
+                  <span className="opacity-80">· {structuredHealthHeadline || riskLabel(highRiskFlag!)}</span>
                 </span>
               )}
               {serviceCase.risk_level === "high" && (
@@ -220,16 +223,9 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         />
         <InfoCard title="续购意向" value={formatIntentFlags(serviceCase.renewal_intent_flags)} icon={HeartHandshake} />
         <InfoCard title="退款/退出意向" value={formatIntentFlags(serviceCase.refund_intent_flags)} icon={RefreshCcw} />
-        {highRiskFlag && (
-          <InfoCard
-            title="持续健康风险依据"
-            value={`${riskLabel(highRiskFlag)}：${highRiskFlag.evidence || highRiskFlag.reason}`}
-            icon={AlertTriangle}
-            className="border-rose-200 bg-rose-50/50"
-            valueClassName="text-rose-900"
-          />
-        )}
       </div>
+
+      <HealthProfilePanel profile={serviceCase.health_profile} />
 
       <OutcomeSection bundle={outcomes} />
 

@@ -164,6 +164,7 @@ class PopulationDistribution(BaseModel):
     key: str
     label: str
     description: str = ""
+    multi_select: bool = False  # 多选维度的各桶人数按服务单去重，桶人数之和可超过总人数
     total: int  # 有效样本数（不含未采集）
     unknown: int = 0  # 未采集/无法解析的用户数
     buckets: list[PopulationDistributionBucket] = Field(default_factory=list)

@@ -494,6 +494,7 @@ class AIService:
                 "【严格的风险分级标准】\n"
                 "- L3 持续健康高风险（level='high'）：仅限用户本人明确披露的疾病（糖尿病/高血压/甲减等）、长期/激素用药、孕产哺乳期、肝肾异常或结石、体检指标严重异常、明确抑郁诊断或自伤/轻生危机。每条必须有具体 code、reason 和来自当前用户原话的 evidence。此类风险会长期标记服务单，requires_human_intervention=true。\n"
                 "  - 用户仅说月经推迟、没来月经或停经，且没有明确确认怀孕、孕期或哺乳期时，不是风险：不得推断为怀孕，risk_flags 和 intervention_reasons 都必须为空，requires_human_intervention=false。只有同一条消息另有明确医疗咨询、急性症状等独立触发条件时，才按该条件判断。\n"
+                "  - 同时提取可长期复用的 health_profile。疾病只有用户明确自述或报告明确结论时 status='confirmed'；出现“可能、疑似、待检查、需要进一步检查”等只能 status='pending'，不得因此输出持续高风险。不能仅凭药名反推疾病。用药和疾病分别记录，但它们不是两个高风险人数。\n"
                 "- L2 体感不适/投诉风险（level='medium'）：失眠、腹痛腹泻、胃部不适、胀气恶心、心悸心慌、持续身体不适等生理体感波动；或用户持续表达强烈不满、质疑专业性/身份、辱骂、要求停止机器人、明确要求退款/退出、要求人工/班主任介入、对服务明显失控。requires_human_intervention=true，系统会直接 @班主任 接手，AI 不再自行回复。\n"
                 "  - 用户要求诊断、治疗、调整/替代药物，或要求保证疗效/减重结果时，属于 L2 医疗与服务合规边界：code='medical_claim'、level='medium'、requires_human_intervention=true。它必须转人工，但不能仅因这一次提问把用户长期标为高风险。\n"
                 "  - 用户明确要求停止机器人、不要机器人继续解释、不要再听 AI 解释时，intervention_reasons 必须输出 code='robot_stop'，requires_human_intervention=true，requires_immediate_safety_reply=false。\n"
@@ -531,6 +532,20 @@ class AIService:
                 '      "source": "必须从以下值中选择：chat_message / questionnaire"\n'
                 "    }\n"
                 "  ],\n"
+                '  "health_profile": {  // 稳定健康画像；只提取当前内容中有原话证据的新事实\n'
+                '    "conditions": [{\n'
+                '      "code": "hypertension | elevated_blood_pressure | type2_diabetes | diabetes_unspecified | dyslipidemia | hypothyroidism | hyperthyroidism | thyroid_nodule | post_thyroidectomy | pcos | hyperprolactinemia | fatty_liver | cholecystitis | gallstone | liver_condition_unspecified | renal_impairment | kidney_stone | depression_diagnosis",\n'
+                '      "status": "confirmed | pending | resolved",\n'
+                '      "evidence": "用户原话或报告原文", "source": "chat_message | questionnaire | checkin"\n'
+                "    }],\n"
+                '    "medications": [{\n'
+                '      "category_code": "thyroid_hormone | antihypertensive | glucose_lowering | lipid_lowering | prolactin_lowering | endocrine_therapy | other_prescription",\n'
+                '      "name": "用户明确提到的药名或药物类别", "long_term": boolean,\n'
+                '      "status": "active | stopped | unknown", "evidence": "用户原话", "source": "chat_message | questionnaire | checkin"\n'
+                "    }],\n"
+                '    "special_stages": [{"code": "pregnancy | lactation | postoperative_recovery", "status": "active | resolved", "evidence": "用户原话", "source": "chat_message | questionnaire | checkin"}],\n'
+                '    "allergies": [{"category_code": "drug_allergy | food_allergy | product_ingredient_allergy | other_allergy", "substance": "过敏物", "status": "confirmed | pending", "evidence": "用户原话", "source": "chat_message | questionnaire | checkin"}]\n'
+                "  },\n"
                 '  "intervention_reasons": [],  // 与risk_flags结构相同，code 也可用 complaint / robot_stop / refund_request，记录需要人工介入的具体原因，无则为空数组\n'
                 '  "renewal_intent": {  // 续购意愿识别\n'
                 '    "detected": boolean,\n'

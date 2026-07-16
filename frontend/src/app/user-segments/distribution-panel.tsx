@@ -55,7 +55,7 @@ export function DistributionPanel({ dist }: { dist: PopulationDistribution }) {
             <p className="panel-subtitle">{dist.description}</p>
           </div>
           <span className="status-pill pill-neutral">
-            有效 {dist.total}
+            {dist.multi_select ? `覆盖 ${dist.total} · 可多选` : `有效 ${dist.total}`}
             {dist.unknown > 0 ? ` · 未采集 ${dist.unknown}` : ""}
           </span>
         </div>

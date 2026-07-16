@@ -53,6 +53,7 @@ from app.services.intake_facts import (
     customer_type_for_profile,
     weight_loss_band_from_profile,
 )
+from app.services.health_taxonomy import health_profile_dimension_labels
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.service_case_queries import active_service_case_condition, effective_start_at
 
@@ -288,6 +289,48 @@ _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
         "numeric": False,
     },
     {
+        "key": "health_domain",
+        "label": "健康领域",
+        "description": "已明确健康情况对应的领域；同一用户可进入多个领域，人数按服务单去重。",
+        "numeric": False,
+        "multi_select": True,
+    },
+    {
+        "key": "health_condition",
+        "label": "具体健康情况",
+        "description": "用户已明确披露的具体疾病或健康情况，不包含待检查和可能性结论。",
+        "numeric": False,
+        "multi_select": True,
+    },
+    {
+        "key": "medication_category",
+        "label": "长期用药类别",
+        "description": "当前长期使用的处方药类别；作为服务注意项，不重复计算为疾病人数。",
+        "numeric": False,
+        "multi_select": True,
+    },
+    {
+        "key": "special_stage",
+        "label": "特殊阶段",
+        "description": "已确认孕哺期或近期术后恢复等会改变服务方式的阶段。",
+        "numeric": False,
+        "multi_select": True,
+    },
+    {
+        "key": "pending_condition",
+        "label": "待确认健康情况",
+        "description": "用户仅表示可能、疑似或待进一步检查的情况，不计入确诊疾病和持续高风险。",
+        "numeric": False,
+        "multi_select": True,
+    },
+    {
+        "key": "allergy_category",
+        "label": "明确过敏史",
+        "description": "用户明确披露的过敏类型；是否影响产品仍需结合具体过敏物判断。",
+        "numeric": False,
+        "multi_select": True,
+    },
+    {
         "key": "weight_loss_band",
         "label": "减重带分布",
         "description": "按 BMI 划分的减重目标带位。",
@@ -362,7 +405,15 @@ async def dashboard_population_portrait_members(
     if key not in _DIMENSION_BY_KEY and key not in {"city", "province"}:
         raise HTTPException(status_code=404, detail=f"未知画像维度: {key}")
     _, case_labels = await _compute_case_portrait_labels(session)
-    matched_ids = [cid for cid, labels in case_labels.items() if labels.get(key) == bucket]
+    matched_ids = [
+        cid
+        for cid, labels in case_labels.items()
+        if (
+            bucket in labels.get(key, [])
+            if isinstance(labels.get(key), list)
+            else labels.get(key) == bucket
+        )
+    ]
     if not matched_ids:
         return []
     result = await session.scalars(
@@ -376,7 +427,7 @@ async def dashboard_population_portrait_members(
 
 async def _compute_case_portrait_labels(
     session: AsyncSession,
-) -> tuple[int, dict[int, dict[str, str]]]:
+) -> tuple[int, dict[int, dict[str, str | list[str]]]]:
     """逐服务单算出各画像维度的分桶标签（画像端点与下钻端点共用，保证一致）。
 
     只统计已建档的活跃服务单（未建档空单不计入，避免兜底标签虚高）。
@@ -385,10 +436,13 @@ async def _compute_case_portrait_labels(
     # 活跃服务单 id → risk_level
     case_rows = (
         await session.execute(
-            select(ServiceCase.id, ServiceCase.risk_level).where(active_service_case_condition())
+            select(ServiceCase.id, ServiceCase.risk_level, ServiceCase.health_profile).where(
+                active_service_case_condition()
+            )
         )
     ).all()
-    risk_by_case = {cid: risk for cid, risk in case_rows}
+    risk_by_case = {cid: risk for cid, risk, _ in case_rows}
+    health_by_case = {cid: profile for cid, _, profile in case_rows}
     active_ids = list(risk_by_case.keys())
     if not active_ids:
         return 0, {}
@@ -422,7 +476,7 @@ async def _compute_case_portrait_labels(
 
     fields = await get_active_questionnaire_fields(session, "intake")
 
-    case_labels: dict[int, dict[str, str]] = {}
+    case_labels: dict[int, dict[str, str | list[str]]] = {}
     for cid in case_ids:
         profile_json = latest_profile_json.get(cid) or {}
         risk_level = risk_by_case.get(cid)
@@ -446,12 +500,13 @@ async def _compute_case_portrait_labels(
         )
 
         province, city = match_city(facts.get("city"))
-        labels: dict[str, str] = {
+        labels: dict[str, str | list[str]] = {
             "customer_type": _category_label(ctype),
             "weight_loss_band": _category_label(band),
             "city": _category_label(city),
             "province": _category_label(province),
         }
+        labels.update(health_profile_dimension_labels(health_by_case.get(cid)))
         for dim in _PORTRAIT_DIMENSIONS:
             if dim["numeric"]:
                 labels[dim["key"]] = _bucket_numeric(
@@ -462,13 +517,16 @@ async def _compute_case_portrait_labels(
     return len(case_ids), case_labels
 
 
-def _build_geography(case_labels: dict[int, dict[str, str]]) -> PopulationGeography:
+def _build_geography(case_labels: dict[int, dict[str, str | list[str]]]) -> PopulationGeography:
     """从逐 case 城市标签构造省→市树；未匹配地址单独计数，绝不静默丢弃。"""
     cities_by_province: dict[str, dict[str, int]] = {}
     unknown = 0
     for labels in case_labels.values():
         province = labels.get("province", UNKNOWN_LABEL)
         city = labels.get("city", UNKNOWN_LABEL)
+        if not isinstance(province, str) or not isinstance(city, str):
+            unknown += 1
+            continue
         if province == UNKNOWN_LABEL or city == UNKNOWN_LABEL:
             unknown += 1
             continue
@@ -493,16 +551,30 @@ def _build_geography(case_labels: dict[int, dict[str, str]]) -> PopulationGeogra
 
 
 def _build_distribution(
-    dim: dict[str, Any], case_labels: dict[int, dict[str, str]]
+    dim: dict[str, Any], case_labels: dict[int, dict[str, str | list[str]]]
 ) -> PopulationDistribution:
     """从逐-case 标签统计单个维度的分布。数值维度按固定顺序（含 0 桶），分类维度按计数降序。"""
     counts: dict[str, int] = {}
     unknown = 0
+    valid_cases = 0
     for labels in case_labels.values():
         value = labels.get(dim["key"], UNKNOWN_LABEL)
+        if dim.get("multi_select"):
+            values = list(dict.fromkeys(item for item in value if item)) if isinstance(value, list) else []
+            if not values:
+                unknown += 1
+                continue
+            valid_cases += 1
+            for item in values:
+                counts[item] = counts.get(item, 0) + 1
+            continue
         if value == UNKNOWN_LABEL:
             unknown += 1
             continue
+        if not isinstance(value, str):
+            unknown += 1
+            continue
+        valid_cases += 1
         counts[value] = counts.get(value, 0) + 1
     if dim["numeric"]:
         buckets = [
@@ -518,7 +590,8 @@ def _build_distribution(
         key=dim["key"],
         label=dim["label"],
         description=dim["description"],
-        total=sum(counts.values()),
+        multi_select=bool(dim.get("multi_select")),
+        total=valid_cases,
         unknown=unknown,
         buckets=buckets,
     )

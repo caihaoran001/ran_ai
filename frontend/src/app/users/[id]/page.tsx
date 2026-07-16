@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { api, Checkin, Message, User, UserDocument, UserStateProfile } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
+import { HealthProfilePanel } from "@/components/health-profile-panel";
+import { healthProfileHeadline } from "@/lib/health-taxonomy";
 
 const SERVICE_STATUS_LABELS: Record<string, string> = {
   created: "已创建",
@@ -85,6 +87,8 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
         />
       )}
 
+      {serviceCase && <HealthProfilePanel profile={serviceCase.health_profile} />}
+
       {profile ? (
         <CollapsibleSection title="建档底稿" subtitle="入营问卷生成的基础判断；服务期内不再重复改写">
           <BaselineProfile profile={profile.profile_json} overview={overview} />
@@ -110,7 +114,10 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
               </Link>
               <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
                 <Info label="转人工记录" value={reasonText(serviceCase.intervention_reasons)} />
-                <Info label="持续健康风险" value={serviceCase.risk_level === "high" ? persistentRiskText(serviceCase.risk_flags) : "暂无"} />
+                <Info
+                  label="持续健康风险"
+                  value={serviceCase.risk_level === "high" ? healthProfileHeadline(serviceCase.health_profile) || persistentRiskText(serviceCase.risk_flags) : "暂无"}
+                />
                 <Info label="AI自动回复" value={serviceCase.ai_auto_reply_enabled === false ? "关闭" : "开启"} />
                 <Info label="续购意向" value={intentText(serviceCase.renewal_intent_flags)} />
                 <Info label="退款/退出意向" value={intentText(serviceCase.refund_intent_flags)} />
@@ -269,7 +276,13 @@ function OperationsSummary({
           meta={latestChangeAt ? `更新于 ${formatDateTime(latestChangeAt)}` : undefined}
         />
         <OperationItem label="打卡" value={`已打卡 ${uniqueCheckinDays} 天`} />
-        {serviceCase.risk_level === "high" && <OperationItem label="持续健康风险" value={persistentRiskText(serviceCase.risk_flags)} tone="risk" />}
+        {serviceCase.risk_level === "high" && (
+          <OperationItem
+            label="持续健康风险"
+            value={healthProfileHeadline(serviceCase.health_profile) || persistentRiskText(serviceCase.risk_flags)}
+            tone="risk"
+          />
+        )}
       </dl>
     </section>
   );
