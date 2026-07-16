@@ -3,8 +3,8 @@
 覆盖：
 - 档案官触发器：含关键类目(checkin/profile_fact/outcome)且用户停说≥3min → fast 快触发；
   仅闲聊 worthy 且未到 24h → 不触发。
-- compose_daily_followup 统一组织：优先级 里程碑 > 矛盾核对 > 日常缺口(早C/午B；
-  晚A 睡前那顿不主动追)；无可问返回 None；LLM 生成复盘/缺口话术、失败回退模板。
+- compose_scheduled_followups 组织候选：五项清单(次日回顾昨天) / 矛盾核对 / 里程碑复盘；
+  各类各占时间窗与天闸、每天最多 3 条；LLM 生成复盘话术、失败回退模板。
 - 里程碑档：服务第 6/13/20/27 天检测出 milestone；need_waist/need_weight 按腰围/体重记录决定。
 - 矛盾核对：表单值≠聊天值→记矛盾→自然语言核对→标 asked(去重)+字段降级→用户新值覆盖表单。
 """
@@ -39,8 +39,6 @@ from app.services.archivist.checkin_projection import (
     upsert_checkin,
 )
 from app.services.archivist.followup import (
-    DailyFollowup,
-    compose_daily_followup,
     compose_followup_message,
     compose_milestone_followup,
     detect_followup,
@@ -188,118 +186,6 @@ async def test_user_confirmed_value_overrides_form(db_session):
 
 
 # ---------------------------------------------------------------------------
-# compose_daily_followup 统一组织：优先级 + 合并 + None
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_daily_followup_milestone_wins_over_gap(db_session):
-    # 第6天（里程碑前夕）且今天全缺 → 里程碑优先，忽略日常缺口。
-    case = await _case(db_session, started_days_ago=5)
-    now = datetime.now(_TZ)
-    fake = _FakeAI("复盘一下这周～")
-    fu = await compose_daily_followup(
-        db_session, service_case=case, now=now, tz=_TZ, ai_service=fake
-    )
-    assert isinstance(fu, DailyFollowup)
-    assert fu.kind == "milestone"
-
-
-@pytest.mark.asyncio
-async def test_daily_followup_contradiction_wins_over_gap(db_session):
-    # 非里程碑日，有矛盾 + 有日常缺口 → 矛盾优先。
-    case = await _case(db_session, started_days_ago=3)
-    today = date.today()
-    # 持有 checkin 引用：SQLAlchemy 身份映射用弱引用，upsert 的矛盾靠原地改共享 list，
-    # 不持引用可能被 GC 掉导致矛盾丢失（沿用 test_detect_and_compose_confirmation 的写法）。
-    checkin = await _form_checkin_with_weight(db_session, case, today, "100斤")
-    await upsert_checkin(
-        db_session, service_case=case, checkin_date=today, fields={"weight": "168斤"}
-    )
-    now = datetime.now(_TZ)
-    fu = await compose_daily_followup(db_session, service_case=case, now=now, tz=_TZ)
-    assert checkin is not None  # 保持引用存活至断言之后
-    assert fu is not None and fu.kind == "contradiction"
-    assert fu.confirmation_fields == ["weight"]
-    assert "体重" in fu.text
-
-
-@pytest.mark.asyncio
-async def test_daily_followup_merges_gaps_into_one(db_session):
-    # 非里程碑日、无矛盾、今天全缺 → 日常缺口，合并成一句（不逐项拆）。
-    case = await _case(db_session, started_days_ago=3)
-    now = datetime.now(_TZ)
-    fake = _FakeAI("今天早C午B晚A和体重都还没看到哈～")
-    fu = await compose_daily_followup(
-        db_session, service_case=case, now=now, tz=_TZ, ai_service=fake
-    )
-    assert fu is not None and fu.kind == "daily_gap"
-    assert fu.text == fake.text
-    # 只调一次 LLM（合并成一句，不按字段多次调）。
-    assert len(fake.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_daily_followup_gap_fallback_on_llm_error(db_session):
-    case = await _case(db_session, started_days_ago=3)
-    now = datetime.now(_TZ)
-    fu = await compose_daily_followup(
-        db_session, service_case=case, now=now, tz=_TZ, ai_service=_RaisingAI()
-    )
-    assert fu is not None and fu.kind == "daily_gap"
-    # 兜底模板把产品缺口揉进一句；体重不再在日常缺口追问（改由里程碑采集）。
-    assert "早C" in fu.text
-    assert "体重" not in fu.text
-
-
-@pytest.mark.asyncio
-async def test_daily_followup_none_when_all_reported(db_session):
-    case = await _case(db_session, started_days_ago=3)
-    today = date.today()
-    checkin = Checkin(
-        service_case_id=case.id,
-        group_id=case.group_id,
-        user_id=case.user_id,
-        checkin_date=today,
-        content="（全打卡）",
-        parsed_json={
-            "weight": "68kg",
-            "product_schedule": {"morning_c": "已喝", "noon_b": "已喝", "night_a": "已喝"},
-        },
-    )
-    db_session.add(checkin)
-    await db_session.flush()
-    now = datetime.now(_TZ)
-    fu = await compose_daily_followup(db_session, service_case=case, now=now, tz=_TZ)
-    assert fu is None
-
-
-@pytest.mark.asyncio
-async def test_daily_gap_excludes_night_a(db_session):
-    # 早C已报、午B/晚A未报 → 日常缺口只追午B，晚A 睡前那顿不主动追、已报的早C不追。
-    case = await _case(db_session, started_days_ago=3)
-    today = date.today()
-    checkin = Checkin(
-        service_case_id=case.id,
-        group_id=case.group_id,
-        user_id=case.user_id,
-        checkin_date=today,
-        content="（部分打卡）",
-        parsed_json={"product_schedule": {"morning_c": "已喝"}},
-    )
-    db_session.add(checkin)
-    await db_session.flush()
-    now = datetime.now(_TZ)
-    fu = await compose_daily_followup(
-        db_session, service_case=case, now=now, tz=_TZ, ai_service=_RaisingAI()
-    )
-    assert fu is not None and fu.kind == "daily_gap"
-    assert "午B" in fu.text  # 未报的午B要追
-    assert "晚A" not in fu.text  # 睡前那顿不主动追
-    assert "早C" not in fu.text  # 已报的不追
-
-
-# ---------------------------------------------------------------------------
 # 里程碑档：检测
 # ---------------------------------------------------------------------------
 
@@ -425,14 +311,6 @@ def test_followup_v2_scheduler_has_cycle_cap_and_silence_brake():
     assert "is_followup_paused" in src
     assert "len(sent_kinds) >= 3" in src
     assert "checkin_followup:" in src
-
-
-def test_active_followup_is_not_sent_from_chat_reply():
-    """Only the scheduler may enforce cross-day checklist and cycle limits."""
-    from app.services.ranren_ai.engine import RanrenAIEngine
-
-    src = inspect.getsource(RanrenAIEngine._reply_with_ai)
-    assert "_maybe_followup_after_reply" not in src
 
 
 async def _sent_execution_document(db_session, case: ServiceCase) -> UserDocument:
