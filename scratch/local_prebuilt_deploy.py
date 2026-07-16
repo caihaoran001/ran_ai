@@ -142,8 +142,16 @@ def main():
         client.close()
         sys.exit(1)
     
-    print("  ✅ Docker Compose reload completed. Monitoring health endpoints...")
-    
+    print("  ✅ Docker Compose reload completed.")
+
+    # 6.5 清理构建缓存，防止每次 --build 累积的旧缓存层滚雪球撑爆 ECS 磁盘。
+    #     只删未被引用的构建缓存，不影响运行中的容器/镜像。
+    print("\n🧹 Step 6.5: Pruning stale Docker build cache on ECS...")
+    _, prune_out, _ = client.exec_command("docker builder prune -f 2>&1 | tail -1")
+    print(f"  {prune_out.read().decode().strip()}")
+
+    print("\n🩺 Monitoring health endpoints...")
+
     # Check health checks in loop
     is_healthy = False
     max_retries = 30

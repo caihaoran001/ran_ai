@@ -64,6 +64,8 @@ services:
       DIAGNOSTICS_HISTORY_PATH: /app/diagnostics/diagnostics_history.json
     volumes:
       - ./diagnostics:/app/diagnostics
+      # 入站图片缓存(聊天记录原图)。持久化后容器重建不再丢图，60 天保留期才真正生效。
+      - ./wecom_cache:/app/.wecom_cache
 
   frontend:
     build:
