@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
 import pytest
 
 from app.api.routes.dashboard import (
@@ -9,9 +12,54 @@ from app.api.routes.dashboard import (
     _build_distribution,
     _build_geography,
     _category_label,
+    _compute_case_portrait_labels,
     _num,
 )
+from app.models.questionnaire import QuestionnaireSubmission
+from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.user import User
 from app.services.china_regions import match_city
+
+
+async def _create_portrait_case(
+    db_session,
+    *,
+    user: User | None = None,
+    status: ServiceCaseStatus = ServiceCaseStatus.IN_SERVICE,
+    created_at: datetime | None = None,
+    deleted_at: datetime | None = None,
+    refund_pending_confirmation: bool = False,
+    health_profile: dict | None = None,
+    intake_answers: dict | None = None,
+) -> tuple[User, ServiceCase]:
+    tag = uuid4().hex[:10]
+    if user is None:
+        user = User(name=f"画像测试-{tag}")
+        db_session.add(user)
+        await db_session.flush()
+    service_case = ServiceCase(
+        case_no=f"PORTRAIT-{tag}",
+        user_id=user.id,
+        group_id=f"portrait-group-{tag}",
+        questionnaire_token=f"portrait-token-{tag}",
+        status=status,
+        created_at=created_at or datetime.now(timezone.utc),
+        deleted_at=deleted_at,
+        refund_pending_confirmation=refund_pending_confirmation,
+        health_profile=health_profile,
+    )
+    db_session.add(service_case)
+    await db_session.flush()
+    if intake_answers is not None:
+        db_session.add(
+            QuestionnaireSubmission(
+                service_case_id=service_case.id,
+                template_key="intake",
+                answers_json=intake_answers,
+            )
+        )
+        await db_session.flush()
+    return user, service_case
 
 
 @pytest.mark.parametrize(
@@ -182,6 +230,143 @@ async def test_population_portrait_endpoint_shape(admin_client):
     }
     assert "geography" in data
     assert {"total", "unknown", "provinces"} <= set(data["geography"])
+
+
+@pytest.mark.asyncio
+async def test_population_portrait_includes_user_without_ai_profile(
+    admin_client,
+    db_session,
+    cai_haoran_answers,
+):
+    baseline_total, _ = await _compute_case_portrait_labels(db_session)
+    answers = dict(cai_haoran_answers)
+    answers.update(
+        {
+            "SIMPLE1774103589114mn0fgyd6": "83",
+            "SIMPLE1774103860160mn0fmri8": "新疆阿勒泰",
+            "SIMPLE1774104038286mn0fqky6": "160",
+            "SIMPLE1774104087629mn0frn0t": "80",
+            "SIMPLE1774104132462mn0fslm6": "39",
+            "SIMPLE1774104236120mn0futlk": "100",
+        }
+    )
+    _, service_case = await _create_portrait_case(
+        db_session,
+        status=ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED,
+        intake_answers=answers,
+        health_profile={
+            "conditions": [
+                {
+                    "code": "hypertension",
+                    "status": "confirmed",
+                    "evidence": "用户明确填写高血压",
+                    "source": "questionnaire",
+                }
+            ],
+            "medications": [],
+            "special_stages": [],
+            "allergies": [
+                {
+                    "category_code": "food_allergy",
+                    "substance": "花生",
+                    "status": "confirmed",
+                    "evidence": "用户明确填写花生过敏",
+                    "source": "questionnaire",
+                }
+            ],
+        },
+    )
+
+    total, labels_by_case = await _compute_case_portrait_labels(db_session)
+    assert total == baseline_total + 1
+    labels = labels_by_case[service_case.id]
+    assert labels["customer_type"] == UNKNOWN_LABEL
+    assert labels["weight_loss_band"] == UNKNOWN_LABEL
+    assert labels["age"] == "55 岁以上"
+    assert labels["bmi"] == "肥胖 28-32"
+    assert labels["bodyfat"] == "≥35%"
+    assert labels["waist_height_ratio"] == "≥0.6 偏高风险"
+    assert labels["province"] == "新疆"
+    assert labels["city"] == "阿勒泰"
+    assert labels["health_domain"] == ["心血管"]
+    assert labels["health_condition"] == ["高血压"]
+    assert labels["allergy_category"] == ["食物过敏"]
+
+    portrait = await admin_client.get("/dashboard/population-portrait")
+    assert portrait.status_code == 200
+    assert portrait.json()["total_users"] == total
+
+    members = await admin_client.get(
+        "/dashboard/population-portrait/members",
+        params={"key": "age", "bucket": "55 岁以上"},
+    )
+    assert members.status_code == 200
+    assert service_case.id in {item["id"] for item in members.json()}
+
+
+@pytest.mark.asyncio
+async def test_population_portrait_uses_latest_non_deleted_case_per_user_and_excludes_refund(
+    db_session,
+):
+    baseline_total, _ = await _compute_case_portrait_labels(db_session)
+    now = datetime.now(timezone.utc)
+
+    # 同一用户多期服务只取最新一张。
+    user_latest, old_case = await _create_portrait_case(
+        db_session,
+        created_at=now - timedelta(days=20),
+        status=ServiceCaseStatus.COMPLETED,
+    )
+    _, latest_case = await _create_portrait_case(
+        db_session,
+        user=user_latest,
+        created_at=now - timedelta(days=10),
+    )
+
+    # 必须先取最新再判断退款：最新已退款时，不得回退到旧的未退款服务单。
+    user_refunded, old_non_refunded = await _create_portrait_case(
+        db_session,
+        created_at=now - timedelta(days=20),
+    )
+    _, latest_refunded = await _create_portrait_case(
+        db_session,
+        user=user_refunded,
+        created_at=now - timedelta(days=10),
+        status=ServiceCaseStatus.REFUNDED,
+    )
+
+    # 退款待确认尚未成为退款状态，仍然纳入。
+    _, refund_pending = await _create_portrait_case(
+        db_session,
+        refund_pending_confirmation=True,
+    )
+
+    # 已毕业但未退款仍然纳入。
+    _, completed = await _create_portrait_case(
+        db_session,
+        status=ServiceCaseStatus.COMPLETED,
+    )
+
+    deleted_at = now - timedelta(days=1)
+    deleted_user = User(name="已删除画像用户", deleted_at=deleted_at)
+    db_session.add(deleted_user)
+    await db_session.flush()
+    _, deleted_user_case = await _create_portrait_case(db_session, user=deleted_user)
+    _, deleted_case = await _create_portrait_case(db_session, deleted_at=deleted_at)
+
+    total, labels_by_case = await _compute_case_portrait_labels(db_session)
+    assert total == baseline_total + 3
+    assert latest_case.id in labels_by_case
+    assert refund_pending.id in labels_by_case
+    assert completed.id in labels_by_case
+    for excluded in (
+        old_case,
+        old_non_refunded,
+        latest_refunded,
+        deleted_user_case,
+        deleted_case,
+    ):
+        assert excluded.id not in labels_by_case
 
 
 @pytest.mark.asyncio

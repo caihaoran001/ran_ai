@@ -376,9 +376,11 @@ _DIMENSION_BY_KEY = {dim["key"]: dim for dim in _PORTRAIT_DIMENSIONS}
 async def dashboard_population_portrait(
     session: AsyncSession = Depends(get_session),
 ) -> PopulationPortrait:
-    """群体画像：活跃服务单的量化区间分布 + 省→市地域层级。
+    """群体画像：未删除、未退款用户的量化区间分布 + 省→市地域层级。
 
-    数据来源：每个活跃服务单取最新画像(customer_type/减重带) + 最新入营问卷(城市/年龄/BMI/体脂/腰围/身高)。
+    每个用户只取最新未删除服务单；若该服务单已确认退款，则该用户不纳入。
+    数据来源：AI 画像(customer_type/减重带，可缺失) + 最新入营问卷(城市/年龄/BMI/体脂/腰围/身高)
+    + 服务单结构化健康标签。没有 AI 画像不会排除用户，只会令对应维度进入『未采集』。
     每个分布都返回有效样本与『未采集』计数，绝不静默丢弃缺失。分桶逻辑与下钻端点共用同一套 case 标签。
     """
     total_users, case_labels = await _compute_case_portrait_labels(session)
@@ -430,36 +432,56 @@ async def _compute_case_portrait_labels(
 ) -> tuple[int, dict[int, dict[str, str | list[str]]]]:
     """逐服务单算出各画像维度的分桶标签（画像端点与下钻端点共用，保证一致）。
 
-    只统计已建档的活跃服务单（未建档空单不计入，避免兜底标签虚高）。
+    统计未软删除用户，每个用户只取最新未删除服务单；最新服务单已确认退款则排除。
+    AI 画像不是入选条件：各维度按问卷、健康标签和画像的实际可用情况独立计数。
     返回 (total_users, {case_id: {dimension_key: bucket_label}})；缺失统一归一为 UNKNOWN_LABEL。
     """
-    # 活跃服务单 id → risk_level
-    case_rows = (
+    # 用户可能有多期服务：先按用户把未删除服务单从新到旧排列，再只取最新一张。
+    # 必须先选最新、再判断 refunded，避免用户退款后旧的未退款服务单被重新纳入。
+    all_case_rows = (
         await session.execute(
-            select(ServiceCase.id, ServiceCase.risk_level, ServiceCase.health_profile).where(
-                active_service_case_condition()
+            select(
+                ServiceCase.id,
+                ServiceCase.user_id,
+                ServiceCase.risk_level,
+                ServiceCase.health_profile,
+                ServiceCase.status,
+            )
+            .join(User, ServiceCase.user_id == User.id)
+            .where(active_service_case_condition(), User.deleted_at.is_(None))
+            .order_by(
+                ServiceCase.user_id,
+                ServiceCase.created_at.desc(),
+                ServiceCase.id.desc(),
             )
         )
     ).all()
-    risk_by_case = {cid: risk for cid, risk, _ in case_rows}
-    health_by_case = {cid: profile for cid, _, profile in case_rows}
-    active_ids = list(risk_by_case.keys())
-    if not active_ids:
+
+    latest_case_rows = []
+    seen_user_ids: set[int] = set()
+    for row in all_case_rows:
+        if row.user_id in seen_user_ids:
+            continue
+        seen_user_ids.add(row.user_id)
+        if row.status == ServiceCaseStatus.REFUNDED:
+            continue
+        latest_case_rows.append(row)
+
+    risk_by_case = {row.id: row.risk_level for row in latest_case_rows}
+    health_by_case = {row.id: row.health_profile for row in latest_case_rows}
+    case_ids = list(risk_by_case)
+    if not case_ids:
         return 0, {}
 
-    # 每个 case 最新画像
+    # 每个 case 最新 AI 画像（可缺失；缺失时用户仍进入总数）。
     latest_profile_json: dict[int, dict] = {}
     for profile in await session.scalars(
         select(UserProfile)
-        .where(UserProfile.service_case_id.in_(active_ids))
+        .where(UserProfile.service_case_id.in_(case_ids))
         .order_by(UserProfile.service_case_id, UserProfile.created_at.desc())
         .distinct(UserProfile.service_case_id)
     ):
         latest_profile_json[profile.service_case_id] = profile.profile_json or {}
-
-    case_ids = list(latest_profile_json.keys())
-    if not case_ids:
-        return 0, {}
 
     # 每个 case 最新入营问卷提交
     latest_submission: dict[int, QuestionnaireSubmission] = {}
@@ -478,13 +500,18 @@ async def _compute_case_portrait_labels(
 
     case_labels: dict[int, dict[str, str | list[str]]] = {}
     for cid in case_ids:
+        has_ai_profile = cid in latest_profile_json
         profile_json = latest_profile_json.get(cid) or {}
         risk_level = risk_by_case.get(cid)
-        # 客户分型：优先已落库标签，缺失则即时推导（兜底）
-        ctype = profile_json.get("customer_type")
-        if not isinstance(ctype, str) or not ctype.strip():
+        # 客户分型和最终减重带依赖 AI 画像；没有画像时保留为『未采集』，不混入 BMI 初判。
+        ctype = profile_json.get("customer_type") if has_ai_profile else None
+        if has_ai_profile and (not isinstance(ctype, str) or not ctype.strip()):
             ctype = customer_type_for_profile(profile_json, risk_level)
-        band = _band_short(weight_loss_band_from_profile(profile_json) or "未采集")
+        band = (
+            _band_short(weight_loss_band_from_profile(profile_json) or "未采集")
+            if has_ai_profile
+            else "未采集"
+        )
 
         submission = latest_submission.get(cid)
         facts = build_intake_fact_summary(fields, submission.answers_json) if submission else {}
