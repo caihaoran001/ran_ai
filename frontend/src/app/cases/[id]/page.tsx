@@ -31,6 +31,18 @@ import {
   Zap,
 } from "lucide-react";
 
+const PERSISTENT_HIGH_RISK_CODES = new Set([
+  "pregnancy",
+  "lactation",
+  "chronic_disease",
+  "long_term_medication",
+  "hormone_medication",
+  "liver_kidney",
+  "stone",
+  "severe_test_abnormality",
+  "depression",
+]);
+
 type Questionnaire = {
   fields: {
     key: string;
@@ -71,6 +83,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const serviceGraduationDate = getServiceGraduationDate(serviceCase.started_at, serviceCase.service_plan_start_date);
   const serviceWindowEnded = Boolean(serviceGraduationDate && chinaDateKey(new Date()) > serviceGraduationDate);
   const refunded = serviceCase.status === "refunded";
+  const highRiskFlag = persistentHighRiskFlag(serviceCase.risk_flags);
   const generationError =
     serviceCase.status === "questionnaire_submitted" && documents.length === 0
       ? extractGenerationError(serviceCase.notes)
@@ -106,19 +119,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
               </p>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              {serviceCase.risk_level === "high" && (
+              {serviceCase.risk_level === "high" && highRiskFlag && (
                 <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
                   <AlertTriangle className="h-3.5 w-3.5" />
                   高风险
-                  {serviceCase.risk_flags?.[0] && (
-                    <span className="opacity-80">· {riskLabel(serviceCase.risk_flags[0])}</span>
-                  )}
-                </span>
-              )}
-              {serviceCase.needs_human_intervention && (
-                <span className="status-pill border-orange-200 bg-orange-50 text-orange-700">
-                  <UserRound className="h-3.5 w-3.5" />
-                  需关注
+                  <span className="opacity-80">· {riskLabel(highRiskFlag)}</span>
                 </span>
               )}
               {serviceCase.risk_level === "high" && (
@@ -214,6 +219,15 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         />
         <InfoCard title="续购意向" value={formatIntentFlags(serviceCase.renewal_intent_flags)} icon={HeartHandshake} />
         <InfoCard title="退款/退出意向" value={formatIntentFlags(serviceCase.refund_intent_flags)} icon={RefreshCcw} />
+        {highRiskFlag && (
+          <InfoCard
+            title="持续健康风险依据"
+            value={`${riskLabel(highRiskFlag)}：${highRiskFlag.evidence || highRiskFlag.reason}`}
+            icon={AlertTriangle}
+            className="border-rose-200 bg-rose-50/50"
+            valueClassName="text-rose-900"
+          />
+        )}
       </div>
 
       <OutcomeSection bundle={outcomes} />
@@ -534,11 +548,6 @@ function extractGenerationError(notes?: string | null) {
   return matched?.replace(/^\[[^\]]+\]\s*/, "") ?? null;
 }
 
-function formatRiskFlags(flags?: Array<Record<string, string>> | null) {
-  if (!flags?.length) return "暂未记录具体原因，请查看聊天记录和问卷内容。";
-  return flags.map((flag) => riskLabel(flag)).join("；");
-}
-
 function formatIntentFlags(flags?: Array<Record<string, string | boolean>> | null) {
   if (!flags?.length) return "暂无";
   const latest = flags[flags.length - 1];
@@ -551,10 +560,12 @@ function riskLabel(flag: Record<string, string>) {
     pregnancy: "孕期/怀孕相关",
     lactation: "哺乳期相关",
     chronic_disease: "慢病相关",
+    long_term_medication: "长期用药相关",
     depression: "情绪危机/抑郁相关",
     hormone_medication: "激素类药物相关",
     liver_kidney: "肝肾异常相关",
     stone: "结石相关",
+    severe_test_abnormality: "体检严重异常相关",
     severe_insomnia: "严重失眠相关",
     chest_pain: "胸痛/胸闷相关",
     palpitation: "心悸/心慌相关",
@@ -569,4 +580,8 @@ function riskLabel(flag: Record<string, string>) {
   };
   const label = labels[flag.code] || flag.code || "未知风险";
   return flag.keyword ? `${label}（命中：${flag.keyword}）` : label;
+}
+
+function persistentHighRiskFlag(flags?: Array<Record<string, string>> | null) {
+  return flags?.find((flag) => flag.level === "high" && PERSISTENT_HIGH_RISK_CODES.has(flag.code));
 }

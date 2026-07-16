@@ -30,11 +30,9 @@ async def test_event_stream_shields_db_query_against_client_disconnect(monkeypat
         await asyncio.sleep(0.15)
         finished["count"] += 1
         return {
-            "pending_ai_messages": 0,
             "pending_knowledge_drafts": 0,
             "pending_documents": 0,
             "pending_total": 0,
-            "intervention_count": 0,
         }
 
     monkeypatch.setattr(events_mod, "_review_counts", slow_review_counts)

@@ -9,10 +9,9 @@ from sqlalchemy import func, select, text
 
 from app.db.session import SessionLocal
 from app.models.knowledge_draft import KnowledgeDraft
-from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, UserDocument
-from app.services.service_case_queries import active_service_case_condition, pending_review_case_ids_subquery
+from app.services.service_case_queries import active_service_case_condition
 
 router = APIRouter()
 
@@ -28,7 +27,6 @@ async def event_stream(request: Request) -> StreamingResponse:
             # 会泄漏成 non-checked-in 连接并最终耗尽连接池(本次整站/机器人瘫痪的根因)。
             payload = await asyncio.shield(_review_counts())
             yield f"event: pending_review\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            yield f"event: intervention\ndata: {json.dumps({'count': payload['intervention_count']}, ensure_ascii=False)}\n\n"
             # 心跳注释行(SSE 规范，前端 EventSource 自动忽略)：保活长连接、便于中间层及时感知存活
             yield ": ping\n\n"
             await asyncio.sleep(5)
@@ -38,17 +36,6 @@ async def event_stream(request: Request) -> StreamingResponse:
 
 async def _review_counts() -> dict[str, int]:
     async with SessionLocal() as session:
-        pending_ai_messages = await session.scalar(
-            select(func.count(Message.id))
-            .join(ServiceCase, Message.service_case_id == ServiceCase.id)
-            .where(
-                active_service_case_condition(),
-                Message.direction == MessageDirection.OUTBOUND,
-                Message.sender_type == MessageSenderType.BOT,
-                Message.purpose == MessagePurpose.CHAT,
-                Message.status == MessageStatus.PENDING,
-            )
-        ) or 0
         pending_knowledge_drafts = await session.scalar(
             select(func.count(KnowledgeDraft.id)).where(KnowledgeDraft.status == "pending")
         ) or 0
@@ -61,23 +48,13 @@ async def _review_counts() -> dict[str, int]:
                 ServiceCase.status != ServiceCaseStatus.REFUNDED,
             )
         ) or 0
-        intervention_count = await session.scalar(
-            select(func.count(ServiceCase.id)).where(
-                active_service_case_condition(),
-                ServiceCase.id.in_(pending_review_case_ids_subquery()),
-            )
-        ) or 0
-
     # pending_total 驱动审核控制台侧边栏红点：只统计控制台里真正待处理的项——
-    # 待审核文件、待审核知识草稿、已退款待确认。AI 回复待审核(pending_ai_messages)
-    # 与 intervention_count 不再计入红点(自动发送模式下该复核块已从控制台移除)。
+    # 待审核文件、待审核知识草稿、已退款待确认。
     return {
-        "pending_ai_messages": pending_ai_messages,
         "pending_knowledge_drafts": pending_knowledge_drafts,
         "pending_documents": pending_documents,
         "refund_pending": refund_pending,
         "pending_total": pending_knowledge_drafts + pending_documents + refund_pending,
-        "intervention_count": intervention_count,
     }
 
 

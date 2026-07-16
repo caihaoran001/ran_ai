@@ -25,7 +25,6 @@ from app.services.ranren_ai.engine import (
     _format_chat_history_line,
     _group_bot_control_command,
     _requires_health_handoff,
-    _requires_immediate_handoff,
 )
 from app.services.channels.base import ChannelMessage
 from app.services.intervention_service import (
@@ -119,7 +118,6 @@ async def test_normal_message_no_risk(db_session, mock_ai, cai_haoran_answers):
     )
     case = await db_session.scalar(select(ServiceCase).where(ServiceCase.id == case_id))
     assert case.risk_level != "high"
-    assert case.needs_human_intervention is False
 
 
 @pytest.mark.asyncio
@@ -195,7 +193,6 @@ def test_explicit_robot_stop_becomes_human_handoff_analysis():
 
     assert insight["requires_human_intervention"] is True
     assert insight["requires_immediate_safety_reply"] is False
-    assert _requires_immediate_handoff(insight) is True
 
 
 def test_intervention_normalizes_agent_context_plan():
@@ -228,45 +225,6 @@ def test_intervention_normalizes_agent_context_plan():
     }
 
 
-def test_high_risk_health_goes_immediate_handoff():
-    # 健康红线(孕期/慢病等 level=high)→ ①层直接@班主任
-    analysis = {
-        "requires_human_intervention": True,
-        "requires_immediate_safety_reply": False,
-        "risk_flags": [{"code": "pregnancy", "level": "high", "reason": "孕期", "evidence": "我是孕妇", "source": "chat_message"}],
-        "intervention_reasons": [{"code": "pregnancy", "level": "high", "reason": "孕期需个案", "evidence": "我是孕妇", "source": "chat_message"}],
-    }
-    assert _requires_immediate_handoff(analysis) is True
-
-
-def test_acute_symptom_goes_immediate_handoff():
-    # 急性体感(心悸 medium / 急性安全回复)→ ①层
-    by_flag = {
-        "requires_human_intervention": True,
-        "risk_flags": [{"code": "palpitation", "level": "medium", "reason": "心悸", "evidence": "心悸", "source": "chat_message"}],
-    }
-    by_safety = {"requires_human_intervention": True, "requires_immediate_safety_reply": True, "risk_flags": []}
-    assert _requires_immediate_handoff(by_flag) is True
-    assert _requires_immediate_handoff(by_safety) is True
-
-
-def test_medium_risk_not_immediate_handoff():
-    # 中风险(非急性、非high、非停机投诉退款)→ 不@班主任,走待审核(②层)
-    analysis = {
-        "requires_human_intervention": True,
-        "requires_immediate_safety_reply": False,
-        "risk_flags": [{"code": "other_risk", "level": "medium", "reason": "体感不适需复核", "evidence": "有点累", "source": "chat_message"}],
-        "intervention_reasons": [{"code": "other_risk", "level": "medium", "reason": "需复核", "evidence": "有点累", "source": "chat_message"}],
-    }
-    assert _requires_immediate_handoff(analysis) is False
-
-
-def test_low_risk_not_immediate_handoff():
-    # 低风险/普通(不需人工介入)→ ③层自动回复
-    analysis = {"requires_human_intervention": False, "requires_immediate_safety_reply": False, "risk_flags": []}
-    assert _requires_immediate_handoff(analysis) is False
-
-
 def test_high_risk_health_consultation_handoff():
     # 高风险用户(risk_level=high)问需专业判断的健康/方案问题 → @班主任(即便当前句本身无新风险)
     health_q = {"requires_human_intervention": False, "risk_flags": [], "health_consultation": True}
@@ -277,6 +235,53 @@ def test_high_risk_health_consultation_handoff():
     # 非高风险用户问健康问题 → 不因此@(AI 正常答)
     assert _requires_health_handoff(health_q, "normal") is False
     assert _requires_health_handoff(health_q, None) is False
+
+
+def test_one_off_medical_boundary_does_not_persist_high_risk():
+    insight = normalize_insight(
+        {
+            "requires_human_intervention": True,
+            "risk_flags": [{
+                "code": "medical_claim",
+                "level": "high",
+                "reason": "用户要求判断是否应停药",
+                "evidence": "我能不能停降压药改吃这个",
+                "source": "chat_message",
+            }],
+        },
+        source="chat_message",
+        content="我能不能停降压药改吃这个",
+    )
+    case = ServiceCase(case_no="MEDICAL-BOUNDARY", group_id="g", questionnaire_token="t")
+
+    merge_case_insight(case, insight)
+
+    assert insight["requires_human_intervention"] is True
+    assert insight["risk_flags"][0]["level"] == "medium"
+    assert case.risk_level != "high"
+
+
+def test_other_risk_cannot_persist_as_high_risk():
+    insight = normalize_insight(
+        {
+            "requires_human_intervention": True,
+            "risk_flags": [{
+                "code": "other_risk",
+                "level": "high",
+                "reason": "模型未能归类的疑似风险",
+                "evidence": "用户原话",
+                "source": "chat_message",
+            }],
+        },
+        source="chat_message",
+        content="用户原话",
+    )
+    case = ServiceCase(case_no="OTHER-RISK", group_id="g", questionnaire_token="t")
+
+    merge_case_insight(case, insight)
+
+    assert insight["risk_flags"][0]["level"] == "medium"
+    assert case.risk_level != "high"
 
 
 @pytest.mark.asyncio

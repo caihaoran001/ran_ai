@@ -14,6 +14,18 @@ const SERVICE_STATUS_LABELS: Record<string, string> = {
   refunded: "已退款",
 };
 
+const PERSISTENT_HIGH_RISK_CODES = new Set([
+  "pregnancy",
+  "lactation",
+  "chronic_disease",
+  "long_term_medication",
+  "hormone_medication",
+  "liver_kidney",
+  "stone",
+  "severe_test_abnormality",
+  "depression",
+]);
+
 function statusLabel(status: string): string {
   return SERVICE_STATUS_LABELS[status] ?? status;
 }
@@ -96,8 +108,8 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
                 {serviceCase.case_no} · {statusLabel(serviceCase.status)}
               </Link>
               <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
-                <Info label="人工介入" value={serviceCase.needs_human_intervention ? reasonText(serviceCase.intervention_reasons) : "暂无"} />
-                <Info label="风险原因" value={serviceCase.risk_level === "high" ? reasonText(serviceCase.risk_flags) : "暂无"} />
+                <Info label="转人工记录" value={reasonText(serviceCase.intervention_reasons)} />
+                <Info label="持续健康风险" value={serviceCase.risk_level === "high" ? persistentRiskText(serviceCase.risk_flags) : "暂无"} />
                 <Info label="AI自动回复" value={serviceCase.ai_auto_reply_enabled === false ? "关闭" : "开启"} />
                 <Info label="续购意向" value={intentText(serviceCase.renewal_intent_flags)} />
                 <Info label="退款/退出意向" value={intentText(serviceCase.refund_intent_flags)} />
@@ -230,11 +242,6 @@ function OperationsSummary({
 }) {
   const domains = recordValue(stateProfile?.state_json?.domains);
   const focus = currentActionFocus(domains);
-  const attentionText = serviceCase.needs_human_intervention
-    ? reasonText(serviceCase.intervention_reasons) || "存在待关注事项"
-    : serviceCase.risk_level === "high"
-      ? reasonText(serviceCase.risk_flags)
-      : "";
   const latestChange = latestStateChange(domains) || latestCheckinSignal(checkins);
   const latestChangeAt = latestStateChangeAt(domains) || stateProfile?.updated_at;
   const nextAction = text(focus.action) || "等待新的有效反馈后由档案官确定下一步。";
@@ -261,7 +268,7 @@ function OperationsSummary({
           meta={latestChangeAt ? `更新于 ${formatDateTime(latestChangeAt)}` : undefined}
         />
         <OperationItem label="打卡" value={`已打卡 ${uniqueCheckinDays} 天`} />
-        {attentionText && <OperationItem label="需要关注" value={attentionText} tone="risk" />}
+        {serviceCase.risk_level === "high" && <OperationItem label="持续健康风险" value={persistentRiskText(serviceCase.risk_flags)} tone="risk" />}
       </dl>
     </section>
   );
@@ -858,6 +865,10 @@ function reasonText(flags?: Array<Record<string, string>> | null) {
     .slice(-3)
     .map((item) => item.evidence ? `${item.reason || item.code}（${item.evidence}）` : item.reason || item.code)
     .join("；");
+}
+
+function persistentRiskText(flags?: Array<Record<string, string>> | null) {
+  return reasonText(flags?.filter((item) => item.level === "high" && PERSISTENT_HIGH_RISK_CODES.has(item.code)));
 }
 
 function intentText(flags?: Array<Record<string, string | boolean>> | null) {

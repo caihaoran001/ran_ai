@@ -8,10 +8,10 @@ export default async function AttentionEventsPage() {
   return (
     <div className="page-stack">
       <DetailHeader
-        title="需关注事件"
-        subtitle={`今日共有 ${items.length} 个服务单、${eventCount} 条触发转人工或 @班主任 的事件。`}
+        title="转人工事件"
+        subtitle={`今日共有 ${items.length} 个服务单、${eventCount} 条触发转人工并 @班主任 的事件。`}
       />
-      <MessageEventList items={items} emptyText="今日暂无需关注事件。" showAiReply />
+      <MessageEventList items={items} emptyText="今日暂无转人工事件。" showAiReply />
     </div>
   );
 }

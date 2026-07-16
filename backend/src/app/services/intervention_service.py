@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 
 VALID_RISK_CODES = frozenset({
     "pregnancy", "lactation", "chronic_disease", "depression",
-    "hormone_medication", "liver_kidney", "stone", "severe_insomnia",
+    "long_term_medication", "hormone_medication", "liver_kidney", "stone",
+    "severe_test_abnormality", "severe_insomnia",
     "chest_pain", "palpitation", "allergy", "medical_claim", "other_risk",
     "emotional_distress", "risk_classifier_unavailable",
     "medication", "physical_discomfort", "complaint", "robot_stop", "refund_request",
@@ -19,6 +20,21 @@ VALID_RISK_CODES = frozenset({
 })
 
 VALID_RISK_LEVELS = frozenset({"low", "medium", "high"})
+
+# 服务单上的「高风险」是持续健康背景，不是一次需要班主任接手的事件。
+# 高风险必须可被运营从用户原话核验；急性不适、诊疗/疗效承诺边界、投诉退款等
+# 仍会转人工，但只作为本次事件留在 intervention_reasons，不升级用户风险等级。
+PERSISTENT_HIGH_RISK_CODES = frozenset({
+    "pregnancy",
+    "lactation",
+    "chronic_disease",
+    "long_term_medication",
+    "hormone_medication",
+    "liver_kidney",
+    "stone",
+    "severe_test_abnormality",
+    "depression",
+})
 
 VALID_SOURCES = frozenset({"chat_message", "questionnaire"})
 
@@ -172,7 +188,7 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
 def merge_case_insight(service_case: ServiceCase, insight: dict[str, Any]) -> None:
     risks = _normalize_items(insight.get("risk_flags"), source="")
     if risks:
-        has_high_risk = any(r.get("level") == "high" for r in risks)
+        has_high_risk = any(_is_persistent_high_risk(r) for r in risks)
         has_medium_risk = any(r.get("level") == "medium" for r in risks)
         if has_high_risk:
             service_case.risk_level = "high"
@@ -181,9 +197,7 @@ def merge_case_insight(service_case: ServiceCase, insight: dict[str, Any]) -> No
         service_case.risk_flags = _merge_lists(service_case.risk_flags, risks)
 
     reasons = _normalize_items(insight.get("intervention_reasons"), source="")
-    # 不再置位 needs_human_intervention：已事件化——『需关注』由『是否有待审核 AI 回复』实时计算
-    # (pending_review_case_ids_subquery)，处理完自动消失，无需持久标记+手动清除。
-    # 仍累积 intervention_reasons 作历史，供画像/LLM 上下文参考。
+    # 转人工不再是服务单状态；保留历史原因，供画像、运营回溯和 LLM 上下文参考。
     service_case.intervention_reasons = _merge_lists(service_case.intervention_reasons, reasons)
 
     renewal = insight.get("renewal_intent")
@@ -291,17 +305,35 @@ def _normalize_items(value: Any, *, source: str) -> list[dict[str, str]]:
         level = _string(item.get("level")) or "medium"
         if level not in VALID_RISK_LEVELS:
             level = "medium"
+        reason = _string(item.get("reason"))
+        evidence = _string(item.get("evidence") or item.get("keyword"))
+        # “high”只能用于有明确分类、有理由且可回查用户原话的持续健康风险。
+        # 不满足时保守降为中风险：照样转人工，不把该用户永久挂成高风险。
+        if level == "high" and not _is_persistent_high_risk({
+            "code": code,
+            "reason": reason,
+            "evidence": evidence,
+        }):
+            level = "medium"
         raw_source = _string(item.get("source"))
         items.append(
             {
                 "code": code,
                 "level": level,
-                "reason": _string(item.get("reason")),
-                "evidence": _string(item.get("evidence") or item.get("keyword")),
+                "reason": reason,
+                "evidence": evidence,
                 "source": raw_source if raw_source in VALID_SOURCES else source,
             }
         )
     return items
+
+
+def _is_persistent_high_risk(item: dict[str, str]) -> bool:
+    return bool(
+        item.get("code") in PERSISTENT_HIGH_RISK_CODES
+        and (item.get("reason") or "").strip()
+        and (item.get("evidence") or "").strip()
+    )
 
 
 def _normalize_intent(value: Any, *, source: str) -> dict[str, Any]:

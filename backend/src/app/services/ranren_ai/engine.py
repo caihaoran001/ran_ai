@@ -124,9 +124,8 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         self.channel = channel
         self.settings = settings or get_settings()
         self.has_pending_newer_message = has_pending_newer_message
-        # 转人工@班主任的短期防刷屏：每个 service_case 30 分钟内不重复@（替代旧的
-        # needs_human_intervention 永久标记——旧逻辑会在第一次@后永久不再@后续风险，导致班主任漏消息；
-        # 新逻辑每个新风险事件都会@、只在短期内防刷屏）。节流时间戳持久化在
+        # 转人工@班主任的短期防刷屏：每个 service_case 30 分钟内不重复@。
+        # 每个新风险事件仍会写入消息分析；节流时间戳持久化在
         # service_cases.last_handoff_at（见 _recently_handed_off / _mark_handoff），重启不再清零。
 
     async def _process_inbound_attachments(
@@ -763,51 +762,6 @@ class RanrenAIEngine(InboundAttachmentProcessor):
 def _prompt_data(value: object) -> str:
     """Escape user-controlled text before placing it inside prompt data tags."""
     return escape(str(value or ""), quote=False)
-
-
-# 急性体感 code：medium 及以上即视为需真人立即接手
-_IMMEDIATE_SAFETY_CODES = {"severe_insomnia", "chest_pain", "palpitation", "allergy", "medical_claim"}
-# 用户诉求类：要求停机器人 / 投诉 / 退款退群
-_HANDOFF_CODES = {"robot_stop", "complaint", "refund_request"}
-
-
-def _has_high_risk(analysis: dict | None) -> bool:
-    """风险分析里是否有任何 level=high 信号（健康红线：孕哺/慢病/激素药/抑郁危机/疗效承诺等）。"""
-    if not isinstance(analysis, dict):
-        return False
-    for key in ("risk_flags", "intervention_reasons"):
-        for item in (analysis.get(key) or []):
-            if isinstance(item, dict) and item.get("level") == "high":
-                return True
-    return False
-
-
-def _requires_immediate_handoff(analysis: dict | None) -> bool:
-    """①层：需立即 @班主任 转人工（真人接手，AI 不再生成回复）。
-
-    触发 = 需人工介入 且满足任一：
-    - 任何 level=high 风险（健康红线）
-    - requires_immediate_safety_reply=true（正在发生的急症/心理危机/诊疗询问）
-    - 急性体感 code（心悸/胸痛/严重失眠/过敏/医学声称）且 level>=medium
-    - 用户诉求 code（停机器人/投诉/退款）
-    """
-    if not isinstance(analysis, dict) or not analysis.get("requires_human_intervention"):
-        return False
-    if _has_high_risk(analysis):
-        return True
-    if analysis.get("requires_immediate_safety_reply") is True:
-        return True
-    flags = analysis.get("risk_flags") or []
-    reasons = analysis.get("intervention_reasons") or []
-    for item in [*flags, *reasons]:
-        if not isinstance(item, dict):
-            continue
-        code = item.get("code")
-        if code in _HANDOFF_CODES:
-            return True
-        if code in _IMMEDIATE_SAFETY_CODES and item.get("level") in {"medium", "high"}:
-            return True
-    return False
 
 
 def _requires_health_handoff(analysis: dict | None, risk_level: str | None) -> bool:

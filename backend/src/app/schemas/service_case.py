@@ -26,7 +26,6 @@ class ServiceCaseUpdate(BaseModel):
     notes: str | None = None
     auto_send_documents: bool | None = None
     ai_auto_reply_enabled: bool | None = None
-    needs_human_intervention: bool | None = None
     refund_pending_confirmation: bool | None = None  # 运营驳回退款候选(置 False)时用
     reset_risk: bool | None = None  # 人工解除高风险标记
 
@@ -49,7 +48,6 @@ class ServiceCaseRead(Timestamped):
     ai_auto_reply_enabled: bool = True
     risk_level: str = "normal"
     risk_flags: list[dict] | None = None
-    needs_human_intervention: bool = False
     intervention_reasons: list[dict] | None = None
     renewal_intent_flags: list[dict] | None = None
     refund_intent_flags: list[dict] | None = None

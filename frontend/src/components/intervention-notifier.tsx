@@ -3,8 +3,7 @@
 import { useSSE } from "@/hooks/use-sse";
 
 export function InterventionBadge() {
-  // pendingReviewCount(=pending_total) 已含待审核文件/知识草稿/已退款待确认。
-  // AI 回复待审核(interventionCount)不再计入红点。
+  // pendingReviewCount(=pending_total) 只含待审核文件、知识草稿和已退款待确认。
   const { pendingReviewCount } = useSSE();
   const count = pendingReviewCount;
 

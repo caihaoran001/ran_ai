@@ -59,7 +59,6 @@ class CaseHealthItem(BaseModel):
     last_checkin_date: str | None = None
     days_since_checkin: int | None = None
     risk_level: str | None = None
-    needs_human_intervention: bool = False
     stage_reports: list[str] = Field(default_factory=list)
     last_inbound_at: datetime | None = None
 
@@ -202,7 +201,7 @@ class DashboardSummary(BaseModel):
     pending_documents: int
     new_users_today: int = 0
     risk_users: int = 0
-    human_intervention_users: int = 0
+    handoff_events_today: int = 0
     unfollowed_users: int = 0
     renewal_followup_users: int = 0
     repurchase_soon_users: int = 0

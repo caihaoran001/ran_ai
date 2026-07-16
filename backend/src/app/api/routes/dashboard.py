@@ -152,12 +152,12 @@ async def dashboard_summary(
             ServiceCase.risk_level == "high",
         )
     )
-    # 『需关注事件』数：今日触发转人工/@班主任 的事件数（事件级，同一用户多次触发算多条）。
+    # 今日转人工事件数：同一用户多次触发算多条；这不是服务单上的持续状态。
     # 口径与「今日用户消息/今日打卡」一致，每日自然滚动，无需人工清零机制。
     # 判定信号：入站用户消息的 analysis_json.requires_human_intervention（由 analyze_intervention 写入，
     # 正是 engine 触发 @班主任 handoff 的条件）。注：旧的「待审核 AI 回复(PENDING)」机制已废弃——
     # 现凡需介入一律直接 @班主任(status=SENT)，不再生成 PENDING 回复，故不能再用它统计。
-    human_intervention_users = await session.scalar(
+    handoff_events_today = await session.scalar(
         select(func.count(Message.id))
         .join(ServiceCase, Message.service_case_id == ServiceCase.id)
         .where(
@@ -259,7 +259,7 @@ async def dashboard_summary(
         pending_documents=pending_documents or 0,
         new_users_today=new_users_today or 0,
         risk_users=risk_users or 0,
-        human_intervention_users=human_intervention_users or 0,
+        handoff_events_today=handoff_events_today or 0,
         unfollowed_users=unfollowed_users or 0,
         renewal_followup_users=renewal_followup_users or 0,
         repurchase_soon_users=renewal_followup_users or 0,
@@ -1638,25 +1638,6 @@ async def dashboard_case_health(session: AsyncSession = Depends(get_session)) ->
         if stage:
             stages_by_case.setdefault(doc.service_case_id, set()).add(str(stage))
 
-    # 『需关注』事件级：今日触发转人工/@班主任 的 case（与看板卡片同口径）。
-    today_start, today_end = _today_bounds()
-    pending_review_ids: set[int] = set(
-        (
-            await session.scalars(
-                select(Message.service_case_id)
-                .where(
-                    Message.service_case_id.in_(case_ids),
-                    Message.created_at >= today_start,
-                    Message.created_at < today_end,
-                    Message.direction == MessageDirection.INBOUND,
-                    Message.sender_type == MessageSenderType.USER,
-                    _requires_human_intervention_expr(),
-                )
-                .distinct()
-            )
-        ).all()
-    )
-
     items: list[CaseHealthItem] = []
     for case in cases:
         last = last_checkin.get(case.id)
@@ -1670,7 +1651,6 @@ async def dashboard_case_health(session: AsyncSession = Depends(get_session)) ->
                 last_checkin_date=last.isoformat() if last else None,
                 days_since_checkin=(today - last).days if last else None,
                 risk_level=case.risk_level,
-                needs_human_intervention=case.id in pending_review_ids,
                 stage_reports=sorted(stages_by_case.get(case.id, set())),
                 last_inbound_at=last_inbound.get(case.id),
             )
@@ -1686,4 +1666,3 @@ def _case_service_day(service_case, today, tz: ZoneInfo) -> int:
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
     return (today - start.astimezone(tz).date()).days + 1
-

@@ -44,7 +44,6 @@ export type ServiceCase = {
   questionnaire_to_llm_output_ms?: number | null;
   risk_level?: string;
   risk_flags?: Array<Record<string, string>> | null;
-  needs_human_intervention?: boolean;
   intervention_reasons?: Array<Record<string, string>> | null;
   renewal_intent_flags?: Array<Record<string, string | boolean>> | null;
   refund_intent_flags?: Array<Record<string, string | boolean>> | null;

@@ -20,7 +20,23 @@ from app.services.content_policy import (
     get_ai_reply_state,
     set_ai_reply_enabled,
 )
-from app.services.ranren_ai.engine import RanrenAIEngine, _requires_immediate_handoff
+from app.services.ranren_ai.engine import RanrenAIEngine
+
+@pytest.mark.asyncio
+async def test_service_case_api_drops_stale_attention_state_and_dashboard_uses_handoffs(
+    admin_client, create_case
+):
+    response = await create_case(
+        {"group_id": f"risk-contract-{secrets.token_hex(6)}", "user": {"name": "风险契约测试"}},
+    )
+    assert response.status_code == 201, response.text
+    assert "needs_human_intervention" not in response.json()
+
+    summary = await admin_client.get("/dashboard/summary")
+    assert summary.status_code == 200, summary.text
+    assert "handoff_events_today" in summary.json()
+    assert "human_intervention_users" not in summary.json()
+
 
 
 @pytest.mark.asyncio
@@ -545,26 +561,6 @@ async def test_should_send_ai_reply_only_guards_human_intervention(create_case, 
     )
 
 
-def test_acute_physical_risk_triggers_immediate_handoff():
-    # 急性体感(心悸等)+需人工介入 → ①层直接@班主任(无论 requires_immediate_safety_reply)
-    base = {"requires_human_intervention": True}
-    assert _requires_immediate_handoff({**base, "risk_flags": []}) is False
-    assert _requires_immediate_handoff(
-        {**base, "risk_flags": [{"code": "palpitation", "level": "medium"}]},
-    ) is True
-    # 新设计:急性体感即使 safety_reply=false 也归①层(健康风险直接转人工)
-    assert _requires_immediate_handoff(
-        {**base, "requires_immediate_safety_reply": False, "risk_flags": [{"code": "palpitation", "level": "medium"}]},
-    ) is True
-    assert _requires_immediate_handoff(
-        {**base, "requires_immediate_safety_reply": True, "risk_flags": []},
-    ) is True
-    # 不需人工介入 → 不@
-    assert _requires_immediate_handoff(
-        {"requires_human_intervention": False, "risk_flags": [{"code": "palpitation", "level": "medium"}]},
-    ) is False
-
-
 def test_diagnostics_suites_keep_real_e2e_last():
     ids = [suite["id"] for suite in diagnostics_mod.TEST_SUITES]
 
@@ -706,17 +702,6 @@ async def test_diagnostics_reset_active_run_preserves_history(tmp_path, monkeypa
     assert history["statuses"]["e2e_01"] == "failed"
     assert history["statuses"]["01"] == "passed"
     assert history["console_logs"]["e2e_01"][0] == "old log"
-
-
-def test_high_risk_triggers_immediate_handoff():
-    # 健康红线 level=high + 需人工介入 → ①层@班主任;只看本次 analysis,不看持久 risk_level
-    base = {"requires_human_intervention": True}
-    assert _requires_immediate_handoff({**base, "risk_flags": []}) is False
-    assert _requires_immediate_handoff(
-        {**base, "risk_flags": [{"code": "medical_boundary", "level": "high"}]},
-    ) is True
-    # 仅有持久高风险但本次 analysis 无风险信号 → 不强制@(避免每句都@)
-    assert _requires_immediate_handoff({**base, "risk_flags": []}) is False
 
 
 @pytest.mark.asyncio

@@ -70,7 +70,6 @@ class ServiceCase(TimestampMixin, Base):
     ai_auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     risk_level: Mapped[str] = mapped_column(String(32), default="normal", index=True)
     risk_flags: Mapped[list[dict] | None] = mapped_column(JSON)
-    needs_human_intervention: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     intervention_reasons: Mapped[list[dict] | None] = mapped_column(JSON)
     # 上次 @班主任转人工的时间(UTC)：持久化短期防刷屏节流，重启不丢，30 分钟内不重复@（替代旧内存字典）。
     last_handoff_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -25,30 +25,10 @@ from app.services.service_case_queries import (
     active_service_case_condition,
     get_active_service_case,
     get_service_case as get_service_case_any,
-    pending_review_case_ids_subquery,
     select_active_service_cases,
 )
 
 router = APIRouter()
-
-
-async def _annotate_pending_review(session: AsyncSession, cases: list[ServiceCase]) -> None:
-    """把 needs_human_intervention 字段动态置为『是否有待审核 AI 回复』(事件级『需关注』)。
-
-    内存赋值仅用于序列化输出;只读端点不 commit，不会污染 DB(列已停止写入)。
-    """
-    if not cases:
-        return
-    ids = [case.id for case in cases]
-    pending = set(
-        (
-            await session.scalars(
-                pending_review_case_ids_subquery().where(Message.service_case_id.in_(ids))
-            )
-        ).all()
-    )
-    for case in cases:
-        case.needs_human_intervention = case.id in pending
 
 
 @router.get("", response_model=list[ServiceCaseRead])
@@ -72,9 +52,8 @@ async def list_service_cases(
                 User.phone.ilike(like),
                 ServiceCase.group_name.ilike(like),
             )
-        )
+    )
     cases = list(await session.scalars(statement))
-    await _annotate_pending_review(session, cases)
     return cases
 
 
@@ -86,7 +65,6 @@ async def get_service_case(
     service_case = await get_service_case_any(session, service_case_id, options=(selectinload(ServiceCase.user),))
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
-    await _annotate_pending_review(session, [service_case])
     return service_case
 
 
@@ -193,7 +171,6 @@ async def update_service_case(
         raise HTTPException(status_code=404, detail="service case not found")
     data = payload.model_dump(exclude_unset=True)
     if data.pop("reset_risk", False):
-        # 事件化后不再有 needs_human_intervention 持久标记可清；此操作语义=重置风险等级。
         service_case.risk_level = "normal"
         service_case.risk_flags = None
         service_case.intervention_reasons = None
@@ -257,8 +234,6 @@ def _apply_service_case_filter(statement, metric: str | None):
         )
     if metric == "risk":
         return statement.where(ServiceCase.risk_level == "high")
-    if metric == "human_intervention":
-        return statement.where(ServiceCase.id.in_(pending_review_case_ids_subquery()))
     if metric == "in_service":
         return statement.where(ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
     if metric == "renewal_followup":

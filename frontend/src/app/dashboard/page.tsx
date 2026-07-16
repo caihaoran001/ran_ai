@@ -30,7 +30,7 @@ type Summary = {
   pending_documents: number;
   new_users_today: number;
   risk_users: number;
-  human_intervention_users?: number;
+  handoff_events_today?: number;
   unfollowed_users: number;
   renewal_followup_users?: number;
   repurchase_soon_users: number;
@@ -53,7 +53,6 @@ type CaseHealthItem = {
   days_since_checkin?: number | null;
   action_focus?: string | null;
   risk_level?: string | null;
-  needs_human_intervention: boolean;
   stage_reports: string[];
   last_inbound_at?: string | null;
 };
@@ -96,7 +95,7 @@ export default async function DashboardPage() {
     pending_documents: 0,
     new_users_today: 0,
     risk_users: 0,
-    human_intervention_users: 0,
+    handoff_events_today: 0,
     unfollowed_users: 0,
     renewal_followup_users: 0,
     repurchase_soon_users: 0,
@@ -152,11 +151,11 @@ export default async function DashboardPage() {
               <span className="text-base font-semibold text-slate-300">个服务中社群</span>
             </div>
             <p className="mt-3 max-w-xl text-sm leading-6 text-slate-400">
-              先看需关注、退款和情绪风险，再处理待审核文件与今日触达。
+              先看转人工、退款和情绪风险，再处理待审核文件与今日触达。
             </p>
           </div>
           <div className="grid grid-cols-2 divide-x divide-y divide-slate-800/80 sm:grid-cols-4 sm:divide-y-0">
-            <CommandMetric label="风险待处理" value={(summary.human_intervention_users ?? 0) + (summary.refund_intent_users ?? 0) + (summary.refund_pending_users ?? 0) + (summary.emotional_users_today ?? 0)} tone="risk" />
+            <CommandMetric label="风险待处理" value={(summary.handoff_events_today ?? 0) + (summary.refund_intent_users ?? 0) + (summary.refund_pending_users ?? 0) + (summary.emotional_users_today ?? 0)} tone="risk" />
             <CommandMetric label="今日消息" value={summary.messages_today} tone="info" />
             <CommandMetric label="今日打卡" value={summary.checkins_today} tone="work" />
             <CommandMetric label="待审核文件" value={summary.pending_documents} tone="review" />
@@ -165,7 +164,7 @@ export default async function DashboardPage() {
       </section>
 
       <DashboardMetricSection title="风险优先处理" description="这些信号需要运营先看证据，再决定是否介入。">
-        <StatCard label="需关注事件" value={summary.human_intervention_users ?? 0} icon={ShieldAlert} color="red" href="/dashboard/attention-events" description="今日触发转人工、@班主任的事件数；点击查看服务单、触发原话和 AI/班主任回复。" />
+        <StatCard label="转人工事件" value={summary.handoff_events_today ?? 0} icon={ShieldAlert} color="red" href="/dashboard/attention-events" description="今日触发转人工并 @班主任 的事件数；点击查看服务单、触发原话和班主任接手记录。" />
         <StatCard label="退款/退出意向" value={summary.refund_intent_users ?? 0} icon={RefreshCcw} color="red" href="/dashboard/refund-intents" description="用户聊天中出现退款、退费、不继续、退出、退群等表达；点击查看触发原话。" />
         <StatCard label="已退款待确认" value={summary.refund_pending_users ?? 0} icon={RefreshCcw} color="red" href="/dashboard/refund-pending" description="AI 识别到客户可能已完成退款、等待运营确认；确认后停止打卡/阶段报告等主动推送，群聊仍保留。" />
         <StatCard label="今日情绪预警" value={summary.emotional_users_today ?? 0} icon={LifeBuoy} color="red" href="/dashboard/emotional-alerts" description="今天入站消息中，经语义识别出现明显负面情绪、执行挫败或心理风险线索的用户数。" />
@@ -313,8 +312,6 @@ function CaseHealthMobileCard({ item }: { item: CaseHealthItem }) {
         <div className="flex flex-wrap items-center gap-2">
           {item.risk_level === "high" ? (
             <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">高风险</span>
-          ) : item.needs_human_intervention ? (
-            <span className="status-pill border-amber-200 bg-amber-50 text-amber-700">需关注</span>
           ) : (
             <span className="status-pill border-slate-200 bg-slate-50 text-slate-600">正常</span>
           )}
@@ -350,8 +347,6 @@ function CaseHealthRow({ item }: { item: CaseHealthItem }) {
       <td className="px-4 py-3">
         {item.risk_level === "high" ? (
           <span className="rounded bg-rose-50 px-2 py-0.5 text-xs text-rose-700">高风险</span>
-        ) : item.needs_human_intervention ? (
-          <span className="rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700">需关注</span>
         ) : (
           <span className="text-xs text-slate-400">正常</span>
         )}
