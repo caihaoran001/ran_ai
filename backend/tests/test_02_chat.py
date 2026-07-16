@@ -120,13 +120,14 @@ def test_format_chat_history_line_labels_staff_with_group_nickname():
         content="晚餐主食减半",
         purpose=MessagePurpose.CHAT,
         status=MessageStatus.RECEIVED,
-        analysis_json={"_qiwe_meta": {"sender_name": "勇哥"}},
+        analysis_json={"_qiwe_meta": {"sender_name": "奢啡加速燃营养师-勇哥"}},
         created_at=datetime(2026, 7, 3, 8, 41, tzinfo=timezone.utc),
     )
 
     line = _format_chat_history_line(message)
 
-    assert "勇哥（工作人员）: 晚餐主食减半" in line
+    assert "奢啡加速燃营养师-勇哥: 晚餐主食减半" in line
+    assert "（工作人员）" not in line
     assert "班主任:" not in line
 
 

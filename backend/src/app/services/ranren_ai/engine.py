@@ -799,7 +799,7 @@ def _staff_speaker(analysis: dict | None) -> str:
     meta = analysis.get("_qiwe_meta") if isinstance(analysis, dict) else None
     raw_name = meta.get("sender_name") if isinstance(meta, dict) else None
     name = " ".join(str(raw_name or "").split()).strip(" ：:")[:40]
-    return f"{name}（工作人员）" if name else "工作人员"
+    return name or "工作人员"
 
 
 def _current_query_body(analysis: dict | None, message_text: str) -> str:

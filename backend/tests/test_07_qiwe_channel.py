@@ -472,17 +472,17 @@ def test_current_query_body_uses_staff_group_nickname():
     analysis = {
         "_qiwe_meta": {
             "sender_type": "staff",
-            "sender_name": "勇哥",
+            "sender_name": "奢啡加速燃营养师-勇哥",
         }
     }
 
     assert _current_query_body(analysis, "这个用户今天第几天？") == (
-        "勇哥（工作人员）：这个用户今天第几天？"
+        "奢啡加速燃营养师-勇哥：这个用户今天第几天？"
     )
 
 
 def test_agent_prompt_does_not_repeat_staff_speaker_prefix():
-    speaker = "勇哥（工作人员）"
+    speaker = "奢啡加速燃营养师-勇哥"
     prompt = build_agent_user_prompt(
         user_query=f"{speaker}：这个用户今天第几天？",
         query_speaker=speaker,
