@@ -8,15 +8,6 @@ from app.models.app_setting import AppSetting
 
 
 CHECKIN_SCHEDULE_SETTING_KEY = "checkin_questionnaire_schedule"
-OLD_DAILY_ACTION_COPY = "请优先完成您的今日【必填】每日行动"
-
-
-def _checkin_link_intro() -> str:
-    return (
-        "晚上好，今天是第{day}天打卡【仅需10秒】，"
-        "看看咱们的【专属5项】完成得怎样吧：\n"
-        "👉 {personalized_link}"
-    )
 
 
 def default_checkin_questionnaire_templates() -> list[dict[str, Any]]:
@@ -46,10 +37,9 @@ def default_checkin_questionnaire_templates() -> list[dict[str, Any]]:
 
 
 def default_checkin_schedule() -> dict[str, Any]:
+    # 日打卡 H5 链接推送已整体下线（改由档案官从聊天抽打卡 + 晚间智能追问）。
+    # 此配置现在只承载入营问卷提交后的自动回复。
     return {
-        "enabled": True,
-        "send_at": "20:00",
-        "timezone": "Asia/Shanghai",
         "intake_submit_reply": {
             "enabled": True,
             "message": (
@@ -60,79 +50,6 @@ def default_checkin_schedule() -> dict[str, Any]:
                 "生成完成后会第一时间发送给你，请稍等。\n\n"
                 "{plan_start_line}"
             ),
-        },
-        "rules": [
-            {
-                "day": 1,
-                "template_key": "daily_checkin_standard",
-                "message": (
-                    _checkin_link_intro()
-                    + "\n\n"
-                    "如今天时间充裕，建议也完成本次【选填】节点复盘，方便我们了解您的整体状况：\n"
-                    "📝 {questionnaire_link}"
-                ),
-            },
-            {
-                "day": 3,
-                "template_key": "daily_checkin_standard",
-                "message": (
-                    _checkin_link_intro()
-                    + "\n\n"
-                    "如今天时间充裕，建议也完成本次【选填】节点复盘，方便判定早期执行情况：\n"
-                    "📝 {questionnaire_link}"
-                ),
-            },
-            {
-                "day": 7,
-                "template_key": "stage_review",
-                "message": (
-                    _checkin_link_intro()
-                    + "\n\n"
-                    "今天也是首个 7 天复盘日！有空请务必填写一下本次【选填】节点复盘，以便我们为您总结本周期变化和制定下阶段目标：\n"
-                    "📝 {questionnaire_link}"
-                ),
-            },
-            {
-                "day": 14,
-                "template_key": "stage_review",
-                "message": (
-                    _checkin_link_intro()
-                    + "\n\n"
-                    "今天迎来了第 14 天复盘日！有空请务必填写一下本次【选填】节点复盘，我们将会为您调整健康策略：\n"
-                    "📝 {questionnaire_link}"
-                ),
-            },
-            {
-                "day": 21,
-                "template_key": "stage_review",
-                "message": (
-                    _checkin_link_intro()
-                    + "\n\n"
-                    "今天来到了第 21 天复盘日！胜利在望，有空请务必填写一下本次【选填】节点复盘，以便为您锁定制胜重点：\n"
-                    "📝 {questionnaire_link}"
-                ),
-            },
-            {
-                "day": 28,
-                "template_key": "stage_review",
-                "message": (
-                    _checkin_link_intro()
-                    + "\n\n"
-                    "恭喜您完成了 28 天的服务周期！请优先完成固定打卡，并在有空时填写本次【选填】节点复盘，我们将为您输出最终交付报告：\n"
-                    "📝 {questionnaire_link}"
-                ),
-            },
-        ],
-        "daily_rule": {
-            "enabled": True,
-            "template_key": "daily_checkin_simple",
-            "message": (
-                _checkin_link_intro()
-                + "\n\n"
-                "如今天时间充裕，建议也填写一下本次【选填】节点复盘：\n"
-                "📝 {questionnaire_link}"
-            ),
-            "skip_days": [1, 3, 7, 14, 21, 28],
         },
     }
 
@@ -159,46 +76,23 @@ async def save_checkin_questionnaire_schedule(
 
 
 def normalize_checkin_schedule(value: dict[str, Any] | None) -> dict[str, Any]:
+    # 只保留 intake_submit_reply；历史存库里的 rules/daily_rule/send_at 等旧字段在此静默丢弃。
     default = default_checkin_schedule()
     if not isinstance(value, dict):
         return default
 
-    schedule = {**default, **value}
-    schedule["enabled"] = bool(schedule.get("enabled", True))
-    schedule["send_at"] = str(schedule.get("send_at") or default["send_at"])
-    schedule["timezone"] = str(schedule.get("timezone") or default["timezone"])
-    intake_submit_reply = schedule.get("intake_submit_reply")
+    intake_submit_reply = value.get("intake_submit_reply")
     if not isinstance(intake_submit_reply, dict):
         intake_submit_reply = default["intake_submit_reply"]
-    schedule["intake_submit_reply"] = {
-        "enabled": intake_submit_reply.get("enabled", True) is not False,
-        "message": str(
-            intake_submit_reply.get("message")
-            or default["intake_submit_reply"]["message"]
-        ),
+    return {
+        "intake_submit_reply": {
+            "enabled": intake_submit_reply.get("enabled", True) is not False,
+            "message": str(
+                intake_submit_reply.get("message")
+                or default["intake_submit_reply"]["message"]
+            ),
+        },
     }
-    rules = schedule.get("rules")
-    if not isinstance(rules, list):
-        rules = default["rules"]
-    schedule["rules"] = [
-        _normalize_checkin_rule_copy(rule) for rule in rules if isinstance(rule, dict)
-    ]
-
-    daily_rule = schedule.get("daily_rule")
-    if not isinstance(daily_rule, dict):
-        daily_rule = default["daily_rule"]
-    schedule["daily_rule"] = _normalize_checkin_rule_copy(daily_rule)
-    return schedule
-
-
-def _normalize_checkin_rule_copy(rule: dict[str, Any]) -> dict[str, Any]:
-    normalized = {**rule}
-    message = normalized.get("message")
-    if isinstance(message, str) and OLD_DAILY_ACTION_COPY in message:
-        intro = _checkin_link_intro()
-        tail = message.split("\n\n", 1)[1] if "\n\n" in message else ""
-        normalized["message"] = f"{intro}\n\n{tail}" if tail else intro
-    return normalized
 
 
 def _field(key: str, title: str, field_type: str = "SIMPLE", *, required: bool = False, options: list[str] | None = None, subtitle: str = "") -> dict[str, Any]:
