@@ -177,6 +177,22 @@ class QiWeChannel:
             return res.raw_response.get("data")
         return None
 
+    async def get_room_member_nicknames(self, room_id: str) -> dict[str, str]:
+        """取一次群详情并返回全部成员的群昵称，由业务层持久缓存。"""
+        data = await self.get_room_detail(room_id)
+        if not isinstance(data, dict):
+            return {}
+        result: dict[str, str] = {}
+        for room in data.get("roomList") or []:
+            if str(room.get("roomId") or "") != str(room_id):
+                continue
+            for member in room.get("memberList") or []:
+                user_id = str(member.get("userId") or "").strip()
+                name = str(member.get("name") or "").strip()
+                if user_id and name:
+                    result[user_id] = name
+        return result
+
     async def batch_get_room_names(self, room_ids: list[str]) -> dict[str, str]:
         """批量取群名：返回 {room_id: roomName}，仅含非空名。
 

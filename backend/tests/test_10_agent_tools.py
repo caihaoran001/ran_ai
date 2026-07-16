@@ -1000,7 +1000,8 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "让我想想" in model.calls[0][0].content
     assert "根据搜索结果" in model.calls[0][0].content
     assert "不要说“根据你的画像/资料/系统记录”" in model.calls[0][0].content
-    assert "不要把它说成营养师、班主任或其他真人说过的话" in model.calls[0][0].content
+    assert "带“（工作人员）”的是群内工作人员发言" in model.calls[0][0].content
+    assert "不当作用户自述" in model.calls[0][0].content
     assert "只用与当前问题直接相关的部分" in model.calls[0][0].content
     assert "只参考长期偏好" in model.calls[0][0].content
     assert "只参考当前状态/风险边界/产品执行" in model.calls[0][0].content

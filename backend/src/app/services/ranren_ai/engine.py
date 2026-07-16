@@ -617,7 +617,8 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         session,
         service_case_id: int,
         *,
-        limit: int = 10,
+        limit: int = 20,
+        max_chars: int = 8000,
         exclude_message_id: int | None = None,
     ) -> list[str]:
         conditions = [
@@ -651,7 +652,20 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             .order_by(Message.created_at.desc())
             .limit(limit)
         )
-        return [_format_chat_history_line(item) for item in reversed(list(result))]
+        lines = [_format_chat_history_line(item) for item in reversed(list(result))]
+        if max_chars <= 0:
+            return lines
+        kept: list[str] = []
+        used = 0
+        for line in reversed(lines):
+            if not kept and len(line) > max_chars:
+                kept.append(line[:max_chars].rstrip())
+                break
+            if kept and used + len(line) > max_chars:
+                break
+            kept.append(line)
+            used += len(line)
+        return list(reversed(kept))
 
     async def _build_intervention_context(self, session, *, service_case: ServiceCase | None) -> dict:
         if not service_case:
@@ -728,7 +742,7 @@ def _format_chat_history_line(message: Message) -> str:
     if message.sender_type == MessageSenderType.BOT:
         speaker = "助教"
     elif message.sender_type == MessageSenderType.STAFF:
-        speaker = "班主任"
+        speaker = _staff_speaker(message.analysis_json)
     else:
         speaker = "用户"
     content = " ".join((message.content or "").split())
@@ -777,8 +791,15 @@ def _current_query_speaker(analysis: dict | None) -> str:
     meta = analysis.get("_qiwe_meta") if isinstance(analysis, dict) else None
     sender_type = meta.get("sender_type") if isinstance(meta, dict) else None
     if sender_type == MessageSenderType.STAFF.value:
-        return "班主任"
+        return _staff_speaker(analysis)
     return "用户"
+
+
+def _staff_speaker(analysis: dict | None) -> str:
+    meta = analysis.get("_qiwe_meta") if isinstance(analysis, dict) else None
+    raw_name = meta.get("sender_name") if isinstance(meta, dict) else None
+    name = " ".join(str(raw_name or "").split()).strip(" ：:")[:40]
+    return f"{name}（工作人员）" if name else "工作人员"
 
 
 def _current_query_body(analysis: dict | None, message_text: str) -> str:

@@ -196,18 +196,48 @@ class EngineGraph:
         recent_user_messages: list[str] = []
         is_staff = False
         sender_type = MessageSenderType.USER
+        callback_sender_name = (message.user_name or "").strip()
 
         async with engine_mod.SessionLocal() as session:
             from app.services.content_policy import (
+                get_qiwe_group_nickname,
                 get_qiwei_staff_senders,
                 get_qiwe_nickname,
+                remember_qiwe_group_nicknames,
                 remember_qiwe_nickname,
             )
-            if message.channel == "qiwe" and not message.user_name and message.user_id:
-                cached = await get_qiwe_nickname(session, message.user_id)
-                if cached:
-                    message.user_name = cached
-                elif hasattr(engine.channel, "get_contact_nickname"):
+            if message.channel == "qiwe" and message.user_id:
+                group_nickname = ""
+                if message.chat_type == "group":
+                    group_nickname = (message.user_name or "").strip()
+                    if group_nickname:
+                        await remember_qiwe_group_nicknames(
+                            session,
+                            message.chat_id,
+                            {message.user_id: group_nickname},
+                        )
+                    else:
+                        group_nickname = await get_qiwe_group_nickname(
+                            session,
+                            message.chat_id,
+                            message.user_id,
+                        )
+                    if not group_nickname and hasattr(engine.channel, "get_room_member_nicknames"):
+                        try:
+                            room_names = await engine.channel.get_room_member_nicknames(message.chat_id)
+                            if room_names:
+                                await remember_qiwe_group_nicknames(session, message.chat_id, room_names)
+                                group_nickname = room_names.get(str(message.user_id), "")
+                        except Exception as e:
+                            logger.error("Error fetching QiWe room member nicknames in engine: %s", e)
+                if group_nickname:
+                    message.user_name = group_nickname
+
+                if not message.user_name:
+                    cached = await get_qiwe_nickname(session, message.user_id)
+                    if cached:
+                        message.user_name = cached
+                if not message.user_name and hasattr(engine.channel, "get_contact_nickname"):
                     try:
                         resolved = await engine.channel.get_contact_nickname(message.user_id)
                         if resolved:
@@ -218,6 +248,12 @@ class EngineGraph:
 
             rules = await get_qiwei_staff_senders(session)
             is_staff = engine._check_is_staff_by_rules(message.user_id, message.user_name, rules)
+            if not is_staff and callback_sender_name != (message.user_name or "").strip():
+                is_staff = engine._check_is_staff_by_rules(
+                    message.user_id,
+                    callback_sender_name,
+                    rules,
+                )
             sender_type = MessageSenderType.STAFF if is_staff else MessageSenderType.USER
 
             service_case = await engine._latest_active_case(session, message.chat_id)

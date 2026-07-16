@@ -160,6 +160,56 @@ async def set_qiwei_staff_senders(rules: list[dict[str, str]], session: AsyncSes
 
 
 QIWE_NICKNAME_SETTING_KEY = "qiwe_nickname_map"
+QIWE_GROUP_NICKNAME_SETTING_KEY = "qiwe_group_nickname_map"
+
+
+async def get_qiwe_group_nickname(
+    session: AsyncSession | None,
+    group_id: str | None,
+    user_id: str | None,
+) -> str:
+    """持久群昵称缓存：按 group_id + user_id 返回群内展示名。"""
+    if not group_id or not user_id or session is None or not hasattr(session, "get"):
+        return ""
+    setting = await session.get(AppSetting, QIWE_GROUP_NICKNAME_SETTING_KEY)
+    if not setting or not isinstance(setting.value_json, dict):
+        return ""
+    members = setting.value_json.get(str(group_id))
+    if not isinstance(members, dict):
+        return ""
+    return str(members.get(str(user_id)) or "").strip()
+
+
+async def remember_qiwe_group_nicknames(
+    session: AsyncSession | None,
+    group_id: str | None,
+    nicknames: dict[str, str],
+) -> None:
+    """持久一个群的成员昵称映射，缓存命中后不再请求 QiWe。"""
+    if not group_id or not nicknames or session is None or not hasattr(session, "get"):
+        return
+    cleaned = {
+        str(user_id): str(name).strip()
+        for user_id, name in nicknames.items()
+        if user_id and str(name).strip()
+    }
+    if not cleaned:
+        return
+
+    setting = await session.get(AppSetting, QIWE_GROUP_NICKNAME_SETTING_KEY)
+    data = dict(setting.value_json) if setting and isinstance(setting.value_json, dict) else {}
+    current = data.get(str(group_id))
+    members = dict(current) if isinstance(current, dict) else {}
+    changed = any(members.get(user_id) != name for user_id, name in cleaned.items())
+    if not changed:
+        return
+    members.update(cleaned)
+    data[str(group_id)] = members
+    if setting:
+        setting.value_json = data
+    else:
+        session.add(AppSetting(key=QIWE_GROUP_NICKNAME_SETTING_KEY, value_json=data))
+    await session.commit()
 
 
 async def get_qiwe_nickname(session: AsyncSession | None, user_id: str | None) -> str:

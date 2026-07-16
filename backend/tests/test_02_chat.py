@@ -110,6 +110,26 @@ def test_format_chat_history_line_labels_bot_as_assistant():
     assert "营养师:" not in line
 
 
+def test_format_chat_history_line_labels_staff_with_group_nickname():
+    message = Message(
+        service_case_id=1,
+        group_id="test-group",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="text",
+        content="晚餐主食减半",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {"sender_name": "勇哥"}},
+        created_at=datetime(2026, 7, 3, 8, 41, tzinfo=timezone.utc),
+    )
+
+    line = _format_chat_history_line(message)
+
+    assert "勇哥（工作人员）: 晚餐主食减半" in line
+    assert "班主任:" not in line
+
+
 @pytest.mark.asyncio
 async def test_normal_message_no_risk(db_session, mock_ai, cai_haoran_answers):
     case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
@@ -519,6 +539,41 @@ async def test_recent_chat_history_includes_document_delivery(db_session, mock_m
     assert any("助教: 两份专属文件已生成，请查收" in line for line in lines)
     assert not any("营养师:" in line for line in lines)
     assert any("用户: 收到" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_recent_chat_history_keeps_latest_twenty_with_length_guard(
+    db_session, mock_message_channel, cai_haoran_answers
+):
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    start = datetime(2026, 7, 16, 1, 0, tzinfo=timezone.utc)
+    for index in range(22):
+        db_session.add(
+            Message(
+                service_case_id=case_id,
+                group_id=group_id,
+                direction=MessageDirection.INBOUND,
+                sender_type=MessageSenderType.USER,
+                message_type="text",
+                content=f"history-{index:02d}-" + "x" * 30,
+                purpose=MessagePurpose.CHAT,
+                status=MessageStatus.RECEIVED,
+                created_at=start.replace(minute=index),
+            )
+        )
+    await db_session.flush()
+
+    engine = RanrenAIEngine(mock_message_channel)
+    lines = await engine._recent_user_messages(db_session, case_id)
+    guarded = await engine._recent_user_messages(db_session, case_id, max_chars=100)
+
+    assert len(lines) == 20
+    assert "history-02" in lines[0]
+    assert "history-21" in lines[-1]
+    assert guarded
+    assert "history-21" in guarded[-1]
+    assert "history-20" not in guarded[0]
+    assert sum(len(line) for line in guarded) <= 100
 
 
 def _age_case() -> ServiceCase:

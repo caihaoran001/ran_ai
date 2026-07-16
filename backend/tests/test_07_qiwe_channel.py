@@ -8,8 +8,13 @@ from types import SimpleNamespace
 import pytest
 
 from app.api.routes.qiwe import _bypass_aggregator, _channel_message_from_qiwe, _is_authorized_callback
+from app.services.agent.prompts import build_agent_user_prompt
 from app.services.channels.base import ChannelMessage, ChannelSendResult
 from app.services.channels.qiwe import QiWeChannel
+from app.services.content_policy import (
+    get_qiwe_group_nickname,
+    remember_qiwe_group_nicknames,
+)
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator, _merge_messages
 from app.services.ranren_ai.engine import RanrenAIEngine, _current_query_body, _image_description_is_available
 from app.models.message import Message
@@ -461,6 +466,75 @@ def test_current_query_body_for_image_only_failure():
     }
 
     assert _current_query_body(analysis, "") == "用户：（发了一张图片）\n图片内容：识别失败，无法可靠读取。"
+
+
+def test_current_query_body_uses_staff_group_nickname():
+    analysis = {
+        "_qiwe_meta": {
+            "sender_type": "staff",
+            "sender_name": "勇哥",
+        }
+    }
+
+    assert _current_query_body(analysis, "这个用户今天第几天？") == (
+        "勇哥（工作人员）：这个用户今天第几天？"
+    )
+
+
+def test_agent_prompt_does_not_repeat_staff_speaker_prefix():
+    speaker = "勇哥（工作人员）"
+    prompt = build_agent_user_prompt(
+        user_query=f"{speaker}：这个用户今天第几天？",
+        query_speaker=speaker,
+        recent_messages=[],
+        skill_catalog="无",
+        current_time_context="2026-07-16 10:00",
+        memory_context="无",
+        knowledge_context="无",
+    )
+
+    assert prompt.count(f"{speaker}：") == 1
+
+
+@pytest.mark.asyncio
+async def test_qiwe_group_nickname_cache_is_scoped_by_group(db_session):
+    await remember_qiwe_group_nicknames(
+        db_session,
+        "room-nickname-a",
+        {"staff-1": "勇哥", "staff-2": "阿杰"},
+    )
+    await remember_qiwe_group_nicknames(
+        db_session,
+        "room-nickname-b",
+        {"staff-1": "王老师"},
+    )
+
+    assert await get_qiwe_group_nickname(db_session, "room-nickname-a", "staff-1") == "勇哥"
+    assert await get_qiwe_group_nickname(db_session, "room-nickname-a", "staff-2") == "阿杰"
+    assert await get_qiwe_group_nickname(db_session, "room-nickname-b", "staff-1") == "王老师"
+    assert await get_qiwe_group_nickname(db_session, "room-nickname-b", "missing") == ""
+
+
+@pytest.mark.asyncio
+async def test_qiwe_room_member_nicknames_uses_group_display_name(monkeypatch):
+    channel = QiWeChannel()
+
+    async def fake_get_room_detail(room_id):
+        return {
+            "roomList": [
+                {
+                    "roomId": room_id,
+                    "memberList": [
+                        {"userId": "staff-1", "name": "勇哥"},
+                        {"userId": "staff-2", "name": ""},
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(channel, "get_room_detail", fake_get_room_detail)
+
+    assert await channel.get_room_member_nicknames("room-a") == {"staff-1": "勇哥"}
 
 
 def test_qiwe_callback_image_event_to_channel_message():
