@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import secrets
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
@@ -32,6 +33,7 @@ from app.services.intervention_service import (
     merge_case_insight,
     normalize_insight,
 )
+from app.services.ai_service.client import AIService
 
 
 async def _setup_case_with_intake(db_session, cai_haoran_answers):
@@ -537,6 +539,13 @@ def test_mark_intake_age_risk_normal_age_untouched():
     mark_intake_age_risk(case, fields, {"age_k": "30"})
     assert case.risk_level != "high"
     assert not any((f or {}).get("code") == "elderly_age" for f in (case.risk_flags or []))
+
+
+def test_intervention_prompt_treats_stopped_period_alone_as_normal_context():
+    prompt_source = inspect.getsource(AIService.extract_intervention_insight)
+
+    assert "用户仅说月经推迟、没来月经或停经" in prompt_source
+    assert "不得推断为怀孕" in prompt_source
 
 
 def test_effective_service_day_by_plan_date():

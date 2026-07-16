@@ -15,6 +15,7 @@ const SERVICE_STATUS_LABELS: Record<string, string> = {
 };
 
 const PERSISTENT_HIGH_RISK_CODES = new Set([
+  "elderly_age",
   "pregnancy",
   "lactation",
   "chronic_disease",

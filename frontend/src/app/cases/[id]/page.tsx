@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 
 const PERSISTENT_HIGH_RISK_CODES = new Set([
+  "elderly_age",
   "pregnancy",
   "lactation",
   "chronic_disease",
@@ -557,6 +558,7 @@ function formatIntentFlags(flags?: Array<Record<string, string | boolean>> | nul
 
 function riskLabel(flag: Record<string, string>) {
   const labels: Record<string, string> = {
+    elderly_age: "高龄（70岁及以上）",
     pregnancy: "孕期/怀孕相关",
     lactation: "哺乳期相关",
     chronic_disease: "慢病相关",

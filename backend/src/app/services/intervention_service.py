@@ -25,6 +25,7 @@ VALID_RISK_LEVELS = frozenset({"low", "medium", "high"})
 # 高风险必须可被运营从用户原话核验；急性不适、诊疗/疗效承诺边界、投诉退款等
 # 仍会转人工，但只作为本次事件留在 intervention_reasons，不升级用户风险等级。
 PERSISTENT_HIGH_RISK_CODES = frozenset({
+    "elderly_age",
     "pregnancy",
     "lactation",
     "chronic_disease",

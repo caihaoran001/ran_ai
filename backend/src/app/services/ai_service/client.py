@@ -493,6 +493,7 @@ class AIService:
 
                 "【严格的风险分级标准】\n"
                 "- L3 持续健康高风险（level='high'）：仅限用户本人明确披露的疾病（糖尿病/高血压/甲减等）、长期/激素用药、孕产哺乳期、肝肾异常或结石、体检指标严重异常、明确抑郁诊断或自伤/轻生危机。每条必须有具体 code、reason 和来自当前用户原话的 evidence。此类风险会长期标记服务单，requires_human_intervention=true。\n"
+                "  - 用户仅说月经推迟、没来月经或停经，且没有明确确认怀孕、孕期或哺乳期时，不是风险：不得推断为怀孕，risk_flags 和 intervention_reasons 都必须为空，requires_human_intervention=false。只有同一条消息另有明确医疗咨询、急性症状等独立触发条件时，才按该条件判断。\n"
                 "- L2 体感不适/投诉风险（level='medium'）：失眠、腹痛腹泻、胃部不适、胀气恶心、心悸心慌、持续身体不适等生理体感波动；或用户持续表达强烈不满、质疑专业性/身份、辱骂、要求停止机器人、明确要求退款/退出、要求人工/班主任介入、对服务明显失控。requires_human_intervention=true，系统会直接 @班主任 接手，AI 不再自行回复。\n"
                 "  - 用户要求诊断、治疗、调整/替代药物，或要求保证疗效/减重结果时，属于 L2 医疗与服务合规边界：code='medical_claim'、level='medium'、requires_human_intervention=true。它必须转人工，但不能仅因这一次提问把用户长期标为高风险。\n"
                 "  - 用户明确要求停止机器人、不要机器人继续解释、不要再听 AI 解释时，intervention_reasons 必须输出 code='robot_stop'，requires_human_intervention=true，requires_immediate_safety_reply=false。\n"
