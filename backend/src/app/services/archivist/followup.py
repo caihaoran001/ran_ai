@@ -9,8 +9,9 @@ H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部
 
 两条链路共用 `ReminderEvent(rule_id="checkin_followup")` 天级去重闸（唯一约束保证一天一条、绝不叠加），
 统一调 `compose_daily_followup` 组织内容：按优先级只问一个主题，合并成一句自然话——
-里程碑复盘（day7/14/21/28 阶段报告要的腰围+复盘，前一晚追）> 矛盾核对（表单值≠聊天值）>
-日常缺口（早C/午B、体重合并；晚A 睡前那顿不主动追）。判定读 checkins 现状 + service_day。
+里程碑复盘（day7/14/21/28 阶段报告要的腰围+体重+复盘，前一晚追）> 矛盾核对（表单值≠聊天值）>
+日常缺口（早C/午B；晚A 睡前那顿不主动追）。判定读 checkins 现状 + service_day。
+体重不再单独一类主动追问，改由里程碑复盘一并采集（避免天天单独问体重）。
 
 日常缺口追问统一在傍晚（`CHECKIN_FOLLOWUP_WINDOW_*`，默认 19:30~20:30）发一次：时间闸放在调用方
 （engine 活跃触发 / reminder 不活跃兜底），本模块只负责组织内容、不做发送时机裁量。
@@ -39,7 +40,7 @@ _PRODUCT_SLOTS = {"morning_c": "早C", "noon_b": "午B", "night_a": "晚A"}
 # 主动「日常缺口」追问只覆盖早C/午B：缺口追问统一在傍晚(见 CHECKIN_FOLLOWUP_WINDOW_*)发一次，
 # 那时晚A(睡前那顿)还没到点，主动追只会变成"没到点就催晚A"，故不纳入——晚A 靠聊天抽取/次日补齐。
 _DAILY_GAP_SLOTS = {"morning_c": "早C", "noon_b": "午B"}
-_WEIGHT_LOOKBACK_DAYS = 3
+_WEIGHT_LOOKBACK_DAYS = 3  # 里程碑前夕若最近 N 天没报体重才顺便要一下，避免刚报过又问。
 _WAIST_LOOKBACK_DAYS = 7  # 腰围一周测一次，避免天天问。
 
 # 里程碑前一晚：服务第 N 天 → 即将到来的里程碑天。阶段报告在里程碑当晚 21:00 生成，
@@ -148,7 +149,8 @@ async def detect_followup(
     missing_slots = _missing_product_slots(today_checkin.parsed_json if today_checkin else None)
     confirmations = _pending_confirmations(today_checkin.parsed_json if today_checkin else None)
 
-    # 体重不是每天必报：仅当最近 N 天都没有记录才追问，避免天天问体重。
+    # 体重不再单独一类主动追问，只在里程碑前夕一并采集：仅当最近 N 天都没有记录才问，
+    # 避免刚报过又问。此处算出、下方塞进 milestone.need_weight（非里程碑日不用）。
     ask_weight = not await _has_field_recently(
         session,
         service_case_id=service_case.id,
@@ -157,7 +159,7 @@ async def detect_followup(
         days=_WEIGHT_LOOKBACK_DAYS,
     )
 
-    # 里程碑前夕：服务第 6/13/20/27 天 → 为次日的阶段报告采集腰围 + 复盘。
+    # 里程碑前夕：服务第 6/13/20/27 天 → 为次日的阶段报告采集腰围 + 体重 + 复盘。
     milestone = None
     service_day = effective_service_day(service_case, now, tz)
     milestone_day = _MILESTONE_EVE.get(service_day)
@@ -169,7 +171,11 @@ async def detect_followup(
             today=today,
             days=_WAIST_LOOKBACK_DAYS,
         )
-        milestone = {"milestone_day": milestone_day, "need_waist": need_waist}
+        milestone = {
+            "milestone_day": milestone_day,
+            "need_waist": need_waist,
+            "need_weight": ask_weight,
+        }
 
     return {
         "missing_slots": missing_slots,
@@ -205,16 +211,19 @@ def compose_followup_message(
     return " ".join(parts)
 
 
-def _milestone_fallback_message(milestone_day: int, need_waist: bool) -> str:
+def _milestone_fallback_message(
+    milestone_day: int, need_waist: bool, need_weight: bool = False
+) -> str:
     """里程碑复盘追问的固定模板兜底（LLM 不可用时使用）。
 
-    只问用户才知道的：腰围（客观数据）+ 这阶段最大变化 + 最大卡点（主观感受）。
+    只问用户才知道的：体重/腰围（客观数据）+ 这阶段最大变化 + 最大卡点（主观感受）。
     「下阶段重点」是专业判断，交给阶段报告基于这些 + action_focus 生成，不反问用户。
     """
     week = {7: "一周", 14: "两周", 21: "三周", 28: "四周"}.get(milestone_day, f"第{milestone_day}天")
-    waist_clause = "腰围量一下发我，" if need_waist else ""
+    measures = [label for label, need in (("体重", need_weight), ("腰围", need_waist)) if need]
+    measure_clause = f"{'、'.join(measures)}量一下发我，" if measures else ""
     return (
-        f"咱们到{week}啦，一起复盘一下～{waist_clause}"
+        f"咱们到{week}啦，一起复盘一下～{measure_clause}"
         "你觉得这阶段最大的变化是什么？还有哪个地方最卡、最难坚持？跟我说说哈。"
     )
 
@@ -224,12 +233,14 @@ async def compose_milestone_followup(
     service_case: ServiceCase,
     milestone_day: int,
     need_waist: bool,
+    need_weight: bool = False,
     context_hint: str = "",
     ai_service: object | None = None,
 ) -> str:
     """里程碑档：LLM 按用户情况生成一句自然的阶段复盘追问；失败回退固定模板。
 
-    覆盖阶段报告要用的：腰围（need_waist 时）、这阶段最大变化、最大卡点、下阶段重点。
+    覆盖阶段报告要用的：体重/腰围（need_weight/need_waist 时）、这阶段最大变化、最大卡点。
+    体重不再单独一类主动追问，改在此处一并采集。
     防御性：LLM 不可用/抛错一律回退模板，绝不 raise、绝不阻塞发送。
     """
     try:
@@ -243,9 +254,14 @@ async def compose_milestone_followup(
             "只收集用户自己才知道的信息：这阶段最大的变化、最大的卡点/最难坚持的地方。"
             "不要反问用户『下阶段重点/下阶段想解决什么』——那是助教基于数据给用户的专业建议，不该甩回给用户。"
         )
-        waist_hint = "本次还需要提醒用户测量并报一下腰围。" if need_waist else "腰围最近已记录，无需再问。"
+        measures = [label for label, need in (("体重", need_weight), ("腰围", need_waist)) if need]
+        measure_hint = (
+            f"本次还需要提醒用户测量并报一下{'、'.join(measures)}。"
+            if measures
+            else "体重、腰围最近已记录，无需再问。"
+        )
         user_prompt = (
-            f"用户处于服务第 {milestone_day} 天里程碑前夕。{waist_hint}"
+            f"用户处于服务第 {milestone_day} 天里程碑前夕。{measure_hint}"
             f"{('用户近况：' + context_hint) if context_hint else ''}"
             "请生成一句自然、简短、亲切的复盘追问。"
         )
@@ -260,7 +276,7 @@ async def compose_milestone_followup(
             return text
     except Exception:  # noqa: BLE001 - 追问失败不能阻塞，回退模板
         pass
-    return _milestone_fallback_message(milestone_day, need_waist)
+    return _milestone_fallback_message(milestone_day, need_waist, need_weight)
 
 
 def _daily_gap_fallback_message(labels: list[str]) -> str:
@@ -272,17 +288,14 @@ async def _compose_daily_gap_message(
     *,
     service_case: ServiceCase,
     missing_slots: list[dict],
-    ask_weight: bool,
     ai_service: object | None = None,
 ) -> str | None:
-    """日常缺口：把当天缺的产品依从 + 体重合并成一句自然口语追问；无缺口返回 None。
+    """日常缺口：把当天缺的产品依从（早C/午B）合并成一句自然口语追问；无缺口返回 None。
 
     LLM 生成保证自然（参考 compose_milestone_followup 的 LLM+模板兜底模式），失败回退模板。
-    刻意合并成一句、不按字段逐条拆问，避免一天问多次。
+    刻意合并成一句、不按字段逐条拆问，避免一天问多次。体重不在此追问（改由里程碑采集）。
     """
     labels = [s["label"] for s in (missing_slots or [])]
-    if ask_weight:
-        labels.append("体重")
     if not labels:
         return None
     try:
@@ -486,6 +499,7 @@ async def compose_scheduled_followups(
                     service_case=service_case,
                     milestone_day=milestone["milestone_day"],
                     need_waist=bool(milestone["need_waist"] and preferences["waist"]),
+                    need_weight=bool(milestone["need_weight"] and preferences["weight"]),
                     ai_service=ai_service,
                 ),
                 target_date=now.date(),
@@ -501,15 +515,7 @@ async def compose_scheduled_followups(
         )
         if daily:
             candidates.append(daily)
-    if detect.get("ask_weight") and preferences["weight"]:
-        candidates.append(
-            ScheduledFollowup(
-                kind="weight",
-                text="方便的话报一下最近一次晨起体重，我帮你把趋势记上～",
-                target_date=now.date(),
-                expected_items=[{"id": "weight", "label": "体重"}],
-            )
-        )
+    # 体重不再单独一类主动追问，已并入里程碑复盘一并采集（见 compose_milestone_followup）。
     return candidates
 
 
@@ -605,7 +611,8 @@ async def compose_daily_followup(
 ) -> DailyFollowup | None:
     """统一「今日主动追问」：按优先级只问一个主题，合并成一句自然话；无可问返回 None。
 
-    优先级：里程碑复盘 > 矛盾核对 > 日常缺口（早C/午B/晚A、体重合并）。
+    优先级：里程碑复盘（腰围+体重+复盘）> 矛盾核对 > 日常缺口（早C/午B；晚A 不主动追）。
+    体重不再单独一类主动追问，改由里程碑复盘一并采集。
     活跃触发（engine）与不活跃兜底（reminder_service）共用本函数，配合 case 级天闸保证一天一条。
     """
     detect = await detect_followup(session, service_case=service_case, now=now, tz=tz)
@@ -616,6 +623,7 @@ async def compose_daily_followup(
             service_case=service_case,
             milestone_day=milestone["milestone_day"],
             need_waist=milestone["need_waist"],
+            need_weight=milestone["need_weight"],
             ai_service=ai_service,
         )
         return DailyFollowup(text=text, kind="milestone")
@@ -632,7 +640,6 @@ async def compose_daily_followup(
     gap_msg = await _compose_daily_gap_message(
         service_case=service_case,
         missing_slots=detect.get("missing_slots") or [],
-        ask_weight=bool(detect.get("ask_weight")),
         ai_service=ai_service,
     )
     if gap_msg:

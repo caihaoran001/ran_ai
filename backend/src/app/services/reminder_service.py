@@ -55,7 +55,6 @@ CHANNEL_SEND_MAX_ATTEMPTS = 3
 CHANNEL_SEND_RETRY_DELAY_SECONDS = 1.0
 _CHECKIN_FOLLOWUP_WINDOWS = {
     "daily_checklist": (time(9, 30), time(10, 30)),
-    "weight": (time(13, 30), time(14, 30)),
     "contradiction": (time(16, 0), time(17, 0)),
     "milestone": (time(19, 30), time(20, 30)),
 }

@@ -248,8 +248,9 @@ async def test_daily_followup_gap_fallback_on_llm_error(db_session):
         db_session, service_case=case, now=now, tz=_TZ, ai_service=_RaisingAI()
     )
     assert fu is not None and fu.kind == "daily_gap"
-    # 兜底模板把所有缺口揉进一句。
-    assert "早C" in fu.text and "体重" in fu.text
+    # 兜底模板把产品缺口揉进一句；体重不再在日常缺口追问（改由里程碑采集）。
+    assert "早C" in fu.text
+    assert "体重" not in fu.text
 
 
 @pytest.mark.asyncio
@@ -276,7 +277,7 @@ async def test_daily_followup_none_when_all_reported(db_session):
 
 @pytest.mark.asyncio
 async def test_daily_gap_excludes_night_a(db_session):
-    # 早C已报、午B/晚A未报 → 日常缺口只追午B(+体重)，晚A 睡前那顿不主动追、已报的早C不追。
+    # 早C已报、午B/晚A未报 → 日常缺口只追午B，晚A 睡前那顿不主动追、已报的早C不追。
     case = await _case(db_session, started_days_ago=3)
     today = date.today()
     checkin = Checkin(
@@ -378,6 +379,30 @@ async def test_milestone_fallback_skips_waist_when_not_needed(db_session):
     )
     assert "腰围" not in msg
     assert "变化" in msg
+
+
+@pytest.mark.asyncio
+async def test_milestone_fallback_includes_weight_when_needed(db_session):
+    # 体重不再单独追问，改由里程碑一并采集：need_weight 时兜底话术要带体重。
+    case = await _case(db_session, started_days_ago=5)
+    msg = await compose_milestone_followup(
+        service_case=case,
+        milestone_day=7,
+        need_waist=True,
+        need_weight=True,
+        ai_service=_RaisingAI(),
+    )
+    assert "体重" in msg and "腰围" in msg
+    assert "变化" in msg
+
+
+@pytest.mark.asyncio
+async def test_milestone_eve_detects_need_weight(db_session):
+    # 第6天里程碑前夕、近3天无体重记录 → need_weight=True，供里程碑话术采集。
+    case = await _case(db_session, started_days_ago=5)
+    now = datetime.now(_TZ)
+    detect = await detect_followup(db_session, service_case=case, now=now, tz=_TZ)
+    assert detect["milestone"]["need_weight"] is True
 
 
 # ---------------------------------------------------------------------------
