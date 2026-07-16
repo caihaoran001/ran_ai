@@ -30,7 +30,6 @@ from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.agent import generate_scheduled_reminder_reply
 from app.services.channels import get_current_channel, send_channel_text
-from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
 from app.services.document_service import (
     generate_profile_and_documents,
     generate_stage_report,
@@ -81,22 +80,14 @@ class ReminderService:
                     knowledge_enabled = (await get_knowledge_evolution_config(session, settings=self.settings)).enabled
             except Exception:
                 logger.exception("Failed to load knowledge evolution config")
-        questionnaire_schedule_enabled = False
-        try:
-            async with SessionLocal() as session:
-                schedule = await get_checkin_questionnaire_schedule(session)
-                questionnaire_schedule_enabled = schedule.get("enabled", False)
-        except Exception:
-            logger.exception("Failed to load questionnaire schedule config")
         if (
             not self.settings.reminder_enabled
             and not self.settings.agent_reminders_enabled
             and not knowledge_enabled
             and not self.settings.outcome_snapshots_enabled
-            and not questionnaire_schedule_enabled
             and not self.settings.checkin_followup_enabled
         ):
-            logger.info("Reminder, agent reminder, outcome snapshot, knowledge evolution and questionnaire schedule services disabled")
+            logger.info("Reminder, agent reminder, outcome snapshot and knowledge evolution services disabled")
             return
         self._stopped.clear()
         self._task = asyncio.create_task(self._run_loop(), name="reminder-service")
@@ -124,7 +115,6 @@ class ReminderService:
                         if self.settings.agent_reminders_enabled:
                             await self.check_agent_reminder_tasks_once()
                         if self.settings.reminder_enabled:
-                            # check_once（12点泛化催打卡）已退役，并入晚间智能追问 check_checkin_followup_once。
                             await self.check_stage_reports_once()
                         if self.settings.outcome_snapshots_enabled:
                             await self.check_outcome_snapshots_once()
@@ -178,97 +168,6 @@ class ReminderService:
                 changed = True
             if changed:
                 await session.commit()
-
-    async def check_once(self) -> None:
-        """【已退役】12点泛化文字催打卡（"还没收到打卡请补一下"）。
-
-        H5 下线后，只会泛泛催、不问具体字段，且与晚间智能追问 check_checkin_followup_once 重叠且更笨，
-        故已从 _run_loop 摘除调用。方法体暂留以防关联引用，不再被调度。
-        """
-        now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
-        if now.isoweekday() not in _parse_weekdays(self.settings.reminder_weekdays):
-            return
-        if now.time() < _parse_time(self.settings.reminder_at):
-            return
-
-        async with SessionLocal() as session:
-            schedule = await get_checkin_questionnaire_schedule(session)
-            timezone = ZoneInfo(self.settings.reminder_timezone)
-            service_cases = list(
-                await session.scalars(
-                    select_active_service_cases(
-                        ServiceCase.status.in_(
-                            [
-                                ServiceCaseStatus.APPROVED,
-                                ServiceCaseStatus.IN_SERVICE,
-                            ]
-                        )
-                    )
-                )
-            )
-            # Pre-fetch today's daily_checkin reminder events to perform in-memory checks
-            today = now.date()
-            reminder_events = list(
-                await session.scalars(
-                    select(ReminderEvent).where(
-                        ReminderEvent.rule_id == "daily_checkin",
-                        ReminderEvent.event_date == today,
-                    )
-                )
-            )
-            seen_set = {e.service_case_id for e in reminder_events if e.event_type == ReminderEventType.SEEN}
-            reminded_set = {e.service_case_id for e in reminder_events if e.event_type == ReminderEventType.REMINDED}
-
-            for service_case in service_cases:
-                seen = service_case.id in seen_set
-                reminded = service_case.id in reminded_set
-                if seen or reminded:
-                    continue
-                day = checkin_day(service_case, now, timezone)
-                # 第1天日期未到(存量沿用次日语义)则不催打卡
-                if day is None:
-                    continue
-                if day > SERVICE_CASE_WINDOW_DAYS:
-                    continue
-                if schedule.get("enabled", True):
-                    rule = _questionnaire_rule_for_day(schedule, day)
-                    if rule:
-                        continue
-                reminder_event = await _reserve_reminder_event(
-                    session,
-                    service_case.id,
-                    rule_id="daily_checkin",
-                    event_date=today,
-                    event_type=ReminderEventType.REMINDED,
-                )
-                if not reminder_event:
-                    continue
-
-                content = self.settings.reminder_message.format(
-                    time=_parse_time(self.settings.reminder_at).strftime("%H:%M"),
-                    date=today.isoformat(),
-                    group_id=service_case.group_id,
-                )
-                message = Message(
-                    service_case_id=service_case.id,
-                    group_id=service_case.group_id,
-                    direction=MessageDirection.OUTBOUND,
-                    sender_type=MessageSenderType.SYSTEM,
-                    message_type="markdown",
-                    content=content,
-                    purpose=MessagePurpose.REMINDER,
-                    status=MessageStatus.PENDING,
-                )
-                session.add(message)
-                await session.flush()
-                result = await _send_channel_text_with_retries(service_case.group_id, content)
-                if result.success:
-                    message.status = MessageStatus.SENT
-                    message.wecom_message_id = result.message_id
-                else:
-                    message.status = MessageStatus.FAILED
-                    message.error = result.error
-            await session.commit()
 
     async def check_checkin_followup_once(self) -> None:
         """打卡追问·不活跃兜底：到确定性随机时刻为当天还没被追过的单主动发一条。
@@ -1270,17 +1169,3 @@ def _service_day(started_at: datetime | None, now: datetime, timezone: ZoneInfo)
     return max((now.date() - started_local.date()).days + 1, 1)
 
 
-def _questionnaire_rule_for_day(schedule: dict, day: int) -> dict | None:
-    if schedule.get("rules_enabled", True) is not False:
-        for rule in schedule.get("rules") or []:
-            if isinstance(rule, dict) and int(rule.get("day") or -1) == day:
-                return rule
-    daily_rule = schedule.get("daily_rule")
-    if not isinstance(daily_rule, dict) or not daily_rule.get("enabled", True):
-        return None
-    skip_days = {
-        int(value)
-        for value in daily_rule.get("skip_days", [])
-        if isinstance(value, int) or str(value).isdigit()
-    }
-    return None if day in skip_days else daily_rule
