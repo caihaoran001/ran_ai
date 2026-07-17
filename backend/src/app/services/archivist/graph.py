@@ -79,7 +79,7 @@ class ArchivistRunResult:
     profile_written: int = 0
     state_written: int = 0
     personal_corrections_written: int = 0
-    qa_drafts_created: int = 0
+    corrections_recorded: int = 0
     corrections_skipped: int = 0
     # FAQ 候选（LLM 在 delta 抽取中顺手产出）；不在归档事务里落库，
     # 由 trigger 在归档提交成功后best-effort转成待审核 qa 草稿（走 knowledge_evolution 管线）。
@@ -473,7 +473,7 @@ class ArchivistGraph:
             corrections=state.get("correction_candidates") or [],
         )
         self.result.personal_corrections_written = correction_result.personal_written
-        self.result.qa_drafts_created = correction_result.qa_drafts_created
+        self.result.corrections_recorded = correction_result.recorded
         self.result.corrections_skipped = correction_result.skipped
 
         # FAQ 候选不在归档事务落库：交给 result，trigger 在归档提交成功后 best-effort 转 qa 草稿。

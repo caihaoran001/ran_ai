@@ -43,8 +43,6 @@ def _had_precipitation(run_result: Any) -> bool:
         return True
     if getattr(run_result, "personal_corrections_written", 0):
         return True
-    if getattr(run_result, "qa_drafts_created", 0):
-        return True
     upserts = getattr(run_result, "upserts", None) or []
     return any(isinstance(u, dict) and u.get("filled") for u in upserts)
 

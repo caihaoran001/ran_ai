@@ -307,7 +307,9 @@ async def test_archivist_no_reportable_writes_nothing(db_session):
 
 
 @pytest.mark.asyncio
-async def test_archivist_routes_staff_corrections_back_to_chat_agent(db_session):
+async def test_archivist_routes_personal_correction_and_only_records_general_correction(
+    db_session,
+):
     case, user_msgs, progress = await _setup_case_with_messages(db_session)
     bot = Message(
         service_case_id=case.id,
@@ -359,10 +361,8 @@ async def test_archivist_routes_staff_corrections_back_to_chat_agent(db_session)
                             "scope": "personal",
                             "summary": "当前用户每天按个性化安排使用五次",
                             "applicability": "仅当前用户的产品使用安排",
-                            "corrected_answer": "按当前用户的个性化安排，每天五次。",
                             "bot_message_id": bot.id,
                             "staff_message_id": staff.id,
-                            "evidence_text": "助教说三次，班主任纠正为五次",
                             "confidence": 0.95,
                         },
                         "id": "personal",
@@ -370,15 +370,11 @@ async def test_archivist_routes_staff_corrections_back_to_chat_agent(db_session)
                     {
                         "name": "report_correction",
                         "args": {
-                            "scope": "global_faq",
+                            "scope": "general",
                             "summary": "产品使用次数需先核对个性化安排",
                             "applicability": "用户询问产品每天使用次数",
-                            "question": "产品每天应该使用几次？",
-                            "corrected_answer": "先核对该用户的个性化安排，不能直接套用通用次数。",
                             "bot_message_id": bot.id,
                             "staff_message_id": staff.id,
-                            "user_message_id": user_msgs[-1].id,
-                            "evidence_text": "班主任指出存在个性化次数",
                             "confidence": 0.9,
                         },
                         "id": "knowledge",
@@ -401,8 +397,21 @@ async def test_archivist_routes_staff_corrections_back_to_chat_agent(db_session)
     assert f"[{bot.id}] 助教" in prompt
     assert f"[{staff.id}] 班主任" in prompt
     assert result.personal_corrections_written == 1
-    assert result.qa_drafts_created == 1
+    assert result.corrections_recorded == 2
+    assert result.corrections_skipped == 0
     assert progress.last_archived_message_id == staff.id
+
+    correction_tool = next(
+        tool for tool in fake.bound_tools if tool.name == "report_correction"
+    )
+    correction_schema = correction_tool.args_schema.model_json_schema()
+    assert correction_schema["properties"]["scope"]["enum"] == ["personal", "general"]
+    assert {
+        "question",
+        "corrected_answer",
+        "user_message_id",
+        "evidence_text",
+    }.isdisjoint(correction_schema["properties"])
 
     memory = await load_profile_memory_context(db_session, service_case_id=case.id)
     rendered = memory.render_for_agent()
@@ -410,11 +419,24 @@ async def test_archivist_routes_staff_corrections_back_to_chat_agent(db_session)
 
     drafts = [
         draft
-        for draft in await db_session.scalars(select(KnowledgeDraft).order_by(KnowledgeDraft.id.asc()))
-        if (draft.content_json or {}).get("source") == "archivist_staff_correction"
+        for draft in await db_session.scalars(select(KnowledgeDraft))
+        if (draft.content_json or {}).get("service_case_id") == case.id
     ]
-    assert {draft.draft_type for draft in drafts} == {"qa"}
-    assert all(draft.status == "pending" for draft in drafts)
+    assert drafts == []
+    traces = list(
+        await db_session.scalars(
+            select(ArchivistExtractTrace).where(
+                ArchivistExtractTrace.service_case_id == case.id
+            )
+        )
+    )
+    reported_scopes = {
+        call["args"]["scope"]
+        for trace in traces
+        for call in trace.emitted_json
+        if call.get("name") == "report_correction"
+    }
+    assert reported_scopes == {"personal", "general"}
 
 
 @pytest.mark.asyncio
@@ -630,7 +652,7 @@ async def test_archivist_personal_faq_writes_staff_guidance_without_draft(db_ses
 
 
 @pytest.mark.asyncio
-async def test_archivist_does_not_create_faq_for_correction_without_user_question(db_session):
+async def test_archivist_general_correction_never_creates_faq_draft(db_session):
     case, user_msgs, progress = await _setup_case_with_messages(db_session)
     bot = Message(
         service_case_id=case.id,
@@ -664,15 +686,11 @@ async def test_archivist_does_not_create_faq_for_correction_without_user_questio
                 {
                     "name": "report_correction",
                     "args": {
-                        "scope": "global_faq",
+                        "scope": "general",
                         "summary": "深色液体是晚A",
                         "applicability": "识别产品图片",
-                        "question": "这碗深色液体是什么产品？",
-                        "corrected_answer": "这是晚A。",
                         "bot_message_id": bot.id,
                         "staff_message_id": staff.id,
-                        "user_message_id": bot.id,
-                        "evidence_text": "助教认错，班主任纠正。",
                         "confidence": 0.95,
                     },
                     "id": "not-a-faq",
@@ -686,7 +704,8 @@ async def test_archivist_does_not_create_faq_for_correction_without_user_questio
     )
     await db_session.flush()
 
-    assert result.qa_drafts_created == 0
+    assert result.corrections_recorded == 1
+    assert result.personal_corrections_written == 0
     drafts = [
         draft
         for draft in await db_session.scalars(select(KnowledgeDraft))

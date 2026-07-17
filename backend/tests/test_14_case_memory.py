@@ -91,7 +91,6 @@ async def test_case_memory_refresh_with_precipitation(db_session):
         outcome_written=1,
         profile_written=0,
         personal_corrections_written=0,
-        qa_drafts_created=0,
         upserts=[{"filled": ["weight"]}],
     )
 
@@ -128,7 +127,6 @@ async def test_case_memory_no_precipitation_skips_summary(db_session):
         profile_written=0,
         state_written=1,
         personal_corrections_written=0,
-        qa_drafts_created=0,
         upserts=[],
     )
 

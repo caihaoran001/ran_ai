@@ -1,4 +1,4 @@
-"""员工纠正的确定性校验、分流和 Chat Agent 反哺读视图。"""
+"""员工纠正的确定性校验与 Chat Agent 反哺读视图。"""
 
 from __future__ import annotations
 
@@ -9,14 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.message import Message, MessageSenderType
 from app.models.service_case import ServiceCase
-from app.services.knowledge_evolution import create_draft_candidate
 from app.services.user_state_profile import apply_staff_correction_to_user_state
 
 
 @dataclass
 class CorrectionApplyResult:
     personal_written: int = 0
-    qa_drafts_created: int = 0
+    recorded: int = 0
     skipped: int = 0
 
 
@@ -40,8 +39,7 @@ async def apply_reported_corrections(
 
         summary = _text(item.get("summary"), 500)
         applicability = _text(item.get("applicability"), 500)
-        corrected_answer = _text(item.get("corrected_answer"), 2000) or summary
-        if not summary or not applicability or not corrected_answer:
+        if not summary or not applicability:
             result.skipped += 1
             continue
         evidence = f"助教[{bot.id}]：{_text(bot.content, 800)}\n班主任[{staff.id}]：{_text(staff.content, 800)}"
@@ -56,52 +54,20 @@ async def apply_reported_corrections(
                 evidence=evidence,
                 confidence=confidence,
             )
-            result.personal_written += int(profile is not None)
-            continue
-
-        if scope == "global_faq":
-            user = await session.get(Message, _positive_int(item.get("user_message_id")))
-            question = _text(item.get("question"), 1000)
-            if not question or not _valid_user_question(service_case.id, user, bot):
+            if profile is None:
                 result.skipped += 1
-                continue
-            draft_type = "qa"
-            category = "员工纠正沉淀"
-        else:
-            result.skipped += 1
+            else:
+                result.personal_written += 1
+                result.recorded += 1
             continue
 
-        draft = await create_draft_candidate(
-            session,
-            draft_type=draft_type,
-            title=summary[:80],
-            question=question,
-            answer=corrected_answer,
-            category=category,
-            tags=["员工纠正", scope],
-            reason="班主任在群内对助教回答进行了明确纠正或补充。",
-            evidence=(
-                f"用户[{user.id}]：{_text(user.content, 800)}\n"
-                f"{evidence}"
-            ),
-            sanitized_text=evidence,
-            source_message_ids=[user.id, bot.id, staff.id],
-            content_json={
-                "source": "archivist_staff_correction",
-                "service_case_id": service_case.id,
-                "scope": scope,
-                "summary": summary,
-                "applicability": applicability,
-                "bot_message_id": bot.id,
-                "staff_message_id": staff.id,
-                "user_message_id": user.id,
-                "confidence": confidence,
-            },
-        )
-        if draft is None:
+        if scope != "general":
             result.skipped += 1
-        else:
-            result.qa_drafts_created += 1
+            continue
+        # 通用纠错已在 archivist_extract_traces.emitted_json 中保留原始上报，
+        # 此处只做消息配对校验和计数。需要进知识库时，模型必须另外调用
+        # report_faq_candidate，由 knowledge_evolution 统一校验班主任确认并建稿。
+        result.recorded += 1
     return result
 
 
@@ -114,20 +80,6 @@ def _valid_pair(service_case_id: int, bot: Message | None, staff: Message | None
         and bot.sender_type == MessageSenderType.BOT
         and staff.sender_type == MessageSenderType.STAFF
         and bot.id < staff.id
-    )
-
-
-def _valid_user_question(
-    service_case_id: int,
-    user: Message | None,
-    bot: Message,
-) -> bool:
-    return bool(
-        user
-        and user.service_case_id == service_case_id
-        and user.sender_type == MessageSenderType.USER
-        and user.id < bot.id
-        and str(user.content or "").strip()
     )
 
 

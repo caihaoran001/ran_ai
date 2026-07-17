@@ -145,30 +145,17 @@ class ReportStateFactArgs(BaseModel):
 class ReportCorrectionArgs(BaseModel):
     """上报一条“助教回答后，班主任追加纠正/补充”的监督信号。"""
 
-    scope: Literal["personal", "global_faq"] = Field(
+    scope: Literal["personal", "general"] = Field(
         description=(
-            "personal=仅当前用户的个性化安排；global_faq=能独立回答其他用户真实提问的通用 FAQ。"
-            "纯助教操作失误、回答语气或无用户问题的纠正不应上报"
+            "personal=纠正内容是当前用户的个性化安排，需写入用户档案；"
+            "general=通用知识或助教回答错误，只记录纠错事件。"
+            "该工具永远不创建 FAQ 草稿"
         )
     )
-    summary: str = Field(description="纠正后的简短事实或规则")
+    summary: str = Field(description="班主任确认的正确事实，不写成 FAQ 问答")
     applicability: str = Field(description="这条纠正在什么用户/问题/场景下适用")
-    question: str | None = Field(
-        default=None,
-        description="global_faq 时填写从用户原话提炼出的可复用标准问题；personal 可留空",
-    )
-    corrected_answer: str | None = Field(
-        default=None,
-        description="员工确认后的事实或标准答案；personal 可与 summary 相同",
-    )
     bot_message_id: int = Field(gt=0, description="被纠正的助教消息 ID")
     staff_message_id: int = Field(gt=0, description="追加纠正的班主任消息 ID")
-    user_message_id: int | None = Field(
-        default=None,
-        gt=0,
-        description="global_faq 必填：提出该问题的用户消息 ID；personal 可留空",
-    )
-    evidence_text: str = Field(description="助教原话与班主任纠正原话的简短证据")
     confidence: float = Field(default=0.0, description="0.0-1.0 置信度")
 
 
@@ -254,7 +241,7 @@ def build_report_tools(kinds: list[str]) -> list[StructuredTool]:
             REPORT_FAQ_CANDIDATE,
             KIND_FAQ,
             ReportFaqCandidateArgs,
-            "上报一条可复用的 FAQ 候选（群聊问答对提炼，供知识库沉淀）。",
+            "上报班主任确认的问答；这是创建 FAQ 草稿或个人指导的唯一入口。",
         ),
     ]
     for name, kind, args_model, desc in specs:
