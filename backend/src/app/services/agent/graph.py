@@ -20,7 +20,7 @@ from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.state import AgentRunContext, AgentState
 from app.services.agent.tools import build_agent_tools
 from app.services.channels.registry import get_current_channel
-from app.services.content_policy import get_qiwe_group_nickname
+from app.services.content_policy import get_qiwe_group_nickname, get_qiwe_nickname
 from app.services.knowledge_index import retrieve_indexed_knowledge
 
 logger = logging.getLogger("uvicorn.error")
@@ -92,20 +92,25 @@ class RanrenAgentGraph:
 
         群昵称优先、微信昵称兜底：
         1) 机器人在本群的群昵称（memberList.name，DB 缓存）——正是 @ 显示、正文里出现的那个名；
-           成员未单独设群昵称时，企微已把微信昵称填进 memberList.name，天然兜底。
-        2) 群昵称缓存整体缺失时，退回账号级微信昵称（get_self_nickname）。
+           注意企微群成员表通常不含机器人账号自身，故此项对机器人常为空。
+        2) 微信昵称（DB 缓存 qiwe_nickname_map）——机器人自身昵称一般已缓存在此，零网络、可靠。
+        3) 账号级微信昵称（get_self_nickname，网络）——DB 都没有时的最后兜底。
         渠道不支持或全部取不到时返回空串（不注入身份块）。
         """
         ctx = self.context
-        if ctx.group_id and ctx.bot_user_id:
+        if ctx.bot_user_id:
             try:
                 async with db_session_module.SessionLocal() as session:
-                    group_nickname = await get_qiwe_group_nickname(session, ctx.group_id, ctx.bot_user_id)
-                if group_nickname:
-                    return group_nickname
+                    if ctx.group_id:
+                        group_nickname = await get_qiwe_group_nickname(session, ctx.group_id, ctx.bot_user_id)
+                        if group_nickname:
+                            return group_nickname
+                    contact_nickname = await get_qiwe_nickname(session, ctx.bot_user_id)
+                    if contact_nickname:
+                        return contact_nickname
             except Exception:
                 logger.exception(
-                    "Failed to resolve bot group nickname service_case_id=%s", ctx.service_case_id
+                    "Failed to resolve bot nickname from DB cache service_case_id=%s", ctx.service_case_id
                 )
         channel = get_current_channel()
         if channel is not None and hasattr(channel, "get_self_nickname"):
