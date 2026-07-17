@@ -157,8 +157,8 @@ def _memory_from_state(state_json: object) -> tuple[list[str], list[str], list[s
     if not isinstance(domains, dict):
         return [], [], [], []
 
-    preferences = _domain_lines(domains.get("personal_preferences"), label="个人偏好")
-    habits = _domain_lines(domains.get("lifestyle_habits"), label="稳定习惯")
+    preferences = _profile_domain_lines(domains.get("personal_preferences"), label="个人偏好")
+    habits = _profile_domain_lines(domains.get("lifestyle_habits"), label="稳定习惯")
     current_state: list[str] = []
     for key, label in (
         ("service_state", "当前服务状态"),
@@ -184,6 +184,54 @@ def _domain_lines(domain: object, *, label: str) -> list[str]:
         if text:
             values.append(text)
     compact = "；".join(values)[:180]
+    return [f"{label}：{compact}"] if compact else []
+
+
+def _profile_domain_lines(domain: object, *, label: str) -> list[str]:
+    """Render the latest profile facts, including facts stranded in legacy history.
+
+    Older writers kept only one current value per signal type, so two food
+    preferences extracted in the same batch could overwrite each other even
+    though both facts remained in domain history. New writers store a list;
+    merging current and history here keeps both shapes readable without a data
+    rewrite or another LLM call.
+    """
+
+    if not isinstance(domain, dict):
+        return []
+    current = domain.get("current") if isinstance(domain.get("current"), dict) else {}
+    current_values = current.get("value") if isinstance(current.get("value"), dict) else {}
+    fallback_time = str(current.get("updated_at") or "")
+    candidates: dict[str, tuple[str, int]] = {}
+    order = 0
+
+    def add(raw: object, *, default_time: str = "") -> None:
+        nonlocal order
+        text = _memory_value_text(raw, 80)
+        if not text:
+            return
+        occurred_at = default_time
+        if isinstance(raw, dict):
+            occurred_at = str(
+                raw.get("last_confirmed_at")
+                or raw.get("occurred_at")
+                or default_time
+                or ""
+            )
+        candidates[text] = (occurred_at, order)
+        order += 1
+
+    for raw in current_values.values():
+        values = raw if isinstance(raw, list) else [raw]
+        for item in values:
+            add(item, default_time=fallback_time)
+
+    history = domain.get("history") if isinstance(domain.get("history"), list) else []
+    for item in history:
+        add(item)
+
+    selected = sorted(candidates.items(), key=lambda item: item[1])[-5:]
+    compact = "、".join(text for text, _rank in selected)[:180]
     return [f"{label}：{compact}"] if compact else []
 
 

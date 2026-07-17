@@ -174,3 +174,39 @@ def test_profile_memory_reads_multi_facts_and_hides_resolved_state() -> None:
 
     assert preferences == ["个人偏好：不吃香菜、不喜欢芹菜"]
     assert current_state == ["当前服务状态：晚 A 仍容易漏掉"]
+
+
+def test_profile_memory_recovers_legacy_overwritten_preference_from_history() -> None:
+    preferences, _habits, _current_state, _warnings = _memory_from_state(
+        {
+            "domains": {
+                "personal_preferences": {
+                    "current": {
+                        "value": {
+                            "food_preference": {
+                                "value": "吃甜食身体不舒服",
+                                "status": "confirmed",
+                            }
+                        },
+                        "updated_at": "2026-07-17T07:32:26+00:00",
+                    },
+                    "history": [
+                        {
+                            "field_key": "food_preference",
+                            "value": "不喜欢吃豆腐",
+                            "status": "confirmed",
+                            "occurred_at": "2026-07-17T07:31:00+00:00",
+                        },
+                        {
+                            "field_key": "food_preference",
+                            "value": "吃甜食身体不舒服",
+                            "status": "confirmed",
+                            "occurred_at": "2026-07-17T07:32:00+00:00",
+                        },
+                    ],
+                }
+            }
+        }
+    )
+
+    assert preferences == ["个人偏好：不喜欢吃豆腐、吃甜食身体不舒服"]
