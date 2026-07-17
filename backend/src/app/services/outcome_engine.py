@@ -17,12 +17,13 @@ from app.services.user_state_profile import (
     OUTCOME_FIELD_DOMAIN_MAP,
     apply_outcome_events_to_user_state,
     apply_profile_signals_to_user_state,
+    apply_state_signals_to_user_state,
 )
 
 logger = logging.getLogger(__name__)
 
-# 成效只记"变好"：正向进展。负向/无变化/未完成/不适不进成效表——那些交给风控与
-# 案例记忆。事件类型收窄为与 case_synthesis._POSITIVE_EVENT_TYPES 对齐的两个。
+# 成效表只记"变好"；负向/无变化/未完成/不适由同轮档案官投影到 service_state。
+# 事件类型收窄为与 case_synthesis._POSITIVE_EVENT_TYPES 对齐的两个。
 VALID_EVENT_TYPES = frozenset({"improved", "completed"})
 
 # 已知成效维度：不再按当前里程碑限制，修复"跨里程碑正向被静默丢弃"的问题
@@ -139,6 +140,7 @@ async def apply_archived_outcome(
     anchor_message: Message,
     outcome_events: list[dict[str, Any]],
     profile_signals: list[dict[str, Any]],
+    state_signals: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """档案官(Archivist)成效/画像落库入口（复用 apply_outcome_analysis 的确定性写入/投影）。
 
@@ -148,7 +150,11 @@ async def apply_archived_outcome(
     """
     spec = current_milestone_spec(service_case)
     state = await get_or_create_stage_state(session, service_case.id, spec)
-    raw = {"outcome_events": outcome_events or [], "profile_signals": profile_signals or []}
+    raw = {
+        "outcome_events": outcome_events or [],
+        "profile_signals": profile_signals or [],
+        "state_signals": state_signals or [],
+    }
     return await apply_outcome_analysis(
         session,
         service_case=service_case,
@@ -257,6 +263,7 @@ async def apply_outcome_analysis(
     collected = dict(state.collected_fields or {})
     created_events: list[dict[str, Any]] = []
     profile_signals = _normalize_profile_signals(raw.get("profile_signals"))
+    state_signals = _normalize_state_signals(raw.get("state_signals"))
 
     for item in _normalize_events(raw.get("outcome_events"), KNOWN_OUTCOME_FIELDS):
         if await _event_exists(session, service_case.id, message.id, item):
@@ -304,6 +311,13 @@ async def apply_outcome_analysis(
         profile_signals=profile_signals,
         source=source,
     )
+    await apply_state_signals_to_user_state(
+        session,
+        service_case=service_case,
+        message=message,
+        state_signals=state_signals,
+        source=source,
+    )
 
     await session.flush()
     return {
@@ -312,6 +326,7 @@ async def apply_outcome_analysis(
         "service_day": service_day(service_case),
         "created_events": created_events,
         "profile_signals": profile_signals,
+        "state_signals": state_signals,
         "collected_fields": collected,
         "missing_fields": missing,
         "notes": str(raw.get("notes") or ""),
@@ -469,6 +484,46 @@ def _normalize_profile_signals(value: Any) -> list[dict[str, Any]]:
             }
         )
     return signals[:5]
+
+
+def _normalize_state_signals(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    allowed_types = {
+        "current_obstacle",
+        "execution_status",
+        "negative_change",
+        "discomfort",
+        "mood_state",
+        "willingness",
+        "unresolved_question",
+        "user_commitment",
+        "health_concern",
+        "user_belief",
+    }
+    signals: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        state_type = _string(item.get("state_type"))
+        fact_value = _string(item.get("value"))
+        evidence_text = _string(item.get("evidence_text"))
+        confidence = _confidence(item.get("confidence"))
+        status = _string(item.get("status")) or "active"
+        if state_type not in allowed_types or not fact_value or not evidence_text or confidence < 0.6:
+            continue
+        if status not in {"active", "resolved"}:
+            status = "active"
+        signals.append(
+            {
+                "state_type": state_type,
+                "value": fact_value,
+                "evidence_text": evidence_text,
+                "confidence": confidence,
+                "status": status,
+            }
+        )
+    return signals[:8]
 
 
 async def _event_exists(

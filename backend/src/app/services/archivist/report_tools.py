@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 REPORT_CHECKIN = "report_checkin"
 REPORT_OUTCOME = "report_outcome"
 REPORT_PROFILE_FACT = "report_profile_fact"
+REPORT_STATE_FACT = "report_state_fact"
 REPORT_CORRECTION = "report_correction"
 REPORT_FAQ_CANDIDATE = "report_faq_candidate"
 
@@ -27,6 +28,7 @@ REPORT_FAQ_CANDIDATE = "report_faq_candidate"
 KIND_CHECKIN = "checkin"
 KIND_OUTCOME = "outcome"
 KIND_PROFILE = "profile"
+KIND_STATE = "state"
 KIND_CORRECTION = "correction"
 KIND_FAQ = "faq"
 
@@ -73,7 +75,7 @@ class ReportCheckinArgs(BaseModel):
 class ReportOutcomeArgs(BaseModel):
     """上报一条正向成效进展（用户变好了/达成了）。每条事件调用一次。
 
-    只上报正向进展；变差/无变化/未完成/不适等负向信号不在此上报（交给风控与案例记忆）。
+    只上报正向进展；变差/无变化/未完成/不适等改用 report_state_fact。
     """
 
     field_key: str = Field(description="成效字段 key（如 weight_change/sleep_change/energy_change 等）")
@@ -88,15 +90,54 @@ class ReportOutcomeArgs(BaseModel):
 class ReportProfileFactArgs(BaseModel):
     """上报一条长期画像信号（稳定偏好/习惯）。每条调用一次，一批最多 3 条。"""
 
-    domain: str = Field(description="personal_preferences 或 lifestyle_habits")
-    signal_type: str = Field(
+    domain: Literal["personal_preferences", "lifestyle_habits"] = Field(
+        description="personal_preferences 或 lifestyle_habits"
+    )
+    signal_type: Literal[
+        "hobby",
+        "activity_preference",
+        "food_preference",
+        "communication_preference",
+        "motivation_preference",
+        "meal_pattern",
+        "hydration_habit",
+        "schedule_constraint",
+        "work_routine",
+        "exercise_habit",
+        "sleep_habit",
+        "social_context",
+    ] = Field(
         description=(
             "hobby / activity_preference / food_preference / communication_preference / "
-            "motivation_preference / meal_pattern / schedule_constraint / work_routine / "
-            "exercise_habit / sleep_habit / social_context / other"
+            "motivation_preference / meal_pattern / hydration_habit / schedule_constraint / "
+            "work_routine / exercise_habit / sleep_habit / social_context"
         )
     )
     value: str = Field(description="简短、可长期复用的事实（不要写成建议/评价/医学判断）")
+    evidence_text: str = Field(description="用户原话证据")
+    confidence: float = Field(default=0.0, description="0.0-1.0 置信度")
+
+
+class ReportStateFactArgs(BaseModel):
+    """上报影响当前服务的状态、阻塞或待解决事项。每条调用一次。"""
+
+    state_type: Literal[
+        "current_obstacle",
+        "execution_status",
+        "negative_change",
+        "discomfort",
+        "mood_state",
+        "willingness",
+        "unresolved_question",
+        "user_commitment",
+        "health_concern",
+        "user_belief",
+    ] = Field(description="当前状态类型")
+    status: Literal["active", "resolved"] = Field(
+        default="active",
+        description="active=当前仍成立；resolved=用户明确表示该状态已解决/不再成立",
+    )
+    value: str = Field(description="简短的当前事实；不写建议，不做诊断，不补充原话没有的信息")
     evidence_text: str = Field(description="用户原话证据")
     confidence: float = Field(default=0.0, description="0.0-1.0 置信度")
 
@@ -171,6 +212,7 @@ REPORT_SPECS: dict[str, tuple[type[BaseModel], str]] = {
     REPORT_CHECKIN: (ReportCheckinArgs, KIND_CHECKIN),
     REPORT_OUTCOME: (ReportOutcomeArgs, KIND_OUTCOME),
     REPORT_PROFILE_FACT: (ReportProfileFactArgs, KIND_PROFILE),
+    REPORT_STATE_FACT: (ReportStateFactArgs, KIND_STATE),
     REPORT_CORRECTION: (ReportCorrectionArgs, KIND_CORRECTION),
     REPORT_FAQ_CANDIDATE: (ReportFaqCandidateArgs, KIND_FAQ),
 }
@@ -184,7 +226,7 @@ def _noop(**_: Any) -> str:
 def build_report_tools(kinds: list[str]) -> list[StructuredTool]:
     """按启用的 kinds 构建 report-only 工具（仅供 bind_tools 让 LLM 看到 schema）。
 
-    kinds 取值：checkin / outcome / profile / correction。
+    kinds 取值：checkin / outcome / profile / state / correction / faq。
     """
     tools: list[StructuredTool] = []
     specs = [
@@ -195,6 +237,12 @@ def build_report_tools(kinds: list[str]) -> list[StructuredTool]:
             KIND_PROFILE,
             ReportProfileFactArgs,
             "上报一条长期画像信号（稳定偏好/习惯）。",
+        ),
+        (
+            REPORT_STATE_FACT,
+            KIND_STATE,
+            ReportStateFactArgs,
+            "上报一条影响当前服务的状态、阻塞、负向变化或待解决事项。",
         ),
         (
             REPORT_CORRECTION,

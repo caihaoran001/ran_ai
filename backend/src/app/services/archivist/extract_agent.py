@@ -22,7 +22,7 @@ from app.services.checkin_service import CHECKIN_KEYS
 
 logger = logging.getLogger(__name__)
 
-_ALL_KINDS = ["checkin", "outcome", "profile", "correction", "faq"]
+_ALL_KINDS = ["checkin", "outcome", "profile", "state", "correction", "faq"]
 _PRODUCT_SUBKEYS = ("morning_c", "noon_b", "night_a", "summary")
 
 _SYSTEM_PROMPT = (
@@ -35,9 +35,15 @@ _SYSTEM_PROMPT = (
     "三段产品依从/明日重点等）。只填用户明确说了的，没提到的字段一律留空，禁止脑补或换算单位。\n"
     "- report_outcome：每发现一条**正向进展**（瘦了X斤、睡眠改善、便秘好转、精神体力变好、"
     "达成阶段目标等）就调用一次，必须带来自用户原话的 evidence_text。只报变好/达成；变差、"
-    "无变化、没执行、身体不适等负向信号不用 report_outcome（那些交给风控与案例记忆）。\n"
+    "无变化、没执行、身体不适等负向信号不用 report_outcome。\n"
     "- report_profile_fact：每发现一条稳定的长期偏好/习惯/约束（口味忌口、作息类型、工作强度、"
-    "家庭限制等）就调用一次，一批最多 3 条；一次性安排/当天情绪/寒暄不算。\n"
+    "家庭限制等）就调用一次，一批最多 3 条；一次性安排/当天情绪/寒暄不算。"
+    "喝水习惯选 hydration_habit，不是 food_preference；经期、手术恢复、用药、疼痛等健康事实"
+    "不是生活习惯；‘吃某物会掉秤’等个人猜想不是食物偏好。\n"
+    "- report_state_fact：每发现一条影响当前服务的状态就调用一次，包括当前阻塞、没执行/"
+    "执行中断、负向变化、身体不适、当下情绪、意愿、待解决问题、用户承诺、健康关注或用户自己的因果认知。"
+    "它表示‘现在怎么了’，不要把这些内容塞进 report_profile_fact。当用户明确说同类状态已解决或不再成立时，"
+    "用相同 state_type 上报并设 status=resolved；否则 status=active。\n"
     "- report_correction：仅当记录中先有【助教】回答，后有【班主任】明确纠正或补充该回答时调用。"
     "必须引用输入中真实存在的助教消息ID和班主任消息ID。个人特殊安排选 personal；只有能独立回答一条真实用户"
     "提问时才选 global_faq，并必须带该用户提问的 user_message_id。纯助教操作失误、回答语气、流程或无用户问题"
@@ -46,7 +52,7 @@ _SYSTEM_PROMPT = (
     "staff_message_id。仅用户与助教的聊天不生成 FAQ。能原样回答其他用户的问题选 general，进入人工审核；"
     "只适用于当前用户的内容选 personal，直接沉淀为该用户的个人指导。医疗诊断、疾病/症状处理、具体产品"
     "剂量、退款承诺、临时系统状态一律不提炼。没有班主任确认或没有优质答案依据时不报。\n\n"
-    "【角色边界】report_checkin/report_outcome/report_profile_fact 只能提取【用户】本人表达的信息；"
+    "【角色边界】report_checkin/report_outcome/report_profile_fact/report_state_fact 只能提取【用户】本人表达的信息；"
     "不得把助教或班主任的话写成用户事实。班主任内容只可作为纠偏或个人指导的确认依据。\n"
     "【总纪律】只上报原话或上下文能直接支持的事实；宁缺毋滥；不确定是不是本人的/今天的就不报；"
     "没有任何可上报内容时，不调用任何工具即可。"
@@ -85,7 +91,7 @@ async def run_extract_agent(
     followup_context: list[dict[str, Any]] | None = None,
     checklist_context: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """跑一轮 Agent 抽取，按 checkin/outcome/profile/correction 四类归桶。
+    """跑一轮 Agent 抽取，按 checkin/outcome/profile/state/correction/faq 归桶。
 
     失败（模型异常/无 key 等）返回空 collector，不抛出——不阻塞归档 checkin live 落库。
 
@@ -99,6 +105,7 @@ async def run_extract_agent(
         "checklist_answers": [],
         "outcome": [],
         "profile": [],
+        "state": [],
         "correction": [],
         "faq": [],
         # 观测留痕(R1):LLM 原始 emit + 过滤后存活 + 被丢弃及原因;
@@ -224,6 +231,7 @@ async def run_extract_agent(
         "followup_item_ids": [str(a.get("item_id") or "") for a in collector["followup_answers"]],
         "outcome": len(collector["outcome"]),
         "profile": len(collector["profile"]),
+        "state": len(collector["state"]),
         "correction": len(collector["correction"]),
         "faq": len(collector["faq"]),
     }

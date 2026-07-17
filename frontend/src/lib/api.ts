@@ -90,6 +90,27 @@ export type UserStateProfile = {
   updated_at: string;
 };
 
+export type UserOperationsFact = {
+  domain: string;
+  domain_label: string;
+  field_key?: string | null;
+  value: string;
+  evidence?: string | null;
+  source?: string | null;
+  occurred_at?: string | null;
+};
+
+export type UserOperationsSnapshot = {
+  attention_code: string;
+  attention_label: string;
+  attention_reason: string;
+  confirmed_guidance?: UserOperationsFact | null;
+  latest_change?: UserOperationsFact | null;
+  checkin_days: number;
+  last_checkin_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type User = {
   id: number;
   name: string;
@@ -100,6 +121,7 @@ export type User = {
   service_cases: ServiceCase[];
   latest_profile?: UserProfile | null;
   latest_state_profile?: UserStateProfile | null;
+  operations_snapshot?: UserOperationsSnapshot | null;
   created_at: string;
   updated_at: string;
 };

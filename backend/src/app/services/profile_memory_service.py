@@ -161,6 +161,7 @@ def _memory_from_state(state_json: object) -> tuple[list[str], list[str], list[s
     habits = _domain_lines(domains.get("lifestyle_habits"), label="稳定习惯")
     current_state: list[str] = []
     for key, label in (
+        ("service_state", "当前服务状态"),
         ("need_analysis", "当前需求"),
         ("body_feedback", "近期体感"),
         ("product_usage", "产品执行"),
@@ -197,6 +198,11 @@ def _domain_current(domain: object) -> dict[str, Any]:
 
 
 def _memory_value_text(value: object, limit: int) -> str:
+    if isinstance(value, list):
+        parts = [_memory_value_text(item, limit) for item in value]
+        return "、".join(item for item in parts if item)[:limit]
+    if isinstance(value, dict) and str(value.get("status") or "") == "resolved":
+        return ""
     if isinstance(value, dict) and "value" in value:
         return _short_text(value.get("value"), limit)
     return _short_text(value, limit)

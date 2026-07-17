@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from pathlib import Path
 from sqlalchemy import not_, select
@@ -25,12 +25,13 @@ router = APIRouter()
 @router.get("/service-cases/{service_case_id}/messages", response_model=list[MessageRead])
 async def list_case_messages(
     service_case_id: int,
+    limit: int | None = Query(default=None, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
 ) -> list[Message]:
     service_case = await get_service_case(session, service_case_id)
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
-    result = await session.scalars(
+    statement = (
         select(Message)
         .where(
             Message.group_id == service_case.group_id,
@@ -42,9 +43,17 @@ async def list_case_messages(
             ),
         )
         .options(selectinload(Message.trigger))
-        .order_by(Message.created_at.asc(), Message.id.asc())
+        .order_by(
+            Message.created_at.desc() if limit else Message.created_at.asc(),
+            Message.id.desc() if limit else Message.id.asc(),
+        )
     )
-    return list(result)
+    if limit:
+        statement = statement.limit(limit)
+    rows = list(await session.scalars(statement))
+    if limit:
+        rows.reverse()
+    return rows
 
 
 @router.post(
@@ -107,4 +116,3 @@ async def get_message_image(
         raise HTTPException(status_code=404, detail="image file not found on disk")
     media_type = image_info.get("content_type") or "image/jpeg"
     return FileResponse(local_path, media_type=media_type)
-

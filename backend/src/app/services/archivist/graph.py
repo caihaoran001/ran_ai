@@ -1,7 +1,7 @@
 """档案官运行图：load_context → extract → classify → guardrail → commit。
 
 设计 §5：顺序焊死的多节点流水线，LLM 只用于判断(extract)，落库用确定性代码(commit)。
-extract 用 Agent 形态一次性抽出打卡+成效+画像；commit 里打卡按天 upsert、成效/画像经
+extract 用 Agent 形态一次性抽出打卡+成效+稳定画像+当前状态；commit 里打卡按天 upsert、其余事实经
 apply_archived_outcome 写真表(outcome_events/user_state)。档案官是成效/画像的**唯一**抽取
 入口(聊天热路径已不再实时抽)。classify/guardrail 为知识沉淀等后续阶段预留的轻量节点。
 """
@@ -52,9 +52,10 @@ class ArchivistState(TypedDict, total=False):
     delta_user_message_ids: list[int]
     # {date_iso: {"fields": {...}, "evidence_ids": [int]}}
     day_candidates: dict[str, dict]
-    # Agent 抽出的成效事件/画像信号（累计跨整批，commit 里一次性写真表）
+    # Agent 抽出的成效事件/稳定画像/当前状态（累计跨整批，commit 里一次性写真表）
     outcome_candidates: list[dict]
     profile_candidates: list[dict]
+    state_candidates: list[dict]
     correction_candidates: list[dict]
     faq_candidates: list[dict]
     followup_answers: list[dict]
@@ -73,9 +74,10 @@ class ArchivistRunResult:
     days_processed: int = 0
     upserts: list[dict] = field(default_factory=list)  # [{date, filled, contradictions...}]
     contradictions: list[dict] = field(default_factory=list)
-    # 成效/画像直写真表结果（Agent 抽出并落库的条数）
+    # 成效/稳定画像/当前状态直写结果（Agent 抽出并落库的条数）
     outcome_written: int = 0
     profile_written: int = 0
+    state_written: int = 0
     personal_corrections_written: int = 0
     qa_drafts_created: int = 0
     corrections_skipped: int = 0
@@ -280,7 +282,7 @@ class ArchivistGraph:
         }
 
     async def _extract(self, state: ArchivistState) -> dict[str, Any]:
-        """对每个自然日的聊天原文用 Agent 一次性抽出打卡+成效+画像（LLM 判断，不落库）。
+        """对每个自然日的聊天原文用 Agent 一次性抽出打卡+成效+稳定画像+当前状态。
 
         打卡按天归入 day_candidates（commit 里按天 upsert）；成效/画像累计跨整批，commit 里
         经 apply_archived_outcome 一次性写真表。档案官是成效/画像的唯一抽取入口。
@@ -289,6 +291,7 @@ class ArchivistGraph:
         day_candidates: dict[str, dict] = {}
         outcome_candidates: list[dict] = []
         profile_candidates: list[dict] = []
+        state_candidates: list[dict] = []
         correction_candidates: list[dict] = []
         faq_candidates: list[dict] = []
         followup_answers: list[dict] = []
@@ -306,7 +309,7 @@ class ArchivistGraph:
 
         for date_iso, msgs in delta_by_date.items():
             content = "\n".join(f"[{m['id']}] {m['role']}：{m['text']}" for m in msgs)
-            # extract 是成效/画像/打卡的唯一权威，恒抽全类：这里写死全部 5 类，
+            # extract 是成效/画像/当前状态/打卡的唯一权威，恒抽全类，
             # **故意不采信入营层 archive_plan.kinds**。archive_plan 只是档案官触发闸门
             # （trigger.py 用它判本单要不要跑/跑多快），刻意宁滥勿缺（gate 提示词明说"抽不到也无妨"）；
             # 若让 extract 照 gate 的 kinds 裁剪，就会把可靠的真抽绑死在不可靠的闸门上、gate 漏标即漏抽，
@@ -314,7 +317,7 @@ class ArchivistGraph:
             collector = await run_extract_agent(
                 content=content,
                 service_case_id=self.service_case.id,
-                enabled_kinds=["checkin", "outcome", "profile", "correction", "faq"],
+                enabled_kinds=["checkin", "outcome", "profile", "state", "correction", "faq"],
                 chat_model=self.chat_model,
                 settings=self.settings,
                 followup_context=followup_context_by_date.get(date_iso) or [],
@@ -335,6 +338,7 @@ class ArchivistGraph:
             has_checkin_activity = has_checkin_activity or bool(fields)
             outcome_candidates.extend(collector.get("outcome") or [])
             profile_candidates.extend(collector.get("profile") or [])
+            state_candidates.extend(collector.get("state") or [])
             correction_candidates.extend(collector.get("correction") or [])
             faq_candidates.extend(collector.get("faq") or [])
             evidence_ids = [m["id"] for m in msgs if m["sender_type"] == "user"]
@@ -373,6 +377,7 @@ class ArchivistGraph:
             "day_candidates": day_candidates,
             "outcome_candidates": outcome_candidates,
             "profile_candidates": profile_candidates,
+            "state_candidates": state_candidates,
             "correction_candidates": correction_candidates,
             "faq_candidates": faq_candidates,
             "followup_answers": followup_answers,
@@ -440,13 +445,14 @@ class ArchivistGraph:
                 or ["chat_checkin"],
             )
 
-        # 成效/画像直写真表：用本批最后一条用户消息作 anchor（提供 message_id/occurred_at）。
+        # 成效/稳定画像/当前状态直写：用本批最后一条用户消息作 anchor。
         # **不再吞异常**：写库失败必须抛出，让 trigger 层回滚事务、不推进水位线、下轮重试，
         # 否则成效/画像会随水位线前移而永久丢失（幂等由 apply_archived_outcome 去重保证重跑安全）。
         outcome_candidates = state.get("outcome_candidates") or []
         profile_candidates = state.get("profile_candidates") or []
+        state_candidates = state.get("state_candidates") or []
         delta_user_message_ids = state.get("delta_user_message_ids") or []
-        if (outcome_candidates or profile_candidates) and delta_user_message_ids:
+        if (outcome_candidates or profile_candidates or state_candidates) and delta_user_message_ids:
             anchor = await self.session.get(Message, max(delta_user_message_ids))
             if anchor is not None:
                 result = await apply_archived_outcome(
@@ -455,9 +461,11 @@ class ArchivistGraph:
                     anchor_message=anchor,
                     outcome_events=outcome_candidates,
                     profile_signals=profile_candidates,
+                    state_signals=state_candidates,
                 )
                 self.result.outcome_written = len(result.get("created_events") or [])
                 self.result.profile_written = len(result.get("profile_signals") or [])
+                self.result.state_written = len(result.get("state_signals") or [])
 
         correction_result = await apply_reported_corrections(
             self.session,

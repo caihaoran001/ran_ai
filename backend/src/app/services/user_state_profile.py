@@ -22,6 +22,7 @@ STATE_DOMAIN_LABELS: dict[str, str] = {
     "rhythm_structure": "节律结构",
     "product_usage": "产品使用",
     "body_feedback": "体感反馈",
+    "service_state": "当前服务状态",
     "risk_profile": "风险信息",
     "outcome_changes": "成效变化",
     "staff_guidance": "班主任确认的个性化安排",
@@ -32,7 +33,61 @@ PROFILE_SIGNAL_DOMAIN_LABELS = {
     "lifestyle_habits": "稳定习惯与生活约束",
 }
 
-# 只把正向进展投影进状态背景；负向信号交给风控与案例记忆。与 outcome_engine 的
+PROFILE_SIGNAL_TYPE_DOMAIN: dict[str, str] = {
+    "hobby": "personal_preferences",
+    "activity_preference": "personal_preferences",
+    "food_preference": "personal_preferences",
+    "communication_preference": "personal_preferences",
+    "motivation_preference": "personal_preferences",
+    "meal_pattern": "lifestyle_habits",
+    "hydration_habit": "lifestyle_habits",
+    "schedule_constraint": "lifestyle_habits",
+    "work_routine": "lifestyle_habits",
+    "exercise_habit": "lifestyle_habits",
+    "sleep_habit": "lifestyle_habits",
+    "social_context": "lifestyle_habits",
+}
+
+STATE_SIGNAL_TYPES = frozenset(
+    {
+        "current_obstacle",
+        "execution_status",
+        "negative_change",
+        "discomfort",
+        "mood_state",
+        "willingness",
+        "unresolved_question",
+        "user_commitment",
+        "health_concern",
+        "user_belief",
+    }
+)
+
+# profile 分类的最后一道安全护栏：主判断仍由档案官的结构化工具输出完成。
+_HEALTH_CONTEXT_MARKERS = (
+    "月经",
+    "经期",
+    "手术",
+    "术后",
+    "恢复期",
+    "用药",
+    "怀孕",
+    "哺乳",
+    "疼痛",
+    "头疼",
+    "头痛",
+    "胃疼",
+    "胃痛",
+    "腹痛",
+    "腰痛",
+    "痛经",
+    "不适",
+)
+_PERSONAL_BELIEF_MARKERS = ("掉秤", "能瘦", "会瘦", "有效", "神器", "一定会")
+_BELIEF_CONTEXT_MARKERS = ("吃", "喝", "空腹", "体重", "瘦", "秤")
+_HYDRATION_MARKERS = ("喝水", "饮水")
+
+# outcome 域只投影正向进展；负向信号由独立 service_state 域承接。与 outcome_engine 的
 # VALID_EVENT_TYPES 语义一致（此处独立定义，避免与 outcome_engine 形成循环导入）。
 _POSITIVE_OUTCOME_EVENT_TYPES = frozenset({"improved", "completed"})
 
@@ -80,11 +135,11 @@ async def initialize_user_state_from_intake(
     """
 
     state_profile = await get_or_create_user_state_profile(session, service_case.id)
-    state = _base_state()
+    state = _ensure_state_shape(state_profile.state_json)
     now = _now_iso()
     overview = profile_json.get("overview") if isinstance(profile_json.get("overview"), dict) else {}
 
-    _set_domain_current(
+    _set_intake_domain_current(
         state,
         "basic",
         {
@@ -104,7 +159,7 @@ async def initialize_user_state_from_intake(
         occurred_at=now,
         confidence=1.0,
     )
-    _set_domain_current(
+    _set_intake_domain_current(
         state,
         "goals",
         {
@@ -119,7 +174,7 @@ async def initialize_user_state_from_intake(
         confidence=1.0,
     )
     need_analysis = profile_json.get("need_analysis") if isinstance(profile_json.get("need_analysis"), dict) else {}
-    _set_domain_current(
+    _set_intake_domain_current(
         state,
         "need_analysis",
         {
@@ -135,7 +190,7 @@ async def initialize_user_state_from_intake(
         occurred_at=now,
         confidence=0.9,
     )
-    _set_domain_current(
+    _set_intake_domain_current(
         state,
         "diet_structure",
         {
@@ -149,7 +204,7 @@ async def initialize_user_state_from_intake(
     )
     diet_pattern = intake_facts.get("diet_pattern")
     if diet_pattern and str(diet_pattern) not in {"未提供", "暂无数据"}:
-        _set_domain_current(
+        _set_intake_domain_current(
             state,
             "lifestyle_habits",
             {
@@ -160,7 +215,7 @@ async def initialize_user_state_from_intake(
             occurred_at=now,
             confidence=0.9,
         )
-    _set_domain_current(
+    _set_intake_domain_current(
         state,
         "risk_profile",
         {
@@ -177,8 +232,12 @@ async def initialize_user_state_from_intake(
 
     state_profile.state_json = state
     flag_modified(state_profile, "state_json")
-    state_profile.summary = str(profile_json.get("summary") or "")[:2000]
-    state_profile.source = "intake"
+    if _has_dynamic_state(state):
+        state_profile.summary = _state_summary(state)
+        state_profile.source = "dynamic"
+    else:
+        state_profile.summary = str(profile_json.get("summary") or "")[:2000]
+        state_profile.source = "intake"
     await session.flush()
     return state_profile
 
@@ -257,26 +316,105 @@ async def apply_profile_signals_to_user_state(
 
     for signal in profile_signals:
         domain = str(signal.get("domain") or "")
-        signal_type = str(signal.get("signal_type") or "other").strip() or "other"
+        signal_type = str(signal.get("signal_type") or "").strip()
         value = str(signal.get("value") or "").strip()
         evidence = str(signal.get("evidence_text") or "").strip()
         confidence = _float(signal.get("confidence"))
-        if domain not in PROFILE_SIGNAL_DOMAIN_LABELS or not value or not evidence or confidence < 0.65:
+        if not value or not evidence or confidence < 0.65:
             continue
-        _update_domain_from_event(
+
+        guarded_state_type = _profile_guardrail_state_type(value=value, evidence=evidence)
+        if guarded_state_type:
+            _update_domain_from_event(
+                state,
+                "service_state",
+                field_key=guarded_state_type,
+                value=_grounded_fact_value(value, evidence),
+                event_type="profile_guardrail_reroute",
+                evidence=evidence,
+                source=("chat_profile_guardrail" if source == "chat" else f"{source}_profile_guardrail"),
+                occurred_at=occurred_at,
+                confidence=confidence,
+                message_id=message.id,
+                milestone="current_state",
+                status="pending_confirmation",
+            )
+            continue
+
+        if any(marker in f"{value}{evidence}" for marker in _HYDRATION_MARKERS):
+            signal_type = "hydration_habit"
+        expected_domain = PROFILE_SIGNAL_TYPE_DOMAIN.get(signal_type)
+        if expected_domain is None or domain not in PROFILE_SIGNAL_DOMAIN_LABELS:
+            continue
+        # 类型已能唯一决定域，不让模型的 domain 误选把事实放错抽屉。
+        domain = expected_domain
+        _upsert_profile_fact(
             state,
             domain,
             field_key=signal_type,
-            value=value,
-            event_type="profile_signal",
+            value=_grounded_fact_value(value, evidence),
             evidence=evidence,
             source=("chat_profile_signal" if source == "chat" else f"{source}_profile_signal"),
             occurred_at=occurred_at,
             confidence=confidence,
             message_id=message.id,
-            milestone="profile",
         )
 
+    state_profile.state_json = state
+    flag_modified(state_profile, "state_json")
+    state_profile.summary = _state_summary(state)
+    state_profile.source = "dynamic"
+    return state_profile
+
+
+async def apply_state_signals_to_user_state(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    message: Message,
+    state_signals: list[dict[str, Any]],
+    source: str = "chat",
+) -> UserStateProfile | None:
+    """写入影响当前服务的阻塞、负向变化、执行状态和待解决事项。
+
+    它们与稳定偏好不同：同一 state_type 的新事实代表当前状态更新，
+    因此 current 保留最新一条，history 保留过程。
+    """
+
+    if not state_signals:
+        return None
+    state_profile = await get_or_create_user_state_profile(session, service_case.id)
+    state = _ensure_state_shape(state_profile.state_json)
+    occurred_at = _datetime_iso(message.created_at)
+    written = False
+    for signal in state_signals:
+        state_type = str(signal.get("state_type") or "").strip()
+        value = str(signal.get("value") or "").strip()
+        evidence = str(signal.get("evidence_text") or "").strip()
+        confidence = _float(signal.get("confidence"))
+        status = str(signal.get("status") or "active").strip()
+        if state_type not in STATE_SIGNAL_TYPES or not value or not evidence or confidence < 0.6:
+            continue
+        if status not in {"active", "resolved"}:
+            status = "active"
+        _update_domain_from_event(
+            state,
+            "service_state",
+            field_key=state_type,
+            value=_grounded_fact_value(value, evidence),
+            event_type="state_signal",
+            evidence=evidence,
+            source=("chat_state_signal" if source == "chat" else f"{source}_state_signal"),
+            occurred_at=occurred_at,
+            confidence=confidence,
+            message_id=message.id,
+            milestone="current_state",
+            status=status,
+        )
+        written = True
+
+    if not written:
+        return None
     state_profile.state_json = state
     flag_modified(state_profile, "state_json")
     state_profile.summary = _state_summary(state)
@@ -411,7 +549,7 @@ def _ensure_state_shape(value: Any) -> dict[str, Any]:
     return state
 
 
-def _set_domain_current(
+def _set_intake_domain_current(
     state: dict[str, Any],
     domain_key: str,
     value: dict[str, Any],
@@ -421,15 +559,30 @@ def _set_domain_current(
     occurred_at: str,
     confidence: float,
 ) -> None:
+    """刷新入营底稿，但不覆盖聊天后已经形成的当前事实和历史。"""
+
     domain = state["domains"][domain_key]
     clean_value = _clean_dict(value)
-    domain["current"] = {
-        "value": clean_value,
-        "source": source,
-        "evidence": evidence,
-        "updated_at": occurred_at,
-        "confidence": confidence,
-    }
+    current = domain.get("current") if isinstance(domain.get("current"), dict) else {}
+    current_value = current.get("value") if isinstance(current.get("value"), dict) else {}
+    if current and str(current.get("source") or "") not in {"", "intake"}:
+        # 动态事实优先；入营重建只补齐它没有占用的底稿字段。
+        merged_value = {**clean_value, **current_value}
+        domain["current"] = {**current, "value": merged_value}
+    else:
+        domain["current"] = {
+            "value": clean_value,
+            "source": source,
+            "evidence": evidence,
+            "updated_at": occurred_at,
+            "confidence": confidence,
+        }
+    history = domain.get("history") if isinstance(domain.get("history"), list) else []
+    domain["history"] = [
+        item
+        for item in history
+        if not isinstance(item, dict) or str(item.get("source") or "") != "intake"
+    ]
     _append_history(
         domain,
         {
@@ -455,17 +608,33 @@ def _update_domain_from_event(
     confidence: float,
     message_id: int | None,
     milestone: str,
+    status: str = "confirmed",
 ) -> None:
     if not value or not evidence:
         return
     domain = state["domains"][domain_key]
     current = domain.get("current") if isinstance(domain.get("current"), dict) else {}
     current_value = current.get("value") if isinstance(current.get("value"), dict) else {}
-    current_value[field_key] = {
+    previous = current_value.get(field_key) if isinstance(current_value.get(field_key), dict) else {}
+    first_seen_at = (
+        str(previous.get("first_seen_at") or "")
+        if _same_fact_value(previous.get("value"), value)
+        else ""
+    ) or occurred_at
+    fact = {
         "value": value,
         "event_type": event_type,
         "milestone": milestone,
+        "source": source,
+        "evidence": evidence,
+        "occurred_at": occurred_at,
+        "confidence": confidence,
+        "message_id": message_id,
+        "status": status,
+        "first_seen_at": first_seen_at,
+        "last_confirmed_at": occurred_at,
     }
+    current_value[field_key] = fact
     domain["current"] = {
         "value": current_value,
         "source": source,
@@ -486,8 +655,117 @@ def _update_domain_from_event(
             "occurred_at": occurred_at,
             "confidence": confidence,
             "message_id": message_id,
+            "status": status,
+            "first_seen_at": first_seen_at,
+            "last_confirmed_at": occurred_at,
         },
     )
+
+
+def _upsert_profile_fact(
+    state: dict[str, Any],
+    domain_key: str,
+    *,
+    field_key: str,
+    value: str,
+    evidence: str,
+    source: str,
+    occurred_at: str,
+    confidence: float,
+    message_id: int | None,
+) -> None:
+    """稳定偏好/习惯按事实多值保留；重复事实只刷新最后确认时间。"""
+
+    if not value or not evidence:
+        return
+    domain = state["domains"][domain_key]
+    current = domain.get("current") if isinstance(domain.get("current"), dict) else {}
+    current_value = current.get("value") if isinstance(current.get("value"), dict) else {}
+    raw_facts = current_value.get(field_key)
+    facts = raw_facts if isinstance(raw_facts, list) else ([raw_facts] if isinstance(raw_facts, dict) else [])
+    normalized_facts: list[dict[str, Any]] = []
+    matched = False
+    for raw in facts:
+        if not isinstance(raw, dict):
+            continue
+        existing = _enrich_legacy_fact(raw, current)
+        if _same_fact_value(existing.get("value"), value):
+            existing.update(
+                {
+                    "value": value,
+                    "evidence": evidence,
+                    "source": source,
+                    "confidence": confidence,
+                    "occurred_at": occurred_at,
+                    "message_id": message_id,
+                    "status": "confirmed",
+                    "last_confirmed_at": occurred_at,
+                }
+            )
+            existing.setdefault("first_seen_at", occurred_at)
+            matched = True
+        normalized_facts.append(existing)
+    if not matched:
+        normalized_facts.append(
+            {
+                "value": value,
+                "event_type": "profile_signal",
+                "milestone": "profile",
+                "source": source,
+                "evidence": evidence,
+                "occurred_at": occurred_at,
+                "confidence": confidence,
+                "message_id": message_id,
+                "status": "confirmed",
+                "first_seen_at": occurred_at,
+                "last_confirmed_at": occurred_at,
+            }
+        )
+    current_value[field_key] = normalized_facts[-5:]
+    domain["current"] = {
+        "value": current_value,
+        "source": source,
+        "evidence": evidence,
+        "updated_at": occurred_at,
+        "confidence": confidence,
+        "message_id": message_id,
+    }
+    _append_history(
+        domain,
+        {
+            "field_key": field_key,
+            "value": value,
+            "event_type": "profile_signal",
+            "milestone": "profile",
+            "source": source,
+            "evidence": evidence,
+            "occurred_at": occurred_at,
+            "confidence": confidence,
+            "message_id": message_id,
+            "status": "confirmed",
+            "first_seen_at": occurred_at,
+            "last_confirmed_at": occurred_at,
+        },
+    )
+
+
+def _enrich_legacy_fact(fact: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(fact)
+    occurred_at = str(
+        enriched.get("occurred_at")
+        or enriched.get("last_confirmed_at")
+        or current.get("updated_at")
+        or _now_iso()
+    )
+    enriched.setdefault("source", current.get("source") or "legacy")
+    enriched.setdefault("evidence", current.get("evidence") or "历史画像事实")
+    enriched.setdefault("confidence", current.get("confidence") or 0.0)
+    enriched.setdefault("occurred_at", occurred_at)
+    enriched.setdefault("message_id", current.get("message_id"))
+    enriched.setdefault("status", "confirmed")
+    enriched.setdefault("first_seen_at", occurred_at)
+    enriched.setdefault("last_confirmed_at", occurred_at)
+    return enriched
 
 
 def _append_history(domain: dict[str, Any], item: dict[str, Any]) -> None:
@@ -507,6 +785,7 @@ def _state_summary(state: dict[str, Any]) -> str:
     snippets: list[str] = []
     for key in (
         "goals",
+        "service_state",
         "personal_preferences",
         "lifestyle_habits",
         "product_usage",
@@ -517,10 +796,62 @@ def _state_summary(state: dict[str, Any]) -> str:
     ):
         domain = domains.get(key) if isinstance(domains.get(key), dict) else {}
         current = domain.get("current") if isinstance(domain.get("current"), dict) else {}
-        evidence = current.get("evidence")
-        if evidence:
-            snippets.append(f"{domain.get('label') or key}：{evidence}")
+        current_value = current.get("value") if isinstance(current.get("value"), dict) else {}
+        facts: list[str] = []
+        for raw in current_value.values():
+            values = raw if isinstance(raw, list) else [raw]
+            for item in values:
+                if isinstance(item, dict) and str(item.get("status") or "") == "resolved":
+                    continue
+                fact = str(item.get("value") or "").strip() if isinstance(item, dict) else str(item or "").strip()
+                if fact and fact not in facts:
+                    facts.append(fact)
+        if facts:
+            snippets.append(f"{domain.get('label') or key}：{'、'.join(facts[-3:])}")
     return "；".join(snippets)[:1000]
+
+
+def _profile_guardrail_state_type(*, value: str, evidence: str) -> str | None:
+    text = f"{value}{evidence}"
+    if any(marker in text for marker in _HEALTH_CONTEXT_MARKERS):
+        return "health_concern"
+    if any(marker in text for marker in _PERSONAL_BELIEF_MARKERS) and any(
+        marker in text for marker in _BELIEF_CONTEXT_MARKERS
+    ):
+        return "user_belief"
+    return None
+
+
+def _grounded_fact_value(value: str, evidence: str) -> str:
+    """保留档案官的简短事实；原话证据在事实记录内独立保存。"""
+
+    cleaned_value = " ".join(value.split()).strip()
+    cleaned_evidence = " ".join(evidence.split()).strip()
+    return cleaned_value[:160] or cleaned_evidence[:160]
+
+
+def _same_fact_value(left: Any, right: Any) -> bool:
+    def normalize(item: Any) -> str:
+        return "".join(str(item or "").split()).strip("，。！？；;,.!?")
+
+    return bool(normalize(left)) and normalize(left) == normalize(right)
+
+
+def _has_dynamic_state(state: dict[str, Any]) -> bool:
+    domains = state.get("domains") if isinstance(state.get("domains"), dict) else {}
+    for domain in domains.values():
+        if not isinstance(domain, dict):
+            continue
+        current = domain.get("current") if isinstance(domain.get("current"), dict) else {}
+        if current and str(current.get("source") or "") not in {"", "intake"}:
+            return True
+        history = domain.get("history") if isinstance(domain.get("history"), list) else []
+        if any(
+            isinstance(item, dict) and str(item.get("source") or "") not in {"", "intake"}
+            for item in history
+        ):
+            return True
+    return False
 
 
 def _clean_dict(value: dict[str, Any]) -> dict[str, Any]:

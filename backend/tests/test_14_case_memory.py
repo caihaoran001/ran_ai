@@ -27,7 +27,7 @@ from app.models.message import (
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.services.archivist.case_memory_service import refresh_case_memory
-from app.services.profile_memory_service import load_profile_memory_context
+from app.services.profile_memory_service import _memory_from_state, load_profile_memory_context
 
 
 class _FakeSummarizer:
@@ -126,6 +126,7 @@ async def test_case_memory_no_precipitation_skips_summary(db_session):
     run_result = SimpleNamespace(
         outcome_written=0,
         profile_written=0,
+        state_written=1,
         personal_corrections_written=0,
         qa_drafts_created=0,
         upserts=[],
@@ -143,5 +144,35 @@ async def test_case_memory_no_precipitation_skips_summary(db_session):
             ArchivistCaseMemory.service_case_id == case.id
         )
     )
-    assert fake.calls == 0  # 无新沉淀 → 不烧摘要 LLM
+    assert fake.calls == 0  # 只写确定性 service_state 不额外烧摘要 LLM
     assert memory is None  # 无新沉淀 → 直接跳过，不建空行
+
+
+def test_profile_memory_reads_multi_facts_and_hides_resolved_state() -> None:
+    preferences, _habits, current_state, _warnings = _memory_from_state(
+        {
+            "domains": {
+                "personal_preferences": {
+                    "current": {
+                        "value": {
+                            "food_preference": [
+                                {"value": "不吃香菜", "status": "confirmed"},
+                                {"value": "不喜欢芹菜", "status": "confirmed"},
+                            ]
+                        }
+                    }
+                },
+                "service_state": {
+                    "current": {
+                        "value": {
+                            "current_obstacle": {"value": "已解决的卡点", "status": "resolved"},
+                            "execution_status": {"value": "晚 A 仍容易漏掉", "status": "active"},
+                        }
+                    }
+                },
+            }
+        }
+    )
+
+    assert preferences == ["个人偏好：不吃香菜、不喜欢芹菜"]
+    assert current_state == ["当前服务状态：晚 A 仍容易漏掉"]

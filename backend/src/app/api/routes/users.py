@@ -14,6 +14,7 @@ from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.schemas.user import UserDetail, UserListItem
 from app.services.intake_facts import customer_type_for_profile
+from app.services.user_operations_summary import build_user_operations_snapshot
 
 router = APIRouter()
 
@@ -54,6 +55,7 @@ async def get_user(
         user.service_cases = [sc for sc in user.service_cases if sc.deleted_at is None]
     latest_profile = None
     latest_state_profile = None
+    operations_snapshot = None
     current_case = max(
         user.service_cases,
         key=lambda case: case.created_at,
@@ -72,6 +74,11 @@ async def get_user(
             .order_by(UserStateProfile.updated_at.desc())
             .limit(1)
         )
+        operations_snapshot = await build_user_operations_snapshot(
+            session,
+            service_case=current_case,
+            state_profile=latest_state_profile,
+        )
 
     data = UserDetail.model_validate(user)
     if latest_profile:
@@ -82,6 +89,7 @@ async def get_user(
             "customer_type": customer_type_for_profile(profile_data, current_case.risk_level),
         }
     data.latest_state_profile = latest_state_profile
+    data.operations_snapshot = operations_snapshot
     return data
 
 

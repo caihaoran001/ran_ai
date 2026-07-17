@@ -217,12 +217,21 @@ async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
                     "args": {"domain": "lifestyle_habits", "signal_type": "sleep_habit", "value": "作息在改善", "evidence_text": "睡眠也变好了", "confidence": 0.7},
                     "id": "p1",
                 },
+                {
+                    "name": "report_state_fact",
+                    "args": {"state_type": "current_obstacle", "value": "晚上经常忘记执行", "evidence_text": "晚上总忘了", "confidence": 0.86},
+                    "id": "s1",
+                },
             ],
         )
     ])
 
     result = await run_archivist(db_session, service_case=case, progress=progress, chat_model=fake)
     await db_session.flush()
+
+    # 当前状态是同一次 extract 调用里的新 report-only 工具，不另起一次 LLM。
+    assert len(fake.calls) == 1
+    assert "report_state_fact" in {tool.name for tool in fake.bound_tools}
 
     # 1) 打卡照常 live upsert（Agent report_checkin 落库）。
     checkin = await db_session.scalar(
@@ -250,7 +259,12 @@ async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
     domains = profile.state_json.get("domains", {})
     assert domains.get("outcome_changes", {}).get("current")
     assert domains.get("lifestyle_habits", {}).get("current")
+    state_fact = domains["service_state"]["current"]["value"]["current_obstacle"]
+    assert state_fact["value"] == "晚上经常忘记执行"
+    assert state_fact["evidence"] == "晚上总忘了"
+    assert state_fact["source"] == "archivist_state_signal"
     assert result.profile_written == 1
+    assert result.state_written == 1
 
     # 4) 阶段状态收集字段更新。
     state = await db_session.scalar(

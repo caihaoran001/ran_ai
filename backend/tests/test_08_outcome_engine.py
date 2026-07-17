@@ -64,6 +64,23 @@ def _event(field_key: str, event_type: str, *, value: str = "占位事实", evid
     }
 
 
+def _profile_fact_by_value(value: object, expected: str) -> dict:
+    """在事实列表、当前状态或历史记录中递归找指定 value。"""
+    if isinstance(value, dict):
+        if value.get("value") == expected:
+            return value
+        for item in value.values():
+            found = _profile_fact_by_value(item, expected)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = _profile_fact_by_value(item, expected)
+            if found:
+                return found
+    return {}
+
+
 @pytest.mark.asyncio
 async def test_archived_outcome_records_positive_event(db_session):
     case = await _setup_outcome_case(db_session, days=7)
@@ -217,8 +234,191 @@ async def test_profile_signals_projected_without_outcome_events(db_session):
         select(UserStateProfile).where(UserStateProfile.service_case_id == case.id)
     )
     domains = state_profile.state_json["domains"]
-    assert domains["personal_preferences"]["current"]["value"]["activity_preference"]["value"] == "喜欢户外和漂流"
-    assert domains["lifestyle_habits"]["current"]["value"]["meal_pattern"]["value"] == "长期不吃晚饭"
+    assert domains["personal_preferences"]["current"]["value"]["activity_preference"][0]["value"] == "喜欢户外和漂流"
+    assert domains["lifestyle_habits"]["current"]["value"]["meal_pattern"][0]["value"] == "长期不吃晚饭"
+
+
+@pytest.mark.asyncio
+async def test_profile_signals_keep_multiple_same_type_facts_with_own_evidence(db_session):
+    """同一 signal_type 可以有多条并存事实，且每条都必须保留自己的原话与溯源元数据。"""
+    case = await _setup_outcome_case(db_session, days=7)
+    message = await _add_message(db_session, case, "我不吃香菜，也不喜欢芹菜")
+
+    result = await apply_archived_outcome(
+        db_session,
+        service_case=case,
+        anchor_message=message,
+        outcome_events=[],
+        profile_signals=[
+            {
+                "domain": "personal_preferences",
+                "signal_type": "food_preference",
+                "value": "不吃香菜",
+                "evidence_text": "我不吃香菜",
+                "confidence": 0.96,
+            },
+            {
+                "domain": "personal_preferences",
+                "signal_type": "food_preference",
+                "value": "不喜欢芹菜",
+                "evidence_text": "也不喜欢芹菜",
+                "confidence": 0.91,
+            },
+        ],
+    )
+
+    assert len(result["profile_signals"]) == 2
+    state_profile = await db_session.scalar(
+        select(UserStateProfile).where(UserStateProfile.service_case_id == case.id)
+    )
+    current_value = state_profile.state_json["domains"]["personal_preferences"]["current"]["value"]
+    facts = current_value["food_preference"]
+    assert isinstance(facts, list)
+    coriander = _profile_fact_by_value(facts, "不吃香菜")
+    celery = _profile_fact_by_value(facts, "不喜欢芹菜")
+
+    assert coriander and celery
+    assert coriander["evidence"] == "我不吃香菜"
+    assert coriander["source"] == "archivist_profile_signal"
+    assert coriander["confidence"] == pytest.approx(0.96)
+    assert coriander["message_id"] == message.id
+    assert coriander["occurred_at"] == message.created_at.isoformat()
+    assert coriander["status"] == "confirmed"
+    assert coriander["first_seen_at"] == coriander["occurred_at"]
+    assert coriander["last_confirmed_at"] == coriander["occurred_at"]
+    assert celery["evidence"] == "也不喜欢芹菜"
+    assert celery["source"] == "archivist_profile_signal"
+    assert celery["confidence"] == pytest.approx(0.91)
+    assert celery["message_id"] == message.id
+    assert celery["occurred_at"] == message.created_at.isoformat()
+    assert celery["status"] == "confirmed"
+    assert celery["first_seen_at"] == celery["occurred_at"]
+    assert celery["last_confirmed_at"] == celery["occurred_at"]
+
+
+@pytest.mark.asyncio
+async def test_profile_signal_guard_routes_health_and_causal_misclassification(db_session):
+    """术后/生理状态不是生活习惯，因果判断也不是偏好；误投后应转入当前状态。"""
+    case = await _setup_outcome_case(db_session, days=7)
+    message = await _add_message(
+        db_session,
+        case,
+        "我还在宫腔镜术后恢复中，月经周期还没稳定；我觉得空腹吃黄瓜掉秤快；另外我不喜欢吃香菜。",
+    )
+
+    result = await apply_archived_outcome(
+        db_session,
+        service_case=case,
+        anchor_message=message,
+        outcome_events=[],
+        profile_signals=[
+            {
+                "domain": "lifestyle_habits",
+                "signal_type": "other",
+                "value": "宫腔镜术后恢复中",
+                "evidence_text": "我还在宫腔镜术后恢复中",
+                "confidence": 0.95,
+            },
+            {
+                "domain": "lifestyle_habits",
+                "signal_type": "other",
+                "value": "月经周期还没稳定",
+                "evidence_text": "月经周期还没稳定",
+                "confidence": 0.92,
+            },
+            {
+                "domain": "personal_preferences",
+                "signal_type": "food_preference",
+                "value": "空腹吃黄瓜掉秤快",
+                "evidence_text": "我觉得空腹吃黄瓜掉秤快",
+                "confidence": 0.9,
+            },
+            {
+                "domain": "personal_preferences",
+                "signal_type": "food_preference",
+                "value": "不喜欢吃香菜",
+                "evidence_text": "我不喜欢吃香菜",
+                "confidence": 0.94,
+            },
+        ],
+    )
+
+    assert result["profile_signals"]
+    state_profile = await db_session.scalar(
+        select(UserStateProfile).where(UserStateProfile.service_case_id == case.id)
+    )
+    domains = state_profile.state_json["domains"]
+    habits = domains["lifestyle_habits"]["current"].get("value", {})
+    assert not _profile_fact_by_value(habits, "宫腔镜术后恢复中")
+    assert not _profile_fact_by_value(habits, "月经周期还没稳定")
+    preferences = domains["personal_preferences"]["current"]["value"]
+    assert _profile_fact_by_value(preferences, "不喜欢吃香菜")
+    assert not _profile_fact_by_value(preferences, "空腹吃黄瓜掉秤快")
+
+    service_domain = domains["service_state"]
+    health_fact = service_domain["current"]["value"]["health_concern"]
+    belief_fact = service_domain["current"]["value"]["user_belief"]
+    assert health_fact["value"] == "月经周期还没稳定"
+    assert health_fact["evidence"] == "月经周期还没稳定"
+    assert health_fact["source"] == "archivist_profile_guardrail"
+    assert health_fact["message_id"] == message.id
+    assert health_fact["status"] == "pending_confirmation"
+    assert health_fact["first_seen_at"] == health_fact["occurred_at"]
+    assert health_fact["last_confirmed_at"] == health_fact["occurred_at"]
+    assert _profile_fact_by_value(service_domain["history"], "宫腔镜术后恢复中")
+    assert belief_fact["value"] == "空腹吃黄瓜掉秤快"
+    assert belief_fact["evidence"] == "我觉得空腹吃黄瓜掉秤快"
+    assert belief_fact["source"] == "archivist_profile_guardrail"
+    assert belief_fact["message_id"] == message.id
+    assert belief_fact["status"] == "pending_confirmation"
+    assert belief_fact["first_seen_at"] == belief_fact["occurred_at"]
+    assert belief_fact["last_confirmed_at"] == belief_fact["occurred_at"]
+
+
+@pytest.mark.asyncio
+async def test_state_signal_can_resolve_previous_current_obstacle(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    first = await _add_message(db_session, case, "晚上总忘记执行")
+    await apply_archived_outcome(
+        db_session,
+        service_case=case,
+        anchor_message=first,
+        outcome_events=[],
+        profile_signals=[],
+        state_signals=[
+            {
+                "state_type": "current_obstacle",
+                "status": "active",
+                "value": "晚上容易忘记执行",
+                "evidence_text": "晚上总忘记执行",
+                "confidence": 0.9,
+            }
+        ],
+    )
+    second = await _add_message(db_session, case, "这个问题已经解决了")
+    await apply_archived_outcome(
+        db_session,
+        service_case=case,
+        anchor_message=second,
+        outcome_events=[],
+        profile_signals=[],
+        state_signals=[
+            {
+                "state_type": "current_obstacle",
+                "status": "resolved",
+                "value": "晚上忘记执行的问题已解决",
+                "evidence_text": "这个问题已经解决了",
+                "confidence": 0.88,
+            }
+        ],
+    )
+
+    state_profile = await db_session.scalar(
+        select(UserStateProfile).where(UserStateProfile.service_case_id == case.id)
+    )
+    service_state = state_profile.state_json["domains"]["service_state"]
+    assert service_state["current"]["value"]["current_obstacle"]["status"] == "resolved"
+    assert [item["status"] for item in service_state["history"]] == ["active", "resolved"]
 
 
 @pytest.mark.asyncio
@@ -346,6 +546,70 @@ async def test_intake_initializes_user_state_profile(db_session):
     assert domains["goals"]["current"]["value"]["main_needs"] == "感觉总是累、没精神"
     assert domains["need_analysis"]["current"]["value"]["priority_need"] == "先恢复白天精力"
     assert domains["goals"]["history"]
+
+
+@pytest.mark.asyncio
+async def test_intake_rebuild_preserves_dynamic_current_and_history(db_session):
+    """重新生成入营画像只刷新基线，不得清空已有聊天成效与长期画像。"""
+    case = await _setup_outcome_case(db_session, days=7)
+    message = await _add_message(db_session, case, "我喜欢户外徒步，这周白天精神也好多了")
+    await apply_archived_outcome(
+        db_session,
+        service_case=case,
+        anchor_message=message,
+        outcome_events=[
+            _event(
+                "energy_change",
+                "improved",
+                value="白天精神改善",
+                evidence="这周白天精神也好多了",
+            )
+        ],
+        profile_signals=[
+            {
+                "domain": "personal_preferences",
+                "signal_type": "activity_preference",
+                "value": "喜欢户外徒步",
+                "evidence_text": "我喜欢户外徒步",
+                "confidence": 0.93,
+            }
+        ],
+    )
+
+    before = await db_session.scalar(
+        select(UserStateProfile).where(UserStateProfile.service_case_id == case.id)
+    )
+    dynamic_before = {
+        key: before.state_json["domains"][key]
+        for key in ("personal_preferences", "body_feedback")
+    }
+
+    rebuilt = await initialize_user_state_from_intake(
+        db_session,
+        service_case=case,
+        profile_json={
+            "summary": "新的入营基线",
+            "day28_goal": "精神更稳",
+            "main_problem": "作息不稳定",
+            "need_analysis": {"priority_need": "先调整作息"},
+        },
+        intake_facts={
+            "legal_name": "重建测试用户",
+            "weight_kg": "64",
+            "main_needs": "改善精力",
+            "day28_expectation": "白天不困",
+            "health_note": "无",
+            "diet_pattern": "三餐规律",
+        },
+    )
+
+    domains = rebuilt.state_json["domains"]
+    assert domains["basic"]["current"]["value"]["weight_kg"] == "64"
+    assert domains["goals"]["current"]["value"]["day28_goal"] == "精神更稳"
+    assert domains["personal_preferences"] == dynamic_before["personal_preferences"]
+    assert domains["body_feedback"] == dynamic_before["body_feedback"]
+    assert domains["personal_preferences"]["history"]
+    assert domains["body_feedback"]["history"]
 
 
 @pytest.mark.asyncio
