@@ -1011,7 +1011,9 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "不确定可以承认不知道" in model.calls[0][0].content
     assert "回复优先级：准确完整 > 专业克制 > 简洁自然" in model.calls[0][0].content
     assert "健康、饮食、运动和产品相关回复说清结论、必要前提和适用条件" in model.calls[0][0].content
+    assert "不为旧说法强行找理由" in model.calls[0][0].content
     assert "不要一次把话题讲完整" not in model.calls[0][0].content
+    assert "对方延续前文时接前文梗" not in model.calls[0][0].content
     assert "20-60字" not in model.calls[0][0].content
     assert "60-140字" not in model.calls[0][0].content
     assert "零称呼起头" in model.calls[0][0].content
