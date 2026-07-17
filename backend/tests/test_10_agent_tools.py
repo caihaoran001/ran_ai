@@ -1011,7 +1011,8 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "不确定可以承认不知道" in model.calls[0][0].content
     assert "回复优先级：准确完整 > 专业克制 > 简洁自然" in model.calls[0][0].content
     assert "健康、饮食、运动和产品相关回复说清结论、必要前提和适用条件" in model.calls[0][0].content
-    assert "不为旧说法强行找理由" in model.calls[0][0].content
+    assert "不准确就直接更正，不替旧说法补场景或找理由" in model.calls[0][0].content
+    assert "这句说反了。应该是动作稳定、恢复正常且仍有余力时再逐步加量" in model.calls[0][0].content
     assert "不要一次把话题讲完整" not in model.calls[0][0].content
     assert "对方延续前文时接前文梗" not in model.calls[0][0].content
     assert "20-60字" not in model.calls[0][0].content
@@ -1020,6 +1021,7 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "哥、姐、宝子、亲、阿姨" in model.calls[0][0].content
     assert "你说 LABUBU 后面那个？" in model.calls[0][0].content
     assert "咒术回战：节奏快" in model.calls[0][0].content
+    assert model.calls[0][1].content.rfind("【本次提问】") > model.calls[0][1].content.rfind("【可用 Skill】")
     assert "今天没排便体重还涨了" in model.calls[0][0].content
     assert "晚餐能吃荞麦面吗" in model.calls[0][0].content
 
