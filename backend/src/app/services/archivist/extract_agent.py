@@ -94,7 +94,8 @@ async def run_extract_agent(
 ) -> dict[str, Any]:
     """跑一轮 Agent 抽取，按 checkin/outcome/profile/state/correction/faq 归桶。
 
-    失败（模型异常/无 key 等）返回空 collector，不抛出——不阻塞归档 checkin live 落库。
+    无可上报内容时返回空 collector；模型调用异常必须向上抛出，
+    由调度层回滚整轮归档并保留水位线，以便下轮重试。
 
     enabled_kinds 只控制"挂哪些 report_* 工具"，用于分阶段灰度；生产恒传全类。
     **它不是入营层 archive_plan.kinds**——extract 是唯一权威、从原文独立重抽，
@@ -156,7 +157,7 @@ async def run_extract_agent(
         logger.exception(
             "Archivist extract-agent failed service_case_id=%s", service_case_id
         )
-        return collector
+        raise
 
     trace = collector["_trace"]
     dropped = trace["dropped"]

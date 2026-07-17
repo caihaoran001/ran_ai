@@ -486,6 +486,30 @@ async def test_archivist_outcome_write_failure_does_not_advance_watermark(
 
 
 @pytest.mark.asyncio
+async def test_archivist_model_failure_does_not_advance_watermark(db_session):
+    """模型抽取失败时必须抛错且不推进水位线，让 trigger 层能回滚并重试。"""
+    case, _, progress = await _setup_case_with_messages(db_session)
+    original_watermark = progress.last_archived_message_id
+
+    class FailingToolCallingModel:
+        def bind_tools(self, tools):
+            return self
+
+        async def ainvoke(self, messages):
+            raise TimeoutError("simulated model timeout")
+
+    with pytest.raises(TimeoutError, match="simulated model timeout"):
+        await run_archivist(
+            db_session,
+            service_case=case,
+            progress=progress,
+            chat_model=FailingToolCallingModel(),
+        )
+
+    assert progress.last_archived_message_id == original_watermark
+
+
+@pytest.mark.asyncio
 async def test_archivist_reports_faq_candidate_into_qa_draft(db_session):
     """FAQ 折进档案官：delta 抽取产出 report_faq_candidate → result.faq_candidates →
     create_qa_drafts_from_archivist 转成待审核 qa 草稿（复用 knowledge_evolution 管线）。"""
