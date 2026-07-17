@@ -996,7 +996,7 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "【隐性用户背景】" in model.calls[0][1].content
     assert "用户晚餐容易拖晚" in model.calls[0][1].content
     assert "现在、最近、最新、今年" in model.calls[0][1].content
-    assert "短、直接、别演" in model.calls[0][0].content
+    assert "直接回应当前问题，不表演、不绕弯" in model.calls[0][0].content
     assert "让我想想" in model.calls[0][0].content
     assert "根据搜索结果" in model.calls[0][0].content
     assert "不要说“根据你的画像/资料/系统记录”" in model.calls[0][0].content
@@ -1009,7 +1009,11 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "这是群聊接话不是考试答题" in model.calls[0][0].content
     assert "上下文不够先追问一个关键点" in model.calls[0][0].content
     assert "不确定可以承认不知道" in model.calls[0][0].content
-    assert "多数时候只回当下这一下" in model.calls[0][0].content
+    assert "回复优先级：准确完整 > 专业克制 > 简洁自然" in model.calls[0][0].content
+    assert "健康、饮食、运动和产品相关回复说清结论、必要前提和适用条件" in model.calls[0][0].content
+    assert "不要一次把话题讲完整" not in model.calls[0][0].content
+    assert "20-60字" not in model.calls[0][0].content
+    assert "60-140字" not in model.calls[0][0].content
     assert "零称呼起头" in model.calls[0][0].content
     assert "哥、姐、宝子、亲、阿姨" in model.calls[0][0].content
     assert "你说 LABUBU 后面那个？" in model.calls[0][0].content
