@@ -248,6 +248,27 @@ def test_intervention_normalizes_agent_context_plan():
     }
 
 
+@pytest.mark.asyncio
+async def test_intervention_prompt_keeps_diet_preferences_in_agent_context():
+    service = AIService.__new__(AIService)
+    captured: dict = {}
+
+    async def fake_generate_text(**kwargs):
+        captured.update(kwargs)
+        return "{}"
+
+    service.generate_text = fake_generate_text
+    await service.extract_intervention_insight(
+        source="chat_message",
+        content="中午吃了半碗杂粮米，五点就饿了",
+        context={},
+    )
+
+    prompt = captured["system_prompt"]
+    assert "饮食建议和身体反馈至少选择 preferences" in prompt
+    assert "需要作息、饮食模式或运动习惯时再选 habits/current_state/warnings" in prompt
+
+
 def test_high_risk_health_consultation_handoff():
     # 高风险用户(risk_level=high)问需专业判断的健康/方案问题 → @班主任(即便当前句本身无新风险)
     health_q = {"requires_human_intervention": False, "risk_flags": [], "health_consultation": True}

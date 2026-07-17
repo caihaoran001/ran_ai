@@ -1007,12 +1007,18 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "只参考当前状态/风险边界/产品执行" in model.calls[0][0].content
     assert "实时数据一律查工具" in model.calls[0][0].content
     assert "这是群聊接话不是考试答题" in model.calls[0][0].content
-    assert "上下文不够先追问一个关键点" in model.calls[0][0].content
-    assert "不确定可以承认不知道" in model.calls[0][0].content
-    assert "回复优先级：准确完整 > 专业克制 > 简洁自然" in model.calls[0][0].content
-    assert "健康、饮食、运动和产品相关回复说清结论、必要前提和适用条件" in model.calls[0][0].content
+    assert "只追问一个关键点" in model.calls[0][0].content
+    assert "不确定就直说，不编细节" in model.calls[0][0].content
+    assert "默认只回答当前一问，普通回复通常 1～3 句" in model.calls[0][0].content
+    assert "健康、饮食、运动和产品问题用“结论 + 一条必要依据或安全边界”" in model.calls[0][0].content
+    assert "不展开机制、搭配、备选方案和后续注意事项" in model.calls[0][0].content
+    assert "不先给精确时长、剂量、次数或原因归因" in model.calls[0][0].content
+    assert "回复优先级：准确完整 > 专业克制 > 简洁自然" not in model.calls[0][0].content
+    assert "不为简短省略关键信息" not in model.calls[0][0].content
     assert "不准确就直接更正，不替旧说法补场景或找理由" in model.calls[0][0].content
     assert "这句说反了。应该是动作稳定、恢复正常且仍有余力时再逐步加量" in model.calls[0][0].content
+    assert "刚吃完先别跑，走路回去更稳妥" in model.calls[0][0].content
+    assert "先把具体感受分清，不能直接归因" in model.calls[0][0].content
     assert "不要一次把话题讲完整" not in model.calls[0][0].content
     assert "对方延续前文时接前文梗" not in model.calls[0][0].content
     assert "20-60字" not in model.calls[0][0].content
@@ -1022,8 +1028,8 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "你说 LABUBU 后面那个？" in model.calls[0][0].content
     assert "咒术回战：节奏快" in model.calls[0][0].content
     assert model.calls[0][1].content.rfind("【本次提问】") > model.calls[0][1].content.rfind("【可用 Skill】")
-    assert "今天没排便体重还涨了" in model.calls[0][0].content
-    assert "晚餐能吃荞麦面吗" in model.calls[0][0].content
+    assert "今天没排便体重还涨了" not in model.calls[0][0].content
+    assert "晚餐能吃荞麦面吗" not in model.calls[0][0].content
 
 
 @pytest.mark.asyncio
