@@ -34,6 +34,7 @@ from app.services.channels.base import ChannelMessage
 # （conftest 全局 + 个别用例 per-test），经此引用才能命中，行为与旧 handle_message 一致。
 from app.services.ranren_ai import engine as engine_mod
 from app.services.ranren_ai.engine import (
+    _bot_user_id_from_message,
     _build_agent_info_gap,
     _current_query_body,
     _current_query_speaker,
@@ -769,6 +770,8 @@ class ReplyGraph:
                 recent_messages=recent_user_messages,
                 analysis=analysis,
                 channel=message.channel,
+                group_id=message.chat_id if message.chat_type == "group" else None,
+                bot_user_id=_bot_user_id_from_message(message),
                 settings=settings,
             )
             reply = agent_result.reply

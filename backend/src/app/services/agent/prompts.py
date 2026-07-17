@@ -55,13 +55,22 @@ def build_agent_user_prompt(
     current_time_context: str,
     memory_context: str,
     knowledge_context: str,
+    bot_nickname: str = "",
 ) -> str:
     recent = "\n".join(f"- {item}" for item in recent_messages) if recent_messages else "无"
     current_query = user_query
     if not current_query.lstrip().startswith((f"{query_speaker}：", "用户：", "系统定时任务：")):
         current_query = f"{query_speaker}：{user_query}"
+    identity_block = ""
+    if bot_nickname.strip():
+        identity_block = (
+            f"【你的身份】\n你在本群的昵称是「{bot_nickname.strip()}」。"
+            "群里有人 @ 这个昵称、或提到这个名字，就是在叫你、对你说话，当成对你说的处理，"
+            "不要把这个名字当成群里的第三方或别人。\n\n"
+        )
     return (
         "以下是本轮群聊消息和可用 Skill。请根据需要自主调用工具，或直接回复。\n\n"
+        f"{identity_block}"
         f"【当前时间】\n{current_time_context}\n\n"
         f"【本次提问】\n{current_query}\n\n"
         f"【最近对话】\n{recent}\n\n"

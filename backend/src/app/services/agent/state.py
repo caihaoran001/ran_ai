@@ -27,3 +27,7 @@ class AgentRunContext:
     # 触发本次 Agent 运行的消息渠道名（如 "qiwe"）。用于日志可观测性与多渠道排查；
     # 按“渠道隔离”铁律，工具/日志需要知道自己服务的是哪个渠道，缺省 None 兼容定时任务等无渠道场景。
     channel: str | None = None
+    # 当前群 id 与机器人自身 userId：用于解析"机器人在本群的群昵称"注入身份提示词。
+    # 缺省 None 兼容非群聊/定时任务等无群上下文场景。
+    group_id: str | None = None
+    bot_user_id: str | None = None

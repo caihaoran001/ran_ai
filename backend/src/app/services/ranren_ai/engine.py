@@ -97,6 +97,18 @@ def _message_mentions_bot(message: ChannelMessage) -> bool:
     return False
 
 
+def _bot_user_id_from_message(message: ChannelMessage) -> str:
+    """从入站 payload 解析机器人自身的企微 userId（回调里的 userId/receiverId）。
+
+    与 _message_mentions_bot 取同一字段；用于解析机器人在本群的群昵称。取不到返回空串。
+    """
+    payload = message.raw_payload
+    if isinstance(payload, list):
+        payload = payload[0] if payload else {}
+    payload = payload if isinstance(payload, dict) else {}
+    return str(payload.get("userId") or payload.get("receiverId") or "").strip()
+
+
 def _explicit_bot_query_text(message: ChannelMessage) -> str | None:
     if message.chat_type != "group" or message.message_type != "text":
         return None

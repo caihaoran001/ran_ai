@@ -19,6 +19,8 @@ from app.services.agent.prompts import AGENT_SYSTEM_PROMPT, build_agent_user_pro
 from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.state import AgentRunContext, AgentState
 from app.services.agent.tools import build_agent_tools
+from app.services.channels.registry import get_current_channel
+from app.services.content_policy import get_qiwe_group_nickname
 from app.services.knowledge_index import retrieve_indexed_knowledge
 
 logger = logging.getLogger("uvicorn.error")
@@ -85,9 +87,38 @@ class RanrenAgentGraph:
         self._tool_timeout_seconds = max(5.0, min(global_timeout - 5.0, global_timeout))
         self.graph = self._compile()
 
+    async def _resolve_bot_nickname(self) -> str:
+        """取机器人在本群的昵称，注入提示词身份用。
+
+        群昵称优先、微信昵称兜底：
+        1) 机器人在本群的群昵称（memberList.name，DB 缓存）——正是 @ 显示、正文里出现的那个名；
+           成员未单独设群昵称时，企微已把微信昵称填进 memberList.name，天然兜底。
+        2) 群昵称缓存整体缺失时，退回账号级微信昵称（get_self_nickname）。
+        渠道不支持或全部取不到时返回空串（不注入身份块）。
+        """
+        ctx = self.context
+        if ctx.group_id and ctx.bot_user_id:
+            try:
+                async with db_session_module.SessionLocal() as session:
+                    group_nickname = await get_qiwe_group_nickname(session, ctx.group_id, ctx.bot_user_id)
+                if group_nickname:
+                    return group_nickname
+            except Exception:
+                logger.exception(
+                    "Failed to resolve bot group nickname service_case_id=%s", ctx.service_case_id
+                )
+        channel = get_current_channel()
+        if channel is not None and hasattr(channel, "get_self_nickname"):
+            try:
+                return await channel.get_self_nickname() or ""
+            except Exception:
+                logger.exception("Failed to resolve bot self nickname service_case_id=%s", ctx.service_case_id)
+        return ""
+
     async def run(self, *, user_query: str, recent_messages: list[str], query_speaker: str = "用户") -> AgentReplyResult:
         memory_context = await self._build_memory_context()
         knowledge_context = await self._build_knowledge_context(user_query)
+        bot_nickname = await self._resolve_bot_nickname()
         initial_messages: list[BaseMessage] = [
             SystemMessage(content=AGENT_SYSTEM_PROMPT),
             HumanMessage(
@@ -99,6 +130,7 @@ class RanrenAgentGraph:
                     current_time_context=_current_time_context(),
                     memory_context=memory_context,
                     knowledge_context=knowledge_context,
+                    bot_nickname=bot_nickname,
                 )
             ),
         ]
@@ -363,6 +395,8 @@ async def generate_agent_reply(
     recent_messages: list[str],
     analysis: dict[str, Any] | None = None,
     channel: str | None = None,
+    group_id: str | None = None,
+    bot_user_id: str | None = None,
     settings: Settings | None = None,
 ) -> AgentReplyResult:
     settings = settings or get_settings()
@@ -372,6 +406,8 @@ async def generate_agent_reply(
             trigger_id=trigger_id,
             agent_context_plan=_agent_context_plan(analysis),
             channel=channel,
+            group_id=group_id,
+            bot_user_id=bot_user_id,
         ),
         settings=settings,
     ).run(user_query=user_query, recent_messages=recent_messages, query_speaker=query_speaker)

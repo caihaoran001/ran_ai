@@ -32,6 +32,8 @@ class QiWeChannel:
         self._client = http_client
         self._last_send_time = 0.0
         self._send_lock = asyncio.Lock()
+        # 机器人账号自身昵称缓存：避免每条消息都网络查；换号时随 apply_credentials 失效。
+        self._self_nickname: str | None = None
 
     def apply_credentials(self, guid: str, token: str) -> None:
         """热切换账号凭证：原地更新 guid/token 并清空进程内昵称缓存。
@@ -43,6 +45,7 @@ class QiWeChannel:
         self.guid = (guid or "").strip()
         self.token = (token or "").strip()
         type(self)._nickname_cache.clear()
+        self._self_nickname = None
 
     async def send_text(
         self,
@@ -126,6 +129,21 @@ class QiWeChannel:
             data = res.raw_response.get("data")
             return data if isinstance(data, dict) else None
         return None
+
+    async def get_self_nickname(self) -> str:
+        """取机器人账号自身在群里显示的昵称（带进程内缓存）。
+
+        供回复 Agent 注入身份用：让它知道"别人 @ 这个昵称就是在叫我"。
+        取不到（凭证无效/离线）返回空串；缓存命中不发网络请求，换号后缓存已失效。
+        """
+        if self._self_nickname is not None:
+            return self._self_nickname
+        profile = await self.get_profile()
+        nickname = ""
+        if isinstance(profile, dict):
+            nickname = str(profile.get("nickname") or "").strip()
+        self._self_nickname = nickname
+        return nickname
 
     async def get_contact_nickname(self, user_id: str) -> str:
         if not user_id:
