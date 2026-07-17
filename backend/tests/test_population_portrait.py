@@ -19,6 +19,7 @@ from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.services.china_regions import match_city
+from app.services.intake_facts import CUSTOM_ANSWER_LABEL, structured_answer_values
 
 
 async def _create_portrait_case(
@@ -88,6 +89,33 @@ def test_category_label_normalizes_unknowns():
     assert _category_label("  北京 ") == "北京"
     for sentinel in ("", None, "未采集", "未提供", "待完善", "需补充身高体重后判断"):
         assert _category_label(sentinel) == UNKNOWN_LABEL
+
+
+def test_structured_answer_values_preserves_option_punctuation_and_groups_custom_text():
+    fields = [
+        {
+            "key": "needs",
+            "title": "您当前最想先解决的是哪类问题？",
+            "options": ["腰腹部肥胖明显、身体发沉", "其他"],
+        },
+        {
+            "key": "diet",
+            "title": "哪一句最符合你的长期饮食模式？",
+            "options": ["我追求低糖、少加工、蛋白优先、主食适量"],
+        },
+    ]
+    answers = {
+        "needs": "腰腹部肥胖明显、身体发沉||其他：想改善体态",
+        "diet": "我追求低糖、少加工、蛋白优先、主食适量",
+    }
+
+    assert structured_answer_values(fields, answers, "最想先解决") == [
+        "腰腹部肥胖明显、身体发沉",
+        CUSTOM_ANSWER_LABEL,
+    ]
+    assert structured_answer_values(fields, answers, "长期饮食模式") == [
+        "我追求低糖、少加工、蛋白优先、主食适量"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -216,6 +244,11 @@ async def test_population_portrait_endpoint_shape(admin_client):
     keys = {d["key"] for d in data["distributions"]}
     assert keys == {
         "customer_type",
+        "main_need",
+        "expected_change",
+        "diet_pattern",
+        "sleep_problem",
+        "sleep_quality",
         "health_domain",
         "health_condition",
         "medication_category",
@@ -291,6 +324,11 @@ async def test_population_portrait_includes_user_without_ai_profile(
     assert labels["health_domain"] == ["心血管"]
     assert labels["health_condition"] == ["高血压"]
     assert labels["allergy_category"] == ["食物过敏"]
+    assert labels["main_need"] == ["情绪与压力易失控"]
+    assert labels["expected_change"] == ["节律与情绪更稳定"]
+    assert labels["diet_pattern"] == "高碳饮食"
+    assert labels["sleep_problem"] == ["睡眠时间很不固定"]
+    assert labels["sleep_quality"] == "还可以"
 
     portrait = await admin_client.get("/dashboard/population-portrait")
     assert portrait.status_code == 200
@@ -302,6 +340,13 @@ async def test_population_portrait_includes_user_without_ai_profile(
     )
     assert members.status_code == 200
     assert service_case.id in {item["id"] for item in members.json()}
+
+    need_members = await admin_client.get(
+        "/dashboard/population-portrait/members",
+        params={"key": "main_need", "bucket": "情绪与压力易失控"},
+    )
+    assert need_members.status_code == 200
+    assert service_case.id in {item["id"] for item in need_members.json()}
 
 
 @pytest.mark.asyncio

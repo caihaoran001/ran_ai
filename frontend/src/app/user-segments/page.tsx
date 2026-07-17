@@ -15,6 +15,8 @@ const HEALTH_DISTRIBUTION_KEYS = new Set([
   "allergy_category",
 ]);
 const PRIMARY_DISTRIBUTION_KEYS = new Set(["customer_type", "weight_loss_band"]);
+const NEED_DISTRIBUTION_KEYS = new Set(["main_need", "expected_change"]);
+const HABIT_DISTRIBUTION_KEYS = new Set(["diet_pattern", "sleep_problem", "sleep_quality"]);
 
 function topBucket(distribution: PopulationDistribution | undefined) {
   if (!distribution || distribution.buckets.length === 0) return null;
@@ -26,6 +28,8 @@ function percentage(count: number, total: number) {
 }
 
 function sectionForDistribution(key: string) {
+  if (NEED_DISTRIBUTION_KEYS.has(key)) return "#customer-needs";
+  if (HABIT_DISTRIBUTION_KEYS.has(key)) return "#habit-profile";
   if (PRIMARY_DISTRIBUTION_KEYS.has(key)) return "#service-strategy";
   if (HEALTH_DISTRIBUTION_KEYS.has(key)) return "#health-profile";
   return "#body-profile";
@@ -181,8 +185,13 @@ export default async function UserSegmentsPage() {
 
   const healthDistributions = portrait.distributions.filter((dist) => HEALTH_DISTRIBUTION_KEYS.has(dist.key));
   const primaryDistributions = portrait.distributions.filter((dist) => PRIMARY_DISTRIBUTION_KEYS.has(dist.key));
+  const needDistributions = portrait.distributions.filter((dist) => NEED_DISTRIBUTION_KEYS.has(dist.key));
+  const habitDistributions = portrait.distributions.filter((dist) => HABIT_DISTRIBUTION_KEYS.has(dist.key));
   const bodyDistributions = portrait.distributions.filter(
-    (dist) => !HEALTH_DISTRIBUTION_KEYS.has(dist.key) && !PRIMARY_DISTRIBUTION_KEYS.has(dist.key),
+    (dist) => !HEALTH_DISTRIBUTION_KEYS.has(dist.key)
+      && !PRIMARY_DISTRIBUTION_KEYS.has(dist.key)
+      && !NEED_DISTRIBUTION_KEYS.has(dist.key)
+      && !HABIT_DISTRIBUTION_KEYS.has(dist.key),
   );
 
   return (
@@ -201,6 +210,15 @@ export default async function UserSegmentsPage() {
         <>
           <PortraitSummary portrait={portrait} />
 
+          {needDistributions.length > 0 && (
+            <DistributionGroupPanel
+              id="customer-needs"
+              title="客户共同诉求"
+              description="汇总用户明确选择的首要问题和 28 天期待；这里只呈现可稳定统计的结构化表达，不把每人的自由文本深层需求强行拼成结论。"
+              distributions={needDistributions}
+            />
+          )}
+
           {primaryDistributions.length > 0 && (
             <section id="service-strategy" className="scroll-mt-6 space-y-3" aria-labelledby="service-strategy-title">
               <SectionHeading
@@ -214,6 +232,15 @@ export default async function UserSegmentsPage() {
                 ))}
               </div>
             </section>
+          )}
+
+          {habitDistributions.length > 0 && (
+            <DistributionGroupPanel
+              id="habit-profile"
+              title="饮食与睡眠习惯"
+              description="饮食模式、常见睡眠问题和主观睡眠质量集中查看；补剂习惯暂不纳入，避免与当前产品使用情况混淆。"
+              distributions={habitDistributions}
+            />
           )}
 
           {healthDistributions.length > 0 && (
@@ -249,7 +276,7 @@ export default async function UserSegmentsPage() {
               </div>
               <div>
                 <p className="font-bold text-slate-800">数据来源</p>
-                <p>问卷、服务单健康资料和 AI 画像分别贡献可用维度；没有 AI 画像仍计入总人数。</p>
+                <p>问卷固定选项、服务单健康资料和 AI 画像分别贡献可用维度；没有 AI 画像仍计入总人数。</p>
               </div>
               <div>
                 <p className="font-bold text-slate-800">比例口径</p>
@@ -257,7 +284,7 @@ export default async function UserSegmentsPage() {
               </div>
               <div>
                 <p className="font-bold text-slate-800">多选与缺失</p>
-                <p>健康资料可多选，分桶人数之和可能超过总人数；缺失信息统一归入“未采集”。</p>
+                <p>诉求、睡眠问题和部分健康资料可多选，分桶人数之和可能超过总人数；缺失信息统一归入“未采集”。</p>
               </div>
             </div>
           </details>

@@ -50,6 +50,7 @@ from app.schemas.service_case import ServiceCaseRead
 from app.services.intake_facts import (
     build_intake_fact_summary,
     customer_type_for_profile,
+    structured_answer_values,
     weight_loss_band_from_profile,
 )
 from app.services.health_taxonomy import health_profile_dimension_labels
@@ -278,6 +279,42 @@ UNKNOWN_LABEL = "未采集"
 # 分类维度的历史哨兵值（含各处"未提供/待完善"等），一律视为未采集。
 _CATEGORY_UNKNOWNS = {"", "未采集", "未提供", "待完善", "需补充身高体重后判断"}
 
+_PORTRAIT_OPTION_LABELS: dict[str, dict[str, str]] = {
+    "main_need": {
+        "感觉总是累、没精神": "疲劳、没精神",
+        "总是容易饿、吃完还想吃": "容易饿、饱腹感不足",
+        "晚上嘴馋、控制不住": "晚间嘴馋、控制不住",
+        "作息乱、睡不好": "作息乱、睡不好",
+        "白天脑子不清楚、专注度差": "清醒感与专注度差",
+        "腰腹部肥胖明显、身体发沉": "腰腹肥胖、身体发沉",
+        "吃得不算多，但状态和体型都不理想": "食量不多但状态体型不佳",
+        "情绪不稳、压力一大就容易乱": "情绪与压力易失控",
+        "便秘、胀气、肠胃消化总是不舒服": "消化与排便不适",
+        "没有明显健康问题，想进入更规律、更高能量的生活状态": "追求规律、高能量状态",
+    },
+    "expected_change": {
+        "白天更有精神": "白天更有精神",
+        "晚上更容易入睡，不起夜，睡眠质量明显提高": "睡眠质量提高",
+        "白天饥饿感更稳定": "饥饿感更稳定",
+        "晚上不容易乱吃": "晚间不乱吃",
+        "身体更轻盈、腰腹部维度缩减": "身体轻盈、腰腹缩减",
+        "每天节律更稳定、情绪更稳": "节律与情绪更稳定",
+        "脑子更清醒、专注更好": "清醒与专注改善",
+        "饮食更容易控制": "饮食更易控制",
+        "开始进入“可持续变好”的状态": "进入可持续变好状态",
+        "体重体态更匀称，您也可以在“其他”选项填写您的体重和腰围数字管理目标（如X个月减重X公斤，减少XX厘米）": "体重体态更匀称",
+    },
+    "diet_pattern": {
+        "我执行的是排除型饮食，很多食物都主动不吃": "排除型饮食",
+        "我以肉类 / 动物性食物为核心，种类很少": "动物性食物为主、种类少",
+        "我在认真控碳，希望保持稳定燃脂状态": "控碳燃脂模式",
+        "我追求低糖、少加工、蛋白优先、主食适量": "低糖少加工、蛋白优先",
+        "我主食偏多，是典型高碳饮食": "高碳饮食",
+        "我甜的很多，是典型高糖饮食": "高糖饮食",
+        "我整体都比较乱，经常外卖、宵夜、炸物、酒精混着来": "饮食较乱、外卖宵夜等",
+    },
+}
+
 # 群体画像维度元数据：画像端点与下钻端点共用，保证顺序/标签/分桶完全一致。
 # numeric=True 的维度带 edges/labels（升序左闭分桶，含 0 计数桶）；分类维度按计数降序。
 _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
@@ -285,6 +322,39 @@ _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
         "key": "customer_type",
         "label": "客户分型",
         "description": "按风险与减重带确定性投影的单一分型标签，用于快速定调。",
+        "numeric": False,
+    },
+    {
+        "key": "main_need",
+        "label": "最想先解决",
+        "description": "用户在入营问卷中明确选择的首要问题；可多选，不用 AI 猜测深层动机。",
+        "numeric": False,
+        "multi_select": True,
+    },
+    {
+        "key": "expected_change",
+        "label": "28天期待变化",
+        "description": "用户明确希望在本服务周期看到的变化；可多选，其他自由填写统一归入补充项。",
+        "numeric": False,
+        "multi_select": True,
+    },
+    {
+        "key": "diet_pattern",
+        "label": "长期饮食模式",
+        "description": "入营问卷中最符合用户长期饮食习惯的一项，不等同于当前产品使用情况。",
+        "numeric": False,
+    },
+    {
+        "key": "sleep_problem",
+        "label": "常见睡眠问题",
+        "description": "用户最近更常见的睡眠困扰；可多选，暂无明显问题作为独立分桶。",
+        "numeric": False,
+        "multi_select": True,
+    },
+    {
+        "key": "sleep_quality",
+        "label": "主观睡眠质量",
+        "description": "用户对最近睡眠质量的主观评价。",
         "numeric": False,
     },
     {
@@ -378,7 +448,7 @@ async def dashboard_population_portrait(
     """群体画像：未删除、未退款用户的量化区间分布 + 省→市地域层级。
 
     每个用户只取最新未删除服务单；若该服务单已确认退款，则该用户不纳入。
-    数据来源：AI 画像(customer_type/减重带，可缺失) + 最新入营问卷(城市/年龄/BMI/体脂/腰围/身高)
+    数据来源：AI 画像(customer_type/减重带，可缺失) + 最新入营问卷(诉求/饮食/睡眠/城市/身体指标)
     + 服务单结构化健康标签。没有 AI 画像不会排除用户，只会令对应维度进入『未采集』。
     每个分布都返回有效样本与『未采集』计数，绝不静默丢弃缺失。分桶逻辑与下钻端点共用同一套 case 标签。
     """
@@ -514,6 +584,7 @@ async def _compute_case_portrait_labels(
 
         submission = latest_submission.get(cid)
         facts = build_intake_fact_summary(fields, submission.answers_json) if submission else {}
+        answers = submission.answers_json if submission and isinstance(submission.answers_json, dict) else {}
         numeric_values = {
             "age": _num(facts.get("age")),
             "bmi": _num(facts.get("bmi")),
@@ -531,6 +602,21 @@ async def _compute_case_portrait_labels(
             "weight_loss_band": _category_label(band),
             "city": _category_label(city),
             "province": _category_label(province),
+            "main_need": _questionnaire_portrait_labels(
+                fields, answers, "main_need", "最想先解决"
+            ),
+            "expected_change": _questionnaire_portrait_labels(
+                fields, answers, "expected_change", "最希望 28 天后"
+            ),
+            "diet_pattern": _single_questionnaire_portrait_label(
+                fields, answers, "diet_pattern", "长期饮食模式"
+            ),
+            "sleep_problem": _questionnaire_portrait_labels(
+                fields, answers, "sleep_problem", "常见的睡眠问题"
+            ),
+            "sleep_quality": _single_questionnaire_portrait_label(
+                fields, answers, "sleep_quality", "睡眠质量的主观评价"
+            ),
         }
         labels.update(health_profile_dimension_labels(health_by_case.get(cid)))
         for dim in _PORTRAIT_DIMENSIONS:
@@ -541,6 +627,32 @@ async def _compute_case_portrait_labels(
         case_labels[cid] = labels
 
     return len(case_ids), case_labels
+
+
+def _questionnaire_portrait_labels(
+    fields: list[dict[str, Any]],
+    answers: dict[str, Any],
+    dimension_key: str,
+    *title_parts: str,
+) -> list[str]:
+    aliases = _PORTRAIT_OPTION_LABELS.get(dimension_key, {})
+    return [
+        aliases.get(value, value)
+        for value in structured_answer_values(fields, answers, *title_parts)
+        if value
+    ]
+
+
+def _single_questionnaire_portrait_label(
+    fields: list[dict[str, Any]],
+    answers: dict[str, Any],
+    dimension_key: str,
+    *title_parts: str,
+) -> str:
+    values = _questionnaire_portrait_labels(
+        fields, answers, dimension_key, *title_parts
+    )
+    return _category_label(values[0] if values else None)
 
 
 def _build_geography(case_labels: dict[int, dict[str, str | list[str]]]) -> PopulationGeography:

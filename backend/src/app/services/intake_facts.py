@@ -4,6 +4,53 @@ import re
 from typing import Any
 
 
+CUSTOM_ANSWER_LABEL = "其他（用户补充）"
+
+
+def structured_answer_values(
+    fields: list[dict[str, Any]],
+    answers: dict[str, Any],
+    *title_parts: str,
+) -> list[str]:
+    """Read one questionnaire answer without splitting punctuation inside an option.
+
+    Historical checkbox submissions use ``||`` between selected options, while
+    radio answers and newer payloads may be a string or a list.  Chinese commas
+    such as ``、`` are part of several option labels and therefore must never be
+    treated as separators here.  Free-form ``其他`` values are collapsed into a
+    stable bucket so population distributions do not expose or fragment user text.
+    """
+
+    for field in fields:
+        key = str(field.get("key") or field.get("id") or "")
+        title = str(field.get("title") or field.get("label") or "")
+        if key not in answers or not all(part in title for part in title_parts):
+            continue
+
+        raw = answers.get(key)
+        if isinstance(raw, list):
+            values = [str(item).strip() for item in raw if str(item).strip()]
+        else:
+            text = str(raw or "").strip()
+            values = [item.strip() for item in text.split("||") if item.strip()] if text else []
+
+        options = {
+            str(option).strip() for option in field.get("options", []) if str(option).strip()
+        }
+        normalized: list[str] = []
+        for value in values:
+            if value == "其他" or value.startswith(("其他：", "其他:")):
+                label = CUSTOM_ANSWER_LABEL
+            elif options and value not in options:
+                label = CUSTOM_ANSWER_LABEL
+            else:
+                label = value
+            if label and label not in normalized:
+                normalized.append(label)
+        return normalized
+    return []
+
+
 def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, Any]) -> dict[str, Any]:
     """Extract deterministic facts shared by profile and document generation."""
 
