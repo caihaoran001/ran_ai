@@ -804,11 +804,22 @@ class ReplyGraph:
                     ),
                 }
             }
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Agent reply failed; discarding without sending service_case_id=%s trigger_id=%s",
                 service_case_id, trigger_id,
             )
+            try:
+                await self.engine._record_agent_reply_failure(
+                    trigger_id=trigger_id,
+                    error=exc,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist Agent reply failure service_case_id=%s trigger_id=%s",
+                    service_case_id,
+                    trigger_id,
+                )
             return {"_halt": True}
         return {"reply": reply, "outbound_analysis": outbound_analysis}
 

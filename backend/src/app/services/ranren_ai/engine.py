@@ -295,6 +295,41 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             await session.commit()
             return risk_level
 
+    async def _record_agent_reply_failure(
+        self,
+        *,
+        trigger_id: int | None,
+        error: Exception,
+    ) -> None:
+        """把 Agent 生成失败持久化到触发该轮回复的入站消息。
+
+        只保存异常类型，不保存异常正文，避免将供应商响应或敏感信息
+        带入业务数据。该标记仅用于观测，不改变回复或重试语义。
+        """
+        if trigger_id is None:
+            return
+        async with SessionLocal() as session:
+            inbound = await session.get(Message, trigger_id)
+            if inbound is None:
+                logger.warning(
+                    "Cannot record Agent reply failure because trigger message is missing trigger_id=%s",
+                    trigger_id,
+                )
+                return
+            analysis = (
+                dict(inbound.analysis_json)
+                if isinstance(inbound.analysis_json, dict)
+                else {}
+            )
+            analysis["agent_reply_failure"] = {
+                "stage": "generation",
+                "error_type": type(error).__name__,
+                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "trigger_message_id": trigger_id,
+            }
+            inbound.analysis_json = analysis
+            await session.commit()
+
     async def _recently_handed_off(self, service_case_id: int) -> bool:
         """30 分钟内是否已 @ 过班主任。节流时间持久化在 service_cases.last_handoff_at，重启不丢。"""
         async with SessionLocal() as session:

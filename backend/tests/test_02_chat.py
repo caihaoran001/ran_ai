@@ -489,14 +489,27 @@ async def test_normal_reply_still_sends_without_marker(
 
 
 @pytest.mark.asyncio
-async def test_agent_error_is_discarded_without_recording(
+async def test_agent_error_is_recorded_on_inbound_without_outbound(
     db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch
 ):
-    # AI 生成失败：直接丢弃不发（只记日志），不再落草稿进审核台，也不产生任何出站记录。
+    # AI 生成失败：仍不发送、不落出站，但要在触发的入站消息上持久化可审计标记。
     import app.services.ranren_ai.engine as engine_mod
 
     case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
     engine = RanrenAIEngine(mock_message_channel)
+    inbound = Message(
+        service_case_id=case_id,
+        group_id=group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="收到",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={"existing_fact": "kept"},
+    )
+    db_session.add(inbound)
+    await db_session.flush()
 
     before = await db_session.scalar(
         select(func.count(Message.id)).where(
@@ -514,7 +527,7 @@ async def test_agent_error_is_discarded_without_recording(
         ChannelMessage(channel="qiwe", chat_id=group_id, chat_type="group", text="收到", message_id="m-err-1"),
         service_case_id=case_id,
         analysis={},
-        trigger_id=None,
+        trigger_id=inbound.id,
     )
 
     after = await db_session.scalar(
@@ -524,6 +537,13 @@ async def test_agent_error_is_discarded_without_recording(
         )
     )
     assert after == before  # 没有新增任何出站记录
+    await db_session.refresh(inbound)
+    assert inbound.analysis_json["existing_fact"] == "kept"
+    failure = inbound.analysis_json["agent_reply_failure"]
+    assert failure["stage"] == "generation"
+    assert failure["error_type"] == "RuntimeError"
+    assert failure["trigger_message_id"] == inbound.id
+    assert datetime.fromisoformat(failure["failed_at"]).tzinfo is not None
 
 
 @pytest.mark.asyncio
