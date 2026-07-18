@@ -58,6 +58,7 @@ def main():
         "--exclude='*.pyc' --exclude='*.log' --exclude='.git' "
         "--exclude='ran_ai_deploy.tar.gz' --exclude='.codex' --exclude='.antigravitycli' "
         "--exclude='.playwright-mcp' --exclude='.sisyphus' --exclude='.agents' "
+        "--exclude='.impeccable' --exclude='docs/wip' "
         "--exclude='./.env' --exclude='./docker-compose.prod.yml' "
         "--exclude='frontend/.next/cache' --exclude='diagnostics/diagnostics_history.json' "
         "--warning=no-file-changed -czf ran_ai_deploy.tar.gz ."
