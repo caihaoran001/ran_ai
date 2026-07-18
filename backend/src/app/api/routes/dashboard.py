@@ -20,6 +20,7 @@ from app.models.user import User
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
+from app.models.user_state_profile import UserStateProfile
 from app.schemas.dashboard import (
     AICostCaseItem,
     AICostSummary,
@@ -279,6 +280,12 @@ UNKNOWN_LABEL = "未采集"
 # 分类维度的历史哨兵值（含各处"未提供/待完善"等），一律视为未采集。
 _CATEGORY_UNKNOWNS = {"", "未采集", "未提供", "待完善", "需补充身高体重后判断"}
 
+_SUPPLEMENT_STATUS_LABELS = {
+    "using": "正在使用",
+    "considering": "咨询/考虑使用",
+    "stopped": "已停用",
+}
+
 _PORTRAIT_OPTION_LABELS: dict[str, dict[str, str]] = {
     "main_need": {
         "感觉总是累、没精神": "疲劳、没精神",
@@ -356,6 +363,16 @@ _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
         "label": "主观睡眠质量",
         "description": "用户对最近睡眠质量的主观评价。",
         "numeric": False,
+    },
+    {
+        "key": "supplement_habit",
+        "label": "补剂习惯",
+        "description": (
+            "从群聊原话沉淀的具体补剂及当前状态；"
+            "‘咨询/考虑使用’不等同于已在使用。"
+        ),
+        "numeric": False,
+        "multi_select": True,
     },
     {
         "key": "health_domain",
@@ -449,7 +466,7 @@ async def dashboard_population_portrait(
 
     每个用户只取最新未删除服务单；若该服务单已确认退款，则该用户不纳入。
     数据来源：AI 画像(customer_type/减重带，可缺失) + 最新入营问卷(诉求/饮食/睡眠/城市/身体指标)
-    + 服务单结构化健康标签。没有 AI 画像不会排除用户，只会令对应维度进入『未采集』。
+    + 服务单结构化健康标签 + 档案官从群聊投影的稳定习惯。没有 AI 画像不会排除用户，只会令对应维度进入『未采集』。
     每个分布都返回有效样本与『未采集』计数，绝不静默丢弃缺失。分桶逻辑与下钻端点共用同一套 case 标签。
     """
     total_users, case_labels = await _compute_case_portrait_labels(session)
@@ -552,6 +569,15 @@ async def _compute_case_portrait_labels(
     ):
         latest_profile_json[profile.service_case_id] = profile.profile_json or {}
 
+    # 每个 case 一条动态状态画像（表上有唯一约束）；补剂习惯只读 current，
+    # 让“已停用”替换旧的“正在使用”，不把历史状态重复计入当前分布。
+    state_json_by_case = {
+        state_profile.service_case_id: state_profile.state_json or {}
+        for state_profile in await session.scalars(
+            select(UserStateProfile).where(UserStateProfile.service_case_id.in_(case_ids))
+        )
+    }
+
     # 每个 case 最新入营问卷提交
     latest_submission: dict[int, QuestionnaireSubmission] = {}
     for submission in await session.scalars(
@@ -617,6 +643,7 @@ async def _compute_case_portrait_labels(
             "sleep_quality": _single_questionnaire_portrait_label(
                 fields, answers, "sleep_quality", "睡眠质量的主观评价"
             ),
+            "supplement_habit": _supplement_portrait_labels(state_json_by_case.get(cid)),
         }
         labels.update(health_profile_dimension_labels(health_by_case.get(cid)))
         for dim in _PORTRAIT_DIMENSIONS:
@@ -653,6 +680,34 @@ def _single_questionnaire_portrait_label(
         fields, answers, dimension_key, *title_parts
     )
     return _category_label(values[0] if values else None)
+
+
+def _supplement_portrait_labels(state_json: Any) -> list[str]:
+    """把动态画像中当前补剂事实转成群体画像分桶标签。
+
+    具体补剂名和使用状态由档案官结构化工具输出，这里不从自由文本
+    或关键词反向猜测；缺少结构化字段的旧数据按未采集处理。
+    """
+
+    state = state_json if isinstance(state_json, dict) else {}
+    domains = state.get("domains") if isinstance(state.get("domains"), dict) else {}
+    habits = domains.get("lifestyle_habits") if isinstance(domains.get("lifestyle_habits"), dict) else {}
+    current = habits.get("current") if isinstance(habits.get("current"), dict) else {}
+    current_value = current.get("value") if isinstance(current.get("value"), dict) else {}
+    raw_facts = current_value.get("supplement_habit")
+    facts = raw_facts if isinstance(raw_facts, list) else [raw_facts]
+    labels: list[str] = []
+    for fact in facts:
+        if not isinstance(fact, dict):
+            continue
+        supplement_name = str(fact.get("supplement_name") or "").strip()
+        status_label = _SUPPLEMENT_STATUS_LABELS.get(str(fact.get("habit_status") or "").strip())
+        if not supplement_name or not status_label:
+            continue
+        label = f"{supplement_name} · {status_label}"
+        if label not in labels:
+            labels.append(label)
+    return labels
 
 
 def _build_geography(case_labels: dict[int, dict[str, str | list[str]]]) -> PopulationGeography:

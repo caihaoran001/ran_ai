@@ -16,7 +16,12 @@ const HEALTH_DISTRIBUTION_KEYS = new Set([
 ]);
 const PRIMARY_DISTRIBUTION_KEYS = new Set(["customer_type", "weight_loss_band"]);
 const NEED_DISTRIBUTION_KEYS = new Set(["main_need", "expected_change"]);
-const HABIT_DISTRIBUTION_KEYS = new Set(["diet_pattern", "sleep_problem", "sleep_quality"]);
+const HABIT_DISTRIBUTION_KEYS = new Set([
+  "diet_pattern",
+  "sleep_problem",
+  "sleep_quality",
+  "supplement_habit",
+]);
 
 function topBucket(distribution: PopulationDistribution | undefined) {
   if (!distribution || distribution.buckets.length === 0) return null;
@@ -237,8 +242,8 @@ export default async function UserSegmentsPage() {
           {habitDistributions.length > 0 && (
             <DistributionGroupPanel
               id="habit-profile"
-              title="饮食与睡眠习惯"
-              description="饮食模式、常见睡眠问题和主观睡眠质量集中查看；补剂习惯暂不纳入，避免与当前产品使用情况混淆。"
+              title="饮食、睡眠与补剂习惯"
+              description="集中查看长期饮食模式、常见睡眠问题以及群聊中沉淀的具体补剂；补剂会区分正在使用、咨询考虑和已停用。"
               distributions={habitDistributions}
             />
           )}
@@ -276,7 +281,7 @@ export default async function UserSegmentsPage() {
               </div>
               <div>
                 <p className="font-bold text-slate-800">数据来源</p>
-                <p>问卷固定选项、服务单健康资料和 AI 画像分别贡献可用维度；没有 AI 画像仍计入总人数。</p>
+                <p>问卷固定选项、服务单健康资料、AI 入营画像和群聊中沉淀的稳定习惯分别贡献可用维度；没有 AI 画像仍计入总人数。</p>
               </div>
               <div>
                 <p className="font-bold text-slate-800">比例口径</p>

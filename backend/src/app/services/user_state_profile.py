@@ -41,6 +41,7 @@ PROFILE_SIGNAL_TYPE_DOMAIN: dict[str, str] = {
     "motivation_preference": "personal_preferences",
     "meal_pattern": "lifestyle_habits",
     "hydration_habit": "lifestyle_habits",
+    "supplement_habit": "lifestyle_habits",
     "schedule_constraint": "lifestyle_habits",
     "work_routine": "lifestyle_habits",
     "exercise_habit": "lifestyle_habits",
@@ -323,7 +324,20 @@ async def apply_profile_signals_to_user_state(
         if not value or not evidence or confidence < 0.65:
             continue
 
-        guarded_state_type = _profile_guardrail_state_type(value=value, evidence=evidence)
+        supplement_name = str(signal.get("supplement_name") or "").strip()
+        habit_status = str(signal.get("habit_status") or "").strip()
+        if signal_type == "supplement_habit":
+            if not supplement_name or habit_status not in {"using", "considering", "stopped"}:
+                continue
+            value = _supplement_fact_value(supplement_name, habit_status)
+
+        # 补剂习惯可与用药/健康咨询同时出现；工具 schema 已要求模型
+        # 把处方药排除在 supplement_habit 之外，不再因原话带健康上下文而丢掉补剂事实。
+        guarded_state_type = (
+            None
+            if signal_type == "supplement_habit"
+            else _profile_guardrail_state_type(value=value, evidence=evidence)
+        )
         if guarded_state_type:
             _update_domain_from_event(
                 state,
@@ -358,6 +372,15 @@ async def apply_profile_signals_to_user_state(
             occurred_at=occurred_at,
             confidence=confidence,
             message_id=message.id,
+            fact_metadata=(
+                {
+                    "supplement_name": supplement_name,
+                    "habit_status": habit_status,
+                }
+                if signal_type == "supplement_habit"
+                else None
+            ),
+            identity_value=supplement_name if signal_type == "supplement_habit" else None,
         )
 
     state_profile.state_json = state
@@ -673,6 +696,8 @@ def _upsert_profile_fact(
     occurred_at: str,
     confidence: float,
     message_id: int | None,
+    fact_metadata: dict[str, Any] | None = None,
+    identity_value: str | None = None,
 ) -> None:
     """稳定偏好/习惯按事实多值保留；重复事实只刷新最后确认时间。"""
 
@@ -685,11 +710,17 @@ def _upsert_profile_fact(
     facts = raw_facts if isinstance(raw_facts, list) else ([raw_facts] if isinstance(raw_facts, dict) else [])
     normalized_facts: list[dict[str, Any]] = []
     matched = False
+    fact_metadata = fact_metadata or {}
     for raw in facts:
         if not isinstance(raw, dict):
             continue
         existing = _enrich_legacy_fact(raw, current)
-        if _same_fact_value(existing.get("value"), value):
+        same_identity = (
+            _same_fact_value(existing.get("supplement_name"), identity_value)
+            if identity_value
+            else _same_fact_value(existing.get("value"), value)
+        )
+        if same_identity:
             existing.update(
                 {
                     "value": value,
@@ -700,6 +731,7 @@ def _upsert_profile_fact(
                     "message_id": message_id,
                     "status": "confirmed",
                     "last_confirmed_at": occurred_at,
+                    **fact_metadata,
                 }
             )
             existing.setdefault("first_seen_at", occurred_at)
@@ -719,9 +751,11 @@ def _upsert_profile_fact(
                 "status": "confirmed",
                 "first_seen_at": occurred_at,
                 "last_confirmed_at": occurred_at,
+                **fact_metadata,
             }
         )
-    current_value[field_key] = normalized_facts[-5:]
+    current_limit = 10 if field_key == "supplement_habit" else 5
+    current_value[field_key] = normalized_facts[-current_limit:]
     domain["current"] = {
         "value": current_value,
         "source": source,
@@ -745,8 +779,18 @@ def _upsert_profile_fact(
             "status": "confirmed",
             "first_seen_at": occurred_at,
             "last_confirmed_at": occurred_at,
+            **fact_metadata,
         },
     )
+
+
+def _supplement_fact_value(supplement_name: str, habit_status: str) -> str:
+    prefix = {
+        "using": "正在使用",
+        "considering": "咨询/考虑使用",
+        "stopped": "已停用",
+    }[habit_status]
+    return f"{prefix}{supplement_name}"[:160]
 
 
 def _enrich_legacy_fact(fact: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:

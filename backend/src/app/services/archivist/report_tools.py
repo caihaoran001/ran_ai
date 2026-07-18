@@ -88,7 +88,7 @@ class ReportOutcomeArgs(BaseModel):
 
 
 class ReportProfileFactArgs(BaseModel):
-    """上报一条长期画像信号（稳定偏好/习惯）。每条调用一次，一批最多 3 条。"""
+    """上报一条长期画像信号（稳定偏好/习惯）。每条调用一次，一批最多 5 条。"""
 
     domain: Literal["personal_preferences", "lifestyle_habits"] = Field(
         description="personal_preferences 或 lifestyle_habits"
@@ -101,6 +101,7 @@ class ReportProfileFactArgs(BaseModel):
         "motivation_preference",
         "meal_pattern",
         "hydration_habit",
+        "supplement_habit",
         "schedule_constraint",
         "work_routine",
         "exercise_habit",
@@ -109,11 +110,25 @@ class ReportProfileFactArgs(BaseModel):
     ] = Field(
         description=(
             "hobby / activity_preference / food_preference / communication_preference / "
-            "motivation_preference / meal_pattern / hydration_habit / schedule_constraint / "
-            "work_routine / exercise_habit / sleep_habit / social_context"
+            "motivation_preference / meal_pattern / hydration_habit / supplement_habit / "
+            "schedule_constraint / work_routine / exercise_habit / sleep_habit / social_context"
         )
     )
     value: str = Field(description="简短、可长期复用的事实（不要写成建议/评价/医学判断）")
+    supplement_name: str | None = Field(
+        default=None,
+        description=(
+            "仅 signal_type=supplement_habit 时必填：用户明确提到的具体补剂名称，"
+            "如鱼油/维生素D/辅酶Q10。不得填处方药、普通食物或训练营产品"
+        ),
+    )
+    habit_status: Literal["using", "considering", "stopped"] | None = Field(
+        default=None,
+        description=(
+            "仅 signal_type=supplement_habit 时必填：using=明确正在/长期使用；"
+            "considering=仅咨询能否吃或打算尝试，尚未确认使用；stopped=明确已停用"
+        ),
+    )
     evidence_text: str = Field(description="用户原话证据")
     confidence: float = Field(default=0.0, description="0.0-1.0 置信度")
 

@@ -297,6 +297,68 @@ async def test_profile_signals_keep_multiple_same_type_facts_with_own_evidence(d
 
 
 @pytest.mark.asyncio
+async def test_supplement_habit_keeps_structured_status_and_updates_current_fact(db_session):
+    case = await _setup_outcome_case(db_session, days=7)
+    using_message = await _add_message(db_session, case, "我一直在吃鱼油")
+
+    first = await apply_archived_outcome(
+        db_session,
+        service_case=case,
+        anchor_message=using_message,
+        outcome_events=[],
+        profile_signals=[
+            {
+                "domain": "lifestyle_habits",
+                "signal_type": "supplement_habit",
+                "value": "长期吃鱼油",
+                "supplement_name": "鱼油",
+                "habit_status": "using",
+                "evidence_text": using_message.content,
+                "confidence": 0.94,
+            }
+        ],
+    )
+    assert first["profile_signals"][0]["supplement_name"] == "鱼油"
+
+    stopped_message = await _add_message(db_session, case, "鱼油我现在已经停了")
+    await apply_archived_outcome(
+        db_session,
+        service_case=case,
+        anchor_message=stopped_message,
+        outcome_events=[],
+        profile_signals=[
+            {
+                "domain": "lifestyle_habits",
+                "signal_type": "supplement_habit",
+                "value": "已停用鱼油",
+                "supplement_name": "鱼油",
+                "habit_status": "stopped",
+                "evidence_text": stopped_message.content,
+                "confidence": 0.97,
+            }
+        ],
+    )
+
+    state_profile = await db_session.scalar(
+        select(UserStateProfile).where(UserStateProfile.service_case_id == case.id)
+    )
+    supplement_facts = state_profile.state_json["domains"]["lifestyle_habits"]["current"]["value"][
+        "supplement_habit"
+    ]
+    assert len(supplement_facts) == 1
+    assert supplement_facts[0]["value"] == "已停用鱼油"
+    assert supplement_facts[0]["supplement_name"] == "鱼油"
+    assert supplement_facts[0]["habit_status"] == "stopped"
+    assert supplement_facts[0]["first_seen_at"] == using_message.created_at.isoformat()
+    assert supplement_facts[0]["last_confirmed_at"] == stopped_message.created_at.isoformat()
+    history = state_profile.state_json["domains"]["lifestyle_habits"]["history"]
+    assert [item["habit_status"] for item in history if item["field_key"] == "supplement_habit"] == [
+        "using",
+        "stopped",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_profile_signal_guard_routes_health_and_causal_misclassification(db_session):
     """术后/生理状态不是生活习惯，因果判断也不是偏好；误投后应转入当前状态。"""
     case = await _setup_outcome_case(db_session, days=7)

@@ -474,15 +474,21 @@ def _normalize_profile_signals(value: Any) -> list[dict[str, Any]]:
         confidence = _confidence(item.get("confidence"))
         if domain not in allowed_domains or not fact_value or not evidence_text or confidence < 0.65:
             continue
-        signals.append(
-            {
-                "domain": domain,
-                "signal_type": signal_type,
-                "value": fact_value,
-                "evidence_text": evidence_text,
-                "confidence": confidence,
-            }
-        )
+        signal = {
+            "domain": domain,
+            "signal_type": signal_type,
+            "value": fact_value,
+            "evidence_text": evidence_text,
+            "confidence": confidence,
+        }
+        if signal_type == "supplement_habit":
+            supplement_name = _string(item.get("supplement_name"))
+            habit_status = _string(item.get("habit_status"))
+            if not supplement_name or habit_status not in {"using", "considering", "stopped"}:
+                continue
+            signal["supplement_name"] = supplement_name
+            signal["habit_status"] = habit_status
+        signals.append(signal)
     return signals[:5]
 
 

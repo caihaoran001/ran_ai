@@ -18,6 +18,7 @@ from app.api.routes.dashboard import (
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
+from app.models.user_state_profile import UserStateProfile
 from app.services.china_regions import match_city
 from app.services.intake_facts import CUSTOM_ANSWER_LABEL, structured_answer_values
 
@@ -249,6 +250,7 @@ async def test_population_portrait_endpoint_shape(admin_client):
         "diet_pattern",
         "sleep_problem",
         "sleep_quality",
+        "supplement_habit",
         "health_domain",
         "health_condition",
         "medication_category",
@@ -263,6 +265,101 @@ async def test_population_portrait_endpoint_shape(admin_client):
     }
     assert "geography" in data
     assert {"total", "unknown", "provinces"} <= set(data["geography"])
+
+
+@pytest.mark.asyncio
+async def test_population_portrait_groups_structured_supplement_habits_and_drills_down(
+    admin_client,
+    db_session,
+):
+    _, using_case = await _create_portrait_case(db_session)
+    _, considering_case = await _create_portrait_case(db_session)
+    _, no_supplement_case = await _create_portrait_case(db_session)
+    now = datetime.now(timezone.utc).isoformat()
+    db_session.add_all(
+        [
+            UserStateProfile(
+                service_case_id=using_case.id,
+                source="dynamic",
+                state_json={
+                    "version": 1,
+                    "domains": {
+                        "lifestyle_habits": {
+                            "label": "稳定习惯与生活约束",
+                            "current": {
+                                "value": {
+                                    "supplement_habit": [
+                                        {
+                                            "value": "正在使用鱼油",
+                                            "supplement_name": "鱼油",
+                                            "habit_status": "using",
+                                        },
+                                        {
+                                            "value": "咨询/考虑使用维生素D",
+                                            "supplement_name": "维生素D",
+                                            "habit_status": "considering",
+                                        },
+                                    ]
+                                },
+                                "updated_at": now,
+                            },
+                            "history": [],
+                        }
+                    },
+                },
+            ),
+            UserStateProfile(
+                service_case_id=considering_case.id,
+                source="dynamic",
+                state_json={
+                    "version": 1,
+                    "domains": {
+                        "lifestyle_habits": {
+                            "label": "稳定习惯与生活约束",
+                            "current": {
+                                "value": {
+                                    "supplement_habit": [
+                                        {
+                                            "value": "正在使用鱼油",
+                                            "supplement_name": "鱼油",
+                                            "habit_status": "using",
+                                        }
+                                    ]
+                                },
+                                "updated_at": now,
+                            },
+                            "history": [],
+                        }
+                    },
+                },
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    _, labels_by_case = await _compute_case_portrait_labels(db_session)
+    assert labels_by_case[using_case.id]["supplement_habit"] == [
+        "鱼油 · 正在使用",
+        "维生素D · 咨询/考虑使用",
+    ]
+    assert labels_by_case[considering_case.id]["supplement_habit"] == ["鱼油 · 正在使用"]
+    assert labels_by_case[no_supplement_case.id]["supplement_habit"] == []
+
+    portrait = await admin_client.get("/dashboard/population-portrait")
+    assert portrait.status_code == 200
+    supplement_distribution = next(
+        item for item in portrait.json()["distributions"] if item["key"] == "supplement_habit"
+    )
+    buckets = {item["label"]: item["count"] for item in supplement_distribution["buckets"]}
+    assert buckets["鱼油 · 正在使用"] >= 2
+    assert buckets["维生素D · 咨询/考虑使用"] >= 1
+
+    members = await admin_client.get(
+        "/dashboard/population-portrait/members",
+        params={"key": "supplement_habit", "bucket": "维生素D · 咨询/考虑使用"},
+    )
+    assert members.status_code == 200
+    assert using_case.id in {item["id"] for item in members.json()}
 
 
 @pytest.mark.asyncio

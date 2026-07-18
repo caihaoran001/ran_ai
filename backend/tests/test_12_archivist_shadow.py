@@ -214,7 +214,15 @@ async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
                 },
                 {
                     "name": "report_profile_fact",  # confidence>=0.65 才落
-                    "args": {"domain": "lifestyle_habits", "signal_type": "sleep_habit", "value": "作息在改善", "evidence_text": "睡眠也变好了", "confidence": 0.7},
+                    "args": {
+                        "domain": "lifestyle_habits",
+                        "signal_type": "supplement_habit",
+                        "value": "正在吃鱼油",
+                        "supplement_name": "鱼油",
+                        "habit_status": "using",
+                        "evidence_text": "我一直在吃鱼油",
+                        "confidence": 0.9,
+                    },
                     "id": "p1",
                 },
                 {
@@ -259,6 +267,12 @@ async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
     domains = profile.state_json.get("domains", {})
     assert domains.get("outcome_changes", {}).get("current")
     assert domains.get("lifestyle_habits", {}).get("current")
+    supplement_fact = domains["lifestyle_habits"]["current"]["value"]["supplement_habit"][0]
+    assert supplement_fact["value"] == "正在使用鱼油"
+    assert supplement_fact["supplement_name"] == "鱼油"
+    assert supplement_fact["habit_status"] == "using"
+    memory = await load_profile_memory_context(db_session, service_case_id=case.id)
+    assert any("正在使用鱼油" in item for item in memory.habits)
     state_fact = domains["service_state"]["current"]["value"]["current_obstacle"]
     assert state_fact["value"] == "晚上经常忘记执行"
     assert state_fact["evidence"] == "晚上总忘了"
