@@ -242,7 +242,7 @@ export default async function UserSegmentsPage() {
           {habitDistributions.length > 0 && (
             <DistributionGroupPanel
               id="habit-profile"
-              title="饮食、睡眠与补剂习惯"
+              title="饮食、睡眠与补剂"
               description="集中查看长期饮食模式、常见睡眠问题以及群聊中沉淀的具体补剂；补剂会区分正在使用、咨询考虑和已停用。"
               distributions={habitDistributions}
             />

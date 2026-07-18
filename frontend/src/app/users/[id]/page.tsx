@@ -488,7 +488,7 @@ function stateFieldLabel(key: string) {
     motivation_preference: "激励偏好",
     meal_pattern: "饮食习惯",
     hydration_habit: "饮水习惯",
-    supplement_habit: "补剂习惯",
+    supplement_habit: "补剂使用与咨询",
     schedule_constraint: "时间约束",
     work_routine: "工作节奏",
     exercise_habit: "运动习惯",

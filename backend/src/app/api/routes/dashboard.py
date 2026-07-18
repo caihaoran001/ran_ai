@@ -366,7 +366,7 @@ _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
     },
     {
         "key": "supplement_habit",
-        "label": "补剂习惯",
+        "label": "补剂使用与咨询",
         "description": (
             "从群聊原话沉淀的具体补剂及当前状态；"
             "‘咨询/考虑使用’不等同于已在使用。"
@@ -569,7 +569,7 @@ async def _compute_case_portrait_labels(
     ):
         latest_profile_json[profile.service_case_id] = profile.profile_json or {}
 
-    # 每个 case 一条动态状态画像（表上有唯一约束）；补剂习惯只读 current，
+    # 每个 case 一条动态状态画像（表上有唯一约束）；补剂使用与咨询只读 current，
     # 让“已停用”替换旧的“正在使用”，不把历史状态重复计入当前分布。
     state_json_by_case = {
         state_profile.service_case_id: state_profile.state_json or {}

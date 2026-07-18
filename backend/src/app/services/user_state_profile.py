@@ -331,7 +331,7 @@ async def apply_profile_signals_to_user_state(
                 continue
             value = _supplement_fact_value(supplement_name, habit_status)
 
-        # 补剂习惯可与用药/健康咨询同时出现；工具 schema 已要求模型
+        # 补剂使用与咨询可与用药/健康咨询同时出现；工具 schema 已要求模型
         # 把处方药排除在 supplement_habit 之外，不再因原话带健康上下文而丢掉补剂事实。
         guarded_state_type = (
             None
