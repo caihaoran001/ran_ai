@@ -14,8 +14,8 @@ const STATUS_LABELS: Record<string, string> = {
   refunded: "已退款",
 };
 
-function CaseStatusCell({ status }: { status: string }) {
-  if (status === "refunded") {
+function CaseStatusCell({ serviceCase }: { serviceCase: ServiceCase }) {
+  if (serviceCase.status === "refunded") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700 ring-1 ring-rose-300 ring-offset-1">
         <RefreshCcw className="h-3.5 w-3.5" />
@@ -23,7 +23,10 @@ function CaseStatusCell({ status }: { status: string }) {
       </span>
     );
   }
-  return <span className="status-pill border-slate-200 bg-slate-50 text-slate-700">{STATUS_LABELS[status] ?? status}</span>;
+  if (serviceCase.status === "in_service" && serviceCase.service_continued_at) {
+    return <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">续服中</span>;
+  }
+  return <span className="status-pill border-slate-200 bg-slate-50 text-slate-700">{STATUS_LABELS[serviceCase.status] ?? serviceCase.status}</span>;
 }
 
 export default async function CasesPage() {
@@ -51,7 +54,7 @@ export default async function CasesPage() {
                 <div className="text-break font-semibold text-slate-950">{item.case_no}</div>
                 <div className="mt-1 text-sm text-slate-600">{item.user?.name ?? "待填写问卷用户"}</div>
               </div>
-              <CaseStatusCell status={item.status} />
+              <CaseStatusCell serviceCase={item} />
             </div>
             <div className="mt-3 space-y-1 text-sm text-slate-600">
               <div className="text-break">群 ID：{item.group_id}</div>
@@ -85,7 +88,7 @@ export default async function CasesPage() {
                 </td>
                 <td>{item.user?.name ?? "-"}</td>
                 <td className="text-break font-mono text-xs text-slate-500">{item.group_id}</td>
-                <td><CaseStatusCell status={item.status} /></td>
+                <td><CaseStatusCell serviceCase={item} /></td>
                 <td>
                   <Link className="admin-link" href={`/q/${item.questionnaire_token}`}>
                     打开问卷

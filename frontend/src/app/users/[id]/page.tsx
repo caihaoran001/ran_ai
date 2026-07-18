@@ -405,12 +405,33 @@ function serviceStageText(serviceCase: User["service_cases"][number]) {
     refunded: "已退款",
   };
   const status = labels[serviceCase.status] || serviceCase.status;
+  if (serviceCase.status === "in_service" && serviceCase.service_continued_at) {
+    const startDate = serviceCase.service_plan_start_date
+      || (serviceCase.started_at ? chinaDateKey(new Date(serviceCase.started_at)) : null);
+    if (!startDate) return "续服中";
+    const today = chinaDateKey(new Date());
+    const days = Math.floor(
+      (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000,
+    ) + 1;
+    return days >= 1 ? `续服中 · 第 ${days} 天` : "续服中";
+  }
   if (["completed", "refunded"].includes(serviceCase.status)) return `${status} · 服务已结束`;
   if (!["approved", "in_service"].includes(serviceCase.status)) return status;
   const start = serviceCase.service_plan_start_date || serviceCase.started_at;
   if (!start) return status;
   const days = Math.floor((Date.now() - new Date(start).getTime()) / 86400000) + 1;
   return days >= 1 ? `${status} · 第 ${days} 天` : `${status} · 计划未开始`;
+}
+
+function chinaDateKey(value: Date) {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const lookup = Object.fromEntries(parts.map((item) => [item.type, item.value]));
+  return `${lookup.year}-${lookup.month}-${lookup.day}`;
 }
 
 function currentDomainItems(domain: Record<string, unknown>, limit: number) {

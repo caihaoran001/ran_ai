@@ -41,6 +41,7 @@ class ServiceCaseRead(Timestamped):
     started_at: datetime | None
     service_plan_start_date: date | None = None
     ended_at: datetime | None
+    service_continued_at: datetime | None = None
     content_generated_at: datetime | None
     questionnaire_to_llm_output_ms: int | None
     notes: str | None

@@ -146,7 +146,7 @@ export function UserRecordDetails({
                     className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 transition-colors hover:border-cyan-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600"
                     href={`/cases/${item.id}`}
                   >
-                    <span className="text-break">{item.case_no} · {statusLabel(item.status)}</span>
+                    <span className="text-break">{item.case_no} · {statusLabel(item)}</span>
                     <ExternalLink className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
                   </Link>
                 ))}
@@ -318,7 +318,7 @@ function intentText(flags?: Array<Record<string, string | boolean>> | null) {
   return typeof latest.evidence === "string" && latest.evidence ? latest.evidence : "已识别";
 }
 
-function statusLabel(status: string) {
+function statusLabel(serviceCase: ServiceCase) {
   const labels: Record<string, string> = {
     created: "已创建",
     questionnaire_submitted: "已提交问卷",
@@ -330,5 +330,6 @@ function statusLabel(status: string) {
     completed: "已毕业",
     refunded: "已退款",
   };
-  return labels[status] || status;
+  if (serviceCase.status === "in_service" && serviceCase.service_continued_at) return "续服中";
+  return labels[serviceCase.status] || serviceCase.status;
 }

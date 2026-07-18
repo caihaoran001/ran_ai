@@ -83,8 +83,6 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const documentHistory = documentHistoryResult ?? documents;
   const questionnaireUrl = `${FRONTEND_BASE.replace(/\/$/, "")}/q/${serviceCase.questionnaire_token}`;
   const isGenerating = serviceCase.status === "generating";
-  const serviceGraduationDate = getServiceGraduationDate(serviceCase.started_at, serviceCase.service_plan_start_date);
-  const serviceWindowEnded = Boolean(serviceGraduationDate && chinaDateKey(new Date()) > serviceGraduationDate);
   const refunded = serviceCase.status === "refunded";
   const highRiskFlag = persistentHighRiskFlag(serviceCase.risk_flags);
   const structuredHealthHeadline = healthProfileHeadline(serviceCase.health_profile);
@@ -101,7 +99,10 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="page-heading">{serviceCase.case_no}</h1>
-              <StatusBadge status={serviceCase.status} />
+              <StatusBadge
+                status={serviceCase.status}
+                continued={Boolean(serviceCase.status === "in_service" && serviceCase.service_continued_at)}
+              />
             </div>
             <p className="text-break mt-2 text-sm text-slate-600">
               {serviceCase.user ? (
@@ -202,6 +203,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
             serviceCase.service_plan_start_date,
             serviceCase.ended_at,
             serviceCase.status,
+            serviceCase.service_continued_at,
           )}
           icon={Timer}
         />
@@ -336,7 +338,7 @@ function StructuredCheckin({ checkin }: { checkin: Checkin }) {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, continued = false }: { status: string; continued?: boolean }) {
   const statusConfig: Record<string, { label: string; className: string }> = {
     created: { label: "已创建", className: "border-slate-200 bg-slate-50 text-slate-700" },
     questionnaire_submitted: { label: "已提交问卷", className: "border-amber-200 bg-amber-50 text-amber-700" },
@@ -352,7 +354,9 @@ function StatusBadge({ status }: { status: string }) {
     archived: { label: "已归档·未发送", className: "border-slate-200 bg-slate-100 text-slate-500" },
   };
 
-  const config = statusConfig[status] || { label: status, className: "border-slate-200 bg-slate-50 text-slate-700" };
+  const config = continued
+    ? { label: "续服中", className: "border-cyan-200 bg-cyan-50 text-cyan-800" }
+    : statusConfig[status] || { label: status, className: "border-slate-200 bg-slate-50 text-slate-700" };
 
   if (status === "refunded") {
     return (
@@ -464,7 +468,12 @@ function formatServiceDuration(
   planStartDate?: string | null,
   endedAt?: string | null,
   status?: string | null,
+  continuedAt?: string | null,
 ) {
+  if (status === "in_service" && continuedAt) {
+    const day = getContinuousServiceDay(startedAt, planStartDate);
+    return day ? `续服中 · 第 ${day} 天` : "续服中";
+  }
   const graduationDate = getServiceGraduationDate(startedAt, planStartDate);
   if (graduationDate && chinaDateKey(new Date()) > graduationDate) {
     return `已于 ${formatDateKey(graduationDate)} 毕业`;
@@ -493,6 +502,15 @@ function formatServiceDuration(
   const hours = totalHours % 24;
   if (days <= 0) return `${hours}h`;
   return `${days}天零${hours}h`;
+}
+
+function getContinuousServiceDay(startedAt?: string | null, planStartDate?: string | null) {
+  const startDate = planStartDate || (startedAt ? chinaDateKey(new Date(startedAt)) : null);
+  if (!startDate) return null;
+  const today = chinaDateKey(new Date());
+  const diff = Date.parse(`${today}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`);
+  if (!Number.isFinite(diff) || diff < 0) return null;
+  return Math.floor(diff / 86_400_000) + 1;
 }
 
 function getServiceGraduationDate(startedAt?: string | null, planStartDate?: string | null) {

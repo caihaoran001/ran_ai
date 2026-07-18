@@ -220,6 +220,7 @@ function DeletedUserCard({ user }: { user: User }) {
 }
 
 function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
+  const continued = serviceCase.status === "in_service" && Boolean(serviceCase.service_continued_at);
   const statusColors: Record<string, string> = {
     created: "border-slate-200 bg-slate-50 text-slate-600",
     questionnaire_submitted: "border-amber-200 bg-amber-50 text-amber-700",
@@ -251,10 +252,10 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
     >
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="text-break text-sm font-semibold text-slate-950">{serviceCase.case_no}</div>
-        <span className={`status-pill ${statusColors[serviceCase.status] || "border-slate-200 bg-slate-50 text-slate-600"}`}>
+        <span className={`status-pill ${continued ? "border-cyan-200 bg-cyan-50 text-cyan-800" : statusColors[serviceCase.status] || "border-slate-200 bg-slate-50 text-slate-600"}`}>
           <span className="inline-flex items-center gap-1">
             {serviceCase.status === "generating" && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
-            {statusLabels[serviceCase.status] || serviceCase.status}
+            {continued ? "续服中" : statusLabels[serviceCase.status] || serviceCase.status}
           </span>
         </span>
         {serviceCase.risk_level === "high" && (

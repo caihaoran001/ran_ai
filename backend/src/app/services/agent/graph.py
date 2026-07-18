@@ -78,6 +78,7 @@ class RanrenAgentGraph:
             skill_registry=self.skill_registry,
             include_reminder_tools=include_reminder_tools,
             include_followup_preference_tools=include_reminder_tools,
+            include_service_lifecycle_tools=include_reminder_tools,
         )
         self.tools_by_name = {tool.name: tool for tool in self.tools}
         base_model = chat_model or create_agent_chat_model(self.settings)

@@ -9,15 +9,28 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
+from app.models.service_case import ServiceCaseStatus
 from app.services.reminder_service import _due_stage_reports
 from app.services.service_case_queries import service_graduation_date, service_window_ended
 
 TZ = ZoneInfo(get_settings().reminder_timezone)
 
 
-def _case(case_id=1, plan: date | None = None, started_at: datetime | None = None):
+def _case(
+    case_id=1,
+    plan: date | None = None,
+    started_at: datetime | None = None,
+    service_continued_at: datetime | None = None,
+    status: ServiceCaseStatus = ServiceCaseStatus.IN_SERVICE,
+):
     # 模拟 ServiceCase：_due_stage_reports 只用到 id / service_plan_start_date / started_at
-    return SimpleNamespace(id=case_id, service_plan_start_date=plan, started_at=started_at)
+    return SimpleNamespace(
+        id=case_id,
+        service_plan_start_date=plan,
+        started_at=started_at,
+        service_continued_at=service_continued_at,
+        status=status,
+    )
 
 
 def _at(y, m, d, hour=23):
@@ -75,3 +88,11 @@ def test_service_graduates_after_day28_not_on_day28():
     assert service_graduation_date(case, TZ) == date(2026, 6, 28)
     assert service_window_ended(case, _at(2026, 6, 28, 23), TZ) is False
     assert service_window_ended(case, _at(2026, 6, 29, 0), TZ) is True
+
+
+def test_continued_service_neither_regraduates_nor_regenerates_standard_reports():
+    continued_at = _at(2026, 7, 5, 10)
+    case = _case(plan=date(2026, 6, 1), service_continued_at=continued_at)
+
+    assert service_window_ended(case, _at(2026, 7, 5, 23), TZ) is False
+    assert _due_stage_reports(case, _at(2026, 7, 5, 23), TZ, set()) == []

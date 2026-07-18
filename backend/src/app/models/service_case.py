@@ -63,6 +63,12 @@ class ServiceCase(TimestampMixin, Base):
     # 用户在问卷选的「计划开始日期」：服务计时起点(打卡/阶段报告/看板服务天数都跟它)；空则回退 started_at
     service_plan_start_date: Mapped[date | None] = mapped_column(Date)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 已毕业后在原服务单上恢复续服的最近时间。状态为 IN_SERVICE 且此字段非空时，
+    # 原 28 天截止不再自动毕业；服务天数仍沿用原起点连续计算。
+    service_continued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 轻量审计轨迹：记录群内续服/结束服务动作的时间、来源消息和发送者。
+    # 不建新服务周期，也不覆盖历史聊天/打卡/文档。
+    service_lifecycle_events: Mapped[list[dict] | None] = mapped_column(JSON)
     content_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     questionnaire_to_llm_output_ms: Mapped[int | None] = mapped_column()
     notes: Mapped[str | None] = mapped_column(String(2000))

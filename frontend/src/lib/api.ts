@@ -40,6 +40,7 @@ export type ServiceCase = {
   started_at?: string | null;
   service_plan_start_date?: string | null;
   ended_at?: string | null;
+  service_continued_at?: string | null;
   content_generated_at?: string | null;
   questionnaire_to_llm_output_ms?: number | null;
   risk_level?: string;

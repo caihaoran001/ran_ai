@@ -1102,6 +1102,32 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         created_at=now - timedelta(minutes=1),
     )
     db_session.add(msg_f)
+
+    # Scenario G: 已毕业群的明确续服指令（应恢复，否则部署窗口会丢指令）
+    case_g = ServiceCase(
+        user_id=user.id,
+        case_no="CASE-G",
+        status=ServiceCaseStatus.COMPLETED,
+        ai_auto_reply_enabled=True,
+        group_id="group-g",
+        questionnaire_token="token-g",
+    )
+    db_session.add(case_g)
+    await db_session.flush()
+    msg_g = Message(
+        service_case_id=case_g.id,
+        group_id="group-g",
+        wecom_message_id="msg-g",
+        content="@燃人AI 继续服务",
+        message_type="text",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {"explicit_bot_query_text": "继续服务"}},
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_g)
     
     await db_session.flush()
     
@@ -1112,9 +1138,11 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     
     await recover_stuck_inbound_messages(FakeChannel(), now)
     
-    assert len(reprocess_calls) == 1
-    assert reprocess_calls[0].id == msg_a.id
-    assert reprocess_calls[0].content == "我需要补发这个回复。"
+    assert {item.id for item in reprocess_calls} == {msg_a.id, msg_g.id}
+    assert {item.content for item in reprocess_calls} == {
+        "我需要补发这个回复。",
+        "@燃人AI 继续服务",
+    }
 
 
 @pytest.mark.asyncio

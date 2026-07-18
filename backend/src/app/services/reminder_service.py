@@ -44,6 +44,7 @@ from app.services.service_case_queries import (
     checkin_day,
     effective_service_day,
     select_active_service_cases,
+    service_continuation_active,
     service_graduation_at,
     service_window_ended,
 )
@@ -1003,6 +1004,9 @@ def _due_stage_reports(
     默认值保留 23 供纯函数单测直接调用（勿改，测试依赖）。
     """
     if now.hour != generate_hour or now.minute < generate_minute:
+        return []
+    # 续服沿用原服务天数，不开启新一期，因此不回头补生成标准 28 天阶段/毕业报告。
+    if service_continuation_active(service_case):
         return []
     service_day = effective_service_day(service_case, now, tz)
     due: list[str] = []

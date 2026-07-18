@@ -23,7 +23,12 @@ from app.services.checkin_presentation import (
 )
 from app.services.checkin_queries import recent_checkins
 from app.services.checkin_service import CHECKIN_KEYS
-from app.services.service_case_queries import effective_service_day, effective_start_at, select_active_service_cases
+from app.services.service_case_queries import (
+    effective_service_day,
+    effective_start_at,
+    select_active_service_cases,
+    service_continuation_active,
+)
 
 
 class DaysArgs(BaseModel):
@@ -140,6 +145,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                 {"type": item.document_type.value, "title": item.title, "status": item.status.value}
                 for item in list(docs)[:8]
             ]
+            continuation_active = service_continuation_active(service_case)
             return {
                 "ok": True,
                 "status": service_case.status.value,
@@ -148,7 +154,15 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                 else None,
                 "started_at": start.isoformat() if start else None,
                 "service_day": day,
-                "service_day_text": f"第 {day} 天" if day >= 1 else "服务尚未正式开始",
+                "service_day_text": (
+                    f"第 {day} 天（续服中）"
+                    if day >= 1 and continuation_active
+                    else (f"第 {day} 天" if day >= 1 else "服务尚未正式开始")
+                ),
+                "continuation_active": continuation_active,
+                "service_continued_at": service_case.service_continued_at.isoformat()
+                if service_case.service_continued_at
+                else None,
                 "questionnaire_completed": service_case.status.value != "created",
                 "documents": document_statuses,
             }

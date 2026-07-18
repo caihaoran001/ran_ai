@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models.service_case import ServiceCase
+from app.models.service_case import ServiceCase, ServiceCaseStatus
 
 SERVICE_CASE_WINDOW_DAYS = 28
 
@@ -65,7 +65,21 @@ def service_graduation_date(service_case: ServiceCase, tz: ZoneInfo) -> _date | 
     return first + timedelta(days=SERVICE_CASE_WINDOW_DAYS - 1)
 
 
+def service_continuation_active(service_case: ServiceCase) -> bool:
+    """原服务单是否正处于续服中。
+
+    `service_continued_at` 是曾续服的审计标记，实时是否续服仍以当前
+    `IN_SERVICE` 状态为准；这样明确结束后无需擦除历史续服时间。
+    """
+    return (
+        getattr(service_case, "service_continued_at", None) is not None
+        and getattr(service_case, "status", None) == ServiceCaseStatus.IN_SERVICE
+    )
+
+
 def service_window_ended(service_case: ServiceCase, now: datetime, tz: ZoneInfo) -> bool:
+    if service_continuation_active(service_case):
+        return False
     graduation = service_graduation_date(service_case, tz)
     return graduation is not None and now.date() > graduation
 

@@ -95,6 +95,39 @@ async def test_graduated_case_rejects_new_checkin(admin_client, public_client, d
 
 
 @pytest.mark.asyncio
+async def test_continued_service_allows_checkin_after_original_day28(
+    admin_client, public_client, db_session
+):
+    suffix = uuid.uuid4().hex[:8]
+    user = User(name="Continued User", phone="13800000010")
+    db_session.add(user)
+    await db_session.flush()
+    service_case = ServiceCase(
+        case_no=f"CONT-{suffix}",
+        user_id=user.id,
+        group_id=f"test-continued-{suffix}",
+        questionnaire_token=f"tok-continued-{suffix}",
+        status=ServiceCaseStatus.IN_SERVICE,
+        service_plan_start_date=date(2026, 1, 1),
+        service_continued_at=datetime.now(timezone.utc),
+    )
+    db_session.add(service_case)
+    await db_session.flush()
+
+    checkin_resp = await admin_client.post(
+        f"/service-cases/{service_case.id}/checkins",
+        json={"content": "续服后打卡", "parsed_json": {"weight": "60"}},
+    )
+    assert checkin_resp.status_code == 201
+
+    questionnaire_resp = await public_client.get(
+        f"/questionnaires/{service_case.questionnaire_token}",
+        params={"template": "personalized_checkin"},
+    )
+    assert questionnaire_resp.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_backfill_historical_personalized_h5_answers_keeps_question_snapshot(db_session):
     now = datetime.now(timezone.utc)
     user = User(name="历史H5打卡用户")
