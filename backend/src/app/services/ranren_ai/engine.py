@@ -48,7 +48,7 @@ URL_PATTERN = re.compile(r"https?://[^\s<>()\"']+")
 PLACEHOLDER_USER_NAME = "待识别用户"
 _PLACEHOLDER_USER_NAMES = frozenset({PLACEHOLDER_USER_NAME, "待填写问卷用户"})
 GROUP_AI_INTRODUCTION = (
-    "大家好，我是燃人AI，很高兴加入这个群～\n\n"
+    "大家好，我是燃人助教，很高兴加入这个群～\n\n"
     "我会 24 小时在线，和群里的营养师一起为你提供持续支持。我可以：\n\n"
     "1. 提供健康生活方式相关资讯，回答日常执行中的问题；\n"
     "2. 提醒每日执行要点，帮你跟进计划；\n"
