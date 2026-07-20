@@ -77,31 +77,33 @@ async def get_service_case_stats(
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
 
-    messages = list(
-        await session.scalars(
-            select(Message)
-            .where(Message.service_case_id == service_case_id)
-            .order_by(Message.created_at.asc())
+    # 只做聚合，别把整段消息/打卡搬进内存（活跃群一个月可上千条，还会和聊天记录接口重复捞）
+    message_stats = await session.execute(
+        select(
+            func.count(Message.id),
+            func.count(Message.id).filter(Message.direction == MessageDirection.INBOUND),
+            func.count(Message.id).filter(Message.direction == MessageDirection.OUTBOUND),
+            func.max(Message.created_at),
+            func.max(Message.created_at).filter(Message.direction == MessageDirection.INBOUND),
+            func.min(Message.created_at).filter(Message.direction == MessageDirection.INBOUND),
+        ).where(Message.service_case_id == service_case_id)
+    )
+    (
+        message_count,
+        inbound_count,
+        outbound_count,
+        last_message_at,
+        last_user_message_at,
+        first_inbound_at,
+    ) = message_stats.one()
+
+    checkin_stats = await session.execute(
+        select(func.count(Checkin.id), func.max(Checkin.created_at)).where(
+            Checkin.service_case_id == service_case_id
         )
     )
-    checkins = list(
-        await session.scalars(
-            select(Checkin)
-            .where(Checkin.service_case_id == service_case_id)
-            .order_by(Checkin.created_at.asc())
-        )
-    )
-    inbound = [
-        message
-        for message in messages
-        if message.direction == MessageDirection.INBOUND
-    ]
-    outbound = [
-        message
-        for message in messages
-        if message.direction == MessageDirection.OUTBOUND
-    ]
-    first_inbound_at = inbound[0].created_at if inbound else None
+    checkin_count, last_checkin_at = checkin_stats.one()
+
     now = datetime.now(timezone.utc)
     days = 1.0
     if first_inbound_at:
@@ -127,14 +129,14 @@ async def get_service_case_stats(
     ai_calls, ai_tokens, ai_cost, ai_vision_cost, ai_deepseek_cost = ai_usage.one()
 
     return ServiceCaseStats(
-        message_count=len(messages),
-        inbound_message_count=len(inbound),
-        outbound_message_count=len(outbound),
-        avg_daily_inbound_messages=round(len(inbound) / days, 2),
-        last_message_at=messages[-1].created_at if messages else None,
-        last_user_message_at=inbound[-1].created_at if inbound else None,
-        checkin_count=len(checkins),
-        last_checkin_at=checkins[-1].created_at if checkins else None,
+        message_count=message_count,
+        inbound_message_count=inbound_count,
+        outbound_message_count=outbound_count,
+        avg_daily_inbound_messages=round(inbound_count / days, 2),
+        last_message_at=last_message_at,
+        last_user_message_at=last_user_message_at,
+        checkin_count=checkin_count,
+        last_checkin_at=last_checkin_at,
         ai_total_calls=ai_calls or 0,
         ai_total_tokens=ai_tokens or 0,
         ai_estimated_cost_yuan=round(float(ai_cost or 0), 6),

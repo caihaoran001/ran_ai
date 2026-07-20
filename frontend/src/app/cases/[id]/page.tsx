@@ -33,6 +33,9 @@ import {
   Zap,
 } from "lucide-react";
 
+// 聊天记录默认只取最近 N 条，避免一次拉全量群消息拖慢整页渲染；需要看更早的可后续做「加载更多」
+const CHAT_MESSAGE_LIMIT = 200;
+
 const PERSISTENT_HIGH_RISK_CODES = new Set([
   "elderly_age",
   "pregnancy",
@@ -76,7 +79,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
     api<UserDocument[]>(`/service-cases/${id}/documents?include_history=true`).catch(() => null),
     api<Checkin[]>(`/service-cases/${id}/checkins`).catch(() => []),
     api<ServiceCaseStats>(`/service-cases/${id}/stats`).catch(() => null),
-    api<Message[]>(`/service-cases/${id}/messages`).catch(() => []),
+    api<Message[]>(`/service-cases/${id}/messages?limit=${CHAT_MESSAGE_LIMIT}`).catch(() => []),
     api<OutcomeBundle>(`/service-cases/${id}/outcomes`).catch(() => null),
     api<Questionnaire>(`/questionnaires/${serviceCase.questionnaire_token}`).catch(() => null),
   ]);
@@ -192,7 +195,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         />
         <InfoCard title="交付文件" value={`${documents.length} 份`} icon={FileText} className="xl:col-span-2" />
         <InfoCard title="打卡记录" value={`${checkins.length} 条`} icon={CheckCircle2} className="xl:col-span-2" />
-        <InfoCard title="聊天记录" value={`${messages.length} 条`} icon={MessageCircle} className="xl:col-span-2" />
+        <InfoCard title="聊天记录" value={`${stats?.message_count ?? messages.length} 条`} icon={MessageCircle} className="xl:col-span-2" />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
@@ -306,7 +309,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           </div>
         </div>
 
-        <ChatMessages messages={messages} userName={serviceCase.user?.name} />
+        <ChatMessages messages={messages} userName={serviceCase.user?.name} totalCount={stats?.message_count} />
       </div>
     </div>
   );

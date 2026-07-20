@@ -29,7 +29,16 @@ function ChatImage({ messageId, alt }: { messageId: number; alt: string }) {
   );
 }
 
-export function ChatMessages({ messages, userName }: { messages: Message[]; userName?: string | null }) {
+export function ChatMessages({
+  messages,
+  userName,
+  totalCount,
+}: {
+  messages: Message[];
+  userName?: string | null;
+  totalCount?: number | null;
+}) {
+  const truncated = typeof totalCount === "number" && totalCount > messages.length;
   const [expanded, setExpanded] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -54,7 +63,9 @@ export function ChatMessages({ messages, userName }: { messages: Message[]; user
     <section className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-medium">聊天记录</h2>
-        <span className="text-sm text-slate-500">{messages.length} 条</span>
+        <span className="text-sm text-slate-500">
+          {truncated ? `最近 ${messages.length} / 共 ${totalCount} 条` : `${messages.length} 条`}
+        </span>
       </div>
       <div ref={listRef} className="mt-3 max-h-[480px] overflow-y-auto space-y-3 pr-1">
         {displayMessages.map((msg) => (
