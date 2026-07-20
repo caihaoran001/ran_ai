@@ -296,6 +296,15 @@ _SUPPLEMENT_STATUS_LABELS = {
     "stopped": "已停用",
 }
 
+# 补剂品类：档案官结构化输出 supplement_category，画像按人数分桶。
+_SUPPLEMENT_CATEGORY_LABELS = {
+    "micronutrient": "维生素等微量营养补充",
+    "macronutrient": "蛋白粉/膳食纤维/健康油脂等宏量营养补充",
+    "health_supplement": "保健品补品（如人参制品）",
+    "herbal": "中式草本（药材/代用茶）",
+    "other": "其他补剂",
+}
+
 _PORTRAIT_OPTION_LABELS: dict[str, dict[str, str]] = {
     "main_need": {
         "感觉总是累、没精神": "疲劳、没精神",
@@ -388,6 +397,16 @@ _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
         "description": (
             "从群聊原话沉淀的具体补剂及当前状态；"
             "‘咨询/考虑使用’不等同于已在使用。"
+        ),
+        "numeric": False,
+        "multi_select": True,
+    },
+    {
+        "key": "supplement_category",
+        "label": "补剂品类分布",
+        "description": (
+            "按品类汇总用户自发使用/咨询的补剂：微量营养、宏量营养、保健补品、中式草本等；"
+            "同一用户可进入多个品类，按人数去重计数。"
         ),
         "numeric": False,
         "multi_select": True,
@@ -681,6 +700,9 @@ async def _compute_case_portrait_labels(
                 fields, answers, "sleep_quality", "睡眠质量的主观评价"
             ),
             "supplement_habit": _supplement_portrait_labels(state_json_by_case.get(cid)),
+            "supplement_category": _supplement_category_portrait_labels(
+                state_json_by_case.get(cid)
+            ),
         }
         labels.update(health_profile_dimension_labels(health_by_case.get(cid)))
         for dim in _PORTRAIT_DIMENSIONS:
@@ -744,12 +766,8 @@ def _questionnaire_portrait_option_order(
     return []
 
 
-def _supplement_portrait_labels(state_json: Any) -> list[str]:
-    """把动态画像中当前补剂事实转成群体画像分桶标签。
-
-    具体补剂名和使用状态由档案官结构化工具输出，这里不从自由文本
-    或关键词反向猜测；缺少结构化字段的旧数据按未采集处理。
-    """
+def _supplement_current_facts(state_json: Any) -> list[dict[str, Any]]:
+    """从动态画像取出当前补剂事实列表（供明细与品类两个维度共用）。"""
 
     state = state_json if isinstance(state_json, dict) else {}
     domains = state.get("domains") if isinstance(state.get("domains"), dict) else {}
@@ -758,15 +776,42 @@ def _supplement_portrait_labels(state_json: Any) -> list[str]:
     current_value = current.get("value") if isinstance(current.get("value"), dict) else {}
     raw_facts = current_value.get("supplement_habit")
     facts = raw_facts if isinstance(raw_facts, list) else [raw_facts]
+    return [fact for fact in facts if isinstance(fact, dict)]
+
+
+def _supplement_portrait_labels(state_json: Any) -> list[str]:
+    """把动态画像中当前补剂事实转成群体画像分桶标签。
+
+    具体补剂名和使用状态由档案官结构化工具输出，这里不从自由文本
+    或关键词反向猜测；缺少结构化字段的旧数据按未采集处理。
+    """
+
     labels: list[str] = []
-    for fact in facts:
-        if not isinstance(fact, dict):
-            continue
+    for fact in _supplement_current_facts(state_json):
         supplement_name = str(fact.get("supplement_name") or "").strip()
         status_label = _SUPPLEMENT_STATUS_LABELS.get(str(fact.get("habit_status") or "").strip())
         if not supplement_name or not status_label:
             continue
         label = f"{supplement_name} · {status_label}"
+        if label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _supplement_category_portrait_labels(state_json: Any) -> list[str]:
+    """把当前补剂事实按品类去重成群体画像分桶标签（每单每品类计一次）。
+
+    品类由档案官结构化字段 supplement_category 决定；缺该字段的旧数据
+    归入『其他补剂』，不从补剂名反向猜测品类。
+    """
+
+    labels: list[str] = []
+    for fact in _supplement_current_facts(state_json):
+        supplement_name = str(fact.get("supplement_name") or "").strip()
+        if not supplement_name:
+            continue
+        category = str(fact.get("supplement_category") or "").strip()
+        label = _SUPPLEMENT_CATEGORY_LABELS.get(category, _SUPPLEMENT_CATEGORY_LABELS["other"])
         if label not in labels:
             labels.append(label)
     return labels

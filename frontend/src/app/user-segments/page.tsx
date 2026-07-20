@@ -22,6 +22,7 @@ const HABIT_DISTRIBUTION_KEYS = new Set([
   "sleep_problem",
   "sleep_quality",
   "supplement_habit",
+  "supplement_category",
 ]);
 
 function topBucket(distribution: PopulationDistribution | undefined) {

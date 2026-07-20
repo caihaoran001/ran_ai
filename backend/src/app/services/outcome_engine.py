@@ -495,6 +495,13 @@ def _normalize_profile_signals(value: Any) -> list[dict[str, Any]]:
                 continue
             signal["supplement_name"] = supplement_name
             signal["habit_status"] = habit_status
+            supplement_category = _string(item.get("supplement_category"))
+            signal["supplement_category"] = (
+                supplement_category
+                if supplement_category
+                in {"micronutrient", "macronutrient", "health_supplement", "herbal", "other"}
+                else "other"
+            )
         signals.append(signal)
     return signals[:5]
 

@@ -303,6 +303,7 @@ async def test_population_portrait_endpoint_shape(admin_client):
         "sleep_problem",
         "sleep_quality",
         "supplement_habit",
+        "supplement_category",
         "health_domain",
         "health_condition",
         "medication_category",

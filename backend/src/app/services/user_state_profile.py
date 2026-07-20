@@ -326,9 +326,18 @@ async def apply_profile_signals_to_user_state(
 
         supplement_name = str(signal.get("supplement_name") or "").strip()
         habit_status = str(signal.get("habit_status") or "").strip()
+        supplement_category = str(signal.get("supplement_category") or "").strip()
         if signal_type == "supplement_habit":
             if not supplement_name or habit_status not in {"using", "considering", "stopped"}:
                 continue
+            if supplement_category not in {
+                "micronutrient",
+                "macronutrient",
+                "health_supplement",
+                "herbal",
+                "other",
+            }:
+                supplement_category = "other"
             value = _supplement_fact_value(supplement_name, habit_status)
 
         # 补剂使用与咨询可与用药/健康咨询同时出现；工具 schema 已要求模型
@@ -376,6 +385,7 @@ async def apply_profile_signals_to_user_state(
                 {
                     "supplement_name": supplement_name,
                     "habit_status": habit_status,
+                    "supplement_category": supplement_category,
                 }
                 if signal_type == "supplement_habit"
                 else None

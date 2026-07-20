@@ -118,8 +118,28 @@ class ReportProfileFactArgs(BaseModel):
     supplement_name: str | None = Field(
         default=None,
         description=(
-            "仅 signal_type=supplement_habit 时必填：用户明确提到的具体补剂名称，"
-            "如鱼油/维生素D/辅酶Q10。不得填处方药、普通食物或训练营产品"
+            "仅 signal_type=supplement_habit 时必填：用户自发在用/在吃/在咨询的具体补充剂名称。"
+            "范围要放宽——除了鱼油/维生素D/辅酶Q10 这类，用户自己买的蛋白粉、膳食纤维、代餐、"
+            "生酮/减脂产品、益生菌、保健品、人参/阿胶等补品、以及泡的药材/代用茶都算。"
+            "只排除两类：①处方药/治疗性药物；②我们自己给的早C午B晚A（训练营配发产品）。"
+            "普通一日三餐食材不算。"
+        ),
+    )
+    supplement_category: Literal[
+        "micronutrient",
+        "macronutrient",
+        "health_supplement",
+        "herbal",
+        "other",
+    ] | None = Field(
+        default=None,
+        description=(
+            "仅 signal_type=supplement_habit 时必填：给上面的补剂归类。"
+            "micronutrient=维生素/矿物质等微量营养补充（维生素D、钙、铁、复合维生素等）；"
+            "macronutrient=蛋白粉/膳食纤维/健康油脂/代餐等宏量营养补充；"
+            "health_supplement=保健品/补品（人参、阿胶、燕窝、蜂蜜、益生菌、鱼油等成品保健品）；"
+            "herbal=中式草本（泡的药材、代用茶、枸杞红枣等自泡饮）；"
+            "other=确实无法归入以上四类的其他补剂"
         ),
     )
     habit_status: Literal["using", "considering", "stopped"] | None = Field(
