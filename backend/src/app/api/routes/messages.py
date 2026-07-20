@@ -26,6 +26,7 @@ router = APIRouter()
 async def list_case_messages(
     service_case_id: int,
     limit: int | None = Query(default=None, ge=1, le=200),
+    before_id: int | None = Query(default=None, ge=1),
     session: AsyncSession = Depends(get_session),
 ) -> list[Message]:
     service_case = await get_service_case(session, service_case_id)
@@ -48,6 +49,9 @@ async def list_case_messages(
             Message.id.desc() if limit else Message.id.asc(),
         )
     )
+    # 游标翻页：加载更多历史时传入当前最旧一条的 id，只取比它更早的
+    if before_id:
+        statement = statement.where(Message.id < before_id)
     if limit:
         statement = statement.limit(limit)
     rows = list(await session.scalars(statement))

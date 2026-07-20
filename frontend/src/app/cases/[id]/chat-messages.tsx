@@ -30,23 +30,66 @@ function ChatImage({ messageId, alt }: { messageId: number; alt: string }) {
 }
 
 export function ChatMessages({
+  serviceCaseId,
   messages,
   userName,
   totalCount,
+  pageSize = 50,
 }: {
+  serviceCaseId: number;
   messages: Message[];
   userName?: string | null;
   totalCount?: number | null;
+  pageSize?: number;
 }) {
-  const truncated = typeof totalCount === "number" && totalCount > messages.length;
-  const [expanded, setExpanded] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const didInitialScroll = useRef(false);
+  const [older, setOlder] = useState<Message[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [exhausted, setExhausted] = useState(false);
 
+  // 服务端已给最新一批(升序)，older 累积更早的历史，拼成完整升序列表
+  const allMessages = [...older, ...messages];
+  const loadedCount = allMessages.length;
+  const hasMore =
+    !exhausted && typeof totalCount === "number" && totalCount > loadedCount;
+  const truncated = typeof totalCount === "number" && totalCount > loadedCount;
+
+  // 仅首次挂载时滚到底；加载更早历史(向上追加)不再抢滚动
   useEffect(() => {
     const list = listRef.current;
-    if (!list) return;
+    if (!list || didInitialScroll.current) return;
     list.scrollTop = list.scrollHeight;
-  }, [messages.length]);
+    didInitialScroll.current = true;
+  }, []);
+
+  async function handleLoadMore() {
+    if (loadingMore || allMessages.length === 0) return;
+    setLoadingMore(true);
+    const list = listRef.current;
+    const prevScrollHeight = list?.scrollHeight ?? 0;
+    try {
+      const oldestId = allMessages[0].id;
+      const res = await fetch(
+        `/api/backend/service-cases/${serviceCaseId}/messages?limit=${pageSize}&before_id=${oldestId}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) throw new Error(`load more failed: ${res.status}`);
+      const batch: Message[] = await res.json();
+      if (batch.length < pageSize) setExhausted(true);
+      if (batch.length > 0) {
+        setOlder((prev) => [...batch, ...prev]);
+        // 追加到顶部后保持视口停在原来的位置，避免跳动
+        requestAnimationFrame(() => {
+          if (list) list.scrollTop = list.scrollHeight - prevScrollHeight;
+        });
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   if (messages.length === 0) {
     return (
@@ -57,17 +100,29 @@ export function ChatMessages({
     );
   }
 
-  const displayMessages = messages;
+  const displayMessages = allMessages;
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-medium">聊天记录</h2>
         <span className="text-sm text-slate-500">
-          {truncated ? `最近 ${messages.length} / 共 ${totalCount} 条` : `${messages.length} 条`}
+          {truncated ? `已加载 ${loadedCount} / 共 ${totalCount} 条` : `${loadedCount} 条`}
         </span>
       </div>
       <div ref={listRef} className="mt-3 max-h-[480px] overflow-y-auto space-y-3 pr-1">
+        {hasMore && (
+          <div className="flex justify-center pb-1">
+            <button
+              type="button"
+              onClick={handleLoadMore}
+              disabled={loadingMore}
+              className="rounded-full border border-slate-200 bg-slate-50 px-4 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loadingMore ? "加载中…" : "加载更早的记录"}
+            </button>
+          </div>
+        )}
         {displayMessages.map((msg) => (
           <div
             key={msg.id}

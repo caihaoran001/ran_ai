@@ -33,8 +33,8 @@ import {
   Zap,
 } from "lucide-react";
 
-// 聊天记录默认只取最近 N 条，避免一次拉全量群消息拖慢整页渲染；需要看更早的可后续做「加载更多」
-const CHAT_MESSAGE_LIMIT = 200;
+// 聊天记录默认只取最近 N 条，避免一次拉全量群消息拖慢整页渲染；更早的靠「加载更多」游标翻页
+const CHAT_MESSAGE_LIMIT = 50;
 
 const PERSISTENT_HIGH_RISK_CODES = new Set([
   "elderly_age",
@@ -309,7 +309,13 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           </div>
         </div>
 
-        <ChatMessages messages={messages} userName={serviceCase.user?.name} totalCount={stats?.message_count} />
+        <ChatMessages
+          serviceCaseId={serviceCase.id}
+          messages={messages}
+          userName={serviceCase.user?.name}
+          totalCount={stats?.message_count}
+          pageSize={CHAT_MESSAGE_LIMIT}
+        />
       </div>
     </div>
   );
