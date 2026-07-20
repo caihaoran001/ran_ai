@@ -346,7 +346,7 @@ async def _sent_execution_document(db_session, case: ServiceCase) -> UserDocumen
                     "今天是否至少吃到2拳蔬菜",
                     "今天是否完成计划内快走",
                     "睡眠是否按计划收口",
-                    "情绪稳定度评分",
+                    "请给今天的情绪稳定度和饭后困打分（1-5）",
                 ]}
             ]
         },
@@ -382,6 +382,8 @@ async def test_document_checklist_reviews_yesterday_and_only_missing_items(db_se
         f"document:{document.id}:3", f"document:{document.id}:4", f"document:{document.id}:5"
     ]
     assert "早C" not in followup.text
+    assert "今天" not in followup.text and "今日" not in followup.text
+    assert "昨天" in followup.text
     assert "回我一句，我记上，后面好帮你调整～" in followup.text
 
     fake = _FakeAI("早上好，补一下昨天的运动和睡眠～回我一句，我记上，后面好帮你调整～")
@@ -389,6 +391,36 @@ async def test_document_checklist_reviews_yesterday_and_only_missing_items(db_se
         db_session, service_case=case, target_date=yesterday, ai_service=fake
     )
     assert "助教会记上并据此帮助后续调整" in fake.calls[0]["system"]
+
+
+@pytest.mark.asyncio
+async def test_document_checklist_rebases_today_and_rejects_llm_time_drift(db_session):
+    """回归 RAI-20260622-502EB2：旧题面含“今天”时不得混入次日追问。"""
+    case = await _case(db_session)
+    await _sent_execution_document(db_session, case)
+    yesterday = date.today() - timedelta(days=1)
+    bad_copy = (
+        "昨天晚A吃了吗？午餐蔬菜够2拳不？"
+        "还有今天的情绪稳定度和饭后困按1-5打分～"
+    )
+    fake = _FakeAI(bad_copy)
+
+    followup = await compose_document_checklist_followup(
+        db_session,
+        service_case=case,
+        target_date=yesterday,
+        reference_date=date.today(),
+        ai_service=fake,
+    )
+
+    assert followup is not None
+    assert followup.text != bad_copy
+    assert "昨天" in followup.text
+    assert "今天" not in followup.text and "今日" not in followup.text
+    # 模型看到的题面已换算，而审计/答案匹配仍保留原题。
+    assert "今天" not in fake.calls[0]["user"]
+    assert "昨天的情绪稳定度和饭后困" in fake.calls[0]["user"]
+    assert any("请给今天的情绪稳定度" in item["label"] for item in followup.expected_items)
 
 
 @pytest.mark.asyncio

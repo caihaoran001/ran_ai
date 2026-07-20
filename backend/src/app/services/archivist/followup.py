@@ -16,6 +16,7 @@ H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -339,14 +340,83 @@ def _first_item_missing_label(checkin: Checkin | None, items: list[dict[str, str
     return "、".join(missing_slots)
 
 
+def _relative_date_label(value: date, *, reference_date: date) -> str:
+    """把确定日期渲染成发送当天可理解的时间词。"""
+    delta_days = (reference_date - value).days
+    if delta_days == 0:
+        return "今天"
+    if delta_days == 1:
+        return "昨天"
+    if delta_days == 2:
+        return "前天"
+    return f"{value.month}月{value.day}日"
+
+
+def _rebase_checklist_label(
+    label: str, *, target_date: date, reference_date: date
+) -> str:
+    """将清单题面的相对时间从“填写日”换算到“追问日”。
+
+    执行单/人工清单保留原文以便审计和答案匹配；只有发给用户的展示副本
+    在这里换算。题面中“今天”指 target_date，“昨天”指 target_date - 1。
+    """
+    target_label = _relative_date_label(target_date, reference_date=reference_date)
+    previous_label = _relative_date_label(
+        target_date - timedelta(days=1), reference_date=reference_date
+    )
+    replacements = {
+        "昨天晚上": f"{previous_label}晚上",
+        "昨日晚上": f"{previous_label}晚上",
+        "昨日晚间": f"{previous_label}晚上",
+        "昨晚": f"{previous_label}晚上",
+        "昨天早上": f"{previous_label}早上",
+        "昨日早上": f"{previous_label}早上",
+        "今天早上": f"{target_label}早上",
+        "今日早上": f"{target_label}早上",
+        "今早": f"{target_label}早上",
+        "今天晚上": f"{target_label}晚上",
+        "今日晚上": f"{target_label}晚上",
+        "今日晚间": f"{target_label}晚上",
+        "今晚": f"{target_label}晚上",
+        "今天": target_label,
+        "今日": target_label,
+        "当天": target_label,
+        "本日": target_label,
+        "昨天": previous_label,
+        "昨日": previous_label,
+    }
+    pattern = re.compile("|".join(re.escape(marker) for marker in replacements))
+    return pattern.sub(
+        lambda match: replacements[match.group(0)], str(label or "").strip()
+    )
+
+
+def _is_valid_checklist_followup_time(
+    text: str, *, target_date: date, reference_date: date
+) -> bool:
+    """发送前确保 LLM 没有把后端已确定的目标日期改回“今天”。"""
+    if not text:
+        return False
+    target_label = _relative_date_label(target_date, reference_date=reference_date)
+    explicit_date = f"{target_date.month}月{target_date.day}日"
+    if target_date < reference_date and any(
+        marker in text for marker in ("今天", "今日", "今早", "今晚")
+    ):
+        return False
+    return target_label in text or explicit_date in text
+
+
 async def compose_document_checklist_followup(
     session: AsyncSession,
     *,
     service_case: ServiceCase,
     target_date: date,
+    reference_date: date | None = None,
     ai_service: object | None = None,
 ) -> ScheduledFollowup | None:
     """Ask only unanswered items from yesterday's effective five-item checklist."""
+    # 正常调度由调用方传发送日；直接调用时按本函数“次日回顾”合同处理。
+    reference_date = reference_date or target_date + timedelta(days=1)
     checklist = await get_active_daily_checklist(session, service_case_id=service_case.id)
     if checklist is None:
         return None
@@ -370,8 +440,18 @@ async def compose_document_checklist_followup(
             missing.append(item)
     if not missing:
         return None
-    labels = "；".join(item["label"] for item in missing)
-    fallback = f"早上好，补一下昨天的打卡：{labels}。回我一句，我记上，后面好帮你调整～"
+    target_label = _relative_date_label(target_date, reference_date=reference_date)
+    display_labels = [
+        _rebase_checklist_label(
+            item["label"], target_date=target_date, reference_date=reference_date
+        )
+        for item in missing
+    ]
+    labels = "；".join(display_labels)
+    fallback = (
+        f"早上好，补一下{target_label}的打卡：{labels}。"
+        "回我一句，我记上，后面好帮你调整～"
+    )
     try:
         if ai_service is None:
             from app.services.ai_service.client import AIService
@@ -379,15 +459,26 @@ async def compose_document_checklist_followup(
             ai_service = AIService()
         text = await ai_service.generate_text(
             system_prompt=(
-                "你是燃人微信群健康助教。用一句不超过100字、口语化的中文，请用户回顾昨天尚未回答的打卡项。"
+                "你是燃人微信群健康助教。后端已确定本轮唯一的打卡目标日期，"
+                "题面中的相对时间也已换算完成；不得改动日期或自行重新换算。"
+                f"用一句不超过100字、口语化的中文，请用户回顾{target_label}尚未回答的打卡项。"
+                f"必须明确说出『{target_label}』；若目标日期早于发送日，不得出现『今天』『今日』『今早』或『今晚』。"
                 "可将多个问题自然合并，但不得增加清单外的问题，不要使用编号。"
                 "结尾自然说明用户回一句即可，助教会记上并据此帮助后续调整；简短、不施压。"
             ),
-            user_prompt=f"昨天尚未回答的打卡项：{labels}",
+            user_prompt=(
+                f"发送日期：{reference_date.isoformat()}；"
+                f"打卡目标日期：{target_date.isoformat()}（{target_label}）；"
+                f"尚未回答的打卡项：{labels}"
+            ),
             scenario="checkin_followup",
             service_case_id=service_case.id,
         )
-        text = (text or "").strip() or fallback
+        text = (text or "").strip()
+        if not _is_valid_checklist_followup_time(
+            text, target_date=target_date, reference_date=reference_date
+        ):
+            text = fallback
     except Exception:  # noqa: BLE001 - proactive reminder must never stop the scheduler
         text = fallback
     return ScheduledFollowup(
@@ -442,6 +533,7 @@ async def compose_scheduled_followups(
             session,
             service_case=service_case,
             target_date=now.date() - timedelta(days=1),
+            reference_date=now.date(),
             ai_service=ai_service,
         )
         if daily:
