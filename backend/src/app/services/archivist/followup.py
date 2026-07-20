@@ -6,7 +6,7 @@ H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部
 组织候选，各类各占各的时间窗与天级去重闸（`ReminderEvent(rule_id="checkin_followup:{kind}")`）、
 每天最多 3 条：
 
-- 五项清单（daily_checklist）：早上回顾**昨天**执行单里尚未回答的项（第1项 = 早C/午B/晚A）。
+- 五项清单（daily_checklist）：早上回顾**昨天**当前生效清单里尚未回答的项；系统清单第1项跟踪早C/午B/晚A，工作人员自定义清单不强加该语义。
 - 矛盾核对（contradiction）：表单值≠聊天值时下午发一句自然核对。
 - 次晨空腹打卡提醒（milestone）：day7/14/21/28 前一晚提醒用户次日早起如厕后、空腹测量并打卡。
 
@@ -26,8 +26,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.checkin import Checkin
 from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.service_case import ServiceCase
-from app.models.user_document import DocumentStatus, DocumentType, UserDocument
-from app.services.intake_generation import personalized_checkin_fields_from_document_payloads
+from app.services.checkin_checklists import (
+    TRACKING_PRODUCT_SCHEDULE,
+    get_effective_daily_checklist,
+)
 from app.services.checkin_followup_preferences import get_followup_preference_states
 from app.services.service_case_queries import effective_service_day
 
@@ -289,37 +291,21 @@ class ScheduledFollowup:
     confirmation_fields: list[str] = field(default_factory=list)
 
 
-async def get_sent_daily_checklist(
+async def get_active_daily_checklist(
     session: AsyncSession, *, service_case_id: int
-) -> tuple[int, list[dict[str, str]]] | None:
-    """Return the five questions from the latest document actually delivered to the user."""
-    document = await session.scalar(
-        select(UserDocument)
-        .where(
-            UserDocument.service_case_id == service_case_id,
-            UserDocument.document_type == DocumentType.DAY28_EXECUTION_STANDARD,
-            UserDocument.status == DocumentStatus.SENT,
-        )
-        .order_by(UserDocument.sent_at.desc(), UserDocument.id.desc())
-        .limit(1)
+) -> tuple[str, list[dict[str, str]]] | None:
+    """Return the effective versioned checklist, independent of file delivery."""
+    checklist = await get_effective_daily_checklist(
+        session, service_case_id=service_case_id
     )
-    if document is None or not isinstance(document.content_json, dict):
-        return None
-    fields = personalized_checkin_fields_from_document_payloads(
-        {DocumentType.DAY28_EXECUTION_STANDARD.value: document.content_json}
-    )
-    items = [
-        {"id": f"document:{document.id}:{index}", "label": str(field["title"]).strip()}
-        for index, field in enumerate(fields[:5], start=1)
-        if str(field.get("title") or "").strip()
-    ]
-    return (document.id, items) if len(items) == 5 else None
+    items = checklist.resolved_items()
+    return (checklist.source_ref, items) if len(items) == 5 else None
 
 
-def _answered_document_items(checkin: Checkin | None, items: list[dict[str, str]]) -> set[str]:
+def _answered_checklist_items(checkin: Checkin | None, items: list[dict[str, str]]) -> set[str]:
     """已答的自定义清单项（custom_checkin）。
 
-    第1项是早C/午B/晚A三合一，不在此判定——它按子产品逐项判缺，见 `_first_item_missing_label`。
+    系统清单第1项若标记为早C/午B/晚A三合一，则按子产品逐项判缺；工作人员自定义项正常按 item_id 判定。
     """
     parsed = checkin.parsed_json if checkin and isinstance(checkin.parsed_json, dict) else {}
     answers = parsed.get("custom_checkin") if isinstance(parsed, dict) else None
@@ -360,8 +346,8 @@ async def compose_document_checklist_followup(
     target_date: date,
     ai_service: object | None = None,
 ) -> ScheduledFollowup | None:
-    """Ask only unanswered items from yesterday's delivered five-item checklist."""
-    checklist = await get_sent_daily_checklist(session, service_case_id=service_case.id)
+    """Ask only unanswered items from yesterday's effective five-item checklist."""
+    checklist = await get_active_daily_checklist(session, service_case_id=service_case.id)
     if checklist is None:
         return None
     _, items = checklist
@@ -372,10 +358,10 @@ async def compose_document_checklist_followup(
             Checkin.deleted_at.is_(None),
         )
     )
-    answered = _answered_document_items(checkin, items)
+    answered = _answered_checklist_items(checkin, items)
     missing: list[dict[str, str]] = []
     for index, item in enumerate(items):
-        if index == 0:
+        if index == 0 and item.get("tracking_kind") == TRACKING_PRODUCT_SCHEDULE:
             # 第1项三合一：只追尚未上报的子产品（早C/午B/晚A），已报的不重复问。
             first_label = _first_item_missing_label(checkin, items)
             if first_label is not None:

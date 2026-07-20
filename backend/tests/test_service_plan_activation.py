@@ -83,6 +83,27 @@ async def test_scheduler_activates_due_reviewing_case(db_session, mock_session_l
 
 
 @pytest.mark.asyncio
+async def test_scheduler_aligns_legacy_active_start_to_plan_date(
+    db_session, mock_session_local
+):
+    service_case = _case(
+        status=ServiceCaseStatus.IN_SERVICE,
+        plan=date(2026, 7, 20),
+    )
+    service_case.started_at = datetime(2026, 7, 22, 9, 0, tzinfo=TZ)
+    db_session.add(service_case)
+    await db_session.flush()
+
+    await ReminderService(get_settings()).check_service_starts_once(
+        now=datetime(2026, 7, 23, 8, 0, tzinfo=TZ)
+    )
+
+    await db_session.refresh(service_case)
+    assert service_case.status == ServiceCaseStatus.IN_SERVICE
+    assert service_case.started_at == datetime(2026, 7, 20, 0, 0, tzinfo=TZ)
+
+
+@pytest.mark.asyncio
 async def test_sending_document_no_longer_starts_service(
     db_session, monkeypatch, tmp_path
 ):

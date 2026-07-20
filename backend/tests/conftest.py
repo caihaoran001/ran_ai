@@ -457,9 +457,16 @@ async def mock_ai():
 @pytest_asyncio.fixture(loop_scope="session")
 async def db_session():
     from app.db.session import SessionLocal
+    from app.models.checkin_checklist_version import CheckinChecklistVersion
 
     async with SessionLocal() as session:
         trans = await session.begin()
+        connection = await session.connection()
+        await connection.run_sync(
+            lambda sync_connection: CheckinChecklistVersion.__table__.create(
+                sync_connection, checkfirst=True
+            )
+        )
         
         orig_commit = session.commit
         async def mock_commit():
@@ -518,6 +525,7 @@ async def mock_session_local(db_session):
         "app.services.qiwe_service.inbox",
         "app.services.agent.tools.reminder_tools",
         "app.services.agent.tools.service_case_tools",
+        "app.services.agent.tools.checkin_checklist_tools",
         "app.services.agent.tools.followup_preference_tools",
         "app.services.agent.tools.service_lifecycle_tools",
         "app.services.agent.tools.knowledge_tools",

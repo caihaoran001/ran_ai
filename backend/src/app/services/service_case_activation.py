@@ -46,6 +46,33 @@ def activate_service_case_if_due(
     return True
 
 
+def align_active_service_start_with_plan(
+    service_case: ServiceCase,
+    *,
+    now: datetime,
+    tz: ZoneInfo,
+) -> bool:
+    """Repair active legacy cases whose started_at still reflects file delivery."""
+    if service_case.status != ServiceCaseStatus.IN_SERVICE:
+        return False
+    planned_start = planned_service_start_at(service_case, tz)
+    if planned_start is None:
+        return False
+    local_now = now.replace(tzinfo=tz) if now.tzinfo is None else now.astimezone(tz)
+    if service_case.service_plan_start_date > local_now.date():
+        return False
+    current_start = service_case.started_at
+    if current_start is not None:
+        if current_start.tzinfo is None:
+            current_start = current_start.replace(tzinfo=timezone.utc)
+        else:
+            current_start = current_start.astimezone(timezone.utc)
+    if current_start == planned_start:
+        return False
+    service_case.started_at = planned_start
+    return True
+
+
 def set_pre_service_status_or_activate(
     service_case: ServiceCase,
     pending_status: ServiceCaseStatus,

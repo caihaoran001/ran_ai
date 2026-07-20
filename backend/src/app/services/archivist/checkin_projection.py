@@ -19,10 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.checkin import Checkin
 from app.models.service_case import ServiceCase
-from app.models.user_document import UserDocument
 from app.services.checkin_presentation import (
-    personalized_checkin_document_id,
-    personalized_checkin_labels,
+    load_personalized_checkin_labels,
 )
 from app.services.checkin_service import CHECKIN_KEYS
 
@@ -259,22 +257,13 @@ async def _with_question_snapshots(
     service_case_id: int,
     answers: list[dict],
 ) -> list[dict]:
-    """Resolve every dynamic item against its exact execution document before persisting it."""
+    """Resolve every dynamic item against its exact versioned source before persisting it."""
     valid = [item for item in answers if item.get("item_id") and item.get("answer")]
-    document_ids = {
-        document_id
-        for item in valid
-        if (document_id := personalized_checkin_document_id(item["item_id"])) is not None
-    }
-    documents = list(
-        await session.scalars(
-            select(UserDocument).where(
-                UserDocument.service_case_id == service_case_id,
-                UserDocument.id.in_(document_ids),
-            )
-        )
-    ) if document_ids else []
-    labels_by_id = personalized_checkin_labels(documents)
+    labels_by_id = await load_personalized_checkin_labels(
+        session,
+        service_case_id=service_case_id,
+        item_ids=[str(item["item_id"]) for item in valid],
+    )
     return [
         {
             **item,

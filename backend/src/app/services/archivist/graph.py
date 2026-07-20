@@ -25,7 +25,7 @@ from app.models.message import Message, MessagePurpose, MessageSenderType, Messa
 from app.models.service_case import ServiceCase
 from app.services.archivist.checkin_projection import CheckinUpsertResult, upsert_checkin
 from app.services.archivist.followup import (
-    get_sent_daily_checklist,
+    get_active_daily_checklist,
     mark_followup_answers,
     mark_latest_followup_cycle_answered,
 )
@@ -299,7 +299,7 @@ class ArchivistGraph:
         extract_traces: list[dict] = []
         has_checkin_activity = False
         followup_context_by_date = state.get("followup_context_by_date") or {}
-        checklist = await get_sent_daily_checklist(
+        checklist = await get_active_daily_checklist(
             self.session, service_case_id=self.service_case.id
         )
         checklist_labels = {

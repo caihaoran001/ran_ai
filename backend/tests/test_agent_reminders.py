@@ -71,6 +71,7 @@ async def test_agent_tool_factory_includes_create_group_reminder():
 
     assert "create_group_reminder" in tool_names
     assert "continue_service" in tool_names
+    assert "set_checkin_checklist" in tool_names
 
 
 @pytest.mark.asyncio
@@ -85,6 +86,7 @@ async def test_scheduled_agent_mode_excludes_create_group_reminder():
 
     assert "create_group_reminder" not in graph.tools_by_name
     assert "continue_service" not in graph.tools_by_name
+    assert "set_checkin_checklist" not in graph.tools_by_name
 
 
 @pytest.mark.asyncio

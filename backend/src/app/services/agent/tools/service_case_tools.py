@@ -17,9 +17,9 @@ from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, Docu
 from app.models.user_profile import UserProfile
 from app.services.agent.state import AgentRunContext
 from app.services.checkin_presentation import (
+    load_personalized_checkin_labels,
     personalized_checkin_answers,
-    personalized_checkin_document_ids,
-    personalized_checkin_labels,
+    personalized_checkin_item_ids,
 )
 from app.services.checkin_queries import recent_checkins
 from app.services.checkin_service import CHECKIN_KEYS
@@ -173,18 +173,14 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
         days = _clamp_days(days)
         async with SessionLocal() as session:
             rows = await _recent_checkins(session, context.service_case_id, days)
-            document_ids = set().union(
-                *(personalized_checkin_document_ids(row.parsed_json) for row in rows)
+            item_ids = set().union(
+                *(personalized_checkin_item_ids(row.parsed_json) for row in rows)
             ) if rows else set()
-            documents = list(
-                await session.scalars(
-                    select(UserDocument).where(
-                        UserDocument.service_case_id == context.service_case_id,
-                        UserDocument.id.in_(document_ids),
-                    )
-                )
-            ) if document_ids else []
-            labels_by_id = personalized_checkin_labels(documents)
+            labels_by_id = await load_personalized_checkin_labels(
+                session,
+                service_case_id=context.service_case_id,
+                item_ids=item_ids,
+            )
             items = []
             for row in rows:
                 parsed = row.parsed_json or {}

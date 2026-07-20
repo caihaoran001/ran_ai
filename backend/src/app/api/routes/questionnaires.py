@@ -23,19 +23,17 @@ from app.models.message import (
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
-from app.models.user_document import DocumentType, UserDocument
-from app.models.user_profile import UserProfile
+from app.services.checkin_checklists import get_effective_daily_checklist
 from app.services.checkin_service import normalize_checkin_json
 from app.schemas.questionnaire import (
     QuestionnairePublic,
     QuestionnaireSubmissionRead,
     QuestionnaireSubmit,
 )
-from app.services.document_service import generate_profile_and_documents, personalized_checkin_fields_from_document_payloads
+from app.services.document_service import generate_profile_and_documents
 from app.db.session import SessionLocal
 from app.services.channels import send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
-from app.services.checkin_questionnaires import DEFAULT_PERSONALIZED_CHECKIN_FIELDS
 from app.services.intervention_service import (
     analyze_intervention,
     mark_intake_age_risk,
@@ -46,7 +44,13 @@ from app.services.outcome_engine import record_intake_profile_completed
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.questionnaire_template import get_active_questionnaire_template
 from app.services.service_case_activation import set_pre_service_status_or_activate
-from app.services.service_case_queries import active_service_case_condition, get_active_service_case, service_window_ended
+from app.services.service_case_queries import (
+    active_service_case_condition,
+    effective_service_day,
+    effective_start_at,
+    get_active_service_case,
+    service_window_ended,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -249,14 +253,13 @@ async def _build_checkin_default_values(
     template: str,
 ) -> dict[str, Any]:
     defaults: dict[str, Any] = {}
-    if not service_case.started_at:
+    if effective_start_at(service_case) is None:
         return defaults
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
-    started = service_case.started_at
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=ZoneInfo("UTC"))
-    day = (now - started.astimezone(ZoneInfo("Asia/Shanghai"))).days + 1
-    defaults["day_no"] = max(1, day)
+    defaults["day_no"] = max(
+        1,
+        effective_service_day(service_case, now, ZoneInfo("Asia/Shanghai")),
+    )
 
     all_checkins = list(
         await session.scalars(
@@ -346,13 +349,11 @@ def _create_checkin_from_questionnaire(
     fields: list[dict],
     answers: dict,
 ) -> None:
-    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
-    if not answers.get("day_no") and service_case.started_at:
-        started = service_case.started_at
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=ZoneInfo("UTC"))
-        day = (today - started.astimezone(ZoneInfo("Asia/Shanghai")).date()).days + 1
-        answers["day_no"] = max(1, day)
+    tz = ZoneInfo("Asia/Shanghai")
+    now = datetime.now(tz)
+    today = now.date()
+    if not answers.get("day_no") and effective_start_at(service_case) is not None:
+        answers["day_no"] = max(1, effective_service_day(service_case, now, tz))
     content = questionnaire_content(fields, answers)
     parsed_json = _checkin_json_from_answers(answers, content)
     session.add(
@@ -465,45 +466,23 @@ async def _generate_profile_and_documents(service_case_id: int) -> None:
 
 
 async def _personalized_checkin_fields(session: AsyncSession, service_case: ServiceCase) -> list[dict[str, Any]]:
-    # The reviewed execution document is the source of truth for the daily form.
-    # This also repairs older profiles that persisted the generic fallback fields.
-    document_fields = await _personalized_checkin_fields_from_latest_document(session, service_case.id)
-    if document_fields:
-        return document_fields
-
-    latest_profile = await session.scalar(
-        select(UserProfile)
-        .where(UserProfile.service_case_id == service_case.id)
-        .order_by(UserProfile.created_at.desc())
-        .limit(1)
+    checklist = await get_effective_daily_checklist(
+        session,
+        service_case_id=service_case.id,
+        sent_documents_only=False,
     )
-    fields = []
-    if latest_profile and latest_profile.profile_json:
-        fields = list(latest_profile.profile_json.get("personalized_checkin_fields") or [])
-    if len(fields) >= 5:
-        return fields
-
-    return [dict(f) for f in DEFAULT_PERSONALIZED_CHECKIN_FIELDS]
-
-
-async def _personalized_checkin_fields_from_latest_document(
-    session: AsyncSession,
-    service_case_id: int,
-) -> list[dict[str, Any]]:
-    document = await session.scalar(
-        select(UserDocument)
-        .where(
-            UserDocument.service_case_id == service_case_id,
-            UserDocument.document_type == DocumentType.DAY28_EXECUTION_STANDARD,
-        )
-        .order_by(UserDocument.created_at.desc())
-        .limit(1)
-    )
-    if not document or not isinstance(document.content_json, dict):
-        return []
-    return personalized_checkin_fields_from_document_payloads(
-        {DocumentType.DAY28_EXECUTION_STANDARD.value: document.content_json}
-    )
+    return [
+        {
+            "id": f"personalized_checkin_{index}",
+            "key": f"personalized_checkin_{index}",
+            "type": "RADIO" if "是否" in item["label"] else "SIMPLE",
+            "title": item["label"],
+            "label": item["label"],
+            "required": True,
+            "options": ["是", "否"] if "是否" in item["label"] else [],
+        }
+        for index, item in enumerate(checklist.resolved_items(), start=1)
+    ]
 
 
 async def _send_intake_submit_reply(service_case_id: int) -> None:

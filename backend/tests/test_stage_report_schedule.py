@@ -78,7 +78,7 @@ def test_late_activation_backfills_missed_milestones():
 
 
 def test_falls_back_to_started_at_when_no_plan():
-    # 未填计划开始日 → 用文件发送(started_at)当天=第1天。6/1发送 → 6/3 为第3天，23点出 day3
+    # 存量案例未填计划开始日 → 回退 started_at 当天=第1天。6/1开始 → 6/3 为第3天，23点出 day3
     case = _case(plan=None, started_at=datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc))
     assert _due_stage_reports(case, _at(2026, 6, 3, 23), TZ, set()) == ["day3"]
 

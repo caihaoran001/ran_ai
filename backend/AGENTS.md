@@ -70,11 +70,12 @@ A QiWe callback turns inbound text into a `ChannelMessage`, aggregates consecuti
 
 **① 每轮自动注入**（不调工具，`run()` 拼进提示词）：当前北京时间（`_current_time_context`）；本轮用户消息 + 说话人 + 近期群聊；**隐性用户背景**（`profile_memory_service` 把 `UserProfile` + `UserStateProfile` + `ArchivistCaseMemory` 压成"结论小抄"：稳定事实/历程小结/长期偏好/稳定习惯/当前状态/最近话题/风险边界，每域最多 5 条取最新、每行≤120字）；skill 目录（仅名字+简介）。**完整带证据的 `state_json` 档案不再给 agent 查**——结论已在隐性背景里；完整档案给人从 `/users/{id}` 页面看。
 
-**② 按需调工具**（18 个，`agent/tools/`）：
+**② 按需调工具**（21 个，`agent/tools/`）：
 - 服务单只读 7 个（`_is_data_tool`，查不到走安全兜底不编造）：`get_service_progress`、`get_recent_checkins`、`get_weight_trend`、`list_delivery_documents`+`read_delivery_document`、`list_group_files`+`read_group_file`。
 - 知识库 1 个：`search_knowledge_base`（RAG，见下）。
 - 定时提醒 3 个：`create_group_reminder`/`list_group_reminders`/`cancel_group_reminder`（定时任务自身触发那次运行会关掉，`include_reminder_tools=False`，防提醒套提醒）。
 - 打卡追问偏好 2 个：`get_checkin_followup_preferences`/`update_checkin_followup_preferences`。
+- 五项追问清单 3 个：`get_checkin_checklist`/`set_checkin_checklist`/`restore_default_checkin_checklist`（设置/恢复只接受当前群已识别工作人员同一条消息明确 @ 机器人；清单独立版本化，不依赖系统发送文件）。
 - 服务生命周期 2 个：`continue_service`/`end_continued_service`（只能由当前群聊显式 @ 机器人的消息触发；续服沿用原服务天数，不新建周期）。
 - 技能 2 个：`skill`（读 SKILL.md 全文）/`read_skill_file`。
 - 联网 1 个：`web_search_lifestyle`（Tavily，硬拦健康/身体指标/隐私类，每轮≤2 次）。

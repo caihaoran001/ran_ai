@@ -48,7 +48,11 @@ from app.services.service_case_queries import (
     service_phase_end_at,
     service_window_ended,
 )
-from app.services.service_case_activation import PRE_SERVICE_STATUSES, activate_service_case_if_due
+from app.services.service_case_activation import (
+    PRE_SERVICE_STATUSES,
+    activate_service_case_if_due,
+    align_active_service_start_with_plan,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -218,19 +222,30 @@ class ReminderService:
             service_cases = list(
                 await session.scalars(
                     select_active_service_cases(
-                        ServiceCase.status.in_(PRE_SERVICE_STATUSES),
+                        ServiceCase.status.in_(
+                            (*PRE_SERVICE_STATUSES, ServiceCaseStatus.IN_SERVICE)
+                        ),
                         ServiceCase.service_plan_start_date.is_not(None),
                         ServiceCase.service_plan_start_date <= current.date(),
                     )
                 )
             )
-            changed = sum(
-                activate_service_case_if_due(service_case, now=current, tz=tz)
-                for service_case in service_cases
-            )
-            if changed:
+            activated = 0
+            aligned = 0
+            for service_case in service_cases:
+                if activate_service_case_if_due(service_case, now=current, tz=tz):
+                    activated += 1
+                elif align_active_service_start_with_plan(
+                    service_case, now=current, tz=tz
+                ):
+                    aligned += 1
+            if activated or aligned:
                 await session.commit()
-                logger.info("Activated %d service cases from plan dates", changed)
+                logger.info(
+                    "Reconciled service plan dates activated=%d aligned=%d",
+                    activated,
+                    aligned,
+                )
 
     async def check_checkin_followup_v2_once(self) -> None:
         """Five-item daily review plus low-frequency measurements, capped at three sends per cycle."""
@@ -744,12 +759,14 @@ class ReminderService:
 
         tasks = []
         for service_case in service_cases:
-            started_at = service_case.started_at
-            if not started_at:
-                continue
-            if started_at.tzinfo is None:
-                started_at = started_at.replace(tzinfo=ZoneInfo("UTC"))
-            days = max((now.date() - started_at.astimezone(ZoneInfo(self.settings.reminder_timezone)).date()).days + 1, 1)
+            days = max(
+                effective_service_day(
+                    service_case,
+                    now,
+                    ZoneInfo(self.settings.reminder_timezone),
+                ),
+                1,
+            )
             for threshold, milestone in (
                 (1, "day1"),
                 (3, "day3"),

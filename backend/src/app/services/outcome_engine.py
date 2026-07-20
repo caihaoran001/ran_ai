@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,8 @@ from app.models.checkin import Checkin
 from app.models.message import Message
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot, OutcomeStageState
 from app.models.service_case import ServiceCase
+from app.core.config import get_settings
+from app.services.service_case_queries import effective_service_day, effective_start_at
 from app.services.user_state_profile import (
     OUTCOME_FIELD_DOMAIN_MAP,
     apply_outcome_events_to_user_state,
@@ -416,7 +419,11 @@ def current_milestone_spec(service_case: ServiceCase) -> OutcomeMilestoneSpec:
 
 
 def service_day(service_case: ServiceCase) -> int:
-    anchor = service_case.started_at or service_case.created_at
+    start = effective_start_at(service_case)
+    if start is not None:
+        tz = ZoneInfo(get_settings().reminder_timezone)
+        return max(effective_service_day(service_case, datetime.now(tz), tz), 1)
+    anchor = service_case.created_at
     if not anchor:
         return 1
     if anchor.tzinfo is None:
@@ -665,10 +672,13 @@ def _snapshot_action_items(spec: OutcomeMilestoneSpec, evidence: dict[str, Any])
 
 
 def _checkin_day(service_case: ServiceCase, checkin: Checkin) -> int:
-    anchor = service_case.started_at or service_case.created_at
+    anchor = effective_start_at(service_case) or service_case.created_at
     if not anchor:
         return 1
-    anchor_date = anchor.astimezone(timezone.utc).date() if anchor.tzinfo else anchor.date()
+    tz = ZoneInfo(get_settings().reminder_timezone)
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    anchor_date = anchor.astimezone(tz).date()
     return max((checkin.checkin_date - anchor_date).days + 1, 1)
 
 

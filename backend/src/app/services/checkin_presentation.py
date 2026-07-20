@@ -6,31 +6,28 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.checkin_checklist_version import CheckinChecklistVersion
 from app.models.user_document import DocumentType, UserDocument
+from app.models.user_profile import UserProfile
+from app.services.checkin_questionnaires import DEFAULT_PERSONALIZED_CHECKIN_FIELDS
 from app.services.intake_generation import personalized_checkin_fields_from_document_payloads
 
 
 _DOCUMENT_ITEM_ID = re.compile(r"^document:(\d+):(\d+)$")
+_CHECKLIST_ITEM_ID = re.compile(r"^checklist:(\d+):(\d+)$")
+_PROFILE_ITEM_ID = re.compile(r"^profile:(\d+):(\d+)$")
 
 
-def personalized_checkin_document_id(item_id: object) -> int | None:
-    match = _DOCUMENT_ITEM_ID.match(str(item_id))
-    return int(match.group(1)) if match else None
-
-
-def personalized_checkin_document_ids(parsed_json: dict[str, Any] | None) -> set[int]:
-    """Return execution-document ids referenced by a check-in's dynamic answers."""
+def personalized_checkin_item_ids(parsed_json: dict[str, Any] | None) -> set[str]:
     if not isinstance(parsed_json, dict):
         return set()
     answers = parsed_json.get("custom_checkin")
     if not isinstance(answers, dict):
         return set()
-    ids: set[int] = set()
-    for item_id in answers:
-        document_id = personalized_checkin_document_id(item_id)
-        if document_id is not None:
-            ids.add(document_id)
-    return ids
+    return {str(item_id) for item_id in answers}
 
 
 def personalized_checkin_labels(documents: Iterable[UserDocument]) -> dict[str, str]:
@@ -48,6 +45,98 @@ def personalized_checkin_labels(documents: Iterable[UserDocument]) -> dict[str, 
             label = str(field.get("title") or field.get("label") or "").strip()
             if label:
                 labels[f"document:{document.id}:{index}"] = label
+    return labels
+
+
+async def load_personalized_checkin_labels(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    item_ids: Iterable[str],
+) -> dict[str, str]:
+    ids = {str(item_id) for item_id in item_ids}
+    document_ids = {
+        int(match.group(1))
+        for item_id in ids
+        if (match := _DOCUMENT_ITEM_ID.match(item_id))
+    }
+    version_ids = {
+        int(match.group(1))
+        for item_id in ids
+        if (match := _CHECKLIST_ITEM_ID.match(item_id))
+    }
+    profile_ids = {
+        int(match.group(1))
+        for item_id in ids
+        if (match := _PROFILE_ITEM_ID.match(item_id))
+    }
+    documents = (
+        list(
+            await session.scalars(
+                select(UserDocument).where(
+                    UserDocument.service_case_id == service_case_id,
+                    UserDocument.id.in_(document_ids),
+                )
+            )
+        )
+        if document_ids
+        else []
+    )
+    labels = personalized_checkin_labels(documents)
+
+    versions = (
+        list(
+            await session.scalars(
+                select(CheckinChecklistVersion).where(
+                    CheckinChecklistVersion.service_case_id == service_case_id,
+                    CheckinChecklistVersion.id.in_(version_ids),
+                )
+            )
+        )
+        if version_ids
+        else []
+    )
+    for version in versions:
+        for index, item in enumerate(version.items_json[:5], start=1):
+            label = (
+                str(item.get("text") or "").strip()
+                if isinstance(item, dict)
+                else str(item).strip()
+            )
+            if label:
+                labels[f"checklist:{version.id}:{index}"] = label
+
+    profiles = (
+        list(
+            await session.scalars(
+                select(UserProfile).where(
+                    UserProfile.service_case_id == service_case_id,
+                    UserProfile.id.in_(profile_ids),
+                )
+            )
+        )
+        if profile_ids
+        else []
+    )
+    for profile in profiles:
+        fields = (
+            profile.profile_json.get("personalized_checkin_fields")
+            if isinstance(profile.profile_json, dict)
+            else []
+        )
+        for index, field in enumerate((fields or [])[:5], start=1):
+            label = (
+                str(field.get("title") or field.get("label") or "").strip()
+                if isinstance(field, dict)
+                else ""
+            )
+            if label:
+                labels[f"profile:{profile.id}:{index}"] = label
+
+    for index, field in enumerate(DEFAULT_PERSONALIZED_CHECKIN_FIELDS[:5], start=1):
+        label = str(field.get("title") or field.get("label") or "").strip()
+        if label:
+            labels[f"default:v1:{index}"] = label
     return labels
 
 
