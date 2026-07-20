@@ -83,7 +83,9 @@ export function DistributionPanel({
               title={`查看「${bucket.label}」的用户`}
               aria-label={`查看${bucket.label}用户，共${bucket.count}人，占全部纳入用户${pct}%`}
             >
-              <div className="min-w-0 truncate text-sm font-medium text-slate-700 sm:col-start-1 sm:row-start-1">{bucket.label}</div>
+              <div className="min-w-0 whitespace-normal break-words text-sm font-medium leading-5 text-slate-700 sm:col-start-1 sm:row-start-1">
+                {bucket.label}
+              </div>
               <div className="shrink-0 text-right text-sm tabular-nums text-slate-600 sm:col-start-3 sm:row-start-1">
                 {bucket.count} 人 · {pct}%
               </div>
