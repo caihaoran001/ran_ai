@@ -36,6 +36,9 @@ export type ServiceCase = {
   notes?: string | null;
   auto_send_documents: boolean;
   ai_auto_reply_enabled: boolean;
+  ai_introduced_at?: string | null;
+  ai_introduced_by_wecom_user_id?: string | null;
+  ai_introduction_trigger_message_id?: number | null;
   deleted_at?: string | null;
   started_at?: string | null;
   service_plan_start_date?: string | null;

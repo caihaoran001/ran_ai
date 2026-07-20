@@ -51,6 +51,7 @@ async def _setup_case_with_intake(db_session, cai_haoran_answers):
         questionnaire_token=token,
         status=ServiceCaseStatus.GENERATING,
         started_at=datetime.now(timezone.utc),
+        ai_introduced_at=datetime.now(timezone.utc),
     )
     db_session.add(case)
     await db_session.flush()

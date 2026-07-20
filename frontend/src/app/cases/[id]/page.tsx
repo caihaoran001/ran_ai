@@ -114,7 +114,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                   {serviceCase.user.name}（查看完整用户画像与打卡历史）
                 </Link>
               ) : (
-                "待填写问卷用户"
+                "待识别用户"
               )}
                · {serviceCase.group_id}
             </p>

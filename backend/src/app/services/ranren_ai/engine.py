@@ -45,6 +45,21 @@ logger = logging.getLogger("uvicorn.error")
 
 AI_REPLY_MAX_CHARS = 1500
 URL_PATTERN = re.compile(r"https?://[^\s<>()\"']+")
+PLACEHOLDER_USER_NAME = "待识别用户"
+_PLACEHOLDER_USER_NAMES = frozenset({PLACEHOLDER_USER_NAME, "待填写问卷用户"})
+GROUP_AI_INTRODUCTION = (
+    "大家好，我是燃人AI，很高兴加入这个群～\n\n"
+    "我会 24 小时在线，和群里的营养师一起为你提供持续支持。我可以：\n\n"
+    "1. 提供健康生活方式相关资讯，回答日常执行中的问题；\n"
+    "2. 提醒每日执行要点，帮你跟进计划；\n"
+    "3. 把你在群里发的体重、饮食、饮水、睡眠、运动等内容分类记录，"
+    "并帮你分析变化趋势；\n"
+    "4. 妥善保护服务过程中的个人信息和健康记录。\n\n"
+    "比如你简单发一句“今天体重 65.2kg，昨晚睡了 7 小时，早C已完成”，"
+    "我会把体重、睡眠和执行情况分别记录下来，后续陪你一起看变化趋势。\n\n"
+    "你平时可以直接在群里和我说话。如果你更想按自己的节奏来、不希望被打扰，"
+    "或者不想被追问，也可以直接告诉我，我会按你的偏好调整。"
+)
 
 # Unified and concise risk replies are imported from content_policy.py
 
@@ -356,10 +371,12 @@ class RanrenAIEngine(InboundAttachmentProcessor):
     async def _create_case_for_message(
         self, session, message: ChannelMessage, is_staff: bool = False
     ) -> ServiceCase:
+        source_note = f"由 {message.channel} 群消息自动创建"
+        customer_name = (message.user_name or "").strip() if not is_staff else ""
         user = User(
-            name="待填写问卷用户",
+            name=customer_name or PLACEHOLDER_USER_NAME,
             wecom_user_id=None if is_staff else (message.user_id if message.channel == "qiwe" else None),
-            notes=f"由 {message.channel} 入营问卷指令自动创建",
+            notes=source_note,
         )
         session.add(user)
         await session.flush()
@@ -368,11 +385,63 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             user_id=user.id,
             group_id=message.chat_id,
             questionnaire_token=secrets.token_urlsafe(24),
-            notes=f"由 {message.channel} 入营问卷指令自动创建",
+            notes=source_note,
         )
         session.add(service_case)
         await session.flush()
         return service_case
+
+    async def _reply_group_introduction(
+        self,
+        message: ChannelMessage,
+        *,
+        service_case_id: int,
+        trigger_id: int,
+    ) -> bool:
+        """首次员工 @ 只发固定自我介绍；发送成功后再持久化开放群聊。"""
+        # 极窄崩溃窗：渠道已成功、SENT 已回填，但进程还没来得及给服务单置引荐状态。
+        # 再次触发前先以成功出站记录补齐状态，避免重复自我介绍。
+        if await reconcile_group_introduction_state(service_case_id=service_case_id):
+            return True
+        result = await self._send_and_record(
+            message=message,
+            service_case_id=service_case_id,
+            content=GROUP_AI_INTRODUCTION,
+            trigger_id=trigger_id,
+            analysis_json={"_system_event": "group_ai_introduction"},
+            send=lambda: self.channel.send_text(
+                message.chat_id,
+                GROUP_AI_INTRODUCTION,
+                reply_to=message.message_id,
+                reply_context=message.raw_payload,
+            ),
+        )
+        if not result or not result.success:
+            logger.warning(
+                "RanrenAI group introduction send failed chat_id=%s service_case_id=%s trigger_id=%s error=%s",
+                message.chat_id,
+                service_case_id,
+                trigger_id,
+                result.error if result else "send result was None",
+            )
+            return False
+
+        async with SessionLocal() as session:
+            service_case = await session.scalar(
+                select_active_service_cases(ServiceCase.id == service_case_id).with_for_update()
+            )
+            if service_case and service_case.ai_introduced_at is None:
+                service_case.ai_introduced_at = datetime.now(timezone.utc)
+                service_case.ai_introduced_by_wecom_user_id = message.user_id
+                service_case.ai_introduction_trigger_message_id = trigger_id
+                await session.commit()
+        logger.info(
+            "RanrenAI group introduction completed chat_id=%s service_case_id=%s trigger_id=%s",
+            message.chat_id,
+            service_case_id,
+            trigger_id,
+        )
+        return True
 
     async def _reply_questionnaire_link(
         self, message: ChannelMessage, service_case: ServiceCase | None, *, trigger_id: int | None = None
@@ -919,6 +988,74 @@ async def reconcile_interrupted_sends(startup_time: datetime) -> None:
         )
 
 
+async def reconcile_group_introduction_state(
+    *, service_case_id: int | None = None
+) -> int:
+    """用已确认发送成功的自我介绍出站记录补齐服务单引荐状态。"""
+    conditions = [
+        Message.direction == MessageDirection.OUTBOUND,
+        Message.sender_type == MessageSenderType.BOT,
+        Message.purpose == MessagePurpose.CHAT,
+        Message.status == MessageStatus.SENT,
+        Message.analysis_json["_system_event"].as_string()
+        == "group_ai_introduction",
+        Message.service_case_id.is_not(None),
+    ]
+    if service_case_id is not None:
+        conditions.append(Message.service_case_id == service_case_id)
+
+    async with SessionLocal() as session:
+        sent_introductions = list(
+            await session.scalars(
+                select(Message).where(*conditions).order_by(Message.id.desc())
+            )
+        )
+        reconciled = 0
+        seen_case_ids: set[int] = set()
+        for outbound in sent_introductions:
+            case_id = outbound.service_case_id
+            if case_id is None or case_id in seen_case_ids:
+                continue
+            seen_case_ids.add(case_id)
+            service_case = await session.scalar(
+                select_active_service_cases(ServiceCase.id == case_id).with_for_update()
+            )
+            if service_case is None or service_case.ai_introduced_at is not None:
+                continue
+
+            sender_id = None
+            if outbound.trigger_id:
+                trigger = await session.get(Message, outbound.trigger_id)
+                trigger_analysis = (
+                    trigger.analysis_json
+                    if trigger and isinstance(trigger.analysis_json, dict)
+                    else {}
+                )
+                trigger_meta = (
+                    trigger_analysis.get("_qiwe_meta")
+                    if isinstance(trigger_analysis.get("_qiwe_meta"), dict)
+                    else {}
+                )
+                sender_id = trigger_meta.get("sender_id")
+
+            service_case.ai_introduced_at = (
+                outbound.sent_at or outbound.created_at or datetime.now(timezone.utc)
+            )
+            service_case.ai_introduced_by_wecom_user_id = (
+                str(sender_id)[:128] if sender_id else None
+            )
+            service_case.ai_introduction_trigger_message_id = outbound.trigger_id
+            reconciled += 1
+
+        if reconciled:
+            await session.commit()
+            logger.info(
+                "Reconciled %d group AI introduction states from sent outbound messages",
+                reconciled,
+            )
+        return reconciled
+
+
 async def mark_outbound_blocked_by_channel_id(channel_message_id: str, reason: str) -> bool:
     """企微风控拦截对账：收到 spam_block 通知后，把对应出站消息标为 FAILED。
 
@@ -968,29 +1105,19 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
     This function is run on application startup to recover any messages that were lost/interrupted during deployment restart.
     """
     from datetime import datetime, timedelta, timezone
-    from app.models.service_case import ServiceCaseStatus
-    
     # Only scan messages received before startup_time - 15 seconds, and within the last 2 hours.
     max_created_at = startup_time - timedelta(seconds=15)
     min_created_at = startup_time - timedelta(hours=2)
     
     async with SessionLocal() as session:
-        # Get active service cases
+        # 问卷已改为可选；是否恢复聊天只看群是否已完成员工引荐，
+        # 不再依赖问卷/文档推进到哪个 service status。
         cases = list(
             await session.scalars(
                 select(ServiceCase)
                 .where(
-                    # 阶段已完结/退款客户仍保留群和聊天能力：重启后也要恢复在途消息，
-                    # 尤其阶段已完结消息可能是明确 @ 机器人的续服指令。
-                    ServiceCase.status.in_(
-                        [
-                            ServiceCaseStatus.APPROVED,
-                            ServiceCaseStatus.IN_SERVICE,
-                            ServiceCaseStatus.COMPLETED,
-                            ServiceCaseStatus.REFUNDED,
-                        ]
-                    ),
                     ServiceCase.ai_auto_reply_enabled == True,
+                    ServiceCase.ai_introduced_at.is_not(None),
                     ServiceCase.deleted_at.is_(None),
                 )
             )
@@ -1056,6 +1183,8 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
 def _message_already_processed_or_claimed(analysis_json: dict | None) -> bool:
     if not isinstance(analysis_json, dict):
         return False
+    if "_reply_gate" in analysis_json:
+        return True
     if any(key in analysis_json for key in ("requires_human_intervention", "outcome", "agent")):
         return True
     claim = analysis_json.get("_recovery_claim")

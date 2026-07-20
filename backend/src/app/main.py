@@ -45,6 +45,7 @@ async def lifespan(app: FastAPI):
         import asyncio
         from datetime import datetime, timezone
         from app.services.ranren_ai.engine import (
+            reconcile_group_introduction_state,
             reconcile_interrupted_sends,
             recover_stuck_inbound_messages,
         )
@@ -53,6 +54,7 @@ async def lifespan(app: FastAPI):
         # 先把重启前残留的「在途(SENDING)」出站记录对账为 FAILED（宁可少发、不自动重发），
         # 再补发那些「收到但从未回复」的在途入站消息，最后重放卡在聚合窗口、从未进引擎的消息。
         await reconcile_interrupted_sends(startup_time)
+        await reconcile_group_introduction_state()
         asyncio.create_task(recover_stuck_inbound_messages(channel, startup_time))
         asyncio.create_task(replay_pending_inbound_events(channel, startup_time))
     try:

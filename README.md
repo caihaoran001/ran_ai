@@ -292,8 +292,11 @@ QIWEI_BATCH_WINDOW_SECONDS=8
 - 同一群同一用户连续文本先聚合，再交给燃人AI处理
 - 按 `group_id` 关联 `service_cases`
 - 写入 `messages`
-- 普通聊天会检索知识库后调用 DeepSeek 生成回复
-- 群里发送“发送本群入营问卷”会自动创建或复用本群服务单，并回复本群专属问卷链接
+- 群内首条有效消息自动创建本群服务单，引荐前只留痕不回复
+- 本群第一次由已识别员工 @ 机器人时，机器人只发送固定自我介绍；从后续消息起开放正常回复
+- 引荐后的普通聊天会检索知识库后调用 DeepSeek 生成回复
+- 群里发送“发送本群入营问卷”仅复用已有服务单并回复可选的本群专属问卷链接
+- 已识别员工可在引荐后的消息中 @ 机器人设置服务开始日期；该日期只控制 28 天计时和按天任务，不影响群聊问答
 - 后台人工发送、提醒发送、AI 回复统一通过 QiWe 服务完成
 
 ## 消息通道与燃人AI
@@ -306,7 +309,7 @@ app/services/ranren_ai/       通道无关的业务处理引擎
 app/services/qiwe_service/    QiWe 群消息聚合
 ```
 
-`RanrenAIEngine` 只依赖通用 `MessageChannel`，负责入营问卷指令、知识库检索、LLM 回复和消息落库。QiWe callback 会把文本消息转成 `ChannelMessage`，并按 8 秒窗口聚合后交给引擎处理。
+`RanrenAIEngine` 只依赖通用 `MessageChannel`，负责群服务单建立、员工引荐闸门、可选问卷指令、知识库检索、LLM 回复和消息落库。QiWe callback 会把文本消息转成 `ChannelMessage`，并按 8 秒窗口聚合后交给引擎处理。
 
 ## 定时提醒
 

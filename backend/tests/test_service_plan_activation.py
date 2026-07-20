@@ -47,6 +47,20 @@ def test_due_plan_activates_without_delivery_documents():
     assert service_case.started_at == datetime(2026, 7, 20, 0, 0, tzinfo=TZ)
 
 
+def test_due_plan_activates_created_case_without_questionnaire():
+    service_case = _case(status=ServiceCaseStatus.CREATED, plan=date(2026, 7, 20))
+
+    changed = activate_service_case_if_due(
+        service_case,
+        now=datetime(2026, 7, 20, 8, 30, tzinfo=TZ),
+        tz=TZ,
+    )
+
+    assert changed is True
+    assert service_case.status == ServiceCaseStatus.IN_SERVICE
+    assert service_case.started_at == datetime(2026, 7, 20, 0, 0, tzinfo=TZ)
+
+
 def test_document_generation_status_does_not_regress_active_service():
     service_case = _case(status=ServiceCaseStatus.IN_SERVICE, plan=date(2026, 7, 20))
     original_start = datetime(2026, 7, 20, 0, 0, tzinfo=TZ)
@@ -68,6 +82,26 @@ def test_document_generation_status_does_not_regress_active_service():
 async def test_scheduler_activates_due_reviewing_case(db_session, mock_session_local):
     service_case = _case(
         status=ServiceCaseStatus.REVIEWING,
+        plan=date(2026, 7, 20),
+    )
+    db_session.add(service_case)
+    await db_session.flush()
+
+    await ReminderService(get_settings()).check_service_starts_once(
+        now=datetime(2026, 7, 20, 0, 1, tzinfo=TZ)
+    )
+
+    await db_session.refresh(service_case)
+    assert service_case.status == ServiceCaseStatus.IN_SERVICE
+    assert service_case.started_at == datetime(2026, 7, 20, 0, 0, tzinfo=TZ)
+
+
+@pytest.mark.asyncio
+async def test_scheduler_activates_due_created_case_without_questionnaire(
+    db_session, mock_session_local
+):
+    service_case = _case(
+        status=ServiceCaseStatus.CREATED,
         plan=date(2026, 7, 20),
     )
     db_session.add(service_case)

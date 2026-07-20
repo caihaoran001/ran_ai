@@ -156,7 +156,7 @@ def test_attention_summary_priority(changes: dict[str, object], expected_code: s
 @pytest.mark.parametrize(
     ("status", "expected_label"),
     [
-        (ServiceCaseStatus.CREATED, "等待入营问卷"),
+        (ServiceCaseStatus.CREATED, "等待员工引荐"),
         (ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED, "画像生成中"),
         (ServiceCaseStatus.GENERATING, "画像生成中"),
         (ServiceCaseStatus.DOCUMENTS_GENERATED, "文件待审核"),
@@ -179,6 +179,26 @@ def test_attention_summary_uses_pre_service_status(status: ServiceCaseStatus, ex
 
     assert code == "watch"
     assert label == expected_label
+
+
+def test_created_case_attention_does_not_require_questionnaire() -> None:
+    case = SimpleNamespace(
+        status=ServiceCaseStatus.CREATED,
+        refund_pending_confirmation=False,
+        ai_auto_reply_enabled=True,
+        ai_introduced_at=datetime.now(timezone.utc),
+        service_plan_start_date=None,
+        risk_level="normal",
+        risk_flags=[],
+        health_profile=None,
+        intervention_reasons=[],
+    )
+
+    code, label, reason = attention_summary(case)  # type: ignore[arg-type]
+
+    assert code == "watch"
+    assert label == "等待设置开始日期"
+    assert "问卷可选" in reason
 
 
 @pytest.mark.asyncio

@@ -66,7 +66,7 @@ class ServiceCase(TimestampMixin, Base):
     # 28 天阶段完结后在原服务单上恢复续服的最近时间。状态为 IN_SERVICE 且此字段非空时，
     # 原 28 天截止不再自动结束；服务天数仍沿用原起点连续计算。
     service_continued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # 轻量审计轨迹：记录群内续服/结束服务动作的时间、来源消息和发送者。
+    # 轻量审计轨迹：记录群内设置开始日期、续服/结束服务动作的时间、来源消息和发送者。
     # 不建新服务周期，也不覆盖历史聊天/打卡/文档。
     service_lifecycle_events: Mapped[list[dict] | None] = mapped_column(JSON)
     content_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -74,6 +74,11 @@ class ServiceCase(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(String(2000))
     auto_send_documents: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 机器人被员工首次 @ 并成功发出自我介绍后才置值。
+    # 该闸门只控制群聊参与，与 28 天服务起算日期独立。
+    ai_introduced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ai_introduced_by_wecom_user_id: Mapped[str | None] = mapped_column(String(128))
+    ai_introduction_trigger_message_id: Mapped[int | None] = mapped_column()
     risk_level: Mapped[str] = mapped_column(String(32), default="normal", index=True)
     risk_flags: Mapped[list[dict] | None] = mapped_column(JSON)
     health_profile: Mapped[dict | None] = mapped_column(JSON)

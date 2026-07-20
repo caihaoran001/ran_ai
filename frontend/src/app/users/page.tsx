@@ -140,7 +140,7 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
                   {user.name}
                 </Link>
               ) : (
-                "待填写问卷用户"
+                "待识别用户"
               )}
             </h3>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-500">

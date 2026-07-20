@@ -26,6 +26,9 @@ function CaseStatusCell({ serviceCase }: { serviceCase: ServiceCase }) {
   if (serviceCase.status === "in_service" && serviceCase.service_continued_at) {
     return <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">续服中</span>;
   }
+  if (!serviceCase.ai_introduced_at) {
+    return <span className="status-pill pill-warn">待员工引荐</span>;
+  }
   return <span className="status-pill border-slate-200 bg-slate-50 text-slate-700">{STATUS_LABELS[serviceCase.status] ?? serviceCase.status}</span>;
 }
 
@@ -38,7 +41,7 @@ export default async function CasesPage() {
         <div className="page-header-row">
           <div>
             <h1 className="page-heading">服务单</h1>
-            <p className="page-subtitle">一个社群对应一个 28 天服务空间。新服务单由群内入营问卷指令自动创建。</p>
+            <p className="page-subtitle">群内首条消息自动建立服务空间；员工首次 @ 机器人完成引荐后，燃人AI开始参与群聊。</p>
           </div>
           <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">
             {cases.length} 个服务空间
@@ -52,7 +55,7 @@ export default async function CasesPage() {
             <div className="flex min-w-0 items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-break font-semibold text-slate-950">{item.case_no}</div>
-                <div className="mt-1 text-sm text-slate-600">{item.user?.name ?? "待填写问卷用户"}</div>
+                <div className="mt-1 text-sm text-slate-600">{item.user?.name ?? "待识别用户"}</div>
               </div>
               <CaseStatusCell serviceCase={item} />
             </div>

@@ -16,7 +16,12 @@ from app.services.content_policy import (
     remember_qiwe_group_nicknames,
 )
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator, _merge_messages
-from app.services.ranren_ai.engine import RanrenAIEngine, _current_query_body, _image_description_is_available
+from app.services.ranren_ai.engine import (
+    GROUP_AI_INTRODUCTION,
+    RanrenAIEngine,
+    _current_query_body,
+    _image_description_is_available,
+)
 from app.models.message import Message
 
 
@@ -674,6 +679,294 @@ def test_qiwe_system_command_bypasses_aggregator():
 
 
 @pytest.mark.asyncio
+async def test_first_group_message_creates_case_but_stays_silent_before_introduction(
+    db_session, monkeypatch
+):
+    """问卷不再是建单前置；首条群消息建单并留痕，引荐前不调 Agent。"""
+    from sqlalchemy import select
+    from app.models.message import Message, MessageDirection
+    from app.models.service_case import ServiceCase
+    from app.models.user import User
+
+    async def no_staff(*args, **kwargs):
+        return []
+
+    async def should_not_analyze(*args, **kwargs):
+        raise AssertionError("pre-introduction message must not enter risk/reply processing")
+
+    monkeypatch.setattr("app.services.content_policy.get_qiwei_staff_senders", no_staff)
+    monkeypatch.setattr(
+        "app.services.ranren_ai.engine.analyze_intervention", should_not_analyze
+    )
+
+    group_id = f"room-awaiting-intro-{secrets.token_hex(4)}"
+    await RanrenAIEngine(FakeChannel()).handle_message(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="大家好",
+            message_id=f"first-{secrets.token_hex(4)}",
+            user_id="customer-1",
+            user_name="用户小燃",
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+
+    service_case = await db_session.scalar(
+        select(ServiceCase).where(ServiceCase.group_id == group_id)
+    )
+    assert service_case is not None
+    assert service_case.ai_introduced_at is None
+    case_user = await db_session.get(User, service_case.user_id)
+    assert case_user is not None
+    assert case_user.wecom_user_id == "customer-1"
+    assert case_user.name == "用户小燃"
+
+    rows = list(
+        await db_session.scalars(
+            select(Message)
+            .where(Message.group_id == group_id)
+            .order_by(Message.id.asc())
+        )
+    )
+    assert len(rows) == 1
+    assert rows[0].direction == MessageDirection.INBOUND
+    assert rows[0].service_case_id == service_case.id
+    assert rows[0].analysis_json["_reply_gate"]["state"] == "awaiting_staff_introduction"
+
+
+@pytest.mark.asyncio
+async def test_first_staff_mention_only_introduces_then_opens_normal_reply(
+    db_session, monkeypatch
+):
+    """首次员工 @ 的正文必须被忽略；介绍成功后才开放用户/员工问题。"""
+    from sqlalchemy import select
+    from app.models.message import Message, MessageDirection
+    from app.models.service_case import ServiceCase
+    from app.models.user import User
+    from app.services.ranren_ai.engine_graph import ReplyGraph
+
+    async def staff_rules(*args, **kwargs):
+        return [{"type": "equals", "pattern": "staff-1"}]
+
+    async def no_risk(*args, **kwargs):
+        return {}
+
+    monkeypatch.setattr("app.services.content_policy.get_qiwei_staff_senders", staff_rules)
+    monkeypatch.setattr("app.services.ranren_ai.engine.analyze_intervention", no_risk)
+
+    sent_texts: list[str] = []
+
+    class RecordingChannel(FakeChannel):
+        async def send_text(self, chat_id, content, **kwargs):
+            sent_texts.append(content)
+            return ChannelSendResult(
+                success=True,
+                message_id=f"sent-{len(sent_texts)}",
+            )
+
+    reply_inputs: list[str] = []
+
+    async def observe_reply(self, state):
+        reply_inputs.append(state["message"].text)
+        return {"_halt": True}
+
+    monkeypatch.setattr(ReplyGraph, "_prep", observe_reply)
+
+    group_id = f"room-intro-{secrets.token_hex(4)}"
+    engine = RanrenAIEngine(RecordingChannel())
+    mention_payload = {
+        "userId": "bot-1",
+        "msgData": {"atList": [{"userId": "bot-1"}]},
+    }
+
+    await engine.handle_message(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="@燃人AI 这句内容不应该被处理",
+            message_id="intro-trigger",
+            user_id="staff-1",
+            user_name="班主任",
+            raw_payload=mention_payload,
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+
+    service_case = await db_session.scalar(
+        select(ServiceCase).where(ServiceCase.group_id == group_id)
+    )
+    assert service_case is not None
+    assert service_case.ai_introduced_at is not None
+    assert service_case.ai_introduced_by_wecom_user_id == "staff-1"
+    assert sent_texts == [GROUP_AI_INTRODUCTION]
+    assert reply_inputs == []
+
+    intro_trigger = await db_session.scalar(
+        select(Message).where(
+            Message.group_id == group_id,
+            Message.direction == MessageDirection.INBOUND,
+            Message.wecom_message_id == "intro-trigger",
+        )
+    )
+    assert intro_trigger is not None
+    assert service_case.ai_introduction_trigger_message_id == intro_trigger.id
+    assert intro_trigger.analysis_json["_reply_gate"]["state"] == "introduction_trigger"
+
+    # 引荐后：员工未 @ 仍静默，用户直接说话可回，员工 @ 也可回。
+    await engine.handle_message(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="用户今天状态不错",
+            message_id="staff-plain",
+            user_id="staff-1",
+            user_name="班主任",
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+    await engine.handle_message(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="我今天有点饿",
+            message_id="customer-question",
+            user_id="customer-1",
+            user_name="用户小燃",
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+    await engine.handle_message(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="@燃人AI 用户最近的记录怎么样？",
+            message_id="staff-question",
+            user_id="staff-1",
+            user_name="班主任",
+            raw_payload=mention_payload,
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+
+    assert reply_inputs == ["我今天有点饿", "用户最近的记录怎么样？"]
+    assert sent_texts == [GROUP_AI_INTRODUCTION]
+    case_user = await db_session.get(User, service_case.user_id)
+    assert case_user is not None
+    assert case_user.wecom_user_id == "customer-1"
+    assert case_user.name == "用户小燃"
+
+
+@pytest.mark.asyncio
+async def test_sent_introduction_reconciles_state_without_resending(
+    db_session, monkeypatch
+):
+    """若发送成功后在状态落库前崩溃，下一次触发只补状态、不重复发介绍。"""
+    from sqlalchemy import select
+    from app.models.message import (
+        Message,
+        MessageDirection,
+        MessagePurpose,
+        MessageSenderType,
+        MessageStatus,
+    )
+    from app.models.service_case import ServiceCase
+
+    async def staff_rules(*args, **kwargs):
+        return [{"type": "equals", "pattern": "staff-reconcile"}]
+
+    monkeypatch.setattr("app.services.content_policy.get_qiwei_staff_senders", staff_rules)
+
+    group_id = f"room-intro-reconcile-{secrets.token_hex(4)}"
+    engine = RanrenAIEngine(FakeChannel())
+    first_message = ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="先创建群服务单",
+        message_id="before-intro",
+        user_id="staff-reconcile",
+        user_name="班主任",
+        timestamp=datetime.now(timezone.utc),
+    )
+    await engine.handle_message(first_message)
+
+    service_case = await db_session.scalar(
+        select(ServiceCase).where(ServiceCase.group_id == group_id)
+    )
+    assert service_case is not None
+    trigger = Message(
+        service_case_id=service_case.id,
+        group_id=group_id,
+        wecom_message_id="intro-trigger-reconcile",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="text",
+        content="@燃人AI",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={
+            "_qiwe_meta": {
+                "sender_id": "staff-reconcile",
+                "sender_type": "staff",
+                "explicit_bot_query_text": "燃人AI",
+            },
+            "_reply_gate": {"state": "introduction_trigger"},
+        },
+    )
+    db_session.add(trigger)
+    await db_session.flush()
+    sent_at = datetime.now(timezone.utc)
+    db_session.add(
+        Message(
+            service_case_id=service_case.id,
+            group_id=group_id,
+            wecom_message_id="intro-sent-reconcile",
+            direction=MessageDirection.OUTBOUND,
+            sender_type=MessageSenderType.BOT,
+            message_type="markdown",
+            content=GROUP_AI_INTRODUCTION,
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.SENT,
+            sent_at=sent_at,
+            trigger_id=trigger.id,
+            analysis_json={"_system_event": "group_ai_introduction"},
+        )
+    )
+    await db_session.flush()
+
+    class NoResendChannel(FakeChannel):
+        async def send_text(self, chat_id, content, **kwargs):
+            raise AssertionError("sent introduction must not be sent twice")
+
+    reconciled = await RanrenAIEngine(NoResendChannel())._reply_group_introduction(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="@燃人AI",
+            message_id="retry-after-restart",
+            user_id="staff-reconcile",
+            user_name="班主任",
+            timestamp=datetime.now(timezone.utc),
+        ),
+        service_case_id=service_case.id,
+        trigger_id=trigger.id,
+    )
+
+    await db_session.refresh(service_case)
+    assert reconciled is True
+    assert service_case.ai_introduced_at == sent_at
+    assert service_case.ai_introduced_by_wecom_user_id == "staff-reconcile"
+    assert service_case.ai_introduction_trigger_message_id == trigger.id
+
+
+@pytest.mark.asyncio
 async def test_qiwe_questionnaire_command_skips_intervention_llm(monkeypatch):
     async def _should_not_run(*args, **kwargs):
         raise AssertionError("analyze_intervention should not run for questionnaire command")
@@ -688,6 +981,7 @@ async def test_qiwe_questionnaire_command_skips_intervention_llm(monkeypatch):
         case_no="CASE-42",
         group_id="room-fast-path",
         questionnaire_token="token-42",
+        ai_introduced_at=datetime.now(timezone.utc),
     )
     added_messages: list[Message] = []
 
@@ -773,6 +1067,7 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
         case_no="CASE-42",
         group_id="room-staff",
         questionnaire_token="token-42",
+        ai_introduced_at=datetime.now(timezone.utc),
     )
 
     monkeypatch.setattr("app.services.ranren_ai.engine.SessionLocal", lambda *args, **kwargs: FakeSession())
@@ -912,6 +1207,7 @@ async def test_qiwe_file_upload_acks_user_but_stays_silent_for_staff(monkeypatch
         case_no="CASE-42",
         group_id="room-file",
         questionnaire_token="token-42",
+        ai_introduced_at=datetime.now(timezone.utc),
     )
 
     processed: list[int] = []
@@ -987,6 +1283,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     case_a = ServiceCase(
         user_id=user.id, case_no="CASE-A", status=ServiceCaseStatus.IN_SERVICE,
         ai_auto_reply_enabled=True, group_id="group-a", questionnaire_token="token-a",
+        ai_introduced_at=now - timedelta(days=1),
     )
     db_session.add(case_a)
     await db_session.flush()
@@ -1004,6 +1301,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     case_b = ServiceCase(
         user_id=user.id, case_no="CASE-B", status=ServiceCaseStatus.IN_SERVICE,
         ai_auto_reply_enabled=True, group_id="group-b", questionnaire_token="token-b",
+        ai_introduced_at=now - timedelta(days=1),
     )
     db_session.add(case_b)
     await db_session.flush()
@@ -1031,6 +1329,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     case_c = ServiceCase(
         user_id=user.id, case_no="CASE-C", status=ServiceCaseStatus.IN_SERVICE,
         ai_auto_reply_enabled=True, group_id="group-c", questionnaire_token="token-c",
+        ai_introduced_at=now - timedelta(days=1),
     )
     db_session.add(case_c)
     await db_session.flush()
@@ -1048,6 +1347,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     case_d = ServiceCase(
         user_id=user.id, case_no="CASE-D", status=ServiceCaseStatus.IN_SERVICE,
         ai_auto_reply_enabled=False, group_id="group-d", questionnaire_token="token-d",
+        ai_introduced_at=now - timedelta(days=1),
     )
     db_session.add(case_d)
     await db_session.flush()
@@ -1065,6 +1365,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     case_e = ServiceCase(
         user_id=user.id, case_no="CASE-E", status=ServiceCaseStatus.IN_SERVICE,
         ai_auto_reply_enabled=True, group_id="group-e", questionnaire_token="token-e",
+        ai_introduced_at=now - timedelta(days=1),
     )
     db_session.add(case_e)
     await db_session.flush()
@@ -1083,6 +1384,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     case_f = ServiceCase(
         user_id=user.id, case_no="CASE-F", status=ServiceCaseStatus.IN_SERVICE,
         ai_auto_reply_enabled=True, group_id="group-f", questionnaire_token="token-f",
+        ai_introduced_at=now - timedelta(days=1),
     )
     db_session.add(case_f)
     await db_session.flush()
@@ -1111,6 +1413,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         ai_auto_reply_enabled=True,
         group_id="group-g",
         questionnaire_token="token-g",
+        ai_introduced_at=now - timedelta(days=1),
     )
     db_session.add(case_g)
     await db_session.flush()
@@ -1128,6 +1431,36 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         created_at=now - timedelta(minutes=1),
     )
     db_session.add(msg_g)
+
+    # Scenario H: 引荐前用户消息即使后来已引荐，也不得在重启后迟到补回。
+    case_h = ServiceCase(
+        user_id=user.id,
+        case_no="CASE-H",
+        status=ServiceCaseStatus.CREATED,
+        ai_auto_reply_enabled=True,
+        group_id="group-h",
+        questionnaire_token="token-h",
+        ai_introduced_at=now - timedelta(seconds=30),
+    )
+    db_session.add(case_h)
+    await db_session.flush()
+    msg_h = Message(
+        service_case_id=case_h.id,
+        group_id="group-h",
+        wecom_message_id="msg-h",
+        content="这是引荐之前说的话。",
+        message_type="text",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={
+            "_qiwe_meta": {},
+            "_reply_gate": {"state": "awaiting_staff_introduction"},
+        },
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_h)
     
     await db_session.flush()
     

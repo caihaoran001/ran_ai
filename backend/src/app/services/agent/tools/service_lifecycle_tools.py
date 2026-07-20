@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -9,9 +9,18 @@ from sqlalchemy import select
 
 from app.core.config import Settings
 from app.db.session import SessionLocal
-from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType
+from app.models.message import (
+    Message,
+    MessageDirection,
+    MessagePurpose,
+    MessageSenderType,
+)
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.agent.state import AgentRunContext
+from app.services.service_case_activation import (
+    activate_service_case_if_due,
+    align_active_service_start_with_plan,
+)
 from app.services.service_case_queries import (
     effective_service_day,
     select_active_service_cases,
@@ -21,7 +30,9 @@ from app.services.service_case_queries import (
 )
 
 
-async def _explicit_group_source(session, context: AgentRunContext) -> tuple[Message | None, dict[str, Any]]:
+async def _explicit_group_source(
+    session, context: AgentRunContext
+) -> tuple[Message | None, dict[str, Any]]:
     """只接受当前群聊中明确 @ 机器人的用户/工作人员消息。
 
     消息入库时，engine 只在真实 @ 机器人时写入
@@ -41,7 +52,11 @@ async def _explicit_group_source(session, context: AgentRunContext) -> tuple[Mes
     if source is None:
         return None, {}
     analysis = source.analysis_json if isinstance(source.analysis_json, dict) else {}
-    meta = analysis.get("_qiwe_meta") if isinstance(analysis.get("_qiwe_meta"), dict) else {}
+    meta = (
+        analysis.get("_qiwe_meta")
+        if isinstance(analysis.get("_qiwe_meta"), dict)
+        else {}
+    )
     if not str(meta.get("explicit_bot_query_text") or "").strip():
         return None, meta
     return source, meta
@@ -54,22 +69,126 @@ def _append_event(
     occurred_at: datetime,
     source: Message,
     meta: dict[str, Any],
+    details: dict[str, Any] | None = None,
 ) -> None:
     events = list(service_case.service_lifecycle_events or [])
-    events.append(
-        {
-            "action": action,
-            "occurred_at": occurred_at.isoformat(),
-            "source_message_id": source.id,
-            "sender_type": source.sender_type.value,
-            "sender_id": meta.get("sender_id"),
-            "sender_name": meta.get("sender_name"),
-        }
-    )
+    event = {
+        "action": action,
+        "occurred_at": occurred_at.isoformat(),
+        "source_message_id": source.id,
+        "sender_type": source.sender_type.value,
+        "sender_id": meta.get("sender_id"),
+        "sender_name": meta.get("sender_name"),
+    }
+    if details:
+        event.update(details)
+    events.append(event)
     service_case.service_lifecycle_events = events
 
 
-def build_service_lifecycle_tools(*, context: AgentRunContext, settings: Settings) -> list[BaseTool]:
+def build_service_lifecycle_tools(
+    *, context: AgentRunContext, settings: Settings
+) -> list[BaseTool]:
+    async def set_service_start_date(start_date: str) -> dict[str, Any]:
+        """由当前群内工作人员设置本服务单的 28 天计划开始日期。"""
+        raw_date = start_date.strip()
+        try:
+            parsed_date = date.fromisoformat(raw_date)
+        except (TypeError, ValueError):
+            return {
+                "ok": False,
+                "error": "开始日期格式无效，请换算成 YYYY-MM-DD 后重试。",
+            }
+        if parsed_date.isoformat() != raw_date:
+            return {
+                "ok": False,
+                "error": "开始日期必须使用 YYYY-MM-DD 格式。",
+            }
+
+        tz = ZoneInfo(settings.reminder_timezone)
+        now = datetime.now(timezone.utc)
+        local_today = now.astimezone(tz).date()
+        async with SessionLocal() as session:
+            source, meta = await _explicit_group_source(session, context)
+            if source is None:
+                return {
+                    "ok": False,
+                    "error": "设置服务开始日期必须由工作人员在当前群里明确 @ 机器人提出。",
+                }
+            if source.sender_type != MessageSenderType.STAFF:
+                return {
+                    "ok": False,
+                    "error": "只有已识别的班主任或运营人员可以设置服务开始日期。",
+                }
+
+            service_case = await session.scalar(
+                select_active_service_cases(
+                    ServiceCase.id == context.service_case_id
+                ).with_for_update()
+            )
+            if service_case is None:
+                return {"ok": False, "error": "当前服务单不存在或已删除。"}
+            if service_case.status in {
+                ServiceCaseStatus.COMPLETED,
+                ServiceCaseStatus.REFUNDED,
+            }:
+                return {
+                    "ok": False,
+                    "error": "已结束或已退款的服务不能在群内改开始日期，请由运营核对后处理。",
+                }
+            if service_continuation_active(service_case):
+                return {
+                    "ok": False,
+                    "error": "当前处于续服中，不能直接改原 28 天服务起点，请由运营核对后处理。",
+                }
+            if (
+                service_case.status == ServiceCaseStatus.IN_SERVICE
+                and parsed_date > local_today
+            ):
+                return {
+                    "ok": False,
+                    "error": "已开始的服务不能改成未来日期，请先由运营核对当前服务状态。",
+                }
+
+            old_date = service_case.service_plan_start_date
+            service_case.service_plan_start_date = parsed_date
+            activated = activate_service_case_if_due(service_case, now=now, tz=tz)
+            aligned = align_active_service_start_with_plan(service_case, now=now, tz=tz)
+            changed = old_date != parsed_date
+            if changed or activated or aligned:
+                _append_event(
+                    service_case,
+                    action="set_service_start_date",
+                    occurred_at=now,
+                    source=source,
+                    meta=meta,
+                    details={
+                        "old_start_date": old_date.isoformat() if old_date else None,
+                        "new_start_date": parsed_date.isoformat(),
+                    },
+                )
+                await session.commit()
+
+            day = effective_service_day(service_case, now.astimezone(tz), tz)
+            return {
+                "ok": True,
+                "changed": changed,
+                "activated": activated,
+                "start_date": parsed_date.isoformat(),
+                "service_status": service_case.status.value,
+                "service_day": day if parsed_date <= local_today else None,
+                "service_day_text": (
+                    f"第 {day} 天"
+                    if parsed_date <= local_today and day >= 1
+                    else "服务尚未正式开始"
+                ),
+                "note": (
+                    "开始日期已生效，28 天任务从该日期起算。"
+                    if parsed_date <= local_today
+                    else "开始日期已保存，到该日期再启动 28 天任务；群聊服务不受影响。"
+                ),
+            }
+
     async def continue_service() -> dict[str, Any]:
         """在原服务单上恢复无固定截止日的连续服务，不重置服务天数。"""
         tz = ZoneInfo(settings.reminder_timezone)
@@ -83,12 +202,17 @@ def build_service_lifecycle_tools(*, context: AgentRunContext, settings: Setting
                 }
 
             service_case = await session.scalar(
-                select_active_service_cases(ServiceCase.id == context.service_case_id).with_for_update()
+                select_active_service_cases(
+                    ServiceCase.id == context.service_case_id
+                ).with_for_update()
             )
             if service_case is None:
                 return {"ok": False, "error": "当前服务单不存在或已删除，不能续服。"}
             if service_case.status == ServiceCaseStatus.REFUNDED:
-                return {"ok": False, "error": "已退款服务不能在群内直接续服，请先由运营确认恢复。"}
+                return {
+                    "ok": False,
+                    "error": "已退款服务不能在群内直接续服，请先由运营确认恢复。",
+                }
             window_ended = service_window_ended(service_case, now.astimezone(tz), tz)
             if service_case.status == ServiceCaseStatus.IN_SERVICE and not window_ended:
                 day = effective_service_day(service_case, now.astimezone(tz), tz)
@@ -97,7 +221,9 @@ def build_service_lifecycle_tools(*, context: AgentRunContext, settings: Setting
                     "continued": False,
                     "already_in_service": True,
                     "service_day": day,
-                    "service_day_text": f"第 {day} 天" if day >= 1 else "服务尚未正式开始",
+                    "service_day_text": f"第 {day} 天"
+                    if day >= 1
+                    else "服务尚未正式开始",
                     "continuation_active": service_continuation_active(service_case),
                     "note": "当前已在服务中，未重复修改服务起点或天数。",
                 }
@@ -151,7 +277,9 @@ def build_service_lifecycle_tools(*, context: AgentRunContext, settings: Setting
                 }
 
             service_case = await session.scalar(
-                select_active_service_cases(ServiceCase.id == context.service_case_id).with_for_update()
+                select_active_service_cases(
+                    ServiceCase.id == context.service_case_id
+                ).with_for_update()
             )
             if service_case is None:
                 return {"ok": False, "error": "当前服务单不存在或已删除。"}
@@ -186,6 +314,17 @@ def build_service_lifecycle_tools(*, context: AgentRunContext, settings: Setting
             }
 
     return [
+        StructuredTool.from_function(
+            coroutine=set_service_start_date,
+            name="set_service_start_date",
+            description=(
+                "Set or correct the 28-day service start date for THIS group. Use only when identified staff explicitly "
+                "@mentions the bot and asks to set/change the service start date. Convert an unambiguous natural-language "
+                "date to YYYY-MM-DD before calling. The questionnaire is optional and this date controls scheduled day-based "
+                "work, not whether the bot may chat. Never use for customer messages, messages without an explicit @mention, "
+                "or general discussion about dates."
+            ),
+        ),
         StructuredTool.from_function(
             coroutine=continue_service,
             name="continue_service",

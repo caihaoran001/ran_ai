@@ -47,6 +47,9 @@ class ServiceCaseRead(Timestamped):
     notes: str | None
     auto_send_documents: bool = False
     ai_auto_reply_enabled: bool = True
+    ai_introduced_at: datetime | None = None
+    ai_introduced_by_wecom_user_id: str | None = None
+    ai_introduction_trigger_message_id: int | None = None
     risk_level: str = "normal"
     risk_flags: list[dict] | None = None
     health_profile: dict | None = None

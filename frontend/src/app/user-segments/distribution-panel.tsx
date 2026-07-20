@@ -299,7 +299,7 @@ function MemberRow({ serviceCase }: { serviceCase: ServiceCase }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="text-break text-sm font-bold text-slate-900">
-            {user?.name ?? "待填写问卷用户"}
+            {user?.name ?? "待识别用户"}
           </span>
           {serviceCase.risk_level === "high" && (
             <span className="status-pill border-orange-200 bg-orange-50 text-orange-700">高风险</span>

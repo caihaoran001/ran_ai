@@ -85,12 +85,17 @@ def attention_summary(service_case: ServiceCase) -> tuple[str, str, str]:
         return "closed", "服务已结束", "当前没有进行中的服务任务。"
     if service_case.refund_pending_confirmation:
         return "action_required", "退款待确认", "已识别退款完成信号，等待运营确认。"
+    if status == ServiceCaseStatus.CREATED.value:
+        if not getattr(service_case, "ai_introduced_at", None):
+            return "watch", "等待员工引荐", "群服务单已建立，等待员工首次 @ 机器人完成引荐。"
+        if not getattr(service_case, "service_plan_start_date", None):
+            return (
+                "watch",
+                "等待设置开始日期",
+                "群聊服务已开放，尚未设置 28 天服务开始日期；问卷可选。",
+            )
+        return "watch", "等待开始服务", "开始日期已设置，到计划日期自动启动 28 天任务。"
     pre_service_states = {
-        ServiceCaseStatus.CREATED.value: (
-            "watch",
-            "等待入营问卷",
-            "入营问卷尚未提交，服务还未开始。",
-        ),
         ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED.value: (
             "watch",
             "画像生成中",

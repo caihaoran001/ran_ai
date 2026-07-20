@@ -8,6 +8,9 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 
 PRE_SERVICE_STATUSES: frozenset[ServiceCaseStatus] = frozenset(
     {
+        # 问卷不是服务启动的前置条件：群聊自动建单后，工作人员也可以
+        # 直接设置计划开始日期，由调度器在到期时激活 CREATED 服务单。
+        ServiceCaseStatus.CREATED,
         ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED,
         ServiceCaseStatus.GENERATING,
         ServiceCaseStatus.DOCUMENTS_GENERATED,
@@ -17,7 +20,9 @@ PRE_SERVICE_STATUSES: frozenset[ServiceCaseStatus] = frozenset(
 )
 
 
-def planned_service_start_at(service_case: ServiceCase, tz: ZoneInfo) -> datetime | None:
+def planned_service_start_at(
+    service_case: ServiceCase, tz: ZoneInfo
+) -> datetime | None:
     """Return the plan-date boundary as an aware UTC timestamp."""
     plan = service_case.service_plan_start_date
     if plan is None:

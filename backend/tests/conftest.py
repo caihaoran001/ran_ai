@@ -577,7 +577,7 @@ async def admin_client(mock_ai, db_session):
 async def create_case(db_session):
     """测试造数据用：直接建 User+ServiceCase 入库。
 
-    生产已移除手动新建服务单的 HTTP 端点（服务单只由群内入营问卷指令自动创建），
+    生产已移除手动新建服务单的 HTTP 端点（服务单由群内首条消息自动创建），
     此 fixture 复刻原端点的默认值行为，供测试快速铺设服务单，返回带 .status_code /
     .json() 的轻量响应对象以贴合原有断言写法。
     """
@@ -598,7 +598,7 @@ async def create_case(db_session):
 
     async def _create(payload: dict) -> _FakeResp:
         user_data = dict(payload.get("user") or {})
-        user_data["name"] = (user_data.get("name") or "").strip() or "待填写问卷用户"
+        user_data["name"] = (user_data.get("name") or "").strip() or "待识别用户"
         user = User(**user_data)
         db_session.add(user)
         await db_session.flush()

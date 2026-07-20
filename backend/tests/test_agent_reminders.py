@@ -70,6 +70,7 @@ async def test_agent_tool_factory_includes_create_group_reminder():
     }
 
     assert "create_group_reminder" in tool_names
+    assert "set_service_start_date" in tool_names
     assert "continue_service" in tool_names
     assert "set_checkin_checklist" in tool_names
 

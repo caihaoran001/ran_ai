@@ -68,6 +68,8 @@ class EngineState(TypedDict, total=False):
     sender_type: Any
     service_case_id: int | None
     service_case_for_command: Any
+    service_case_introduced: bool
+    should_send_introduction: bool
     service_case_silenced: bool
     resume_takeover_receipt: bool
     analysis: dict | None
@@ -93,6 +95,7 @@ class EngineGraph:
     def _compile(self):
         b = StateGraph(EngineState)
         b.add_node("setup", self._setup)
+        b.add_node("group_introduction", self._group_introduction)
         b.add_node("group_command_reply", self._group_command_reply)
         b.add_node("attachments", self._attachments)
         b.add_node("file_ack", self._file_ack)
@@ -111,8 +114,13 @@ class EngineGraph:
         )
         b.add_conditional_edges(
             "setup", self._route_after_setup,
-            {"group_command_reply": "group_command_reply", "attachments": "attachments"},
+            {
+                "group_introduction": "group_introduction",
+                "group_command_reply": "group_command_reply",
+                "attachments": "attachments",
+            },
         )
+        b.add_edge("group_introduction", END)
         b.add_edge("group_command_reply", END)
         b.add_conditional_edges(
             "attachments", self._route_after_attachments,
@@ -145,9 +153,13 @@ class EngineGraph:
         return "reprocess_head" if state.get("entry_mode") == "reprocess" else "setup"
 
     def _route_after_setup(self, state: EngineState) -> str:
+        if state.get("should_send_introduction"):
+            return "group_introduction"
         return "group_command_reply" if state.get("group_control_command") else "attachments"
 
     def _route_after_attachments(self, state: EngineState) -> str:
+        if not state.get("service_case_introduced"):
+            return END
         if state.get("service_case_silenced"):
             return END
         if state.get("file_processed"):
@@ -190,6 +202,8 @@ class EngineGraph:
 
         service_case_id: int | None = None
         service_case_for_command: ServiceCase | None = None
+        service_case_introduced = False
+        should_send_introduction = False
         service_case_silenced = False
         resume_takeover_receipt = False
         analysis: dict | None = None
@@ -258,14 +272,25 @@ class EngineGraph:
             sender_type = MessageSenderType.STAFF if is_staff else MessageSenderType.USER
 
             service_case = await engine._latest_active_case(session, message.chat_id)
-            if should_send_questionnaire and not service_case:
+            if not service_case and (
+                message.chat_type == "group" or should_send_questionnaire
+            ):
                 service_case = await engine._create_case_for_message(session, message, is_staff=is_staff)
 
             if service_case:
                 service_case_id = service_case.id
                 service_case_for_command = service_case
+                service_case_introduced = service_case.ai_introduced_at is not None
+                should_send_introduction = bool(
+                    not service_case_introduced
+                    and is_staff
+                    and message.chat_type == "group"
+                    and message.message_type == "text"
+                    and _message_mentions_bot(message)
+                )
 
-                if group_control_command == "silence":
+                # 未引荐时的第一次员工 @ 只能做引荐，其后正文不执行任何指令。
+                if service_case_introduced and group_control_command == "silence":
                     service_case.ai_auto_reply_enabled = False
                     session.add(service_case)
                     await session.flush()
@@ -273,7 +298,7 @@ class EngineGraph:
                         "RanrenAI group command silenced bot chat_id=%s service_case_id=%s message_id=%s",
                         message.chat_id, service_case.id, message.message_id,
                     )
-                elif group_control_command == "resume":
+                elif service_case_introduced and group_control_command == "resume":
                     was_silenced = not bool(getattr(service_case, "ai_auto_reply_enabled", True))
                     service_case.ai_auto_reply_enabled = True
                     session.add(service_case)
@@ -291,6 +316,7 @@ class EngineGraph:
                         case_user = await session.get(User, service_case.user_id)
                     if case_user:
                         needs_binding = False
+                        user_changed = False
                         if not case_user.wecom_user_id:
                             needs_binding = True
                         else:
@@ -303,12 +329,23 @@ class EngineGraph:
                                 message.user_id, case_user.id, case_user.wecom_user_id,
                             )
                             case_user.wecom_user_id = message.user_id
-                            if message.user_name and case_user.name == "待填写问卷用户":
-                                case_user.name = message.user_name
+                            user_changed = True
+                        if (
+                            message.user_name
+                            and case_user.name in engine_mod._PLACEHOLDER_USER_NAMES
+                        ):
+                            case_user.name = message.user_name
+                            user_changed = True
+                        if user_changed:
                             session.add(case_user)
                             await session.flush()
 
-            if service_case and not should_send_questionnaire and not is_staff:
+            if (
+                service_case
+                and service_case_introduced
+                and not should_send_questionnaire
+                and not is_staff
+            ):
                 recent_user_messages = await engine._recent_user_messages(session, service_case.id)
 
             purpose = MessagePurpose.CHAT
@@ -322,6 +359,14 @@ class EngineGraph:
             if explicit_bot_query_text:
                 meta["explicit_bot_query_text"] = explicit_bot_query_text
             analysis = {"_qiwe_meta": meta}
+            if service_case and not service_case_introduced:
+                analysis["_reply_gate"] = {
+                    "state": (
+                        "introduction_trigger"
+                        if should_send_introduction
+                        else "awaiting_staff_introduction"
+                    )
+                }
 
             db_inbound = Message(
                 service_case_id=service_case.id if service_case else None,
@@ -351,6 +396,8 @@ class EngineGraph:
             "sender_type": sender_type,
             "service_case_id": service_case_id,
             "service_case_for_command": service_case_for_command,
+            "service_case_introduced": service_case_introduced,
+            "should_send_introduction": should_send_introduction,
             "service_case_silenced": service_case_silenced,
             "resume_takeover_receipt": resume_takeover_receipt,
             "analysis": analysis,
@@ -359,6 +406,24 @@ class EngineGraph:
             "recent_user_messages": recent_user_messages,
             "purpose": purpose,
         }
+
+    async def _group_introduction(self, state: EngineState) -> dict[str, Any]:
+        """首次员工 @ 是确定性引荐事件：只发自我介绍，不处理同条正文。"""
+        message: ChannelMessage = state["message"]
+        service_case_id = state.get("service_case_id")
+        inbound_id = state.get("inbound_id")
+        if not service_case_id or not inbound_id:
+            logger.error(
+                "RanrenAI cannot introduce without persisted case/message chat_id=%s",
+                message.chat_id,
+            )
+            return {}
+        await self.engine._reply_group_introduction(
+            message,
+            service_case_id=service_case_id,
+            trigger_id=inbound_id,
+        )
+        return {}
 
     async def _group_command_reply(self, state: EngineState) -> dict[str, Any]:
         """对应 345–371：resume 回执（静默解除时），command 一律留痕不回复后结束。"""
@@ -527,8 +592,15 @@ class EngineGraph:
                 return {"_halt": True}
 
             service_case = await session.scalar(select_active_service_cases(ServiceCase.id == service_case_id))
-            if not service_case or not service_case.ai_auto_reply_enabled:
-                logger.info("reprocess_message: Skip message %s because case is inactive/silenced", inbound_id)
+            if (
+                not service_case
+                or not service_case.ai_auto_reply_enabled
+                or service_case.ai_introduced_at is None
+            ):
+                logger.info(
+                    "reprocess_message: Skip message %s because case is inactive/silenced/not introduced",
+                    inbound_id,
+                )
                 return {"_halt": True}
 
             claimed = dict(analysis_json)
