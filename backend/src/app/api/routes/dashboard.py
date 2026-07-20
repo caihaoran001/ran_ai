@@ -332,8 +332,16 @@ _PORTRAIT_OPTION_LABELS: dict[str, dict[str, str]] = {
     },
 }
 
+# 这两道单选题的选项本身就是有意义的业务梯度，群体画像应跟随
+# 当前启用问卷的选项顺序，而不是被各分桶的实时人数重排。
+_ORDERED_QUESTIONNAIRE_DIMENSIONS: dict[str, tuple[str, ...]] = {
+    "diet_pattern": ("长期饮食模式",),
+    "sleep_quality": ("睡眠质量的主观评价",),
+}
+
 # 群体画像维度元数据：画像端点与下钻端点共用，保证顺序/标签/分桶完全一致。
-# numeric=True 的维度带 edges/labels（升序左闭分桶，含 0 计数桶）；分类维度按计数降序。
+# numeric=True 的维度带 edges/labels（升序左闭分桶，含 0 计数桶）；
+# 有业务梯度的问卷分类跟随当前问卷选项顺序，其余分类维度按计数降序。
 _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
     {
         "key": "customer_type",
@@ -479,10 +487,29 @@ async def dashboard_population_portrait(
     + 服务单结构化健康标签 + 档案官从群聊投影的稳定习惯。没有 AI 画像不会排除用户，只会令对应维度进入『未采集』。
     每个分布都返回有效样本与『未采集』计数，绝不静默丢弃缺失。分桶逻辑与下钻端点共用同一套 case 标签。
     """
-    total_users, case_labels = await _compute_case_portrait_labels(session)
+    questionnaire_fields = await get_active_questionnaire_fields(session, "intake")
+    total_users, case_labels = await _compute_case_portrait_labels(
+        session,
+        questionnaire_fields=questionnaire_fields,
+    )
     if total_users == 0:
         return PopulationPortrait(total_users=0, distributions=[], geography=None)
-    distributions = [_build_distribution(dim, case_labels) for dim in _PORTRAIT_DIMENSIONS]
+    questionnaire_orders = {
+        dimension_key: _questionnaire_portrait_option_order(
+            questionnaire_fields,
+            dimension_key,
+            *title_parts,
+        )
+        for dimension_key, title_parts in _ORDERED_QUESTIONNAIRE_DIMENSIONS.items()
+    }
+    distributions = [
+        _build_distribution(
+            dim,
+            case_labels,
+            ordered_labels=questionnaire_orders.get(dim["key"]),
+        )
+        for dim in _PORTRAIT_DIMENSIONS
+    ]
     return PopulationPortrait(
         total_users=total_users,
         distributions=distributions,
@@ -549,6 +576,8 @@ async def dashboard_population_portrait_members(
 
 async def _compute_case_portrait_labels(
     session: AsyncSession,
+    *,
+    questionnaire_fields: list[dict[str, Any]] | None = None,
 ) -> tuple[int, dict[int, dict[str, str | list[str]]]]:
     """逐服务单算出各画像维度的分桶标签（画像端点与下钻端点共用，保证一致）。
 
@@ -595,7 +624,11 @@ async def _compute_case_portrait_labels(
     ):
         latest_submission[submission.service_case_id] = submission
 
-    fields = await get_active_questionnaire_fields(session, "intake")
+    fields = (
+        questionnaire_fields
+        if questionnaire_fields is not None
+        else await get_active_questionnaire_fields(session, "intake")
+    )
 
     case_labels: dict[int, dict[str, str | list[str]]] = {}
     for cid in case_ids:
@@ -686,6 +719,31 @@ def _single_questionnaire_portrait_label(
     return _category_label(values[0] if values else None)
 
 
+def _questionnaire_portrait_option_order(
+    fields: list[dict[str, Any]],
+    dimension_key: str,
+    *title_parts: str,
+) -> list[str]:
+    """读取当前启用问卷的原始选项顺序，并转换为群体画像展示标签。"""
+
+    aliases = _PORTRAIT_OPTION_LABELS.get(dimension_key, {})
+    for field in fields:
+        title = str(field.get("title") or field.get("label") or "")
+        if not all(part in title for part in title_parts):
+            continue
+        options = field.get("options")
+        if not isinstance(options, list):
+            return []
+        labels: list[str] = []
+        for option in options:
+            value = str(option).strip()
+            label = aliases.get(value, value)
+            if label and label not in labels:
+                labels.append(label)
+        return labels
+    return []
+
+
 def _supplement_portrait_labels(state_json: Any) -> list[str]:
     """把动态画像中当前补剂事实转成群体画像分桶标签。
 
@@ -748,9 +806,16 @@ def _build_geography(case_labels: dict[int, dict[str, str | list[str]]]) -> Popu
 
 
 def _build_distribution(
-    dim: dict[str, Any], case_labels: dict[int, dict[str, str | list[str]]]
+    dim: dict[str, Any],
+    case_labels: dict[int, dict[str, str | list[str]]],
+    *,
+    ordered_labels: list[str] | None = None,
 ) -> PopulationDistribution:
-    """从逐-case 标签统计单个维度的分布。数值维度按固定顺序（含 0 桶），分类维度按计数降序。"""
+    """从逐-case 标签统计单个维度的分布。
+
+    数值维度按固定区间顺序（含 0 桶）；有业务梯度的问卷维度按问卷顺序；
+    其余分类维度仍按计数降序。
+    """
     counts: dict[str, int] = {}
     unknown = 0
     valid_cases = 0
@@ -777,6 +842,18 @@ def _build_distribution(
         buckets = [
             PopulationDistributionBucket(label=name, count=counts.get(name, 0))
             for name in dim["labels"]
+        ]
+    elif ordered_labels is not None:
+        ordered_set = set(ordered_labels)
+        names = [name for name in ordered_labels if name in counts]
+        names.extend(
+            name
+            for name, _ in sorted(counts.items(), key=lambda kv: -kv[1])
+            if name not in ordered_set
+        )
+        buckets = [
+            PopulationDistributionBucket(label=name, count=counts[name])
+            for name in names
         ]
     else:
         buckets = [

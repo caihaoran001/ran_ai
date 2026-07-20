@@ -14,6 +14,7 @@ from app.api.routes.dashboard import (
     _category_label,
     _compute_case_portrait_labels,
     _num,
+    _questionnaire_portrait_option_order,
 )
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
@@ -119,6 +120,30 @@ def test_structured_answer_values_preserves_option_punctuation_and_groups_custom
     ]
 
 
+def test_questionnaire_portrait_option_order_preserves_template_order_and_aliases():
+    fields = [
+        {
+            "title": "哪一句最符合你的长期饮食模式？",
+            "options": [
+                "我执行的是排除型饮食，很多食物都主动不吃",
+                "我追求低糖、少加工、蛋白优先、主食适量",
+                "我整体都比较乱，经常外卖、宵夜、炸物、酒精混着来",
+            ],
+        },
+        {
+            "title": "您对最近睡眠质量的主观评价是？",
+            "options": ["很好", "还可以", "一般", "不太好", "很差"],
+        },
+    ]
+
+    assert _questionnaire_portrait_option_order(
+        fields, "diet_pattern", "长期饮食模式"
+    ) == ["排除型饮食", "低糖少加工、蛋白优先", "饮食较乱、外卖宵夜等"]
+    assert _questionnaire_portrait_option_order(
+        fields, "sleep_quality", "睡眠质量的主观评价"
+    ) == ["很好", "还可以", "一般", "不太好", "很差"]
+
+
 @pytest.mark.parametrize(
     "raw,expected",
     [
@@ -200,6 +225,33 @@ def test_build_category_distribution_counts_and_unknown_sorted():
     assert dist.buckets[0].count == 2
 
 
+def test_build_ordered_questionnaire_distribution_does_not_sort_by_count():
+    dim = {
+        "key": "sleep_quality",
+        "label": "主观睡眠质量",
+        "description": "",
+        "numeric": False,
+    }
+    case_labels = {
+        1: {"sleep_quality": "很好"},
+        2: {"sleep_quality": "很差"},
+        3: {"sleep_quality": "很差"},
+        4: {"sleep_quality": "很差"},
+        5: {"sleep_quality": "历史自定义值"},
+        6: {"sleep_quality": "历史自定义值"},
+    }
+
+    dist = _build_distribution(
+        dim,
+        case_labels,
+        ordered_labels=["很好", "还可以", "一般", "不太好", "很差"],
+    )
+
+    # 已有问卷选项按原顺序；历史/额外值放在最后，不丢数据。
+    assert [bucket.label for bucket in dist.buckets] == ["很好", "很差", "历史自定义值"]
+    assert [bucket.count for bucket in dist.buckets] == [1, 3, 2]
+
+
 def test_build_multi_select_distribution_counts_each_case_once_per_bucket():
     dim = {
         "key": "health_domain",
@@ -265,6 +317,61 @@ async def test_population_portrait_endpoint_shape(admin_client):
     }
     assert "geography" in data
     assert {"total", "unknown", "provinces"} <= set(data["geography"])
+
+
+@pytest.mark.asyncio
+async def test_population_portrait_endpoint_keeps_questionnaire_order_for_ordered_dimensions(
+    admin_client,
+    db_session,
+    cai_haoran_answers,
+):
+    diet_key = "RADIO1774172399735mn1kft01"
+    sleep_key = "RADIO1774107228737mn0hmypv"
+    first_answers = dict(cai_haoran_answers)
+    first_answers.update(
+        {
+            diet_key: "我执行的是排除型饮食，很多食物都主动不吃",
+            sleep_key: "很好",
+        }
+    )
+    last_answers = dict(cai_haoran_answers)
+    last_answers.update(
+        {
+            diet_key: "我整体都比较乱，经常外卖、宵夜、炸物、酒精混着来",
+            sleep_key: "很差",
+        }
+    )
+    await _create_portrait_case(db_session, intake_answers=first_answers)
+    for _ in range(3):
+        await _create_portrait_case(db_session, intake_answers=last_answers)
+
+    response = await admin_client.get("/dashboard/population-portrait")
+    assert response.status_code == 200
+    distributions = {item["key"]: item for item in response.json()["distributions"]}
+
+    diet_order = [
+        "排除型饮食",
+        "动物性食物为主、种类少",
+        "控碳燃脂模式",
+        "低糖少加工、蛋白优先",
+        "高碳饮食",
+        "高糖饮食",
+        "饮食较乱、外卖宵夜等",
+    ]
+    sleep_order = ["很好", "还可以", "一般", "不太好", "很差"]
+    diet_labels = [item["label"] for item in distributions["diet_pattern"]["buckets"]]
+    sleep_labels = [item["label"] for item in distributions["sleep_quality"]["buckets"]]
+
+    assert "排除型饮食" in diet_labels
+    assert "饮食较乱、外卖宵夜等" in diet_labels
+    assert [label for label in diet_labels if label in diet_order] == [
+        label for label in diet_order if label in diet_labels
+    ]
+    assert "很好" in sleep_labels
+    assert "很差" in sleep_labels
+    assert [label for label in sleep_labels if label in sleep_order] == [
+        label for label in sleep_order if label in sleep_labels
+    ]
 
 
 @pytest.mark.asyncio
