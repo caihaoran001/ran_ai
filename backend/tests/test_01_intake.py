@@ -15,6 +15,7 @@ from app.services.document_service import (
     _apply_intake_facts_to_document_payloads,
     _intake_generation_system_prompt,
 )
+from app.services.document_templates import _daily_checkin_text, combined_prompt_schema
 from app.services.intake_facts import build_intake_fact_summary
 from app.services.questionnaire_template import default_questionnaire_template
 
@@ -150,7 +151,7 @@ def _make_intake_mock_response(*, weight_band: str = "维持优化带（A带）"
                         "2. 今日是否在23:30前上床？（是/否）\n"
                         "3. 今日蔬菜摄入是否达到2拳？（是/否）\n"
                         "4. 今日是否完成7000步或有氧30分钟？（是/否）\n"
-                        "5. 今日情绪稳定度和饭后困综合评分（1-5分，1很差5很好）"
+                        "5. 今日饭后困评分（1-5分，1很困5分不困）"
                     ),
                     "week5_12": "第5-8周在睡眠稳定后逐步拉高运动频率和饮食精细度。第9-12周进入维持模式。",
                     "weekly_standard": "每周通过标准：每周至少完成1次体重+腰围记录；晚间收口>=5天/周；23:00前入睡>=4天/周",
@@ -177,6 +178,21 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "蔬菜总量是否至少2拳" in prompt
     assert "今天是否至少吃到2拳蔬菜" not in prompt
     assert "今日是否心慌" not in prompt
+    assert "「情绪稳定度评分」与「饭后困评分」是两个独立候选问题" in prompt
+    assert "若两项同时入选 daily_checkin，必须各占 1 项" in prompt
+    assert "情绪稳定度与饭后困综合评分必须固定" not in prompt
+    assert "情绪稳定度和饭后困综合评分（1-5）" not in prompt
+
+    daily_checkin_spec = combined_prompt_schema()[
+        DocumentType.DAY28_EXECUTION_STANDARD.value
+    ]["daily_checkin"]
+    assert "情绪稳定度评分和饭后困评分是两个独立候选问题" in daily_checkin_spec
+    assert "两项同时入选时各占1项" in daily_checkin_spec
+    assert "必须合并为1项" not in daily_checkin_spec
+
+    fallback = _daily_checkin_text(None)
+    assert "饭后困评分（1分很困、5分不困）" in fallback
+    assert "情绪稳定度和饭后困综合评分" not in fallback
 
 
 @pytest.mark.asyncio
@@ -232,7 +248,7 @@ async def test_questionnaire_submit_creates_profile_and_documents(
         "今日是否在23:30前上床？（是/否）",
         "今日蔬菜摄入是否达到2拳？（是/否）",
         "今日是否完成7000步或有氧30分钟？（是/否）",
-        "今日情绪稳定度和饭后困综合评分（1-5分，1很差5很好）",
+        "今日饭后困评分（1-5分，1很困5分不困）",
     ]
     for i, (pf, expected) in enumerate(zip(personalized_fields, expected_labels)):
         assert pf["label"] == expected, f"第 {i+1} 项标签不一致"
@@ -410,7 +426,7 @@ async def test_personalized_checkin_uses_latest_document_daily_checkin_block(adm
                             "2. 今日是否在23:30前上床？（是/否）\n"
                             "3. 今日蔬菜摄入是否达到2拳？（是/否）\n"
                             "4. 今日是否完成7000步或有氧30分钟？（是/否）\n"
-                            "5. 今日情绪稳定度和饭后困综合评分（1-5分）"
+                            "5. 今日饭后困评分（1-5分，1很困5分不困）"
                         ),
                     }
                 ]
