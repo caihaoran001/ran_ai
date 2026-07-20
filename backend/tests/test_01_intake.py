@@ -170,6 +170,13 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
         "候选问题超过5个时只保留优先级最高的5个并舍弃其余，禁止合并多个问题，"
         "尤其禁止「是否……？请记录……」「是否……并填写……」「是否……同时记录……」等把判断题和填空/评分题塞进同一项的句式。"
     ) in prompt
+    assert (
+        "daily_checkin 的5项题面一律禁止包含「"
+        "今天/今日/今早/今晚/昨天/昨日/昨晚/当天/本日」等相对时间词"
+    ) in prompt
+    assert "蔬菜总量是否至少2拳" in prompt
+    assert "今天是否至少吃到2拳蔬菜" not in prompt
+    assert "今日是否心慌" not in prompt
 
 
 @pytest.mark.asyncio

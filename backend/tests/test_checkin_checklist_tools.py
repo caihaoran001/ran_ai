@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -287,11 +287,7 @@ async def test_manual_question_ids_restore_historical_labels(db_session):
 
 
 class _FollowupAI:
-    def __init__(self):
-        self.calls: list[dict] = []
-
     async def generate_text(self, **kwargs):
-        self.calls.append(kwargs)
         return "补一下昨天的五项，回我一句就行。"
 
 
@@ -303,19 +299,13 @@ async def test_followup_uses_manual_questions_without_document(db_session):
         AgentRunContext(service_case_id=service_case.id, trigger_id=source.id)
     )["set_checkin_checklist"].ainvoke({"questions": QUESTIONS})
 
-    ai = _FollowupAI()
-    yesterday = date.today() - timedelta(days=1)
     followup = await compose_document_checklist_followup(
         db_session,
         service_case=service_case,
-        target_date=yesterday,
-        reference_date=date.today(),
-        ai_service=ai,
+        target_date=date.today(),
+        ai_service=_FollowupAI(),
     )
 
     assert followup is not None
     assert [item["label"] for item in followup.expected_items] == QUESTIONS
     assert all(item["id"].startswith("checklist:") for item in followup.expected_items)
-    assert "今天" not in ai.calls[0]["user_prompt"]
-    assert "昨天蔬菜吃够两拳了吗" in ai.calls[0]["user_prompt"]
-    assert "前天晚上几点入睡" in ai.calls[0]["user_prompt"]
