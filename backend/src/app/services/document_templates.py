@@ -116,15 +116,6 @@ STAGE_REPORT_SPEC = {
 }
 
 
-GRADUATION_REPORT_SPEC = {
-    "weight_change": "体重变化",
-    "rhythm_change": "节律变化",
-    "execution_rate": "执行率",
-    "growth_summary": "用户成长总结",
-    "next_route": "下一阶段路线图",
-}
-
-
 def prompt_schema_for(document_type: DocumentType) -> dict[str, Any]:
     if document_type == DocumentType.ENERGY_RESTART_PRESCRIPTION:
         return ENERGY_FIELD_SPEC
@@ -139,8 +130,6 @@ def combined_prompt_schema() -> dict[str, Any]:
 
 
 def stage_report_prompt_schema(stage: str) -> dict[str, Any]:
-    if stage == "graduation":
-        return GRADUATION_REPORT_SPEC
     return STAGE_REPORT_SPEC
 
 
@@ -164,25 +153,16 @@ def build_stage_report_content_json(
     user_name: str,
     fields: dict[str, Any],
 ) -> dict[str, Any]:
-    if stage == "graduation":
-        blocks = [
-            _text_block("weight_change", "1. 体重变化", fields.get("weight_change")),
-            _text_block("rhythm_change", "2. 节律变化", fields.get("rhythm_change")),
-            _text_block("execution_rate", "3. 执行率", fields.get("execution_rate")),
-            _text_block("growth_summary", "4. 用户成长总结", fields.get("growth_summary")),
-            _text_block("next_route", "5. 下一阶段路线图", fields.get("next_route")),
-        ]
-    else:
-        blocks = [
-            _text_block("stage_summary", "1. 阶段总结", fields.get("stage_summary")),
-            _text_block("risk_reminder", "2. 风险提醒", fields.get("risk_reminder")),
-            _text_block("adjustment_advice", "3. 微调建议", fields.get("adjustment_advice")),
-            _text_block(
-                "followup_advice",
-                "4. 后续执行建议",
-                fields.get("followup_advice") or fields.get("repurchase_advice"),
-            ),
-        ]
+    blocks = [
+        _text_block("stage_summary", "1. 阶段总结", fields.get("stage_summary")),
+        _text_block("risk_reminder", "2. 风险提醒", fields.get("risk_reminder")),
+        _text_block("adjustment_advice", "3. 微调建议", fields.get("adjustment_advice")),
+        _text_block(
+            "followup_advice",
+            "4. 后续执行建议",
+            fields.get("followup_advice") or fields.get("repurchase_advice"),
+        ),
+    ]
     payload = _payload(title=title, recipient=user_name, blocks=blocks)
     payload["stage"] = stage
     return payload

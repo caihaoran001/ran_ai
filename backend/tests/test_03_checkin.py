@@ -83,7 +83,7 @@ async def test_graduated_case_rejects_new_checkin(admin_client, public_client, d
 
     checkin_resp = await admin_client.post(
         f"/service-cases/{service_case.id}/checkins",
-        json={"content": "毕业后补打卡", "parsed_json": {"weight": "60"}},
+        json={"content": "阶段完结后补打卡", "parsed_json": {"weight": "60"}},
     )
     assert checkin_resp.status_code == 409
 

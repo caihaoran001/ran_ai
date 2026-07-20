@@ -63,7 +63,7 @@ TEST_SUITES = [
         "id": "04",
         "display_id": "04",
         "name": "test_04_stage_reports",
-        "description": "阶段报告与毕业报告自动生成测试",
+        "description": "3/7/14/21/28天阶段报告自动生成测试",
         "file": "tests/test_04_stage_reports.py",
         "tier": "health",
         "included_in_health_check": True,

@@ -10,7 +10,6 @@ const STAGES = [
   ["day14", "14天"],
   ["day21", "21天"],
   ["day28", "28天"],
-  ["graduation", "毕业"],
 ] as const;
 
 export function StageReportActions({

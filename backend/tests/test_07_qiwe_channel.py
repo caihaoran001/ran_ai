@@ -1103,7 +1103,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     )
     db_session.add(msg_f)
 
-    # Scenario G: 已毕业群的明确续服指令（应恢复，否则部署窗口会丢指令）
+    # Scenario G: 阶段已完结群的明确续服指令（应恢复，否则部署窗口会丢指令）
     case_g = ServiceCase(
         user_id=user.id,
         case_no="CASE-G",

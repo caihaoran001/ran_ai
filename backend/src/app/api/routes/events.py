@@ -10,7 +10,7 @@ from sqlalchemy import func, select, text
 from app.db.session import SessionLocal
 from app.models.knowledge_draft import KnowledgeDraft
 from app.models.service_case import ServiceCase, ServiceCaseStatus
-from app.models.user_document import DocumentStatus, UserDocument
+from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, UserDocument
 from app.services.service_case_queries import active_service_case_condition
 
 router = APIRouter()
@@ -67,7 +67,10 @@ async def _pending_latest_document_count(session) -> int:
             text("content_json->>'stage'"),
         )
         .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
-        .where(active_service_case_condition())
+        .where(
+            active_service_case_condition(),
+            UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
+        )
         .order_by(
             UserDocument.service_case_id,
             UserDocument.document_type,

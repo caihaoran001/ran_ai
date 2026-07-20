@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.document_service import _generate_stage_payload
 from tests.conftest import seed_checkins, seed_chat_messages
 
@@ -56,7 +57,7 @@ async def test_stage_report_generation_all_stages(admin_client, create_case, db_
     )
     assert patch_resp.status_code == 200, patch_resp.text
 
-    stages = ["day3", "day7", "day14", "day21", "day28", "graduation"]
+    stages = ["day3", "day7", "day14", "day21", "day28"]
     for stage in stages:
         gen_resp = await admin_client.post(
             f"/service-cases/{case_id}/stage-reports/generate",
@@ -65,15 +66,16 @@ async def test_stage_report_generation_all_stages(admin_client, create_case, db_
         assert gen_resp.status_code == 200, f"stage={stage}: {gen_resp.text}"
         doc = gen_resp.json()
         assert doc["service_case_id"] == case_id
-        assert doc["document_type"] in ("stage_report", "graduation_report")
+        assert doc["document_type"] == "stage_report"
 
     docs_resp = await admin_client.get(f"/service-cases/{case_id}/documents")
     assert docs_resp.status_code == 200, docs_resp.text
     documents = docs_resp.json()
-    assert len(documents) >= 6
+    assert len(documents) >= 5
 
-    stage_docs = [d for d in documents if d["document_type"] in ("stage_report", "graduation_report")]
-    assert len(stage_docs) >= 6
+    stage_docs = [d for d in documents if d["document_type"] == "stage_report"]
+    assert len(stage_docs) >= 5
+    assert {d["content_json"]["stage"] for d in stage_docs} >= set(stages)
 
 
 @pytest.mark.asyncio
@@ -317,7 +319,7 @@ async def test_stage_report_marks_degraded_after_unusable_retries():
 
 
 @pytest.mark.asyncio
-async def test_stage_report_retries_when_non_graduation_has_commercial_terms():
+async def test_stage_report_retries_when_payload_has_commercial_terms():
     ai = _SequenceAI(
         [
             json.dumps(
@@ -357,67 +359,50 @@ async def test_stage_report_retries_when_non_graduation_has_commercial_terms():
 
 
 @pytest.mark.asyncio
-async def test_graduation_report(admin_client, create_case, db_session):
-    await _ensure_manual_review(admin_client)
-
+async def test_graduation_report_is_retired_but_historical_row_is_preserved(
+    admin_client,
+    create_case,
+    db_session,
+):
     group_id = f"test-04d-{uuid4().hex[:8]}"
     create_resp = await create_case(
         {
             "group_id": group_id,
-            "user": {"name": "毕业报告测试用户"},
+            "user": {"name": "阶段报告测试用户"},
         },
     )
     assert create_resp.status_code == 201, create_resp.text
     case = create_resp.json()
     case_id = case["id"]
-    token = case["questionnaire_token"]
-
-    submit_resp = await admin_client.post(
-        f"/questionnaires/{token}/submit",
-        json={"answers": {"name": "毕业报告测试用户"}},
-        params={"template": "intake"},
-    )
-    assert submit_resp.status_code == 201, submit_resp.text
-
-    await seed_checkins(
-        db_session,
+    legacy = UserDocument(
         service_case_id=case_id,
-        group_id=case["group_id"],
-        user_id=case["user_id"],
-        days=28,
+        document_type=DocumentType.GRADUATION_REPORT,
+        title="历史毕业报告",
+        content_md="# 历史毕业报告",
+        content_json={"stage": "graduation", "blocks": []},
+        status=DocumentStatus.REVIEWING,
     )
-    await seed_chat_messages(
-        db_session,
-        service_case_id=case_id,
-        group_id=case["group_id"],
-    )
+    db_session.add(legacy)
     await db_session.commit()
-
-    started_at = datetime.now(timezone.utc) - timedelta(days=28)
-    patch_resp = await admin_client.patch(
-        f"/service-cases/{case_id}",
-        json={"started_at": started_at.strftime("%Y-%m-%dT%H:%M:%SZ")},
-    )
-    assert patch_resp.status_code == 200, patch_resp.text
+    await db_session.refresh(legacy)
 
     gen_resp = await admin_client.post(
         f"/service-cases/{case_id}/stage-reports/generate",
         params={"stage": "graduation"},
     )
-    assert gen_resp.status_code == 200, gen_resp.text
-    doc = gen_resp.json()
+    assert gen_resp.status_code == 400, gen_resp.text
+    assert gen_resp.json()["detail"] == "invalid stage"
 
-    assert doc["document_type"] == "graduation_report"
+    list_resp = await admin_client.get(
+        f"/service-cases/{case_id}/documents",
+        params={"include_history": "true"},
+    )
+    assert list_resp.status_code == 200, list_resp.text
+    assert all(doc["document_type"] != "graduation_report" for doc in list_resp.json())
 
-    content_json = doc.get("content_json") or {}
-    assert content_json.get("stage") == "graduation"
-
-    content_md = doc.get("content_md") or ""
-    blocks = content_json.get("blocks") or []
-    block_contents_by_key = {b.get("key", ""): str(b.get("content", "")) for b in blocks}
-
-    assert "weight_change" in block_contents_by_key or "weight" in content_md.lower()
-    assert "growth_summary" in block_contents_by_key or "成长" in content_md
+    direct_resp = await admin_client.get(f"/documents/{legacy.id}")
+    assert direct_resp.status_code == 404, direct_resp.text
+    assert await db_session.get(UserDocument, legacy.id) is not None
 
 
 async def _ensure_manual_review(admin_client):

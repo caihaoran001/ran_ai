@@ -18,7 +18,15 @@ class DocumentType(str, enum.Enum):
     ENERGY_RESTART_PRESCRIPTION = "energy_restart_prescription"
     DAY28_EXECUTION_STANDARD = "day28_execution_standard"
     STAGE_REPORT = "stage_report"
+    # 仅用于兼容数据库中的历史记录；产品已停止生成和展示该类型。
     GRADUATION_REPORT = "graduation_report"
+
+
+ACTIVE_DOCUMENT_TYPES: tuple[DocumentType, ...] = (
+    DocumentType.ENERGY_RESTART_PRESCRIPTION,
+    DocumentType.DAY28_EXECUTION_STANDARD,
+    DocumentType.STAGE_REPORT,
+)
 
 
 class DocumentStatus(str, enum.Enum):

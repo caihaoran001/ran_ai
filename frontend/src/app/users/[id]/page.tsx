@@ -401,7 +401,7 @@ function serviceStageText(serviceCase: User["service_cases"][number]) {
     reviewing: "待审核",
     approved: "已批准",
     in_service: "服务中",
-    completed: "已毕业",
+    completed: "阶段已完结",
     refunded: "已退款",
   };
   const status = labels[serviceCase.status] || serviceCase.status;

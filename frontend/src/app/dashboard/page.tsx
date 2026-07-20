@@ -366,9 +366,6 @@ function CaseHealthRow({ item }: { item: CaseHealthItem }) {
               {stageNum[stage]}
             </span>
           ))}
-          {item.stage_reports.includes("graduation") && (
-            <span className="ml-1 rounded bg-emerald-600 px-1.5 text-[11px] text-white">毕业</span>
-          )}
         </div>
       </td>
     </tr>

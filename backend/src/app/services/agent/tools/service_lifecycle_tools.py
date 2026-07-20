@@ -16,7 +16,7 @@ from app.services.service_case_queries import (
     effective_service_day,
     select_active_service_cases,
     service_continuation_active,
-    service_graduation_at,
+    service_phase_end_at,
     service_window_ended,
 )
 
@@ -107,14 +107,14 @@ def build_service_lifecycle_tools(*, context: AgentRunContext, settings: Setting
             }:
                 return {
                     "ok": False,
-                    "error": "只能对已毕业的服务恢复续服；当前还处于入营或交付流程。",
+                    "error": "只能对28天阶段已完结的服务恢复续服；当前还处于入营或交付流程。",
                 }
 
             service_case.status = ServiceCaseStatus.IN_SERVICE
             # 指令可能刚好落在第 29 天调度器尚未把状态切成 COMPLETED 的短窗口；
-            # 此时先固化原毕业时间，再开启续服，避免立即被重新毕业。
+            # 此时先固化原阶段结束时间，再开启续服，避免立即被再次结束。
             if service_case.ended_at is None and window_ended:
-                service_case.ended_at = service_graduation_at(service_case, tz)
+                service_case.ended_at = service_phase_end_at(service_case, tz)
             service_case.service_continued_at = now
             _append_event(
                 service_case,

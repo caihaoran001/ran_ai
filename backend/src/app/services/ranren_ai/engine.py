@@ -980,8 +980,8 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
             await session.scalars(
                 select(ServiceCase)
                 .where(
-                    # 已毕业/退款客户仍保留群和聊天能力：重启后也要恢复在途消息，
-                    # 尤其已毕业消息可能是明确 @ 机器人的续服指令。
+                    # 阶段已完结/退款客户仍保留群和聊天能力：重启后也要恢复在途消息，
+                    # 尤其阶段已完结消息可能是明确 @ 机器人的续服指令。
                     ServiceCase.status.in_(
                         [
                             ServiceCaseStatus.APPROVED,

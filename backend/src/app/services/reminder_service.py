@@ -45,7 +45,7 @@ from app.services.service_case_queries import (
     effective_service_day,
     select_active_service_cases,
     service_continuation_active,
-    service_graduation_at,
+    service_phase_end_at,
     service_window_ended,
 )
 
@@ -113,7 +113,7 @@ class ReminderService:
                     if not acquired:
                         logger.debug("Reminder scheduler skipped: advisory lock is held by another worker")
                     else:
-                        await self.check_service_graduations_once()
+                        await self.check_service_phase_ends_once()
                         if self.settings.agent_reminders_enabled:
                             await self.check_agent_reminder_tasks_once()
                         if self.settings.reminder_enabled:
@@ -130,7 +130,7 @@ class ReminderService:
                         if self.settings.checkin_followup_enabled:
                             await self.check_checkin_followup_v2_once()
                         # 群体洞察可能有一次较长的 LLM 调用，放到循环末尾，
-                        # 避免延迟毕业、提醒、补发等时效性任务。
+                        # 避免延迟阶段完结、提醒、补发等时效性任务。
                         if self.settings.population_insight_enabled:
                             await self.check_population_insight_once()
             except asyncio.CancelledError:
@@ -182,7 +182,7 @@ class ReminderService:
         else:
             logger.debug("Population insight auto-refresh skipped reason=%s", result.reason)
 
-    async def check_service_graduations_once(self, now: datetime | None = None) -> None:
+    async def check_service_phase_ends_once(self, now: datetime | None = None) -> None:
         timezone = ZoneInfo(self.settings.reminder_timezone)
         now = now or datetime.now(timezone)
         async with SessionLocal() as session:
@@ -199,7 +199,7 @@ class ReminderService:
                 if not service_window_ended(service_case, now, timezone):
                     continue
                 service_case.status = ServiceCaseStatus.COMPLETED
-                service_case.ended_at = service_case.ended_at or service_graduation_at(service_case, timezone)
+                service_case.ended_at = service_case.ended_at or service_phase_end_at(service_case, timezone)
                 changed = True
             if changed:
                 await session.commit()
@@ -468,9 +468,7 @@ class ReminderService:
                     .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
                     .where(
                         active_service_case_condition(),
-                        UserDocument.document_type.in_(
-                            [DocumentType.STAGE_REPORT, DocumentType.GRADUATION_REPORT]
-                        ),
+                        UserDocument.document_type == DocumentType.STAGE_REPORT,
                         UserDocument.updated_at < threshold,
                     )
                 )
@@ -646,12 +644,12 @@ class ReminderService:
             if not case_ids:
                 return
 
-            # Pre-fetch all stage/graduation reports for active cases in one query
+            # Pre-fetch all stage reports for active cases in one query.
             documents = list(
                 await session.scalars(
                     select(UserDocument).where(
                         UserDocument.service_case_id.in_(case_ids),
-                        UserDocument.document_type.in_([DocumentType.STAGE_REPORT, DocumentType.GRADUATION_REPORT]),
+                        UserDocument.document_type == DocumentType.STAGE_REPORT,
                     )
                 )
             )
@@ -1029,7 +1027,7 @@ def _due_stage_reports(
     generate_hour: int = 23,
     generate_minute: int = 0,
 ) -> list[str]:
-    """该 case 在 now 时刻应生成、且尚未生成的阶段/毕业报告 stage 列表。
+    """该 case 在 now 时刻应生成、且尚未生成的阶段报告 stage 列表。
 
     规则：仅在配置的生成时间集中产出（运营当晚集中审、用户次日早上看到）；「服务第几天」用
     effective_service_day（计划开始日当天=第1天，与看板/AI 口径一致）；service_day >= 里程碑
@@ -1040,7 +1038,7 @@ def _due_stage_reports(
     """
     if now.hour != generate_hour or now.minute < generate_minute:
         return []
-    # 续服沿用原服务天数，不开启新一期，因此不回头补生成标准 28 天阶段/毕业报告。
+    # 续服沿用原服务天数，不开启新一期，因此不回头补生成标准 28 天阶段报告。
     if service_continuation_active(service_case):
         return []
     service_day = effective_service_day(service_case, now, tz)
@@ -1048,8 +1046,6 @@ def _due_stage_reports(
     for threshold, stage in _STAGE_MILESTONES:
         if service_day >= threshold and (service_case.id, stage) not in existing_reports:
             due.append(stage)
-    if service_day >= 28 and (service_case.id, "graduation") not in existing_reports:
-        due.append("graduation")
     return due
 
 

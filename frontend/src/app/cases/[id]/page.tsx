@@ -347,7 +347,7 @@ function StatusBadge({ status, continued = false }: { status: string; continued?
     reviewing: { label: "审核中", className: "border-violet-200 bg-violet-50 text-violet-700" },
     approved: { label: "已批准", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
     in_service: { label: "服务中", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
-    completed: { label: "已毕业", className: "border-slate-200 bg-slate-50 text-slate-600" },
+    completed: { label: "阶段已完结", className: "border-slate-200 bg-slate-50 text-slate-600" },
     refunded: { label: "已退款", className: "border-rose-200 bg-rose-50 text-rose-700" },
     sent: { label: "已发送", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
     draft: { label: "草稿", className: "border-slate-200 bg-slate-50 text-slate-600" },
@@ -474,9 +474,9 @@ function formatServiceDuration(
     const day = getContinuousServiceDay(startedAt, planStartDate);
     return day ? `续服中 · 第 ${day} 天` : "续服中";
   }
-  const graduationDate = getServiceGraduationDate(startedAt, planStartDate);
-  if (graduationDate && chinaDateKey(new Date()) > graduationDate) {
-    return `已于 ${formatDateKey(graduationDate)} 毕业`;
+  const phaseEndDate = getServicePhaseEndDate(startedAt, planStartDate);
+  if (phaseEndDate && chinaDateKey(new Date()) > phaseEndDate) {
+    return `已于 ${formatDateKey(phaseEndDate)} 阶段完结`;
   }
   if (status === "completed" && endedAt) {
     return `已于 ${formatChinaDateTime(endedAt, "已完成")} 完成`;
@@ -513,7 +513,7 @@ function getContinuousServiceDay(startedAt?: string | null, planStartDate?: stri
   return Math.floor(diff / 86_400_000) + 1;
 }
 
-function getServiceGraduationDate(startedAt?: string | null, planStartDate?: string | null) {
+function getServicePhaseEndDate(startedAt?: string | null, planStartDate?: string | null) {
   if (planStartDate) {
     return addDaysToDateKey(planStartDate, 27);
   }

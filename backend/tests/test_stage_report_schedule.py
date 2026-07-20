@@ -1,6 +1,6 @@
 """阶段报告触发时机回归测试。
 
-阶段报告（day3/7/14/21/28 + graduation）改为固定在「服务第 N 天当地 23:00」集中生成，
+阶段报告（day3/7/14/21/28）固定在「服务第 N 天当地 23:00」集中生成，
 方便运营当晚集中审核、用户次日早上看到。核心判断抽成纯函数 reminder_service._due_stage_reports，
 这里覆盖它的全部分支（不碰 DB/LLM）。
 """
@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from app.core.config import get_settings
 from app.models.service_case import ServiceCaseStatus
 from app.services.reminder_service import _due_stage_reports
-from app.services.service_case_queries import service_graduation_date, service_window_ended
+from app.services.service_case_queries import service_phase_end_date, service_window_ended
 
 TZ = ZoneInfo(get_settings().reminder_timezone)
 
@@ -62,19 +62,19 @@ def test_future_plan_start_not_due():
     assert _due_stage_reports(case, _at(2026, 6, 3, 23), TZ, set()) == []
 
 
-def test_day28_outputs_day28_and_graduation():
-    # 第28天23点，前面里程碑都已生成 → 只新增 day28 + graduation
+def test_day28_outputs_only_day28_stage_report():
+    # 第28天23点，前面里程碑都已生成 → 只新增 day28 阶段报告
     case = _case(plan=date(2026, 6, 1))
     existing = {(1, "day3"), (1, "day7"), (1, "day14"), (1, "day21")}
     due = _due_stage_reports(case, _at(2026, 6, 28, 23), TZ, existing)
-    assert due == ["day28", "graduation"]
+    assert due == ["day28"]
 
 
 def test_late_activation_backfills_missed_milestones():
     # 补偿性：若一路漏扫，第28天23点会把所有未生成的里程碑补齐（用 >= 而非 ==）
     case = _case(plan=date(2026, 6, 1))
     due = _due_stage_reports(case, _at(2026, 6, 28, 23), TZ, set())
-    assert due == ["day3", "day7", "day14", "day21", "day28", "graduation"]
+    assert due == ["day3", "day7", "day14", "day21", "day28"]
 
 
 def test_falls_back_to_started_at_when_no_plan():
@@ -83,14 +83,14 @@ def test_falls_back_to_started_at_when_no_plan():
     assert _due_stage_reports(case, _at(2026, 6, 3, 23), TZ, set()) == ["day3"]
 
 
-def test_service_graduates_after_day28_not_on_day28():
+def test_service_phase_ends_after_day28_not_on_day28():
     case = _case(plan=date(2026, 6, 1))
-    assert service_graduation_date(case, TZ) == date(2026, 6, 28)
+    assert service_phase_end_date(case, TZ) == date(2026, 6, 28)
     assert service_window_ended(case, _at(2026, 6, 28, 23), TZ) is False
     assert service_window_ended(case, _at(2026, 6, 29, 0), TZ) is True
 
 
-def test_continued_service_neither_regraduates_nor_regenerates_standard_reports():
+def test_continued_service_does_not_end_again_or_regenerate_standard_reports():
     continued_at = _at(2026, 7, 5, 10)
     case = _case(plan=date(2026, 6, 1), service_continued_at=continued_at)
 

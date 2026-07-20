@@ -13,7 +13,7 @@ from app.db.session import SessionLocal
 from app.models.checkin import Checkin
 from app.models.message import Message
 from app.models.service_case import ServiceCase
-from app.models.user_document import DocumentStatus, DocumentType, UserDocument
+from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.agent.state import AgentRunContext
 from app.services.checkin_presentation import (
@@ -55,7 +55,7 @@ class ListDeliveryDocumentsArgs(BaseModel):
         default=None,
         description=(
             "Optional exact UserDocument.document_type enum filter. Valid values: "
-            "energy_restart_prescription, day28_execution_standard, stage_report, graduation_report."
+            "energy_restart_prescription, day28_execution_standard, stage_report."
         ),
     )
     limit: int = Field(default=12, ge=1, le=30, description="How many recent delivery documents to list, 1 to 30.")
@@ -88,7 +88,6 @@ _DOCUMENT_TYPE_LABELS: dict[DocumentType, str] = {
     DocumentType.ENERGY_RESTART_PRESCRIPTION: "能量重启处方单",
     DocumentType.DAY28_EXECUTION_STANDARD: "28天执行单",
     DocumentType.STAGE_REPORT: "阶段报告",
-    DocumentType.GRADUATION_REPORT: "毕业报告",
 }
 
 
@@ -138,7 +137,10 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             day = effective_service_day(service_case, now, tz)
             docs = await session.scalars(
                 select(UserDocument)
-                .where(UserDocument.service_case_id == context.service_case_id)
+                .where(
+                    UserDocument.service_case_id == context.service_case_id,
+                    UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
+                )
                 .order_by(UserDocument.created_at.desc())
             )
             document_statuses = [
@@ -349,6 +351,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                 .where(
                     UserDocument.service_case_id == context.service_case_id,
                     UserDocument.status == DocumentStatus.SENT,
+                    UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
                 )
                 .order_by(UserDocument.created_at.desc(), UserDocument.id.desc())
                 .limit(min(_MAX_DOCUMENT_SCAN, limit))
@@ -380,6 +383,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                         UserDocument.id == document_id,
                         UserDocument.service_case_id == context.service_case_id,
                         UserDocument.status == DocumentStatus.SENT,
+                        UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
                     )
                 )
                 if document is None:
@@ -397,6 +401,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                             UserDocument.service_case_id == context.service_case_id,
                             UserDocument.document_type == document_type,
                             UserDocument.status == DocumentStatus.SENT,
+                            UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
                         )
                         .order_by(UserDocument.created_at.desc(), UserDocument.id.desc())
                         .limit(_MAX_DOCUMENT_SCAN)

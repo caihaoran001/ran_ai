@@ -75,7 +75,7 @@ async def test_stage_reports_skip_refunded(db_session, mock_session_local):
     sc = await _make_case(db_session, status=ServiceCaseStatus.REFUNDED, started_at=started_at)
     sc.service_plan_start_date = date(2026, 6, 1)
     await db_session.flush()
-    # 第28天当地23点：若为 IN_SERVICE 本会生成 day28+graduation；REFUNDED 应完全跳过
+    # 第28天当地23点：若为 IN_SERVICE 本会生成 day28 阶段报告；REFUNDED 应完全跳过
     await ReminderService().check_stage_reports_once(now=datetime(2026, 6, 28, 23, 0, tzinfo=TZ))
     docs = list(await db_session.scalars(select(UserDocument).where(UserDocument.service_case_id == sc.id)))
     assert docs == []

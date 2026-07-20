@@ -84,7 +84,7 @@ A QiWe callback turns inbound text into a `ChannelMessage`, aggregates consecuti
 - **注意**：`retrieve_case_context_db`（专门只查 `source_type='case'`、带 skill 教练头的独立优秀案例检索）已定义但**当前无任何调用点**（未接线）；优秀案例目前只能靠上面的混合检索被顺带捞到，没有独立案例通道在跑。要恢复"案例专用检索"需显式接线，别以为它在生效。
 
 ### Documents & profiles
-Questionnaire submission → LLM generates a user profile. Service-case detail can generate two delivery docs (处方单, 28天执行单) and stage reports (3/7/14/21/28-day + graduation). Flow: LLM emits **structured JSON** for key fields → backend templates (`document_templates.py`) render editable Markdown → persisted as `content_json`/`content_md` → only at download/send time does `docx_service.py` render a temporary `.docx` (deleted after). **The authoritative system prompts live in `backend/src/app/services/document_service.py`; `手动版提示词.md` is reference only and must not be used at runtime.**
+Questionnaire submission → LLM generates a user profile. Service-case detail can generate two delivery docs (处方单, 28天执行单) and stage reports (3/7/14/21/28-day). The 28-day point ends the current service phase and does not generate a separate graduation report. Flow: LLM emits **structured JSON** for key fields → backend templates (`document_templates.py`) render editable Markdown → persisted as `content_json`/`content_md` → only at download/send time does `docx_service.py` render a temporary `.docx` (deleted after). **The authoritative system prompts live in `backend/src/app/services/document_service.py`; `手动版提示词.md` is reference only and must not be used at runtime.**
 
 ### Archivist — outcome / check-in / knowledge extraction (NOT per-message, NOT on the reply path)
 成效抽取**不在消息主链路上实时跑**。消息进来只负责入库/回复；结构化抽取由独立的「档案官」`app/services/archivist/` 承担，在 **scheduler 进程** (`ran-ai-scheduler`) 里周期扫描完成：
@@ -131,7 +131,7 @@ Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY
 | 风控干预 | `src/app/services/intervention_service.py` | LLM 风控识别 + service_case 风险/续购/退款合并 |
 | 结构化 FAQ | `src/app/services/knowledge_faq_service.py` | FAQ 业务表 + 知识索引同步 |
 | 案例库 | `src/app/services/case_library.py` | 优秀案例库检索 |
-| 文档模板 | `src/app/services/document_templates.py` | 处方单/执行单/阶段报告/毕业报告模板 |
+| 文档模板 | `src/app/services/document_templates.py` | 处方单/执行单/阶段报告模板 |
 | DOCX 渲染 | `src/app/services/docx_service.py` | python-docx 落盘为 .docx |
 | 风险判断 | `src/app/services/risk_service.py` | `is_high_risk` 等风险判定 |
 | 打卡问卷模板 | `src/app/services/checkin_questionnaires.py` | 每日打卡问卷 schema 调度 |

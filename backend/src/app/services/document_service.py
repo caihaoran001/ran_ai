@@ -44,6 +44,7 @@ from app.services.intake_generation import (
     personalized_checkin_fields_from_document_payloads,
 )
 from app.services.stage_report import (
+    STAGE_REPORT_STAGES,
     _existing_stage_report,
     _generate_stage_payload,
     _stage_title,
@@ -181,7 +182,7 @@ async def generate_stage_report(
     *,
     stage: str,
 ) -> UserDocument:
-    if stage not in {"day3", "day7", "day14", "day21", "day28", "graduation"}:
+    if stage not in STAGE_REPORT_STAGES:
         raise RuntimeError("invalid stage")
     existing = await _existing_stage_report(session, service_case.id, stage)
     if existing:
@@ -237,21 +238,15 @@ async def generate_stage_report(
     if degraded and isinstance(content_json, dict):
         content_json["degraded"] = True
     content = render_document_content(content_json)
-    document_type = (
-        DocumentType.GRADUATION_REPORT
-        if stage == "graduation"
-        else DocumentType.STAGE_REPORT
-    )
-    stage_model = ai._model_for("graduation_report" if stage == "graduation" else "stage_report")
     document = UserDocument(
         service_case_id=service_case.id,
-        document_type=document_type,
+        document_type=DocumentType.STAGE_REPORT,
         title=title,
         content_md=content,
         content_json=content_json,
         file_path=None,
         status=DocumentStatus.REVIEWING,
-        generated_by_model=stage_model,
+        generated_by_model=ai._model_for("stage_report"),
     )
     session.add(document)
     await session.commit()
@@ -270,11 +265,10 @@ async def retry_degraded_stage_report(session: AsyncSession, document: UserDocum
     if not service_case:
         return False
     base = document.content_json if isinstance(document.content_json, dict) else {}
-    if document.document_type == DocumentType.GRADUATION_REPORT:
-        stage = "graduation"
-    else:
-        stage = str(base.get("stage") or "")
-    if stage not in {"day3", "day7", "day14", "day21", "day28", "graduation"}:
+    if document.document_type != DocumentType.STAGE_REPORT:
+        return False
+    stage = str(base.get("stage") or "")
+    if stage not in STAGE_REPORT_STAGES:
         return False
 
     user_name = await _user_name(session, service_case)
@@ -331,7 +325,7 @@ async def retry_degraded_stage_report(session: AsyncSession, document: UserDocum
     document.content_json = content_json  # 不含 degraded / degraded_retry_count
     document.content_md = render_document_content(content_json)
     document.file_path = None
-    document.generated_by_model = ai._model_for("graduation_report" if stage == "graduation" else "stage_report")
+    document.generated_by_model = ai._model_for("stage_report")
     await session.commit()
     logger.info("Stage report degraded -> recovered doc_id=%s stage=%s", document.id, stage)
     return True

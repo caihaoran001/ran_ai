@@ -61,7 +61,7 @@ export function StageReportConfig() {
         <div>
           <h3 className="text-base font-semibold text-slate-900">阶段报告生成时间</h3>
           <p className="mt-1 text-sm text-slate-500 leading-relaxed">
-            阶段报告（3 / 7 / 14 / 21 / 28 天 + 毕业报告）每天到设定时间集中生成，并进入待审核。建议设在晚间，运营当晚集中审核、用户次日早上看到。（北京时间，默认 21:00）
+            阶段报告（3 / 7 / 14 / 21 / 28 天）每天到设定时间集中生成，并进入待审核。建议设在晚间，运营当晚集中审核、用户次日早上看到。（北京时间，默认 21:00）
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">

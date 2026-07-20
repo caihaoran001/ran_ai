@@ -57,8 +57,8 @@ def checkin_day(service_case: ServiceCase, now: datetime, tz: ZoneInfo) -> int |
     return day if day >= 1 else None
 
 
-def service_graduation_date(service_case: ServiceCase, tz: ZoneInfo) -> _date | None:
-    """28 天服务窗口的毕业日期：第 28 天当天仍在服务内，次日停止打卡等周期内任务。"""
+def service_phase_end_date(service_case: ServiceCase, tz: ZoneInfo) -> _date | None:
+    """28 天服务阶段的结束日期：第 28 天当天仍在服务内，次日停止周期内任务。"""
     first = checkin_first_day(service_case, tz)
     if first is None:
         return None
@@ -80,15 +80,15 @@ def service_continuation_active(service_case: ServiceCase) -> bool:
 def service_window_ended(service_case: ServiceCase, now: datetime, tz: ZoneInfo) -> bool:
     if service_continuation_active(service_case):
         return False
-    graduation = service_graduation_date(service_case, tz)
-    return graduation is not None and now.date() > graduation
+    phase_end = service_phase_end_date(service_case, tz)
+    return phase_end is not None and now.date() > phase_end
 
 
-def service_graduation_at(service_case: ServiceCase, tz: ZoneInfo) -> datetime | None:
-    graduation = service_graduation_date(service_case, tz)
-    if graduation is None:
+def service_phase_end_at(service_case: ServiceCase, tz: ZoneInfo) -> datetime | None:
+    phase_end = service_phase_end_date(service_case, tz)
+    if phase_end is None:
         return None
-    return datetime.combine(graduation, _time.max, tzinfo=tz)
+    return datetime.combine(phase_end, _time.max, tzinfo=tz)
 
 
 def active_service_case_condition():

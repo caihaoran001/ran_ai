@@ -18,7 +18,7 @@ from app.models.outcome import OutcomeEvent, OutcomeSnapshot
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.questionnaire import QuestionnaireSubmission
-from app.models.user_document import DocumentStatus, DocumentType, UserDocument
+from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.schemas.dashboard import (
@@ -134,7 +134,10 @@ async def dashboard_summary(
             text("content_json->>'stage'")
         )
         .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
-        .where(active_service_case_condition())
+        .where(
+            active_service_case_condition(),
+            UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
+        )
         .order_by(
             UserDocument.service_case_id,
             UserDocument.document_type,
@@ -1198,7 +1201,10 @@ async def dashboard_pending_documents(
             text("content_json->>'stage'"),
         )
         .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
-        .where(active_service_case_condition())
+        .where(
+            active_service_case_condition(),
+            UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
+        )
         .order_by(
             UserDocument.service_case_id,
             UserDocument.document_type,
@@ -1895,13 +1901,10 @@ async def dashboard_case_health(session: AsyncSession = Depends(get_session)) ->
     for doc in await session.scalars(
         select(UserDocument).where(
             UserDocument.service_case_id.in_(case_ids),
-            UserDocument.document_type.in_([DocumentType.STAGE_REPORT, DocumentType.GRADUATION_REPORT]),
+            UserDocument.document_type == DocumentType.STAGE_REPORT,
         )
     ):
-        if doc.document_type == DocumentType.GRADUATION_REPORT:
-            stage = "graduation"
-        else:
-            stage = (doc.content_json or {}).get("stage") if isinstance(doc.content_json, dict) else None
+        stage = (doc.content_json or {}).get("stage") if isinstance(doc.content_json, dict) else None
         if stage:
             stages_by_case.setdefault(doc.service_case_id, set()).add(str(stage))
 

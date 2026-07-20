@@ -77,7 +77,7 @@ def _tools(service_case: ServiceCase, source: Message):
 
 
 @pytest.mark.asyncio
-async def test_continue_service_keeps_original_day_and_prevents_regraduation(db_session):
+async def test_continue_service_keeps_original_day_and_prevents_phase_reend(db_session):
     service_case, original_ended_at = await _graduated_case(db_session)
     source = await _explicit_command(db_session, service_case)
     tools = _tools(service_case, source)
@@ -139,7 +139,7 @@ async def test_continue_service_rejects_refunded_case(db_session):
 
 
 @pytest.mark.asyncio
-async def test_continue_service_handles_day29_before_graduation_scheduler_runs(db_session):
+async def test_continue_service_handles_day29_before_phase_end_scheduler_runs(db_session):
     service_case, _ = await _graduated_case(db_session, status=ServiceCaseStatus.IN_SERVICE)
     service_case.ended_at = None
     await db_session.flush()

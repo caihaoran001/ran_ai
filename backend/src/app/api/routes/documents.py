@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app.db.session import get_session
 from app.db.session import SessionLocal
 from app.models.service_case import ServiceCase, ServiceCaseStatus
-from app.models.user_document import DocumentStatus, UserDocument
+from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, UserDocument
 from app.schemas.document import DocumentUpdate, UserDocumentRead, UserProfileRead
 from app.services.document_service import (
     create_temporary_document_file,
@@ -104,7 +104,10 @@ async def list_case_documents(
     await _case_or_404(session, service_case_id, include_deleted=True)
     documents = list(await session.scalars(
         select(UserDocument)
-        .where(UserDocument.service_case_id == service_case_id)
+        .where(
+            UserDocument.service_case_id == service_case_id,
+            UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
+        )
         .order_by(UserDocument.created_at.desc())
     ))
     if include_history:
@@ -122,6 +125,7 @@ async def list_all_documents(
 ) -> list[UserDocument]:
     documents = list(await session.scalars(
         select(UserDocument)
+        .where(UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES))
         .order_by(UserDocument.created_at.desc())
     ))
     if include_history:
@@ -138,9 +142,7 @@ async def get_document(
     document_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> UserDocument:
-    document = await session.get(UserDocument, document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="document not found")
+    document = await _active_document_or_404(session, document_id)
     return document
 
 
@@ -150,9 +152,7 @@ async def update_document(
     payload: DocumentUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> UserDocument:
-    document = await session.get(UserDocument, document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="document not found")
+    document = await _active_document_or_404(session, document_id)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(document, key, value)
     return await rewrite_document_file(session, document)
@@ -163,9 +163,7 @@ async def approve_document(
     document_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> UserDocument:
-    document = await session.get(UserDocument, document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="document not found")
+    document = await _active_document_or_404(session, document_id)
     document.status = DocumentStatus.APPROVED
     document.reviewed_at = datetime.now(timezone.utc)
     await session.commit()
@@ -179,9 +177,7 @@ async def discard_document(
     session: AsyncSession = Depends(get_session),
 ) -> UserDocument:
     """人工审核后决定不发送：归档（移出待审核，标记未发送，留痕可查）。"""
-    document = await session.get(UserDocument, document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="document not found")
+    document = await _active_document_or_404(session, document_id)
     if document.status == DocumentStatus.SENT:
         raise HTTPException(status_code=400, detail="已发送的文件不能再标记为未发送")
     document.status = DocumentStatus.ARCHIVED
@@ -196,9 +192,7 @@ async def mark_document_sent(
     document_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> UserDocument:
-    document = await session.get(UserDocument, document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="document not found")
+    document = await _active_document_or_404(session, document_id)
     try:
         return await send_one_document(session, document)
     except RuntimeError as exc:
@@ -210,9 +204,7 @@ async def download_document(
     document_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
-    document = await session.get(UserDocument, document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="document not found")
+    document = await _active_document_or_404(session, document_id)
     try:
         path, cleanup = await create_temporary_document_file(session, document)
     except RuntimeError as exc:
@@ -245,6 +237,16 @@ def _document_identity(document: UserDocument) -> tuple[str, str]:
     content_json = document.content_json if isinstance(document.content_json, dict) else {}
     stage = str(content_json.get("stage") or "")
     return (str(document.document_type), stage)
+
+
+async def _active_document_or_404(
+    session: AsyncSession,
+    document_id: int,
+) -> UserDocument:
+    document = await session.get(UserDocument, document_id)
+    if not document or document.document_type not in ACTIVE_DOCUMENT_TYPES:
+        raise HTTPException(status_code=404, detail="document not found")
+    return document
 
 
 async def _generate_documents_in_background(service_case_id: int, auto_send: bool) -> None:

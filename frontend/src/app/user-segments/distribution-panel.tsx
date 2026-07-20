@@ -31,7 +31,7 @@ const STATUS_LABELS: Record<string, string> = {
   reviewing: "审核中",
   approved: "已批准",
   in_service: "服务中",
-  completed: "已毕业",
+  completed: "阶段已完结",
   refunded: "已退款",
 };
 

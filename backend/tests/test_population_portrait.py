@@ -483,7 +483,7 @@ async def test_population_portrait_uses_latest_non_deleted_case_per_user_and_exc
         refund_pending_confirmation=True,
     )
 
-    # 已毕业但未退款仍然纳入。
+    # 阶段已完结但未退款仍然纳入。
     _, completed = await _create_portrait_case(
         db_session,
         status=ServiceCaseStatus.COMPLETED,
