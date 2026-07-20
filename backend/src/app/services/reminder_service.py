@@ -48,6 +48,7 @@ from app.services.service_case_queries import (
     service_phase_end_at,
     service_window_ended,
 )
+from app.services.service_case_activation import PRE_SERVICE_STATUSES, activate_service_case_if_due
 
 
 logger = logging.getLogger(__name__)
@@ -81,16 +82,16 @@ class ReminderService:
                     knowledge_enabled = (await get_knowledge_evolution_config(session, settings=self.settings)).enabled
             except Exception:
                 logger.exception("Failed to load knowledge evolution config")
-        if (
+        optional_services_disabled = (
             not self.settings.reminder_enabled
             and not self.settings.agent_reminders_enabled
             and not knowledge_enabled
             and not self.settings.outcome_snapshots_enabled
             and not self.settings.checkin_followup_enabled
             and not self.settings.population_insight_enabled
-        ):
-            logger.info("All scheduled services are disabled")
-            return
+        )
+        if optional_services_disabled:
+            logger.info("Optional scheduled services are disabled; lifecycle maintenance remains enabled")
         self._stopped.clear()
         self._task = asyncio.create_task(self._run_loop(), name="reminder-service")
         logger.info("Reminder service started")
@@ -113,6 +114,7 @@ class ReminderService:
                     if not acquired:
                         logger.debug("Reminder scheduler skipped: advisory lock is held by another worker")
                     else:
+                        await self.check_service_starts_once()
                         await self.check_service_phase_ends_once()
                         if self.settings.agent_reminders_enabled:
                             await self.check_agent_reminder_tasks_once()
@@ -203,6 +205,32 @@ class ReminderService:
                 changed = True
             if changed:
                 await session.commit()
+
+    async def check_service_starts_once(self, now: datetime | None = None) -> None:
+        """Activate every submitted case whose local plan date has arrived."""
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        current = now or datetime.now(tz)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=tz)
+        else:
+            current = current.astimezone(tz)
+        async with SessionLocal() as session:
+            service_cases = list(
+                await session.scalars(
+                    select_active_service_cases(
+                        ServiceCase.status.in_(PRE_SERVICE_STATUSES),
+                        ServiceCase.service_plan_start_date.is_not(None),
+                        ServiceCase.service_plan_start_date <= current.date(),
+                    )
+                )
+            )
+            changed = sum(
+                activate_service_case_if_due(service_case, now=current, tz=tz)
+                for service_case in service_cases
+            )
+            if changed:
+                await session.commit()
+                logger.info("Activated %d service cases from plan dates", changed)
 
     async def check_checkin_followup_v2_once(self) -> None:
         """Five-item daily review plus low-frequency measurements, capped at three sends per cycle."""

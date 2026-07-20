@@ -14,7 +14,7 @@ SERVICE_CASE_WINDOW_DAYS = 28
 
 
 def effective_start_at(service_case: ServiceCase) -> datetime | None:
-    """服务计时起点：用户在问卷选的『计划开始日期』(当地时区当天0点)优先；未填则回退 started_at(文件发送时刻)。"""
+    """服务计时起点：计划开始日期（当地时区当天0点）优先；存量数据回退 started_at。"""
     plan = getattr(service_case, "service_plan_start_date", None)
     if plan is not None:
         tz = ZoneInfo(get_settings().reminder_timezone)

@@ -45,6 +45,7 @@ from app.services.intervention_service import (
 from app.services.outcome_engine import record_intake_profile_completed
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.questionnaire_template import get_active_questionnaire_template
+from app.services.service_case_activation import set_pre_service_status_or_activate
 from app.services.service_case_queries import active_service_case_condition, get_active_service_case, service_window_ended
 
 logger = logging.getLogger(__name__)
@@ -122,8 +123,19 @@ async def submit_questionnaire(
         answers_json=payload.answers,
     )
     if template == "intake":
-        service_case.status = ServiceCaseStatus.GENERATING if get_settings().ai_api_key else ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
+        pending_status = (
+            ServiceCaseStatus.GENERATING
+            if get_settings().ai_api_key
+            else ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
+        )
+        service_case.status = pending_status
         await _sync_user_from_answers(session, service_case, fields, payload.answers)
+        set_pre_service_status_or_activate(
+            service_case,
+            pending_status,
+            now=datetime.now(timezone),
+            tz=timezone,
+        )
         await record_intake_profile_completed(session, service_case=service_case)
     elif template != "intake":
         _create_checkin_from_questionnaire(session, service_case, fields, payload.answers)
@@ -172,7 +184,12 @@ async def edit_intake_submission(
     await _sync_user_from_answers(session, service_case, fields, payload.answers)
     mark_intake_age_risk(service_case, fields, payload.answers)
     if get_settings().ai_api_key:
-        service_case.status = ServiceCaseStatus.GENERATING
+        set_pre_service_status_or_activate(
+            service_case,
+            ServiceCaseStatus.GENERATING,
+            now=datetime.now(ZoneInfo(get_settings().reminder_timezone)),
+            tz=ZoneInfo(get_settings().reminder_timezone),
+        )
     await session.commit()
     await session.refresh(submission)
     if get_settings().ai_api_key:
@@ -542,7 +559,13 @@ async def _send_intake_submit_reply(service_case_id: int) -> None:
 def _append_generation_error_note(service_case: ServiceCase, exc: Exception) -> None:
     timestamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
     settings = get_settings()
-    service_case.status = ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
+    tz = ZoneInfo(settings.reminder_timezone)
+    set_pre_service_status_or_activate(
+        service_case,
+        ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED,
+        now=datetime.now(tz),
+        tz=tz,
+    )
     message = (
         f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
         f"（AI_MAX_TOKENS={settings.ai_max_tokens}）"

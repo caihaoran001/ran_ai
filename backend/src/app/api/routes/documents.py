@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
@@ -24,6 +25,7 @@ from app.services.document_service import (
     send_one_document,
 )
 from app.services.service_case_queries import get_active_service_case, get_service_case
+from app.services.service_case_activation import set_pre_service_status_or_activate
 
 router = APIRouter()
 
@@ -64,7 +66,13 @@ async def retry_generate_case_documents(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
     service_case = await _case_or_404(session, service_case_id)
-    service_case.status = ServiceCaseStatus.GENERATING
+    tz = ZoneInfo(get_settings().reminder_timezone)
+    set_pre_service_status_or_activate(
+        service_case,
+        ServiceCaseStatus.GENERATING,
+        now=datetime.now(tz),
+        tz=tz,
+    )
     await session.commit()
     background_tasks.add_task(_generate_documents_in_background, service_case_id, auto_send)
     return {"detail": "document generation queued"}
@@ -267,7 +275,13 @@ async def _generate_documents_in_background(service_case_id: int, auto_send: boo
 def _append_generation_error_note(service_case: ServiceCase, exc: Exception) -> None:
     timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
     settings = get_settings()
-    service_case.status = ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
+    tz = ZoneInfo(settings.reminder_timezone)
+    set_pre_service_status_or_activate(
+        service_case,
+        ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED,
+        now=datetime.now(tz),
+        tz=tz,
+    )
     message = (
         f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
         f"（AI_MAX_TOKENS={settings.ai_max_tokens}）"

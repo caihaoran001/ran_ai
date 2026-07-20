@@ -19,7 +19,7 @@ from app.models.message import (
     MessageSenderType,
     MessageStatus,
 )
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.channels import send_channel_document, send_channel_text
 from app.services.content_policy import get_content_delivery_mode
@@ -132,7 +132,6 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
         document.status = DocumentStatus.SENT
         document.sent_at = _utc_now()
         _record_document_delivery(session, service_case, document, result.message_id)
-        await _mark_case_in_service_if_documents_sent(session, service_case)
         await session.commit()
     if should_send_intro:
         await _send_document_reading_reminder(session, service_case)
@@ -168,7 +167,6 @@ async def send_one_document(session: AsyncSession, document: UserDocument) -> Us
     document.status = DocumentStatus.SENT
     document.sent_at = _utc_now()
     _record_document_delivery(session, service_case, document, result.message_id)
-    await _mark_case_in_service_if_documents_sent(session, service_case)
     await session.commit()
     await session.refresh(document)
     return document
@@ -229,32 +227,6 @@ def _record_document_delivery(
 
 async def _should_auto_send(session: AsyncSession, service_case: ServiceCase) -> bool:
     return await get_content_delivery_mode(session) == "auto_send" and not is_high_risk(service_case)
-
-
-async def _mark_case_in_service_if_documents_sent(
-    session: AsyncSession,
-    service_case: ServiceCase,
-) -> None:
-    documents = list(
-        await session.scalars(
-            select(UserDocument)
-            .where(UserDocument.service_case_id == service_case.id)
-            .order_by(UserDocument.created_at.desc())
-        )
-    )
-    latest_by_type: dict[DocumentType, UserDocument] = {}
-    for item in documents:
-        latest_by_type.setdefault(item.document_type, item)
-    latest_documents = [
-        latest_by_type[document_type]
-        for document_type in DOCUMENT_DEFINITIONS
-        if document_type in latest_by_type
-    ]
-    if len(latest_documents) == len(DOCUMENT_DEFINITIONS) and all(
-        item.status == DocumentStatus.SENT for item in latest_documents
-    ):
-        service_case.status = ServiceCaseStatus.IN_SERVICE
-        service_case.started_at = service_case.started_at or _utc_now()
 
 
 async def _document_intro_already_sent(session: AsyncSession, service_case: ServiceCase) -> bool:

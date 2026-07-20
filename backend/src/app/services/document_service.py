@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
+from app.core.config import get_settings
 from app.services.ai_service import AIService
 from app.services.docx_service import render_template_markdown
 from app.services.document_templates import (
@@ -31,6 +33,7 @@ from app.services.user_state_profile import initialize_user_state_from_intake
 from app.services.risk_service import is_high_risk
 from app.services.intake_facts import customer_type_for_profile
 from app.services.service_case_queries import get_active_service_case
+from app.services.service_case_activation import set_pre_service_status_or_activate
 
 from app.services.document_common import (
     DOCUMENT_DEFINITIONS,
@@ -166,7 +169,13 @@ async def generate_profile_and_documents(
             int((llm_output_at - submission.created_at).total_seconds() * 1000),
             0,
         )
-    service_case.status = ServiceCaseStatus.REVIEWING
+    tz = ZoneInfo(get_settings().reminder_timezone)
+    set_pre_service_status_or_activate(
+        service_case,
+        ServiceCaseStatus.REVIEWING,
+        now=llm_output_at,
+        tz=tz,
+    )
     await session.commit()
     await session.refresh(profile)
     for document in documents:
