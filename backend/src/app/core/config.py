@@ -168,6 +168,17 @@ class Settings(BaseSettings):
         validation_alias="REMINDER_MESSAGE",
     )
     outcome_snapshots_enabled: bool = Field(default=True, validation_alias="OUTCOME_SNAPSHOTS_ENABLED")
+    # 群体共同洞察：每日在指定小时检查一次，实际只在周期到期或新增用户达阈值时调用模型。
+    population_insight_enabled: bool = Field(
+        default=True,
+        validation_alias="POPULATION_INSIGHT_ENABLED",
+    )
+    population_insight_auto_hour: int = Field(
+        default=3,
+        ge=0,
+        le=23,
+        validation_alias="POPULATION_INSIGHT_AUTO_HOUR",
+    )
     # 档案官（Archivist）总开关：聊天转打卡的后台扫描。默认开；缺省不注入也为开，
     # 需临时停用时在 compose environment 设 ARCHIVIST_ENABLED=false。
     archivist_enabled: bool = Field(default=True, validation_alias="ARCHIVIST_ENABLED")

@@ -1,9 +1,10 @@
 import { api } from "@/lib/api";
-import type { PopulationDistribution, PopulationPortrait } from "@/lib/api";
+import type { PopulationDistribution, PopulationInsight, PopulationPortrait } from "@/lib/api";
 import { AlertTriangle, ClipboardCheck, HeartPulse, PieChart, UsersRound } from "lucide-react";
 import { DistributionGroupPanel } from "./distribution-group-panel";
 import { DistributionPanel } from "./distribution-panel";
 import { GeographyPanel } from "./geography-panel";
+import { PopulationInsightPanel } from "./population-insight-panel";
 import { RetryButton } from "./retry-button";
 
 const HEALTH_DISTRIBUTION_KEYS = new Set([
@@ -161,12 +162,12 @@ function PortraitSummary({ portrait }: { portrait: PopulationPortrait }) {
 }
 
 export default async function UserSegmentsPage() {
-  let portrait: PopulationPortrait | null = null;
-  try {
-    portrait = await api<PopulationPortrait>("/dashboard/population-portrait");
-  } catch {
-    portrait = null;
-  }
+  const [portraitResult, insightResult] = await Promise.allSettled([
+    api<PopulationPortrait>("/dashboard/population-portrait"),
+    api<PopulationInsight>("/dashboard/population-insight"),
+  ]);
+  const portrait = portraitResult.status === "fulfilled" ? portraitResult.value : null;
+  const insight = insightResult.status === "fulfilled" ? insightResult.value : null;
 
   const snapshotTime = formatSnapshotTime(new Date());
 
@@ -214,6 +215,11 @@ export default async function UserSegmentsPage() {
       ) : (
         <>
           <PortraitSummary portrait={portrait} />
+
+          <PopulationInsightPanel
+            initialInsight={insight}
+            loadFailed={insightResult.status === "rejected"}
+          />
 
           {needDistributions.length > 0 && (
             <DistributionGroupPanel

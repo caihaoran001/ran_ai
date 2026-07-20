@@ -68,6 +68,7 @@ class ReminderService:
         self._stopped = asyncio.Event()
         self._last_room_name_full_refresh: datetime | None = None
         self._last_image_cache_cleanup: datetime | None = None
+        self._last_population_insight_check_date: date | None = None
         # 阶段报告生成时间配置缓存（5 分钟 TTL，避免白天每 30s 都查一次 DB）
         self._stage_report_schedule: tuple[int, int] | None = None
         self._stage_report_schedule_at: datetime | None = None
@@ -86,8 +87,9 @@ class ReminderService:
             and not knowledge_enabled
             and not self.settings.outcome_snapshots_enabled
             and not self.settings.checkin_followup_enabled
+            and not self.settings.population_insight_enabled
         ):
-            logger.info("Reminder, agent reminder, outcome snapshot and knowledge evolution services disabled")
+            logger.info("All scheduled services are disabled")
             return
         self._stopped.clear()
         self._task = asyncio.create_task(self._run_loop(), name="reminder-service")
@@ -127,6 +129,10 @@ class ReminderService:
                             await self.check_archivist_once()
                         if self.settings.checkin_followup_enabled:
                             await self.check_checkin_followup_v2_once()
+                        # 群体洞察可能有一次较长的 LLM 调用，放到循环末尾，
+                        # 避免延迟毕业、提醒、补发等时效性任务。
+                        if self.settings.population_insight_enabled:
+                            await self.check_population_insight_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -146,6 +152,35 @@ class ReminderService:
         stats = await run_archivist_scan()
         if stats.get("ran"):
             logger.info("Archivist scan stats=%s", stats)
+
+    async def check_population_insight_once(self, now: datetime | None = None) -> None:
+        """每天只检查一次群体洞察刷新条件；普通画像变动不直接触发模型。"""
+
+        if not self.settings.population_insight_enabled:
+            return
+        from app.services.population_insight import refresh_population_insight
+
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        current = now or datetime.now(tz)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=tz)
+        else:
+            current = current.astimezone(tz)
+        if current.hour < self.settings.population_insight_auto_hour:
+            return
+        if self._last_population_insight_check_date == current.date():
+            return
+        self._last_population_insight_check_date = current.date()
+        async with SessionLocal() as session:
+            result = await refresh_population_insight(session, now=current.astimezone(timezone.utc))
+        if result.ran:
+            logger.info(
+                "Population insight auto-refresh completed reason=%s snapshot_id=%s",
+                result.reason,
+                result.snapshot_id,
+            )
+        else:
+            logger.debug("Population insight auto-refresh skipped reason=%s", result.reason)
 
     async def check_service_graduations_once(self, now: datetime | None = None) -> None:
         timezone = ZoneInfo(self.settings.reminder_timezone)

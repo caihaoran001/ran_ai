@@ -14,6 +14,7 @@ from app.models.knowledge_draft import KnowledgeDraft
 from app.models.knowledge_faq import KnowledgeFAQ, KnowledgeFAQVersion
 from app.models.message import Message
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot, OutcomeStageState
+from app.models.population_insight import PopulationInsightSnapshot
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.questionnaire_template import QuestionnaireTemplate
 from app.models.reminder import ReminderEvent

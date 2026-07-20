@@ -194,7 +194,7 @@ class MockAIService:
         # 与真实 AIService 接口对齐：按场景返回模型名（mock 不区分，回退默认）
         if scenario == "intervention_risk" and (getattr(self.settings, "ai_risk_model", "") or "").strip():
             return self.settings.ai_risk_model.strip()
-        if scenario in {"intake_doc", "stage_report", "graduation_report"} and (
+        if scenario in {"intake_doc", "stage_report", "graduation_report", "population_insight"} and (
             getattr(self.settings, "ai_document_model", "") or ""
         ).strip():
             return self.settings.ai_document_model.strip()
@@ -245,6 +245,36 @@ class MockAIService:
                             "source_message_ids": [1, 2],
                         }
                     ]
+                },
+                ensure_ascii=False,
+            )
+        if "用户研究分析师" in system_prompt and "common_jtbd" in system_prompt:
+            return json.dumps(
+                {
+                    "headline": "不同健康起点指向同一个长期管理任务",
+                    "summary": "用户进入服务的表层原因不同，但都在寻找能够长期坚持的健康管理方式。",
+                    "common_jtbd": {
+                        "when": "当我意识到当前状态可能影响未来健康时",
+                        "want_to": "我希望建立能够长期坚持的健康管理方式",
+                        "so_i_can": "从而维持稳定状态并降低未来健康风险",
+                    },
+                    "segments": [
+                        {
+                            "name": "健康风险管理型",
+                            "entry_point": "已有健康风险或身体负担",
+                            "deeper_goal": "降低长期风险并稳定状态",
+                            "evidence_basis": "画像中的健康风险与长期目标",
+                        },
+                        {
+                            "name": "主动健康投资型",
+                            "entry_point": "主动改善精力和生活状态",
+                            "deeper_goal": "维持更高的长期生活质量",
+                            "evidence_basis": "画像中的精力、节律与长期状态诉求",
+                        },
+                    ],
+                    "shared_patterns": ["关注长期可坚持，而不只是短期体重数字"],
+                    "product_implications": ["产品价值可能正向长期健康管理能力延伸，值得继续验证"],
+                    "evidence_limits": ["结论仅基于当前系统内可用画像，不代表外部市场趋势"],
                 },
                 ensure_ascii=False,
             )
@@ -398,18 +428,21 @@ async def mock_ai():
     import app.services.knowledge_evolution as evolution_mod
     import app.services.ranren_ai.engine as engine_mod
     import app.services.intervention_service as intervention_mod
+    import app.services.population_insight as population_insight_mod
 
     orig_client = client_mod.AIService
     orig_doc = doc_mod.AIService
     orig_evolution = evolution_mod.AIService
     orig_engine = engine_mod.AIService
     orig_intervention = intervention_mod.AIService
+    orig_population_insight = population_insight_mod.AIService
 
     client_mod.AIService = lambda *a, **kw: mock
     doc_mod.AIService = lambda *a, **kw: mock
     evolution_mod.AIService = lambda *a, **kw: mock
     engine_mod.AIService = lambda *a, **kw: mock
     intervention_mod.AIService = lambda *a, **kw: mock
+    population_insight_mod.AIService = lambda *a, **kw: mock
 
     yield mock
 
@@ -418,6 +451,7 @@ async def mock_ai():
     evolution_mod.AIService = orig_evolution
     engine_mod.AIService = orig_engine
     intervention_mod.AIService = orig_intervention
+    population_insight_mod.AIService = orig_population_insight
 
 
 @pytest_asyncio.fixture(loop_scope="session")

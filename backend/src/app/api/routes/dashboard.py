@@ -44,6 +44,7 @@ from app.schemas.dashboard import (
     PopulationGeography,
     PopulationGeoCity,
     PopulationGeoProvince,
+    PopulationInsightResponse,
     PopulationPortrait,
 )
 from app.services.china_regions import match_city
@@ -56,6 +57,12 @@ from app.services.intake_facts import (
 )
 from app.services.health_taxonomy import health_profile_dimension_labels
 from app.services.questionnaire_template import get_active_questionnaire_fields
+from app.services.population_scope import select_population_service_cases
+from app.services.population_insight import (
+    PopulationInsightGenerationError,
+    get_population_insight,
+    refresh_population_insight,
+)
 from app.services.service_case_queries import active_service_case_condition, effective_start_at
 
 router = APIRouter()
@@ -480,6 +487,30 @@ async def dashboard_population_portrait(
     )
 
 
+@router.get("/population-insight", response_model=PopulationInsightResponse)
+async def dashboard_population_insight(
+    session: AsyncSession = Depends(get_session),
+) -> PopulationInsightResponse:
+    """只读最新共同洞察快照；打开页面不触发模型调用。"""
+
+    return await get_population_insight(session)
+
+
+@router.post("/population-insight/refresh", response_model=PopulationInsightResponse)
+async def dashboard_refresh_population_insight(
+    session: AsyncSession = Depends(get_session),
+) -> PopulationInsightResponse:
+    """人工立即刷新：一次请求最多一次模型调用，成功后追加快照。"""
+
+    try:
+        result = await refresh_population_insight(session, force=True)
+    except PopulationInsightGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if result.reason == "insufficient_profiles":
+        raise HTTPException(status_code=409, detail="至少需要 2 位完整入营画像才能提炼共同洞察")
+    return await get_population_insight(session)
+
+
 @router.get("/population-portrait/members", response_model=list[ServiceCaseRead])
 async def dashboard_population_portrait_members(
     key: str,
@@ -522,39 +553,9 @@ async def _compute_case_portrait_labels(
     AI 画像不是入选条件：各维度按问卷、健康标签和画像的实际可用情况独立计数。
     返回 (total_users, {case_id: {dimension_key: bucket_label}})；缺失统一归一为 UNKNOWN_LABEL。
     """
-    # 用户可能有多期服务：先按用户把未删除服务单从新到旧排列，再只取最新一张。
-    # 必须先选最新、再判断 refunded，避免用户退款后旧的未退款服务单被重新纳入。
-    all_case_rows = (
-        await session.execute(
-            select(
-                ServiceCase.id,
-                ServiceCase.user_id,
-                ServiceCase.risk_level,
-                ServiceCase.health_profile,
-                ServiceCase.status,
-            )
-            .join(User, ServiceCase.user_id == User.id)
-            .where(active_service_case_condition(), User.deleted_at.is_(None))
-            .order_by(
-                ServiceCase.user_id,
-                ServiceCase.created_at.desc(),
-                ServiceCase.id.desc(),
-            )
-        )
-    ).all()
-
-    latest_case_rows = []
-    seen_user_ids: set[int] = set()
-    for row in all_case_rows:
-        if row.user_id in seen_user_ids:
-            continue
-        seen_user_ids.add(row.user_id)
-        if row.status == ServiceCaseStatus.REFUNDED:
-            continue
-        latest_case_rows.append(row)
-
-    risk_by_case = {row.id: row.risk_level for row in latest_case_rows}
-    health_by_case = {row.id: row.health_profile for row in latest_case_rows}
+    latest_cases = await select_population_service_cases(session)
+    risk_by_case = {service_case.id: service_case.risk_level for service_case in latest_cases}
+    health_by_case = {service_case.id: service_case.health_profile for service_case in latest_cases}
     case_ids = list(risk_by_case)
     if not case_ids:
         return 0, {}

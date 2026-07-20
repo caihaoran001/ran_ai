@@ -89,6 +89,25 @@ async def load_profile_memory_context(
         )
     )
 
+    return build_profile_memory_context(
+        profile=profile,
+        state_profile=state_profile,
+        case_memory=case_memory,
+    )
+
+
+def build_profile_memory_context(
+    *,
+    profile: UserProfile | None,
+    state_profile: UserStateProfile | None,
+    case_memory: ArchivistCaseMemory | None = None,
+) -> ProfileMemoryContext:
+    """把已批量读取的画像记录压缩为可复用上下文。
+
+    Agent 单用户路径和群体洞察批处理路径共用同一套字段取舍，
+    但群体路径可先批量查库，避免每位用户三次查询。
+    """
+
     stable_facts, warnings = _memory_from_profile(profile)
     preferences, habits, current_state, state_warnings = _memory_from_state(
         state_profile.state_json if state_profile else None

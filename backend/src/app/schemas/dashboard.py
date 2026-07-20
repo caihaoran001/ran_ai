@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import Field
 from pydantic import BaseModel
 
@@ -191,6 +193,43 @@ class PopulationPortrait(BaseModel):
     total_users: int  # 纳入统计的活跃服务单数
     distributions: list[PopulationDistribution] = Field(default_factory=list)
     geography: PopulationGeography | None = None
+
+
+class PopulationInsightJTBD(BaseModel):
+    when: str
+    want_to: str
+    so_i_can: str
+
+
+class PopulationInsightSegment(BaseModel):
+    name: str
+    entry_point: str
+    deeper_goal: str
+    evidence_basis: str
+
+
+class PopulationInsightContent(BaseModel):
+    headline: str
+    summary: str
+    common_jtbd: PopulationInsightJTBD
+    segments: list[PopulationInsightSegment] = Field(default_factory=list)
+    shared_patterns: list[str] = Field(default_factory=list)
+    product_implications: list[str] = Field(default_factory=list)
+    evidence_limits: list[str] = Field(default_factory=list)
+
+
+class PopulationInsightResponse(BaseModel):
+    status: Literal["empty", "generating", "ready", "failed"] = "empty"
+    content: PopulationInsightContent | None = None
+    included_users: int = 0
+    profiled_users: int = 0
+    model_input_users: int = 0
+    evidence_level: str = "暂无洞察"
+    generated_at: datetime | None = None
+    generated_by_model: str | None = None
+    refresh_reason: str | None = None
+    next_automatic_refresh_at: datetime | None = None
+    last_refresh_failed: bool = False
 
 
 class DashboardSummary(BaseModel):

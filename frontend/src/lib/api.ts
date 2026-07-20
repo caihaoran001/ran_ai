@@ -401,3 +401,40 @@ export type PopulationPortrait = {
   distributions: PopulationDistribution[];
   geography: PopulationGeography | null;
 };
+
+export type PopulationInsightJTBD = {
+  when: string;
+  want_to: string;
+  so_i_can: string;
+};
+
+export type PopulationInsightSegment = {
+  name: string;
+  entry_point: string;
+  deeper_goal: string;
+  evidence_basis: string;
+};
+
+export type PopulationInsightContent = {
+  headline: string;
+  summary: string;
+  common_jtbd: PopulationInsightJTBD;
+  segments: PopulationInsightSegment[];
+  shared_patterns: string[];
+  product_implications: string[];
+  evidence_limits: string[];
+};
+
+export type PopulationInsight = {
+  status: "empty" | "generating" | "ready" | "failed";
+  content: PopulationInsightContent | null;
+  included_users: number;
+  profiled_users: number;
+  model_input_users: number;
+  evidence_level: string;
+  generated_at: string | null;
+  generated_by_model: string | null;
+  refresh_reason: string | null;
+  next_automatic_refresh_at: string | null;
+  last_refresh_failed: boolean;
+};
