@@ -8,9 +8,9 @@ H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部
 
 - 五项清单（daily_checklist）：早上回顾**昨天**执行单里尚未回答的项（第1项 = 早C/午B/晚A）。
 - 矛盾核对（contradiction）：表单值≠聊天值时下午发一句自然核对。
-- 里程碑复盘（milestone）：day7/14/21/28 前一晚采集阶段报告要的腰围 + 体重 + 复盘。
+- 次晨空腹打卡提醒（milestone）：day7/14/21/28 前一晚提醒用户次日早起如厕后、空腹测量并打卡。
 
-判定读 checkins 现状 + service_day。体重不再单独一类主动追问，改由里程碑复盘一并采集。
+判定读 checkins 现状 + service_day。体重不再单独一类主动追问，改由里程碑前夜提醒在次晨采集。
 （历史上另有一条"活跃触发"链路在 agent 回复后即时补发，已下线；本模块只组织内容、不裁量发送时机。）
 """
 
@@ -34,11 +34,11 @@ from app.services.service_case_queries import effective_service_day
 # 早C/午B/晚A 三段产品依从：最不会自然出现在聊天里、又是阶段报告核心指标。
 # （作矛盾核对/五项清单第1项判缺的字段标签来源，见 _FIELD_LABELS、_first_item_missing_label。）
 _PRODUCT_SLOTS = {"morning_c": "早C", "noon_b": "午B", "night_a": "晚A"}
-_WEIGHT_LOOKBACK_DAYS = 3  # 里程碑前夕若最近 N 天没报体重才顺便要一下，避免刚报过又问。
+_WEIGHT_LOOKBACK_DAYS = 3  # 里程碑前夕若最近 N 天没报体重，次晨打卡提醒中带上称重。
 _WAIST_LOOKBACK_DAYS = 7  # 腰围一周测一次，避免天天问。
 
-# 里程碑前一晚：服务第 N 天 → 即将到来的里程碑天。阶段报告在里程碑当晚 21:00 生成，
-# 故提前一天追问，给用户答复时间。service_day 用 effective_service_day（计划开始当天=第1天）。
+# 里程碑前一晚：服务第 N 天 → 即将到来的里程碑天。晚间只发提醒，
+# 实际测量/打卡必须等到次日早起如厕后的空腹状态。service_day 用 effective_service_day（计划开始当天=第1天）。
 _MILESTONE_EVE = {6: 7, 13: 14, 20: 21, 27: 28}
 
 # 矛盾追问用的字段中文标签（含 product_schedule 子键）。
@@ -127,8 +127,8 @@ async def detect_followup(
     )
     confirmations = _pending_confirmations(today_checkin.parsed_json if today_checkin else None)
 
-    # 体重不再单独一类主动追问，只在里程碑前夕一并采集：仅当最近 N 天都没有记录才问，
-    # 避免刚报过又问。此处算出、下方塞进 milestone.need_weight（非里程碑日不用）。
+    # 体重不再单独一类主动追问，只在里程碑前夕的“次晨打卡”提醒中带上：
+    # 仅当最近 N 天都没有记录才提醒次晨称重，避免刚报过又问。
     ask_weight = not await _has_field_recently(
         session,
         service_case_id=service_case.id,
@@ -137,7 +137,7 @@ async def detect_followup(
         days=_WEIGHT_LOOKBACK_DAYS,
     )
 
-    # 里程碑前夕：服务第 6/13/20/27 天 → 为次日的阶段报告采集腰围 + 体重 + 复盘。
+    # 里程碑前夕：服务第 6/13/20/27 天 → 晚间提醒用户次晨空腹打卡。
     milestone = None
     service_day = effective_service_day(service_case, now, tz)
     milestone_day = _MILESTONE_EVE.get(service_day)
@@ -191,17 +191,40 @@ def compose_followup_message(
 def _milestone_fallback_message(
     milestone_day: int, need_waist: bool, need_weight: bool = False
 ) -> str:
-    """里程碑复盘追问的固定模板兜底（LLM 不可用时使用）。
-
-    只问用户才知道的：体重/腰围（客观数据）+ 这阶段最大变化 + 最大卡点（主观感受）。
-    「下阶段重点」是专业判断，交给阶段报告基于这些 + action_focus 生成，不反问用户。
-    """
-    week = {7: "一周", 14: "两周", 21: "三周", 28: "四周"}.get(milestone_day, f"第{milestone_day}天")
-    measures = [label for label, need in (("体重", need_weight), ("腰围", need_waist)) if need]
-    measure_clause = f"{'、'.join(measures)}量一下发我，" if measures else ""
+    """里程碑前夜提醒的固定模板兜底（LLM 不可用或语义跑偏时使用）。"""
+    actions = [
+        action
+        for action, needed in (("称好体重", need_weight), ("量好腰围", need_waist))
+        if needed
+    ]
+    checkin_action = f"{'、'.join(actions)}，再发群里打卡" if actions else "完成打卡并发到群里"
     return (
-        f"咱们到{week}啦，一起复盘一下～{measure_clause}"
-        "你觉得这阶段最大的变化是什么？还有哪个地方最卡、最难坚持？跟我说说哈。"
+        f"明天是服务第{milestone_day}天，今晚先提醒一下："
+        f"明早起床如厕后，空腹状态下{checkin_action}。今晚不用测，早点休息～"
+    )
+
+
+def _is_valid_next_morning_checkin_reminder(text: str) -> bool:
+    """确保 LLM 没有把“晚间提醒”写成“晚间测量”。"""
+    has_morning = any(marker in text for marker in ("明早", "明天早上", "明天早起"))
+    forbidden = (
+        "今晚称",
+        "今晚量",
+        "今晚打卡",
+        "晚上称",
+        "晚上量",
+        "晚上打卡",
+        "现在称",
+        "现在量",
+        "现在测",
+        "现在打卡",
+        "马上称",
+        "马上量",
+        "马上测",
+        "马上打卡",
+    )
+    return has_morning and "如厕后" in text and "空腹" in text and not any(
+        phrase in text for phrase in forbidden
     )
 
 
@@ -214,11 +237,9 @@ async def compose_milestone_followup(
     context_hint: str = "",
     ai_service: object | None = None,
 ) -> str:
-    """里程碑档：LLM 按用户情况生成一句自然的阶段复盘追问；失败回退固定模板。
+    """里程碑前夜：生成“次晨如厕后空腹打卡”提醒；失败或时间语义跑偏则回退固定模板。
 
-    覆盖阶段报告要用的：体重/腰围（need_weight/need_waist 时）、这阶段最大变化、最大卡点。
-    体重不再单独一类主动追问，改在此处一并采集。
-    防御性：LLM 不可用/抛错一律回退模板，绝不 raise、绝不阻塞发送。
+    体重/腰围只在 need_weight/need_waist 时带上，不再要求用户当晚复盘或测量。
     """
     try:
         if ai_service is None:
@@ -226,21 +247,22 @@ async def compose_milestone_followup(
 
             ai_service = AIService()
         system_prompt = (
-            "你是燃人健康管理的贴心助理，在企业微信群里用一句口语化中文向用户发起阶段复盘追问。"
+            "你是燃人健康管理的贴心助理，正在企业微信群里发一条晚间提醒。"
             "要求：亲切自然、不超过 80 字、不要罗列编号。"
-            "只收集用户自己才知道的信息：这阶段最大的变化、最大的卡点/最难坚持的地方。"
-            "不要反问用户『下阶段重点/下阶段想解决什么』——那是助教基于数据给用户的专业建议，不该甩回给用户。"
+            "必须明确写出『明早』、『如厕后』和『空腹』，让用户到明天早上再测量并打卡。"
+            "绝对不能让用户今晚、现在或马上称重、量腰围或打卡。"
+            "不要追问阶段变化、卡点或下阶段计划。"
         )
         measures = [label for label, need in (("体重", need_weight), ("腰围", need_waist)) if need]
         measure_hint = (
-            f"本次还需要提醒用户测量并报一下{'、'.join(measures)}。"
+            f"明早需要用户在如厕后、空腹状态下测量{'、'.join(measures)}，再发群里打卡。"
             if measures
-            else "体重、腰围最近已记录，无需再问。"
+            else "体重、腰围最近已记录，只提醒用户明早如厕后空腹打卡。"
         )
         user_prompt = (
-            f"用户处于服务第 {milestone_day} 天里程碑前夕。{measure_hint}"
+            f"今晚是用户服务第 {milestone_day} 天的前一晚。{measure_hint}"
             f"{('用户近况：' + context_hint) if context_hint else ''}"
-            "请生成一句自然、简短、亲切的复盘追问。"
+            "请生成一句自然、简短、亲切的次晨空腹打卡提醒。"
         )
         text = await ai_service.generate_text(
             system_prompt=system_prompt,
@@ -249,7 +271,7 @@ async def compose_milestone_followup(
             service_case_id=service_case.id,
         )
         text = (text or "").strip()
-        if text:
+        if text and _is_valid_next_morning_checkin_reminder(text):
             return text
     except Exception:  # noqa: BLE001 - 追问失败不能阻塞，回退模板
         pass
@@ -423,8 +445,10 @@ async def compose_scheduled_followups(
                     need_weight=bool(milestone["need_weight"] and preferences["weight"]),
                     ai_service=ai_service,
                 ),
-                target_date=now.date(),
-                expected_items=[{"id": "milestone", "label": "阶段复盘"}],
+                target_date=now.date() + timedelta(days=1),
+                expected_items=[
+                    {"id": "milestone_morning_checkin", "label": "次晨空腹打卡"}
+                ],
             )
         )
     if preferences["daily_checklist"]:
@@ -436,7 +460,7 @@ async def compose_scheduled_followups(
         )
         if daily:
             candidates.append(daily)
-    # 体重不再单独一类主动追问，已并入里程碑复盘一并采集（见 compose_milestone_followup）。
+    # 体重不再单独一类主动追问，已并入里程碑前夜的次晨空腹打卡提醒。
     return candidates
 
 

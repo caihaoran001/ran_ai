@@ -3,8 +3,8 @@
 覆盖：
 - 档案官触发器：含关键类目(checkin/profile_fact/outcome)且用户停说≥3min → fast 快触发；
   仅闲聊 worthy 且未到 24h → 不触发。
-- compose_scheduled_followups 组织候选：五项清单(次日回顾昨天) / 矛盾核对 / 里程碑复盘；
-  各类各占时间窗与天闸、每天最多 3 条；LLM 生成复盘话术、失败回退模板。
+- compose_scheduled_followups 组织候选：五项清单(次日回顾昨天) / 矛盾核对 / 次晨空腹打卡提醒；
+  各类各占时间窗与天闸、每天最多 3 条；LLM 生成提醒话术、失败或时间语义跑偏时回退模板。
 - 里程碑档：服务第 6/13/20/27 天检测出 milestone；need_waist/need_weight 按腰围/体重记录决定。
 - 矛盾核对：表单值≠聊天值→记矛盾→自然语言核对→标 asked(去重)+字段降级→用户新值覆盖表单。
 """
@@ -228,19 +228,23 @@ async def test_milestone_need_waist_false_when_recent_waist_exists(db_session):
 
 
 # ---------------------------------------------------------------------------
-# 里程碑档：话术生成（LLM + 兜底）
+# 里程碑前夜：次晨空腹打卡提醒（LLM + 兜底）
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_milestone_followup_uses_injected_llm(db_session):
     case = await _case(db_session, started_days_ago=5)
-    fake = _FakeAI("你这周辛苦啦，腰围量了吗？最大的变化和卡点跟我聊聊～")
+    fake = _FakeAI("今晚先提醒一下，明早起床如厕后空腹量好腰围，再发群里打卡～")
     msg = await compose_milestone_followup(
         service_case=case, milestone_day=7, need_waist=True, ai_service=fake
     )
     assert msg == fake.text
     assert fake.calls and fake.calls[0]["scenario"] == "checkin_followup"
+    assert "明早" in fake.calls[0]["system"]
+    assert "如厕后" in fake.calls[0]["system"]
+    assert "空腹" in fake.calls[0]["system"]
+    assert "今晚" in fake.calls[0]["user"]
 
 
 @pytest.mark.asyncio
@@ -249,11 +253,27 @@ async def test_milestone_followup_falls_back_on_llm_error(db_session):
     msg = await compose_milestone_followup(
         service_case=case, milestone_day=7, need_waist=True, ai_service=_RaisingAI()
     )
-    # 回退固定模板：含腰围提醒 + 复盘要素(变化/卡点)。
+    # 回退固定模板：晚间只提醒，测量明确放到次晨如厕后空腹状态。
     assert "腰围" in msg
-    assert "变化" in msg and "卡" in msg
-    # 不反问用户"下阶段重点/想解决什么"(交给阶段报告生成)。
-    assert "下阶段" not in msg
+    assert "明早" in msg and "如厕后" in msg and "空腹" in msg
+    assert "今晚不用测" in msg
+    assert "复盘" not in msg and "卡点" not in msg
+
+
+@pytest.mark.asyncio
+async def test_milestone_followup_rejects_copy_that_asks_for_evening_measurement(db_session):
+    case = await _case(db_session, started_days_ago=5)
+    fake = _FakeAI("今晚称一下体重，再说说这阶段最大的变化～")
+    msg = await compose_milestone_followup(
+        service_case=case,
+        milestone_day=7,
+        need_waist=True,
+        need_weight=True,
+        ai_service=fake,
+    )
+    assert msg != fake.text
+    assert "明早" in msg and "如厕后" in msg and "空腹" in msg
+    assert "今晚称" not in msg
 
 
 @pytest.mark.asyncio
@@ -263,12 +283,12 @@ async def test_milestone_fallback_skips_waist_when_not_needed(db_session):
         service_case=case, milestone_day=14, need_waist=False, ai_service=_RaisingAI()
     )
     assert "腰围" not in msg
-    assert "变化" in msg
+    assert "明早" in msg and "如厕后" in msg and "空腹" in msg
 
 
 @pytest.mark.asyncio
 async def test_milestone_fallback_includes_weight_when_needed(db_session):
-    # 体重不再单独追问，改由里程碑一并采集：need_weight 时兜底话术要带体重。
+    # 体重不再单独追问，need_weight 时由前夜提醒用户次晨空腹称重。
     case = await _case(db_session, started_days_ago=5)
     msg = await compose_milestone_followup(
         service_case=case,
@@ -278,12 +298,12 @@ async def test_milestone_fallback_includes_weight_when_needed(db_session):
         ai_service=_RaisingAI(),
     )
     assert "体重" in msg and "腰围" in msg
-    assert "变化" in msg
+    assert "明早" in msg and "今晚不用测" in msg
 
 
 @pytest.mark.asyncio
 async def test_milestone_eve_detects_need_weight(db_session):
-    # 第6天里程碑前夕、近3天无体重记录 → need_weight=True，供里程碑话术采集。
+    # 第6天里程碑前夕、近3天无体重记录 → need_weight=True，提醒次晨空腹称重。
     case = await _case(db_session, started_days_ago=5)
     now = datetime.now(_TZ)
     detect = await detect_followup(db_session, service_case=case, now=now, tz=_TZ)
@@ -490,6 +510,10 @@ async def test_followup_preferences_filter_proactive_topics(db_session):
     )
     assert [item.kind for item in candidates] == ["milestone"]
     assert "腰围" not in candidates[0].text
+    assert candidates[0].target_date == now.date() + timedelta(days=1)
+    assert candidates[0].expected_items == [
+        {"id": "milestone_morning_checkin", "label": "次晨空腹打卡"}
+    ]
 
 
 # ---------------------------------------------------------------------------

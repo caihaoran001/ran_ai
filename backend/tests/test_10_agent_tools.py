@@ -205,6 +205,8 @@ async def test_agent_can_read_and_update_bound_checkin_followup_preferences(db_s
 
     initial = await tools["get_checkin_followup_preferences"].ainvoke({})
     assert all(item["enabled"] for item in initial["preferences"])
+    labels = {item["topic"]: item["label"] for item in initial["preferences"]}
+    assert labels["milestone_review"] == "次晨空腹打卡提醒"
 
     updated = await tools["update_checkin_followup_preferences"].ainvoke(
         {"topics": ["weight", "waist"], "enabled": False}

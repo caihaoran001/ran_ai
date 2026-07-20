@@ -182,9 +182,9 @@ class Settings(BaseSettings):
     # 档案官（Archivist）总开关：聊天转打卡的后台扫描。默认开；缺省不注入也为开，
     # 需临时停用时在 compose environment 设 ARCHIVIST_ENABLED=false。
     archivist_enabled: bool = Field(default=True, validation_alias="ARCHIVIST_ENABLED")
-    # 打卡追问(H5 完整替代)：外部确定性触发、每 case 每天最多一条(合并里程碑/矛盾/日常缺口成一句)。
-    #  - 里程碑复盘/矛盾核对：活跃时 agent 回复后即补发，不活跃时兜底轮询到点发。
-    #  - 日常缺口(早C/午B)：统一在下方傍晚窗口内发一次(晚A 不主动追)；早上聊天不再顺手补缺口追问。
+    # 打卡追问(H5 完整替代)：外部确定性触发，日五项/矛盾核对/次晨空腹提醒分窗口发送，每天最多 3 条。
+    #  - 里程碑前夜：晚间只提醒用户次晨起床如厕后空腹测量并打卡，不要求当晚称重。
+    #  - 日五项：次日早上回顾昨日执行单中尚未回答的项。
     # 会发送真实群消息，默认 False=不追问；设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
     checkin_followup_enabled: bool = Field(default=False, validation_alias="CHECKIN_FOLLOWUP_ENABLED")
     # 傍晚窗口[start,end)：① 不活跃兜底按 (case_id,日期) 在窗口内确定性伪随机落一个发送时刻(规避定点风控)；

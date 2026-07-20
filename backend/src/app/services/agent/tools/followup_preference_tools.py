@@ -29,7 +29,7 @@ class UpdateFollowupPreferencesArgs(BaseModel):
         max_length=len(FOLLOWUP_TOPICS),
         description=(
             "Topics to change. daily_checklist=昨日五项回顾, weight=体重, waist=腰围, "
-            "milestone_review=阶段复盘, contradiction=打卡数据核对。可一次传多个。"
+            "milestone_review=次晨空腹打卡提醒, contradiction=打卡数据核对。可一次传多个。"
         ),
     )
     enabled: bool = Field(

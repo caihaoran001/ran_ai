@@ -21,7 +21,7 @@ FOLLOWUP_TOPIC_LABELS: dict[str, str] = {
     "daily_checklist": "昨日五项打卡回顾",
     "weight": "体重",
     "waist": "腰围",
-    "milestone_review": "阶段复盘",
+    "milestone_review": "次晨空腹打卡提醒",
     "contradiction": "打卡数据核对",
 }
 
