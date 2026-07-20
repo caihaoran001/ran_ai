@@ -170,6 +170,7 @@ function PersonalPortraitPanel({
   const riskState = recordValue(recordValue(recordValue(domains.risk_profile).current).value);
   const preferences = memoryItems(recordValue(domains.personal_preferences), 6);
   const habits = memoryItems(recordValue(domains.lifestyle_habits), 6);
+  const supplements = supplementFacts(domains);
   const summary = text(profile?.summary) || text(profileJson.summary);
   const serviceTraits = [
     ["真实诉求", formatOptionalValue(goalState.main_needs)],
@@ -257,6 +258,8 @@ function PersonalPortraitPanel({
         </div>
       )}
 
+      {supplements.length > 0 && <SupplementPanel facts={supplements} />}
+
       {stateProfile && <StateEvidenceView state={stateProfile.state_json} updatedAt={stateProfile.updated_at} />}
     </section>
   );
@@ -277,6 +280,39 @@ function PortraitRow({ label, value }: { label: string; value: string }) {
 
 function InlinePortraitEmpty({ children }: { children: React.ReactNode }) {
   return <p className="text-sm leading-6 text-slate-600">{children}</p>;
+}
+
+function SupplementPanel({ facts }: { facts: SupplementFact[] }) {
+  const groups = SUPPLEMENT_CATEGORY_ORDER
+    .map((category) => ({ category, items: facts.filter((fact) => fact.category === category) }))
+    .filter((group) => group.items.length > 0);
+
+  return (
+    <div className="border-t border-slate-200 px-5 py-4 sm:px-6">
+      <div className="text-xs font-bold text-slate-500">补剂使用与咨询</div>
+      <p className="mt-1 max-w-[68ch] text-xs leading-5 text-slate-500">
+        从群聊沉淀的用户自备补剂，按品类归类，可用于后续补剂推荐；标注正在用 / 考虑中 / 已停用。
+      </p>
+      <div className="mt-3 space-y-3">
+        {groups.map((group) => (
+          <div key={group.category} className="min-w-0">
+            <div className="mb-1.5 text-xs font-semibold text-slate-600">{SUPPLEMENT_CATEGORY_LABELS[group.category]}</div>
+            <div className="flex flex-wrap gap-2">
+              {group.items.map((fact, index) => (
+                <span
+                  key={`${fact.name}-${index}`}
+                  className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm font-medium ${SUPPLEMENT_STATUS_STYLE[fact.status] ?? "border-slate-200 bg-slate-50 text-slate-700"}`}
+                >
+                  <span className="text-break">{fact.name}</span>
+                  <span className="text-xs opacity-80">{SUPPLEMENT_STATUS_LABELS[fact.status] ?? "正在用"}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function StateEvidenceView({ state, updatedAt }: { state: Record<string, unknown>; updatedAt: string }) {
@@ -453,9 +489,50 @@ function currentDomainItems(domain: Record<string, unknown>, limit: number) {
     .slice(0, limit);
 }
 
+// 补剂品类：与后端 dashboard 群体画像口径一致，宏量在前、其他兜底在后。
+const SUPPLEMENT_CATEGORY_LABELS: Record<string, string> = {
+  macronutrient: "宏量营养 · 蛋白粉 / 膳食纤维 / 健康油脂",
+  micronutrient: "微量营养 · 维生素 / 矿物质",
+  health_supplement: "保健品 / 补品",
+  herbal: "中式草本 · 药材 / 代用茶",
+  other: "其他补剂",
+};
+const SUPPLEMENT_CATEGORY_ORDER = ["macronutrient", "micronutrient", "health_supplement", "herbal", "other"];
+const SUPPLEMENT_STATUS_LABELS: Record<string, string> = {
+  using: "正在用",
+  considering: "考虑中",
+  stopped: "已停用",
+};
+const SUPPLEMENT_STATUS_STYLE: Record<string, string> = {
+  using: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  considering: "border-amber-200 bg-amber-50 text-amber-800",
+  stopped: "border-slate-200 bg-slate-100 text-slate-500",
+};
+
+type SupplementFact = { name: string; category: string; status: string };
+
+// 从生活习惯域抽出补剂清单；品类不在白名单的一律归“其他补剂”。
+function supplementFacts(domains: Record<string, unknown>): SupplementFact[] {
+  const value = recordValue(recordValue(recordValue(domains.lifestyle_habits).current).value);
+  const raw = value.supplement_habit;
+  if (!Array.isArray(raw)) return [];
+  const facts: SupplementFact[] = [];
+  for (const item of raw) {
+    const rec = recordValue(item);
+    const name = text(rec.supplement_name);
+    if (!name) continue;
+    const rawCategory = text(rec.supplement_category);
+    const category = SUPPLEMENT_CATEGORY_LABELS[rawCategory] ? rawCategory : "other";
+    facts.push({ name, category, status: text(rec.habit_status) || "using" });
+  }
+  return facts;
+}
+
 function memoryItems(domain: Record<string, unknown>, limit: number) {
   const value = recordValue(recordValue(domain.current).value);
   return Object.entries(value)
+    // 补剂在下方“补剂使用与咨询”独立区块完整呈现，这里排除以免被截断/混排。
+    .filter(([key]) => key !== "supplement_habit")
     .flatMap(([key, raw]) => {
       const facts = Array.isArray(raw) ? raw : [raw];
       return facts.map((fact) => {
@@ -525,6 +602,12 @@ function formatStateValue(value: unknown): string {
   if (["string", "number", "boolean"].includes(typeof value)) return String(value);
   if (Array.isArray(value)) return value.map(formatStateValue).filter((item) => item && item !== "未记录").join("、");
   const record = recordValue(value);
+  // 补剂事实：只呈现“名称（状态）”，避免把品类码/置信度等字段拼进正文。
+  const supplementName = text(record.supplement_name);
+  if (supplementName) {
+    const status = SUPPLEMENT_STATUS_LABELS[text(record.habit_status)] || "";
+    return status ? `${supplementName}（${status}）` : supplementName;
+  }
   return text(record.value) || Object.values(record).map(formatStateValue).filter((item) => item && item !== "未记录").join("；") || "未记录";
 }
 
