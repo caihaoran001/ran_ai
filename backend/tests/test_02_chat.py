@@ -663,6 +663,9 @@ def test_effective_service_day_by_plan_date():
     case.service_plan_start_date = None
     case.started_at = datetime(2026, 6, 19, 0, 0, tzinfo=timezone.utc)
     assert effective_service_day(case, now, tz) == 2
+    # 计划日与文件都没有(仅自动建单、未开服) → <1(未开始)，不能误报第1天
+    case.started_at = None
+    assert effective_service_day(case, now, tz) < 1
 
 
 def test_checkin_day_plan_vs_legacy_nextday():

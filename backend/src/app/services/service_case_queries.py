@@ -23,10 +23,14 @@ def effective_start_at(service_case: ServiceCase) -> datetime | None:
 
 
 def effective_service_day(service_case: ServiceCase, now: datetime, tz: ZoneInfo) -> int:
-    """服务第几天：计划开始当天=第1天；计划日未到返回 <=0(调用方据此判断『未开始』)；无起点返回 1。"""
+    """服务第几天：计划开始当天=第1天；计划日未到或无任何起点返回 <=0(调用方据此判断『未开始』)。
+
+    无起点(未设计划开始日、也未发开服文件)时返回 0，与"计划日未到"同走『服务尚未正式开始』
+    分支，避免把仅自动建单、尚未开服的案例误报成"第1天"。需要保底≥1天号的调用方自行 max(...,1)。
+    """
     start = effective_start_at(service_case)
     if start is None:
-        return 1
+        return 0
     if start.tzinfo is None:
         start = start.replace(tzinfo=ZoneInfo("UTC"))
     return (now.date() - start.astimezone(tz).date()).days + 1
