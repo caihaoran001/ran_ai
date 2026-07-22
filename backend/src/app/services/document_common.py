@@ -39,6 +39,27 @@ async def _user_name(session: AsyncSession, service_case: ServiceCase) -> str:
     return user.name if user else "未提供"
 
 
+async def _recipient_name_and_gender(
+    session: AsyncSession, service_case: ServiceCase
+) -> tuple[str, str]:
+    """确定性称呼 + 性别，与处方单/执行单同源（入营问卷「性别」字段）。
+
+    - 称呼：男/女时带「先生/女士」后缀（如「小明 先生」），性别未提供时不带后缀。
+    - 性别：返回「男」「女」或「未提供」。
+    供阶段报告提示词与交付文件名使用，避免大模型或关键词各自瞎猜导致前后不一致。
+    """
+    submission = await _latest_submission(session, service_case.id)
+    if submission:
+        fields = await get_active_questionnaire_fields(session, "intake")
+        facts = build_intake_fact_summary(fields, submission.answers_json)
+        recipient = str(facts.get("recipient_name") or "").strip()
+        gender = str(facts.get("gender") or "").strip() or "未提供"
+        if recipient and recipient != "未提供":
+            return recipient, gender
+    name = await _user_name(session, service_case)
+    return name, "未提供"
+
+
 async def _latest_submission(
     session: AsyncSession, service_case_id: int
 ) -> QuestionnaireSubmission | None:

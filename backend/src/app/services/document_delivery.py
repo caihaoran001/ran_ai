@@ -30,7 +30,11 @@ from app.services.docx_service import (
     write_markdown_docx,
     write_template_docx,
 )
-from app.services.document_common import DOCUMENT_DEFINITIONS, _user_name
+from app.services.document_common import (
+    DOCUMENT_DEFINITIONS,
+    _recipient_name_and_gender,
+    _user_name,
+)
 
 
 async def _send_document_reading_reminder(session: AsyncSession, service_case: ServiceCase) -> None:
@@ -180,12 +184,13 @@ async def create_temporary_document_file(
     if not service_case:
         raise RuntimeError("service case not found")
     user_name = await _user_name(session, service_case)
+    _, gender = await _recipient_name_and_gender(session, service_case)
     temp_dir = Path(tempfile.mkdtemp(prefix="ran-ai-docx-"))
     output_path = temp_dir / _document_filename(
         user_name=user_name,
         document_type=document.document_type,
         title=document.title,
-        content=document.content_md,
+        gender=gender,
     )
     await _render_document_file(
         output_path=output_path,
@@ -274,15 +279,13 @@ def _document_filename(
     user_name: str,
     document_type: DocumentType,
     title: str,
-    content: str,
+    gender: str,
 ) -> str:
-    suffix = "女士" if _is_female_guess(content) else "先生"
+    # 性别以入营问卷为准（男→先生 / 女→女士 / 未提供→不带后缀），
+    # 不再靠扫描正文关键词猜，避免同一用户各文件称呼不一致。
+    suffix = {"男": "先生", "女": "女士"}.get((gender or "").strip(), "")
     version = datetime.now().strftime("%Y%m%d%H%M%S")
     return safe_filename(f"{user_name} {title} {user_name}{suffix} {document_type.value} {version}.docx")
-
-
-def _is_female_guess(content: str) -> bool:
-    return "女性" in content or "女士" in content
 
 
 def _utc_now():

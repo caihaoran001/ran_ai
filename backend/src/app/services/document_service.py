@@ -38,6 +38,7 @@ from app.services.service_case_activation import set_pre_service_status_or_activ
 from app.services.document_common import (
     DOCUMENT_DEFINITIONS,
     _latest_submission,
+    _recipient_name_and_gender,
     _user_name,
 )
 from app.services.document_prompts import _intake_generation_system_prompt
@@ -198,6 +199,7 @@ async def generate_stage_report(
         return existing
 
     user_name = await _user_name(session, service_case)
+    recipient_name, gender = await _recipient_name_and_gender(session, service_case)
     latest_profile = await session.scalar(
         select(UserProfile)
         .where(UserProfile.service_case_id == service_case.id)
@@ -236,6 +238,8 @@ async def generate_stage_report(
         state_json=state_profile.state_json if state_profile else None,
         checkins=checkins,
         messages=messages,
+        recipient_name=recipient_name,
+        gender=gender,
     )
     degraded = bool(fields_payload.pop("__degraded__", False)) if isinstance(fields_payload, dict) else False
     content_json = build_stage_report_content_json(
@@ -281,6 +285,7 @@ async def retry_degraded_stage_report(session: AsyncSession, document: UserDocum
         return False
 
     user_name = await _user_name(session, service_case)
+    recipient_name, gender = await _recipient_name_and_gender(session, service_case)
     latest_profile = await session.scalar(
         select(UserProfile)
         .where(UserProfile.service_case_id == service_case.id)
@@ -319,6 +324,8 @@ async def retry_degraded_stage_report(session: AsyncSession, document: UserDocum
         state_json=state_profile.state_json if state_profile else None,
         checkins=checkins,
         messages=messages,
+        recipient_name=recipient_name,
+        gender=gender,
     )
     still_degraded = isinstance(fields_payload, dict) and bool(fields_payload.pop("__degraded__", False))
     if still_degraded:
