@@ -48,17 +48,27 @@ URL_PATTERN = re.compile(r"https?://[^\s<>()\"']+")
 PLACEHOLDER_USER_NAME = "待识别用户"
 _PLACEHOLDER_USER_NAMES = frozenset({PLACEHOLDER_USER_NAME, "待填写问卷用户"})
 GROUP_AI_INTRODUCTION = (
-    "大家好，我是燃人助教，很高兴加入这个群～\n\n"
-    "我会 24 小时在线，和群里的营养师一起为你提供持续支持。我可以：\n\n"
-    "1. 提供健康生活方式相关资讯，回答日常执行中的问题；\n"
-    "2. 提醒每日执行要点，帮你跟进计划；\n"
-    "3. 把你在群里发的体重、饮食、饮水、睡眠、运动等内容分类记录，"
-    "并帮你分析变化趋势；\n"
-    "4. 妥善保护服务过程中的个人信息和健康记录。\n\n"
-    "比如你简单发一句“今天体重 65.2kg，昨晚睡了 7 小时，早C已完成”，"
-    "我会把体重、睡眠和执行情况分别记录下来，后续陪你一起看变化趋势。\n\n"
-    "你平时可以直接在群里和我说话。如果你更想按自己的节奏来、不希望被打扰，"
-    "或者不想被追问，也可以直接告诉我，我会按你的偏好调整。"
+    "你好呀，我是燃人助教～我会和你的营养师一起陪着你，基本随时都在。"
+    "有需要随时在群里喊我，我能帮你：\n\n"
+    "· 答疑解惑：饮食、作息、运动、日常执行上有任何问题，随时问我；\n"
+    "· 陪你聊天：不只聊健康，兴趣爱好、日常心情都能唠两句，别把我当机器就行～\n"
+    "· 定时提醒：想被提醒喝水、吃饭、早点睡，或者盯着每天的执行要点，"
+    "跟我说一声我就帮你定；\n"
+    "· 记录 & 看趋势：体重、饮食、睡眠、运动随手发给我，我帮你记着、陪你一起看变化；\n"
+    "· 阶段小结：每隔几天帮你回顾一下进展，看看这段做得怎么样。\n\n"
+    "比如你发一句“今天体重 65.2kg，昨晚睡了 7 小时，早C已完成”，"
+    "我就会把体重、睡眠、执行分别记下来。这些记录我只用来更好地跟进你，会替你保管好。\n\n"
+    "你要是想按自己的节奏来、不想被打扰，随时跟我说一声就行～"
+)
+
+# 自我介绍之后紧接着发的第二条：主动了解用户「已有的健康习惯」和「在用的健康产品/补剂」，
+# 让后续沟通更贴合、避免建议和用户已有习惯打架。答案由用户在群里自由回复，
+# 档案官的 supplement_habit / profile_fact 抽取管道会自动接住，无需额外结构化解析。
+GROUP_AI_INTRO_FOLLOWUP = (
+    "对了，想先跟你了解两点，方便后面更有针对性地陪你调整～\n\n"
+    "1. 你现在有没有在坚持的健康习惯？（比如控制饮食、规律运动、早睡、喝够水）\n"
+    "2. 有没有在吃什么健康产品或补剂？（比如蛋白粉、维生素、益生菌、代餐等）\n\n"
+    "有就随手说说，没有也完全没关系～"
 )
 
 # Unified and concise risk replies are imported from content_policy.py
@@ -441,6 +451,34 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             service_case_id,
             trigger_id,
         )
+
+        # 引荐成功后紧接着发第二条：主动了解已有健康习惯 / 在用补剂。best-effort：
+        # 介绍状态已落库，这里失败只记日志，不重发介绍、不阻断整体流程。
+        try:
+            followup = await self._send_and_record(
+                message=message,
+                service_case_id=service_case_id,
+                content=GROUP_AI_INTRO_FOLLOWUP,
+                trigger_id=trigger_id,
+                analysis_json={"_system_event": "group_ai_intro_followup"},
+                send=lambda: self.channel.send_text(
+                    message.chat_id,
+                    GROUP_AI_INTRO_FOLLOWUP,
+                ),
+            )
+            if not followup or not followup.success:
+                logger.warning(
+                    "RanrenAI intro follow-up send failed chat_id=%s service_case_id=%s error=%s",
+                    message.chat_id,
+                    service_case_id,
+                    followup.error if followup else "send result was None",
+                )
+        except Exception:
+            logger.exception(
+                "RanrenAI intro follow-up send raised chat_id=%s service_case_id=%s",
+                message.chat_id,
+                service_case_id,
+            )
         return True
 
     async def _reply_questionnaire_link(
