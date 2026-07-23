@@ -43,13 +43,16 @@ class ProfileMemoryContext:
     def render_for_agent(
         self,
         *,
-        max_lines: int = 8,
         sections: Sequence[str] = AGENT_MEMORY_SECTIONS,
     ) -> str:
         """Render a compact prompt fragment.
 
-        The section argument is intentionally explicit so the next iteration can
-        choose only relevant memory sections without changing extraction logic.
+        每个来源域自身已限量(稳定事实≤5、历程小结靠上游字数上限、偏好/习惯各1、
+        当前状态≤6、风险边界≤2),因此这里不再按"总条数"做位置截断——那种截断只会
+        把排在末位的风险边界静默砍掉,而字数上限其实已经限制了体量。
+
+        The section argument is intentionally explicit so the caller can choose
+        only relevant memory sections without changing extraction logic.
         """
 
         lines: list[str] = []
@@ -63,7 +66,7 @@ class ProfileMemoryContext:
         compact = _dedupe_keep_order(lines)
         if not compact:
             return "暂无可用用户背景。"
-        return "\n".join(f"- {line}" for line in compact[: max(1, max_lines)])
+        return "\n".join(f"- {line}" for line in compact)
 
 
 async def load_profile_memory_context(

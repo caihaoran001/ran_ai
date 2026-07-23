@@ -113,7 +113,7 @@ async def test_case_memory_refresh_with_precipitation(db_session):
 
     # 注入 Chat Agent：历程小结出现在渲染结果里。
     ctx = await load_profile_memory_context(db_session, service_case_id=case.id)
-    rendered = ctx.render_for_agent(max_lines=10)
+    rendered = ctx.render_for_agent()
     assert "历程小结" in rendered
 
 

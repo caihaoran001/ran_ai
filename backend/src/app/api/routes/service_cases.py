@@ -154,9 +154,9 @@ async def get_service_case_ai_context_preview(
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
     # 预览 AI 每轮回复真实携带的「隐性用户背景」（profile_memory：稳定事实/历程小结/偏好/
-    # 习惯/当前状态/最近话题/风险边界）。放宽行数以便运营看全，不做 agent 端的按需截断。
+    # 习惯/当前状态/最近话题/风险边界）。全量渲染，不做 agent 端的按需截断。
     memory = await build_agent_memory_context(
-        session, service_case_id=service_case.id, max_lines=50
+        session, service_case_id=service_case.id
     )
     context = f"### AI 每轮携带的隐性用户背景\n{memory}"
     return ServiceCaseAIContextPreview(context=context)
