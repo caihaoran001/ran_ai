@@ -740,7 +740,11 @@ async def test_group_at_bot_silence_and_resume_commands(db_session, mock_message
     normal_msg = await db_session.scalar(select(Message).where(Message.wecom_message_id == "normal-while-silenced"))
     assert normal_msg is not None
     assert normal_msg.analysis_json is not None
-    assert set(normal_msg.analysis_json.keys()) == {"_qiwe_meta"}
+    assert set(normal_msg.analysis_json.keys()) == {
+        "_qiwe_meta",
+        "_reply_processing",
+    }
+    assert normal_msg.analysis_json["_reply_processing"]["status"] == "completed"
 
     outbound_count = await db_session.scalar(select(func.count()).select_from(Message).where(
         Message.service_case_id == case_id,

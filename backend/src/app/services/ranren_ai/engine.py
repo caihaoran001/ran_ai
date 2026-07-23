@@ -220,11 +220,20 @@ class RanrenAIEngine(InboundAttachmentProcessor):
 
         await run_handle_message(self, message)
 
-    async def reprocess_message(self, message: Message) -> None:
-        """Reprocess a stuck inbound USER message (e.g., interrupted by container restart)."""
+    async def reprocess_message(
+        self,
+        message: Message,
+        *,
+        recovery_started_at: datetime | None = None,
+    ) -> None:
+        """Reprocess a stuck inbound message after an interrupted run."""
         from app.services.ranren_ai.engine_graph import run_reprocess_message
 
-        await run_reprocess_message(self, message)
+        await run_reprocess_message(
+            self,
+            message,
+            recovery_started_at=recovery_started_at,
+        )
 
     async def _reply_human_handoff(
         self,
@@ -308,10 +317,18 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 risk_level = service_case.risk_level
             if db_inbound:
                 existing = db_inbound.analysis_json or {}
-                meta = existing.get("_qiwe_meta")
                 new_analysis = dict(analysis)
-                if meta:
-                    new_analysis["_qiwe_meta"] = meta
+                # 风险分析是中间结果，不能覆盖消息编排/恢复元数据。
+                for key in (
+                    "_qiwe_meta",
+                    "_reply_gate",
+                    "_group_control",
+                    "_system_command",
+                    "_reply_processing",
+                    "_recovery_claim",
+                ):
+                    if key in existing:
+                        new_analysis[key] = existing[key]
                 db_inbound.analysis_json = new_analysis
             await session.commit()
             return risk_level
@@ -1134,13 +1151,122 @@ async def mark_outbound_blocked_by_channel_id(channel_message_id: str, reason: s
         return True
 
 
+_REPLY_PROCESSING_KEY = "_reply_processing"
+_REPLY_STATUS_PROCESSING = "processing"
+_REPLY_STATUS_COMPLETED = "completed"
+_REPLY_STATUS_RETRYABLE_FAILURE = "retryable_failure"
+_REPLY_TERMINAL_STATUSES = {_REPLY_STATUS_COMPLETED}
+
+
+def _with_reply_processing_status(
+    analysis_json: dict | None,
+    *,
+    status: str,
+    reason: str,
+) -> dict:
+    analysis = dict(analysis_json) if isinstance(analysis_json, dict) else {}
+    analysis[_REPLY_PROCESSING_KEY] = {
+        "status": status,
+        "reason": reason,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return analysis
+
+
+def _message_has_active_recovery_claim(
+    analysis_json: dict | None,
+    *,
+    stale_before: datetime | None = None,
+) -> bool:
+    if not isinstance(analysis_json, dict):
+        return False
+    claim = analysis_json.get("_recovery_claim")
+    if not isinstance(claim, dict):
+        return False
+    claimed_at = _parse_datetime(claim.get("claimed_at"))
+    if claimed_at is None:
+        return True
+    if stale_before is not None:
+        if stale_before.tzinfo is None:
+            stale_before = stale_before.replace(tzinfo=timezone.utc)
+        if claimed_at < stale_before.astimezone(timezone.utc):
+            return False
+    return (datetime.now(timezone.utc) - claimed_at).total_seconds() < 600
+
+
+def _message_reply_is_terminal(analysis_json: dict | None) -> bool:
+    if not isinstance(analysis_json, dict):
+        return False
+    processing = analysis_json.get(_REPLY_PROCESSING_KEY)
+    if isinstance(processing, dict) and processing.get("status") in _REPLY_TERMINAL_STATUSES:
+        return True
+    # 兼容新终态上线前已落库的“等待员工引荐”消息：它本来就不应迟到补回。
+    reply_gate = analysis_json.get("_reply_gate")
+    return (
+        isinstance(reply_gate, dict)
+        and reply_gate.get("state") == "awaiting_staff_introduction"
+    )
+
+
+def _legacy_message_looks_processed(analysis_json: dict | None) -> bool:
+    """Recognize pre-terminal-marker rows without hiding new interrupted runs."""
+    if not isinstance(analysis_json, dict) or _REPLY_PROCESSING_KEY in analysis_json:
+        return False
+    return bool(
+        any(
+            key in analysis_json
+            for key in ("requires_human_intervention", "outcome", "agent")
+        )
+        or analysis_json.get("_reply_gate")
+        or analysis_json.get("_group_control")
+    )
+
+
+async def _inbound_checkpoint_exists(
+    *,
+    channel_name: str,
+    inbound: Message,
+) -> bool:
+    """Legacy rows are recoverable only when their old run left a checkpoint."""
+    from app.services.agent.checkpoint import (
+        build_checkpoint_thread_id,
+        checkpoint_config,
+        get_agent_checkpointer,
+    )
+    from app.services.ranren_ai.engine_graph import _checkpoint_fallback_key
+
+    checkpointer = get_agent_checkpointer()
+    if checkpointer is None:
+        return False
+    analysis = inbound.analysis_json if isinstance(inbound.analysis_json, dict) else {}
+    meta = analysis.get("_qiwe_meta") if isinstance(analysis.get("_qiwe_meta"), dict) else {}
+    fallback = _checkpoint_fallback_key(
+        user_id=str(meta.get("sender_id") or ""),
+        timestamp=int(
+            meta.get("timestamp")
+            or int(inbound.created_at.timestamp())
+        ),
+        message_type=inbound.message_type,
+        text=inbound.content,
+    )
+    thread_id = build_checkpoint_thread_id(
+        workflow="reply",
+        channel=channel_name,
+        chat_id=inbound.group_id,
+        message_id=inbound.wecom_message_id,
+        fallback_key=fallback,
+    )
+    return await checkpointer.aget_tuple(checkpoint_config(thread_id)) is not None
+
+
 async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: datetime) -> None:
     """Scan and reprocess inbound user messages that were received but never processed (e.g. due to service restart).
     This function is run on application startup to recover any messages that were lost/interrupted during deployment restart.
     """
     from datetime import datetime, timedelta, timezone
-    # Only scan messages received before startup_time - 15 seconds, and within the last 2 hours.
-    max_created_at = startup_time - timedelta(seconds=15)
+    # 新进程启动前的旧任务都已停止；必须覆盖紧邻重启前的消息，否则 inbox
+    # 会因业务入站已存在而跳过重放，形成一个 15 秒恢复黑洞。
+    max_created_at = startup_time
     min_created_at = startup_time - timedelta(hours=2)
     
     async with SessionLocal() as session:
@@ -1150,8 +1276,6 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
             await session.scalars(
                 select(ServiceCase)
                 .where(
-                    ServiceCase.ai_auto_reply_enabled == True,
-                    ServiceCase.ai_introduced_at.is_not(None),
                     ServiceCase.deleted_at.is_(None),
                 )
             )
@@ -1159,29 +1283,74 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
         if not cases:
             return
 
-        stuck_messages = []
-        for case in cases:
-            # Query the latest inbound user chat message in the last 2 hours for this case
-            latest_inbound = await session.scalar(
+        cases_by_id = {case.id: case for case in cases}
+        case_ids = list(cases_by_id)
+        candidates = list(
+            await session.scalars(
                 select(Message)
                 .where(
-                    Message.service_case_id == case.id,
+                    Message.service_case_id.in_(case_ids),
                     Message.direction == MessageDirection.INBOUND,
-                    Message.sender_type == MessageSenderType.USER,
+                    Message.sender_type.in_(
+                        [MessageSenderType.USER, MessageSenderType.STAFF]
+                    ),
                     Message.purpose == MessagePurpose.CHAT,
-                    Message.message_type == "text",
                     Message.created_at >= min_created_at,
                     Message.created_at <= max_created_at,
                 )
-                .order_by(Message.id.desc())
-                .limit(1)
+                .order_by(Message.id.asc())
             )
-            if not latest_inbound:
+        )
+        stuck_messages = []
+        for inbound in candidates:
+            analysis = inbound.analysis_json if isinstance(inbound.analysis_json, dict) else {}
+            service_case = cases_by_id.get(inbound.service_case_id)
+            if service_case is None:
+                continue
+            if inbound.sender_type == MessageSenderType.STAFF:
+                meta = analysis.get("_qiwe_meta") if isinstance(analysis.get("_qiwe_meta"), dict) else {}
+                reply_gate = (
+                    analysis.get("_reply_gate")
+                    if isinstance(analysis.get("_reply_gate"), dict)
+                    else {}
+                )
+                is_introduction = reply_gate.get("state") == "introduction_trigger"
+                is_group_control = bool(analysis.get("_group_control"))
+                is_system_command = bool(analysis.get("_system_command"))
+                is_explicit_query = bool(meta.get("explicit_bot_query_text"))
+                if not (
+                    is_explicit_query
+                    or is_group_control
+                    or is_system_command
+                    or is_introduction
+                ):
+                    continue
+                if (
+                    not is_introduction
+                    and not is_group_control
+                    and (
+                        not service_case.ai_auto_reply_enabled
+                        or service_case.ai_introduced_at is None
+                    )
+                ):
+                    continue
+            elif (
+                not service_case.ai_auto_reply_enabled
+                or service_case.ai_introduced_at is None
+            ):
                 continue
 
-            # Skip if it was already processed or claimed by another recovery task.
-            aj = latest_inbound.analysis_json or {}
-            if _message_already_processed_or_claimed(aj):
+            if _message_reply_is_terminal(analysis):
+                continue
+            if _message_has_active_recovery_claim(
+                analysis,
+                stale_before=startup_time,
+            ):
+                continue
+            if _legacy_message_looks_processed(analysis) and not await _inbound_checkpoint_exists(
+                channel_name=channel.name,
+                inbound=inbound,
+            ):
                 continue
 
             # Check if there is already any outbound reply (sent/pending/failed) for this message
@@ -1189,12 +1358,12 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
                 select(Message.id)
                 .where(
                     Message.direction == MessageDirection.OUTBOUND,
-                    Message.trigger_id == latest_inbound.id,
+                    Message.trigger_id == inbound.id,
                 )
                 .limit(1)
             )
             if not reply_exists:
-                stuck_messages.append(latest_inbound)
+                stuck_messages.append(inbound)
 
         if not stuck_messages:
             return
@@ -1209,25 +1378,25 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
     engine = RanrenAIEngine(channel)
     for msg in stuck_messages:
         try:
-            await engine.reprocess_message(msg)
+            await engine.reprocess_message(
+                msg,
+                recovery_started_at=startup_time,
+            )
         except Exception:
             logger.exception("Failed to reprocess stuck message id=%s", msg.id)
 
 
-def _message_already_processed_or_claimed(analysis_json: dict | None) -> bool:
-    if not isinstance(analysis_json, dict):
-        return False
-    if "_reply_gate" in analysis_json:
-        return True
-    if any(key in analysis_json for key in ("requires_human_intervention", "outcome", "agent")):
-        return True
-    claim = analysis_json.get("_recovery_claim")
-    if not isinstance(claim, dict):
-        return False
-    claimed_at = _parse_datetime(claim.get("claimed_at"))
-    if claimed_at is None:
-        return True
-    return (datetime.now(timezone.utc) - claimed_at).total_seconds() < 600
+def _message_already_processed_or_claimed(
+    analysis_json: dict | None,
+    *,
+    claim_stale_before: datetime | None = None,
+) -> bool:
+    return _message_reply_is_terminal(
+        analysis_json
+    ) or _message_has_active_recovery_claim(
+        analysis_json,
+        stale_before=claim_stale_before,
+    )
 
 
 def _parse_datetime(value: object) -> datetime | None:

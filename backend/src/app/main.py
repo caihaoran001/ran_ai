@@ -73,18 +73,25 @@ async def lifespan(app: FastAPI):
         )
         from app.services.qiwe_service.inbox import replay_pending_inbound_events
         startup_time = datetime.now(timezone.utc)
-        # 先把重启前残留的「在途(SENDING)」出站记录对账为 FAILED（宁可少发、不自动重发），
-        # 再补发那些「收到但从未回复」的在途入站消息，最后重放卡在聚合窗口、从未进引擎的消息。
+        # 先把重启前残留的「在途(SENDING)」出站记录对账为 FAILED（宁可少发、不自动重发）。
         await reconcile_interrupted_sends(startup_time)
         await reconcile_group_introduction_state()
-        asyncio.create_task(recover_stuck_inbound_messages(channel, startup_time))
-        asyncio.create_task(replay_pending_inbound_events(channel, startup_time))
+
+        async def _recover_qiwe_messages() -> None:
+            # 顺序执行：先让业务 Message 使用原 thread_id 恢复（此时 inbox raw_payload
+            # 仍可供图片恢复读取），再重放从未进入引擎的 pending events。
+            await recover_stuck_inbound_messages(channel, startup_time)
+            await replay_pending_inbound_events(channel, startup_time)
+
+        asyncio.create_task(_recover_qiwe_messages())
     try:
         yield
     finally:
         await reminder_service.stop()
         if qiwe_aggregator:
-            await qiwe_aggregator.stop()
+            await qiwe_aggregator.stop(
+                drain_timeout_seconds=settings.qiwei_shutdown_drain_seconds,
+            )
         if qiwe_should_start:
             set_current_channel(None)
         stop_engine_graph_runtime()

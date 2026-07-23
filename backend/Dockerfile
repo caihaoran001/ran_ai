@@ -14,4 +14,4 @@ ENV PYTHONPATH=/app/src \
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --group dev
 
 EXPOSE 8000
-CMD ["sh", "-c", "uv run alembic upgrade head && uv run ran-ai-api"]
+CMD ["sh", "-c", "uv run alembic upgrade head && exec uv run ran-ai-api"]

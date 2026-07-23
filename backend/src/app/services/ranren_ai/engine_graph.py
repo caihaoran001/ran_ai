@@ -29,6 +29,7 @@ from app.models.message import (
     MessageSenderType,
     MessageStatus,
 )
+from app.models.inbound_event import InboundEvent
 from app.models.service_case import ServiceCase
 from app.models.user import User
 from app.services.agent.checkpoint import (
@@ -50,6 +51,10 @@ from app.services.ranren_ai.engine import (
     _explicit_bot_query_text,
     _group_bot_control_command,
     _message_already_processed_or_claimed,
+    _REPLY_STATUS_COMPLETED,
+    _REPLY_STATUS_PROCESSING,
+    _REPLY_STATUS_RETRYABLE_FAILURE,
+    _with_reply_processing_status,
     _message_mentions_bot,
     _reply_is_no_reply,
     _requires_health_handoff,
@@ -70,6 +75,7 @@ class EngineState(TypedDict, total=False):
     entry_mode: str  # "fresh" | "reprocess" | "reply_only"
     started_at: float
     checkpoint_thread_id: str
+    recovery_started_at: datetime | None
     # 计算态（把原 handle_message 的局部量摊平；节点覆盖式更新）
     should_send_questionnaire: bool
     group_control_command: str | None
@@ -95,6 +101,9 @@ class EngineState(TypedDict, total=False):
     outbound_analysis: dict | None
     should_send: bool
     _halt: bool  # reprocess_head 守卫失败 → 直接结束
+    _completion_status: str
+    _completion_reason: str
+    _skip_finalization: bool
 
 
 @dataclass(frozen=True)
@@ -176,7 +185,13 @@ class EngineGraph:
         return "risk"
 
     def _route_after_reprocess_head(self, state: EngineState) -> str:
-        return END if state.get("_halt") else "risk"
+        if state.get("_halt"):
+            return END
+        if state.get("should_send_introduction"):
+            return "group_introduction"
+        if state.get("group_control_command"):
+            return "group_command_reply"
+        return "attachments"
 
     def _route_after_risk(self, state: EngineState) -> str:
         if state.get("needs_handoff"):
@@ -405,7 +420,11 @@ class EngineGraph:
             }
             if explicit_bot_query_text:
                 meta["explicit_bot_query_text"] = explicit_bot_query_text
-            analysis = {"_qiwe_meta": meta}
+            analysis = _with_reply_processing_status(
+                {"_qiwe_meta": meta},
+                status=_REPLY_STATUS_PROCESSING,
+                reason="fresh_inbound",
+            )
             if service_case and not service_case_introduced:
                 analysis["_reply_gate"] = {
                     "state": (
@@ -419,6 +438,8 @@ class EngineGraph:
                     "command": group_control_command,
                     "resume_receipt": resume_takeover_receipt,
                 }
+            if should_send_questionnaire:
+                analysis["_system_command"] = "send_questionnaire"
 
             db_inbound = Message(
                 service_case_id=service_case.id if service_case else None,
@@ -510,13 +531,8 @@ class EngineGraph:
             )
             .limit(1)
         )
-        already_processed = (
-            bool(outbound_exists)
-            or (
-                _message_already_processed_or_claimed(analysis)
-                and not reply_gate
-                and not group_meta
-            )
+        already_processed = bool(outbound_exists) or _message_already_processed_or_claimed(
+            analysis
         )
         logger.info(
             "RanrenAI reused durable inbound chat_id=%s message_id=%s db_message_id=%s checkpoint_resume=%s",
@@ -544,6 +560,7 @@ class EngineGraph:
             "explicit_bot_query_text": restored_explicit_query,
             "should_send_questionnaire": should_send_questionnaire,
             "_halt": already_processed,
+            "_skip_finalization": already_processed,
         }
 
     async def _group_introduction(self, state: EngineState) -> dict[str, Any]:
@@ -755,9 +772,12 @@ class EngineGraph:
                 return {"_halt": True}
 
             analysis_json = msg_row.analysis_json if isinstance(msg_row.analysis_json, dict) else {}
-            if _message_already_processed_or_claimed(analysis_json):
+            if _message_already_processed_or_claimed(
+                analysis_json,
+                claim_stale_before=state.get("recovery_started_at"),
+            ):
                 logger.info("reprocess_message: Skip message %s because it is already processed or claimed", inbound_id)
-                return {"_halt": True}
+                return {"_halt": True, "_skip_finalization": True}
 
             reply_exists = await session.scalar(
                 select(Message.id).where(
@@ -784,10 +804,32 @@ class EngineGraph:
                 return {"_halt": True}
 
             service_case = await session.scalar(select_active_service_cases(ServiceCase.id == service_case_id))
+            reply_gate = (
+                analysis_json.get("_reply_gate")
+                if isinstance(analysis_json.get("_reply_gate"), dict)
+                else {}
+            )
+            should_send_introduction = (
+                reply_gate.get("state") == "introduction_trigger"
+            )
+            group_meta = (
+                analysis_json.get("_group_control")
+                if isinstance(analysis_json.get("_group_control"), dict)
+                else {}
+            )
+            group_control_command = (
+                str(group_meta.get("command") or "").strip() or None
+            )
             if (
                 not service_case
-                or not service_case.ai_auto_reply_enabled
-                or service_case.ai_introduced_at is None
+                or (
+                    not service_case.ai_auto_reply_enabled
+                    and group_control_command != "resume"
+                )
+                or (
+                    service_case.ai_introduced_at is None
+                    and not should_send_introduction
+                )
             ):
                 logger.info(
                     "reprocess_message: Skip message %s because case is inactive/silenced/not introduced",
@@ -800,6 +842,11 @@ class EngineGraph:
                 "claimed_at": datetime.now(timezone.utc).isoformat(),
                 "reason": "startup_recovery",
             }
+            claimed = _with_reply_processing_status(
+                claimed,
+                status=_REPLY_STATUS_PROCESSING,
+                reason="startup_recovery",
+            )
             msg_row.analysis_json = claimed
             group_id = msg_row.group_id
             content = msg_row.content
@@ -807,9 +854,25 @@ class EngineGraph:
             message_type = msg_row.message_type
             created_at = msg_row.created_at
             purpose = msg_row.purpose
+            raw_payload = await session.scalar(
+                select(InboundEvent.raw_payload)
+                .where(
+                    InboundEvent.channel == self.engine.channel.name,
+                    InboundEvent.message_id == wecom_message_id,
+                )
+                .order_by(InboundEvent.id.desc())
+                .limit(1)
+            )
             await session.commit()
 
         meta = analysis_json.get("_qiwe_meta", {}) if analysis_json else {}
+        explicit_bot_query_text = (
+            str(meta.get("explicit_bot_query_text") or "").strip() or None
+        )
+        should_send_questionnaire = (
+            analysis_json.get("_system_command") == "send_questionnaire"
+        )
+        is_staff = msg_row.sender_type == MessageSenderType.STAFF
         channel_msg = ChannelMessage(
             channel=self.engine.channel.name,
             chat_id=group_id,
@@ -819,13 +882,17 @@ class EngineGraph:
             user_id=meta.get("sender_id"),
             user_name=meta.get("sender_name"),
             message_type=message_type,
-            raw_payload=None,
+            raw_payload=raw_payload,
             timestamp=created_at,
         )
 
         async with engine_mod.SessionLocal() as session:
-            recent_user_messages = await self.engine._recent_user_messages(
-                session, service_case_id, exclude_message_id=inbound_id
+            recent_user_messages = (
+                await self.engine._recent_user_messages(
+                    session, service_case_id, exclude_message_id=inbound_id
+                )
+                if service_case.ai_introduced_at is not None and not is_staff
+                else []
             )
 
         return {
@@ -835,8 +902,16 @@ class EngineGraph:
             "trigger_id": inbound_id,
             "recent_user_messages": recent_user_messages,
             "purpose": purpose,
-            "is_staff": False,
-            "analysis": None,
+            "is_staff": is_staff,
+            "sender_type": msg_row.sender_type,
+            "analysis": analysis_json,
+            "service_case_introduced": service_case.ai_introduced_at is not None,
+            "should_send_introduction": should_send_introduction,
+            "service_case_silenced": not service_case.ai_auto_reply_enabled,
+            "resume_takeover_receipt": bool(group_meta.get("resume_receipt")),
+            "group_control_command": group_control_command,
+            "explicit_bot_query_text": explicit_bot_query_text,
+            "should_send_questionnaire": should_send_questionnaire,
         }
 
     # ---------- 共享尾部 ----------
@@ -1082,7 +1157,11 @@ class EngineGraph:
                     service_case_id,
                     trigger_id,
                 )
-            return {"_halt": True}
+            return {
+                "_halt": True,
+                "_completion_status": _REPLY_STATUS_RETRYABLE_FAILURE,
+                "_completion_reason": "agent_generation_failed",
+            }
         return {"reply": reply, "outbound_analysis": outbound_analysis}
 
     async def _reply_guards(self, state: EngineState) -> dict[str, Any]:
@@ -1174,6 +1253,47 @@ class EngineGraph:
         )
         return {}
 
+    async def _finalize(self, state: EngineState) -> dict[str, Any]:
+        """Persist one explicit business terminal after every successful graph path.
+
+        A process interruption never reaches this node, so its inbound row stays
+        processing/retryable and startup recovery may safely wake the same thread.
+        """
+        if state.get("_skip_finalization"):
+            return {}
+        inbound_id = (
+            state.get("inbound_id")
+            or state.get("trigger_id")
+            or state.get("db_message_id")
+        )
+        if not inbound_id:
+            return {}
+        status = state.get("_completion_status") or _REPLY_STATUS_COMPLETED
+        reason = state.get("_completion_reason") or (
+            "no_reply" if state.get("_halt") else "workflow_completed"
+        )
+        async with engine_mod.SessionLocal() as session:
+            # 少量纯单元测试使用只实现 add/flush 的轻量 session；真实
+            # SQLAlchemy AsyncSession 始终具备 get()。
+            if not hasattr(session, "get"):
+                return {}
+            inbound = await session.get(Message, inbound_id)
+            if inbound is None or inbound.direction != MessageDirection.INBOUND:
+                return {}
+            inbound.analysis_json = _with_reply_processing_status(
+                inbound.analysis_json,
+                status=status,
+                reason=reason,
+            )
+            await session.commit()
+        logger.info(
+            "RanrenAI reply workflow finalized trigger_id=%s status=%s reason=%s",
+            inbound_id,
+            status,
+            reason,
+        )
+        return {}
+
 
 def _engine_node_dispatch(
     method_name: str,
@@ -1223,6 +1343,7 @@ def _compile_engine_graph(checkpointer: BaseCheckpointSaver | None):
         "reply_generate",
         "reply_guards",
         "reply_send",
+        "finalize",
     ):
         builder.add_node(
             node_name,
@@ -1245,50 +1366,56 @@ def _compile_engine_graph(checkpointer: BaseCheckpointSaver | None):
             "group_introduction": "group_introduction",
             "group_command_reply": "group_command_reply",
             "attachments": "attachments",
-            END: END,
+            END: "finalize",
         },
     )
-    builder.add_edge("group_introduction", END)
-    builder.add_edge("group_command_reply", END)
+    builder.add_edge("group_introduction", "finalize")
+    builder.add_edge("group_command_reply", "finalize")
     builder.add_conditional_edges(
         "attachments",
         _engine_route_dispatch("_route_after_attachments"),
-        {"file_ack": "file_ack", "staff_gate": "staff_gate", END: END},
+        {"file_ack": "file_ack", "staff_gate": "staff_gate", END: "finalize"},
     )
-    builder.add_edge("file_ack", END)
+    builder.add_edge("file_ack", "finalize")
     builder.add_conditional_edges(
         "staff_gate",
         _engine_route_dispatch("_route_after_staff_gate"),
-        {"questionnaire": "questionnaire", "risk": "risk", END: END},
+        {"questionnaire": "questionnaire", "risk": "risk", END: "finalize"},
     )
-    builder.add_edge("questionnaire", END)
+    builder.add_edge("questionnaire", "finalize")
     builder.add_conditional_edges(
         "reprocess_head",
         _engine_route_dispatch("_route_after_reprocess_head"),
-        {"risk": "risk", END: END},
+        {
+            "group_introduction": "group_introduction",
+            "group_command_reply": "group_command_reply",
+            "attachments": "attachments",
+            END: "finalize",
+        },
     )
     builder.add_conditional_edges(
         "risk",
         _engine_route_dispatch("_route_after_risk"),
-        {"handoff": "handoff", "reply_prep": "reply_prep", END: END},
+        {"handoff": "handoff", "reply_prep": "reply_prep", END: "finalize"},
     )
-    builder.add_edge("handoff", END)
+    builder.add_edge("handoff", "finalize")
     builder.add_conditional_edges(
         "reply_prep",
         _engine_route_dispatch("_route_after_reply_prep"),
-        {"reply_generate": "reply_generate", END: END},
+        {"reply_generate": "reply_generate", END: "finalize"},
     )
     builder.add_conditional_edges(
         "reply_generate",
         _engine_route_dispatch("_route_after_reply_generate"),
-        {"reply_guards": "reply_guards", END: END},
+        {"reply_guards": "reply_guards", END: "finalize"},
     )
     builder.add_conditional_edges(
         "reply_guards",
         _engine_route_dispatch("_route_after_reply_guards"),
-        {"reply_send": "reply_send", END: END},
+        {"reply_send": "reply_send", END: "finalize"},
     )
-    builder.add_edge("reply_send", END)
+    builder.add_edge("reply_send", "finalize")
+    builder.add_edge("finalize", END)
     return builder.compile(checkpointer=checkpointer)
 
 
@@ -1369,7 +1496,12 @@ async def run_handle_message(engine: "RanrenAIEngine", message: ChannelMessage) 
     )
 
 
-async def run_reprocess_message(engine: "RanrenAIEngine", db_message: Message) -> None:
+async def run_reprocess_message(
+    engine: "RanrenAIEngine",
+    db_message: Message,
+    *,
+    recovery_started_at: datetime | None = None,
+) -> None:
     """reprocess 入口薄封装：构造初始 state 后跑图。"""
     checkpointer = get_agent_checkpointer()
     meta = (
@@ -1395,6 +1527,7 @@ async def run_reprocess_message(engine: "RanrenAIEngine", db_message: Message) -
         "entry_mode": "reprocess",
         "started_at": time.monotonic(),
         "checkpoint_thread_id": thread_id,
+        "recovery_started_at": recovery_started_at,
     }
     await EngineGraph(engine, checkpointer=checkpointer).run(
         state,

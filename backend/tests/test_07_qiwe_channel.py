@@ -314,6 +314,44 @@ async def test_qiwe_aggregator_uses_fixed_window_without_resetting_timer():
 
 
 @pytest.mark.asyncio
+async def test_qiwe_aggregator_shutdown_drains_running_engine_task():
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingEngine:
+        async def handle_message(self, message):
+            started.set()
+            await release.wait()
+
+    aggregator = QiWeMessageAggregator(
+        FakeChannel(),
+        window_seconds=0.01,
+        engine=BlockingEngine(),
+    )
+    await aggregator.enqueue(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id="room-drain",
+            chat_type="group",
+            text="部署时等我处理完",
+            message_id=f"drain-{secrets.token_hex(4)}",
+            user_id="u1",
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    stop_task = asyncio.create_task(
+        aggregator.stop(drain_timeout_seconds=1)
+    )
+    await asyncio.sleep(0.02)
+    assert not stop_task.done()
+
+    release.set()
+    await asyncio.wait_for(stop_task, timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_qiwe_aggregator_dispatch_now_reuses_dedupe():
     engine = FakeEngine()
     aggregator = QiWeMessageAggregator(FakeChannel(), window_seconds=0.1, engine=engine)
@@ -643,6 +681,49 @@ def test_qiwe_callback_secret_validates_header_or_query():
     ) is False
 
 
+@pytest.mark.asyncio
+async def test_qiwe_callback_persists_inbox_before_background_dispatch(
+    public_client,
+    db_session,
+    monkeypatch,
+):
+    from sqlalchemy import select
+    from app.models.inbound_event import InboundEvent
+
+    monkeypatch.setattr(
+        "app.api.routes.qiwe.get_settings",
+        lambda: SimpleNamespace(
+            qiwei_callback_secret="callback-secret",
+            qiwei_batch_window_seconds=8.0,
+        ),
+    )
+    message_id = f"callback-sync-{secrets.token_hex(4)}"
+    response = await public_client.post(
+        "/channels/qiwe/callback?secret=callback-secret",
+        json={
+            "code": 0,
+            "data": [
+                {
+                    "cmd": 15000,
+                    "msgType": 2,
+                    "fromRoomId": "room-callback-sync",
+                    "senderId": "user-1",
+                    "timestamp": int(datetime.now(timezone.utc).timestamp()),
+                    "msgUniqueIdentifier": message_id,
+                    "msgData": {"content": "先落库再返回"},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    event = await db_session.scalar(
+        select(InboundEvent).where(InboundEvent.message_id == message_id)
+    )
+    assert event is not None
+    assert event.status == InboundEvent.STATUS_PENDING
+
+
 def test_qiwe_system_command_bypasses_aggregator():
     command = ChannelMessage(
         channel="qiwe",
@@ -735,6 +816,7 @@ async def test_first_group_message_creates_case_but_stays_silent_before_introduc
     assert rows[0].direction == MessageDirection.INBOUND
     assert rows[0].service_case_id == service_case.id
     assert rows[0].analysis_json["_reply_gate"]["state"] == "awaiting_staff_introduction"
+    assert rows[0].analysis_json["_reply_processing"]["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -1326,7 +1408,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     )
     db_session.add(reply_b)
     
-    # Scenario C: Message is too new (within 15 seconds) (should NOT be recovered)
+    # Scenario C: 重启前 5 秒刚落库的消息也必须恢复，不能留下部署窗口。
     case_c = ServiceCase(
         user_id=user.id, case_no="CASE-C", status=ServiceCaseStatus.IN_SERVICE,
         ai_auto_reply_enabled=True, group_id="group-c", questionnaire_token="token-c",
@@ -1362,7 +1444,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     )
     db_session.add(msg_d)
 
-    # Scenario E: Already processed by intervention analysis (should NOT be recovered)
+    # Scenario E: 风险分析只是中间结果，尚未出站时必须恢复
     case_e = ServiceCase(
         user_id=user.id, case_no="CASE-E", status=ServiceCaseStatus.IN_SERVICE,
         ai_auto_reply_enabled=True, group_id="group-e", questionnaire_token="token-e",
@@ -1376,7 +1458,15 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         content="已经走过风控但还没出站。", message_type="text",
         direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
         purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
-        analysis_json={"_qiwe_meta": {}, "requires_human_intervention": False},
+        analysis_json={
+            "_qiwe_meta": {},
+            "requires_human_intervention": False,
+            "_reply_processing": {
+                "status": "processing",
+                "reason": "fresh_inbound",
+                "updated_at": now.isoformat(),
+            },
+        },
         created_at=now - timedelta(minutes=1),
     )
     db_session.add(msg_e)
@@ -1462,20 +1552,115 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         created_at=now - timedelta(minutes=1),
     )
     db_session.add(msg_h)
+
+    # Scenario I: 图片已经入业务表但还没完成回复，也必须恢复。
+    case_i = ServiceCase(
+        user_id=user.id, case_no="CASE-I", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-i", questionnaire_token="token-i",
+        ai_introduced_at=now - timedelta(days=1),
+    )
+    db_session.add(case_i)
+    await db_session.flush()
+    msg_i = Message(
+        service_case_id=case_i.id, group_id="group-i", wecom_message_id="msg-i",
+        content="[图片]", message_type="image",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {}},
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_i)
+
+    # Scenario J: 员工明确 @ 机器人的问题属于需要恢复的指令。
+    case_j = ServiceCase(
+        user_id=user.id, case_no="CASE-J", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-j", questionnaire_token="token-j",
+        ai_introduced_at=now - timedelta(days=1),
+    )
+    db_session.add(case_j)
+    await db_session.flush()
+    msg_j = Message(
+        service_case_id=case_j.id, group_id="group-j", wecom_message_id="msg-j",
+        content="@燃人AI 看下这个用户", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.STAFF,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={
+            "_qiwe_meta": {"explicit_bot_query_text": "看下这个用户"}
+        },
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_j)
+
+    # Scenario K: 已走到 Graph 统一收尾节点的消息不得再次恢复。
+    case_k = ServiceCase(
+        user_id=user.id, case_no="CASE-K", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-k", questionnaire_token="token-k",
+        ai_introduced_at=now - timedelta(days=1),
+    )
+    db_session.add(case_k)
+    await db_session.flush()
+    msg_k = Message(
+        service_case_id=case_k.id, group_id="group-k", wecom_message_id="msg-k",
+        content="已经正常静默完成", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={
+            "_qiwe_meta": {},
+            "_reply_processing": {
+                "status": "completed",
+                "reason": "no_reply",
+                "updated_at": now.isoformat(),
+            },
+        },
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_k)
+
+    # Scenario L: 上线前没有终态字段的旧分析记录，无 checkpoint 时不能突然迟到补回。
+    case_l = ServiceCase(
+        user_id=user.id, case_no="CASE-L", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-l", questionnaire_token="token-l",
+        ai_introduced_at=now - timedelta(days=1),
+    )
+    db_session.add(case_l)
+    await db_session.flush()
+    msg_l = Message(
+        service_case_id=case_l.id, group_id="group-l", wecom_message_id="msg-l",
+        content="旧版本已分析过的消息", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={
+            "_qiwe_meta": {},
+            "requires_human_intervention": False,
+        },
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_l)
     
     await db_session.flush()
     
     reprocess_calls = []
-    async def fake_reprocess_message(self, message):
+    async def fake_reprocess_message(self, message, **kwargs):
         reprocess_calls.append(message)
     monkeypatch.setattr(RanrenAIEngine, "reprocess_message", fake_reprocess_message)
     
     await recover_stuck_inbound_messages(FakeChannel(), now)
     
-    assert {item.id for item in reprocess_calls} == {msg_a.id, msg_g.id}
+    assert {item.id for item in reprocess_calls} == {
+        msg_a.id,
+        msg_c.id,
+        msg_e.id,
+        msg_g.id,
+        msg_i.id,
+        msg_j.id,
+    }
     assert {item.content for item in reprocess_calls} == {
         "我需要补发这个回复。",
+        "刚发的消息。",
+        "已经走过风控但还没出站。",
         "@燃人AI 继续服务",
+        "[图片]",
+        "@燃人AI 看下这个用户",
     }
 
 
@@ -1669,6 +1854,34 @@ async def test_qiwe_aggregator_persists_and_marks_inbound_events(db_session):
     assert pending.processed_at is not None
 
 
+@pytest.mark.asyncio
+async def test_persist_inbound_event_is_idempotent(db_session):
+    from sqlalchemy import func, select
+    from app.models.inbound_event import InboundEvent
+    from app.services.qiwe_service.inbox import persist_inbound_event
+
+    message_id = f"inbox-dedupe-{secrets.token_hex(4)}"
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-inbox-dedupe",
+        chat_type="group",
+        text="重复回调只留一条",
+        message_id=message_id,
+        user_id="u1",
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    first_id = await persist_inbound_event(message)
+    second_id = await persist_inbound_event(message)
+
+    assert first_id is not None
+    assert second_id == first_id
+    count = await db_session.scalar(
+        select(func.count(InboundEvent.id)).where(
+            InboundEvent.message_id == message_id
+        )
+    )
+    assert count == 1
 @pytest.mark.asyncio
 async def test_qiwe_aggregator_keeps_inbound_event_pending_when_engine_fails(db_session):
     """Fix②：引擎抛异常时不标 processed，保留给开机 replay 兜底。"""

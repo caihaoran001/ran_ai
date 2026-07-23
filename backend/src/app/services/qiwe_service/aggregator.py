@@ -59,8 +59,23 @@ class QiWeMessageAggregator:
         self._seen_message_ids: OrderedDict[str, float] = OrderedDict()
         self._next_seen_prune_at = 0.0
         self._lock = asyncio.Lock()
+        self._stopping = False
 
-    async def enqueue(self, message: ChannelMessage) -> None:
+    async def enqueue(
+        self,
+        message: ChannelMessage,
+        *,
+        inbound_event_id: int | None = None,
+    ) -> None:
+        if self._stopping:
+            if inbound_event_id is None:
+                await persist_inbound_event(message)
+            logger.info(
+                "QiWe enqueue deferred to durable replay during shutdown chat_id=%s message_id=%s",
+                message.chat_id,
+                message.message_id,
+            )
+            return
         key = _conversation_key(message)
         async with self._lock:
             if self._is_duplicate_locked(message):
@@ -76,7 +91,9 @@ class QiWeMessageAggregator:
             batch.messages.append(message)
             # durable inbox：进聚合窗口前先落库，堵住「8s 窗口内重启丢消息」的黑洞。
             # 持久化失败只记日志、不阻断实时处理（persist_inbound_event 内部已兜底）。
-            event_id = await persist_inbound_event(message)
+            event_id = inbound_event_id
+            if event_id is None:
+                event_id = await persist_inbound_event(message)
             if event_id is not None:
                 batch.event_ids.append(event_id)
 
@@ -108,9 +125,23 @@ class QiWeMessageAggregator:
                     len(batch.messages),
                 )
 
-    async def dispatch_now(self, message: ChannelMessage) -> None:
+    async def dispatch_now(
+        self,
+        message: ChannelMessage,
+        *,
+        inbound_event_id: int | None = None,
+    ) -> None:
+        if self._stopping:
+            if inbound_event_id is None:
+                await persist_inbound_event(message)
+            logger.info(
+                "QiWe immediate dispatch deferred to durable replay during shutdown chat_id=%s message_id=%s",
+                message.chat_id,
+                message.message_id,
+            )
+            return
         started_at = time.monotonic()
-        event_id: int | None = None
+        event_id = inbound_event_id
         async with self._lock:
             if self._is_duplicate_locked(message):
                 logger.info(
@@ -126,7 +157,8 @@ class QiWeMessageAggregator:
                 batch.messages or (batch.processing_task and not batch.processing_task.done())
             ):
                 batch.messages.append(message)
-                event_id = await persist_inbound_event(message)
+                if event_id is None:
+                    event_id = await persist_inbound_event(message)
                 if event_id is not None:
                     batch.event_ids.append(event_id)
                 logger.info(
@@ -137,7 +169,8 @@ class QiWeMessageAggregator:
                     len(batch.messages),
                 )
                 return
-            event_id = await persist_inbound_event(message)
+            if event_id is None:
+                event_id = await persist_inbound_event(message)
         logger.info(
             "QiWe immediate dispatch start chat_id=%s user_id=%s message_id=%s",
             message.chat_id,
@@ -170,20 +203,53 @@ class QiWeMessageAggregator:
             batch = self._batches.get(key)
             return bool(batch and batch.messages)
 
-    async def stop(self) -> None:
+    async def stop(self, *, drain_timeout_seconds: float = 60.0) -> None:
+        """Stop accepting new work and let already-running Engine tasks finish."""
         async with self._lock:
-            tasks = [
-                task
+            self._stopping = True
+            timer_tasks = [
+                batch.timer_task
                 for batch in self._batches.values()
-                for task in (batch.timer_task, batch.processing_task)
-                if task
+                if batch.timer_task
             ]
-            self._batches.clear()
-        for task in tasks:
+            processing_tasks = [
+                batch.processing_task
+                for batch in self._batches.values()
+                if batch.processing_task
+            ]
+        # 尚在聚合窗口的事件已经持久化，直接交给新进程 replay，不在关机时开启新一轮。
+        for task in timer_tasks:
             if task and not task.done():
                 task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        if timer_tasks:
+            await asyncio.gather(*timer_tasks, return_exceptions=True)
+
+        pending: set[asyncio.Task] = set()
+        if processing_tasks:
+            _, pending = await asyncio.wait(
+                processing_tasks,
+                timeout=max(0.0, drain_timeout_seconds),
+            )
+        if pending:
+            logger.warning(
+                "QiWe shutdown drain timed out; cancelling %d processing task(s)",
+                len(pending),
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        async with self._lock:
+            late_timers = [
+                batch.timer_task
+                for batch in self._batches.values()
+                if batch.timer_task and not batch.timer_task.done()
+            ]
+            self._batches.clear()
+        for task in late_timers:
+            task.cancel()
+        if late_timers:
+            await asyncio.gather(*late_timers, return_exceptions=True)
 
     async def _flush_later(self, key: tuple[str, str]) -> None:
         try:
@@ -252,7 +318,7 @@ class QiWeMessageAggregator:
                 batch = self._batches.get(key)
                 if batch and batch.processing_task is asyncio.current_task():
                     batch.processing_task = None
-                    if batch.messages:
+                    if batch.messages and not self._stopping:
                         batch.timer_task = asyncio.create_task(self._flush_later(key))
                     else:
                         self._batches.pop(key, None)

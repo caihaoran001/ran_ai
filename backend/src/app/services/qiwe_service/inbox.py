@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import base64
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.db.session import SessionLocal
 from app.models.inbound_event import InboundEvent
@@ -18,15 +20,45 @@ logger = logging.getLogger("uvicorn.error")
 _SPAM_BLOCK_PREFIX = "spam_block_"
 
 
+def _inbound_event_dedupe_key(
+    *,
+    event_type: str,
+    channel: str,
+    message_id: str | None,
+) -> str | None:
+    message_id = (message_id or "").strip()
+    if not message_id:
+        return None
+    identity = "\x1f".join((event_type, channel, message_id))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+async def _existing_event_id(dedupe_key: str) -> int | None:
+    async with SessionLocal() as session:
+        return await session.scalar(
+            select(InboundEvent.id).where(InboundEvent.dedupe_key == dedupe_key)
+        )
+
+
 async def persist_inbound_event(message: ChannelMessage) -> int | None:
     """把一条入站消息落到持久化收件箱，返回事件 id。
 
-    失败只记日志、返回 None——durability 层绝不阻断实时消息处理（防御性编程）。
+    失败记日志并返回 None；HTTP 回调入口会据此返回 503，聚合器内部调用则保留原有兜底。
     """
+    dedupe_key = _inbound_event_dedupe_key(
+        event_type=InboundEvent.EVENT_MESSAGE,
+        channel=message.channel,
+        message_id=message.message_id,
+    )
+    if dedupe_key:
+        existing_id = await _existing_event_id(dedupe_key)
+        if existing_id is not None:
+            return existing_id
     try:
         async with SessionLocal() as session:
             event = InboundEvent(
                 event_type=InboundEvent.EVENT_MESSAGE,
+                dedupe_key=dedupe_key,
                 channel=message.channel,
                 chat_id=message.chat_id,
                 user_id=message.user_id,
@@ -42,6 +74,23 @@ async def persist_inbound_event(message: ChannelMessage) -> int | None:
             event_id = event.id
             await session.commit()
             return event_id
+    except IntegrityError:
+        if dedupe_key:
+            existing_id = await _existing_event_id(dedupe_key)
+            if existing_id is not None:
+                logger.info(
+                    "persist_inbound_event reused event_id=%s chat_id=%s message_id=%s",
+                    existing_id,
+                    message.chat_id,
+                    message.message_id,
+                )
+                return existing_id
+        logger.exception(
+            "persist_inbound_event idempotency conflict without existing row chat_id=%s message_id=%s",
+            message.chat_id,
+            message.message_id,
+        )
+        return None
     except Exception:
         logger.exception(
             "persist_inbound_event failed chat_id=%s message_id=%s",
@@ -90,14 +139,28 @@ async def persist_qiwe_spam_block_event(
     channel_message_id = (channel_message_id or "").strip()
     if not channel_message_id:
         return None
+    message_id = str(
+        raw_payload.get("msgUniqueIdentifier")
+        or f"{_SPAM_BLOCK_PREFIX}{channel_message_id}"
+    )
+    dedupe_key = _inbound_event_dedupe_key(
+        event_type=InboundEvent.EVENT_QIWE_SPAM_BLOCK,
+        channel="qiwe",
+        message_id=message_id,
+    )
+    if dedupe_key:
+        existing_id = await _existing_event_id(dedupe_key)
+        if existing_id is not None:
+            return existing_id
     try:
         async with SessionLocal() as session:
             event = InboundEvent(
                 event_type=InboundEvent.EVENT_QIWE_SPAM_BLOCK,
+                dedupe_key=dedupe_key,
                 channel="qiwe",
                 chat_id=channel_message_id,
                 user_id=None,
-                message_id=str(raw_payload.get("msgUniqueIdentifier") or f"{_SPAM_BLOCK_PREFIX}{channel_message_id}"),
+                message_id=message_id,
                 text=reason or "企业微信官方风控拦截：消息未送达",
                 message_type=InboundEvent.EVENT_QIWE_SPAM_BLOCK,
                 raw_payload=raw_payload,
@@ -109,6 +172,10 @@ async def persist_qiwe_spam_block_event(
             event_id = event.id
             await session.commit()
             return event_id
+    except IntegrityError:
+        if dedupe_key:
+            return await _existing_event_id(dedupe_key)
+        return None
     except Exception:
         logger.exception(
             "persist_qiwe_spam_block_event failed channel_message_id=%s",

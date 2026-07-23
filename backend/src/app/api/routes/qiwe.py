@@ -17,6 +17,7 @@ from app.services.channels.base import ChannelMessage
 from app.services.channels.qiwe import QiWeChannel
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator
 from app.services.qiwe_service.inbox import (
+    persist_inbound_event,
     persist_qiwe_spam_block_event,
     process_qiwe_spam_block_event,
     qiwe_spam_block_notice,
@@ -58,12 +59,25 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
                 reason=reason,
                 raw_payload=item,
             )
+            if event_id is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="failed to persist qiwe spam-block event",
+                )
             background_tasks.add_task(
                 process_qiwe_spam_block_event, event_id, channel_message_id, reason
             )
             continue
         message = _channel_message_from_qiwe(item)
         if message is not None:
+            # 先提交 durable inbox，再向企微返回 2xx。部署若发生在响应之后，
+            # 新进程仍能从 pending event 重放；重复回调由 dedupe_key 复用原事件。
+            event_id = await persist_inbound_event(message)
+            if event_id is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="failed to persist qiwe inbound event",
+                )
             accepted += 1
             if _bypass_aggregator(message):
                 bypassed += 1
@@ -74,9 +88,17 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
                     message.message_id,
                     message.text[:40],
                 )
-                background_tasks.add_task(aggregator.dispatch_now, message)
+                background_tasks.add_task(
+                    aggregator.dispatch_now,
+                    message,
+                    inbound_event_id=event_id,
+                )
             else:
-                background_tasks.add_task(aggregator.enqueue, message)
+                background_tasks.add_task(
+                    aggregator.enqueue,
+                    message,
+                    inbound_event_id=event_id,
+                )
     logger.info(
         "QiWe callback accepted count=%s bypassed=%s blocked=%s elapsed_ms=%.1f",
         accepted,

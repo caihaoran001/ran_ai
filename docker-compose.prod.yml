@@ -4,6 +4,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.prod
     restart: unless-stopped
+    stop_grace_period: 90s
     environment:
       ENVIRONMENT: production
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL for Aliyun RDS PostgreSQL is required}
@@ -49,6 +50,7 @@ services:
       QIWEI_CALLBACK_SECRET: ${QIWEI_CALLBACK_SECRET:?QIWEI_CALLBACK_SECRET is required}
       QIWEI_BASE_URL: ${QIWEI_BASE_URL:-http://manager.qiweapi.com/qiwe}
       QIWEI_BATCH_WINDOW_SECONDS: ${QIWEI_BATCH_WINDOW_SECONDS:-8}
+      QIWEI_SHUTDOWN_DRAIN_SECONDS: ${QIWEI_SHUTDOWN_DRAIN_SECONDS:-60}
       REMINDER_ENABLED: ${REMINDER_ENABLED:-true}
       AGENT_REMINDERS_ENABLED: ${AGENT_REMINDERS_ENABLED:-true}
       REMINDER_CHECK_INTERVAL_SECONDS: ${REMINDER_CHECK_INTERVAL_SECONDS:-30}

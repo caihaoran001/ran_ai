@@ -22,6 +22,7 @@ services:
       context: ./backend
     container_name: ran-ai-backend
     restart: unless-stopped
+    stop_grace_period: 90s
     env_file:
       - .env
     environment:

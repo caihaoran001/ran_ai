@@ -142,6 +142,10 @@ class Settings(BaseSettings):
         default=8.0,
         validation_alias="QIWEI_BATCH_WINDOW_SECONDS",
     )
+    qiwei_shutdown_drain_seconds: float = Field(
+        default=60.0,
+        validation_alias="QIWEI_SHUTDOWN_DRAIN_SECONDS",
+    )
 
     # 注意：12点泛化文字催打卡(check_once)已退役并入打卡追问(check_checkin_followup_v2_once)。
     # 本开关现仅剩门控阶段报告生成(check_stage_reports_once)，reminder_at/reminder_message 已不再使用。

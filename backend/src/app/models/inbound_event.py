@@ -28,6 +28,8 @@ class InboundEvent(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     event_type: Mapped[str] = mapped_column(String(32), default=EVENT_MESSAGE, nullable=False, index=True)
+    # 新写入事件的稳定幂等键。存量记录保持 NULL，避免上线迁移被历史重复回调阻塞。
+    dedupe_key: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
     chat_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     user_id: Mapped[str | None] = mapped_column(String(128))
