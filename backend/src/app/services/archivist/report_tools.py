@@ -1,9 +1,9 @@
-"""档案官 extract Agent 的 report-only 工具（决策 A）。
+"""档案官单轮抽取器使用的 report-only schema。
 
-档案官做成一个真 Agent：LLM 读增量后**自主决定**调哪几个 report_* 工具、调几次
-（一条消息可同时是打卡+成效+画像）。**关键：这些工具只"上报"、不落库**——
+LLM 读增量后一次返回零到多个 report_* tool_calls（一条消息可同时是打卡+成效+画像）。
+**关键：这些工具只"上报"、不落库**——
 它们仅承载 LLM 抽出的结构化意图（供 bind_tools 让模型看到 schema），真正的 DB 写
-（按天 UPSERT、影子对账等）全部留在 graph 的 commit 节点确定性代码里。
+（按天 UPSERT、成效/画像投影等）全部留在 pipeline 的 commit 阶段确定性代码里。
 
 因此这里工具函数是 no-op 占位（返回 "ok"）；extract_agent 直接读 AIMessage.tool_calls，
 用下面的 Pydantic 模型校验入参后收集，不依赖 StructuredTool 的执行副作用。

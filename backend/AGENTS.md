@@ -15,7 +15,7 @@ backend/
 │   │   ├── channels/        # 消息渠道抽象层
 │   │   ├── ranren_ai/       # 渠道无关业务引擎
 │   │   ├── agent/           # 回复生成：LangGraph ReAct Agent (graph/tools/prompts/context_builder)
-│   │   ├── archivist/       # 档案官：周期扫描抽 delta → 打卡投影/成效/FAQ/案例草稿 (LangGraph, 见下)
+│   │   ├── archivist/       # 档案官：周期扫描抽 delta → 打卡投影/成效/FAQ/案例草稿 (async 流水线, 见下)
 │   │   ├── qiwe_service/    # QiWe 消息聚合
 │   │   ├── knowledge_base/  # 本地 Markdown FAQ fallback
 │   │   ├── case_library.py  # 优秀案例库检索
@@ -91,7 +91,7 @@ Questionnaire submission → LLM generates a user profile. Service-case detail c
 成效抽取**不在消息主链路上实时跑**。消息进来只负责入库/回复；结构化抽取由独立的「档案官」`app/services/archivist/` 承担，在 **scheduler 进程** (`ran-ai-scheduler`) 里周期扫描完成：
 
 - **触发** (`archivist/trigger.py::run_archivist_scan`)：`reminder_service.check_archivist_once` 按 `reminder_check_interval_seconds` 周期调用。**DB 派生找候选服务单 + 行锁防双跑**（重启不丢，不用内存 timer）。闸门：仅当累积 delta 含关键类目（可结构化打卡 / 稳定个人事实 / 阶段成效）且用户停说约 3min 才走 Fast 快触发；无增量则 `no_delta` 跳过。
-- **抽取** (`archivist/graph.py`)：本身是 LangGraph `StateGraph`（load_context → extract → classify → guardrail → commit）。`extract` 是挂 `report_*` 工具的 Agent，**只上报不落库**；落库由 `commit` 的确定性代码做。
+- **抽取** (`archivist/graph.py`)：普通 async 流水线（load_context → extract → commit）。`extract` 单轮调用挂载 `report_*` schema 的模型，**只上报不落库**；候选校验和落库由后续确定性代码做。模块名保留 `graph.py` 仅为兼容既有导入。
 - **产物**：① 刷新 `case_memory`（案例记忆）；② delta 抽出的 FAQ 候选转待审核 qa 草稿；③ **成效出现稳态变化时才合成优秀案例草稿**（代替原 day3/7/14/21/28 里程碑硬扫）。`outcome_engine.py` 退化为被档案官调用的成效抽取/评分工具，`user_state_profile.py` 仍把 outcome 投影为 JSONB `user_state_profiles`（action_focus / need_analysis / body_feedback / risk_profile），AI 回复引用当前 action focus 作隐性背景。
 - 打卡追问 (`archivist/followup.py`) 由外部确定性触发：每 case 每天最多一条，共用 `ReminderEvent(rule_id="checkin_followup")` 天闸（见 memory「打卡追问线上已开启」）。
 

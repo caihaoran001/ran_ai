@@ -142,25 +142,27 @@
 
 ---
 
-## 5. 运行结构：LangGraph 多节点流水线（不是 ReAct 循环）
+## 5. 运行结构：普通 async 流水线（不是 ReAct 循环）
 
-> 取舍说明：回复 Agent 是"直线活"，用 `agent↔tools` 循环够了。档案官写的是**业务事实**，要的是**可控**——顺序不能交给大模型临场决定（否则可能没过护栏就把个人处方当全局知识写进 FAQ）。所以做成**顺序焊死的多节点图**：走不到"提交"节点，除非先过"护栏"节点。
+> 实现更新（2026-07-23）：当前流程没有条件分支、循环、checkpoint 或人工中断，LangGraph 只包装固定顺序，因此已收敛为普通 async 流水线。可控性继续由固定调用顺序、Pydantic 校验、数据库事务、水位线和幂等写保证。
 >
 > **LLM 只用在"判断"节点，落库用确定性代码**（呼应项目纪律：判断优先大模型结构化输出，落库确定性兜底）。
 >
-> **决策 A（多类沉淀的形态，2026-07-09 定）**：`extract` 节点做成**一个真 Agent**——单次 LLM 挂 `report_checkin / report_profile_fact / report_outcome / report_correction / report_knowledge_qa` 若干工具，由 LLM **自主决定调哪几个、调几次**（一条消息可同时是打卡+成效）。关键约束：**这些工具"只上报、不落库"**——工具返回值仅是"抽到的结构化意图"，真正的 DB 写（按天 UPSERT、表单权威、补空、矛盾留痕、幂等去重、水位线推进）全部留在 `commit` 节点的确定性代码里。即"LLM 当记录员、代码当档案柜管理员"。**否掉**"工具直接写库的纯 agent"（与重启安全/幂等/合并精细度冲突）和"代码硬路由每类一次抽取"的纯 pipeline（放弃了 agent 的跨类协同）。**P0 只有打卡一类，仍用单抽取器；此形态在落地第 2 类(成效/画像)时才重构 `extract`，届时有真实数据佐证。**
+> **多类沉淀的输出形态**：`extract` 单次 LLM 挂 `report_checkin / report_profile_fact / report_outcome / report_correction / report_knowledge_qa` 若干 schema，由模型一次返回零到多个 tool_calls（一条消息可同时是打卡+成效）。这只是函数调用式结构化抽取，不是会执行工具并观察结果的 ReAct Agent。关键约束：**这些 schema "只上报、不落库"**——tool_call 仅表示抽到的结构化意图，真正的 DB 写（按天 UPSERT、表单权威、补空、矛盾留痕、幂等去重、水位线推进）全部留在确定性 commit 阶段。即"LLM 当记录员、代码当档案柜管理员"。
 
 ```
-[load_context] → [extract(Agent: LLM + report-only 工具)] → [classify(LLM)] → [guardrail(code)] → [commit(code)]
+[load_context] → [extract(单轮 LLM + report-only schema)] → [validate/code] → [commit/code]
+                                                                      ↓
+                                                       [post_commit/best-effort]
 ```
 
 | 节点 | 类型 | 职责 |
 |---|---|---|
 | `load_context` | 代码 | 读水位线、拉增量消息、载入画像/摘要/最近打卡（只读视图） |
-| `extract` | **LLM 抽取（1–2 跳）** | 从增量抽结构化候选：打卡字段(`CHECKIN_KEYS`)、成效事件、画像信号、值得记的情节、"AI答错→员工纠正"配对。**不把"一次调用搞定"当卖点**——把 5 个抽取任务压进一个 prompt 要么臃肿、要么单任务质量下降；宁可承认可能是"抽取 + 分类"两跳，output schema 设计克制些反而更稳。收编成效后，这里能吃掉原 outcome 抽取那跳，净增调用有限 |
-| `classify` | LLM/规则 | 给沉淀候选打标：**全局知识 vs 个人处方**；检测矛盾（如体重 100 vs 168） |
-| `guardrail` | 代码 | 受保护字段拦截（`risk_level`/问卷权威字段只提议不覆盖）；要求 evidence；决定"自动写 / 提议送人工 / 产草稿送审" |
-| `commit` | 代码 | 幂等落库；产知识/案例草稿（不发布）；写 `case_memory`；推进水位线 |
+| `extract` | **单轮 LLM 抽取** | 从增量一次抽出打卡字段、成效事件、画像/状态信号、员工纠正和 FAQ 候选；`report_*` 只作为结构化输出 schema，不执行写操作 |
+| `validate` | 代码 | Pydantic 校验、白名单/角色/证据校验、空候选过滤；确定全局知识与个人指导的合法去向 |
+| `commit` | 代码 | 幂等写打卡/成效/画像/纠正/抽取留痕，并在全部成功后推进水位线 |
+| `post_commit` | 代码 | 主事务成功后独立刷新 `case_memory`、转 FAQ 草稿、按稳态成效合成案例草稿；失败不回滚主归档 |
 
 ### in-run state（TypedDict，仅本次运行内流动，不跨运行、不做 system-of-record）
 ```
@@ -173,7 +175,7 @@ guardrail_verdicts: [{target, action: write|propose|draft, reason}]
 committed / drafts_created   # 供 trace/审计
 ```
 
-> **持久档案 = 领域表；LangGraph state = 本次运行的脚手架。** 不挂 checkpointer 作为记忆归属地（你们现在 `graph.compile()` 也没挂，基线是对的）。checkpointer 顶多用于"断点续跑"，且因为有水位线+幂等，重跑本就安全，属可选优化。
+> **持久档案 = 领域表；pipeline state = 本次运行的脚手架。** 不把进程内 state 当记忆归属地；失败恢复继续依靠数据库水位线、事务和幂等重跑。
 
 ---
 
@@ -225,7 +227,7 @@ committed / drafts_created   # 供 trace/审计
 **新建**：
 - `case_memory` 表（自由文本记忆）。
 - **独立进度表 `archivist_progress`**（存水位线 `last_archived_message_id`，不给 `service_cases` 加列，§4/§10.3）。
-- 档案官图/节点（`services/agent/` 下新增，复用 state/graph/tools 模式）。
+- 档案官 async 流水线（`services/archivist/`，固定顺序执行 load/extract/validate/commit）。
 - 触发接线：挂 **inbound 处理点**、**fire-and-forget 入队**（去抖 + 最大滞留上限）+ scheduler sweep 兜底（§3）。
 
 ---

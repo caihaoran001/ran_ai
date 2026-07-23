@@ -1,6 +1,6 @@
 """档案官成效/画像收编——直写真表健康自测（决策 A：档案官独家抽取）。
 
-验证：档案官 extract 用 Agent 形态一次性抽打卡+成效+画像；commit 里打卡照常 live upsert、
+验证：档案官 extract 单轮一次性抽打卡+成效+画像；commit 里打卡照常 live upsert、
 成效/画像经 apply_archived_outcome **直接写真表**——outcome_events(source=archivist、
 message_id=anchor、当前里程碑)、user_state_profiles 出现对应 domain、outcome_stage_states
 更新；影子对账已删除，archivist_shadow_outcomes 不再写入。无可上报内容时零写入。
@@ -39,7 +39,7 @@ from app.services.profile_memory_service import load_profile_memory_context
 
 
 class FakeToolCallingModel:
-    """注入档案官 extract Agent 的假模型：bind_tools 返回自身，ainvoke 顺序吐预设 AIMessage。"""
+    """注入档案官单轮抽取器的假模型：bind_tools 返回自身，ainvoke 顺序吐预设 AIMessage。"""
 
     def __init__(self, responses):
         self.responses = list(responses)

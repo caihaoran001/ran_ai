@@ -1,9 +1,11 @@
-"""档案官运行图：load_context → extract → classify → guardrail → commit。
+"""档案官运行流水线：load_context → extract → commit。
 
-设计 §5：顺序焊死的多节点流水线，LLM 只用于判断(extract)，落库用确定性代码(commit)。
-extract 用 Agent 形态一次性抽出打卡+成效+稳定画像+当前状态；commit 里打卡按天 upsert、其余事实经
+LLM 只用于判断(extract)，落库用确定性代码(commit)。
+extract 单轮一次性抽出打卡+成效+稳定画像+当前状态；commit 里打卡按天 upsert、其余事实经
 apply_archived_outcome 写真表(outcome_events/user_state)。档案官是成效/画像的**唯一**抽取
-入口(聊天热路径已不再实时抽)。classify/guardrail 为知识沉淀等后续阶段预留的轻量节点。
+入口(聊天热路径已不再实时抽)。
+
+模块路径保留为 ``archivist.graph`` 以兼容既有调用方；运行时是普通 async 流水线，不使用 LangGraph。
 """
 
 from __future__ import annotations
@@ -14,7 +16,6 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, TypedDict
 from zoneinfo import ZoneInfo
 
-from langgraph.graph import END, START, StateGraph
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,7 +43,7 @@ _SH_TZ = ZoneInfo("Asia/Shanghai")
 INITIAL_BACKFILL_DAYS = 3
 
 
-class ArchivistState(TypedDict, total=False):
+class ArchivistPipelineState(TypedDict, total=False):
     watermark_from: int | None
     watermark_to: int | None
     # {date_iso: [{"id": int, "text": str, "role": str, "sender_type": str}]}
@@ -50,9 +51,10 @@ class ArchivistState(TypedDict, total=False):
     # 本轮推动水位线的用户/员工入站消息，以及成效 anchor 专用用户消息。
     delta_message_ids: list[int]
     delta_user_message_ids: list[int]
+    followup_context_by_date: dict[str, list[dict]]
     # {date_iso: {"fields": {...}, "evidence_ids": [int]}}
     day_candidates: dict[str, dict]
-    # Agent 抽出的成效事件/稳定画像/当前状态（累计跨整批，commit 里一次性写真表）
+    # 模型抽出的成效事件/稳定画像/当前状态（累计跨整批，commit 里一次性写真表）
     outcome_candidates: list[dict]
     profile_candidates: list[dict]
     state_candidates: list[dict]
@@ -63,7 +65,6 @@ class ArchivistState(TypedDict, total=False):
     has_checkin_activity: bool
     # 抽取观测留痕(R1):每个自然日一条 {target_date, emitted, kept, dropped}
     extract_traces: list[dict]
-    committed: list[dict]
 
 
 @dataclass
@@ -74,7 +75,7 @@ class ArchivistRunResult:
     days_processed: int = 0
     upserts: list[dict] = field(default_factory=list)  # [{date, filled, contradictions...}]
     contradictions: list[dict] = field(default_factory=list)
-    # 成效/稳定画像/当前状态直写结果（Agent 抽出并落库的条数）
+    # 成效/稳定画像/当前状态直写结果（模型抽出并落库的条数）
     outcome_written: int = 0
     profile_written: int = 0
     state_written: int = 0
@@ -92,7 +93,7 @@ def _sh_date(dt: datetime) -> date:
     return dt.astimezone(_SH_TZ).date()
 
 
-class ArchivistGraph:
+class ArchivistPipeline:
     def __init__(
         self,
         session: AsyncSession,
@@ -111,30 +112,17 @@ class ArchivistGraph:
         self.batch_cap = batch_cap
         self.settings = get_settings()
         self.result = ArchivistRunResult()
-        self.graph = self._compile()
-
-    def _compile(self):
-        builder = StateGraph(ArchivistState)
-        builder.add_node("load_context", self._load_context)
-        builder.add_node("extract", self._extract)
-        builder.add_node("classify", self._classify)
-        builder.add_node("guardrail", self._guardrail)
-        builder.add_node("commit", self._commit)
-        builder.add_edge(START, "load_context")
-        builder.add_edge("load_context", "extract")
-        builder.add_edge("extract", "classify")
-        builder.add_edge("classify", "guardrail")
-        builder.add_edge("guardrail", "commit")
-        builder.add_edge("commit", END)
-        return builder.compile()
 
     async def run(self) -> ArchivistRunResult:
-        await self.graph.ainvoke({})
+        state: ArchivistPipelineState = {}
+        state.update(await self._load_context())
+        state.update(await self._extract(state))
+        await self._commit(state)
         return self.result
 
-    # --- 节点 ---
+    # --- 流水线阶段 ---
 
-    async def _load_context(self, state: ArchivistState) -> dict[str, Any]:
+    async def _load_context(self) -> dict[str, Any]:
         """读水位线，拉用户/员工增量，并带上其间助教消息作为纠正上下文。"""
         watermark = self.progress.last_archived_message_id or 0
         delta_stmt = (
@@ -281,8 +269,8 @@ class ArchivistGraph:
             "followup_context_by_date": followup_context_by_date,
         }
 
-    async def _extract(self, state: ArchivistState) -> dict[str, Any]:
-        """对每个自然日的聊天原文用 Agent 一次性抽出打卡+成效+稳定画像+当前状态。
+    async def _extract(self, state: ArchivistPipelineState) -> dict[str, Any]:
+        """对每个自然日的聊天原文用模型一次性抽出打卡+成效+稳定画像+当前状态。
 
         打卡按天归入 day_candidates（commit 里按天 upsert）；成效/画像累计跨整批，commit 里
         经 apply_archived_outcome 一次性写真表。档案官是成效/画像的唯一抽取入口。
@@ -373,8 +361,14 @@ class ArchivistGraph:
                     target_date, {"fields": {}, "evidence_ids": evidence_ids, "custom_answers": []}
                 )
                 payload["custom_answers"].append(answer)
+        # 原 guardrail 节点只负责剔除空打卡候选；在候选离开抽取阶段前直接收紧即可。
+        kept_day_candidates = {
+            key: payload
+            for key, payload in day_candidates.items()
+            if payload.get("fields") or payload.get("custom_answers")
+        }
         return {
-            "day_candidates": day_candidates,
+            "day_candidates": kept_day_candidates,
             "outcome_candidates": outcome_candidates,
             "profile_candidates": profile_candidates,
             "state_candidates": state_candidates,
@@ -386,17 +380,7 @@ class ArchivistGraph:
             "has_checkin_activity": has_checkin_activity,
         }
 
-    async def _classify(self, state: ArchivistState) -> dict[str, Any]:
-        """候选类型由 report 工具 schema 收紧；更复杂的跨候选分类仍预留在此节点。"""
-        return {}
-
-    async def _guardrail(self, state: ArchivistState) -> dict[str, Any]:
-        """剔除空打卡；纠正候选在 commit 中校验消息角色、服务单归属和置信度。"""
-        candidates = state.get("day_candidates") or {}
-        kept = {k: v for k, v in candidates.items() if v.get("fields") or v.get("custom_answers")}
-        return {"day_candidates": kept}
-
-    async def _commit(self, state: ArchivistState) -> dict[str, Any]:
+    async def _commit(self, state: ArchivistPipelineState) -> None:
         """确定性落库：按天 upsert 打卡；推进水位线 + last_archived_at。不在此 commit 事务。"""
         candidates = state.get("day_candidates") or {}
         committed: list[dict] = []
@@ -501,7 +485,6 @@ class ArchivistGraph:
         self.progress.last_archived_at = datetime.now(timezone.utc)
         self.progress.consecutive_failures = 0
         self.progress.last_failure_reason = None
-        return {"committed": committed}
 
 
 async def get_or_create_progress(
@@ -543,11 +526,11 @@ async def run_archivist(
     chat_model 可注入（测试用）；生产路径（trigger.run_archivist_scan）不传，走真实模型。
     batch_cap：恢复期只处理最老 N 条增量以定位毒消息（None=全量）。
     """
-    graph = ArchivistGraph(
+    pipeline = ArchivistPipeline(
         session,
         service_case=service_case,
         progress=progress,
         chat_model=chat_model,
         batch_cap=batch_cap,
     )
-    return await graph.run()
+    return await pipeline.run()

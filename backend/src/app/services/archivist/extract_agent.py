@@ -1,11 +1,12 @@
-"""档案官 extract 节点的 Agent 形态（决策 A，P0.5 落地第 2 类沉淀时启用）。
+"""档案官 extract 阶段的单轮工具调用抽取器。
 
-一个真 Agent：把增量聊天原文 + report-only 工具 schema 交给 LLM，LLM 自主决定调哪几个
-report_* 工具、调几次；本模块读回 AIMessage.tool_calls，用 Pydantic 校验后归桶返回。
-**不落库**——真正的写/对账在 graph.commit 节点。
+把增量聊天原文 + report-only 工具 schema 交给 LLM，模型一次返回零到多个 report_* tool_calls；
+本模块读回 AIMessage.tool_calls，用 Pydantic 校验后归桶返回。
+**不落库**——真正的写/对账在 pipeline commit 阶段。
 
-单轮抽取即可（不需要 ReAct 多轮循环）：给增量 → 模型 emit tool_calls → 收集 → 结束。
+它不是 ReAct Agent，也不使用 LangGraph：给增量 → 模型 emit tool_calls → 收集 → 结束。
 chat_model 可注入（默认 create_agent_chat_model），镜像 RanrenAgentGraph 的注入法，便于测试。
+模块名和函数名保留 ``extract_agent`` / ``run_extract_agent`` 以兼容既有导入。
 """
 
 from __future__ import annotations
@@ -97,7 +98,7 @@ async def run_extract_agent(
     followup_context: list[dict[str, Any]] | None = None,
     checklist_context: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """跑一轮 Agent 抽取，按 checkin/outcome/profile/state/correction/faq 归桶。
+    """跑一轮结构化抽取，按 checkin/outcome/profile/state/correction/faq 归桶。
 
     无可上报内容时返回空 collector；模型调用异常必须向上抛出，
     由调度层回滚整轮归档并保留水位线，以便下轮重试。
