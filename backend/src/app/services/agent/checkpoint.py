@@ -161,10 +161,11 @@ async def ainvoke_resumable(
     config: dict[str, Any],
     checkpointer: BaseCheckpointSaver | None,
     delete_thread_on_success: bool,
+    context: Any | None = None,
 ) -> dict[str, Any]:
     """Invoke a graph once, or resume its last unfinished node after interruption."""
     if checkpointer is None:
-        return await graph.ainvoke(initial_state, config=config)
+        return await graph.ainvoke(initial_state, config=config, context=context)
 
     existing = await checkpointer.aget_tuple(config)
     if existing is None:
@@ -178,7 +179,7 @@ async def ainvoke_resumable(
             return result
         graph_input = None
 
-    result = await graph.ainvoke(graph_input, config=config)
+    result = await graph.ainvoke(graph_input, config=config, context=context)
     if delete_thread_on_success:
         snapshot = await graph.aget_state(config)
         if not snapshot.next:

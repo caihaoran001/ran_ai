@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import TypedDict
 
 import pytest
@@ -12,6 +15,9 @@ from app.services.agent.checkpoint import (
     checkpoint_config,
     checkpoint_database_url,
 )
+from app.services.agent import graph as agent_graph_module
+from app.services.channels.base import ChannelMessage
+from app.services.ranren_ai.engine_graph import EngineGraph
 
 
 def test_checkpoint_database_url_uses_psycopg_driver() -> None:
@@ -51,6 +57,22 @@ def test_checkpoint_thread_id_is_stable_and_does_not_expose_chat_id() -> None:
     assert first.startswith("ran-ai:reply:")
     assert "真实群聊ID" not in first
     assert "callback-123" not in first
+
+
+def test_agent_graph_keeps_checkpointed_and_plain_variants_resident() -> None:
+    saver = InMemorySaver()
+    agent_graph_module.stop_agent_graph_runtime()
+    try:
+        agent_graph_module.start_agent_graph_runtime(saver)
+        checkpointed = agent_graph_module._get_agent_compiled_graph(saver)
+        agent_graph_module.start_agent_graph_runtime()
+        plain = agent_graph_module._get_agent_compiled_graph(None)
+
+        assert checkpointed is not plain
+        assert agent_graph_module._get_agent_compiled_graph(saver) is checkpointed
+        assert agent_graph_module._get_agent_compiled_graph(None) is plain
+    finally:
+        agent_graph_module.stop_agent_graph_runtime()
 
 
 @pytest.mark.asyncio
@@ -106,3 +128,51 @@ async def test_resumable_invoke_continues_from_failed_node_without_replaying_ups
     assert result["value"] == 2
     assert calls == ["upstream", "fragile-1", "fragile-2"]
     assert await saver.aget_tuple(config) is None
+
+
+@pytest.mark.asyncio
+async def test_engine_graph_reuses_compiled_topology_and_isolates_concurrent_handlers(
+    monkeypatch,
+) -> None:
+    arrivals: set[str] = set()
+    both_arrived = asyncio.Event()
+    observed: dict[str, str] = {}
+
+    async def observe_reply(self, state):
+        label = state["message"].text
+        arrivals.add(label)
+        if len(arrivals) == 2:
+            both_arrived.set()
+        await asyncio.wait_for(both_arrived.wait(), timeout=1)
+        observed[label] = self.engine.identity
+        return {"_halt": True}
+
+    monkeypatch.setattr(EngineGraph, "_reply_prep", observe_reply)
+
+    first = EngineGraph(SimpleNamespace(identity="case-a"))
+    second = EngineGraph(SimpleNamespace(identity="case-b"))
+    assert first.graph is second.graph
+
+    def state(label: str) -> dict:
+        return {
+            "entry_mode": "reply_only",
+            "started_at": 0.0,
+            "message": ChannelMessage(
+                channel="qiwe",
+                chat_id=f"group-{label}",
+                chat_type="group",
+                text=label,
+                message_id=f"message-{label}",
+                timestamp=datetime.now(timezone.utc),
+            ),
+        }
+
+    await asyncio.gather(
+        first.run(state("message-a")),
+        second.run(state("message-b")),
+    )
+
+    assert observed == {
+        "message-a": "case-a",
+        "message-b": "case-b",
+    }

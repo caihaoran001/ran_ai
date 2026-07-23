@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import secrets
 from io import BytesIO
 from datetime import date, datetime, timezone
@@ -1039,6 +1040,73 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert model.calls[0][1].content.rfind("【本次提问】") > model.calls[0][1].content.rfind("【可用 Skill】")
     assert "今天没排便体重还涨了" not in model.calls[0][0].content
     assert "晚餐能吃荞麦面吗" not in model.calls[0][0].content
+
+
+@pytest.mark.asyncio
+async def test_shared_agent_graph_isolates_concurrent_service_case_bindings(db_session):
+    settings = get_settings()
+    first_case = await _case(db_session)
+    second_case = await _case(db_session)
+    arrivals: set[str] = set()
+    both_arrived = asyncio.Event()
+
+    class InterleavingModel(FakeToolCallingModel):
+        def __init__(self, label: str):
+            super().__init__([])
+            self.label = label
+            self.call_count = 0
+
+        async def ainvoke(self, messages):
+            self.calls.append(list(messages))
+            self.call_count += 1
+            if self.call_count == 1:
+                arrivals.add(self.label)
+                if len(arrivals) == 2:
+                    both_arrived.set()
+                await asyncio.wait_for(both_arrived.wait(), timeout=1)
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "get_service_progress",
+                            "args": {},
+                            "id": f"call-{self.label}",
+                        }
+                    ],
+                )
+            return AIMessage(content=f"reply-{self.label}")
+
+    first_model = InterleavingModel("case-a")
+    second_model = InterleavingModel("case-b")
+    first_graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=first_case.id, trigger_id=101),
+        settings=settings,
+        chat_model=first_model,
+    )
+    second_graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=second_case.id, trigger_id=202),
+        settings=settings,
+        chat_model=second_model,
+    )
+    first_tool = FakeAsyncTool({"ok": True, "case_id": first_case.id})
+    second_tool = FakeAsyncTool({"ok": True, "case_id": second_case.id})
+    first_graph.tools_by_name["get_service_progress"] = first_tool
+    second_graph.tools_by_name["get_service_progress"] = second_tool
+
+    assert first_graph.graph is second_graph.graph
+    first_result, second_result = await asyncio.gather(
+        first_graph.run(user_query="A 的进度", recent_messages=[]),
+        second_graph.run(user_query="B 的进度", recent_messages=[]),
+    )
+
+    assert first_result.reply == "reply-case-a"
+    assert second_result.reply == "reply-case-b"
+    assert first_result.tool_trace[0]["name"] == "get_service_progress"
+    assert second_result.tool_trace[0]["name"] == "get_service_progress"
+    assert len(first_tool.calls) == 1
+    assert len(second_tool.calls) == 1
+    assert first_model.call_count == 2
+    assert second_model.call_count == 2
 
 
 @pytest.mark.asyncio

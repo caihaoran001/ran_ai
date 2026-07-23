@@ -12,10 +12,19 @@ from app.core.config import configure_logging, get_settings
 from app.services.channels import set_current_channel
 from app.services.channels.qiwe import QiWeChannel
 from app.services.agent.checkpoint import (
+    get_agent_checkpointer,
     start_agent_checkpoint_runtime,
     stop_agent_checkpoint_runtime,
 )
+from app.services.agent.graph import (
+    start_agent_graph_runtime,
+    stop_agent_graph_runtime,
+)
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator
+from app.services.ranren_ai.engine_graph import (
+    start_engine_graph_runtime,
+    stop_engine_graph_runtime,
+)
 from app.services.reminder_service import ReminderService
 
 
@@ -25,6 +34,12 @@ async def lifespan(app: FastAPI):
     # Checkpoint tables are created/upgraded by the controlled deployment step.
     # Runtime startup only opens and validates the async psycopg pool.
     await start_agent_checkpoint_runtime(settings)
+    checkpointer = get_agent_checkpointer()
+    start_agent_graph_runtime(checkpointer)
+    # Scheduled reminders intentionally have no per-inbound checkpoint thread,
+    # so keep their no-checkpointer topology as a second precompiled variant.
+    start_agent_graph_runtime()
+    start_engine_graph_runtime(checkpointer)
     reminder_service = ReminderService(settings)
     qiwe_aggregator: QiWeMessageAggregator | None = None
     # 运营在后台切换的账号落库 app_settings，优先于 env；重启后据此恢复。
@@ -72,6 +87,8 @@ async def lifespan(app: FastAPI):
             await qiwe_aggregator.stop()
         if qiwe_should_start:
             set_current_channel(None)
+        stop_engine_graph_runtime()
+        stop_agent_graph_runtime()
         await stop_agent_checkpoint_runtime()
         # Gracefully dispose database connection pool to avoid shutdown hangs
         from app.db.session import engine

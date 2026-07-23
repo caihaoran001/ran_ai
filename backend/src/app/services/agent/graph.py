@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 
 from app.core.config import Settings, get_settings
 from app.db import session as db_session_module
@@ -64,7 +65,19 @@ class AgentReplyResult:
     data_tool_failed: bool = False
 
 
+@dataclass(frozen=True)
+class _AgentGraphExecutionContext:
+    """Per-invocation bindings consumed by the process-shared compiled graph."""
+
+    handler: "RanrenAgentGraph"
+
+
+_AGENT_GRAPH_CACHE: list[tuple[BaseCheckpointSaver | None, Any]] = []
+
+
 class RanrenAgentGraph:
+    """One run's dependencies backed by a process-shared compiled topology."""
+
     def __init__(
         self,
         *,
@@ -94,7 +107,7 @@ class RanrenAgentGraph:
         # 单工具超时留在整轮全局超时之内：给足查询/外部请求时间，又不至于一个慢工具占满整轮预算。
         global_timeout = max(1.0, float(self.settings.agent_timeout_seconds or 40.0))
         self._tool_timeout_seconds = max(5.0, min(global_timeout - 5.0, global_timeout))
-        self.graph = self._compile()
+        self.graph = _get_agent_compiled_graph(checkpointer)
 
     async def _resolve_bot_nickname(self) -> str:
         """取机器人在本群的昵称，注入提示词身份用。
@@ -174,11 +187,13 @@ class RanrenAgentGraph:
                     config=run_config,
                     checkpointer=self.checkpointer,
                     delete_thread_on_success=False,
+                    context=_AgentGraphExecutionContext(handler=self),
                 )
                 if run_config is not None
                 else self.graph.ainvoke(
                     state,
                     config={"recursion_limit": max(4, self.settings.agent_max_llm_calls * 2 + 2)},
+                    context=_AgentGraphExecutionContext(handler=self),
                 )
             )
             result = await asyncio.wait_for(
@@ -233,15 +248,6 @@ class RanrenAgentGraph:
                 "Failed to build agent knowledge context service_case_id=%s", self.context.service_case_id
             )
             return "暂无相关参考问答。"
-
-    def _compile(self):
-        builder = StateGraph(AgentState)
-        builder.add_node("agent", self._agent_node)
-        builder.add_node("tools", self._tools_node)
-        builder.add_edge(START, "agent")
-        builder.add_conditional_edges("agent", self._route_after_agent, {"tools": "tools", END: END})
-        builder.add_edge("tools", "agent")
-        return builder.compile(checkpointer=self.checkpointer)
 
     async def _agent_node(self, state: AgentState) -> dict[str, Any]:
         llm_count = int(state.get("llm_call_count") or 0)
@@ -416,6 +422,75 @@ class RanrenAgentGraph:
         if getattr(last, "tool_calls", None):
             return "tools"
         return END
+
+
+def _agent_node_dispatch(
+    method_name: str,
+):
+    async def dispatch(
+        state: AgentState,
+        runtime: Runtime[_AgentGraphExecutionContext],
+    ) -> dict[str, Any]:
+        method = getattr(runtime.context.handler, method_name)
+        return await method(state)
+
+    dispatch.__name__ = f"{method_name}_dispatch"
+    return dispatch
+
+
+def _agent_route_dispatch(
+    method_name: str,
+):
+    def dispatch(
+        state: AgentState,
+        runtime: Runtime[_AgentGraphExecutionContext],
+    ) -> str:
+        method = getattr(runtime.context.handler, method_name)
+        return method(state)
+
+    dispatch.__name__ = f"{method_name}_dispatch"
+    return dispatch
+
+
+def _compile_agent_graph(checkpointer: BaseCheckpointSaver | None):
+    builder = StateGraph(
+        AgentState,
+        context_schema=_AgentGraphExecutionContext,
+    )
+    builder.add_node("agent", _agent_node_dispatch("_agent_node"))
+    builder.add_node("tools", _agent_node_dispatch("_tools_node"))
+    builder.add_edge(START, "agent")
+    builder.add_conditional_edges(
+        "agent",
+        _agent_route_dispatch("_route_after_agent"),
+        {"tools": "tools", END: END},
+    )
+    builder.add_edge("tools", "agent")
+    return builder.compile(checkpointer=checkpointer)
+
+
+def _get_agent_compiled_graph(checkpointer: BaseCheckpointSaver | None):
+    for cached_checkpointer, graph in _AGENT_GRAPH_CACHE:
+        if cached_checkpointer is checkpointer:
+            return graph
+    graph = _compile_agent_graph(checkpointer)
+    _AGENT_GRAPH_CACHE.append((checkpointer, graph))
+    return graph
+
+
+def start_agent_graph_runtime(
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> None:
+    """Compile one shared ReAct topology variant during process startup."""
+    _get_agent_compiled_graph(checkpointer)
+    logger.info(
+        "Shared LangGraph ReAct topology compiled checkpointed=%s",
+        checkpointer is not None,
+    )
+
+
+def stop_agent_graph_runtime() -> None:
+    _AGENT_GRAPH_CACHE.clear()
 
 
 async def generate_agent_reply(

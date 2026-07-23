@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -95,8 +97,18 @@ class EngineState(TypedDict, total=False):
     _halt: bool  # reprocess_head 守卫失败 → 直接结束
 
 
+@dataclass(frozen=True)
+class _EngineGraphExecutionContext:
+    """Per-invocation bindings consumed by the process-shared compiled graph."""
+
+    handler: "EngineGraph"
+
+
+_ENGINE_GRAPH_CACHE: tuple[BaseCheckpointSaver | None, Any] | None = None
+
+
 class EngineGraph:
-    """按 entry_mode 承接 handle_message(fresh) 与 reprocess_message(reprocess)。"""
+    """One message's bindings backed by a process-shared compiled topology."""
 
     def __init__(
         self,
@@ -106,81 +118,7 @@ class EngineGraph:
     ) -> None:
         self.engine = engine
         self.checkpointer = checkpointer
-        self.graph = self._compile()
-
-    def _compile(self):
-        b = StateGraph(EngineState)
-        b.add_node("setup", self._setup)
-        b.add_node("group_introduction", self._group_introduction)
-        b.add_node("group_command_reply", self._group_command_reply)
-        b.add_node("attachments", self._attachments)
-        b.add_node("file_ack", self._file_ack)
-        b.add_node("staff_gate", self._staff_gate)
-        b.add_node("questionnaire", self._questionnaire)
-        b.add_node("reprocess_head", self._reprocess_head)
-        b.add_node("risk", self._risk)
-        b.add_node("handoff", self._handoff)
-        # 回复编排直接平铺在主图；只有可循环复用的 ReAct agent 保留为内层图。
-        b.add_node("reply_prep", self._reply_prep)
-        b.add_node("reply_generate", self._reply_generate)
-        b.add_node("reply_guards", self._reply_guards)
-        b.add_node("reply_send", self._reply_send)
-
-        b.add_conditional_edges(
-            START, self._route_start,
-            {
-                "setup": "setup",
-                "reprocess_head": "reprocess_head",
-                "reply_prep": "reply_prep",
-            },
-        )
-        b.add_conditional_edges(
-            "setup", self._route_after_setup,
-            {
-                "group_introduction": "group_introduction",
-                "group_command_reply": "group_command_reply",
-                "attachments": "attachments",
-                END: END,
-            },
-        )
-        b.add_edge("group_introduction", END)
-        b.add_edge("group_command_reply", END)
-        b.add_conditional_edges(
-            "attachments", self._route_after_attachments,
-            {"file_ack": "file_ack", "staff_gate": "staff_gate", END: END},
-        )
-        b.add_edge("file_ack", END)
-        b.add_conditional_edges(
-            "staff_gate", self._route_after_staff_gate,
-            {"questionnaire": "questionnaire", "risk": "risk", END: END},
-        )
-        b.add_edge("questionnaire", END)
-        b.add_conditional_edges(
-            "reprocess_head", self._route_after_reprocess_head,
-            {"risk": "risk", END: END},
-        )
-        b.add_conditional_edges(
-            "risk", self._route_after_risk,
-            {"handoff": "handoff", "reply_prep": "reply_prep", END: END},
-        )
-        b.add_edge("handoff", END)
-        b.add_conditional_edges(
-            "reply_prep",
-            self._route_after_reply_prep,
-            {"reply_generate": "reply_generate", END: END},
-        )
-        b.add_conditional_edges(
-            "reply_generate",
-            self._route_after_reply_generate,
-            {"reply_guards": "reply_guards", END: END},
-        )
-        b.add_conditional_edges(
-            "reply_guards",
-            self._route_after_reply_guards,
-            {"reply_send": "reply_send", END: END},
-        )
-        b.add_edge("reply_send", END)
-        return b.compile(checkpointer=self.checkpointer)
+        self.graph = _get_engine_compiled_graph(checkpointer)
 
     async def run(
         self,
@@ -188,8 +126,9 @@ class EngineGraph:
         *,
         run_config: dict[str, Any] | None = None,
     ) -> None:
+        execution_context = _EngineGraphExecutionContext(handler=self)
         if run_config is None:
-            await self.graph.ainvoke(state)
+            await self.graph.ainvoke(state, context=execution_context)
             return
         await ainvoke_resumable(
             self.graph,
@@ -197,6 +136,7 @@ class EngineGraph:
             config=run_config,
             checkpointer=self.checkpointer,
             delete_thread_on_success=True,
+            context=execution_context,
         )
 
     # ---------- 路由 ----------
@@ -1233,6 +1173,149 @@ class EngineGraph:
             message.chat_id, trigger_id, result.success, result.message_id, send_elapsed_ms,
         )
         return {}
+
+
+def _engine_node_dispatch(
+    method_name: str,
+):
+    async def dispatch(
+        state: EngineState,
+        runtime: Runtime[_EngineGraphExecutionContext],
+    ) -> dict[str, Any]:
+        method = getattr(runtime.context.handler, method_name)
+        return await method(state)
+
+    dispatch.__name__ = f"{method_name}_dispatch"
+    return dispatch
+
+
+def _engine_route_dispatch(
+    method_name: str,
+):
+    def dispatch(
+        state: EngineState,
+        runtime: Runtime[_EngineGraphExecutionContext],
+    ) -> str:
+        method = getattr(runtime.context.handler, method_name)
+        return method(state)
+
+    dispatch.__name__ = f"{method_name}_dispatch"
+    return dispatch
+
+
+def _compile_engine_graph(checkpointer: BaseCheckpointSaver | None):
+    builder = StateGraph(
+        EngineState,
+        context_schema=_EngineGraphExecutionContext,
+    )
+    for node_name in (
+        "setup",
+        "group_introduction",
+        "group_command_reply",
+        "attachments",
+        "file_ack",
+        "staff_gate",
+        "questionnaire",
+        "reprocess_head",
+        "risk",
+        "handoff",
+        "reply_prep",
+        "reply_generate",
+        "reply_guards",
+        "reply_send",
+    ):
+        builder.add_node(
+            node_name,
+            _engine_node_dispatch(f"_{node_name}"),
+        )
+
+    builder.add_conditional_edges(
+        START,
+        _engine_route_dispatch("_route_start"),
+        {
+            "setup": "setup",
+            "reprocess_head": "reprocess_head",
+            "reply_prep": "reply_prep",
+        },
+    )
+    builder.add_conditional_edges(
+        "setup",
+        _engine_route_dispatch("_route_after_setup"),
+        {
+            "group_introduction": "group_introduction",
+            "group_command_reply": "group_command_reply",
+            "attachments": "attachments",
+            END: END,
+        },
+    )
+    builder.add_edge("group_introduction", END)
+    builder.add_edge("group_command_reply", END)
+    builder.add_conditional_edges(
+        "attachments",
+        _engine_route_dispatch("_route_after_attachments"),
+        {"file_ack": "file_ack", "staff_gate": "staff_gate", END: END},
+    )
+    builder.add_edge("file_ack", END)
+    builder.add_conditional_edges(
+        "staff_gate",
+        _engine_route_dispatch("_route_after_staff_gate"),
+        {"questionnaire": "questionnaire", "risk": "risk", END: END},
+    )
+    builder.add_edge("questionnaire", END)
+    builder.add_conditional_edges(
+        "reprocess_head",
+        _engine_route_dispatch("_route_after_reprocess_head"),
+        {"risk": "risk", END: END},
+    )
+    builder.add_conditional_edges(
+        "risk",
+        _engine_route_dispatch("_route_after_risk"),
+        {"handoff": "handoff", "reply_prep": "reply_prep", END: END},
+    )
+    builder.add_edge("handoff", END)
+    builder.add_conditional_edges(
+        "reply_prep",
+        _engine_route_dispatch("_route_after_reply_prep"),
+        {"reply_generate": "reply_generate", END: END},
+    )
+    builder.add_conditional_edges(
+        "reply_generate",
+        _engine_route_dispatch("_route_after_reply_generate"),
+        {"reply_guards": "reply_guards", END: END},
+    )
+    builder.add_conditional_edges(
+        "reply_guards",
+        _engine_route_dispatch("_route_after_reply_guards"),
+        {"reply_send": "reply_send", END: END},
+    )
+    builder.add_edge("reply_send", END)
+    return builder.compile(checkpointer=checkpointer)
+
+
+def _get_engine_compiled_graph(checkpointer: BaseCheckpointSaver | None):
+    global _ENGINE_GRAPH_CACHE
+    if (
+        _ENGINE_GRAPH_CACHE is None
+        or _ENGINE_GRAPH_CACHE[0] is not checkpointer
+    ):
+        _ENGINE_GRAPH_CACHE = (
+            checkpointer,
+            _compile_engine_graph(checkpointer),
+        )
+    return _ENGINE_GRAPH_CACHE[1]
+
+
+def start_engine_graph_runtime(
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> None:
+    """Compile the shared message-orchestration topology once at startup."""
+    _get_engine_compiled_graph(checkpointer)
+    logger.info("Shared LangGraph Engine topology compiled")
+
+
+def stop_engine_graph_runtime() -> None:
+    global _ENGINE_GRAPH_CACHE
+    _ENGINE_GRAPH_CACHE = None
 
 
 async def run_reply_with_ai(
