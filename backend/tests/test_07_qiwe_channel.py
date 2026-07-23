@@ -17,6 +17,7 @@ from app.services.content_policy import (
 )
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator, _merge_messages
 from app.services.ranren_ai.engine import (
+    GROUP_AI_INTRO_FOLLOWUP,
     GROUP_AI_INTRODUCTION,
     RanrenAIEngine,
     _current_query_body,
@@ -745,7 +746,7 @@ async def test_first_staff_mention_only_introduces_then_opens_normal_reply(
     from app.models.message import Message, MessageDirection
     from app.models.service_case import ServiceCase
     from app.models.user import User
-    from app.services.ranren_ai.engine_graph import ReplyGraph
+    from app.services.ranren_ai.engine_graph import EngineGraph
 
     async def staff_rules(*args, **kwargs):
         return [{"type": "equals", "pattern": "staff-1"}]
@@ -772,7 +773,7 @@ async def test_first_staff_mention_only_introduces_then_opens_normal_reply(
         reply_inputs.append(state["message"].text)
         return {"_halt": True}
 
-    monkeypatch.setattr(ReplyGraph, "_prep", observe_reply)
+    monkeypatch.setattr(EngineGraph, "_reply_prep", observe_reply)
 
     group_id = f"room-intro-{secrets.token_hex(4)}"
     engine = RanrenAIEngine(RecordingChannel())
@@ -801,7 +802,7 @@ async def test_first_staff_mention_only_introduces_then_opens_normal_reply(
     assert service_case is not None
     assert service_case.ai_introduced_at is not None
     assert service_case.ai_introduced_by_wecom_user_id == "staff-1"
-    assert sent_texts == [GROUP_AI_INTRODUCTION]
+    assert sent_texts == [GROUP_AI_INTRODUCTION, GROUP_AI_INTRO_FOLLOWUP]
     assert reply_inputs == []
 
     intro_trigger = await db_session.scalar(
@@ -855,7 +856,7 @@ async def test_first_staff_mention_only_introduces_then_opens_normal_reply(
     )
 
     assert reply_inputs == ["我今天有点饿", "用户最近的记录怎么样？"]
-    assert sent_texts == [GROUP_AI_INTRODUCTION]
+    assert sent_texts == [GROUP_AI_INTRODUCTION, GROUP_AI_INTRO_FOLLOWUP]
     case_user = await db_session.get(User, service_case.user_id)
     assert case_user is not None
     assert case_user.wecom_user_id == "customer-1"
@@ -1076,9 +1077,9 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
     monkeypatch.setattr(RanrenAIEngine, "_recent_user_messages", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(RanrenAIEngine, "_store_intervention_analysis", lambda *args, **kwargs: asyncio.sleep(0, result=None))
 
-    # reply 子图以「子图即节点」原生挂载后，主流程不再经过 _reply_with_ai；观测钩子随缝
-    # 平移到子图入口节点 _prep：记录 (text, trigger.sender_type) 后 _halt 短路（等价旧 fake 的 no-op）。
-    from app.services.ranren_ai.engine_graph import ReplyGraph
+    # 回复编排平铺到主图后，主流程不再经过 _reply_with_ai；观测钩子放在
+    # 主图 reply_prep 节点：记录 (text, trigger.sender_type) 后 _halt 短路（等价旧 fake 的 no-op）。
+    from app.services.ranren_ai.engine_graph import EngineGraph
 
     async def fake_reply_prep(self, state):
         trigger_id = state.get("trigger_id")
@@ -1086,7 +1087,7 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
         reply_inputs.append((state["message"].text, trigger.sender_type))
         return {"_halt": True}
 
-    monkeypatch.setattr(ReplyGraph, "_prep", fake_reply_prep)
+    monkeypatch.setattr(EngineGraph, "_reply_prep", fake_reply_prep)
 
     engine = RanrenAIEngine(FakeChannel())
 

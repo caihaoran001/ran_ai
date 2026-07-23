@@ -9,10 +9,16 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.core.config import Settings, get_settings
 from app.db import session as db_session_module
+from app.services.agent.checkpoint import (
+    ainvoke_resumable,
+    checkpoint_config,
+    get_agent_checkpointer,
+)
 from app.services.agent.context_builder import build_agent_memory_context
 from app.services.agent.model import create_agent_chat_model
 from app.services.agent.prompts import AGENT_SYSTEM_PROMPT, build_agent_user_prompt
@@ -67,9 +73,11 @@ class RanrenAgentGraph:
         skill_registry: SkillRegistry | None = None,
         chat_model: Any | None = None,
         include_reminder_tools: bool = True,
+        checkpointer: BaseCheckpointSaver | None = None,
     ):
         self.context = context
         self.settings = settings or get_settings()
+        self.checkpointer = checkpointer
         # 复用进程级共享 registry，使 skill 目录扫描的缓存能跨请求命中（skill 是静态文件，改动靠 docker restart 失效）。
         self.skill_registry = skill_registry or _shared_skill_registry()
         self.tools = build_agent_tools(
@@ -121,7 +129,14 @@ class RanrenAgentGraph:
                 logger.exception("Failed to resolve bot self nickname service_case_id=%s", ctx.service_case_id)
         return ""
 
-    async def run(self, *, user_query: str, recent_messages: list[str], query_speaker: str = "用户") -> AgentReplyResult:
+    async def run(
+        self,
+        *,
+        user_query: str,
+        recent_messages: list[str],
+        query_speaker: str = "用户",
+        run_config: dict[str, Any] | None = None,
+    ) -> AgentReplyResult:
         memory_context = await self._build_memory_context()
         knowledge_context = await self._build_knowledge_context(user_query)
         bot_nickname = await self._resolve_bot_nickname()
@@ -152,11 +167,22 @@ class RanrenAgentGraph:
             "consecutive_tool_failures": {},
         }
         try:
-            result = await asyncio.wait_for(
-                self.graph.ainvoke(
+            invocation = (
+                ainvoke_resumable(
+                    self.graph,
+                    state,
+                    config=run_config,
+                    checkpointer=self.checkpointer,
+                    delete_thread_on_success=False,
+                )
+                if run_config is not None
+                else self.graph.ainvoke(
                     state,
                     config={"recursion_limit": max(4, self.settings.agent_max_llm_calls * 2 + 2)},
-                ),
+                )
+            )
+            result = await asyncio.wait_for(
+                invocation,
                 timeout=max(1.0, float(self.settings.agent_timeout_seconds or 40.0)),
             )
         except Exception:
@@ -215,7 +241,7 @@ class RanrenAgentGraph:
         builder.add_edge(START, "agent")
         builder.add_conditional_edges("agent", self._route_after_agent, {"tools": "tools", END: END})
         builder.add_edge("tools", "agent")
-        return builder.compile()
+        return builder.compile(checkpointer=self.checkpointer)
 
     async def _agent_node(self, state: AgentState) -> dict[str, Any]:
         llm_count = int(state.get("llm_call_count") or 0)
@@ -404,8 +430,19 @@ async def generate_agent_reply(
     group_id: str | None = None,
     bot_user_id: str | None = None,
     settings: Settings | None = None,
+    checkpoint_thread_id: str | None = None,
 ) -> AgentReplyResult:
     settings = settings or get_settings()
+    checkpointer = get_agent_checkpointer() if checkpoint_thread_id else None
+    run_config = (
+        checkpoint_config(
+            checkpoint_thread_id,
+            checkpoint_ns="agent",
+            recursion_limit=max(4, settings.agent_max_llm_calls * 2 + 2),
+        )
+        if checkpointer is not None and checkpoint_thread_id
+        else None
+    )
     result = await RanrenAgentGraph(
         context=AgentRunContext(
             service_case_id=service_case_id,
@@ -416,7 +453,13 @@ async def generate_agent_reply(
             bot_user_id=bot_user_id,
         ),
         settings=settings,
-    ).run(user_query=user_query, recent_messages=recent_messages, query_speaker=query_speaker)
+        checkpointer=checkpointer,
+    ).run(
+        user_query=user_query,
+        recent_messages=recent_messages,
+        query_speaker=query_speaker,
+        run_config=run_config,
+    )
     # Agent 主动调了数据工具且失败，说明它自己判断需要真实数据；直接走安全兜底，不再用关键词二次猜意图。
     if result.data_tool_failed:
         raise AgentDataUnavailableError(DATA_UNAVAILABLE_REPLY)

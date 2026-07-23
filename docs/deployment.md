@@ -19,7 +19,7 @@
 
 | 你要做的 | 跑什么 | 会动什么 |
 |---|---|---|
-| **部署代码**（日常、高频） | `uv run --no-project --with paramiko python scratch/local_prebuilt_deploy.py` | 只更新代码（后端 `src`、前端 standalone）+ rebuild 容器。**不碰**服务器的 `.env` 和 `docker-compose.prod.yml`（打包已排除） |
+| **部署代码**（日常、高频） | `uv run --no-project --with paramiko python scratch/local_prebuilt_deploy.py` | 只更新代码（后端 `src`、前端 standalone）+ rebuild 容器，并在切换容器前自动执行 LangGraph checkpoint 表初始化/升级。**不碰**服务器的 `.env` 和 `docker-compose.prod.yml`（打包已排除） |
 | **改生产配置**（少见） | `uv run --with paramiko python scratch/configure_remote_files.py` | 用脚本内置模板**整体覆盖**服务器的 `.env` 和 `docker-compose.prod.yml` |
 
 **为什么分开**：部署代码很频繁；如果每次部署都覆盖 `.env`，一旦有人在服务器上手改过配置（如换 QiWe `guid`），就会被模板覆盖回去、搞坏线上。所以**部署代码绝不动配置**；改配置是一个单独、显式的动作。
@@ -65,6 +65,12 @@ DATABASE_URL=postgresql+asyncpg://用户名:密码@RDS内网地址:5432/数据�
 
 推荐优先使用 RDS 内网地址，并确保 ECS 与 RDS 在同一 VPC/可达网络内。
 
+回复 Agent 的 LangGraph checkpoint 也复用这个 RDS，只创建普通 PostgreSQL
+表，不需要新实例或额外扩展。`scratch/local_prebuilt_deploy.py` 会在新镜像构建完成、
+旧容器仍运行时执行一次 `uv run ran-ai-checkpoint-setup`；如果业务账号没有建表/建索引
+权限，部署会在切换容器前失败并保留旧版本，此时才需要 DBA 为该账号补一次目标 schema
+的 DDL 权限。
+
 Caddy 路由规则：
 
 - `/api/channels/qiwe/*` 直连后端，用于 QiWe callback。
@@ -109,6 +115,7 @@ AI_COMPLETION_COST_PER_1M_TOKENS=25.11
 2. 数据库、用户、密码已创建。
 3. `vector` 插件可用。
 4. `pg_trgm` 插件可用。项目会在 migration 中执行 `CREATE EXTENSION IF NOT EXISTS pg_trgm`，用于中文关键词 fallback 检索的 GIN 索引。
+5. 应用数据库账号可在目标 schema 创建普通表和索引（LangGraph 首次 checkpoint 初始化需要；不需要新增扩展）。
 
 可以在 RDS 上执行：
 
@@ -138,7 +145,9 @@ git clone <your-repo-url> ran_ai
 cd ran_ai
 cp .env.production.example .env
 nano .env
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml run --rm --no-deps backend uv run ran-ai-checkpoint-setup
+docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs -f backend
 ```

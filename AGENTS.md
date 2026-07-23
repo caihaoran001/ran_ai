@@ -54,7 +54,7 @@ npm run test:e2e     # Playwright
 系统全景与各子系统的"为什么这么设计"已下沉到 **`backend/AGENTS.md` 的 Architecture 节**（消息分层、回复 Agent、RAG、文档/画像、档案官/成效、风控）。改动相关代码前先读那一节。这里只留一句话导航：
 
 - **消息分层**（channel-agnostic）：QiWe 回调 → `ChannelMessage` → ~8s 聚合 → `RanrenAIEngine`（风控/入库/守卫）。发消息一律走 `channels` 抽象，不直连通道 API。
-- **回复生成**：引擎把回复委托给 **LangGraph ReAct Agent**（`agent/graph.py::generate_agent_reply` + `agent/tools/`）；知识检索等都在 agent 的工具里。
+- **回复生成**：持久化 `EngineGraph` 平铺风险/回复守卫/发送编排，内部只保留可循环复用的 **LangGraph ReAct Agent**（`agent/graph.py::generate_agent_reply` + `agent/tools/`）；每个入站 turn 使用稳定哈希 `thread_id` 写 PostgreSQL checkpoint，中断后从未完成节点恢复。聚合窗口 `inbound_events` 与外部发送 `SENDING/SENT/FAILED` 账本仍分别承担传输边界可靠性，不能被 checkpoint 替代。
 - **知识检索 / RAG**：DB 索引 `knowledge_chunks` 优先，未命中 fallback 本地 Markdown 关键词（限 `keyword_whitelist.json`）。
 - **文档 / 画像**：LLM 出结构化 JSON → 模板渲 Markdown → 落库 → 下载/发送时才临时渲 `.docx`。运行时系统提示词以 `document_service.py` 为准。
 - **成效 / 结构化抽取（档案官）**：**不在消息路径实时跑**。`archivist/` 在 scheduler 里周期扫描（DB 派生 + 行锁，去抖 ~3min），普通 async 流水线用单轮 LLM 结构化抽取 delta → 确定性落库 → 刷新案例记忆 / 转 FAQ 草稿 /（成效稳态变化时）合成优秀案例草稿；`outcome_engine.py` 退为其调用的抽取工具，`user_state_profile.py` 投影 JSONB 画像。

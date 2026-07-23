@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -28,6 +29,12 @@ from app.models.message import (
 )
 from app.models.service_case import ServiceCase
 from app.models.user import User
+from app.services.agent.checkpoint import (
+    ainvoke_resumable,
+    build_checkpoint_thread_id,
+    checkpoint_config,
+    get_agent_checkpointer,
+)
 from app.services.channels.base import ChannelMessage
 # 通过 engine 模块引用 SessionLocal / analyze_intervention / generate_agent_reply /
 # get_ai_reply_enabled / AgentDataUnavailableError：测试把补丁打在 engine 模块上
@@ -57,9 +64,10 @@ logger = logging.getLogger("uvicorn.error")
 class EngineState(TypedDict, total=False):
     # 输入
     message: ChannelMessage
-    db_message: Message  # 仅 reprocess 入口
-    entry_mode: str  # "fresh" | "reprocess"
+    db_message_id: int  # 仅 reprocess 入口
+    entry_mode: str  # "fresh" | "reprocess" | "reply_only"
     started_at: float
+    checkpoint_thread_id: str
     # 计算态（把原 handle_message 的局部量摊平；节点覆盖式更新）
     should_send_questionnaire: bool
     group_control_command: str | None
@@ -67,7 +75,6 @@ class EngineState(TypedDict, total=False):
     is_staff: bool
     sender_type: Any
     service_case_id: int | None
-    service_case_for_command: Any
     service_case_introduced: bool
     should_send_introduction: bool
     service_case_silenced: bool
@@ -82,14 +89,23 @@ class EngineState(TypedDict, total=False):
     case_risk_level: str | None
     purpose: Any
     needs_handoff: bool
+    reply: str
+    outbound_analysis: dict | None
+    should_send: bool
     _halt: bool  # reprocess_head 守卫失败 → 直接结束
 
 
 class EngineGraph:
     """按 entry_mode 承接 handle_message(fresh) 与 reprocess_message(reprocess)。"""
 
-    def __init__(self, engine: "RanrenAIEngine") -> None:
+    def __init__(
+        self,
+        engine: "RanrenAIEngine",
+        *,
+        checkpointer: BaseCheckpointSaver | None = None,
+    ) -> None:
         self.engine = engine
+        self.checkpointer = checkpointer
         self.graph = self._compile()
 
     def _compile(self):
@@ -104,13 +120,19 @@ class EngineGraph:
         b.add_node("reprocess_head", self._reprocess_head)
         b.add_node("risk", self._risk)
         b.add_node("handoff", self._handoff)
-        # reply 子图以「子图即节点」的原生形态挂载：LangGraph 按同名键在父/子 state 间通信
-        # （message/service_case_id/analysis/trigger_id 均已在父 state 就位）。异常照旧冒出 ainvoke。
-        b.add_node("reply", ReplyGraph(self.engine).graph)
+        # 回复编排直接平铺在主图；只有可循环复用的 ReAct agent 保留为内层图。
+        b.add_node("reply_prep", self._reply_prep)
+        b.add_node("reply_generate", self._reply_generate)
+        b.add_node("reply_guards", self._reply_guards)
+        b.add_node("reply_send", self._reply_send)
 
         b.add_conditional_edges(
             START, self._route_start,
-            {"setup": "setup", "reprocess_head": "reprocess_head"},
+            {
+                "setup": "setup",
+                "reprocess_head": "reprocess_head",
+                "reply_prep": "reply_prep",
+            },
         )
         b.add_conditional_edges(
             "setup", self._route_after_setup,
@@ -118,6 +140,7 @@ class EngineGraph:
                 "group_introduction": "group_introduction",
                 "group_command_reply": "group_command_reply",
                 "attachments": "attachments",
+                END: END,
             },
         )
         b.add_edge("group_introduction", END)
@@ -138,21 +161,56 @@ class EngineGraph:
         )
         b.add_conditional_edges(
             "risk", self._route_after_risk,
-            {"handoff": "handoff", "reply": "reply", END: END},
+            {"handoff": "handoff", "reply_prep": "reply_prep", END: END},
         )
         b.add_edge("handoff", END)
-        b.add_edge("reply", END)
-        return b.compile()
+        b.add_conditional_edges(
+            "reply_prep",
+            self._route_after_reply_prep,
+            {"reply_generate": "reply_generate", END: END},
+        )
+        b.add_conditional_edges(
+            "reply_generate",
+            self._route_after_reply_generate,
+            {"reply_guards": "reply_guards", END: END},
+        )
+        b.add_conditional_edges(
+            "reply_guards",
+            self._route_after_reply_guards,
+            {"reply_send": "reply_send", END: END},
+        )
+        b.add_edge("reply_send", END)
+        return b.compile(checkpointer=self.checkpointer)
 
-    async def run(self, state: EngineState) -> None:
-        await self.graph.ainvoke(state)
+    async def run(
+        self,
+        state: EngineState,
+        *,
+        run_config: dict[str, Any] | None = None,
+    ) -> None:
+        if run_config is None:
+            await self.graph.ainvoke(state)
+            return
+        await ainvoke_resumable(
+            self.graph,
+            state,
+            config=run_config,
+            checkpointer=self.checkpointer,
+            delete_thread_on_success=True,
+        )
 
     # ---------- 路由 ----------
 
     def _route_start(self, state: EngineState) -> str:
-        return "reprocess_head" if state.get("entry_mode") == "reprocess" else "setup"
+        if state.get("entry_mode") == "reprocess":
+            return "reprocess_head"
+        if state.get("entry_mode") == "reply_only":
+            return "reply_prep"
+        return "setup"
 
     def _route_after_setup(self, state: EngineState) -> str:
+        if state.get("_halt"):
+            return END
         if state.get("should_send_introduction"):
             return "group_introduction"
         return "group_command_reply" if state.get("group_control_command") else "attachments"
@@ -187,7 +245,34 @@ class EngineGraph:
             return END
         if state.get("purpose") != MessagePurpose.CHAT:
             return END
-        return "reply"
+        return "reply_prep"
+
+    def _route_after_reply_prep(self, state: EngineState) -> str:
+        return "reply_generate" if not state.get("_halt") else END
+
+    def _route_after_reply_generate(self, state: EngineState) -> str:
+        return "reply_guards" if not state.get("_halt") else END
+
+    def _route_after_reply_guards(self, state: EngineState) -> str:
+        if state.get("_halt"):
+            return END
+        return "reply_send" if state.get("should_send") else END
+
+    async def _outbound_exists_for_trigger(self, trigger_id: int | None) -> bool:
+        if not trigger_id:
+            return False
+        async with engine_mod.SessionLocal() as session:
+            if not hasattr(session, "scalar"):
+                return False
+            outbound_id = await session.scalar(
+                select(Message.id)
+                .where(
+                    Message.direction == MessageDirection.OUTBOUND,
+                    Message.trigger_id == trigger_id,
+                )
+                .limit(1)
+            )
+        return outbound_id is not None
 
     # ---------- fresh 节点 ----------
 
@@ -201,7 +286,6 @@ class EngineGraph:
         explicit_bot_query_text = state["explicit_bot_query_text"]
 
         service_case_id: int | None = None
-        service_case_for_command: ServiceCase | None = None
         service_case_introduced = False
         should_send_introduction = False
         service_case_silenced = False
@@ -221,6 +305,30 @@ class EngineGraph:
                 remember_qiwe_group_nicknames,
                 remember_qiwe_nickname,
             )
+            # A process can die after committing the inbound Message but before
+            # LangGraph persists the setup-node checkpoint. Reuse that durable
+            # row on resume instead of inserting the same callback twice.
+            if message.message_id and hasattr(session, "scalar"):
+                existing_inbound = await session.scalar(
+                    select(Message)
+                    .where(
+                        Message.group_id == message.chat_id,
+                        Message.wecom_message_id == message.message_id,
+                        Message.direction == MessageDirection.INBOUND,
+                    )
+                    .order_by(Message.id.desc())
+                    .limit(1)
+                )
+                if existing_inbound is not None:
+                    return await self._restore_existing_inbound_state(
+                        session,
+                        message=message,
+                        inbound=existing_inbound,
+                        should_send_questionnaire=should_send_questionnaire,
+                        group_control_command=group_control_command,
+                        explicit_bot_query_text=explicit_bot_query_text,
+                    )
+
             if message.channel == "qiwe" and message.user_id:
                 group_nickname = ""
                 if message.chat_type == "group":
@@ -279,7 +387,6 @@ class EngineGraph:
 
             if service_case:
                 service_case_id = service_case.id
-                service_case_for_command = service_case
                 service_case_introduced = service_case.ai_introduced_at is not None
                 should_send_introduction = bool(
                     not service_case_introduced
@@ -367,6 +474,11 @@ class EngineGraph:
                         else "awaiting_staff_introduction"
                     )
                 }
+            if group_control_command:
+                analysis["_group_control"] = {
+                    "command": group_control_command,
+                    "resume_receipt": resume_takeover_receipt,
+                }
 
             db_inbound = Message(
                 service_case_id=service_case.id if service_case else None,
@@ -395,7 +507,6 @@ class EngineGraph:
             "is_staff": is_staff,
             "sender_type": sender_type,
             "service_case_id": service_case_id,
-            "service_case_for_command": service_case_for_command,
             "service_case_introduced": service_case_introduced,
             "should_send_introduction": should_send_introduction,
             "service_case_silenced": service_case_silenced,
@@ -405,6 +516,94 @@ class EngineGraph:
             "trigger_id": inbound_id,
             "recent_user_messages": recent_user_messages,
             "purpose": purpose,
+        }
+
+    async def _restore_existing_inbound_state(
+        self,
+        session: Any,
+        *,
+        message: ChannelMessage,
+        inbound: Message,
+        should_send_questionnaire: bool,
+        group_control_command: str | None,
+        explicit_bot_query_text: str | None,
+    ) -> dict[str, Any]:
+        """Rehydrate setup output after the DB-commit/checkpoint crash window."""
+        analysis = dict(inbound.analysis_json) if isinstance(inbound.analysis_json, dict) else {}
+        service_case = (
+            await session.get(ServiceCase, inbound.service_case_id)
+            if inbound.service_case_id
+            else None
+        )
+        service_case_introduced = bool(
+            service_case and service_case.ai_introduced_at is not None
+        )
+        reply_gate = analysis.get("_reply_gate") if isinstance(analysis.get("_reply_gate"), dict) else {}
+        should_send_introduction = reply_gate.get("state") == "introduction_trigger"
+        group_meta = (
+            analysis.get("_group_control")
+            if isinstance(analysis.get("_group_control"), dict)
+            else {}
+        )
+        restored_command = str(group_meta.get("command") or group_control_command or "") or None
+        resume_takeover_receipt = bool(group_meta.get("resume_receipt"))
+        meta = analysis.get("_qiwe_meta") if isinstance(analysis.get("_qiwe_meta"), dict) else {}
+        restored_explicit_query = (
+            str(meta.get("explicit_bot_query_text") or explicit_bot_query_text or "").strip()
+            or None
+        )
+        is_staff = inbound.sender_type == MessageSenderType.STAFF
+        recent_user_messages = (
+            await self.engine._recent_user_messages(
+                session,
+                inbound.service_case_id,
+                exclude_message_id=inbound.id,
+            )
+            if inbound.service_case_id and service_case_introduced and not is_staff
+            else []
+        )
+        outbound_exists = await session.scalar(
+            select(Message.id)
+            .where(
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.trigger_id == inbound.id,
+            )
+            .limit(1)
+        )
+        already_processed = (
+            bool(outbound_exists)
+            or (
+                _message_already_processed_or_claimed(analysis)
+                and not reply_gate
+                and not group_meta
+            )
+        )
+        logger.info(
+            "RanrenAI reused durable inbound chat_id=%s message_id=%s db_message_id=%s checkpoint_resume=%s",
+            message.chat_id,
+            message.message_id,
+            inbound.id,
+            not already_processed,
+        )
+        return {
+            "is_staff": is_staff,
+            "sender_type": inbound.sender_type,
+            "service_case_id": inbound.service_case_id,
+            "service_case_introduced": service_case_introduced,
+            "should_send_introduction": should_send_introduction,
+            "service_case_silenced": bool(
+                service_case and not service_case.ai_auto_reply_enabled
+            ),
+            "resume_takeover_receipt": resume_takeover_receipt,
+            "analysis": analysis,
+            "inbound_id": inbound.id,
+            "trigger_id": inbound.id,
+            "recent_user_messages": recent_user_messages,
+            "purpose": inbound.purpose,
+            "group_control_command": restored_command,
+            "explicit_bot_query_text": restored_explicit_query,
+            "should_send_questionnaire": should_send_questionnaire,
+            "_halt": already_processed,
         }
 
     async def _group_introduction(self, state: EngineState) -> dict[str, Any]:
@@ -432,7 +631,10 @@ class EngineGraph:
         service_case_id = state.get("service_case_id")
         inbound_id = state.get("inbound_id")
         group_control_command = state.get("group_control_command")
-        if state.get("resume_takeover_receipt"):
+        if (
+            state.get("resume_takeover_receipt")
+            and not await self._outbound_exists_for_trigger(inbound_id)
+        ):
             receipt = "那我继续来跟进哈~"
             try:
                 await self.engine._send_and_record(
@@ -457,10 +659,47 @@ class EngineGraph:
     async def _attachments(self, state: EngineState) -> dict[str, Any]:
         """对应 373–378：解析入站图片/文件。"""
         message: ChannelMessage = state["message"]
+        inbound_id = state.get("inbound_id")
+        if inbound_id:
+            async with engine_mod.SessionLocal() as session:
+                persisted = (
+                    await session.get(Message, inbound_id)
+                    if hasattr(session, "get")
+                    else None
+                )
+            persisted_analysis = (
+                dict(persisted.analysis_json)
+                if persisted and isinstance(persisted.analysis_json, dict)
+                else {}
+            )
+            if message.message_type == "file" and isinstance(
+                persisted_analysis.get("file_info"),
+                dict,
+            ):
+                message.text = persisted.content
+                return {
+                    "analysis": persisted_analysis,
+                    "image_analysis_content": None,
+                    "file_processed": True,
+                    "non_text_stored_only": False,
+                }
+            if isinstance(persisted_analysis.get("image_prompt"), dict):
+                image_analysis_content = (
+                    ""
+                    if message.message_type == "image"
+                    else engine_mod._strip_image_placeholders(message.text)
+                )
+                message.text = image_analysis_content
+                return {
+                    "analysis": persisted_analysis,
+                    "image_analysis_content": image_analysis_content,
+                    "file_processed": False,
+                    "non_text_stored_only": False,
+                }
         analysis, image_analysis_content, file_processed, non_text_stored_only = (
             await self.engine._process_inbound_attachments(
                 message=message,
-                inbound_id=state.get("inbound_id"),
+                inbound_id=inbound_id,
                 service_case_id=state.get("service_case_id"),
                 analysis=state.get("analysis"),
             )
@@ -474,7 +713,10 @@ class EngineGraph:
 
     async def _file_ack(self, state: EngineState) -> dict[str, Any]:
         """对应 390–411：用户上传文件回执一句；班主任静默。"""
-        if not state.get("is_staff"):
+        if (
+            not state.get("is_staff")
+            and not await self._outbound_exists_for_trigger(state.get("inbound_id"))
+        ):
             message: ChannelMessage = state["message"]
             ack = "文件收到啦，需要我帮你看什么？"
             try:
@@ -534,9 +776,20 @@ class EngineGraph:
         message: ChannelMessage = state["message"]
         started_at = state["started_at"]
         inbound_id = state.get("inbound_id")
-        await self.engine._reply_questionnaire_link(
-            message, state.get("service_case_for_command"), trigger_id=inbound_id
-        )
+        if not await self._outbound_exists_for_trigger(inbound_id):
+            service_case = None
+            service_case_id = state.get("service_case_id")
+            if service_case_id:
+                async with engine_mod.SessionLocal() as session:
+                    service_case = await self.engine._latest_active_case(
+                        session,
+                        message.chat_id,
+                    )
+            await self.engine._reply_questionnaire_link(
+                message,
+                service_case,
+                trigger_id=inbound_id,
+            )
         logger.info(
             "RanrenAI command handled channel=%s chat_id=%s message_id=%s trigger_id=%s total_elapsed_ms=%.1f",
             message.channel, message.chat_id, message.message_id, inbound_id,
@@ -548,18 +801,17 @@ class EngineGraph:
 
     async def _reprocess_head(self, state: EngineState) -> dict[str, Any]:
         """对应 reprocess_message 530–618：锁/claim/校验/重建 ChannelMessage。任一守卫失败 → _halt。"""
-        db_message: Message = state["db_message"]
-        inbound_id = db_message.id
-        service_case_id = db_message.service_case_id
-        if not service_case_id:
-            logger.warning("reprocess_message: message %s has no service_case_id", inbound_id)
-            return {"_halt": True}
+        inbound_id = state["db_message_id"]
 
         async with engine_mod.SessionLocal() as session:
             stmt = select(Message).where(Message.id == inbound_id).with_for_update()
             msg_row = await session.scalar(stmt)
             if not msg_row:
                 logger.warning("reprocess_message: Message %s not found in lock", inbound_id)
+                return {"_halt": True}
+            service_case_id = msg_row.service_case_id
+            if not service_case_id:
+                logger.warning("reprocess_message: message %s has no service_case_id", inbound_id)
                 return {"_halt": True}
 
             analysis_json = msg_row.analysis_json if isinstance(msg_row.analysis_json, dict) else {}
@@ -609,20 +861,26 @@ class EngineGraph:
                 "reason": "startup_recovery",
             }
             msg_row.analysis_json = claimed
+            group_id = msg_row.group_id
+            content = msg_row.content
+            wecom_message_id = msg_row.wecom_message_id
+            message_type = msg_row.message_type
+            created_at = msg_row.created_at
+            purpose = msg_row.purpose
             await session.commit()
 
-        meta = (db_message.analysis_json or {}).get("_qiwe_meta", {}) if db_message.analysis_json else {}
+        meta = analysis_json.get("_qiwe_meta", {}) if analysis_json else {}
         channel_msg = ChannelMessage(
             channel=self.engine.channel.name,
-            chat_id=db_message.group_id,
+            chat_id=group_id,
             chat_type="group",
-            text=db_message.content,
-            message_id=db_message.wecom_message_id,
+            text=content,
+            message_id=wecom_message_id,
             user_id=meta.get("sender_id"),
             user_name=meta.get("sender_name"),
-            message_type=db_message.message_type,
+            message_type=message_type,
             raw_payload=None,
-            timestamp=db_message.created_at,
+            timestamp=created_at,
         )
 
         async with engine_mod.SessionLocal() as session:
@@ -636,7 +894,7 @@ class EngineGraph:
             "inbound_id": inbound_id,
             "trigger_id": inbound_id,
             "recent_user_messages": recent_user_messages,
-            "purpose": db_message.purpose,
+            "purpose": purpose,
             "is_staff": False,
             "analysis": None,
         }
@@ -657,6 +915,44 @@ class EngineGraph:
         case_risk_level = state.get("case_risk_level")
 
         if service_case_id and inbound_id and not is_staff:
+            # If the process died after committing intervention analysis but before
+            # this node's checkpoint, reuse the durable result instead of paying
+            # for and potentially diverging on a second model call.
+            async with engine_mod.SessionLocal() as session:
+                if hasattr(session, "get") and hasattr(session, "scalar"):
+                    persisted_inbound = await session.get(Message, inbound_id)
+                    persisted_analysis = (
+                        dict(persisted_inbound.analysis_json)
+                        if persisted_inbound
+                        and isinstance(persisted_inbound.analysis_json, dict)
+                        else {}
+                    )
+                    persisted_case = await session.scalar(
+                        select_active_service_cases(
+                            ServiceCase.id == service_case_id
+                        )
+                    )
+                    persisted_risk_level = (
+                        persisted_case.risk_level if persisted_case else None
+                    )
+                else:
+                    persisted_analysis = {}
+                    persisted_risk_level = None
+            if "requires_human_intervention" in persisted_analysis:
+                analysis = persisted_analysis
+                case_risk_level = persisted_risk_level
+                health_handoff = _requires_health_handoff(
+                    analysis,
+                    case_risk_level,
+                )
+                needs_handoff = bool(
+                    analysis.get("requires_human_intervention")
+                ) or health_handoff
+                return {
+                    "analysis": analysis,
+                    "case_risk_level": case_risk_level,
+                    "needs_handoff": needs_handoff,
+                }
             if image_analysis_content is not None and not image_analysis_content:
                 logger.info(
                     "RanrenAI skip intervention/outcome analysis for image-only message chat_id=%s trigger_id=%s service_case_id=%s",
@@ -698,9 +994,16 @@ class EngineGraph:
         started_at = state["started_at"]
         service_case_id = state.get("service_case_id")
         inbound_id = state.get("inbound_id")
+        if await self._outbound_exists_for_trigger(inbound_id):
+            logger.info(
+                "RanrenAI skip resumed handoff because outbound already exists trigger_id=%s service_case_id=%s",
+                inbound_id,
+                service_case_id,
+            )
+            return {}
         if not await self.engine._recently_handed_off(service_case_id):
-            await self.engine._mark_handoff(service_case_id)
             await self.engine._reply_human_handoff(message, service_case_id=service_case_id, trigger_id=inbound_id)
+            await self.engine._mark_handoff(service_case_id)
             logger.info(
                 "RanrenAI handed off to staff chat_id=%s trigger_id=%s service_case_id=%s total_elapsed_ms=%.1f",
                 message.chat_id, inbound_id, service_case_id,
@@ -713,67 +1016,9 @@ class EngineGraph:
             )
         return {}
 
+    # ---------- 回复尾部（直接平铺在 EngineGraph） ----------
 
-class ReplyState(TypedDict, total=False):
-    # 输入
-    message: ChannelMessage
-    service_case_id: int | None
-    analysis: dict | None
-    trigger_id: int | None
-    # 计算态
-    service_case: Any
-    recent_user_messages: list
-    reply: str
-    outbound_analysis: dict | None
-    should_send: bool
-    _halt: bool
-
-
-class ReplyGraph:
-    """_reply_with_ai 的子图（Phase 2）：把回复半程的守卫拆成显式节点。
-
-    prep（开关/存活）→ gen（生成+异常）→ guards（no_reply/净化/不拆台/should_send）→ send（新消息/队列守卫 + record-first 发送）。
-    与旧 _reply_with_ai 逐段等价：早退→到 END 的条件边；异常语义不变——
-    generate_agent_reply 的通用异常在 gen 内吞掉并到 END（方法整体正常返回），
-    发送等非生成异常照旧冒出（send 节点抛出 → ainvoke 抛出 → 方法抛出）。
-    """
-
-    def __init__(self, engine: "RanrenAIEngine") -> None:
-        self.engine = engine
-        self.graph = self._compile()
-
-    def _compile(self):
-        b = StateGraph(ReplyState)
-        b.add_node("prep", self._prep)
-        b.add_node("gen", self._gen)
-        b.add_node("guards", self._guards)
-        b.add_node("send", self._send)
-        b.add_edge(START, "prep")
-        b.add_conditional_edges("prep", self._route_after_prep, {"gen": "gen", END: END})
-        b.add_conditional_edges("gen", self._route_after_gen, {"guards": "guards", END: END})
-        b.add_conditional_edges("guards", self._route_after_guards, {"send": "send", END: END})
-        b.add_edge("send", END)
-        return b.compile()
-
-    async def run(self, state: ReplyState) -> None:
-        await self.graph.ainvoke(state)
-
-    # ---------- 路由 ----------
-
-    def _route_after_prep(self, state: ReplyState) -> str:
-        return "gen" if not state.get("_halt") else END
-
-    def _route_after_gen(self, state: ReplyState) -> str:
-        return "guards" if not state.get("_halt") else END
-
-    def _route_after_guards(self, state: ReplyState) -> str:
-        if state.get("_halt"):
-            return END
-        return "send" if state.get("should_send") else END
-
-    # ---------- 节点 ----------
-
-    async def _prep(self, state: ReplyState) -> dict[str, Any]:
+    async def _reply_prep(self, state: EngineState) -> dict[str, Any]:
         """对应 401–438 + 494–501：开关/存活检查 + recent；任一早退 → _halt。"""
         message: ChannelMessage = state["message"]
         service_case_id = state.get("service_case_id")
@@ -820,11 +1065,11 @@ class ReplyGraph:
                 "RanrenAI skip Agent reply because no active service case chat_id=%s trigger_id=%s service_case_id=%s",
                 message.chat_id, trigger_id, service_case_id,
             )
-            return {"_halt": True, "service_case": service_case, "recent_user_messages": recent_user_messages}
+            return {"_halt": True, "recent_user_messages": recent_user_messages}
 
-        return {"service_case": service_case, "recent_user_messages": recent_user_messages}
+        return {"recent_user_messages": recent_user_messages}
 
-    async def _gen(self, state: ReplyState) -> dict[str, Any]:
+    async def _reply_generate(self, state: EngineState) -> dict[str, Any]:
         """对应 440–493：generate_agent_reply + 异常处理。通用异常 → _halt(丢弃)。"""
         message: ChannelMessage = state["message"]
         service_case_id = state.get("service_case_id")
@@ -834,17 +1079,22 @@ class ReplyGraph:
         settings = get_settings()
         user_query = _current_query_body(analysis, message.text)
         try:
+            agent_kwargs: dict[str, Any] = {
+                "service_case_id": service_case_id,
+                "trigger_id": trigger_id,
+                "user_query": user_query,
+                "query_speaker": _current_query_speaker(analysis),
+                "recent_messages": recent_user_messages,
+                "analysis": analysis,
+                "channel": message.channel,
+                "group_id": message.chat_id if message.chat_type == "group" else None,
+                "bot_user_id": _bot_user_id_from_message(message),
+                "settings": settings,
+            }
+            if self.checkpointer is not None and state.get("checkpoint_thread_id"):
+                agent_kwargs["checkpoint_thread_id"] = state["checkpoint_thread_id"]
             agent_result = await engine_mod.generate_agent_reply(
-                service_case_id=service_case_id,
-                trigger_id=trigger_id,
-                user_query=user_query,
-                query_speaker=_current_query_speaker(analysis),
-                recent_messages=recent_user_messages,
-                analysis=analysis,
-                channel=message.channel,
-                group_id=message.chat_id if message.chat_type == "group" else None,
-                bot_user_id=_bot_user_id_from_message(message),
-                settings=settings,
+                **agent_kwargs,
             )
             reply = agent_result.reply
             agent_meta = {
@@ -895,13 +1145,12 @@ class ReplyGraph:
             return {"_halt": True}
         return {"reply": reply, "outbound_analysis": outbound_analysis}
 
-    async def _guards(self, state: ReplyState) -> dict[str, Any]:
+    async def _reply_guards(self, state: EngineState) -> dict[str, Any]:
         """对应 503–526 + 572–578：no_reply/净化/不拆台/should_send;should_send False → 丢弃日志。"""
         message: ChannelMessage = state["message"]
         service_case_id = state.get("service_case_id")
         trigger_id = state.get("trigger_id")
         analysis = state.get("analysis")
-        service_case = state.get("service_case")
         reply = state.get("reply") or ""
 
         if reply and _reply_is_no_reply(reply):
@@ -921,6 +1170,15 @@ class ReplyGraph:
                 )
                 return {"_halt": True}
             async with engine_mod.SessionLocal() as session:
+                service_case = (
+                    await session.scalar(
+                        select_active_service_cases(
+                            ServiceCase.id == service_case_id
+                        )
+                    )
+                    if service_case_id
+                    else None
+                )
                 should_send = await self.engine._should_send_ai_reply(session, service_case, analysis, message)
 
         if not should_send:
@@ -930,7 +1188,7 @@ class ReplyGraph:
             )
         return {"reply": reply, "should_send": should_send}
 
-    async def _send(self, state: ReplyState) -> dict[str, Any]:
+    async def _reply_send(self, state: EngineState) -> dict[str, Any]:
         """对应 528–570：新消息/队列守卫 + record-first 发送。"""
         message: ChannelMessage = state["message"]
         service_case_id = state.get("service_case_id")
@@ -938,6 +1196,13 @@ class ReplyGraph:
         reply = state.get("reply")
         outbound_analysis = state.get("outbound_analysis")
 
+        if await self._outbound_exists_for_trigger(trigger_id):
+            logger.info(
+                "RanrenAI skip resumed AI reply because outbound already exists trigger_id=%s service_case_id=%s",
+                trigger_id,
+                service_case_id,
+            )
+            return {}
         if await self.engine._has_newer_inbound_message(service_case_id=service_case_id, trigger_id=trigger_id):
             logger.info(
                 "RanrenAI skip stale AI reply chat_id=%s trigger_id=%s service_case_id=%s",
@@ -978,36 +1243,117 @@ async def run_reply_with_ai(
     analysis: dict | None,
     trigger_id: int | None = None,
 ) -> None:
-    """_reply_with_ai 薄封装：构造 ReplyState 后跑 reply 子图。"""
-    state: ReplyState = {
+    """Direct reply-only entry using the same persisted EngineGraph."""
+    checkpointer = get_agent_checkpointer()
+    thread_id = _checkpoint_thread_id_for_message(
+        message,
+        workflow="reply",
+        fallback_suffix=f"trigger:{trigger_id or 0}",
+    )
+    state: EngineState = {
         "message": message,
+        "entry_mode": "reply_only",
+        "started_at": time.monotonic(),
         "service_case_id": service_case_id,
         "analysis": analysis,
         "trigger_id": trigger_id,
+        "checkpoint_thread_id": thread_id,
     }
-    await ReplyGraph(engine).run(state)
+    await EngineGraph(engine, checkpointer=checkpointer).run(
+        state,
+        run_config=checkpoint_config(thread_id) if checkpointer is not None else None,
+    )
 
 
 async def run_handle_message(engine: "RanrenAIEngine", message: ChannelMessage) -> None:
     """fresh 入口薄封装：构造初始 state 后跑图。"""
+    checkpointer = get_agent_checkpointer()
+    thread_id = _checkpoint_thread_id_for_message(message, workflow="reply")
     state: EngineState = {
         "message": message,
         "entry_mode": "fresh",
         "started_at": time.monotonic(),
+        "checkpoint_thread_id": thread_id,
         "should_send_questionnaire": (
             "发送本群入营问卷" in message.text or "发送本群专属问卷" in message.text
         ),
         "group_control_command": _group_bot_control_command(message),
         "explicit_bot_query_text": _explicit_bot_query_text(message),
     }
-    await EngineGraph(engine).run(state)
+    await EngineGraph(engine, checkpointer=checkpointer).run(
+        state,
+        run_config=checkpoint_config(thread_id) if checkpointer is not None else None,
+    )
 
 
 async def run_reprocess_message(engine: "RanrenAIEngine", db_message: Message) -> None:
     """reprocess 入口薄封装：构造初始 state 后跑图。"""
+    checkpointer = get_agent_checkpointer()
+    meta = (
+        db_message.analysis_json.get("_qiwe_meta", {})
+        if isinstance(db_message.analysis_json, dict)
+        else {}
+    )
+    fallback = _checkpoint_fallback_key(
+        user_id=str(meta.get("sender_id") or ""),
+        timestamp=int(meta.get("timestamp") or int(db_message.created_at.timestamp())),
+        message_type=db_message.message_type,
+        text=db_message.content,
+    )
+    thread_id = build_checkpoint_thread_id(
+        workflow="reply",
+        channel=engine.channel.name,
+        chat_id=db_message.group_id,
+        message_id=db_message.wecom_message_id,
+        fallback_key=fallback,
+    )
     state: EngineState = {
-        "db_message": db_message,
+        "db_message_id": db_message.id,
         "entry_mode": "reprocess",
         "started_at": time.monotonic(),
+        "checkpoint_thread_id": thread_id,
     }
-    await EngineGraph(engine).run(state)
+    await EngineGraph(engine, checkpointer=checkpointer).run(
+        state,
+        run_config=checkpoint_config(thread_id) if checkpointer is not None else None,
+    )
+
+
+def _checkpoint_thread_id_for_message(
+    message: ChannelMessage,
+    *,
+    workflow: str,
+    fallback_suffix: str = "",
+) -> str:
+    fallback = _checkpoint_fallback_key(
+        user_id=message.user_id or "",
+        timestamp=int(message.timestamp.timestamp()),
+        message_type=message.message_type,
+        text=message.text,
+    )
+    if fallback_suffix:
+        fallback = f"{fallback}\x1f{fallback_suffix}"
+    return build_checkpoint_thread_id(
+        workflow=workflow,
+        channel=message.channel,
+        chat_id=message.chat_id,
+        message_id=message.message_id,
+        fallback_key=fallback,
+    )
+
+
+def _checkpoint_fallback_key(
+    *,
+    user_id: str,
+    timestamp: int,
+    message_type: str,
+    text: str,
+) -> str:
+    return "\x1f".join(
+        (
+            user_id,
+            str(timestamp),
+            message_type,
+            text,
+        )
+    )

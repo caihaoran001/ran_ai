@@ -11,6 +11,10 @@ from app.api.router import api_router
 from app.core.config import configure_logging, get_settings
 from app.services.channels import set_current_channel
 from app.services.channels.qiwe import QiWeChannel
+from app.services.agent.checkpoint import (
+    start_agent_checkpoint_runtime,
+    stop_agent_checkpoint_runtime,
+)
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator
 from app.services.reminder_service import ReminderService
 
@@ -18,6 +22,9 @@ from app.services.reminder_service import ReminderService
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    # Checkpoint tables are created/upgraded by the controlled deployment step.
+    # Runtime startup only opens and validates the async psycopg pool.
+    await start_agent_checkpoint_runtime(settings)
     reminder_service = ReminderService(settings)
     qiwe_aggregator: QiWeMessageAggregator | None = None
     # 运营在后台切换的账号落库 app_settings，优先于 env；重启后据此恢复。
@@ -65,6 +72,7 @@ async def lifespan(app: FastAPI):
             await qiwe_aggregator.stop()
         if qiwe_should_start:
             set_current_channel(None)
+        await stop_agent_checkpoint_runtime()
         # Gracefully dispose database connection pool to avoid shutdown hangs
         from app.db.session import engine
         await engine.dispose()

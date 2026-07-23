@@ -122,7 +122,10 @@ def main():
             sys.exit(1)
     print("  ✅ Remote extraction and diagnostics clearing completed!")
 
-    # 6. Rebuild & reload containers on ECS.
+    # 6. Build the new images, initialize/upgrade LangGraph checkpoint tables
+    #    against the existing RDS, then reload containers. Running checkpoint
+    #    setup before `up -d` means a DDL/permission failure leaves the current
+    #    production containers untouched.
     #    生产 .env 与 docker-compose.prod.yml 不在本脚本覆盖范围（打包已排除，解压不覆盖），
     #    要改生产配置请单独运行 scratch/configure_remote_files.py。
     print("\n🚀 Step 6: Rebuilding and reloading containers on ECS (Measuring Downtime)...")
@@ -130,18 +133,29 @@ def main():
     # Start timer
     start_time = time.time()
     
-    # Run docker-compose command
-    cmd = "cd /root/ran_ai && docker compose -f docker-compose.prod.yml up -d --build"
-    print(f"  Running remote command: {cmd}")
-    stdin, stdout, stderr = client.exec_command(cmd)
-    
-    # Read exit status to ensure it ran successfully
-    exit_status = stdout.channel.recv_exit_status()
-    if exit_status != 0:
-        err = stderr.read().decode().strip()
-        print(f"  ❌ Docker Compose failed: {err}")
-        client.close()
-        sys.exit(1)
+    deploy_commands = [
+        (
+            "Docker Compose build",
+            "cd /root/ran_ai && docker compose -f docker-compose.prod.yml build",
+        ),
+        (
+            "LangGraph checkpoint setup",
+            "cd /root/ran_ai && docker compose -f docker-compose.prod.yml run --rm --no-deps backend uv run ran-ai-checkpoint-setup",
+        ),
+        (
+            "Docker Compose reload",
+            "cd /root/ran_ai && docker compose -f docker-compose.prod.yml up -d",
+        ),
+    ]
+    for label, cmd in deploy_commands:
+        print(f"  Running remote command ({label}): {cmd}")
+        stdin, stdout, stderr = client.exec_command(cmd)
+        exit_status = stdout.channel.recv_exit_status()
+        if exit_status != 0:
+            err = stderr.read().decode().strip()
+            print(f"  ❌ {label} failed: {err}")
+            client.close()
+            sys.exit(1)
     
     print("  ✅ Docker Compose reload completed.")
 
