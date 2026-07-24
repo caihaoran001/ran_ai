@@ -172,7 +172,7 @@ export function ChatMessages({
                 <div className="mt-2 space-y-2">
                   <ChatImage messageId={msg.id} alt={msg.content || "用户上传的图片"} />
                   {msg.content && msg.content !== "[图片]" && (
-                    <p className="text-xs text-slate-500 italic bg-slate-50/50 p-2 rounded border-l-2 border-slate-300">
+                    <p className="rounded border border-slate-200 bg-slate-50/50 p-2 text-xs italic text-slate-600">
                       AI描述: {msg.content}
                     </p>
                   )}
@@ -190,6 +190,24 @@ export function ChatMessages({
                 ) : (
                   <div className="mt-1 text-xs text-red-500">发送失败</div>
                 ))}
+              {msg.direction === "outbound" && msg.status === "pending" && (
+                <div className="mt-1 text-xs font-medium text-slate-600">
+                  等待发送
+                </div>
+              )}
+              {msg.direction === "outbound" && msg.status === "sending" && (
+                <div className="mt-1 text-xs font-medium text-cyan-800">
+                  正在发送
+                </div>
+              )}
+              {msg.direction === "outbound" && msg.status === "unknown" && (
+                <div
+                  className="mt-1 text-xs font-semibold text-amber-800"
+                  title={msg.error || "渠道请求已开始，但未取得可信发送结果"}
+                >
+                  发送结果待确认 · 未自动重发
+                </div>
+              )}
             </div>
           </div>
         ))}

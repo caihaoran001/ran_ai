@@ -28,6 +28,7 @@ from app.models.user import User
 from app.services.ai_service import AIService
 from app.services.agent import AgentDataUnavailableError, generate_agent_reply
 from app.services.channels.base import ChannelMessage, MessageChannel
+from app.services.channels.send_context import bind_send_request_started
 from app.services.ranren_ai.attachments import (
     InboundAttachmentProcessor,
     _IMAGE_PARSE_FAILED_PROMPT,
@@ -45,6 +46,12 @@ logger = logging.getLogger("uvicorn.error")
 
 AI_REPLY_MAX_CHARS = 1500
 URL_PATTERN = re.compile(r"https?://[^\s<>()\"']+")
+_OUTBOUND_REQUEST_STARTED_STATUSES = (
+    MessageStatus.SENDING,
+    MessageStatus.SENT,
+    MessageStatus.FAILED,
+    MessageStatus.UNKNOWN,
+)
 PLACEHOLDER_USER_NAME = "待识别用户"
 _PLACEHOLDER_USER_NAMES = frozenset({PLACEHOLDER_USER_NAME, "待填写问卷用户"})
 GROUP_AI_INTRODUCTION = (
@@ -289,7 +296,7 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 reply_context=message.raw_payload,
             )
 
-        # 3. record-first 发送并落库（先 SENDING、后回填），保证崩溃不重复@班主任
+        # 3. record-first：排队先记 PENDING，请求前切 SENDING，再回填终态。
         result = await self._send_and_record(
             message=message,
             service_case_id=service_case_id,
@@ -575,7 +582,7 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             return False
         return True
 
-    async def _create_outbound_sending(
+    async def _get_or_create_outbound_pending(
         self,
         *,
         message: ChannelMessage,
@@ -584,12 +591,44 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         trigger_id: int | None = None,
         analysis_json: dict | None = None,
     ) -> int:
-        """record-first：发送前先落一条 SENDING 出站记录，返回其 id。
-
-        这样即使进程恰好在「已调用渠道 API 发出、但还没回填结果」的瞬间崩溃，DB 里也已存在
-        一条挂了 trigger_id 的出站记录，开机 recover_stuck 会据此去重、不重复补发（宁可少发）。
-        """
+        """Persist a safe-to-retry PENDING row, reusing it after graph recovery."""
         async with SessionLocal() as session:
+            if trigger_id is not None:
+                pending_rows = list(
+                    await session.scalars(
+                        select(Message)
+                        .where(
+                            Message.direction == MessageDirection.OUTBOUND,
+                            Message.sender_type == MessageSenderType.BOT,
+                            Message.purpose == MessagePurpose.CHAT,
+                            Message.trigger_id == trigger_id,
+                            Message.status == MessageStatus.PENDING,
+                        )
+                        .order_by(Message.id.asc())
+                        .with_for_update()
+                    )
+                )
+                for pending in pending_rows:
+                    if (
+                        pending.group_id == message.chat_id
+                        and pending.content == content
+                    ):
+                        return pending.id
+                # A recovered graph can legitimately regenerate a different
+                # reply before any channel request started. Retire the obsolete
+                # PENDING rows; unlike SENDING/UNKNOWN they are known unsent.
+                for pending in pending_rows:
+                    pending.status = MessageStatus.FAILED
+                    pending.error = (
+                        "superseded before channel request by recovered workflow"
+                    )
+
+            now = datetime.now(timezone.utc)
+            outbound_analysis = dict(analysis_json or {})
+            outbound_analysis["_delivery"] = {
+                "state_machine": "agent_outbound_v1",
+                "queued_at": now.isoformat(),
+            }
             row = Message(
                 service_case_id=service_case_id,
                 group_id=message.chat_id,
@@ -599,10 +638,10 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 message_type="markdown",
                 content=content,
                 purpose=MessagePurpose.CHAT,
-                status=MessageStatus.SENDING,
+                status=MessageStatus.PENDING,
                 error=None,
                 trigger_id=trigger_id,
-                analysis_json=analysis_json,
+                analysis_json=outbound_analysis,
             )
             session.add(row)
             await session.flush()
@@ -610,24 +649,70 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             await session.commit()
             return outbound_id
 
+    async def _mark_outbound_sending(self, outbound_id: int) -> None:
+        """Commit SENDING immediately before the channel HTTP request starts."""
+        async with SessionLocal() as session:
+            row = await session.get(Message, outbound_id, with_for_update=True)
+            if row is None:
+                raise RuntimeError(f"outbound message {outbound_id} disappeared before send")
+            if row.status != MessageStatus.PENDING:
+                raise RuntimeError(
+                    f"outbound message {outbound_id} cannot start from {row.status.value}"
+                )
+            now = datetime.now(timezone.utc)
+            analysis = dict(row.analysis_json or {})
+            delivery = dict(analysis.get("_delivery") or {})
+            delivery["request_started_at"] = now.isoformat()
+            analysis["_delivery"] = delivery
+            row.analysis_json = analysis
+            row.status = MessageStatus.SENDING
+            row.error = None
+            await session.commit()
+
     async def _finalize_outbound(
         self,
         outbound_id: int,
         *,
         message_id: str | None,
-        success: bool,
+        status: MessageStatus,
         error: str | None,
+        delivery_uncertain: bool = False,
+        raw_response: Any = None,
     ) -> None:
-        """回填 SENDING 记录的最终结果：成功→SENT+sent_at，失败→FAILED。"""
+        """Finalize one durable outbound attempt without losing audit metadata."""
         async with SessionLocal() as session:
             row = await session.get(Message, outbound_id)
             if row is None:
                 return
+            now = datetime.now(timezone.utc)
+            analysis = dict(row.analysis_json or {})
+            delivery = dict(analysis.get("_delivery") or {})
+            delivery["completed_at"] = now.isoformat()
+            delivery["delivery_uncertain"] = delivery_uncertain
+            if isinstance(raw_response, dict):
+                payload = (
+                    raw_response.get("data")
+                    if isinstance(raw_response.get("data"), dict)
+                    else {}
+                )
+                receipt = {
+                    key: payload[key]
+                    for key in (
+                        "msgUniqueIdentifier",
+                        "msgServerId",
+                        "seq",
+                        "timestamp",
+                    )
+                    if payload.get(key) is not None
+                }
+                if receipt:
+                    delivery["provider_receipt"] = receipt
+            analysis["_delivery"] = delivery
+            row.analysis_json = analysis
             row.wecom_message_id = message_id
-            row.status = MessageStatus.SENT if success else MessageStatus.FAILED
-            row.error = None if success else error
-            if success:
-                row.sent_at = datetime.now(timezone.utc)
+            row.status = status
+            row.error = None if status == MessageStatus.SENT else error
+            row.sent_at = now if status == MessageStatus.SENT else None
             await session.commit()
 
     async def _send_and_record(
@@ -640,33 +725,59 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         trigger_id: int | None = None,
         analysis_json: dict | None = None,
     ) -> Any:
-        """record-first 出站发送：先落 SENDING 行 → 调 send() 真正发送 → 回填 SENT/FAILED。
+        """Durable send: PENDING -> SENDING at HTTP start -> terminal result.
 
-        send() 抛异常时也会把记录回填为 FAILED 再向上抛，保证不残留悬空 SENDING（崩溃场景除外，
-        由开机对账兜底）。返回 send() 的原始结果供调用方记日志。
+        PENDING is safe to resume after a restart because no channel request has
+        started. Once the request starts, a missing/untrustworthy response is
+        UNKNOWN and is never automatically resent.
         """
-        outbound_id = await self._create_outbound_sending(
+        outbound_id = await self._get_or_create_outbound_pending(
             message=message,
             service_case_id=service_case_id,
             content=content,
             trigger_id=trigger_id,
             analysis_json=analysis_json,
         )
+        request_started = False
+
+        async def mark_request_started() -> None:
+            nonlocal request_started
+            await self._mark_outbound_sending(outbound_id)
+            request_started = True
+
         try:
-            result = await send()
+            with bind_send_request_started(mark_request_started):
+                result = await send()
         except Exception as exc:
             await self._finalize_outbound(
                 outbound_id,
                 message_id=None,
-                success=False,
+                status=(
+                    MessageStatus.UNKNOWN
+                    if request_started
+                    else MessageStatus.FAILED
+                ),
                 error=f"send raised: {type(exc).__name__}: {exc}",
+                delivery_uncertain=request_started,
             )
             raise
+        success = bool(result and result.success)
+        delivery_uncertain = bool(
+            result and getattr(result, "delivery_uncertain", False)
+        )
+        if success:
+            status = MessageStatus.SENT
+        elif delivery_uncertain or (request_started and result is None):
+            status = MessageStatus.UNKNOWN
+        else:
+            status = MessageStatus.FAILED
         await self._finalize_outbound(
             outbound_id,
             message_id=(result.message_id if result else None),
-            success=bool(result and result.success),
+            status=status,
             error=(result.error if result else "send result was None"),
+            delivery_uncertain=(status == MessageStatus.UNKNOWN),
+            raw_response=(result.raw_response if result else None),
         )
         return result
 
@@ -1005,35 +1116,41 @@ def _chat_history_time_label(created_at: datetime | None) -> str:
 
 
 async def reconcile_interrupted_sends(startup_time: datetime) -> None:
-    """开机对账：把重启前残留的 SENDING(在途)出站记录标为 FAILED。
+    """Mark pre-startup SENDING attempts UNKNOWN without auto-resending.
 
-    正常发送在 record-first 落库后会立即回填 SENT/FAILED；进程重启后仍是 SENDING 的记录，
-    说明它在「已落库、但发送结果未回填」的瞬间被中断。按「宁可少发」策略：绝不自动重发
-    (避免可能已送达的消息重复刷屏)，只标记为 FAILED 让运营在后台可见、必要时手动补发。
-    这些记录仍带 trigger_id，故 recover_stuck_inbound_messages 也会据此判定「已回复」而不再补发。
+    A new process cannot know whether the old request reached QiWe. The first
+    version intentionally records this uncertainty and leaves history matching
+    for a later startup-only reconciler; content similarity is not safe proof.
+    PENDING is not touched because it means the HTTP request never started.
     """
-    from datetime import timedelta
-
-    cutoff = startup_time - timedelta(seconds=15)
     async with SessionLocal() as session:
         rows = list(
             await session.scalars(
                 select(Message).where(
                     Message.direction == MessageDirection.OUTBOUND,
                     Message.status == MessageStatus.SENDING,
-                    Message.created_at <= cutoff,
+                    Message.created_at <= startup_time,
                 )
             )
         )
         if not rows:
             return
         for row in rows:
-            row.status = MessageStatus.FAILED
+            row.status = MessageStatus.UNKNOWN
             if not row.error:
-                row.error = "interrupted during send by restart; not auto-resent (send-once policy)"
+                row.error = (
+                    "interrupted after channel request started; delivery unknown; "
+                    "startup history reconciliation deferred; not auto-resent"
+                )
+            analysis = dict(row.analysis_json or {})
+            delivery = dict(analysis.get("_delivery") or {})
+            delivery["reconciliation"] = "history_sync_deferred"
+            delivery["reconciled_at"] = datetime.now(timezone.utc).isoformat()
+            analysis["_delivery"] = delivery
+            row.analysis_json = analysis
         await session.commit()
         logger.info(
-            "reconcile_interrupted_sends: marked %d interrupted SENDING outbound messages as FAILED: %s",
+            "reconcile_interrupted_sends: marked %d interrupted SENDING outbound messages as UNKNOWN: %s",
             len(rows),
             [r.id for r in rows],
         )
@@ -1113,7 +1230,8 @@ async def mark_outbound_blocked_by_channel_id(channel_message_id: str, reason: s
     发送时渠道 API 会当场返回成功、消息记为 SENT；但账号被风控时，企微随后会异步回一条
     spam_block 通知（msgType=1011），说明这条其实没能进群。此处按通知携带的渠道消息 id
     (wecom_message_id) 回查那条已发记录，改为 FAILED 并写入风控原因，让后台如实反映「没送达」。
-    只降级 SENT/SENDING；已是 FAILED 等终态则视为已对账、不重复改写。返回是否命中一条记录。
+    只降级 SENT/SENDING/UNKNOWN；已是 FAILED 等终态则视为已对账、不重复改写。
+    返回是否命中一条记录。
     """
     channel_message_id = (channel_message_id or "").strip()
     if not channel_message_id:
@@ -1131,7 +1249,11 @@ async def mark_outbound_blocked_by_channel_id(channel_message_id: str, reason: s
                 channel_message_id,
             )
             return False
-        if row.status not in (MessageStatus.SENT, MessageStatus.SENDING):
+        if row.status not in (
+            MessageStatus.SENT,
+            MessageStatus.SENDING,
+            MessageStatus.UNKNOWN,
+        ):
             logger.info(
                 "mark_outbound_blocked_by_channel_id: outbound message id=%s already status=%s channel_message_id=%s",
                 row.id,
@@ -1353,12 +1475,14 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
             ):
                 continue
 
-            # Check if there is already any outbound reply (sent/pending/failed) for this message
+            # PENDING means the channel request definitely did not start, so it
+            # must be allowed to resume and be reused by _send_and_record.
             reply_exists = await session.scalar(
                 select(Message.id)
                 .where(
                     Message.direction == MessageDirection.OUTBOUND,
                     Message.trigger_id == inbound.id,
+                    Message.status.in_(_OUTBOUND_REQUEST_STARTED_STATUSES),
                 )
                 .limit(1)
             )

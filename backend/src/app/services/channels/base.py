@@ -26,6 +26,9 @@ class ChannelSendResult:
     error: str | None = None
     raw_response: Any = None
     retryable: bool = False
+    # True means the request may have reached the channel, but no trustworthy
+    # response was received (timeout/connection reset/invalid response).
+    delivery_uncertain: bool = False
 
 
 class MessageChannel(Protocol):
@@ -61,4 +64,3 @@ class MessageChannel(Protocol):
         reply_context: Any = None,
     ) -> ChannelSendResult:
         ...
-

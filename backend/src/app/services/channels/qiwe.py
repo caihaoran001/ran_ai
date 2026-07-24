@@ -11,6 +11,7 @@ import httpx
 
 from app.core.config import Settings, get_settings
 from app.services.channels.base import ChannelSendResult
+from app.services.channels.send_context import notify_send_request_started
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -289,6 +290,10 @@ class QiWeChannel:
         return bool(self.token and self.guid)
 
     async def _execute_post_json(self, path: str, payload: dict[str, Any]) -> ChannelSendResult:
+        # For outbound message sends, the engine binds a task-local hook that
+        # moves the durable row PENDING -> SENDING here: after queue/rate-limit
+        # waiting, immediately before the external HTTP request.
+        await notify_send_request_started()
         try:
             async with self._client_context() as client:
                 response = await client.post(
@@ -302,7 +307,12 @@ class QiWeChannel:
                 response.raise_for_status()
                 data = response.json()
         except Exception as exc:
-            return ChannelSendResult(success=False, error=str(exc), retryable=True)
+            return ChannelSendResult(
+                success=False,
+                error=str(exc),
+                retryable=True,
+                delivery_uncertain=True,
+            )
         return _qiwe_result(data)
 
     async def _post_json(self, path: str, payload: dict[str, Any], *, rate_limit: bool = True) -> ChannelSendResult:

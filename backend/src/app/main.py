@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
         )
         from app.services.qiwe_service.inbox import replay_pending_inbound_events
         startup_time = datetime.now(timezone.utc)
-        # 先把重启前残留的「在途(SENDING)」出站记录对账为 FAILED（宁可少发、不自动重发）。
+        # 旧进程残留的 SENDING 无法确认是否送达，先记 UNKNOWN，绝不自动重发。
         await reconcile_interrupted_sends(startup_time)
         await reconcile_group_introduction_state()
 

@@ -51,6 +51,7 @@ from app.services.ranren_ai.engine import (
     _explicit_bot_query_text,
     _group_bot_control_command,
     _message_already_processed_or_claimed,
+    _OUTBOUND_REQUEST_STARTED_STATUSES,
     _REPLY_STATUS_COMPLETED,
     _REPLY_STATUS_PROCESSING,
     _REPLY_STATUS_RETRYABLE_FAILURE,
@@ -224,6 +225,7 @@ class EngineGraph:
                 .where(
                     Message.direction == MessageDirection.OUTBOUND,
                     Message.trigger_id == trigger_id,
+                    Message.status.in_(_OUTBOUND_REQUEST_STARTED_STATUSES),
                 )
                 .limit(1)
             )
@@ -528,6 +530,7 @@ class EngineGraph:
             .where(
                 Message.direction == MessageDirection.OUTBOUND,
                 Message.trigger_id == inbound.id,
+                Message.status.in_(_OUTBOUND_REQUEST_STARTED_STATUSES),
             )
             .limit(1)
         )
@@ -783,6 +786,7 @@ class EngineGraph:
                 select(Message.id).where(
                     Message.direction == MessageDirection.OUTBOUND,
                     Message.trigger_id == inbound_id,
+                    Message.status.in_(_OUTBOUND_REQUEST_STARTED_STATUSES),
                 ).limit(1)
             )
             if reply_exists:

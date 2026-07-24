@@ -37,12 +37,14 @@ class MessagePurpose(str, enum.Enum):
 class MessageStatus(str, enum.Enum):
     RECEIVED = "received"
     PENDING = "pending"
-    # SENDING：出站消息已落库、正在/即将调用渠道 API 发送的「在途」态。
-    # 先落 SENDING 再发（record-first），任何「已发出但未回填结果」瞬间的崩溃都会留下这条记录，
-    # 使开机 recover_stuck 依 trigger_id 去重、不重复发送；残留的 SENDING 由开机对账标为 FAILED。
+    # SENDING：已经开始调用渠道 API、但尚未拿到可信结果的「在途」态。
+    # 等发送锁/限流时保持 PENDING；仅在真正 HTTP 请求前切换到 SENDING。
     SENDING = "sending"
     SENT = "sent"
     FAILED = "failed"
+    # 请求可能已经被渠道接收，但进程没有拿到可信结果。UNKNOWN 绝不能自动重发，
+    # 否则可能在群里产生重复消息；后续只能通过渠道历史记录或人工确认来对账。
+    UNKNOWN = "unknown"
 
 
 class Message(TimestampMixin, Base):

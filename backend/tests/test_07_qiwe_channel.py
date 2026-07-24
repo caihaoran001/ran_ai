@@ -112,6 +112,40 @@ async def test_qiwe_send_text_uses_to_id():
 
 
 @pytest.mark.asyncio
+async def test_qiwe_request_start_hook_runs_after_rate_wait_before_http(monkeypatch):
+    import time
+
+    from app.services.channels import qiwe as qiwe_module
+    from app.services.channels.send_context import bind_send_request_started
+
+    events: list[str] = []
+
+    class OrderedClient(FakeClient):
+        async def post(self, url, **kwargs):
+            events.append("post")
+            return await super().post(url, **kwargs)
+
+    async def fake_sleep(_seconds):
+        events.append("sleep")
+
+    monkeypatch.setattr(qiwe_module.asyncio, "sleep", fake_sleep)
+    client = OrderedClient([
+        {"code": 0, "msg": "成功", "data": {"msgUniqueIdentifier": "msg-hook"}}
+    ])
+    channel = QiWeChannel(_settings(), http_client=client)
+    channel._last_send_time = time.monotonic()
+
+    async def on_request_start():
+        events.append("hook")
+
+    with bind_send_request_started(on_request_start):
+        result = await channel.send_text("room-hook", "hello")
+
+    assert result.success is True
+    assert events == ["sleep", "hook", "post"]
+
+
+@pytest.mark.asyncio
 async def test_qiwe_send_text_builds_reply_payload_from_context():
     client = FakeClient([
         {"code": 0, "msg": "成功", "data": {"msgUniqueIdentifier": "msg-1"}}
@@ -1636,6 +1670,34 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         created_at=now - timedelta(minutes=1),
     )
     db_session.add(msg_l)
+
+    # Scenario M: PENDING 出站只代表排队中、尚未请求渠道，必须恢复。
+    case_m = ServiceCase(
+        user_id=user.id, case_no="CASE-M", status=ServiceCaseStatus.IN_SERVICE,
+        ai_auto_reply_enabled=True, group_id="group-m", questionnaire_token="token-m",
+        ai_introduced_at=now - timedelta(days=1),
+    )
+    db_session.add(case_m)
+    await db_session.flush()
+    msg_m = Message(
+        service_case_id=case_m.id, group_id="group-m", wecom_message_id="msg-m",
+        content="排队时被部署中断。", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={"_qiwe_meta": {}},
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_m)
+    await db_session.flush()
+    pending_m = Message(
+        service_case_id=case_m.id, group_id="group-m", wecom_message_id=None,
+        content="尚未开始发送的回复", message_type="markdown",
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.PENDING,
+        trigger_id=msg_m.id,
+        created_at=now - timedelta(seconds=30),
+    )
+    db_session.add(pending_m)
     
     await db_session.flush()
     
@@ -1653,6 +1715,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         msg_g.id,
         msg_i.id,
         msg_j.id,
+        msg_m.id,
     }
     assert {item.content for item in reprocess_calls} == {
         "我需要补发这个回复。",
@@ -1661,12 +1724,13 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         "@燃人AI 继续服务",
         "[图片]",
         "@燃人AI 看下这个用户",
+        "排队时被部署中断。",
     }
 
 
 @pytest.mark.asyncio
 async def test_send_and_record_is_record_first(db_session):
-    """Fix③：出站发送前先落 SENDING 行(record-first)，发送成功后回填 SENT + sent_at。"""
+    """排队先落 PENDING，渠道请求前切 SENDING，成功后回填 SENT。"""
     from sqlalchemy import select
     from app.models.service_case import ServiceCase, ServiceCaseStatus
     from app.models.message import (
@@ -1677,6 +1741,7 @@ async def test_send_and_record_is_record_first(db_session):
         MessageStatus,
     )
     from app.models.user import User
+    from app.services.channels.send_context import notify_send_request_started
 
     user = User(name="record-first用户")
     db_session.add(user)
@@ -1706,14 +1771,17 @@ async def test_send_and_record_is_record_first(db_session):
     seen = {}
 
     async def _send():
-        # 发送这一刻，DB 里应已存在一条 SENDING 出站记录（record-first 的核心）
+        # 进入渠道发送函数时仍只是排队，尚未开始 HTTP 请求。
         row = await db_session.scalar(
             select(Message).where(
                 Message.direction == MessageDirection.OUTBOUND,
                 Message.trigger_id == inbound.id,
             )
         )
-        seen["status"] = row.status if row else None
+        seen["before_request"] = row.status if row else None
+        await notify_send_request_started()
+        await db_session.refresh(row)
+        seen["at_request"] = row.status if row else None
         return ChannelSendResult(success=True, message_id="sent-rf")
 
     result = await engine._send_and_record(
@@ -1722,7 +1790,8 @@ async def test_send_and_record_is_record_first(db_session):
     )
 
     assert result.success is True
-    assert seen["status"] == MessageStatus.SENDING
+    assert seen["before_request"] == MessageStatus.PENDING
+    assert seen["at_request"] == MessageStatus.SENDING
     row = await db_session.scalar(
         select(Message).where(
             Message.direction == MessageDirection.OUTBOUND,
@@ -1732,6 +1801,107 @@ async def test_send_and_record_is_record_first(db_session):
     assert row.status == MessageStatus.SENT
     assert row.sent_at is not None
     assert row.wecom_message_id == "sent-rf"
+
+
+@pytest.mark.asyncio
+async def test_send_and_record_reuses_pending_after_recovery(db_session):
+    from sqlalchemy import func, select
+
+    from app.models.message import (
+        Message,
+        MessageDirection,
+        MessagePurpose,
+        MessageSenderType,
+        MessageStatus,
+    )
+    from app.services.channels.send_context import notify_send_request_started
+
+    inbound = Message(
+        group_id="group-reuse", wecom_message_id="in-reuse",
+        content="问题", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+    )
+    db_session.add(inbound)
+    await db_session.flush()
+    pending = Message(
+        group_id="group-reuse", wecom_message_id=None,
+        content="恢复后的同一回复", message_type="markdown",
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.PENDING,
+        trigger_id=inbound.id,
+        analysis_json={"_delivery": {"state_machine": "agent_outbound_v1"}},
+    )
+    db_session.add(pending)
+    await db_session.flush()
+    pending_id = pending.id
+
+    async def _send():
+        await notify_send_request_started()
+        return ChannelSendResult(success=True, message_id="sent-reuse")
+
+    engine = RanrenAIEngine(FakeChannel())
+    result = await engine._send_and_record(
+        message=ChannelMessage(
+            channel="qiwe", chat_id="group-reuse", chat_type="group",
+            text="问题", message_id="in-reuse",
+        ),
+        service_case_id=None,
+        content="恢复后的同一回复",
+        trigger_id=inbound.id,
+        send=_send,
+    )
+
+    assert result.success is True
+    assert await db_session.scalar(
+        select(func.count(Message.id)).where(
+            Message.direction == MessageDirection.OUTBOUND,
+            Message.trigger_id == inbound.id,
+        )
+    ) == 1
+    await db_session.refresh(pending)
+    assert pending.id == pending_id
+    assert pending.status == MessageStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_send_and_record_marks_uncertain_transport_result_unknown(db_session):
+    from sqlalchemy import select
+
+    from app.models.message import Message, MessageDirection, MessageStatus
+    from app.services.channels.send_context import notify_send_request_started
+
+    async def _send():
+        await notify_send_request_started()
+        return ChannelSendResult(
+            success=False,
+            error="read timeout",
+            retryable=True,
+            delivery_uncertain=True,
+        )
+
+    engine = RanrenAIEngine(FakeChannel())
+    result = await engine._send_and_record(
+        message=ChannelMessage(
+            channel="qiwe", chat_id="group-unknown", chat_type="group",
+            text="问题", message_id="in-unknown",
+        ),
+        service_case_id=None,
+        content="结果不确定的回复",
+        send=_send,
+    )
+
+    assert result.success is False
+    row = await db_session.scalar(
+        select(Message).where(
+            Message.direction == MessageDirection.OUTBOUND,
+            Message.group_id == "group-unknown",
+        )
+    )
+    assert row.status == MessageStatus.UNKNOWN
+    assert row.error == "read timeout"
+    assert row.sent_at is None
+    assert row.analysis_json["_delivery"]["delivery_uncertain"] is True
 
 
 @pytest.mark.asyncio
@@ -1790,8 +1960,8 @@ async def test_interrupted_send_not_duplicated_by_recovery(db_session, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_reconcile_interrupted_sends_marks_failed(db_session):
-    """Fix③：开机对账把重启前残留的 SENDING 标为 FAILED(不自动重发)；新起的 SENDING 不动。"""
+async def test_reconcile_interrupted_sends_marks_unknown(db_session):
+    """启动把旧进程残留 SENDING 标 UNKNOWN；启动后新建的行不动。"""
     from datetime import timedelta
     from app.services.ranren_ai.engine import reconcile_interrupted_sends
     from app.models.message import (
@@ -1802,28 +1972,29 @@ async def test_reconcile_interrupted_sends_marks_failed(db_session):
         MessageStatus,
     )
 
-    now = datetime.now(timezone.utc)
+    startup_time = datetime.now(timezone.utc)
     old = Message(
         group_id="group-rec", content="旧的在途", message_type="markdown",
         direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
         purpose=MessagePurpose.CHAT, status=MessageStatus.SENDING,
-        created_at=now - timedelta(minutes=1),
+        created_at=startup_time - timedelta(minutes=1),
     )
     fresh = Message(
         group_id="group-rec", content="刚起的在途", message_type="markdown",
         direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
         purpose=MessagePurpose.CHAT, status=MessageStatus.SENDING,
-        created_at=now,  # 晚于 cutoff(now-15s) → 不动
+        created_at=startup_time + timedelta(seconds=1),
     )
     db_session.add_all([old, fresh])
     await db_session.flush()
 
-    await reconcile_interrupted_sends(now)
+    await reconcile_interrupted_sends(startup_time)
 
     await db_session.refresh(old)
     await db_session.refresh(fresh)
-    assert old.status == MessageStatus.FAILED
+    assert old.status == MessageStatus.UNKNOWN
     assert old.error and "interrupted" in old.error
+    assert old.analysis_json["_delivery"]["reconciliation"] == "history_sync_deferred"
     assert fresh.status == MessageStatus.SENDING
 
 
