@@ -453,13 +453,12 @@ async def test_agent_data_unavailable_records_safe_reply(
     )
     assert msg is not None
     # 数据查不到时除固定安全标记外，还结构化留痕信息缺口(第2点)：type + 触发本轮的用户原问作 topic。
-    assert msg.analysis_json == {
-        "agent": {
-            "enabled": True,
-            "data_unavailable": True,
-            "info_gap": {"type": "data_unavailable", "query": "用户：我现在第几天？"},
-        }
+    assert msg.analysis_json["agent"] == {
+        "enabled": True,
+        "data_unavailable": True,
+        "info_gap": {"type": "data_unavailable", "query": "用户：我现在第几天？"},
     }
+    assert msg.analysis_json["_delivery"]["state_machine"] == "agent_outbound_v1"
 
 
 @pytest.mark.asyncio

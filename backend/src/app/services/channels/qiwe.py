@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import logging
 from pathlib import Path
 import random
@@ -14,6 +15,13 @@ from app.services.channels.base import ChannelSendResult
 from app.services.channels.send_context import notify_send_request_started
 
 logger = logging.getLogger("uvicorn.error")
+
+
+@dataclass(frozen=True, slots=True)
+class QiWeHistoryPage:
+    items: list[dict[str, Any]]
+    has_more: bool
+    travel_sync_key: int | str | None
 
 
 class QiWeChannel:
@@ -130,6 +138,47 @@ class QiWeChannel:
             data = res.raw_response.get("data")
             return data if isinstance(data, dict) else None
         return None
+
+    async def sync_message_history(
+        self,
+        *,
+        after_seq: int,
+        limit: int = 50,
+    ) -> QiWeHistoryPage:
+        """Read one bounded page of archived QiWe messages after ``after_seq``.
+
+        This is a public channel-adapter operation for startup reconciliation.
+        Callers deliberately own pagination policy; the current recovery flow
+        always requests one page capped at 50 records.
+        """
+        if after_seq < 0:
+            raise ValueError("after_seq must be non-negative")
+        if limit < 1 or limit > 50:
+            raise ValueError("limit must be between 1 and 50")
+        payload = {
+            "method": "/msg/syncMsg",
+            "params": {
+                "guid": self.guid,
+                "msgSeq": after_seq,
+                "limit": limit,
+            },
+        }
+        result = await self._post_json(
+            "/api/qw/doApi",
+            payload,
+            rate_limit=False,
+        )
+        if not result.success:
+            raise RuntimeError(result.error or "QiWe history sync failed")
+        raw = result.raw_response if isinstance(result.raw_response, dict) else {}
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+        raw_items = data.get("syncMsgList")
+        items = [item for item in (raw_items or []) if isinstance(item, dict)]
+        return QiWeHistoryPage(
+            items=items,
+            has_more=bool(data.get("hasMore")),
+            travel_sync_key=data.get("travelSyncKey"),
+        )
 
     async def get_self_nickname(self) -> str:
         """取机器人账号自身在群里显示的昵称（带进程内缓存）。

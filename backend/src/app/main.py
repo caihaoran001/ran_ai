@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-import uvicorn
-import secrets
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+import logging
+import secrets
+
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +32,9 @@ from app.services.ranren_ai.engine_graph import (
 from app.services.reminder_service import ReminderService
 
 
+logger = logging.getLogger("uvicorn.error")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -41,7 +48,9 @@ async def lifespan(app: FastAPI):
     start_agent_graph_runtime()
     start_engine_graph_runtime(checkpointer)
     reminder_service = ReminderService(settings)
+    channel: QiWeChannel | None = None
     qiwe_aggregator: QiWeMessageAggregator | None = None
+    frozen_outbound_ids: list[int] = []
     # 运营在后台切换的账号落库 app_settings，优先于 env；重启后据此恢复。
     from app.db.session import SessionLocal
     from app.services.qiwe_account_settings import get_qiwe_account
@@ -60,22 +69,29 @@ async def lifespan(app: FastAPI):
             channel,
             window_seconds=settings.qiwei_batch_window_seconds,
         )
+        from app.services.ranren_ai.engine import (
+            reconcile_group_introduction_state,
+            reconcile_interrupted_sends,
+        )
+
+        startup_time = datetime.now(timezone.utc)
+        # 在任何会发送消息的后台服务启动、以及 FastAPI 对外 ready 之前冻结恢复批次。
+        # 后续历史对账只接收这份固定 id 清单，不可能扫到恢复后新产生的 SENDING。
+        frozen_outbound_ids = await reconcile_interrupted_sends(startup_time)
+        await reconcile_group_introduction_state()
+
     await reminder_service.start()
     app.state.reminder_service = reminder_service
     app.state.qiwe_aggregator = qiwe_aggregator
     if qiwe_should_start and channel:
-        import asyncio
-        from datetime import datetime, timezone
         from app.services.ranren_ai.engine import (
             reconcile_group_introduction_state,
-            reconcile_interrupted_sends,
             recover_stuck_inbound_messages,
         )
+        from app.services.qiwe_service.outbound_reconciliation import (
+            reconcile_frozen_unknown_sends,
+        )
         from app.services.qiwe_service.inbox import replay_pending_inbound_events
-        startup_time = datetime.now(timezone.utc)
-        # 旧进程残留的 SENDING 无法确认是否送达，先记 UNKNOWN，绝不自动重发。
-        await reconcile_interrupted_sends(startup_time)
-        await reconcile_group_introduction_state()
 
         async def _recover_qiwe_messages() -> None:
             # 顺序执行：先让业务 Message 使用原 thread_id 恢复（此时 inbox raw_payload
@@ -83,7 +99,29 @@ async def lifespan(app: FastAPI):
             await recover_stuck_inbound_messages(channel, startup_time)
             await replay_pending_inbound_events(channel, startup_time)
 
-        asyncio.create_task(_recover_qiwe_messages())
+        async def _reconcile_qiwe_outbound() -> None:
+            try:
+                await reconcile_frozen_unknown_sends(
+                    channel,
+                    frozen_outbound_ids,
+                )
+                # 若确认的是首次引荐消息，随即补齐服务单闸门，避免下次员工 @ 时重复介绍。
+                await reconcile_group_introduction_state()
+            except Exception:
+                logger.exception(
+                    "QiWe startup outbound reconciliation failed frozen_ids=%s",
+                    frozen_outbound_ids,
+                )
+
+        asyncio.create_task(
+            _recover_qiwe_messages(),
+            name="qiwe-inbound-startup-recovery",
+        )
+        if frozen_outbound_ids:
+            asyncio.create_task(
+                _reconcile_qiwe_outbound(),
+                name="qiwe-outbound-startup-reconciliation",
+            )
     try:
         yield
     finally:

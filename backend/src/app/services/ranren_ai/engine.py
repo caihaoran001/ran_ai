@@ -6,7 +6,7 @@ import logging
 import re
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
@@ -1115,45 +1115,78 @@ def _chat_history_time_label(created_at: datetime | None) -> str:
     return f"{prefix} {local_time:%H:%M}"
 
 
-async def reconcile_interrupted_sends(startup_time: datetime) -> None:
-    """Mark pre-startup SENDING attempts UNKNOWN without auto-resending.
+async def reconcile_interrupted_sends(startup_time: datetime) -> list[int]:
+    """Freeze a startup recovery batch and mark old SENDING attempts UNKNOWN.
 
     A new process cannot know whether the old request reached QiWe. The first
-    version intentionally records this uncertainty and leaves history matching
-    for a later startup-only reconciler; content similarity is not safe proof.
-    PENDING is not touched because it means the HTTP request never started.
+    synchronous startup phase snapshots recent pre-startup SENDING/UNKNOWN ids.
+    The later history task receives only this immutable id list, so messages
+    created or moved to SENDING after the app becomes ready can never be swept
+    into the running recovery job. PENDING is not touched because it means the
+    HTTP request never started.
     """
+    recent_cutoff = startup_time - timedelta(minutes=5)
     async with SessionLocal() as session:
-        rows = list(
+        sending_rows = list(
             await session.scalars(
                 select(Message).where(
                     Message.direction == MessageDirection.OUTBOUND,
                     Message.status == MessageStatus.SENDING,
                     Message.created_at <= startup_time,
+                    Message.updated_at <= startup_time,
                 )
             )
         )
-        if not rows:
-            return
-        for row in rows:
+        recent_unknown_ids = list(
+            await session.scalars(
+                select(Message.id).where(
+                    Message.direction == MessageDirection.OUTBOUND,
+                    Message.status == MessageStatus.UNKNOWN,
+                    Message.created_at >= recent_cutoff,
+                    Message.created_at <= startup_time,
+                    Message.updated_at <= startup_time,
+                )
+            )
+        )
+        frozen_ids = {
+            row.id
+            for row in sending_rows
+            if row.created_at >= recent_cutoff
+        }
+        frozen_ids.update(recent_unknown_ids)
+        frozen_at = datetime.now(timezone.utc).isoformat()
+        for row in sending_rows:
             row.status = MessageStatus.UNKNOWN
             if not row.error:
                 row.error = (
                     "interrupted after channel request started; delivery unknown; "
-                    "startup history reconciliation deferred; not auto-resent"
+                    "frozen for startup history reconciliation; not auto-resent"
                 )
             analysis = dict(row.analysis_json or {})
             delivery = dict(analysis.get("_delivery") or {})
-            delivery["reconciliation"] = "history_sync_deferred"
-            delivery["reconciled_at"] = datetime.now(timezone.utc).isoformat()
+            delivery["reconciliation"] = (
+                "history_sync_pending"
+                if row.id in frozen_ids
+                else "history_sync_outside_window"
+            )
+            delivery["recovery_frozen_at"] = frozen_at
             analysis["_delivery"] = delivery
             row.analysis_json = analysis
-        await session.commit()
-        logger.info(
-            "reconcile_interrupted_sends: marked %d interrupted SENDING outbound messages as UNKNOWN: %s",
-            len(rows),
-            [r.id for r in rows],
-        )
+        if sending_rows:
+            await session.commit()
+            logger.info(
+                "reconcile_interrupted_sends: marked %d interrupted SENDING outbound messages as UNKNOWN: %s",
+                len(sending_rows),
+                [r.id for r in sending_rows],
+            )
+        frozen = sorted(frozen_ids)
+        if frozen:
+            logger.info(
+                "reconcile_interrupted_sends: froze %d recent outbound ids for one-shot history reconciliation: %s",
+                len(frozen),
+                frozen,
+            )
+        return frozen
 
 
 async def reconcile_group_introduction_state(

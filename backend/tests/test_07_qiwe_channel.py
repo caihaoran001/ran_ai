@@ -112,6 +112,47 @@ async def test_qiwe_send_text_uses_to_id():
 
 
 @pytest.mark.asyncio
+async def test_qiwe_sync_message_history_reads_one_bounded_page():
+    client = FakeClient([
+        {
+            "code": 0,
+            "msg": "成功",
+            "data": {
+                "hasMore": 1,
+                "travelSyncKey": 8817498,
+                "syncMsgList": [
+                    {
+                        "fromRoomId": "room-1",
+                        "senderId": "bot-1",
+                        "msgData": {"content": "hello"},
+                        "msgUniqueIdentifier": "history-1",
+                        "seq": 8817498,
+                        "timestamp": 1784876888,
+                    }
+                ],
+            },
+        }
+    ])
+    channel = QiWeChannel(_settings(), http_client=client)
+
+    page = await channel.sync_message_history(after_seq=8817497, limit=50)
+
+    assert len(page.items) == 1
+    assert page.items[0]["msgUniqueIdentifier"] == "history-1"
+    assert page.has_more is True
+    assert page.travel_sync_key == 8817498
+    _, kwargs = client.calls[0]
+    assert kwargs["json"] == {
+        "method": "/msg/syncMsg",
+        "params": {
+            "guid": "guid",
+            "msgSeq": 8817497,
+            "limit": 50,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_qiwe_request_start_hook_runs_after_rate_wait_before_http(monkeypatch):
     import time
 
@@ -1782,7 +1823,19 @@ async def test_send_and_record_is_record_first(db_session):
         await notify_send_request_started()
         await db_session.refresh(row)
         seen["at_request"] = row.status if row else None
-        return ChannelSendResult(success=True, message_id="sent-rf")
+        return ChannelSendResult(
+            success=True,
+            message_id="sent-rf",
+            raw_response={
+                "code": 0,
+                "data": {
+                    "msgUniqueIdentifier": "sent-rf",
+                    "msgServerId": 1234,
+                    "seq": 8817000,
+                    "timestamp": 1784876800,
+                },
+            },
+        )
 
     result = await engine._send_and_record(
         message=channel_msg, service_case_id=case.id, content="回复内容",
@@ -1801,6 +1854,12 @@ async def test_send_and_record_is_record_first(db_session):
     assert row.status == MessageStatus.SENT
     assert row.sent_at is not None
     assert row.wecom_message_id == "sent-rf"
+    assert row.analysis_json["_delivery"]["provider_receipt"] == {
+        "msgUniqueIdentifier": "sent-rf",
+        "msgServerId": 1234,
+        "seq": 8817000,
+        "timestamp": 1784876800,
+    }
 
 
 @pytest.mark.asyncio
@@ -1988,14 +2047,15 @@ async def test_reconcile_interrupted_sends_marks_unknown(db_session):
     db_session.add_all([old, fresh])
     await db_session.flush()
 
-    await reconcile_interrupted_sends(startup_time)
+    frozen_ids = await reconcile_interrupted_sends(startup_time)
 
     await db_session.refresh(old)
     await db_session.refresh(fresh)
     assert old.status == MessageStatus.UNKNOWN
     assert old.error and "interrupted" in old.error
-    assert old.analysis_json["_delivery"]["reconciliation"] == "history_sync_deferred"
+    assert old.analysis_json["_delivery"]["reconciliation"] == "history_sync_pending"
     assert fresh.status == MessageStatus.SENDING
+    assert frozen_ids == [old.id]
 
 
 @pytest.mark.asyncio
