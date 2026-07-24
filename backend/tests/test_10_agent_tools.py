@@ -11,6 +11,7 @@ from docx import Document
 from sqlalchemy import select
 
 from app.core.config import get_settings
+from app.models.archivist_case_memory import ArchivistCaseMemory
 from app.models.checkin import Checkin
 from app.models.checkin_followup_preference import CheckinFollowupPreference
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
@@ -27,6 +28,7 @@ from app.services.agent.tools.followup_preference_tools import build_followup_pr
 from app.services.agent.tools.web_search_tools import _normalize_current_query_year, build_web_search_tools
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_enabled
+from app.services.intervention_service import normalize_insight
 from app.services.profile_memory_service import load_profile_memory_context
 from app.services.ranren_ai.engine import RanrenAIEngine
 
@@ -952,6 +954,60 @@ async def test_agent_memory_context_respects_selected_scopes(db_session):
     assert "咖啡因敏感" in product_memory
     assert "工作日晚间经常加班" in product_memory
     assert "喜欢潮玩和动漫" not in product_memory
+
+
+@pytest.mark.asyncio
+async def test_case_summary_survives_intervention_normalization_into_agent_prompt(db_session):
+    service_case = await _case(db_session)
+    db_session.add(
+        UserProfile(
+            service_case_id=service_case.id,
+            profile_json={"summary": "稳定画像不应出现在本轮提示词。"},
+            summary="稳定画像不应出现在本轮提示词。",
+            generated_by_model="test",
+        )
+    )
+    db_session.add(
+        ArchivistCaseMemory(
+            service_case_id=service_case.id,
+            summary="第一周午后容易饿，午餐增加蛋白质后有所改善。",
+        )
+    )
+    await db_session.flush()
+
+    analysis = normalize_insight(
+        {
+            "requires_human_intervention": False,
+            "risk_flags": [],
+            "intervention_reasons": [],
+            "agent_context_plan": {
+                "message_scene": "body_feedback",
+                "memory_scopes": ["case_summary", "unknown_scope"],
+                "tool_hints": [],
+                "reason": "当前反馈需要结合此前尝试判断。",
+            },
+        },
+        source="chat_message",
+        content="这两天下午又容易饿了",
+    )
+    assert analysis["agent_context_plan"]["memory_scopes"] == ["case_summary"]
+
+    model = FakeToolCallingModel([AIMessage(content="先看看最近午餐的蛋白质和总量有没有减少。")])
+    result = await RanrenAgentGraph(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=123,
+            agent_context_plan=analysis["agent_context_plan"],
+        ),
+        settings=get_settings(),
+        chat_model=model,
+    ).run(user_query="这两天下午又容易饿了", recent_messages=[])
+
+    assert result.reply == "先看看最近午餐的蛋白质和总量有没有减少。"
+    final_user_prompt = model.calls[0][1].content
+    assert "【隐性用户背景】" in final_user_prompt
+    assert "历程小结：第一周午后容易饿，午餐增加蛋白质后有所改善。" in final_user_prompt
+    assert "稳定画像不应出现在本轮提示词" not in final_user_prompt
 
 
 @pytest.mark.asyncio

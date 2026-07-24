@@ -603,6 +603,8 @@ class AIService:
                 "仅当当前消息本身明确出现新的急性体感、用药问题、诊疗请求，或针对自身孕期/疾病的具体医学咨询时，才按等级标记并转人工。"
                 "\n7. agent_context_plan 只负责建议后续 Agent 应该带哪些用户背景，不控制 Agent 调用工具。"
                 "饮食建议和身体反馈至少选择 preferences，需要作息、饮食模式或运动习惯时再选 habits/current_state/warnings；"
+                "用户复盘服务历程、评价整体进展、延续此前做法，或当前建议必须知道之前尝试和阶段转折时选择 case_summary；"
+                "简单产品规则、实时数据查询和无关兴趣闲聊不要选择 case_summary；"
                 "产品规则问题优先选择 current_state/habits/warnings；查服务天数、体重、打卡等实时数据可少带或不带背景，tool_hints 给 service_case_data；"
                 "兴趣闲聊、潮玩、影视、游戏只选择 preferences，不要选择体重、饮食、产品、风险背景；"
                 "用户纠正上一轮或说半句话时用 correction，并优先 preferences。"

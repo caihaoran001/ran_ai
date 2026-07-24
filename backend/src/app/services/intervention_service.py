@@ -57,6 +57,7 @@ VALID_AGENT_MESSAGE_SCENES = frozenset({
 
 VALID_AGENT_MEMORY_SCOPES = frozenset({
     "stable_facts",
+    "case_summary",
     "preferences",
     "habits",
     "current_state",

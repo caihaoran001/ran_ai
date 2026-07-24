@@ -230,22 +230,29 @@ def test_intervention_normalizes_agent_context_plan():
             "emotion_signal": {"detected": False, "level": "low"},
             "health_consultation": False,
             "agent_context_plan": {
-                "message_scene": "casual_interest",
-                "memory_scopes": ["preferences", "recent_topics", "warnings", "unknown_scope", "preferences"],
-                "tool_hints": ["web_search", "service_case_data", "bad_hint", "web_search"],
-                "reason": "用户在聊潮玩兴趣，后续只需要兴趣和最近话题。",
+                "message_scene": "body_feedback",
+                "memory_scopes": [
+                    "preferences",
+                    "case_summary",
+                    "recent_topics",
+                    "warnings",
+                    "unknown_scope",
+                    "preferences",
+                ],
+                "tool_hints": ["knowledge_base", "service_case_data", "bad_hint", "knowledge_base"],
+                "reason": "用户反馈午后饥饿再次出现，需要结合此前尝试和当前状态。",
             },
         },
         source="chat_message",
-        content="LABUBU之后出圈的是啥",
+        content="这两天下午又容易饿了",
     )
 
     assert insight["agent_context_plan"] == {
-        "message_scene": "casual_interest",
+        "message_scene": "body_feedback",
         # recent_topics 已下线 → 从合法 memory_scopes 过滤掉。
-        "memory_scopes": ["preferences", "warnings"],
-        "tool_hints": ["web_search", "service_case_data"],
-        "reason": "用户在聊潮玩兴趣，后续只需要兴趣和最近话题。",
+        "memory_scopes": ["preferences", "case_summary", "warnings"],
+        "tool_hints": ["knowledge_base", "service_case_data"],
+        "reason": "用户反馈午后饥饿再次出现，需要结合此前尝试和当前状态。",
     }
 
 
@@ -268,6 +275,8 @@ async def test_intervention_prompt_keeps_diet_preferences_in_agent_context():
     prompt = captured["system_prompt"]
     assert "饮食建议和身体反馈至少选择 preferences" in prompt
     assert "需要作息、饮食模式或运动习惯时再选 habits/current_state/warnings" in prompt
+    assert "复盘服务历程、评价整体进展、延续此前做法" in prompt
+    assert "简单产品规则、实时数据查询和无关兴趣闲聊不要选择 case_summary" in prompt
 
 
 def test_high_risk_health_consultation_handoff():
