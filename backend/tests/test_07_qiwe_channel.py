@@ -2285,6 +2285,37 @@ async def test_qiwe_inbox_dispatcher_expires_old_messages_without_reply(db_sessi
 
 
 @pytest.mark.asyncio
+async def test_qiwe_inbox_dispatcher_expires_stale_spam_block(db_session):
+    from app.models.inbound_event import InboundEvent
+    from app.services.qiwe_service.inbox_dispatcher import QiWeInboxDispatcher
+
+    now = datetime.now(timezone.utc)
+    event = InboundEvent(
+        event_type=InboundEvent.EVENT_QIWE_SPAM_BLOCK,
+        channel="qiwe",
+        chat_id="old-channel-message-id",
+        message_id=f"old-spam-{secrets.token_hex(4)}",
+        text="历史风控孤儿",
+        message_type=InboundEvent.EVENT_QIWE_SPAM_BLOCK,
+        raw_payload=None,
+        status=InboundEvent.STATUS_PENDING,
+        created_at=now - timedelta(days=15),
+    )
+    db_session.add(event)
+    await db_session.flush()
+    dispatcher = QiWeInboxDispatcher(
+        QiWeMessageAggregator(FakeChannel(), engine=FakeEngine()),
+        max_spam_event_age_seconds=48 * 60 * 60,
+    )
+
+    claimed = await dispatcher._claim_pending(now)
+
+    assert claimed == []
+    await db_session.refresh(event)
+    assert event.status == InboundEvent.STATUS_EXPIRED
+
+
+@pytest.mark.asyncio
 async def test_qiwe_inbox_dispatcher_resets_interrupted_claim(db_session):
     from app.models.inbound_event import InboundEvent
     from app.services.qiwe_service.inbox_dispatcher import QiWeInboxDispatcher

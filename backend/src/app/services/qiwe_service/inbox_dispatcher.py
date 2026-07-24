@@ -35,12 +35,14 @@ class QiWeInboxDispatcher:
         poll_interval_seconds: float = 1.0,
         batch_size: int = 100,
         max_message_age_seconds: float = 300.0,
+        max_spam_event_age_seconds: float = 172800.0,
         stale_claim_seconds: float = 900.0,
     ) -> None:
         self.aggregator = aggregator
         self.poll_interval_seconds = poll_interval_seconds
         self.batch_size = batch_size
         self.max_message_age_seconds = max_message_age_seconds
+        self.max_spam_event_age_seconds = max_spam_event_age_seconds
         self.stale_claim_seconds = stale_claim_seconds
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
@@ -156,6 +158,9 @@ class QiWeInboxDispatcher:
                 )
             )
             expiry = now - timedelta(seconds=self.max_message_age_seconds)
+            spam_expiry = now - timedelta(
+                seconds=self.max_spam_event_age_seconds
+            )
             for row in rows:
                 if row.business_message_id is not None:
                     row.status = InboundEvent.STATUS_PROCESSED
@@ -171,6 +176,18 @@ class QiWeInboxDispatcher:
                         "QiWe inbox expired without auto-reply event_id=%s chat_id=%s age_seconds=%.1f",
                         row.id,
                         row.chat_id,
+                        (now - row.created_at).total_seconds(),
+                    )
+                    continue
+                if (
+                    row.event_type == InboundEvent.EVENT_QIWE_SPAM_BLOCK
+                    and row.created_at < spam_expiry
+                ):
+                    row.status = InboundEvent.STATUS_EXPIRED
+                    row.processed_at = now
+                    logger.warning(
+                        "QiWe inbox expired stale spam-block event_id=%s age_seconds=%.1f",
+                        row.id,
                         (now - row.created_at).total_seconds(),
                     )
                     continue
@@ -223,8 +240,13 @@ class QiWeInboxDispatcher:
         )
         if not handled:
             # The 1011 callback can race the transaction that stores the
-            # outbound channel id. Keep it retryable instead of losing it.
-            await self._release_claim(event.id)
+            # outbound channel id. Keep PROCESSING and let the stale-claim
+            # recycler retry after 15 minutes instead of hammering RDS each
+            # second. A backend restart also safely releases the old claim.
+            logger.warning(
+                "QiWe inbox spam-block unmatched; deferred retry event_id=%s",
+                event.id,
+            )
 
     async def _release_claim(self, event_id: int) -> None:
         async with SessionLocal() as session:
