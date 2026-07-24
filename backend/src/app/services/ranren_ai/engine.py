@@ -649,6 +649,45 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             await session.commit()
             return outbound_id
 
+    async def _retire_pending_outbound(
+        self,
+        *,
+        trigger_id: int | None,
+        reason: str,
+    ) -> int:
+        """Retire safe-to-retry rows when a recovered reply is no longer valid."""
+        if trigger_id is None:
+            return 0
+        async with SessionLocal() as session:
+            rows = list(
+                await session.scalars(
+                    select(Message)
+                    .where(
+                        Message.direction == MessageDirection.OUTBOUND,
+                        Message.sender_type == MessageSenderType.BOT,
+                        Message.purpose == MessagePurpose.CHAT,
+                        Message.trigger_id == trigger_id,
+                        Message.status == MessageStatus.PENDING,
+                    )
+                    .with_for_update()
+                )
+            )
+            if not rows:
+                return 0
+            retired_at = datetime.now(timezone.utc).isoformat()
+            for row in rows:
+                analysis = dict(row.analysis_json or {})
+                delivery = dict(analysis.get("_delivery") or {})
+                delivery["retry_suppressed_at"] = retired_at
+                delivery["retry_suppressed_reason"] = reason
+                analysis["_delivery"] = delivery
+                row.analysis_json = analysis
+                row.status = MessageStatus.FAILED
+                row.error = reason
+                row.sent_at = None
+            await session.commit()
+            return len(rows)
+
     async def _mark_outbound_sending(self, outbound_id: int) -> None:
         """Commit SENDING immediately before the channel HTTP request starts."""
         async with SessionLocal() as session:
@@ -742,6 +781,29 @@ class RanrenAIEngine(InboundAttachmentProcessor):
 
         async def mark_request_started() -> None:
             nonlocal request_started
+            # A send can wait behind QiWe's account-wide rate limiter for
+            # several seconds. Re-check kill switches at the actual HTTP
+            # boundary so a spam-block callback can cancel already queued work.
+            async with SessionLocal() as session:
+                if not await get_ai_reply_enabled(session):
+                    raise RuntimeError(
+                        "outbound send cancelled before channel request: "
+                        "global AI reply is disabled"
+                    )
+                if service_case_id is not None:
+                    service_case = await session.scalar(
+                        select_active_service_cases(
+                            ServiceCase.id == service_case_id
+                        )
+                    )
+                    if (
+                        service_case is None
+                        or not service_case.ai_auto_reply_enabled
+                    ):
+                        raise RuntimeError(
+                            "outbound send cancelled before channel request: "
+                            "service case cannot auto-reply"
+                        )
             await self._mark_outbound_sending(outbound_id)
             request_started = True
 
@@ -1414,7 +1476,14 @@ async def _inbound_checkpoint_exists(
     return await checkpointer.aget_tuple(checkpoint_config(thread_id)) is not None
 
 
-async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: datetime) -> None:
+async def recover_stuck_inbound_messages(
+    channel: MessageChannel,
+    startup_time: datetime,
+    *,
+    has_pending_newer_message: (
+        Callable[[ChannelMessage], Awaitable[bool]] | None
+    ) = None,
+) -> None:
     """Scan and reprocess inbound user messages that were received but never processed (e.g. due to service restart).
     This function is run on application startup to recover any messages that were lost/interrupted during deployment restart.
     """
@@ -1532,7 +1601,10 @@ async def recover_stuck_inbound_messages(channel: MessageChannel, startup_time: 
         )
 
     # Process messages outside session block to avoid holding connections/locks
-    engine = RanrenAIEngine(channel)
+    engine = RanrenAIEngine(
+        channel,
+        has_pending_newer_message=has_pending_newer_message,
+    )
     for msg in stuck_messages:
         try:
             await engine.reprocess_message(

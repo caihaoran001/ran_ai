@@ -805,6 +805,10 @@ class EngineGraph:
                     "reprocess_message: Skip message %s because newer inbound message %s exists",
                     inbound_id, newer_msg_exists,
                 )
+                await self.engine._retire_pending_outbound(
+                    trigger_id=inbound_id,
+                    reason="recovered reply suppressed because a newer inbound message exists",
+                )
                 return {"_halt": True}
 
             service_case = await session.scalar(select_active_service_cases(ServiceCase.id == service_case_id))
@@ -838,6 +842,10 @@ class EngineGraph:
                 logger.info(
                     "reprocess_message: Skip message %s because case is inactive/silenced/not introduced",
                     inbound_id,
+                )
+                await self.engine._retire_pending_outbound(
+                    trigger_id=inbound_id,
+                    reason="recovered reply suppressed because the service case cannot auto-reply",
                 )
                 return {"_halt": True}
 
@@ -1054,6 +1062,10 @@ class EngineGraph:
                         "RanrenAI skip reply because service case is inactive service_case_id=%s",
                         service_case_id,
                     )
+                    await self.engine._retire_pending_outbound(
+                        trigger_id=trigger_id,
+                        reason="recovered reply suppressed because the service case is inactive",
+                    )
                     return {"_halt": True}
             else:
                 service_case = None
@@ -1063,11 +1075,19 @@ class EngineGraph:
                     "RanrenAI skip AI reply because globally disabled chat_id=%s trigger_id=%s service_case_id=%s",
                     message.chat_id, trigger_id, service_case_id,
                 )
+                await self.engine._retire_pending_outbound(
+                    trigger_id=trigger_id,
+                    reason="recovered reply suppressed because global AI reply is disabled",
+                )
                 return {"_halt": True}
             if service_case and not service_case.ai_auto_reply_enabled:
                 logger.info(
                     "RanrenAI skip AI reply because case auto-reply disabled chat_id=%s trigger_id=%s service_case_id=%s",
                     message.chat_id, trigger_id, service_case_id,
+                )
+                await self.engine._retire_pending_outbound(
+                    trigger_id=trigger_id,
+                    reason="recovered reply suppressed because case auto-reply is disabled",
                 )
                 return {"_halt": True}
 
@@ -1181,6 +1201,10 @@ class EngineGraph:
                 "RanrenAI skip AI reply because model chose no-reply chat_id=%s trigger_id=%s service_case_id=%s",
                 message.chat_id, trigger_id, service_case_id,
             )
+            await self.engine._retire_pending_outbound(
+                trigger_id=trigger_id,
+                reason="recovered reply superseded because the model chose no-reply",
+            )
             return {"_halt": True}
 
         should_send = False
@@ -1190,6 +1214,10 @@ class EngineGraph:
                 logger.info(
                     "RanrenAI skip AI reply because staff already replied chat_id=%s trigger_id=%s service_case_id=%s",
                     message.chat_id, trigger_id, service_case_id,
+                )
+                await self.engine._retire_pending_outbound(
+                    trigger_id=trigger_id,
+                    reason="recovered reply suppressed because staff already replied",
                 )
                 return {"_halt": True}
             async with engine_mod.SessionLocal() as session:
@@ -1209,6 +1237,10 @@ class EngineGraph:
                 "RanrenAI discard AI reply because should_send is false chat_id=%s trigger_id=%s service_case_id=%s",
                 message.chat_id, trigger_id, service_case_id,
             )
+            await self.engine._retire_pending_outbound(
+                trigger_id=trigger_id,
+                reason="recovered reply suppressed by the final send policy",
+            )
         return {"reply": reply, "should_send": should_send}
 
     async def _reply_send(self, state: EngineState) -> dict[str, Any]:
@@ -1219,6 +1251,40 @@ class EngineGraph:
         reply = state.get("reply")
         outbound_analysis = state.get("outbound_analysis")
 
+        async with engine_mod.SessionLocal() as session:
+            globally_enabled = await engine_mod.get_ai_reply_enabled(session)
+            service_case = (
+                await session.scalar(
+                    select_active_service_cases(
+                        ServiceCase.id == service_case_id
+                    )
+                )
+                if service_case_id
+                else None
+            )
+        if not globally_enabled:
+            await self.engine._retire_pending_outbound(
+                trigger_id=trigger_id,
+                reason="recovered reply suppressed because global AI reply is disabled",
+            )
+            return {}
+        if service_case_id and (
+            service_case is None or not service_case.ai_auto_reply_enabled
+        ):
+            await self.engine._retire_pending_outbound(
+                trigger_id=trigger_id,
+                reason="recovered reply suppressed because the service case cannot auto-reply",
+            )
+            return {}
+        if await self.engine._staff_replied_after(
+            service_case_id=service_case_id,
+            trigger_id=trigger_id,
+        ):
+            await self.engine._retire_pending_outbound(
+                trigger_id=trigger_id,
+                reason="recovered reply suppressed because staff already replied",
+            )
+            return {}
         if await self._outbound_exists_for_trigger(trigger_id):
             logger.info(
                 "RanrenAI skip resumed AI reply because outbound already exists trigger_id=%s service_case_id=%s",
@@ -1231,11 +1297,19 @@ class EngineGraph:
                 "RanrenAI skip stale AI reply chat_id=%s trigger_id=%s service_case_id=%s",
                 message.chat_id, trigger_id, service_case_id,
             )
+            await self.engine._retire_pending_outbound(
+                trigger_id=trigger_id,
+                reason="recovered reply suppressed because a newer user message exists",
+            )
             return {}
         if self.engine.has_pending_newer_message and await self.engine.has_pending_newer_message(message):
             logger.info(
                 "RanrenAI skip AI reply because newer raw messages are queued chat_id=%s trigger_id=%s service_case_id=%s",
                 message.chat_id, trigger_id, service_case_id,
+            )
+            await self.engine._retire_pending_outbound(
+                trigger_id=trigger_id,
+                reason="recovered reply suppressed because a newer raw message is queued",
             )
             return {}
         send_started_at = time.monotonic()

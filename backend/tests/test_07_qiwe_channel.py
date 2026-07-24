@@ -1863,6 +1863,75 @@ async def test_send_and_record_is_record_first(db_session):
 
 
 @pytest.mark.asyncio
+async def test_queued_send_is_cancelled_if_risk_switch_closes_before_http(db_session):
+    from sqlalchemy import select
+
+    from app.models.message import (
+        Message,
+        MessageDirection,
+        MessagePurpose,
+        MessageSenderType,
+        MessageStatus,
+    )
+    from app.services.channels.send_context import notify_send_request_started
+    from app.services.content_policy import set_ai_reply_enabled
+
+    inbound = Message(
+        group_id="group-cancel-queued",
+        wecom_message_id="in-cancel-queued",
+        content="风控前排队的消息",
+        message_type="text",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(inbound)
+    await db_session.flush()
+    engine = RanrenAIEngine(FakeChannel())
+    channel_msg = ChannelMessage(
+        channel="qiwe",
+        chat_id="group-cancel-queued",
+        chat_type="group",
+        text=inbound.content,
+        message_id=inbound.wecom_message_id,
+        user_id="u-cancel-queued",
+        timestamp=datetime.now(timezone.utc),
+    )
+    reached_http = False
+
+    async def _send():
+        nonlocal reached_http
+        await notify_send_request_started()
+        reached_http = True
+        return ChannelSendResult(success=True, message_id="should-not-send")
+
+    await set_ai_reply_enabled(False, db_session)
+    try:
+        with pytest.raises(RuntimeError, match="global AI reply is disabled"):
+            await engine._send_and_record(
+                message=channel_msg,
+                service_case_id=None,
+                content="不应发出去",
+                trigger_id=inbound.id,
+                send=_send,
+            )
+    finally:
+        await set_ai_reply_enabled(True, db_session)
+
+    row = await db_session.scalar(
+        select(Message).where(
+            Message.direction == MessageDirection.OUTBOUND,
+            Message.trigger_id == inbound.id,
+        )
+    )
+    assert reached_http is False
+    assert row is not None
+    assert row.status == MessageStatus.FAILED
+    assert row.sent_at is None
+
+
+@pytest.mark.asyncio
 async def test_send_and_record_reuses_pending_after_recovery(db_session):
     from sqlalchemy import func, select
 

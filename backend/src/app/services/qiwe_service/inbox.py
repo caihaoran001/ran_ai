@@ -336,3 +336,51 @@ async def replay_pending_inbound_events(channel: MessageChannel, startup_time: d
         except Exception:
             # 不标记 processed，留待下次开机重试
             logger.exception("replay_pending_inbound_events failed event_id=%s", event.id)
+
+
+async def replay_pending_spam_block_events(startup_time: datetime) -> int:
+    """Process durable 1011 notices before any startup path can send again."""
+    min_time = startup_time - timedelta(hours=2)
+    async with SessionLocal() as session:
+        events = list(
+            await session.scalars(
+                select(InboundEvent)
+                .where(
+                    InboundEvent.status == InboundEvent.STATUS_PENDING,
+                    InboundEvent.event_type == InboundEvent.EVENT_QIWE_SPAM_BLOCK,
+                    InboundEvent.created_at <= startup_time,
+                    InboundEvent.created_at >= min_time,
+                )
+                .order_by(InboundEvent.id.asc())
+            )
+        )
+    processed = 0
+    for event in events:
+        try:
+            spam_block = qiwe_spam_block_notice(event.raw_payload or {})
+            if spam_block is None:
+                logger.warning(
+                    "replay_pending_spam_block_events: malformed event_id=%s",
+                    event.id,
+                )
+                await mark_inbound_events_processed([event.id])
+                continue
+            channel_message_id, reason = spam_block
+            if await process_qiwe_spam_block_event(
+                event.id,
+                channel_message_id,
+                event.text or reason,
+            ):
+                processed += 1
+        except Exception:
+            logger.exception(
+                "replay_pending_spam_block_events failed event_id=%s",
+                event.id,
+            )
+    if events:
+        logger.info(
+            "replay_pending_spam_block_events checked=%d processed=%d",
+            len(events),
+            processed,
+        )
+    return processed
