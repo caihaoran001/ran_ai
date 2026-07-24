@@ -16,6 +16,7 @@ from langchain_core.messages import AIMessage
 from sqlalchemy import select
 
 from app.models.archivist_progress import ArchivistProgress
+from app.models.archivist_quarantine import ArchivistQuarantine
 from app.models.message import (
     Message,
     MessageDirection,
@@ -26,7 +27,10 @@ from app.models.message import (
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.services.archivist.graph import run_archivist
-from app.services.archivist.trigger import _quarantine_oldest_message
+from app.services.archivist.trigger import (
+    _quarantine_oldest_message,
+    replay_archivist_quarantine,
+)
 
 
 class _SilentModel:
@@ -40,6 +44,10 @@ class _SilentModel:
 
 
 async def _setup_case_with_n_messages(db_session, n: int):
+    connection = await db_session.connection()
+    await connection.run_sync(
+        lambda conn: ArchivistQuarantine.__table__.create(conn, checkfirst=True)
+    )
     user = User(name="毒消息自愈测试用户")
     db_session.add(user)
     await db_session.flush()
@@ -100,6 +108,8 @@ async def test_quarantine_skips_oldest_and_resets(db_session, caplog):
     """隔离：推进水位线跳过最老那条、清零连续失败计数、留痕含 QUARANTINED 与 message_id。"""
     case, msgs, progress = await _setup_case_with_n_messages(db_session, 3)
     progress.consecutive_failures = 6
+    progress.quarantine_candidate_failures = 3
+    progress.quarantine_candidate_fingerprint = "fingerprint-1"
     progress.last_failure_reason = "boom: some write error"
     await db_session.flush()
     now = datetime.now(timezone.utc)
@@ -113,8 +123,17 @@ async def test_quarantine_skips_oldest_and_resets(db_session, caplog):
     assert quarantined is True
     assert progress.last_archived_message_id == msgs[0].id  # 恰好跳过最老那一条
     assert progress.consecutive_failures == 0
+    assert progress.quarantine_candidate_failures == 0
     assert progress.last_failure_reason.startswith(f"QUARANTINED msg={msgs[0].id}")
     assert any("ARCHIVIST_QUARANTINE" in r.message for r in caplog.records)
+    quarantine = await db_session.scalar(
+        select(ArchivistQuarantine).where(
+            ArchivistQuarantine.message_id == msgs[0].id
+        )
+    )
+    assert quarantine is not None
+    assert quarantine.status == ArchivistQuarantine.STATUS_QUARANTINED
+    assert quarantine.failure_fingerprint == "fingerprint-1"
 
 
 @pytest.mark.asyncio
@@ -133,3 +152,32 @@ async def test_quarantine_noop_when_no_delta(db_session):
     assert quarantined is False
     assert progress.last_archived_message_id == msgs[0].id
     assert progress.consecutive_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_quarantine_replay_does_not_rewind_official_watermark(db_session):
+    case, msgs, progress = await _setup_case_with_n_messages(db_session, 2)
+    progress.last_archived_message_id = msgs[-1].id
+    quarantine = ArchivistQuarantine(
+        service_case_id=case.id,
+        message_id=msgs[0].id,
+        status=ArchivistQuarantine.STATUS_QUARANTINED,
+        failure_fingerprint="fingerprint-2",
+        failure_reason="stable bad payload",
+        quarantined_at=datetime.now(timezone.utc),
+        replay_attempts=0,
+    )
+    db_session.add(quarantine)
+    await db_session.flush()
+
+    result = await replay_archivist_quarantine(
+        db_session,
+        quarantine_id=quarantine.id,
+        chat_model=_SilentModel(),
+    )
+    await db_session.flush()
+
+    assert result.watermark_to == msgs[0].id
+    assert progress.last_archived_message_id == msgs[-1].id
+    assert quarantine.status == ArchivistQuarantine.STATUS_REPLAYED
+    assert quarantine.replay_attempts == 1

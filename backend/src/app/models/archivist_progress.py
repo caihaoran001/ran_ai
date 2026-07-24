@@ -38,7 +38,7 @@ class ArchivistProgress(TimestampMixin, Base):
 
     # 可靠性：一轮归档失败（LLM 抽取或成效/画像写库抛错）时**不推进水位线**，
     # 由独立事务在这里记账并留痕，供运营发现卡住的单、支持重试。
-    # 连续失败计数：成功归档后清零；用于识别"反复失败"的单。
+    # 连续失败计数：成功归档后清零；仅用于运营观测，不直接触发有损隔离。
     consecutive_failures: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0", default=0
     )
@@ -48,3 +48,11 @@ class ArchivistProgress(TimestampMixin, Base):
     )
     last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_failure_reason: Mapped[str | None] = mapped_column(String(500))
+    # 错误分类用于区分基础设施/系统故障与明确可归因到单条消息的确定性失败。
+    last_failure_kind: Mapped[str | None] = mapped_column(String(32))
+    last_failure_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    # 只有明确的 message 错误才累加；瞬时和未知系统错误会清零，绝不触发自动跳消息。
+    quarantine_candidate_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0
+    )
+    quarantine_candidate_fingerprint: Mapped[str | None] = mapped_column(String(64))

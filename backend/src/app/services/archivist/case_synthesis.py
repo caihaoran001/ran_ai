@@ -7,7 +7,8 @@
 - 合成时喂**全历史 + 成效时间线**,产出完整弧线的案例草稿,复用 knowledge_evolution 的
   抽取/去重/人工审核/入库管线(不重复造表、不绕过审核)。
 
-尽力而为:由 trigger 在归档提交成功后、用独立 session 调用;异常只记日志,不影响归档水位线。
+由持久化 post-task 在归档提交成功后用独立 session 调用；普通调用异常只记日志，
+post-task 会要求异常向上抛并退避重试，不影响已提交的归档水位线。
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ async def maybe_synthesize_case(
     service_case_id: int,
     run_result: Any,
     settings: Settings | None = None,
+    raise_on_error: bool = False,
 ) -> None:
     """成效有新沉淀时,评估并(在够格时)合成一条优秀案例草稿。尽力而为,失败不外抛。"""
     try:
@@ -108,6 +110,8 @@ async def maybe_synthesize_case(
         logger.exception(
             "Archivist case synthesis failed service_case_id=%s", service_case_id
         )
+        if raise_on_error:
+            raise
 
 
 async def _load_outcome_events(session, service_case_id: int) -> list[OutcomeEvent]:

@@ -534,6 +534,7 @@ async def mock_session_local(db_session):
         "app.services.reminder_service",
         "app.services.archivist.case_memory_service",
         "app.services.archivist.case_synthesis",
+        "app.services.archivist.post_commit_tasks",
         "app.services.archivist.trigger",
     ]
     for mod_name in modules_to_patch:

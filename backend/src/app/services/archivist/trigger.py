@@ -20,12 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal
 from app.models.archivist_progress import ArchivistProgress
+from app.models.archivist_quarantine import ArchivistQuarantine
 from app.models.message import Message, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase
-from app.services.archivist.case_memory_service import refresh_case_memory
-from app.services.archivist.case_synthesis import maybe_synthesize_case
 from app.services.archivist.graph import get_or_create_progress, run_archivist
-from app.services.knowledge_evolution import create_qa_drafts_from_archivist
+from app.services.archivist.errors import classify_archivist_failure
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +33,10 @@ MAX_LATENCY_SECONDS = 24 * 3600    # B 最大滞留：24 小时（非关键 wort
 MAX_DELTA_COUNT = 20               # C 累积：20 条用户发言（安全阀）
 
 # 毒消息自愈（防单条稳定报错永久卡死水位线，连累群聊 Agent 画像永不刷新）：
-# 连续失败达 SINGLE_STEP 时把批次缩到最老 1 条，将失败范围收敛到单条以定位毒消息；
-# 仍连续失败达 QUARANTINE 时判定最老那条为毒消息，告警 + 跳过它推进水位线 + 清零失败计数。
+# 只有显式分类为 message 的确定性错误才参与以下计数。网络、限流、模型服务、配置、数据库
+# 或未知系统错误只保留水位线原地重试，绝不因连续失败而跳过用户消息。
+# message 错误达 SINGLE_STEP 时把批次缩到最老 1 条，将失败范围收敛到单条；
+# 仍达 QUARANTINE 时持久化隔离记录 + 跳过它推进水位线 + 清零候选计数。
 # 单条模式下若最老那条其实无毒会成功推进，逐条自愈直到走到真正的毒消息才隔离（罕见路径，可接受少量重试）。
 # 两者必须差 ≥1：先单条验证最老那条确实自己会炸，再隔离，避免误伤同批的好消息。
 # 任意一次成功即清零，故连炸到阈值基本可排除偶发抖动（LLM 超时等）。
@@ -223,7 +224,7 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                 service_case = await session.get(ServiceCase, cid)
                 if service_case is None:
                     continue
-                failures = progress.consecutive_failures or 0
+                failures = progress.quarantine_candidate_failures or 0
                 # 毒消息自愈：反复失败到阈值先缩批定位、再隔离，避免单条报错永久卡死水位线。
                 if failures >= QUARANTINE_AFTER_FAILURES:
                     quarantined = await _quarantine_oldest_message(
@@ -242,49 +243,14 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                     "Archivist ran service_case_id=%s reason=%s delta=%s days=%s contradictions=%s",
                     cid, reason, result.delta_count, result.days_processed, len(result.contradictions),
                 )
-                # 归档已提交成功后再做以下 best-effort 收尾（独立事务,失败不影响归档水位线）：
-                # ① 刷新 case_memory（记忆产物）；② 把 delta 抽出的 FAQ 候选转待审核 qa 草稿。
-                await refresh_case_memory(
-                    service_case_id=cid,
-                    run_result=result,
-                    watermark_to=result.watermark_to,
-                )
-                await _persist_faq_candidates(cid, result.faq_candidates)
-                # ③ 成效出现稳态变化时,合成优秀案例草稿（代替原 day3/7/14/21/28 里程碑硬扫）。
-                await maybe_synthesize_case(service_case_id=cid, run_result=result)
         except Exception as exc:
             # 归档失败：主事务已回滚（未 commit），水位线保持不动，下轮重试。
             # 失败留痕走独立事务，避免与已回滚的事务纠缠。
             logger.exception("Archivist run failed service_case_id=%s", cid)
             stats["failed"] += 1
-            await _record_failure(cid, reason=str(exc), now=now)
+            await _record_failure(cid, error=exc, now=now)
 
     return stats
-
-
-async def _persist_faq_candidates(service_case_id: int, candidates: list[dict] | None) -> None:
-    """把档案官 delta 抽出的 FAQ 候选转待审核 qa 草稿（独立事务,尽力而为）。
-
-    FAQ 是知识沉淀、走人工审核,及时即可、不追求完整;失败只记日志,不影响已提交的归档。
-    """
-    if not candidates:
-        return
-    try:
-        async with SessionLocal() as session:
-            created = await create_qa_drafts_from_archivist(
-                session, service_case_id=service_case_id, candidates=candidates
-            )
-            await session.commit()
-            if created:
-                logger.info(
-                    "Archivist FAQ drafts created=%s service_case_id=%s",
-                    created,
-                    service_case_id,
-                )
-    except Exception:
-        logger.exception(
-            "Archivist FAQ draft persist failed service_case_id=%s", service_case_id
-        )
 
 
 async def _quarantine_oldest_message(
@@ -314,6 +280,8 @@ async def _quarantine_oldest_message(
     if suspect is None:
         # 没有可疑消息可跳过（增量已被清空/软删）：清零失败计数避免空转，不动水位线。
         progress.consecutive_failures = 0
+        progress.quarantine_candidate_failures = 0
+        progress.quarantine_candidate_fingerprint = None
         return False
 
     prev_reason = progress.last_failure_reason or ""
@@ -327,18 +295,38 @@ async def _quarantine_oldest_message(
         prev_reason,
         (suspect.content or "")[:200],
     )
+    session.add(
+        ArchivistQuarantine(
+            service_case_id=service_case_id,
+            message_id=suspect.id,
+            status=ArchivistQuarantine.STATUS_QUARANTINED,
+            failure_fingerprint=progress.quarantine_candidate_fingerprint,
+            failure_reason=prev_reason[:2000] or "deterministic message processing failure",
+            quarantined_at=now,
+            replay_attempts=0,
+        )
+    )
     progress.last_archived_message_id = suspect.id
     progress.last_archived_at = now
     progress.consecutive_failures = 0
     progress.last_failure_reason = f"QUARANTINED msg={suspect.id}: {prev_reason}"[:500]
+    progress.quarantine_candidate_failures = 0
+    progress.quarantine_candidate_fingerprint = None
     return True
 
 
-async def _record_failure(service_case_id: int, *, reason: str, now: datetime) -> None:
+async def _record_failure(
+    service_case_id: int,
+    *,
+    error: Exception,
+    now: datetime,
+) -> None:
     """在独立事务里累加失败计数并留痕（主事务已回滚，水位线保持不动）。
 
     尽力而为：记账本身再失败也只记日志，不影响其余候选单继续扫描。
     """
+    classification = classify_archivist_failure(error)
+    reason = str(error)
     try:
         async with SessionLocal() as session:
             progress = await session.scalar(
@@ -352,8 +340,76 @@ async def _record_failure(service_case_id: int, *, reason: str, now: datetime) -
             progress.failure_count = (progress.failure_count or 0) + 1
             progress.last_failure_at = now
             progress.last_failure_reason = (reason or "")[:500]
+            progress.last_failure_kind = classification.kind
+            progress.last_failure_fingerprint = classification.fingerprint
+            if classification.kind == "message":
+                if (
+                    progress.quarantine_candidate_fingerprint
+                    == classification.fingerprint
+                ):
+                    progress.quarantine_candidate_failures = (
+                        progress.quarantine_candidate_failures or 0
+                    ) + 1
+                else:
+                    progress.quarantine_candidate_fingerprint = (
+                        classification.fingerprint
+                    )
+                    progress.quarantine_candidate_failures = 1
+            else:
+                # 系统性故障不能靠跳消息修复；清零有损隔离计数。
+                progress.quarantine_candidate_failures = 0
+                progress.quarantine_candidate_fingerprint = None
             await session.commit()
     except Exception:
         logger.exception(
             "Archivist failure bookkeeping failed service_case_id=%s", service_case_id
         )
+
+
+async def replay_archivist_quarantine(
+    session: AsyncSession,
+    *,
+    quarantine_id: int,
+    chat_model: object | None = None,
+):
+    """在不回退正式水位线的前提下，隔离单条原位重跑一次。
+
+    使用临时 progress 只选中目标 message；事实写入、outbox 和“已重放”状态同事务提交，
+    由 API 调用方负责 commit。任何异常由调用方 rollback 后记录重放失败。
+    """
+    quarantine = await session.scalar(
+        select(ArchivistQuarantine)
+        .where(ArchivistQuarantine.id == quarantine_id)
+        .with_for_update()
+    )
+    if quarantine is None:
+        raise LookupError("archivist quarantine not found")
+    if quarantine.status != ArchivistQuarantine.STATUS_QUARANTINED:
+        raise ValueError("archivist quarantine is not pending replay")
+
+    message = await session.get(Message, quarantine.message_id)
+    service_case = await session.get(ServiceCase, quarantine.service_case_id)
+    if message is None or service_case is None or service_case.deleted_at is not None:
+        raise LookupError("quarantined message or service case no longer exists")
+
+    isolated_progress = ArchivistProgress(
+        service_case_id=service_case.id,
+        last_archived_message_id=message.id - 1,
+    )
+    result = await run_archivist(
+        session,
+        service_case=service_case,
+        progress=isolated_progress,
+        chat_model=chat_model,
+        batch_cap=1,
+    )
+    if result.watermark_to != message.id:
+        raise RuntimeError(
+            f"quarantine replay selected unexpected watermark {result.watermark_to}"
+        )
+
+    quarantine.status = ArchivistQuarantine.STATUS_REPLAYED
+    quarantine.replay_attempts = int(quarantine.replay_attempts or 0) + 1
+    quarantine.replayed_at = datetime.now(timezone.utc)
+    quarantine.last_replay_error = None
+    return result

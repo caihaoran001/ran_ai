@@ -32,6 +32,7 @@ from app.services.archivist.followup import (
 )
 from app.services.archivist.corrections import apply_reported_corrections
 from app.services.archivist.extract_agent import run_extract_agent
+from app.services.archivist.post_commit_tasks import enqueue_archivist_post_commit_tasks
 from app.services.outcome_engine import apply_archived_outcome
 
 logger = logging.getLogger(__name__)
@@ -460,7 +461,7 @@ class ArchivistPipeline:
         self.result.corrections_recorded = correction_result.recorded
         self.result.corrections_skipped = correction_result.skipped
 
-        # FAQ 候选不在归档事务落库：交给 result，trigger 在归档提交成功后 best-effort 转 qa 草稿。
+        # FAQ 候选不在归档主事务直接落知识草稿；先放入 result，随后同事务登记 outbox。
         self.result.faq_candidates = state.get("faq_candidates") or []
 
         # 抽取观测留痕(R1)：与打卡 upsert/水位线同一事务落库，痕迹始终与已提交状态强一致。
@@ -477,6 +478,15 @@ class ArchivistPipeline:
                 )
             )
 
+        # 后置产物的任务意图必须和水位线同事务持久化。服务在主事务提交后立刻重启时，
+        # 下一轮调度仍能重做 case_memory / FAQ 草稿 / 优秀案例合成。
+        await enqueue_archivist_post_commit_tasks(
+            self.session,
+            service_case_id=self.service_case.id,
+            watermark_to=watermark_to,
+            run_result=self.result,
+        )
+
         # 走到这里说明打卡 upsert、成效/画像写库、纠正落库全部成功（任一步抛错都不会到此，
         # 由 trigger 层回滚、水位线保持不动）。此时才推进水位线并清零失败计数。
         # 即使本轮没抽到打卡也要推进，避免下轮重复处理同一批增量。
@@ -485,6 +495,10 @@ class ArchivistPipeline:
         self.progress.last_archived_at = datetime.now(timezone.utc)
         self.progress.consecutive_failures = 0
         self.progress.last_failure_reason = None
+        self.progress.last_failure_kind = None
+        self.progress.last_failure_fingerprint = None
+        self.progress.quarantine_candidate_failures = 0
+        self.progress.quarantine_candidate_fingerprint = None
 
 
 async def get_or_create_progress(

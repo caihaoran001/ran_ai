@@ -16,7 +16,9 @@ from app.core.config import get_settings
 from app.db.session import get_session
 from app.services.ai_service import AIService
 from app.models.ai_usage import AIUsageLog
+from app.models.archivist_post_commit_task import ArchivistPostCommitTask
 from app.models.archivist_progress import ArchivistProgress
+from app.models.archivist_quarantine import ArchivistQuarantine
 from app.models.service_case import ServiceCase
 
 router = APIRouter()
@@ -162,6 +164,9 @@ async def get_archivist_failures(
             if progress.last_failure_at
             else None,
             "last_failure_reason": progress.last_failure_reason,
+            "last_failure_kind": progress.last_failure_kind,
+            "last_failure_fingerprint": progress.last_failure_fingerprint,
+            "quarantine_candidate_failures": progress.quarantine_candidate_failures,
             "last_archived_message_id": progress.last_archived_message_id,
             "last_archived_at": progress.last_archived_at.isoformat()
             if progress.last_archived_at
@@ -170,6 +175,170 @@ async def get_archivist_failures(
         for progress, case_no in rows
     ]
     return {"total_failing": int(total_failing or 0), "items": items}
+
+
+@router.get("/archivist-post-tasks")
+async def get_archivist_post_tasks(
+    session: AsyncSession = Depends(get_session),
+    status: str = Query(ArchivistPostCommitTask.STATUS_FAILED),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """查看档案官后置任务；默认只列自动重试中的失败项。"""
+    allowed = {
+        ArchivistPostCommitTask.STATUS_PENDING,
+        ArchivistPostCommitTask.STATUS_FAILED,
+        ArchivistPostCommitTask.STATUS_SUCCEEDED,
+    }
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="invalid archivist post-task status")
+    rows = list(
+        await session.scalars(
+            select(ArchivistPostCommitTask)
+            .where(ArchivistPostCommitTask.status == status)
+            .order_by(ArchivistPostCommitTask.id.desc())
+            .limit(limit)
+        )
+    )
+    total = await session.scalar(
+        select(func.count(ArchivistPostCommitTask.id)).where(
+            ArchivistPostCommitTask.status == status
+        )
+    )
+    return {
+        "status": status,
+        "total": int(total or 0),
+        "items": [
+            {
+                "id": task.id,
+                "service_case_id": task.service_case_id,
+                "watermark_to": task.watermark_to,
+                "task_type": task.task_type,
+                "attempt_count": task.attempt_count,
+                "next_attempt_at": (
+                    task.next_attempt_at.isoformat() if task.next_attempt_at else None
+                ),
+                "completed_at": (
+                    task.completed_at.isoformat() if task.completed_at else None
+                ),
+                "last_error": task.last_error,
+            }
+            for task in rows
+        ],
+    }
+
+
+@router.post("/archivist-post-tasks/{task_id}/retry")
+async def retry_archivist_post_task(
+    task_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    task = await session.get(
+        ArchivistPostCommitTask,
+        task_id,
+        with_for_update=True,
+    )
+    if task is None:
+        raise HTTPException(status_code=404, detail="archivist post task not found")
+    if task.status == ArchivistPostCommitTask.STATUS_SUCCEEDED:
+        raise HTTPException(
+            status_code=409,
+            detail="succeeded archivist post task does not need retry",
+        )
+    task.status = ArchivistPostCommitTask.STATUS_PENDING
+    task.next_attempt_at = None
+    task.last_error = None
+    await session.commit()
+    return {"id": task.id, "status": task.status}
+
+
+@router.get("/archivist-quarantines")
+async def get_archivist_quarantines(
+    session: AsyncSession = Depends(get_session),
+    status: str = Query(ArchivistQuarantine.STATUS_QUARANTINED),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """查看被档案官跳过的确定性毒消息；记录在成功恢复后仍保留。"""
+    if status not in {
+        ArchivistQuarantine.STATUS_QUARANTINED,
+        ArchivistQuarantine.STATUS_REPLAYED,
+    }:
+        raise HTTPException(status_code=400, detail="invalid quarantine status")
+    rows = list(
+        await session.scalars(
+            select(ArchivistQuarantine)
+            .where(ArchivistQuarantine.status == status)
+            .order_by(ArchivistQuarantine.quarantined_at.desc())
+            .limit(limit)
+        )
+    )
+    total = await session.scalar(
+        select(func.count(ArchivistQuarantine.id)).where(
+            ArchivistQuarantine.status == status
+        )
+    )
+    return {
+        "status": status,
+        "total": int(total or 0),
+        "items": [
+            {
+                "id": item.id,
+                "service_case_id": item.service_case_id,
+                "message_id": item.message_id,
+                "failure_fingerprint": item.failure_fingerprint,
+                "failure_reason": item.failure_reason,
+                "quarantined_at": item.quarantined_at.isoformat(),
+                "replay_attempts": item.replay_attempts,
+                "replayed_at": (
+                    item.replayed_at.isoformat() if item.replayed_at else None
+                ),
+                "last_replay_error": item.last_replay_error,
+            }
+            for item in rows
+        ],
+    }
+
+
+@router.post("/archivist-quarantines/{quarantine_id}/replay")
+async def replay_archivist_quarantined_message(
+    quarantine_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """人工原位重放一条隔离消息，不回退正式水位线。"""
+    from app.services.archivist.trigger import replay_archivist_quarantine
+
+    try:
+        result = await replay_archivist_quarantine(
+            session,
+            quarantine_id=quarantine_id,
+        )
+        await session.commit()
+    except LookupError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        await session.rollback()
+        quarantine = await session.get(
+            ArchivistQuarantine,
+            quarantine_id,
+            with_for_update=True,
+        )
+        if quarantine is not None:
+            quarantine.replay_attempts = int(quarantine.replay_attempts or 0) + 1
+            quarantine.last_replay_error = f"{type(exc).__name__}: {exc}"[:2000]
+            await session.commit()
+        raise HTTPException(
+            status_code=503,
+            detail="archivist quarantine replay failed; record kept for retry",
+        ) from exc
+    return {
+        "id": quarantine_id,
+        "status": ArchivistQuarantine.STATUS_REPLAYED,
+        "watermark_to": result.watermark_to,
+        "delta_count": result.delta_count,
+    }
 
 
 @router.get("/summary")

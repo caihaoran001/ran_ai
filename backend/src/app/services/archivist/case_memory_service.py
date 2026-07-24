@@ -1,8 +1,8 @@
 """档案官 case_memory：为每个服务单维护自由文本滚动小结。
 
 定位:**记忆产物**,不是权威事实源——供 Chat Agent 了解用户背景(重要经历/阶段转折)。
-因此对归档主流程是**尽力而为**:由 trigger 在归档事务成功提交后、用独立 session 调用;
-本模块所有异常内部吞掉只记日志,绝不回滚归档水位线。
+因此不进入归档主事务:由持久化 post-task 在归档提交后用独立 session 调用。
+普通直接调用仍是 best-effort；post-task 传 ``raise_on_error=True`` 时异常向上抛以触发持久重试。
 
 - summary:仅当本轮**有新沉淀**(打卡/成效/画像/纠正落库)时,才追加一次轻量 LLM 调用刷新;
   纯闲聊轮不刷,控制成本。摘要文本 LLM 产出后原样落 archivist_case_memory,不写领域事实表。
@@ -68,11 +68,12 @@ async def refresh_case_memory(
     watermark_to: int | None,
     chat_model: object | None = None,
     settings: Settings | None = None,
+    raise_on_error: bool = False,
 ) -> None:
-    """归档成功后刷新该单的 case_memory 滚动小结(尽力而为,独立事务)。
+    """归档成功后刷新该单的 case_memory 滚动小结（独立事务、按水位线幂等）。
 
     summary 仅在本轮有新沉淀时经 LLM 刷新;纯闲聊轮直接跳过(不建空行、不烧 LLM)。
-    任何异常只记日志,不向上抛(不影响已提交的归档)。
+    普通调用异常只记日志；持久任务可要求抛出，以便退避重试。
     """
     if not _had_precipitation(run_result):
         return
@@ -87,6 +88,12 @@ async def refresh_case_memory(
             if memory is None:
                 memory = ArchivistCaseMemory(service_case_id=service_case_id)
                 session.add(memory)
+            elif (
+                watermark_to is not None
+                and memory.summary_watermark_message_id is not None
+                and memory.summary_watermark_message_id >= watermark_to
+            ):
+                return
 
             new_summary = await _generate_summary(
                 session,
@@ -95,7 +102,10 @@ async def refresh_case_memory(
                 existing_summary=memory.summary,
                 chat_model=chat_model,
                 settings=settings,
+                raise_on_error=raise_on_error,
             )
+            if raise_on_error and not new_summary:
+                raise RuntimeError("case_memory summary model returned empty content")
             if new_summary:
                 memory.summary = new_summary[:_SUMMARY_MAX_CHARS]
                 memory.summary_watermark_message_id = watermark_to
@@ -105,6 +115,8 @@ async def refresh_case_memory(
         logger.exception(
             "case_memory refresh failed service_case_id=%s", service_case_id
         )
+        if raise_on_error:
+            raise
 
 
 async def _generate_summary(
@@ -115,6 +127,7 @@ async def _generate_summary(
     existing_summary: str | None,
     chat_model: object | None,
     settings: Settings,
+    raise_on_error: bool = False,
 ) -> str:
     """用最近对话摘录 + 已有小结,让 LLM 产出更新后的滚动小结;失败返回空串。"""
     convo = await _recent_conversation(session, service_case_id, watermark_to)
@@ -141,6 +154,8 @@ async def _generate_summary(
         logger.exception(
             "case_memory summary generation failed service_case_id=%s", service_case_id
         )
+        if raise_on_error:
+            raise
         return ""
 
 
