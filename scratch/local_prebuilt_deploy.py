@@ -5,8 +5,8 @@
   因此可以放心频繁部署，不会误伤线上配置（即使有人在服务器上手改过 .env）。
 
 要修改【生产配置】（.env 里的数据库/密钥/QiWe guid，或 docker-compose.prod.yml 结构），
-请单独运行：  uv run --with paramiko python scratch/configure_remote_files.py
-（该脚本会用其内置模板覆盖服务器上的这两个文件——改配置时务必先同步好模板再跑它。）
+请单独运行：uv run --with paramiko python scratch/configure_remote_files.py
+（compose 取仓库当前文件，.env 取该脚本内模板；运行会覆盖服务器对应文件。）
 """
 import paramiko
 import sys
@@ -135,16 +135,16 @@ def main():
     
     deploy_commands = [
         (
-            "Docker Compose build",
-            "cd /root/ran_ai && docker compose -f docker-compose.prod.yml build",
+            "Docker Compose build (business services only)",
+            "cd /root/ran_ai && docker compose -f docker-compose.prod.yml build backend frontend",
         ),
         (
             "LangGraph checkpoint setup",
             "cd /root/ran_ai && docker compose -f docker-compose.prod.yml run --rm --no-deps backend uv run ran-ai-checkpoint-setup",
         ),
         (
-            "Docker Compose reload",
-            "cd /root/ran_ai && docker compose -f docker-compose.prod.yml up -d",
+            "Docker Compose reload (keep ingress/caddy running)",
+            "cd /root/ran_ai && docker compose -f docker-compose.prod.yml up -d --no-deps backend frontend",
         ),
     ]
     for label, cmd in deploy_commands:

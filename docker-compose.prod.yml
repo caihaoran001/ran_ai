@@ -1,5 +1,6 @@
 services:
   backend:
+    image: ran-ai-backend:local
     build:
       context: ./backend
       dockerfile: Dockerfile.prod
@@ -69,6 +70,30 @@ services:
       # 入站图片缓存(聊天记录原图)。持久化后容器重建不再丢图，60 天保留期才真正生效。
       - ./wecom_cache:/app/.wecom_cache
 
+  qiwe-ingress:
+    # Shares the backend image at initial rollout, but normal deployments never
+    # recreate this container. It keeps running its old, known-good image while
+    # the backend tag is rebuilt underneath it.
+    image: ran-ai-backend:local
+    command: ["uv", "run", "ran-ai-qiwe-ingress"]
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL for Aliyun RDS PostgreSQL is required}
+      QIWEI_CALLBACK_SECRET: ${QIWEI_CALLBACK_SECRET:?QIWEI_CALLBACK_SECRET is required}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   frontend:
     build:
       context: ./frontend
@@ -94,6 +119,7 @@ services:
     depends_on:
       - frontend
       - backend
+      - qiwe-ingress
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

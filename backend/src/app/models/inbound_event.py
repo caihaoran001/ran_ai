@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, JSON, String, Text
+from sqlalchemy import DateTime, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -12,17 +12,19 @@ from app.models.mixins import TimestampMixin
 class InboundEvent(TimestampMixin, Base):
     """入站消息的持久化「收件箱」。
 
-    QiWe 群消息进聚合器时会先在内存缓冲 ~8s 再合并处理，这段窗口内若进程被重启，
-    尚未落库的消息就会丢失（现有 recover_stuck 只能捞已入库的 Message）。本表在消息
-    进窗口时就先落一条记录，开机 replay 扫描未处理(pending)的事件补处理，堵住这个黑洞。
+    稳定 qiwe-ingress 在返回 2xx 前先写本表；可重启 backend 用状态租约持续消费，
+    再进入约 8 秒聚合窗口。事件与业务 Message 在同一事务绑定，之后的中断交给
+    Message/LangGraph 恢复，不会把 transport event 当成一条新消息重复回复。
 
-    注意：去重仍由聚合器内存层负责(带 TTL)，本表不做唯一约束，只作持久化日志与重放来源。
+    新事件用 dedupe_key 抵御重复回调；聚合器的内存 TTL 去重只作同进程快速保护。
     """
 
     __tablename__ = "inbound_events"
 
     STATUS_PENDING = "pending"
+    STATUS_PROCESSING = "processing"
     STATUS_PROCESSED = "processed"
+    STATUS_EXPIRED = "expired"
     EVENT_MESSAGE = "message"
     EVENT_QIWE_SPAM_BLOCK = "qiwe_spam_block"
 
@@ -41,3 +43,10 @@ class InboundEvent(TimestampMixin, Base):
     message_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(16), default=STATUS_PENDING, nullable=False, index=True)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Once this is set, the event has crossed the durable business boundary.
+    # Any later interruption is recovered from Message/LangGraph checkpoints,
+    # never by replaying the transport event as a new user turn.
+    business_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id"),
+        index=True,
+    )

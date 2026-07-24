@@ -5,23 +5,23 @@ import hmac
 import logging
 import re
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from app.core.config import Settings
 from app.core.config import get_settings
-from app.services.channels import get_current_channel, set_current_channel
 from app.services.channels.base import ChannelMessage
-from app.services.channels.qiwe import QiWeChannel
-from app.services.qiwe_service.aggregator import QiWeMessageAggregator
 from app.services.qiwe_service.inbox import (
     persist_inbound_event,
     persist_qiwe_spam_block_event,
     process_qiwe_spam_block_event,
     qiwe_spam_block_notice,
 )
+
+if TYPE_CHECKING:
+    from app.services.qiwe_service.aggregator import QiWeMessageAggregator
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
@@ -40,7 +40,12 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
     if payload.get("code") != 0:
         return ""
 
-    aggregator = _get_aggregator(request)
+    # The dedicated ingress process only persists callbacks. The monolithic
+    # fallback/test app may still dispatch inline when this state flag is absent.
+    dispatch_inline = bool(
+        getattr(request.app.state, "qiwe_dispatch_inline", True)
+    )
+    aggregator = _get_aggregator(request) if dispatch_inline else None
     accepted = 0
     bypassed = 0
     blocked = 0
@@ -64,9 +69,13 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
                     status_code=503,
                     detail="failed to persist qiwe spam-block event",
                 )
-            background_tasks.add_task(
-                process_qiwe_spam_block_event, event_id, channel_message_id, reason
-            )
+            if dispatch_inline:
+                background_tasks.add_task(
+                    process_qiwe_spam_block_event,
+                    event_id,
+                    channel_message_id,
+                    reason,
+                )
             continue
         message = _channel_message_from_qiwe(item)
         if message is not None:
@@ -79,7 +88,7 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
                     detail="failed to persist qiwe inbound event",
                 )
             accepted += 1
-            if _bypass_aggregator(message):
+            if dispatch_inline and _bypass_aggregator(message):
                 bypassed += 1
                 logger.info(
                     "QiWe callback command bypass chat_id=%s user_id=%s message_id=%s text=%s",
@@ -89,13 +98,13 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
                     message.text[:40],
                 )
                 background_tasks.add_task(
-                    aggregator.dispatch_now,
+                    aggregator.dispatch_now,  # type: ignore[union-attr]
                     message,
                     inbound_event_id=event_id,
                 )
-            else:
+            elif dispatch_inline:
                 background_tasks.add_task(
-                    aggregator.enqueue,
+                    aggregator.enqueue,  # type: ignore[union-attr]
                     message,
                     inbound_event_id=event_id,
                 )
@@ -172,6 +181,10 @@ def _strip_leading_mentions(text: str) -> str:
 
 
 def _get_aggregator(request: Request) -> QiWeMessageAggregator:
+    from app.services.channels import get_current_channel, set_current_channel
+    from app.services.channels.qiwe import QiWeChannel
+    from app.services.qiwe_service.aggregator import QiWeMessageAggregator
+
     aggregator = getattr(request.app.state, "qiwe_aggregator", None)
     if aggregator is not None:
         return aggregator

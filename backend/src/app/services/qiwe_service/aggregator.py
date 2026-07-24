@@ -177,6 +177,10 @@ class QiWeMessageAggregator:
             message.user_id,
             message.message_id,
         )
+        if event_id is not None:
+            message.inbound_event_ids = list(
+                dict.fromkeys([*message.inbound_event_ids, event_id])
+            )
         try:
             await self.engine.handle_message(message)
         except Exception as exc:
@@ -296,7 +300,16 @@ class QiWeMessageAggregator:
         )
         processed = False
         try:
-            await self.engine.handle_message(_merge_messages(messages))
+            merged = _merge_messages(messages)
+            merged.inbound_event_ids = list(
+                dict.fromkeys(
+                    [
+                        *merged.inbound_event_ids,
+                        *(event_ids or []),
+                    ]
+                )
+            )
+            await self.engine.handle_message(merged)
             processed = True
         except Exception as exc:
             logger.exception(
@@ -380,4 +393,9 @@ def _merge_messages(messages: list[ChannelMessage]) -> ChannelMessage:
         message_type="text",
         raw_payload=[item.raw_payload for item in messages],
         timestamp=timestamp,
+        inbound_event_ids=[
+            event_id
+            for item in messages
+            for event_id in item.inbound_event_ids
+        ],
     )

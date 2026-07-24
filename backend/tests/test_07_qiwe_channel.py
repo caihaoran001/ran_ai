@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -792,6 +792,54 @@ async def test_qiwe_callback_persists_inbox_before_background_dispatch(
     )
 
     assert response.status_code == 200
+    event = await db_session.scalar(
+        select(InboundEvent).where(InboundEvent.message_id == message_id)
+    )
+    assert event is not None
+    assert event.status == InboundEvent.STATUS_PENDING
+
+
+@pytest.mark.asyncio
+async def test_dedicated_qiwe_ingress_only_persists_callback(
+    db_session,
+    monkeypatch,
+):
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy import select
+
+    from app.models.inbound_event import InboundEvent
+    from app.qiwe_ingress import create_qiwe_ingress_app
+
+    monkeypatch.setattr(
+        "app.api.routes.qiwe.get_settings",
+        lambda: SimpleNamespace(qiwei_callback_secret="ingress-secret"),
+    )
+    app = create_qiwe_ingress_app()
+    message_id = f"ingress-only-{secrets.token_hex(4)}"
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/channels/qiwe/callback?secret=ingress-secret",
+            json={
+                "code": 0,
+                "data": [
+                    {
+                        "cmd": 15000,
+                        "msgType": 2,
+                        "fromRoomId": "room-ingress-only",
+                        "senderId": "user-1",
+                        "timestamp": int(datetime.now(timezone.utc).timestamp()),
+                        "msgUniqueIdentifier": message_id,
+                        "msgData": {"content": "只入库，不跑业务"},
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    assert not hasattr(app.state, "qiwe_aggregator")
     event = await db_session.scalar(
         select(InboundEvent).where(InboundEvent.message_id == message_id)
     )
@@ -2152,6 +2200,167 @@ async def test_qiwe_aggregator_persists_and_marks_inbound_events(db_session):
     assert len(engine.messages) == 1
     assert pending.status == InboundEvent.STATUS_PROCESSED
     assert pending.processed_at is not None
+    assert engine.messages[0].inbound_event_ids == [pending.id]
+
+
+@pytest.mark.asyncio
+async def test_qiwe_inbox_dispatcher_claims_and_dispatches_pending_event(db_session):
+    from sqlalchemy import select
+
+    from app.models.inbound_event import InboundEvent
+    from app.services.qiwe_service.inbox_dispatcher import QiWeInboxDispatcher
+
+    now = datetime.now(timezone.utc)
+    event = InboundEvent(
+        channel="qiwe",
+        chat_id="room-dispatcher",
+        user_id="u1",
+        message_id=f"dispatcher-{secrets.token_hex(4)}",
+        text="后端恢复后处理我",
+        message_type="text",
+        raw_payload=None,
+        message_timestamp=now,
+        status=InboundEvent.STATUS_PENDING,
+        created_at=now,
+    )
+    db_session.add(event)
+    await db_session.flush()
+    engine = FakeEngine()
+    aggregator = QiWeMessageAggregator(
+        FakeChannel(),
+        window_seconds=10,
+        engine=engine,
+    )
+    dispatcher = QiWeInboxDispatcher(aggregator)
+
+    claimed = await dispatcher._claim_pending(now)
+
+    assert [row.id for row in claimed] == [event.id]
+    await db_session.refresh(event)
+    assert event.status == InboundEvent.STATUS_PROCESSING
+
+    await dispatcher._dispatch(claimed[0])
+    await aggregator.flush(("room-dispatcher", "u1"))
+
+    stored = await db_session.scalar(
+        select(InboundEvent).where(InboundEvent.id == event.id)
+    )
+    assert stored.status == InboundEvent.STATUS_PROCESSED
+    assert len(engine.messages) == 1
+    assert engine.messages[0].inbound_event_ids == [event.id]
+
+
+@pytest.mark.asyncio
+async def test_qiwe_inbox_dispatcher_expires_old_messages_without_reply(db_session):
+    from app.models.inbound_event import InboundEvent
+    from app.services.qiwe_service.inbox_dispatcher import QiWeInboxDispatcher
+
+    now = datetime.now(timezone.utc)
+    event = InboundEvent(
+        channel="qiwe",
+        chat_id="room-expired",
+        user_id="u1",
+        message_id=f"expired-{secrets.token_hex(4)}",
+        text="已经积压很久",
+        message_type="text",
+        raw_payload=None,
+        message_timestamp=now - timedelta(hours=24),
+        status=InboundEvent.STATUS_PENDING,
+        created_at=now - timedelta(hours=24),
+    )
+    db_session.add(event)
+    await db_session.flush()
+    engine = FakeEngine()
+    dispatcher = QiWeInboxDispatcher(
+        QiWeMessageAggregator(FakeChannel(), engine=engine),
+        max_message_age_seconds=300,
+    )
+
+    claimed = await dispatcher._claim_pending(now)
+
+    assert claimed == []
+    await db_session.refresh(event)
+    assert event.status == InboundEvent.STATUS_EXPIRED
+    assert engine.messages == []
+
+
+@pytest.mark.asyncio
+async def test_qiwe_inbox_dispatcher_resets_interrupted_claim(db_session):
+    from app.models.inbound_event import InboundEvent
+    from app.services.qiwe_service.inbox_dispatcher import QiWeInboxDispatcher
+
+    event = InboundEvent(
+        channel="qiwe",
+        chat_id="room-interrupted-claim",
+        message_id=f"claim-{secrets.token_hex(4)}",
+        text="上个后端领走后中断",
+        message_type="text",
+        status=InboundEvent.STATUS_PROCESSING,
+    )
+    db_session.add(event)
+    await db_session.flush()
+    dispatcher = QiWeInboxDispatcher(
+        QiWeMessageAggregator(FakeChannel(), engine=FakeEngine())
+    )
+
+    await dispatcher._reset_interrupted_claims()
+
+    await db_session.refresh(event)
+    assert event.status == InboundEvent.STATUS_PENDING
+
+
+@pytest.mark.asyncio
+async def test_engine_links_inbox_event_to_business_message(db_session):
+    from app.models.inbound_event import InboundEvent
+    from app.models.message import (
+        Message,
+        MessageDirection,
+        MessagePurpose,
+        MessageSenderType,
+        MessageStatus,
+    )
+    from app.services.ranren_ai.engine_graph import EngineGraph
+
+    event = InboundEvent(
+        channel="qiwe",
+        chat_id="room-link",
+        message_id=f"link-event-{secrets.token_hex(4)}",
+        text="可靠交接",
+        message_type="text",
+        status=InboundEvent.STATUS_PROCESSING,
+    )
+    inbound = Message(
+        group_id="room-link",
+        content="可靠交接",
+        message_type="text",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add_all([event, inbound])
+    await db_session.flush()
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-link",
+        chat_type="group",
+        text="可靠交接",
+        inbound_event_ids=[event.id],
+    )
+
+    linked = await EngineGraph._link_inbound_events(
+        None,
+        db_session,
+        message=message,
+        inbound_id=inbound.id,
+    )
+    await db_session.flush()
+
+    assert linked is True
+    await db_session.refresh(event)
+    assert event.status == InboundEvent.STATUS_PROCESSED
+    assert event.business_message_id == inbound.id
+    assert event.processed_at is not None
 
 
 @pytest.mark.asyncio
@@ -2227,110 +2436,6 @@ async def test_qiwe_immediate_dispatch_persists_and_marks_inbound_event(db_sessi
     assert event.event_type == InboundEvent.EVENT_MESSAGE
     assert event.status == InboundEvent.STATUS_PROCESSED
     assert event.processed_at is not None
-
-
-@pytest.mark.asyncio
-async def test_replay_pending_inbound_events_reprocesses_unhandled_event(db_session, monkeypatch):
-    """Fix②：开机重放卡在聚合窗口、从未进引擎的 pending inbound_event。"""
-    from datetime import timedelta
-    from sqlalchemy import select
-    from app.models.inbound_event import InboundEvent
-    from app.services.qiwe_service.inbox import replay_pending_inbound_events
-
-    now = datetime.now(timezone.utc)
-    event = InboundEvent(
-        channel="qiwe", chat_id="room-replay", user_id="u1", message_id="replay-1",
-        text="重放我", message_type="text", raw_payload={"k": "v"},
-        message_timestamp=now - timedelta(minutes=1),
-        status=InboundEvent.STATUS_PENDING,
-        created_at=now - timedelta(minutes=1),
-    )
-    db_session.add(event)
-    await db_session.flush()
-
-    calls = []
-
-    async def fake_handle_message(self, message):
-        calls.append(message)
-
-    monkeypatch.setattr(RanrenAIEngine, "handle_message", fake_handle_message)
-    await replay_pending_inbound_events(FakeChannel(), now)
-
-    assert len(calls) == 1
-    assert calls[0].text == "重放我"
-    assert calls[0].message_id == "replay-1"
-    await db_session.refresh(event)
-    assert event.status == InboundEvent.STATUS_PROCESSED
-
-
-@pytest.mark.asyncio
-async def test_replay_pending_inbound_events_reprocesses_recent_pre_startup_event(db_session, monkeypatch):
-    """Fix②回归：启动前 1 秒写入的 pending event 也必须重放，不能被 15s cutoff 漏掉。"""
-    from datetime import timedelta
-    from app.models.inbound_event import InboundEvent
-    from app.services.qiwe_service.inbox import replay_pending_inbound_events
-
-    now = datetime.now(timezone.utc)
-    event = InboundEvent(
-        channel="qiwe", chat_id="room-replay-recent", user_id="u1", message_id="replay-recent-1",
-        text="刚进窗口就重启", message_type="text", raw_payload=None,
-        message_timestamp=now - timedelta(seconds=1),
-        status=InboundEvent.STATUS_PENDING,
-        created_at=now - timedelta(seconds=1),
-    )
-    db_session.add(event)
-    await db_session.flush()
-
-    calls = []
-
-    async def fake_handle_message(self, message):
-        calls.append(message)
-
-    monkeypatch.setattr(RanrenAIEngine, "handle_message", fake_handle_message)
-    await replay_pending_inbound_events(FakeChannel(), now)
-
-    assert len(calls) == 1
-    assert calls[0].text == "刚进窗口就重启"
-    await db_session.refresh(event)
-    assert event.status == InboundEvent.STATUS_PROCESSED
-
-
-@pytest.mark.asyncio
-async def test_replay_pending_inbound_events_skips_already_handled_event(db_session, monkeypatch):
-    """Fix②：若同窗口已存在入站 Message，说明正常进入过引擎，只标 processed、不重放。"""
-    from datetime import timedelta
-    from app.models.inbound_event import InboundEvent
-    from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
-    from app.services.qiwe_service.inbox import replay_pending_inbound_events
-
-    now = datetime.now(timezone.utc)
-    event = InboundEvent(
-        channel="qiwe", chat_id="room-skip", user_id="u1", message_id="skip-1",
-        text="别重放", message_type="text", raw_payload=None,
-        message_timestamp=now - timedelta(minutes=1),
-        status=InboundEvent.STATUS_PENDING,
-        created_at=now - timedelta(minutes=1),
-    )
-    db_session.add(event)
-    db_session.add(Message(
-        group_id="room-skip", wecom_message_id="merged-skip", content="别重放", message_type="text",
-        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
-        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
-        created_at=now - timedelta(seconds=50),
-    ))
-    await db_session.flush()
-
-    calls = []
-
-    async def fake_handle_message(self, message):
-        calls.append(message)
-
-    monkeypatch.setattr(RanrenAIEngine, "handle_message", fake_handle_message)
-    await replay_pending_inbound_events(FakeChannel(), now)
-
-    assert calls == []
-    await db_session.refresh(event)
-    assert event.status == InboundEvent.STATUS_PROCESSED
 
 
 def test_spam_block_notice_parses_and_ignores_normal():
@@ -2453,11 +2558,11 @@ async def test_qiwe_spam_block_event_persists_processes_and_marks_processed(db_s
 
 
 @pytest.mark.asyncio
-async def test_replay_pending_inbound_events_processes_qiwe_spam_block_event(db_session):
+async def test_startup_replay_processes_qiwe_spam_block_event(db_session):
     from datetime import timedelta
     from app.models.inbound_event import InboundEvent
     from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
-    from app.services.qiwe_service.inbox import replay_pending_inbound_events
+    from app.services.qiwe_service.inbox import replay_pending_spam_block_events
 
     now = datetime.now(timezone.utc)
     sent = Message(
@@ -2486,10 +2591,11 @@ async def test_replay_pending_inbound_events_processes_qiwe_spam_block_event(db_
     db_session.add_all([sent, event])
     await db_session.flush()
 
-    await replay_pending_inbound_events(FakeChannel(), now)
+    processed = await replay_pending_spam_block_events(now)
 
     await db_session.refresh(sent)
     await db_session.refresh(event)
+    assert processed == 1
     assert sent.status == MessageStatus.FAILED
     assert sent.sent_at is None
     assert event.status == InboundEvent.STATUS_PROCESSED

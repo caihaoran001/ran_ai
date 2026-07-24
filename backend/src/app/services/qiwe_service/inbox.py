@@ -11,8 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.session import SessionLocal
 from app.models.inbound_event import InboundEvent
-from app.models.message import Message, MessageDirection
-from app.services.channels.base import ChannelMessage, MessageChannel
+from app.services.channels.base import ChannelMessage
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -192,11 +191,13 @@ async def process_qiwe_spam_block_event(
     """执行风控对账；命中出站记录后才把 durable event 标 processed。"""
     from app.services.ranren_ai.engine import mark_outbound_blocked_by_channel_id
 
+    # The notice itself is authoritative evidence that the account is blocked.
+    # Disable new automatic replies even when the notice races the outbound row
+    # update and cannot be matched on this first attempt.
+    await _auto_disable_ai_reply_on_risk(reason)
     handled = await mark_outbound_blocked_by_channel_id(channel_message_id, reason)
     if handled and event_id is not None:
         await mark_inbound_events_processed([event_id])
-    if handled:
-        await _auto_disable_ai_reply_on_risk(reason)
     return handled
 
 
@@ -236,7 +237,16 @@ async def mark_inbound_events_processed(event_ids: list[int]) -> None:
         logger.exception("mark_inbound_events_processed failed ids=%s", ids)
 
 
-def _channel_message_from_event(event: InboundEvent) -> ChannelMessage:
+def channel_message_from_inbound_event(event: InboundEvent) -> ChannelMessage:
+    if isinstance(event.raw_payload, dict):
+        # Reuse the callback parser so sender name, group/private classification,
+        # and future QiWe payload changes stay identical across ingress/replay.
+        from app.api.routes.qiwe import _channel_message_from_qiwe
+
+        parsed = _channel_message_from_qiwe(event.raw_payload)
+        if parsed is not None:
+            parsed.inbound_event_ids = [event.id]
+            return parsed
     return ChannelMessage(
         channel=event.channel,
         chat_id=event.chat_id,
@@ -247,95 +257,8 @@ def _channel_message_from_event(event: InboundEvent) -> ChannelMessage:
         message_type=event.message_type or "text",
         raw_payload=event.raw_payload,
         timestamp=event.message_timestamp or event.created_at,
+        inbound_event_ids=[event.id],
     )
-
-
-async def replay_pending_inbound_events(channel: MessageChannel, startup_time: datetime) -> None:
-    """开机重放：补处理重启前卡在聚合窗口、从未进入引擎的入站消息。
-
-    保守判定(宁可少发)：若该会话在此消息时间点之后、且在本次重启之前已存在任意入站 Message，
-    说明它(或其所在聚合批)已被引擎正常处理过，只标 processed、不再重放，把可能缺失的回复交给
-    recover_stuck；否则视为窗口内真丢失，重建 ChannelMessage 交引擎补处理。
-
-    「重启之前」这个上界很关键：它让重放自己写入的 Message 不会把同批的其他事件误判成已处理。
-    """
-    from app.services.ranren_ai.engine import RanrenAIEngine  # 延迟导入避免循环依赖
-
-    max_time = startup_time
-    min_time = startup_time - timedelta(hours=2)
-    async with SessionLocal() as session:
-        events = list(
-            await session.scalars(
-                select(InboundEvent)
-                .where(
-                    InboundEvent.status == InboundEvent.STATUS_PENDING,
-                    InboundEvent.created_at <= max_time,
-                    InboundEvent.created_at >= min_time,
-                )
-                .order_by(InboundEvent.id.asc())
-            )
-        )
-    if not events:
-        return
-
-    logger.info(
-        "replay_pending_inbound_events: found %d pending inbound events to check: %s",
-        len(events),
-        [e.id for e in events],
-    )
-
-    engine = RanrenAIEngine(channel)
-    for event in events:
-        try:
-            if event.event_type == InboundEvent.EVENT_QIWE_SPAM_BLOCK:
-                spam_block = qiwe_spam_block_notice(event.raw_payload or {})
-                if spam_block is None:
-                    logger.warning(
-                        "replay_pending_inbound_events: malformed qiwe spam_block event_id=%s",
-                        event.id,
-                    )
-                    await mark_inbound_events_processed([event.id])
-                    continue
-                channel_message_id, reason = spam_block
-                handled = await process_qiwe_spam_block_event(
-                    event.id,
-                    channel_message_id,
-                    event.text or reason,
-                )
-                if handled:
-                    logger.info(
-                        "replay_pending_inbound_events processed qiwe spam_block event_id=%s channel_message_id=%s",
-                        event.id,
-                        channel_message_id,
-                    )
-                continue
-
-            ref_time = event.message_timestamp or event.created_at
-            async with SessionLocal() as session:
-                already = await session.scalar(
-                    select(Message.id)
-                    .where(
-                        Message.group_id == event.chat_id,
-                        Message.direction == MessageDirection.INBOUND,
-                        Message.created_at >= ref_time - timedelta(seconds=30),
-                        Message.created_at <= startup_time,
-                    )
-                    .limit(1)
-                )
-            if already:
-                await mark_inbound_events_processed([event.id])
-                continue
-            await engine.handle_message(_channel_message_from_event(event))
-            await mark_inbound_events_processed([event.id])
-            logger.info(
-                "replay_pending_inbound_events reprocessed event_id=%s chat_id=%s message_id=%s",
-                event.id,
-                event.chat_id,
-                event.message_id,
-            )
-        except Exception:
-            # 不标记 processed，留待下次开机重试
-            logger.exception("replay_pending_inbound_events failed event_id=%s", event.id)
 
 
 async def replay_pending_spam_block_events(startup_time: datetime) -> int:

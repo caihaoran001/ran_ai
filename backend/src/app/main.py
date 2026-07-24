@@ -25,6 +25,7 @@ from app.services.agent.graph import (
     stop_agent_graph_runtime,
 )
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator
+from app.services.qiwe_service.inbox_dispatcher import QiWeInboxDispatcher
 from app.services.ranren_ai.engine_graph import (
     start_engine_graph_runtime,
     stop_engine_graph_runtime,
@@ -50,6 +51,7 @@ async def lifespan(app: FastAPI):
     reminder_service = ReminderService(settings)
     channel: QiWeChannel | None = None
     qiwe_aggregator: QiWeMessageAggregator | None = None
+    qiwe_inbox_dispatcher: QiWeInboxDispatcher | None = None
     frozen_outbound_ids: list[int] = []
     # 运营在后台切换的账号落库 app_settings，优先于 env；重启后据此恢复。
     from app.db.session import SessionLocal
@@ -100,20 +102,27 @@ async def lifespan(app: FastAPI):
                     frozen_outbound_ids,
                 )
         await reconcile_group_introduction_state()
+        qiwe_inbox_dispatcher = QiWeInboxDispatcher(qiwe_aggregator)
+        await qiwe_inbox_dispatcher.start()
+        # Ensure messages accepted by the stable ingress during the deploy have
+        # become durable business Messages before reminders/old graph recovery.
+        await qiwe_inbox_dispatcher.wait_until_handed_off(
+            before=startup_time,
+            timeout_seconds=30.0,
+        )
 
     await reminder_service.start()
     app.state.reminder_service = reminder_service
     app.state.qiwe_aggregator = qiwe_aggregator
+    app.state.qiwe_inbox_dispatcher = qiwe_inbox_dispatcher
     if qiwe_should_start and channel:
         from app.services.ranren_ai.engine import (
             recover_stuck_inbound_messages,
         )
-        from app.services.qiwe_service.inbox import replay_pending_inbound_events
-
         async def _recover_qiwe_messages() -> None:
-            # 先把聚合窗口内从未进入引擎的消息落成业务 Message，再恢复旧 Graph；
-            # 这样旧回复能看到更新入站并按 stale 守卫作废，不会补发过时内容。
-            await replay_pending_inbound_events(channel, startup_time)
+            # Durable inbox handoff has already completed above. Resume older
+            # graph runs only after those newer inbound Messages are visible,
+            # so stale-reply guards can safely suppress obsolete output.
             await recover_stuck_inbound_messages(
                 channel,
                 startup_time,
@@ -128,6 +137,8 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await reminder_service.stop()
+        if qiwe_inbox_dispatcher:
+            await qiwe_inbox_dispatcher.stop()
         if qiwe_aggregator:
             await qiwe_aggregator.stop(
                 drain_timeout_seconds=settings.qiwei_shutdown_drain_seconds,
@@ -154,6 +165,9 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if docs_enabled else None,
         openapi_url="/openapi.json" if docs_enabled else None,
     )
+    # This process is no longer the callback worker. Keeping the route mounted
+    # is a harmless fallback, but it only writes the durable inbox.
+    app.state.qiwe_dispatch_inline = False
     cors_origins = _cors_origins(settings)
     app.add_middleware(
         CORSMiddleware,

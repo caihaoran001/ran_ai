@@ -5,13 +5,14 @@
   - .env（生产密钥 / 数据库 / QiWe guid 等真实配置）
 
 ⚠️ 重要：日常部署代码的 local_prebuilt_deploy.py 已不再调用本脚本，也不会动这两个文件。
-只有在【改动生产配置】时才手动运行本脚本；运行前请确保下方模板已是最新配置，
-因为它会整体覆盖服务器上的 .env 与 docker-compose.prod.yml（服务器上的手改会被覆盖）。
+只有在【改动生产配置】时才手动运行本脚本；compose 取仓库根目录当前文件，
+.env 取下方模板。两者都会整体覆盖服务器文件（服务器上的手改会被覆盖）。
 
 运行：uv run --with paramiko python scratch/configure_remote_files.py
 """
 import paramiko
 import sys
+from pathlib import Path
 
 def main():
     client = paramiko.SSHClient()
@@ -24,7 +25,7 @@ def main():
 
     print("✅ SSH Connected. Writing docker-compose.prod.yml on ECS...")
     
-    docker_compose_content = """services:
+    _legacy_docker_compose_content = """services:
   backend:
     build:
       context: ./backend
@@ -121,6 +122,13 @@ volumes:
   caddy_data:
   caddy_config:
 """
+    # Keep docker-compose.prod.yml as the single source of truth. The old
+    # embedded snapshot above is retained temporarily only to avoid mixing a
+    # large unrelated cleanup into this production architecture change.
+    project_root = Path(__file__).resolve().parents[1]
+    docker_compose_content = (
+        project_root / "docker-compose.prod.yml"
+    ).read_text(encoding="utf-8")
 
     sftp = client.open_sftp()
     

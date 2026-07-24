@@ -277,7 +277,7 @@ class EngineGraph:
                     .limit(1)
                 )
                 if existing_inbound is not None:
-                    return await self._restore_existing_inbound_state(
+                    restored = await self._restore_existing_inbound_state(
                         session,
                         message=message,
                         inbound=existing_inbound,
@@ -285,6 +285,13 @@ class EngineGraph:
                         group_control_command=group_control_command,
                         explicit_bot_query_text=explicit_bot_query_text,
                     )
+                    if await self._link_inbound_events(
+                        session,
+                        message=message,
+                        inbound_id=existing_inbound.id,
+                    ):
+                        await session.commit()
+                    return restored
 
             if message.channel == "qiwe" and message.user_id:
                 group_nickname = ""
@@ -458,6 +465,11 @@ class EngineGraph:
             session.add(db_inbound)
             await session.flush()
             inbound_id = db_inbound.id
+            await self._link_inbound_events(
+                session,
+                message=message,
+                inbound_id=inbound_id,
+            )
             await session.commit()
             logger.info(
                 "RanrenAI inbound stored channel=%s chat_id=%s sender_type=%s message_id=%s db_message_id=%s service_case_id=%s command=%s elapsed_ms=%.1f",
@@ -480,6 +492,44 @@ class EngineGraph:
             "recent_user_messages": recent_user_messages,
             "purpose": purpose,
         }
+
+    async def _link_inbound_events(
+        self,
+        session: Any,
+        *,
+        message: ChannelMessage,
+        inbound_id: int,
+    ) -> bool:
+        """Atomically acknowledge the durable inbox at the business boundary."""
+        event_ids = list(dict.fromkeys(message.inbound_event_ids))
+        if not event_ids:
+            return False
+        events = list(
+            await session.scalars(
+                select(InboundEvent)
+                .where(InboundEvent.id.in_(event_ids))
+                .with_for_update()
+            )
+        )
+        if not events:
+            logger.warning(
+                "RanrenAI inbound event link found no rows ids=%s db_message_id=%s",
+                event_ids,
+                inbound_id,
+            )
+            return False
+        now = datetime.now(timezone.utc)
+        for event in events:
+            event.business_message_id = inbound_id
+            event.status = InboundEvent.STATUS_PROCESSED
+            event.processed_at = now
+            session.add(event)
+        logger.info(
+            "RanrenAI linked inbox events ids=%s db_message_id=%s",
+            [event.id for event in events],
+            inbound_id,
+        )
+        return True
 
     async def _restore_existing_inbound_state(
         self,
