@@ -1,21 +1,23 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Eye, EyeOff, Lock, User, Loader2, ShieldCheck } from "lucide-react";
+import { flushSync } from "react-dom";
+import { CheckCircle2, Eye, EyeOff, Lock, User, Loader2, ShieldCheck } from "lucide-react";
+
+type LoginState = "idle" | "verifying" | "redirecting";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [loginState, setLoginState] = useState<LoginState>("idle");
+  const isSubmitting = loginState !== "idle";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setIsLoading(true);
+    setLoginState("verifying");
 
     try {
       const res = await fetch("/api/auth/login", {
@@ -29,15 +31,16 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (res.ok) {
-        router.push("/cases");
-        router.refresh();
-      } else {
-        setError(data.error || "登录失败，请检查用户名和密码");
+        flushSync(() => setLoginState("redirecting"));
+        window.location.replace("/cases");
+        return;
       }
+
+      setError(data.error || "登录失败，请检查用户名和密码");
+      setLoginState("idle");
     } catch (err) {
       setError("网络连接错误，请稍后重试");
-    } finally {
-      setIsLoading(false);
+      setLoginState("idle");
     }
   };
 
@@ -70,7 +73,11 @@ export default function LoginPage() {
 
         {/* Form card — solid, not glass */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-7 shadow-2xl shadow-black/40">
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form
+            onSubmit={handleSubmit}
+            aria-busy={isSubmitting}
+            className="space-y-5"
+          >
             {error && (
               <div
                 role="alert"
@@ -92,6 +99,7 @@ export default function LoginPage() {
                   name="username"
                   type="text"
                   required
+                  disabled={isSubmitting}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 pl-10 pr-3.5 text-sm font-medium text-white outline-none transition-all duration-150 placeholder:text-slate-500 hover:border-slate-600 focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/20"
@@ -112,6 +120,7 @@ export default function LoginPage() {
                   name="password"
                   type={showPassword ? "text" : "password"}
                   required
+                  disabled={isSubmitting}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="h-11 w-full rounded-xl border border-slate-700 bg-slate-950 pl-10 pr-11 text-sm font-medium text-white outline-none transition-all duration-150 placeholder:text-slate-500 hover:border-slate-600 focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/20"
@@ -119,6 +128,7 @@ export default function LoginPage() {
                 />
                 <button
                   type="button"
+                  disabled={isSubmitting}
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={showPassword ? "隐藏密码" : "显示密码"}
                   className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300"
@@ -131,13 +141,22 @@ export default function LoginPage() {
             {/* Submit — solid teal, no rainbow gradient */}
             <button
               type="submit"
-              disabled={isLoading}
-              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 text-sm font-bold text-white shadow-lg shadow-cyan-900/40 outline-none transition-all duration-150 hover:bg-cyan-500 focus-visible:ring-4 focus-visible:ring-cyan-500/30 active:scale-[0.99] disabled:pointer-events-none disabled:opacity-60"
+              disabled={isSubmitting}
+              className={`flex h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold text-white outline-none transition-all duration-150 focus-visible:ring-4 active:scale-[0.99] disabled:pointer-events-none ${
+                loginState === "redirecting"
+                  ? "bg-emerald-600 shadow-lg shadow-emerald-950/40 focus-visible:ring-emerald-500/30"
+                  : "bg-cyan-600 shadow-lg shadow-cyan-900/40 hover:bg-cyan-500 focus-visible:ring-cyan-500/30 disabled:opacity-60"
+              }`}
             >
-              {isLoading ? (
+              {loginState === "redirecting" ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>正在验证...</span>
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span aria-live="polite">登录成功，正在进入系统…</span>
+                </>
+              ) : loginState === "verifying" ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+                  <span aria-live="polite">正在验证…</span>
                 </>
               ) : (
                 <span>登 录</span>
