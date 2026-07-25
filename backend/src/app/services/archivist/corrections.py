@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,8 @@ class CorrectionApplyResult:
     personal_written: int = 0
     recorded: int = 0
     skipped: int = 0
+    personal_items: list[dict[str, Any]] = field(default_factory=list)
+    general_items: list[dict[str, Any]] = field(default_factory=list)
 
 
 async def apply_reported_corrections(
@@ -59,6 +61,13 @@ async def apply_reported_corrections(
             else:
                 result.personal_written += 1
                 result.recorded += 1
+                result.personal_items.append(
+                    {
+                        "summary": summary,
+                        "applicability": applicability,
+                        "staff_message_id": staff.id,
+                    }
+                )
             continue
 
         if scope != "general":
@@ -68,6 +77,14 @@ async def apply_reported_corrections(
         # 此处只做消息配对校验和计数。需要进知识库时，模型必须另外调用
         # report_faq_candidate，由 knowledge_evolution 统一校验班主任确认并建稿。
         result.recorded += 1
+        result.general_items.append(
+            {
+                "summary": summary,
+                "applicability": applicability,
+                "bot_message_id": bot.id,
+                "staff_message_id": staff.id,
+            }
+        )
     return result
 
 

@@ -126,6 +126,10 @@ async def test_same_archivist_call_writes_both_memory_summaries(db_session):
     assert memory is not None
     assert len(fake.calls) == 1
     assert result.memory_written == 1
+    assert result.input_message_ids == [item.id for item in msgs]
+    assert {
+        item["kind"] for item in result.change_details
+    } >= {"user_summary", "case_material"}
     assert memory.summary and "睡眠改善" in memory.summary
     assert memory.case_material_summary and "仍需后续记录" in memory.case_material_summary
     assert memory.summary_watermark_message_id == watermark

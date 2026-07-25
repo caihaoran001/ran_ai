@@ -64,6 +64,7 @@ class AICostCaseStat(BaseModel):
     total_tokens: int = 0
     estimated_cost_yuan: float = 0.0
     last_call_at: datetime | None = None
+    scenarios: list[AICostScenarioStat] = Field(default_factory=list)
 
 
 class AICostOverview(BaseModel):
@@ -73,6 +74,8 @@ class AICostOverview(BaseModel):
     completion_tokens: int = 0
     total_tokens: int = 0
     estimated_cost_yuan: float = 0.0
+    service_case_count: int = 0
+    unassigned_cost_yuan: float = 0.0
     scenarios: list[AICostScenarioStat] = Field(default_factory=list)
     cases: list[AICostCaseStat] = Field(default_factory=list)
 
@@ -98,6 +101,33 @@ class RecentAgentRun(BaseModel):
     finished_at: datetime | None = None
 
 
+class ArchivistInputMessage(BaseModel):
+    id: int
+    role: str
+    content: str
+    created_at: datetime
+    is_context: bool = False
+
+
+class ArchivistBatchChange(BaseModel):
+    kind: str
+    action: str
+    title: str
+    before: str | None = None
+    after: str | None = None
+    evidence: str | None = None
+    items: list[dict] = Field(default_factory=list)
+
+
+class ArchivistBatchRun(RecentAgentRun):
+    trigger_reason: str | None = None
+    input_source: str = "unavailable"
+    input_messages: list[ArchivistInputMessage] = Field(default_factory=list)
+    changes: list[ArchivistBatchChange] = Field(default_factory=list)
+    changes_detail_available: bool = False
+    dropped_items: list[dict] = Field(default_factory=list)
+
+
 class AgentOperationsOverview(BaseModel):
     days: int
     period_start: datetime
@@ -109,3 +139,4 @@ class AgentOperationsOverview(BaseModel):
     tools: list[AgentToolStat] = Field(default_factory=list)
     costs: AICostOverview
     recent_runs: list[RecentAgentRun] = Field(default_factory=list)
+    archivist_batches: list[ArchivistBatchRun] = Field(default_factory=list)

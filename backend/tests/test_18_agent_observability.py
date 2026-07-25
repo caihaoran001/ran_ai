@@ -119,7 +119,17 @@ async def test_agent_ledger_tracks_model_tools_and_api(
                 "outcomes": 1,
                 "profile_facts": 1,
                 "memory_updates": 1,
-            }
+            },
+            "input_message_ids": [],
+            "changes": [
+                {
+                    "kind": "user_summary",
+                    "action": "updated",
+                    "title": "用户历程小结",
+                    "before": "此前执行不稳定",
+                    "after": "本周已连续完成计划",
+                }
+            ],
         },
     )
 
@@ -156,6 +166,15 @@ async def test_agent_ledger_tracks_model_tools_and_api(
     assert payload["reply"]["tool_calls"] >= 3
     assert payload["archivist"]["input_count"] >= 4
     assert payload["archivist"]["output_breakdown"]["outcomes"] >= 1
+    batch = next(
+        item
+        for item in payload["archivist_batches"]
+        if item["id"] == archivist_run_id
+    )
+    assert batch["input_source"] == "exact"
+    assert batch["changes_detail_available"] is True
+    assert batch["changes"][0]["kind"] == "user_summary"
+    assert batch["changes"][0]["after"] == "本周已连续完成计划"
     tool = next(
         item
         for item in payload["tools"]
@@ -167,3 +186,10 @@ async def test_agent_ledger_tracks_model_tools_and_api(
         item["scenario"] == "reply_agent"
         for item in payload["costs"]["scenarios"]
     )
+    assert payload["costs"]["service_case_count"] >= 1
+    case_cost = next(
+        item
+        for item in payload["costs"]["cases"]
+        if item["service_case_id"] == service_case_id
+    )
+    assert case_cost["scenarios"][0]["scenario"] == "reply_agent"

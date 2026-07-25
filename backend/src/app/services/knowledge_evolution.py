@@ -4,11 +4,9 @@ import hashlib
 import json
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from html import escape
-from datetime import date, datetime, time, timedelta, timezone
-from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -325,6 +323,7 @@ async def create_qa_drafts_from_archivist(
     *,
     service_case_id: int,
     candidates: list[dict[str, Any]] | None,
+    created_drafts: list[KnowledgeDraft] | None = None,
 ) -> int:
     """把档案官候选分流为待审核通用 FAQ 或班主任确认的个人指导。
 
@@ -387,6 +386,8 @@ async def create_qa_drafts_from_archivist(
         )
         if draft is not None:
             created += 1
+            if created_drafts is not None:
+                created_drafts.append(draft)
     return created
 
 

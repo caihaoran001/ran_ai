@@ -272,7 +272,7 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                         else "archived_no_output"
                     ),
                     latency_ms=int((time.monotonic() - run_started_at) * 1000),
-                    input_count=result.delta_count,
+                    input_count=len(result.input_message_ids),
                     output_count=output_count,
                     dropped_count=result.dropped_count,
                     metadata={
@@ -280,6 +280,9 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                         "watermark_to": result.watermark_to,
                         "emitted_count": result.emitted_count,
                         "output_breakdown": output_breakdown,
+                        "input_message_ids": result.input_message_ids,
+                        "candidate_message_count": result.delta_count,
+                        "changes": result.change_details,
                         "batch_cap": batch_cap,
                     },
                 )
@@ -326,7 +329,8 @@ def archivist_output_breakdown(result) -> dict[str, int]:
             - int(result.personal_corrections_written or 0),
         ),
         "faq_drafts": int(result.faq_written or 0),
-        "memory_updates": int(result.memory_written or 0),
+        "user_summary_updates": int(result.user_summary_written or 0),
+        "case_material_updates": int(result.case_material_written or 0),
         "case_drafts": int(result.case_written or 0),
     }
 

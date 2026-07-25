@@ -9,7 +9,9 @@ LLM 只用于判断(extract)，落库用确定性代码(commit)。整批增量�
 
 from __future__ import annotations
 
+import json
 import logging
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, TypedDict
@@ -25,6 +27,7 @@ from app.models.archivist_progress import ArchivistProgress
 from app.models.message import Message, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.outcome import OutcomeEvent
 from app.models.service_case import ServiceCase
+from app.models.user_state_profile import UserStateProfile
 from app.services.archivist.checkin_projection import CheckinUpsertResult, upsert_checkin
 from app.services.archivist.followup import (
     get_active_daily_checklist,
@@ -81,6 +84,8 @@ class ArchivistRunResult:
     watermark_from: int | None = None
     watermark_to: int | None = None
     delta_count: int = 0
+    # 真正进入本轮模型输入的聊天消息（含为班主任纠正补入的助教上下文）。
+    input_message_ids: list[int] = field(default_factory=list)
     days_processed: int = 0
     upserts: list[dict] = field(default_factory=list)  # [{date, filled, contradictions...}]
     contradictions: list[dict] = field(default_factory=list)
@@ -94,15 +99,103 @@ class ArchivistRunResult:
     faq_candidates: list[dict] = field(default_factory=list)
     faq_written: int = 0
     memory_written: int = 0
+    user_summary_written: int = 0
+    case_material_written: int = 0
     case_written: int = 0
     emitted_count: int = 0
     dropped_count: int = 0
+    # 只记录确定性写库后的业务变化，供运营按批次追溯；不参与任何业务判断。
+    change_details: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _sh_date(dt: datetime) -> date:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(_SH_TZ).date()
+
+
+def _audit_text(value: Any, *, limit: int = 2000) -> str | None:
+    """把变更值压成可读、可持久化的审计文本，不让运行账本无限膨胀。"""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+    elif isinstance(value, (dict, list)):
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    else:
+        text = str(value).strip()
+    return text[:limit] or None
+
+
+def _nested_value(values: dict[str, Any], dotted_key: str) -> str | None:
+    current: Any = values
+    for part in dotted_key.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return _audit_text(current)
+
+
+def _state_change_details(
+    before: dict[str, Any] | None,
+    after: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """只展示最终投影中真正新增或改变的 current 事实。"""
+    before_domains = (
+        before.get("domains")
+        if isinstance(before, dict) and isinstance(before.get("domains"), dict)
+        else {}
+    )
+    after_domains = (
+        after.get("domains")
+        if isinstance(after, dict) and isinstance(after.get("domains"), dict)
+        else {}
+    )
+    changes: list[dict[str, Any]] = []
+    for domain_key, domain in after_domains.items():
+        if not isinstance(domain, dict):
+            continue
+        previous_domain = before_domains.get(domain_key)
+        previous_current = (
+            previous_domain.get("current")
+            if isinstance(previous_domain, dict)
+            and isinstance(previous_domain.get("current"), dict)
+            else {}
+        )
+        current = domain.get("current")
+        if not isinstance(current, dict):
+            continue
+        for field_key, item in current.items():
+            if not isinstance(item, dict) or previous_current.get(field_key) == item:
+                continue
+            source = str(item.get("source") or "")
+            # 成效本身已用 OutcomeEvent 的精确创建结果展示，避免投影后重复出现一次。
+            if source == "archivist":
+                continue
+            if "profile_signal" in source or "profile_guardrail" in source:
+                kind = "profile_fact"
+            elif "state_signal" in source:
+                kind = "state_fact"
+            elif "staff_correction" in source or "staff_guidance" in source:
+                kind = "personal_guidance"
+            else:
+                kind = "user_state"
+            previous_item = previous_current.get(field_key)
+            changes.append(
+                {
+                    "kind": kind,
+                    "action": "updated" if previous_item else "added",
+                    "title": f"{domain.get('label') or domain_key} · {field_key}",
+                    "before": _audit_text(
+                        previous_item.get("value")
+                        if isinstance(previous_item, dict)
+                        else None
+                    ),
+                    "after": _audit_text(item.get("value")),
+                    "evidence": _audit_text(item.get("evidence")),
+                }
+            )
+    return changes
 
 
 class ArchivistPipeline:
@@ -274,6 +367,14 @@ class ArchivistPipeline:
                         followup_context_by_date.setdefault(date_iso, []).append(context)
 
         self.result.delta_count = len(delta_rows)
+        self.result.input_message_ids = sorted(
+            {
+                int(item["id"])
+                for messages in delta_by_date.values()
+                for item in messages
+                if item.get("id")
+            }
+        )
         archive_context = await self._load_archive_context()
         return {
             "watermark_from": watermark or None,
@@ -502,6 +603,16 @@ class ArchivistPipeline:
 
     async def _commit(self, state: ArchivistPipelineState) -> None:
         """确定性落库：按天 upsert 打卡；推进水位线 + last_archived_at。不在此 commit 事务。"""
+        existing_state_profile = await self.session.scalar(
+            select(UserStateProfile).where(
+                UserStateProfile.service_case_id == self.service_case.id
+            )
+        )
+        state_before = deepcopy(
+            existing_state_profile.state_json
+            if existing_state_profile is not None
+            else None
+        )
         candidates = state.get("day_candidates") or {}
         committed: list[dict] = []
         for date_iso, payload in sorted(candidates.items()):
@@ -518,12 +629,58 @@ class ArchivistPipeline:
                 "date": date_iso,
                 "created": res.created,
                 "filled": res.filled,
+                "custom_answers_written": res.custom_answers_written,
                 "kept_form": res.kept_form,
                 "contradictions": res.contradictions,
             }
             committed.append(entry)
             self.result.upserts.append(entry)
             self.result.contradictions.extend(res.contradictions)
+            written_items = [
+                {
+                    "field": field_key,
+                    "value": _nested_value(payload.get("fields") or {}, field_key),
+                }
+                for field_key in res.filled
+            ]
+            custom_by_id = {
+                str(item.get("item_id")): item
+                for item in (payload.get("custom_answers") or [])
+                if item.get("item_id")
+            }
+            written_items.extend(
+                {
+                    "field": item_id,
+                    "label": str(custom_by_id.get(item_id, {}).get("question") or ""),
+                    "value": str(custom_by_id.get(item_id, {}).get("answer") or ""),
+                }
+                for item_id in res.custom_answers_written
+            )
+            if written_items:
+                self.result.change_details.append(
+                    {
+                        "kind": "checkin",
+                        "action": "created" if res.created else "updated",
+                        "title": f"{date_iso} 打卡",
+                        "items": written_items,
+                    }
+                )
+            if res.contradictions:
+                self.result.change_details.append(
+                    {
+                        "kind": "checkin_conflict",
+                        "action": "not_applied",
+                        "title": f"{date_iso} 打卡冲突",
+                        "items": [
+                            {
+                                "field": item.get("field"),
+                                "before": _audit_text(item.get("form_value")),
+                                "after": _audit_text(item.get("chat_value")),
+                            }
+                            for item in res.contradictions
+                        ],
+                    }
+                )
         self.result.days_processed = len(committed)
 
         followup_answers = state.get("followup_answers") or []
@@ -567,9 +724,20 @@ class ArchivistPipeline:
                     profile_signals=profile_candidates,
                     state_signals=state_candidates,
                 )
-                self.result.outcome_written = len(result.get("created_events") or [])
+                created_events = result.get("created_events") or []
+                self.result.outcome_written = len(created_events)
                 self.result.profile_written = len(result.get("profile_signals") or [])
                 self.result.state_written = len(result.get("state_signals") or [])
+                self.result.change_details.extend(
+                    {
+                        "kind": "outcome",
+                        "action": "added",
+                        "title": str(item.get("field_key") or "阶段成效"),
+                        "after": _audit_text(item.get("value")),
+                        "evidence": _audit_text(item.get("evidence_text")),
+                    }
+                    for item in created_events
+                )
 
         correction_result = await apply_reported_corrections(
             self.session,
@@ -579,14 +747,40 @@ class ArchivistPipeline:
         self.result.personal_corrections_written = correction_result.personal_written
         self.result.corrections_recorded = correction_result.recorded
         self.result.corrections_skipped = correction_result.skipped
+        self.result.change_details.extend(
+            {
+                "kind": "correction",
+                "action": "recorded",
+                "title": "班主任通用纠错",
+                "after": _audit_text(item.get("summary")),
+                "evidence": _audit_text(item.get("applicability")),
+            }
+            for item in correction_result.general_items
+        )
 
         # FAQ、两类滚动小结、优秀案例候选都属于本轮档案官的正式输出，
         # 与核心事实和水位线在同一事务写入；任一步失败都让整批回滚重做。
         self.result.faq_candidates = state.get("faq_candidates") or []
+        faq_drafts = []
         self.result.faq_written = await create_qa_drafts_from_archivist(
             self.session,
             service_case_id=self.service_case.id,
             candidates=self.result.faq_candidates,
+            created_drafts=faq_drafts,
+        )
+        self.result.change_details.extend(
+            {
+                "kind": "faq_draft",
+                "action": "created",
+                "title": draft.title,
+                "after": _audit_text(
+                    {
+                        "question": draft.question,
+                        "answer": draft.answer,
+                    }
+                ),
+            }
+            for draft in faq_drafts
         )
 
         memory_candidate = state.get("memory_candidate")
@@ -604,12 +798,51 @@ class ArchivistPipeline:
                 if memory is None:
                     memory = ArchivistCaseMemory(service_case_id=self.service_case.id)
                     self.session.add(memory)
+                previous_user_summary = memory.summary
+                previous_case_material = memory.case_material_summary
                 if user_summary:
-                    memory.summary = user_summary[:800]
+                    next_user_summary = user_summary[:800]
+                    if next_user_summary != previous_user_summary:
+                        memory.summary = next_user_summary
+                        self.result.user_summary_written = 1
+                        self.result.change_details.append(
+                            {
+                                "kind": "user_summary",
+                                "action": (
+                                    "created"
+                                    if not previous_user_summary
+                                    else "updated"
+                                ),
+                                "title": "用户历程小结",
+                                "before": previous_user_summary,
+                                "after": next_user_summary,
+                            }
+                        )
                 if case_material_summary:
-                    memory.case_material_summary = case_material_summary[:1600]
+                    next_case_material = case_material_summary[:1600]
+                    if next_case_material != previous_case_material:
+                        memory.case_material_summary = next_case_material
+                        self.result.case_material_written = 1
+                        self.result.change_details.append(
+                            {
+                                "kind": "case_material",
+                                "action": (
+                                    "created"
+                                    if not previous_case_material
+                                    else "updated"
+                                ),
+                                "title": "优秀案例素材小结",
+                                "before": previous_case_material,
+                                "after": next_case_material,
+                            }
+                        )
                 memory.summary_watermark_message_id = state.get("watermark_to")
-                self.result.memory_written = 1
+                self.result.memory_written = int(
+                    bool(
+                        self.result.user_summary_written
+                        or self.result.case_material_written
+                    )
+                )
 
         case_candidates = state.get("case_candidates") or []
         if self.result.outcome_written and case_candidates:
@@ -658,6 +891,36 @@ class ArchivistPipeline:
                     },
                 )
                 self.result.case_written = 1 if draft is not None else 0
+                if draft is not None:
+                    self.result.change_details.append(
+                        {
+                            "kind": "case_draft",
+                            "action": "created",
+                            "title": draft.title,
+                            "after": _audit_text(
+                                {
+                                    "background": draft.question,
+                                    "case": draft.answer,
+                                }
+                            ),
+                        }
+                    )
+
+        current_state_profile = await self.session.scalar(
+            select(UserStateProfile).where(
+                UserStateProfile.service_case_id == self.service_case.id
+            )
+        )
+        self.result.change_details.extend(
+            _state_change_details(
+                state_before,
+                (
+                    current_state_profile.state_json
+                    if current_state_profile is not None
+                    else None
+                ),
+            )
+        )
 
         # 抽取观测留痕(R1)：与打卡 upsert/水位线同一事务落库，痕迹始终与已提交状态强一致。
         watermark_to = state.get("watermark_to")

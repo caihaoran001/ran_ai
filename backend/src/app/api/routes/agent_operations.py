@@ -12,7 +12,9 @@ from app.db.session import get_session
 from app.models.agent_run import AgentRun
 from app.models.agent_tool_call import AgentToolCall
 from app.models.ai_usage import AIUsageLog
+from app.models.archivist_extract_trace import ArchivistExtractTrace
 from app.models.knowledge_draft import KnowledgeDraft
+from app.models.message import Message, MessagePurpose, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.models.user import User
 from app.schemas.agent_operations import (
@@ -23,6 +25,9 @@ from app.schemas.agent_operations import (
     AICostCaseStat,
     AICostOverview,
     AICostScenarioStat,
+    ArchivistBatchChange,
+    ArchivistBatchRun,
+    ArchivistInputMessage,
     ArchivistRuntimeSummary,
     RecentAgentRun,
 )
@@ -122,6 +127,9 @@ async def get_agent_operations(
         tools=await _tool_stats(session, period_start=period_start),
         costs=await _cost_overview(session, period_start=period_start),
         recent_runs=await _recent_runs(session, period_start=period_start),
+        archivist_batches=await _archivist_batches(
+            session, period_start=period_start
+        ),
     )
 
 
@@ -399,14 +407,77 @@ async def _cost_overview(
             .limit(200)
         )
     ).all()
+    case_ids = [int(row[0]) for row in case_rows]
+    case_scenario_rows = []
+    if case_ids:
+        case_scenario_rows = (
+            await session.execute(
+                select(
+                    AIUsageLog.service_case_id,
+                    AIUsageLog.scenario,
+                    func.count(AIUsageLog.id),
+                    func.count(AIUsageLog.id).filter(
+                        AIUsageLog.success.is_(True)
+                    ),
+                    func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0),
+                    func.coalesce(func.sum(AIUsageLog.completion_tokens), 0),
+                    func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
+                    func.coalesce(
+                        func.sum(AIUsageLog.estimated_cost_yuan), 0.0
+                    ),
+                )
+                .where(
+                    AIUsageLog.created_at >= period_start,
+                    AIUsageLog.is_diagnostic.is_(False),
+                    AIUsageLog.service_case_id.in_(case_ids),
+                )
+                .group_by(AIUsageLog.service_case_id, AIUsageLog.scenario)
+                .order_by(
+                    AIUsageLog.service_case_id,
+                    func.coalesce(
+                        func.sum(AIUsageLog.estimated_cost_yuan), 0.0
+                    ).desc(),
+                )
+            )
+        ).all()
+    scenarios_by_case: dict[int, list[AICostScenarioStat]] = defaultdict(list)
+    for row in case_scenario_rows:
+        scenarios_by_case[int(row[0])].append(
+            AICostScenarioStat(
+                scenario=str(row[1]),
+                calls=int(row[2] or 0),
+                successful_calls=int(row[3] or 0),
+                prompt_tokens=int(row[4] or 0),
+                completion_tokens=int(row[5] or 0),
+                total_tokens=int(row[6] or 0),
+                estimated_cost_yuan=round(float(row[7] or 0.0), 6),
+            )
+        )
+    assigned_cost, service_case_count = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(AIUsageLog.estimated_cost_yuan), 0.0),
+                func.count(func.distinct(AIUsageLog.service_case_id)),
+            ).where(
+                AIUsageLog.created_at >= period_start,
+                AIUsageLog.is_diagnostic.is_(False),
+                AIUsageLog.service_case_id.is_not(None),
+            )
+        )
+    ).one()
+    total_cost = round(
+        sum(item.estimated_cost_yuan for item in scenarios), 6
+    )
     return AICostOverview(
         calls=sum(item.calls for item in scenarios),
         successful_calls=sum(item.successful_calls for item in scenarios),
         prompt_tokens=sum(item.prompt_tokens for item in scenarios),
         completion_tokens=sum(item.completion_tokens for item in scenarios),
         total_tokens=sum(item.total_tokens for item in scenarios),
-        estimated_cost_yuan=round(
-            sum(item.estimated_cost_yuan for item in scenarios), 6
+        estimated_cost_yuan=total_cost,
+        service_case_count=int(service_case_count or 0),
+        unassigned_cost_yuan=round(
+            max(0.0, total_cost - float(assigned_cost or 0.0)), 6
         ),
         scenarios=scenarios,
         cases=[
@@ -418,6 +489,7 @@ async def _cost_overview(
                 total_tokens=int(row[4] or 0),
                 estimated_cost_yuan=round(float(row[5] or 0.0), 6),
                 last_call_at=row[6],
+                scenarios=scenarios_by_case.get(int(row[0]), []),
             )
             for row in case_rows
         ],
@@ -467,3 +539,194 @@ async def _recent_runs(
         )
         for run, case_no, user_name in rows
     ]
+
+
+async def _archivist_batches(
+    session: AsyncSession,
+    *,
+    period_start: datetime,
+) -> list[ArchivistBatchRun]:
+    rows = (
+        await session.execute(
+            select(AgentRun, ServiceCase.case_no, User.name)
+            .outerjoin(ServiceCase, AgentRun.service_case_id == ServiceCase.id)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(
+                AgentRun.agent_type == "archivist",
+                AgentRun.created_at >= period_start,
+                AgentRun.is_diagnostic.is_(False),
+            )
+            .order_by(AgentRun.started_at.desc(), AgentRun.id.desc())
+            .limit(30)
+        )
+    ).all()
+    if not rows:
+        return []
+
+    run_ids = [run.id for run, _case_no, _user_name in rows]
+    traces = list(
+        await session.scalars(
+            select(ArchivistExtractTrace).where(
+                ArchivistExtractTrace.agent_run_id.in_(run_ids)
+            )
+        )
+    )
+    dropped_by_run: dict[int, list[dict]] = defaultdict(list)
+    for trace in traces:
+        if trace.agent_run_id is None:
+            continue
+        dropped_by_run[trace.agent_run_id].extend(
+            item
+            for item in (trace.dropped_json or [])
+            if isinstance(item, dict)
+        )
+
+    exact_ids: set[int] = set()
+    for run, _case_no, _user_name in rows:
+        metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+        for value in metadata.get("input_message_ids") or []:
+            try:
+                exact_ids.add(int(value))
+            except (TypeError, ValueError):
+                continue
+    exact_messages = (
+        list(
+            await session.scalars(
+                select(Message)
+                .where(Message.id.in_(exact_ids))
+                .order_by(Message.id.asc())
+            )
+        )
+        if exact_ids
+        else []
+    )
+    message_by_id = {message.id: message for message in exact_messages}
+
+    batches: list[ArchivistBatchRun] = []
+    for run, case_no, user_name in rows:
+        metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+        raw_ids = metadata.get("input_message_ids")
+        input_source = "exact" if isinstance(raw_ids, list) else "unavailable"
+        message_ids: list[int] = []
+        for value in raw_ids or []:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed not in message_ids:
+                message_ids.append(parsed)
+
+        fallback_messages: list[Message] = []
+        if not message_ids and run.service_case_id is not None:
+            watermark_from = _optional_int(metadata.get("watermark_from"))
+            watermark_to = _optional_int(metadata.get("watermark_to"))
+            if watermark_to is not None:
+                fallback_messages = list(
+                    await session.scalars(
+                        select(Message)
+                        .where(
+                            Message.service_case_id == run.service_case_id,
+                            Message.id > (watermark_from or 0),
+                            Message.id <= watermark_to,
+                            Message.sender_type.in_(
+                                [
+                                    MessageSenderType.USER,
+                                    MessageSenderType.STAFF,
+                                    MessageSenderType.BOT,
+                                ]
+                            ),
+                            Message.purpose == MessagePurpose.CHAT,
+                        )
+                        .order_by(Message.id.asc())
+                    )
+                )
+                input_source = "watermark_range"
+        selected_messages = (
+            [message_by_id[item] for item in message_ids if item in message_by_id]
+            if message_ids
+            else fallback_messages
+        )
+
+        raw_changes = metadata.get("changes")
+        detail_available = isinstance(raw_changes, list)
+        changes = [
+            ArchivistBatchChange.model_validate(item)
+            for item in (raw_changes or [])
+            if isinstance(item, dict)
+        ]
+        if not detail_available:
+            changes = [
+                ArchivistBatchChange(
+                    kind=str(key),
+                    action="count_only",
+                    title=str(key),
+                    after=f"{int(value or 0)} 项",
+                )
+                for key, value in (
+                    metadata.get("output_breakdown")
+                    if isinstance(metadata.get("output_breakdown"), dict)
+                    else {}
+                ).items()
+                if int(value or 0) > 0
+            ]
+
+        batches.append(
+            ArchivistBatchRun(
+                id=run.id,
+                agent_type=run.agent_type,
+                run_kind=run.run_kind,
+                status=run.status,
+                outcome=run.outcome,
+                service_case_id=run.service_case_id,
+                case_no=case_no,
+                user_name=user_name,
+                model_calls=run.model_calls,
+                tool_calls=run.tool_calls,
+                total_tokens=run.total_tokens,
+                estimated_cost_yuan=round(
+                    float(run.estimated_cost_yuan or 0.0), 6
+                ),
+                input_count=run.input_count,
+                output_count=run.output_count,
+                latency_ms=run.latency_ms,
+                error_type=run.error_type,
+                started_at=run.started_at,
+                finished_at=run.finished_at,
+                trigger_reason=run.trigger_reason,
+                input_source=input_source,
+                input_messages=[
+                    ArchivistInputMessage(
+                        id=message.id,
+                        role=_archivist_role(message.sender_type),
+                        content=(message.content or "")[:4000],
+                        created_at=message.created_at,
+                        is_context=bool(
+                            message.sender_type == MessageSenderType.BOT
+                            and message.id
+                            <= (_optional_int(metadata.get("watermark_from")) or 0)
+                        ),
+                    )
+                    for message in selected_messages
+                    if message.created_at is not None
+                ],
+                changes=changes,
+                changes_detail_available=detail_available,
+                dropped_items=dropped_by_run.get(run.id, [])[:50],
+            )
+        )
+    return batches
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _archivist_role(sender_type: MessageSenderType) -> str:
+    return {
+        MessageSenderType.USER: "用户",
+        MessageSenderType.STAFF: "班主任",
+        MessageSenderType.BOT: "助教",
+    }.get(sender_type, sender_type.value)

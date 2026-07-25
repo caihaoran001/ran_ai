@@ -40,6 +40,7 @@ SOURCE_USER_CONFIRMED = "user_confirmed"
 class CheckinUpsertResult:
     created: bool = False
     filled: list[str] = field(default_factory=list)         # 补空成功的字段
+    custom_answers_written: list[str] = field(default_factory=list)  # 实际新增/更新的个性题答案
     skipped_same: list[str] = field(default_factory=list)    # 值相同、无需改
     kept_form: list[str] = field(default_factory=list)       # 表单已填、聊天不覆盖
     contradictions: list[dict] = field(default_factory=list)  # 表单值≠聊天值，留痕待人工
@@ -206,7 +207,9 @@ async def upsert_checkin(
                 _merge_scalar(key=key, incoming=value, parsed=parsed, meta=meta, result=result)
         if result.contradictions:
             meta["contradictions"].extend(result.contradictions)
-        _merge_custom_answers(parsed, custom_answers)
+        result.custom_answers_written.extend(
+            _merge_custom_answers(parsed, custom_answers)
+        )
         # 个性化执行单题目的回答本身也应能创建当天打卡；它不一定同时能映射到
         # 固定的 CHECKIN_KEYS（例如“今天午餐有没有按计划吃”）。
         if not parsed:
@@ -243,10 +246,16 @@ async def upsert_checkin(
             checkin_date,
             result.contradictions,
         )
-    custom_changed = _merge_custom_answers(parsed, custom_answers)
+    result.custom_answers_written.extend(
+        _merge_custom_answers(parsed, custom_answers)
+    )
     parsed["_meta"] = meta
     # 只有真正有变化才写(补空/更新/矛盾)，避免无谓 UPDATE
-    if result.filled or result.contradictions or custom_changed:
+    if (
+        result.filled
+        or result.contradictions
+        or result.custom_answers_written
+    ):
         checkin.parsed_json = parsed
     return result
 
@@ -274,9 +283,9 @@ async def _with_question_snapshots(
     ]
 
 
-def _merge_custom_answers(parsed: dict, answers: list[dict]) -> bool:
+def _merge_custom_answers(parsed: dict, answers: list[dict]) -> list[str]:
     """Store answers and immutable question snapshots without polluting fixed fields."""
-    changed = False
+    changed_item_ids: list[str] = []
     current = dict(parsed.get("custom_checkin") or {})
     for item in answers:
         item_id = str(item["item_id"])
@@ -294,7 +303,7 @@ def _merge_custom_answers(parsed: dict, answers: list[dict]) -> bool:
             value.pop("question")
         if current.get(item_id) != value:
             current[item_id] = value
-            changed = True
-    if changed:
+            changed_item_ids.append(item_id)
+    if changed_item_ids:
         parsed["custom_checkin"] = current
-    return changed
+    return changed_item_ids

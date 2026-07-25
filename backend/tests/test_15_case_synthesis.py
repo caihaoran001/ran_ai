@@ -161,6 +161,9 @@ async def test_new_outcome_and_case_are_written_by_same_call(db_session):
     assert result.outcome_written == 1
     assert result.memory_written == 1
     assert result.case_written == 1
+    assert {
+        item["kind"] for item in result.change_details
+    } >= {"outcome", "user_summary", "case_material", "case_draft"}
     draft = await db_session.scalar(
         select(KnowledgeDraft).where(
             KnowledgeDraft.draft_type == "case",
