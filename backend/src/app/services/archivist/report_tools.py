@@ -23,6 +23,8 @@ REPORT_PROFILE_FACT = "report_profile_fact"
 REPORT_STATE_FACT = "report_state_fact"
 REPORT_CORRECTION = "report_correction"
 REPORT_FAQ_CANDIDATE = "report_faq_candidate"
+REPORT_MEMORY = "report_memory"
+REPORT_CASE_CANDIDATE = "report_case_candidate"
 
 # report_* 工具对应 collector 的桶名。
 KIND_CHECKIN = "checkin"
@@ -31,11 +33,17 @@ KIND_PROFILE = "profile"
 KIND_STATE = "state"
 KIND_CORRECTION = "correction"
 KIND_FAQ = "faq"
+KIND_MEMORY = "memory"
+KIND_CASE = "case"
 
 
 class ReportCheckinArgs(BaseModel):
     """上报当天可结构化的打卡字段；只填用户明确说了的，没提到的留空。"""
 
+    target_date: str = Field(
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="这条打卡所属的北京时间自然日，必须来自输入里的日期分组（YYYY-MM-DD）",
+    )
     product_schedule: dict[str, str] | None = Field(
         default=None,
         description=(
@@ -229,6 +237,54 @@ class ReportFaqCandidateArgs(BaseModel):
     )
 
 
+class ReportMemoryArgs(BaseModel):
+    """上报本批归档后的两类滚动小结；只传更新后的完整文本。"""
+
+    user_summary: str = Field(
+        min_length=1,
+        max_length=800,
+        description=(
+            "更新后的用户历程小结，融合既有小结与本批新事实，保留仍成立的重点、覆盖过时信息；"
+            "不超过350个中文字符，不写建议、诊断或疗效承诺"
+        ),
+    )
+    case_material_summary: str | None = Field(
+        default=None,
+        max_length=1600,
+        description=(
+            "更新后的优秀案例素材小结。只保留可能帮助未来形成真实案例的起点困难、关键行动、"
+            "阶段转折、持续改善和仍欠缺的证据；融合既有素材，不复制历史聊天原话。"
+            "本批没有任何案例价值且既有素材为空时可留空"
+        ),
+    )
+
+
+class ReportCaseCandidateArgs(BaseModel):
+    """上报一条已具备完整、稳定证据链的优秀案例候选；一批最多一条。"""
+
+    title: str = Field(min_length=1, max_length=200, description="脱敏后的简短案例标题")
+    question: str = Field(
+        min_length=1,
+        description="案例背景：用户原先遇到的困难或所处阶段，使用抽象事实，不复制历史原话",
+    )
+    answer: str = Field(
+        min_length=1,
+        description="脱敏后的完整案例正文：关键行动、转折、持续结果和可复用价值",
+    )
+    category: Literal["坚持执行", "行为改善", "情绪转正", "执行突破"] = Field(
+        description="案例所属领域"
+    )
+    tags: list[str] | None = Field(default=None, description="2-3个核心标签")
+    reason: str = Field(description="为什么该变化已显著、稳定并值得进入人工审核")
+    evidence: str = Field(
+        description="支撑案例的抽象事实链，不复制历史聊天原话、不含个人敏感信息"
+    )
+    source_message_ids: list[int] | None = Field(
+        default=None,
+        description="本批消息或历史结构化成效所关联的消息ID，最多20个",
+    )
+
+
 # 工具名 → (Pydantic 模型, collector 桶名)。extract_agent 用它校验入参并归桶。
 REPORT_SPECS: dict[str, tuple[type[BaseModel], str]] = {
     REPORT_CHECKIN: (ReportCheckinArgs, KIND_CHECKIN),
@@ -237,6 +293,8 @@ REPORT_SPECS: dict[str, tuple[type[BaseModel], str]] = {
     REPORT_STATE_FACT: (ReportStateFactArgs, KIND_STATE),
     REPORT_CORRECTION: (ReportCorrectionArgs, KIND_CORRECTION),
     REPORT_FAQ_CANDIDATE: (ReportFaqCandidateArgs, KIND_FAQ),
+    REPORT_MEMORY: (ReportMemoryArgs, KIND_MEMORY),
+    REPORT_CASE_CANDIDATE: (ReportCaseCandidateArgs, KIND_CASE),
 }
 
 
@@ -248,7 +306,7 @@ def _noop(**_: Any) -> str:
 def build_report_tools(kinds: list[str]) -> list[StructuredTool]:
     """按启用的 kinds 构建 report-only 工具（仅供 bind_tools 让 LLM 看到 schema）。
 
-    kinds 取值：checkin / outcome / profile / state / correction / faq。
+    kinds 取值：checkin / outcome / profile / state / correction / faq / memory / case。
     """
     tools: list[StructuredTool] = []
     specs = [
@@ -277,6 +335,18 @@ def build_report_tools(kinds: list[str]) -> list[StructuredTool]:
             KIND_FAQ,
             ReportFaqCandidateArgs,
             "上报班主任确认的问答；这是创建 FAQ 草稿或个人指导的唯一入口。",
+        ),
+        (
+            REPORT_MEMORY,
+            KIND_MEMORY,
+            ReportMemoryArgs,
+            "上报本批归档后的用户历程小结和优秀案例素材小结。",
+        ),
+        (
+            REPORT_CASE_CANDIDATE,
+            KIND_CASE,
+            ReportCaseCandidateArgs,
+            "上报一条已具备完整稳定证据链、可进入人工审核的优秀案例候选。",
         ),
     ]
     for name, kind, args_model, desc in specs:

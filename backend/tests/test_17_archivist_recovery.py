@@ -1,17 +1,17 @@
-"""档案官重启恢复：事务内 outbox、失败退避与安全错误分类。"""
+"""档案官单批次调用、事务恢复与安全错误分类。"""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from langchain_core.messages import AIMessage
 from sqlalchemy import select
 
-from app.models.archivist_post_commit_task import ArchivistPostCommitTask
 from app.models.archivist_progress import ArchivistProgress
+from app.models.checkin import Checkin
 from app.models.message import (
     Message,
     MessageDirection,
@@ -23,35 +23,23 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.services.archivist.errors import ArchivistMessageProcessingError
 from app.services.archivist.graph import run_archivist
-from app.services.archivist.post_commit_tasks import (
-    enqueue_archivist_post_commit_tasks,
-    run_archivist_post_commit_tasks,
-)
 from app.services.archivist.trigger import _record_failure
 
 
-class _CheckinModel:
+class _BatchModel:
+    def __init__(self, tool_calls):
+        self.tool_calls = tool_calls
+        self.calls: list[list] = []
+
     def bind_tools(self, tools):
         return self
 
     async def ainvoke(self, messages):
-        return AIMessage(
-            content="",
-            tool_calls=[
-                {
-                    "name": "report_checkin",
-                    "args": {"sleep": "昨晚睡了7小时"},
-                    "id": "checkin-1",
-                }
-            ],
-        )
+        self.calls.append(list(messages))
+        return AIMessage(content="", tool_calls=self.tool_calls)
 
 
-async def _setup_case(db_session):
-    connection = await db_session.connection()
-    await connection.run_sync(
-        lambda conn: ArchivistPostCommitTask.__table__.create(conn, checkfirst=True)
-    )
+async def _setup_case(db_session, *, days: int = 1):
     user = User(name="档案官恢复测试用户")
     db_session.add(user)
     await db_session.flush()
@@ -65,146 +53,107 @@ async def _setup_case(db_session):
     )
     db_session.add(case)
     await db_session.flush()
-    message = Message(
-        service_case_id=case.id,
-        group_id=case.group_id,
-        direction=MessageDirection.INBOUND,
-        sender_type=MessageSenderType.USER,
-        message_type="text",
-        content="这周睡眠改善了，今天也完成了打卡。",
-        purpose=MessagePurpose.CHAT,
-        status=MessageStatus.RECEIVED,
-    )
-    db_session.add(message)
-    await db_session.flush()
-    return case, message
 
-
-@pytest.mark.asyncio
-async def test_post_tasks_are_durable_and_deduplicated(db_session):
-    case, message = await _setup_case(db_session)
-    result = SimpleNamespace(
-        outcome_written=1,
-        profile_written=1,
-        personal_corrections_written=0,
-        upserts=[{"filled": ["sleep"]}],
-        faq_candidates=[{"question": "怎么改善睡眠？", "answer": "先固定起床时间。"}],
-    )
-
-    created = await enqueue_archivist_post_commit_tasks(
-        db_session,
-        service_case_id=case.id,
-        watermark_to=message.id,
-        run_result=result,
-    )
-    duplicate = await enqueue_archivist_post_commit_tasks(
-        db_session,
-        service_case_id=case.id,
-        watermark_to=message.id,
-        run_result=result,
-    )
-    await db_session.flush()
-
-    tasks = list(
-        await db_session.scalars(
-            select(ArchivistPostCommitTask).where(
-                ArchivistPostCommitTask.service_case_id == case.id
-            )
+    messages = []
+    for offset in reversed(range(days)):
+        created_at = datetime.now(timezone.utc) - timedelta(days=offset)
+        message = Message(
+            service_case_id=case.id,
+            group_id=case.group_id,
+            direction=MessageDirection.INBOUND,
+            sender_type=MessageSenderType.USER,
+            message_type="text",
+            content=f"{created_at.date().isoformat()} 睡眠和执行记录",
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.RECEIVED,
+            created_at=created_at,
         )
-    )
-    assert created == 3
-    assert duplicate == 0
-    assert {task.task_type for task in tasks} == {
-        ArchivistPostCommitTask.TYPE_CASE_MEMORY,
-        ArchivistPostCommitTask.TYPE_FAQ_DRAFTS,
-        ArchivistPostCommitTask.TYPE_CASE_SYNTHESIS,
-    }
-    assert all(task.status == ArchivistPostCommitTask.STATUS_PENDING for task in tasks)
-
-
-@pytest.mark.asyncio
-async def test_archivist_commit_writes_watermark_and_post_task_together(db_session):
-    case, message = await _setup_case(db_session)
+        db_session.add(message)
+        messages.append(message)
+    await db_session.flush()
     progress = ArchivistProgress(service_case_id=case.id, last_archived_message_id=0)
     db_session.add(progress)
     await db_session.flush()
+    return case, messages, progress
+
+
+@pytest.mark.asyncio
+async def test_multi_day_delta_invokes_archivist_once(db_session):
+    case, messages, progress = await _setup_case(db_session, days=2)
+    dates = [
+        item.created_at.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+        for item in messages
+    ]
+    model = _BatchModel(
+        [
+            {
+                "name": "report_checkin",
+                "args": {"target_date": dates[0], "sleep": "睡了7小时"},
+                "id": "day-1",
+            },
+            {
+                "name": "report_checkin",
+                "args": {"target_date": dates[1], "sleep": "睡了8小时"},
+                "id": "day-2",
+            },
+        ]
+    )
 
     result = await run_archivist(
         db_session,
         service_case=case,
         progress=progress,
-        chat_model=_CheckinModel(),
+        chat_model=model,
     )
     await db_session.flush()
 
-    task = await db_session.scalar(
-        select(ArchivistPostCommitTask).where(
-            ArchivistPostCommitTask.service_case_id == case.id,
-            ArchivistPostCommitTask.watermark_to == message.id,
-            ArchivistPostCommitTask.task_type
-            == ArchivistPostCommitTask.TYPE_CASE_MEMORY,
+    assert len(model.calls) == 1
+    prompt = model.calls[0][-1].content
+    assert f"【日期 {dates[0]}】" in prompt
+    assert f"【日期 {dates[1]}】" in prompt
+    checkins = list(
+        await db_session.scalars(
+            select(Checkin)
+            .where(Checkin.service_case_id == case.id)
+            .order_by(Checkin.checkin_date.asc())
         )
     )
-    assert result.watermark_to == message.id
-    assert progress.last_archived_message_id == message.id
-    assert task is not None
-    assert task.status == ArchivistPostCommitTask.STATUS_PENDING
+    assert [item.checkin_date.isoformat() for item in checkins] == dates
+    assert result.days_processed == 2
+    assert progress.last_archived_message_id == messages[-1].id
 
 
 @pytest.mark.asyncio
-async def test_post_task_failure_backs_off_and_retries(db_session, monkeypatch):
-    case, message = await _setup_case(db_session)
-    task = ArchivistPostCommitTask(
-        service_case_id=case.id,
-        watermark_to=message.id,
-        task_type=ArchivistPostCommitTask.TYPE_CASE_MEMORY,
-        payload_json={"outcome_written": 1, "upserts": []},
-        status=ArchivistPostCommitTask.STATUS_PENDING,
-        attempt_count=0,
-    )
-    db_session.add(task)
-    await db_session.flush()
-    now = datetime.now(timezone.utc)
+async def test_unified_write_failure_does_not_advance_watermark(
+    db_session, monkeypatch
+):
+    case, _messages, progress = await _setup_case(db_session)
+    original_watermark = progress.last_archived_message_id
 
-    async def _fail(_task):
-        raise TimeoutError("temporary model outage")
+    async def _fail(*args, **kwargs):
+        raise RuntimeError("simulated unified write failure")
 
     monkeypatch.setattr(
-        "app.services.archivist.post_commit_tasks._execute_post_commit_task",
+        "app.services.archivist.graph.create_qa_drafts_from_archivist",
         _fail,
     )
-    first = await run_archivist_post_commit_tasks(now=now)
-    await db_session.refresh(task)
-    assert first == {"claimed": 1, "succeeded": 0, "failed": 1}
-    assert task.status == ArchivistPostCommitTask.STATUS_FAILED
-    assert task.attempt_count == 1
-    assert task.next_attempt_at is not None
+    model = _BatchModel([])
 
-    too_early = await run_archivist_post_commit_tasks(now=now)
-    assert too_early["claimed"] == 0
+    with pytest.raises(RuntimeError, match="simulated unified write failure"):
+        await run_archivist(
+            db_session,
+            service_case=case,
+            progress=progress,
+            chat_model=model,
+        )
 
-    async def _succeed(_task):
-        return None
-
-    monkeypatch.setattr(
-        "app.services.archivist.post_commit_tasks._execute_post_commit_task",
-        _succeed,
-    )
-    retried = await run_archivist_post_commit_tasks(
-        now=task.next_attempt_at + timedelta(seconds=1)
-    )
-    await db_session.refresh(task)
-    assert retried == {"claimed": 1, "succeeded": 1, "failed": 0}
-    assert task.status == ArchivistPostCommitTask.STATUS_SUCCEEDED
-    assert task.attempt_count == 2
+    assert len(model.calls) == 1
+    assert progress.last_archived_message_id == original_watermark
 
 
 @pytest.mark.asyncio
 async def test_transient_failure_never_becomes_quarantine_candidate(db_session):
-    case, _ = await _setup_case(db_session)
-    progress = ArchivistProgress(service_case_id=case.id, last_archived_message_id=0)
-    db_session.add(progress)
-    await db_session.flush()
+    case, _, progress = await _setup_case(db_session)
 
     for _ in range(5):
         await _record_failure(
@@ -222,10 +171,7 @@ async def test_transient_failure_never_becomes_quarantine_candidate(db_session):
 
 @pytest.mark.asyncio
 async def test_only_same_deterministic_message_error_counts_toward_quarantine(db_session):
-    case, _ = await _setup_case(db_session)
-    progress = ArchivistProgress(service_case_id=case.id, last_archived_message_id=0)
-    db_session.add(progress)
-    await db_session.flush()
+    case, _, progress = await _setup_case(db_session)
 
     for _ in range(2):
         await _record_failure(

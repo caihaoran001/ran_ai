@@ -26,7 +26,7 @@ from app.services.user_state_profile import (
 logger = logging.getLogger(__name__)
 
 # 成效表只记"变好"；负向/无变化/未完成/不适由同轮档案官投影到 service_state。
-# 事件类型收窄为与 case_synthesis._POSITIVE_EVENT_TYPES 对齐的两个。
+# 事件类型收窄为档案官优秀案例判断使用的两个正向类型。
 VALID_EVENT_TYPES = frozenset({"improved", "completed"})
 
 # 已知成效维度：不再按当前里程碑限制，修复"跨里程碑正向被静默丢弃"的问题
@@ -35,7 +35,7 @@ VALID_EVENT_TYPES = frozenset({"improved", "completed"})
 KNOWN_OUTCOME_FIELDS = frozenset(OUTCOME_FIELD_DOMAIN_MAP)
 
 # 主观体感维度（睡眠/精神/排便等）：无数值序列，只能靠用户口述，单次提及有偶然性。
-# 用"同一维度不同日≥2 次正向"作为"已确立改善"的结构化线索，交给 case_synthesis 的 LLM 终判。
+# 用"同一维度不同日≥2 次正向"作为"已确立改善"的结构化线索，交给同轮档案官终判。
 SUBJECTIVE_FIELDS = frozenset(
     key for key, domain in OUTCOME_FIELD_DOMAIN_MAP.items() if domain == "body_feedback"
 )
@@ -591,7 +591,7 @@ def _snapshot_metrics(
 def _series_trend(values: list[float]) -> dict[str, Any] | None:
     """客观指标趋势去噪：先 3 日滑动吸收单天反弹，再看净变化方向与一致性。
 
-    不设"显著"阈值——net/consistent 交给 case_synthesis 的 LLM 解读。单天体重波动
+    不设"显著"阈值——net/consistent 交给档案官模型解读。单天体重波动
     （如某天掉一斤第二天弹回）被平滑吸收，不会被误判为向下趋势。
     """
     if len(values) < 2:
@@ -635,7 +635,7 @@ def _moving_average(values: list[float], *, window: int) -> list[float]:
 def _subjective_signals(all_events: list[OutcomeEvent]) -> dict[str, dict[str, Any]]:
     """按体感维度统计"不同日的正向提及次数"：≥2 天=已确立改善(established)，单次=候选线索(candidate)。
 
-    这是给 case_synthesis LLM 的结构化线索，本身不做硬阈值拦截。
+    这是给档案官优秀案例判断的结构化线索，本身不做硬阈值拦截。
     """
     days_by_field: dict[str, set[str]] = {}
     for event in all_events:

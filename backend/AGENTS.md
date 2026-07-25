@@ -93,8 +93,8 @@ Questionnaire submission → LLM generates a user profile. Service-case detail c
 成效抽取**不在消息主链路上实时跑**。消息进来只负责入库/回复；结构化抽取由独立的「档案官」`app/services/archivist/` 承担，在 **scheduler 进程** (`ran-ai-scheduler`) 里周期扫描完成：
 
 - **触发** (`archivist/trigger.py::run_archivist_scan`)：`reminder_service.check_archivist_once` 按 `reminder_check_interval_seconds` 周期调用。**DB 派生找候选服务单 + 行锁防双跑**（重启不丢，不用内存 timer）。闸门：仅当累积 delta 含关键类目（可结构化打卡 / 稳定个人事实 / 阶段成效）且用户停说约 3min 才走 Fast 快触发；无增量则 `no_delta` 跳过。
-- **抽取** (`archivist/graph.py`)：普通 async 流水线（load_context → extract → commit）。`extract` 单轮调用挂载 `report_*` schema 的模型，**只上报不落库**；候选校验和落库由后续确定性代码做。模块名保留 `graph.py` 仅为兼容既有导入。
-- **产物**：① 刷新 `case_memory`（案例记忆）；② delta 抽出的 FAQ 候选转待审核 qa 草稿；③ **成效出现稳态变化时才合成优秀案例草稿**（代替原 day3/7/14/21/28 里程碑硬扫）。`outcome_engine.py` 退化为被档案官调用的成效抽取/评分工具，`user_state_profile.py` 仍把 outcome 投影为 JSONB `user_state_profiles`（action_focus / need_analysis / body_feedback / risk_profile），AI 回复引用当前 action focus 作隐性背景。
+- **抽取** (`archivist/graph.py`)：普通 async 流水线（load_context → extract → commit），不使用 LangGraph/ReAct。每批 delta 只调用一次挂载 `report_*` schema 的模型；一批可跨多天，模型在同一响应里多次上报，工具只承载结构化输出、不落库。历史只传结构化事实、用户历程小结和优秀案例素材小结，不重复传已归档聊天原文。
+- **产物**：同一次模型输出覆盖打卡、画像、成效、状态、纠正、FAQ、两类滚动小结和优秀案例候选；确定性代码校验后与水位线在同一事务写入，不设后置衍生任务。只有本批写入新正向成效且模型确认变化显著稳定时才创建优秀案例草稿。`outcome_engine.py` 是档案官调用的成效写入/评分工具，`user_state_profile.py` 仍把 outcome 投影为 JSONB `user_state_profiles`（action_focus / need_analysis / body_feedback / risk_profile），AI 回复只读取用户历程小结，不读取优秀案例素材小结。
 - 打卡追问 (`archivist/followup.py`) 由外部确定性触发：每 case 每天最多一条，共用 `ReminderEvent(rule_id="checkin_followup")` 天闸（见 memory「打卡追问线上已开启」）。
 
 ### Risk control

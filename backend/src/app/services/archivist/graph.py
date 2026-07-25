@@ -1,9 +1,8 @@
 """档案官运行流水线：load_context → extract → commit。
 
-LLM 只用于判断(extract)，落库用确定性代码(commit)。
-extract 单轮一次性抽出打卡+成效+稳定画像+当前状态；commit 里打卡按天 upsert、其余事实经
-apply_archived_outcome 写真表(outcome_events/user_state)。档案官是成效/画像的**唯一**抽取
-入口(聊天热路径已不再实时抽)。
+LLM 只用于判断(extract)，落库用确定性代码(commit)。整批增量只调用一次模型，在同一个
+响应里上报打卡、成效、画像、状态、FAQ、两类滚动小结和优秀案例候选；commit 将全部产物与
+水位线写进同一事务。档案官是成效/画像的**唯一**抽取入口(聊天热路径已不再实时抽)。
 
 模块路径保留为 ``archivist.graph`` 以兼容既有调用方；运行时是普通 async 流水线，不使用 LangGraph。
 """
@@ -20,9 +19,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.models.archivist_case_memory import ArchivistCaseMemory
 from app.models.archivist_extract_trace import ArchivistExtractTrace
 from app.models.archivist_progress import ArchivistProgress
 from app.models.message import Message, MessagePurpose, MessageSenderType, MessageStatus
+from app.models.outcome import OutcomeEvent
 from app.models.service_case import ServiceCase
 from app.services.archivist.checkin_projection import CheckinUpsertResult, upsert_checkin
 from app.services.archivist.followup import (
@@ -32,7 +33,11 @@ from app.services.archivist.followup import (
 )
 from app.services.archivist.corrections import apply_reported_corrections
 from app.services.archivist.extract_agent import run_extract_agent
-from app.services.archivist.post_commit_tasks import enqueue_archivist_post_commit_tasks
+from app.services.knowledge_evolution import (
+    _existing_case_summaries,
+    create_draft_candidate,
+    create_qa_drafts_from_archivist,
+)
 from app.services.outcome_engine import apply_archived_outcome
 
 logger = logging.getLogger(__name__)
@@ -53,6 +58,7 @@ class ArchivistPipelineState(TypedDict, total=False):
     delta_message_ids: list[int]
     delta_user_message_ids: list[int]
     followup_context_by_date: dict[str, list[dict]]
+    archive_context: dict[str, Any]
     # {date_iso: {"fields": {...}, "evidence_ids": [int]}}
     day_candidates: dict[str, dict]
     # 模型抽出的成效事件/稳定画像/当前状态（累计跨整批，commit 里一次性写真表）
@@ -61,10 +67,12 @@ class ArchivistPipelineState(TypedDict, total=False):
     state_candidates: list[dict]
     correction_candidates: list[dict]
     faq_candidates: list[dict]
+    memory_candidate: dict[str, Any] | None
+    case_candidates: list[dict]
     followup_answers: list[dict]
     checklist_answers: list[dict]
     has_checkin_activity: bool
-    # 抽取观测留痕(R1):每个自然日一条 {target_date, emitted, kept, dropped}
+    # 抽取观测留痕(R1):每批一条 {target_date, emitted, kept, dropped}
     extract_traces: list[dict]
 
 
@@ -83,9 +91,10 @@ class ArchivistRunResult:
     personal_corrections_written: int = 0
     corrections_recorded: int = 0
     corrections_skipped: int = 0
-    # FAQ 候选（LLM 在 delta 抽取中顺手产出）；不在归档事务里落库，
-    # 由 trigger 在归档提交成功后best-effort转成待审核 qa 草稿（走 knowledge_evolution 管线）。
     faq_candidates: list[dict] = field(default_factory=list)
+    faq_written: int = 0
+    memory_written: int = 0
+    case_written: int = 0
 
 
 def _sh_date(dt: datetime) -> date:
@@ -261,6 +270,7 @@ class ArchivistPipeline:
                         followup_context_by_date.setdefault(date_iso, []).append(context)
 
         self.result.delta_count = len(delta_rows)
+        archive_context = await self._load_archive_context()
         return {
             "watermark_from": watermark or None,
             "watermark_to": watermark_to or None,
@@ -268,25 +278,82 @@ class ArchivistPipeline:
             "delta_message_ids": delta_message_ids,
             "delta_user_message_ids": delta_user_message_ids,
             "followup_context_by_date": followup_context_by_date,
+            "archive_context": archive_context,
+        }
+
+    async def _load_archive_context(self) -> dict[str, Any]:
+        """加载已抽象的历史，不把已归档聊天原文重复喂给模型。"""
+        memory = await self.session.scalar(
+            select(ArchivistCaseMemory).where(
+                ArchivistCaseMemory.service_case_id == self.service_case.id
+            )
+        )
+        events = list(
+            await self.session.scalars(
+                select(OutcomeEvent)
+                .where(OutcomeEvent.service_case_id == self.service_case.id)
+                .order_by(OutcomeEvent.id.desc())
+                .limit(40)
+            )
+        )
+        events.reverse()
+        existing_cases = await _existing_case_summaries(
+            self.session,
+            service_case_id=self.service_case.id,
+        )
+        return {
+            "existing_user_summary": memory.summary if memory else None,
+            "existing_case_material_summary": (
+                memory.case_material_summary if memory else None
+            ),
+            # 历史消息若已抽成 outcome，只传结构化事实和来源 ID，不再传 evidence_text/原话。
+            "outcome_timeline": [
+                {
+                    "field_key": item.field_key,
+                    "event_type": item.event_type,
+                    "value": item.value_text,
+                    "milestone": item.milestone,
+                    "occurred_at": (
+                        item.occurred_at.isoformat() if item.occurred_at else None
+                    ),
+                    "source_message_id": item.message_id,
+                }
+                for item in events
+            ],
+            "existing_case_summaries": [
+                {
+                    "title": item.get("title"),
+                    "category": item.get("category"),
+                    "answer_summary": item.get("answer_summary"),
+                }
+                for item in existing_cases
+            ],
         }
 
     async def _extract(self, state: ArchivistPipelineState) -> dict[str, Any]:
-        """对每个自然日的聊天原文用模型一次性抽出打卡+成效+稳定画像+当前状态。
-
-        打卡按天归入 day_candidates（commit 里按天 upsert）；成效/画像累计跨整批，commit 里
-        经 apply_archived_outcome 一次性写真表。档案官是成效/画像的唯一抽取入口。
-        """
+        """把整批增量交给模型一次，收集全部 report_* 产物。"""
         delta_by_date = state.get("delta_by_date") or {}
         day_candidates: dict[str, dict] = {}
-        outcome_candidates: list[dict] = []
-        profile_candidates: list[dict] = []
-        state_candidates: list[dict] = []
-        correction_candidates: list[dict] = []
-        faq_candidates: list[dict] = []
         followup_answers: list[dict] = []
         checklist_answers: list[dict] = []
         extract_traces: list[dict] = []
         has_checkin_activity = False
+        if not delta_by_date:
+            return {
+                "day_candidates": {},
+                "outcome_candidates": [],
+                "profile_candidates": [],
+                "state_candidates": [],
+                "correction_candidates": [],
+                "faq_candidates": [],
+                "memory_candidate": None,
+                "case_candidates": [],
+                "followup_answers": [],
+                "checklist_answers": [],
+                "extract_traces": [],
+                "has_checkin_activity": False,
+            }
+
         followup_context_by_date = state.get("followup_context_by_date") or {}
         checklist = await get_active_daily_checklist(
             self.session, service_case_id=self.service_case.id
@@ -295,73 +362,115 @@ class ArchivistPipeline:
             str(item["id"]): str(item["label"])
             for item in (checklist[1] if checklist is not None else [])
         }
-
-        for date_iso, msgs in delta_by_date.items():
-            content = "\n".join(f"[{m['id']}] {m['role']}：{m['text']}" for m in msgs)
-            # extract 是成效/画像/当前状态/打卡的唯一权威，恒抽全类，
-            # **故意不采信入营层 archive_plan.kinds**。archive_plan 只是档案官触发闸门
-            # （trigger.py 用它判本单要不要跑/跑多快），刻意宁滥勿缺（gate 提示词明说"抽不到也无妨"）；
-            # 若让 extract 照 gate 的 kinds 裁剪，就会把可靠的真抽绑死在不可靠的闸门上、gate 漏标即漏抽，
-            # 违反"禁止软硬并行、要能定位"。两处 worthy 判断本就不必一致——这是分工，不是 bug。
-            collector = await run_extract_agent(
-                content=content,
-                service_case_id=self.service_case.id,
-                enabled_kinds=["checkin", "outcome", "profile", "state", "correction", "faq"],
-                chat_model=self.chat_model,
-                settings=self.settings,
-                followup_context=followup_context_by_date.get(date_iso) or [],
-                checklist_context=(
-                    [
-                        {"item_id": item["id"], "label": item["label"], "target_date": date_iso}
-                        for item in checklist[1]
-                    ]
-                    if checklist is not None
-                    else []
-                ),
+        dates = sorted(delta_by_date)
+        content_parts: list[str] = []
+        evidence_ids_by_date: dict[str, list[int]] = {}
+        for date_iso in dates:
+            msgs = delta_by_date[date_iso]
+            content_parts.append(f"【日期 {date_iso}】")
+            content_parts.extend(
+                f"[{item['id']}] {item['role']}：{item['text']}" for item in msgs
             )
-            # 抽取观测留痕：仅在 LLM 确有 emit 或有丢弃时记，跳过纯 no-op 抽取避免噪声。
-            trace = collector.get("_trace") or {}
-            if trace.get("emitted") or trace.get("dropped"):
-                extract_traces.append({"target_date": date_iso, **trace})
-            fields = collector.get("checkin") or {}
+            evidence_ids_by_date[date_iso] = [
+                item["id"] for item in msgs if item["sender_type"] == "user"
+            ]
+
+        followup_context = [
+            context
+            for date_iso in dates
+            for context in (followup_context_by_date.get(date_iso) or [])
+        ]
+        checklist_context = (
+            [
+                {
+                    "item_id": item["id"],
+                    "label": item["label"],
+                    "target_date": date_iso,
+                }
+                for date_iso in dates
+                for item in checklist[1]
+            ]
+            if checklist is not None
+            else []
+        )
+        # extract 是唯一权威，恒抽全类；archive_plan 只负责上游触发，不裁剪本轮工具。
+        collector = await run_extract_agent(
+            content="\n".join(content_parts),
+            service_case_id=self.service_case.id,
+            enabled_kinds=[
+                "checkin",
+                "outcome",
+                "profile",
+                "state",
+                "correction",
+                "faq",
+                "memory",
+                "case",
+            ],
+            chat_model=self.chat_model,
+            settings=self.settings,
+            followup_context=followup_context,
+            checklist_context=checklist_context,
+            archive_context=state.get("archive_context") or {},
+            allowed_dates=dates,
+        )
+        trace = collector.get("_trace") or {}
+        if trace.get("emitted") or trace.get("dropped"):
+            extract_traces.append({"target_date": dates[-1], **trace})
+
+        for date_iso, fields in (collector.get("checkins") or {}).items():
             has_checkin_activity = has_checkin_activity or bool(fields)
-            outcome_candidates.extend(collector.get("outcome") or [])
-            profile_candidates.extend(collector.get("profile") or [])
-            state_candidates.extend(collector.get("state") or [])
-            correction_candidates.extend(collector.get("correction") or [])
-            faq_candidates.extend(collector.get("faq") or [])
-            evidence_ids = [m["id"] for m in msgs if m["sender_type"] == "user"]
             if fields:
-                day_candidates.setdefault(date_iso, {"fields": {}, "evidence_ids": evidence_ids, "custom_answers": []})["fields"].update(fields)
-            for answer in collector.get("followup_answers") or []:
-                item_id = str(answer.get("item_id") or "")
-                answer = {
-                    **answer,
-                    "question": checklist_labels.get(item_id, ""),
-                    "source": "chat",
-                }
-                followup_answers.append(answer)
-                target_date = str(answer.get("target_date") or date_iso)
-                if not item_id.startswith("document:"):
-                    continue
-                payload = day_candidates.setdefault(
-                    target_date, {"fields": {}, "evidence_ids": evidence_ids, "custom_answers": []}
-                )
-                payload["custom_answers"].append(answer)
-            for answer in collector.get("checklist_answers") or []:
-                item_id = str(answer.get("item_id") or "")
-                answer = {
-                    **answer,
-                    "question": checklist_labels.get(item_id, ""),
-                    "source": "chat",
-                }
-                checklist_answers.append(answer)
-                has_checkin_activity = True
-                target_date = str(answer.get("target_date") or date_iso)
-                payload = day_candidates.setdefault(
-                    target_date, {"fields": {}, "evidence_ids": evidence_ids, "custom_answers": []}
-                )
-                payload["custom_answers"].append(answer)
+                day_candidates.setdefault(
+                    date_iso,
+                    {
+                        "fields": {},
+                        "evidence_ids": evidence_ids_by_date.get(date_iso, []),
+                        "custom_answers": [],
+                    },
+                )["fields"].update(fields)
+
+        for raw_answer in collector.get("followup_answers") or []:
+            item_id = str(raw_answer.get("item_id") or "")
+            answer = {
+                **raw_answer,
+                "question": checklist_labels.get(item_id, ""),
+                "source": "chat",
+            }
+            followup_answers.append(answer)
+            target_date = str(answer.get("target_date") or "")
+            if not item_id.startswith("document:"):
+                continue
+            payload = day_candidates.setdefault(
+                target_date,
+                {
+                    "fields": {},
+                    "evidence_ids": evidence_ids_by_date.get(target_date, []),
+                    "custom_answers": [],
+                },
+            )
+            payload["custom_answers"].append(answer)
+
+        for raw_answer in collector.get("checklist_answers") or []:
+            item_id = str(raw_answer.get("item_id") or "")
+            answer = {
+                **raw_answer,
+                "question": checklist_labels.get(item_id, ""),
+                "source": "chat",
+            }
+            checklist_answers.append(answer)
+            has_checkin_activity = True
+            target_date = str(answer.get("target_date") or "")
+            payload = day_candidates.setdefault(
+                target_date,
+                {
+                    "fields": {},
+                    "evidence_ids": evidence_ids_by_date.get(target_date, []),
+                    "custom_answers": [],
+                },
+            )
+            payload["custom_answers"].append(answer)
+
         # 原 guardrail 节点只负责剔除空打卡候选；在候选离开抽取阶段前直接收紧即可。
         kept_day_candidates = {
             key: payload
@@ -370,11 +479,13 @@ class ArchivistPipeline:
         }
         return {
             "day_candidates": kept_day_candidates,
-            "outcome_candidates": outcome_candidates,
-            "profile_candidates": profile_candidates,
-            "state_candidates": state_candidates,
-            "correction_candidates": correction_candidates,
-            "faq_candidates": faq_candidates,
+            "outcome_candidates": collector.get("outcome") or [],
+            "profile_candidates": collector.get("profile") or [],
+            "state_candidates": collector.get("state") or [],
+            "correction_candidates": collector.get("correction") or [],
+            "faq_candidates": collector.get("faq") or [],
+            "memory_candidate": collector.get("memory"),
+            "case_candidates": collector.get("case") or [],
             "followup_answers": followup_answers,
             "checklist_answers": checklist_answers,
             "extract_traces": extract_traces,
@@ -461,8 +572,84 @@ class ArchivistPipeline:
         self.result.corrections_recorded = correction_result.recorded
         self.result.corrections_skipped = correction_result.skipped
 
-        # FAQ 候选不在归档主事务直接落知识草稿；先放入 result，随后同事务登记 outbox。
+        # FAQ、两类滚动小结、优秀案例候选都属于本轮档案官的正式输出，
+        # 与核心事实和水位线在同一事务写入；任一步失败都让整批回滚重做。
         self.result.faq_candidates = state.get("faq_candidates") or []
+        self.result.faq_written = await create_qa_drafts_from_archivist(
+            self.session,
+            service_case_id=self.service_case.id,
+            candidates=self.result.faq_candidates,
+        )
+
+        memory_candidate = state.get("memory_candidate")
+        if isinstance(memory_candidate, dict):
+            user_summary = str(memory_candidate.get("user_summary") or "").strip()
+            case_material_summary = str(
+                memory_candidate.get("case_material_summary") or ""
+            ).strip()
+            if user_summary or case_material_summary:
+                memory = await self.session.scalar(
+                    select(ArchivistCaseMemory).where(
+                        ArchivistCaseMemory.service_case_id == self.service_case.id
+                    )
+                )
+                if memory is None:
+                    memory = ArchivistCaseMemory(service_case_id=self.service_case.id)
+                    self.session.add(memory)
+                if user_summary:
+                    memory.summary = user_summary[:800]
+                if case_material_summary:
+                    memory.case_material_summary = case_material_summary[:1600]
+                memory.summary_watermark_message_id = state.get("watermark_to")
+                self.result.memory_written = 1
+
+        case_candidates = state.get("case_candidates") or []
+        if self.result.outcome_written and case_candidates:
+            candidate = case_candidates[0]
+            archive_context = state.get("archive_context") or {}
+            allowed_message_ids = set(state.get("delta_user_message_ids") or [])
+            allowed_message_ids.update(
+                int(item["source_message_id"])
+                for item in (archive_context.get("outcome_timeline") or [])
+                if item.get("source_message_id")
+            )
+            source_message_ids = []
+            for value in candidate.get("source_message_ids") or []:
+                try:
+                    message_id = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if message_id in allowed_message_ids and message_id not in source_message_ids:
+                    source_message_ids.append(message_id)
+            if source_message_ids:
+                material_summary = ""
+                if isinstance(memory_candidate, dict):
+                    material_summary = str(
+                        memory_candidate.get("case_material_summary") or ""
+                    ).strip()
+                material_summary = material_summary or str(
+                    archive_context.get("existing_case_material_summary") or ""
+                ).strip()
+                draft = await create_draft_candidate(
+                    self.session,
+                    draft_type="case",
+                    title=str(candidate.get("title") or "")[:200],
+                    question=str(candidate.get("question") or ""),
+                    answer=str(candidate.get("answer") or ""),
+                    category=str(candidate.get("category") or "")[:100] or None,
+                    tags=candidate.get("tags") or [],
+                    reason=str(candidate.get("reason") or "") or None,
+                    evidence=str(candidate.get("evidence") or "") or None,
+                    source_message_ids=source_message_ids[:20],
+                    content_json={
+                        **candidate,
+                        "scan_type": "archivist_outcome_stable",
+                        "service_case_id": self.service_case.id,
+                        "watermark_to": state.get("watermark_to"),
+                        "case_material_summary": material_summary or None,
+                    },
+                )
+                self.result.case_written = 1 if draft is not None else 0
 
         # 抽取观测留痕(R1)：与打卡 upsert/水位线同一事务落库，痕迹始终与已提交状态强一致。
         watermark_to = state.get("watermark_to")
@@ -478,16 +665,7 @@ class ArchivistPipeline:
                 )
             )
 
-        # 后置产物的任务意图必须和水位线同事务持久化。服务在主事务提交后立刻重启时，
-        # 下一轮调度仍能重做 case_memory / FAQ 草稿 / 优秀案例合成。
-        await enqueue_archivist_post_commit_tasks(
-            self.session,
-            service_case_id=self.service_case.id,
-            watermark_to=watermark_to,
-            run_result=self.result,
-        )
-
-        # 走到这里说明打卡 upsert、成效/画像写库、纠正落库全部成功（任一步抛错都不会到此，
+        # 走到这里说明打卡、成效/画像、纠正、FAQ、小结和案例写库全部成功（任一步抛错都不会到此，
         # 由 trigger 层回滚、水位线保持不动）。此时才推进水位线并清零失败计数。
         # 即使本轮没抽到打卡也要推进，避免下轮重复处理同一批增量。
         if watermark_to:

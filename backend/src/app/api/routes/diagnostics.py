@@ -16,7 +16,6 @@ from app.core.config import get_settings
 from app.db.session import get_session
 from app.services.ai_service import AIService
 from app.models.ai_usage import AIUsageLog
-from app.models.archivist_post_commit_task import ArchivistPostCommitTask
 from app.models.archivist_progress import ArchivistProgress
 from app.models.archivist_quarantine import ArchivistQuarantine
 from app.models.service_case import ServiceCase
@@ -175,80 +174,6 @@ async def get_archivist_failures(
         for progress, case_no in rows
     ]
     return {"total_failing": int(total_failing or 0), "items": items}
-
-
-@router.get("/archivist-post-tasks")
-async def get_archivist_post_tasks(
-    session: AsyncSession = Depends(get_session),
-    status: str = Query(ArchivistPostCommitTask.STATUS_FAILED),
-    limit: int = Query(50, ge=1, le=500),
-):
-    """查看档案官后置任务；默认只列自动重试中的失败项。"""
-    allowed = {
-        ArchivistPostCommitTask.STATUS_PENDING,
-        ArchivistPostCommitTask.STATUS_FAILED,
-        ArchivistPostCommitTask.STATUS_SUCCEEDED,
-    }
-    if status not in allowed:
-        raise HTTPException(status_code=400, detail="invalid archivist post-task status")
-    rows = list(
-        await session.scalars(
-            select(ArchivistPostCommitTask)
-            .where(ArchivistPostCommitTask.status == status)
-            .order_by(ArchivistPostCommitTask.id.desc())
-            .limit(limit)
-        )
-    )
-    total = await session.scalar(
-        select(func.count(ArchivistPostCommitTask.id)).where(
-            ArchivistPostCommitTask.status == status
-        )
-    )
-    return {
-        "status": status,
-        "total": int(total or 0),
-        "items": [
-            {
-                "id": task.id,
-                "service_case_id": task.service_case_id,
-                "watermark_to": task.watermark_to,
-                "task_type": task.task_type,
-                "attempt_count": task.attempt_count,
-                "next_attempt_at": (
-                    task.next_attempt_at.isoformat() if task.next_attempt_at else None
-                ),
-                "completed_at": (
-                    task.completed_at.isoformat() if task.completed_at else None
-                ),
-                "last_error": task.last_error,
-            }
-            for task in rows
-        ],
-    }
-
-
-@router.post("/archivist-post-tasks/{task_id}/retry")
-async def retry_archivist_post_task(
-    task_id: int,
-    session: AsyncSession = Depends(get_session),
-):
-    task = await session.get(
-        ArchivistPostCommitTask,
-        task_id,
-        with_for_update=True,
-    )
-    if task is None:
-        raise HTTPException(status_code=404, detail="archivist post task not found")
-    if task.status == ArchivistPostCommitTask.STATUS_SUCCEEDED:
-        raise HTTPException(
-            status_code=409,
-            detail="succeeded archivist post task does not need retry",
-        )
-    task.status = ArchivistPostCommitTask.STATUS_PENDING
-    task.next_attempt_at = None
-    task.last_error = None
-    await session.commit()
-    return {"id": task.id, "status": task.status}
 
 
 @router.get("/archivist-quarantines")

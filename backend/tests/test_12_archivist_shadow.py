@@ -102,6 +102,7 @@ async def test_archivist_maps_normal_chat_to_delivered_checklist_item(db_session
                 {
                     "name": "report_checkin",
                     "args": {
+                        "target_date": target_date,
                         "checklist_answers": [
                             {
                                 "item_id": item_id,
@@ -186,6 +187,7 @@ async def _setup_case_with_messages(db_session):
 @pytest.mark.asyncio
 async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
     case, msgs, progress = await _setup_case_with_messages(db_session)
+    target_date = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
 
     # 假模型：两条消息同一自然日 → 一次 ainvoke，emit 打卡+成效+画像 report。
     fake = FakeToolCallingModel([
@@ -194,7 +196,11 @@ async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
             tool_calls=[
                 {
                     "name": "report_checkin",
-                    "args": {"weight": "168斤", "product_schedule": {"morning_c": "已喝"}},
+                    "args": {
+                        "target_date": target_date,
+                        "weight": "168斤",
+                        "product_schedule": {"morning_c": "已喝"},
+                    },
                     "id": "c1",
                 },
                 {
@@ -525,9 +531,7 @@ async def test_archivist_model_failure_does_not_advance_watermark(db_session):
 
 @pytest.mark.asyncio
 async def test_archivist_reports_faq_candidate_into_qa_draft(db_session):
-    """FAQ 折进档案官：delta 抽取产出 report_faq_candidate → result.faq_candidates →
-    create_qa_drafts_from_archivist 转成待审核 qa 草稿（复用 knowledge_evolution 管线）。"""
-    from app.services.knowledge_evolution import create_qa_drafts_from_archivist
+    """FAQ 候选由同一轮档案官输出，并在归档主事务直接转成待审核草稿。"""
 
     case, msgs, progress = await _setup_case_with_messages(db_session)
     staff = Message(
@@ -571,12 +575,7 @@ async def test_archivist_reports_faq_candidate_into_qa_draft(db_session):
 
     assert len(result.faq_candidates) == 1
     assert result.faq_candidates[0]["question"].startswith("减肥期间吃了土豆")
-
-    created = await create_qa_drafts_from_archivist(
-        db_session, service_case_id=case.id, candidates=result.faq_candidates
-    )
-    await db_session.flush()
-    assert created == 1
+    assert result.faq_written == 1
 
     drafts = list(
         await db_session.scalars(
@@ -592,8 +591,6 @@ async def test_archivist_reports_faq_candidate_into_qa_draft(db_session):
 
 @pytest.mark.asyncio
 async def test_archivist_does_not_create_faq_from_user_and_bot_only(db_session):
-    from app.services.knowledge_evolution import create_qa_drafts_from_archivist
-
     case, msgs, progress = await _setup_case_with_messages(db_session)
     fake = FakeToolCallingModel([
         AIMessage(
@@ -618,12 +615,9 @@ async def test_archivist_does_not_create_faq_from_user_and_bot_only(db_session):
     result = await run_archivist(
         db_session, service_case=case, progress=progress, chat_model=fake
     )
-    created = await create_qa_drafts_from_archivist(
-        db_session, service_case_id=case.id, candidates=result.faq_candidates
-    )
     await db_session.flush()
 
-    assert created == 0
+    assert result.faq_written == 0
     drafts = [
         draft
         for draft in await db_session.scalars(select(KnowledgeDraft))
@@ -634,8 +628,6 @@ async def test_archivist_does_not_create_faq_from_user_and_bot_only(db_session):
 
 @pytest.mark.asyncio
 async def test_archivist_personal_faq_writes_staff_guidance_without_draft(db_session):
-    from app.services.knowledge_evolution import create_qa_drafts_from_archivist
-
     case, msgs, progress = await _setup_case_with_messages(db_session)
     staff = Message(
         service_case_id=case.id,
@@ -673,12 +665,9 @@ async def test_archivist_personal_faq_writes_staff_guidance_without_draft(db_ses
     result = await run_archivist(
         db_session, service_case=case, progress=progress, chat_model=fake
     )
-    created = await create_qa_drafts_from_archivist(
-        db_session, service_case_id=case.id, candidates=result.faq_candidates
-    )
     await db_session.flush()
 
-    assert created == 0
+    assert result.faq_written == 0
     drafts = [
         draft
         for draft in await db_session.scalars(select(KnowledgeDraft))
@@ -798,6 +787,7 @@ async def test_archivist_extract_trace_records_kept_and_dropped(db_session):
                 {
                     "name": "report_checkin",
                     "args": {
+                        "target_date": target_date,
                         "checklist_answers": [
                             {
                                 "item_id": kept_id,

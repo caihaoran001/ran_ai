@@ -27,7 +27,6 @@ from app.models.outcome import OutcomeSnapshot, OutcomeStageState
 from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentType, UserDocument
-from app.models.user_profile import UserProfile
 from app.services.agent import generate_scheduled_reminder_reply
 from app.services.channels import get_current_channel, send_channel_text
 from app.services.document_service import (
@@ -39,7 +38,6 @@ from app.services.knowledge_evolution_settings import get_knowledge_evolution_co
 from app.services.outcome_engine import generate_outcome_snapshot
 from app.services.stage_report_settings import get_stage_report_schedule
 from app.services.service_case_queries import (
-    SERVICE_CASE_WINDOW_DAYS,
     active_service_case_condition,
     checkin_day,
     effective_service_day,
@@ -154,22 +152,10 @@ class ReminderService:
     async def check_archivist_once(self) -> None:
         """档案官周期扫描：DB 派生找到点的服务单，跑聊天转打卡。触发/幂等/防双跑见 archivist.trigger。"""
         from app.services.archivist.trigger import run_archivist_scan
-        from app.services.archivist.post_commit_tasks import (
-            run_archivist_post_commit_tasks,
-        )
 
-        # 先补偿上次中断留下的任务，再扫描新消息并立即消费本轮新任务。
-        recovered = await run_archivist_post_commit_tasks()
         stats = await run_archivist_scan()
-        created = await run_archivist_post_commit_tasks()
         if stats.get("ran"):
             logger.info("Archivist scan stats=%s", stats)
-        if recovered.get("claimed") or created.get("claimed"):
-            logger.info(
-                "Archivist post-task stats recovered=%s created=%s",
-                recovered,
-                created,
-            )
 
     async def check_population_insight_once(self, now: datetime | None = None) -> None:
         """每天只检查一次群体洞察刷新条件；普通画像变动不直接触发模型。"""
