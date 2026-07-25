@@ -229,14 +229,63 @@ async def replay_archivist_quarantined_message(
     session: AsyncSession = Depends(get_session),
 ):
     """人工原位重放一条隔离消息，不回退正式水位线。"""
+    import time
+
+    from app.services.agent_observability import (
+        COMPLETED as AGENT_RUN_COMPLETED,
+        FAILED as AGENT_RUN_FAILED,
+        complete_agent_run,
+        ensure_agent_run,
+    )
+    from app.services.archivist.trigger import archivist_output_breakdown
     from app.services.archivist.trigger import replay_archivist_quarantine
 
+    agent_run_id: int | None = None
+    run_started_at = time.monotonic()
     try:
+        quarantine = await session.get(ArchivistQuarantine, quarantine_id)
+        if (
+            quarantine is not None
+            and quarantine.status == ArchivistQuarantine.STATUS_QUARANTINED
+        ):
+            agent_run_id = await ensure_agent_run(
+                run_key=(
+                    f"archivist-replay:{quarantine_id}:"
+                    f"{int(quarantine.replay_attempts or 0) + 1}"
+                ),
+                agent_type="archivist",
+                run_kind="manual_replay",
+                service_case_id=quarantine.service_case_id,
+                trigger_message_id=quarantine.message_id,
+                trigger_reason="manual_quarantine_replay",
+                input_count=1,
+                metadata={"quarantine_id": quarantine_id},
+            )
         result = await replay_archivist_quarantine(
             session,
             quarantine_id=quarantine_id,
+            agent_run_id=agent_run_id,
         )
         await session.commit()
+        output_breakdown = archivist_output_breakdown(result)
+        output_count = sum(output_breakdown.values())
+        await complete_agent_run(
+            agent_run_id=agent_run_id,
+            status=AGENT_RUN_COMPLETED,
+            outcome=(
+                "archived_with_output" if output_count else "archived_no_output"
+            ),
+            latency_ms=int((time.monotonic() - run_started_at) * 1000),
+            input_count=result.delta_count,
+            output_count=output_count,
+            dropped_count=result.dropped_count,
+            metadata={
+                "quarantine_id": quarantine_id,
+                "watermark_to": result.watermark_to,
+                "emitted_count": result.emitted_count,
+                "output_breakdown": output_breakdown,
+            },
+        )
     except LookupError as exc:
         await session.rollback()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -245,6 +294,14 @@ async def replay_archivist_quarantined_message(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         await session.rollback()
+        await complete_agent_run(
+            agent_run_id=agent_run_id,
+            status=AGENT_RUN_FAILED,
+            outcome="archivist_replay_failed",
+            latency_ms=int((time.monotonic() - run_started_at) * 1000),
+            error_type=type(exc).__name__,
+            metadata={"quarantine_id": quarantine_id},
+        )
         quarantine = await session.get(
             ArchivistQuarantine,
             quarantine_id,

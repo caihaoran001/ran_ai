@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.config import Settings, get_settings
+from app.services.agent_observability import record_model_usage
 from app.services.archivist.report_tools import REPORT_SPECS, build_report_tools
 from app.services.checkin_service import CHECKIN_KEYS
 
@@ -120,6 +122,8 @@ async def run_extract_agent(
     checklist_context: list[dict[str, Any]] | None = None,
     archive_context: dict[str, Any] | None = None,
     allowed_dates: list[str] | None = None,
+    agent_run_id: int | None = None,
+    usage_message_id: int | None = None,
 ) -> dict[str, Any]:
     """跑一轮结构化抽取，按 report_* 产物归桶。
 
@@ -151,6 +155,7 @@ async def run_extract_agent(
     kinds = enabled_kinds or _ALL_KINDS
     settings = settings or get_settings()
 
+    call_started_at = time.monotonic()
     try:
         if chat_model is None:
             from app.services.agent.model import create_agent_chat_model
@@ -192,11 +197,33 @@ async def run_extract_agent(
             ),
         ]
         response = await bound.ainvoke(messages)
-    except Exception:
+    except Exception as exc:
+        await record_model_usage(
+            agent_run_id=agent_run_id,
+            scenario="archivist_extract",
+            service_case_id=service_case_id,
+            message_id=usage_message_id,
+            model=settings.ai_model,
+            elapsed_ms=int((time.monotonic() - call_started_at) * 1000),
+            success=False,
+            error_type=type(exc).__name__,
+            settings=settings,
+        )
         logger.exception(
             "Archivist extract-agent failed service_case_id=%s", service_case_id
         )
         raise
+    await record_model_usage(
+        agent_run_id=agent_run_id,
+        scenario="archivist_extract",
+        service_case_id=service_case_id,
+        message_id=usage_message_id,
+        model=settings.ai_model,
+        elapsed_ms=int((time.monotonic() - call_started_at) * 1000),
+        response=response,
+        success=True,
+        settings=settings,
+    )
 
     trace = collector["_trace"]
     dropped = trace["dropped"]

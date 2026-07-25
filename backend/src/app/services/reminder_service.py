@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time as clock
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -28,6 +29,12 @@ from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentType, UserDocument
 from app.services.agent import generate_scheduled_reminder_reply
+from app.services.agent_observability import (
+    COMPLETED as AGENT_RUN_COMPLETED,
+    FAILED as AGENT_RUN_FAILED,
+    complete_agent_run,
+    ensure_agent_run,
+)
 from app.services.channels import get_current_channel, send_channel_text
 from app.services.document_service import (
     generate_profile_and_documents,
@@ -398,6 +405,17 @@ class ReminderService:
                 await session.flush()
 
                 recent_messages = await _recent_chat_lines(session, task.service_case_id)
+                run_started_at = clock.monotonic()
+                agent_run_id = await ensure_agent_run(
+                    run_key=f"reminder:{task.id}",
+                    agent_type="reply",
+                    run_kind="scheduled_reminder",
+                    service_case_id=task.service_case_id,
+                    trigger_message_id=task.trigger_message_id,
+                    trigger_reason="scheduled_reminder",
+                    input_count=1,
+                    metadata={"reminder_task_id": task.id},
+                )
                 try:
                     current_channel = get_current_channel()
                     agent_result = await generate_scheduled_reminder_reply(
@@ -407,6 +425,7 @@ class ReminderService:
                         recent_messages=recent_messages,
                         channel=getattr(current_channel, "name", None),
                         settings=self.settings,
+                        agent_run_id=agent_run_id,
                     )
                     outbound_content = agent_result.reply.strip()
                     outbound_analysis = {
@@ -423,10 +442,28 @@ class ReminderService:
                     logger.exception("Scheduled agent reminder generation failed task_id=%s", task.id)
                     task.status = AgentReminderTaskStatus.FAILED
                     task.error = f"agent generation failed: {type(exc).__name__}: {exc}"
+                    await complete_agent_run(
+                        agent_run_id=agent_run_id,
+                        status=AGENT_RUN_FAILED,
+                        outcome="reminder_generation_failed",
+                        latency_ms=int(
+                            (clock.monotonic() - run_started_at) * 1000
+                        ),
+                        error_type=type(exc).__name__,
+                    )
                     continue
                 if not outbound_content:
                     task.status = AgentReminderTaskStatus.FAILED
                     task.error = "agent generation returned empty reply"
+                    await complete_agent_run(
+                        agent_run_id=agent_run_id,
+                        status=AGENT_RUN_FAILED,
+                        outcome="reminder_empty",
+                        latency_ms=int(
+                            (clock.monotonic() - run_started_at) * 1000
+                        ),
+                        error_type="EmptyReply",
+                    )
                     continue
 
                 # 提醒默认原生 @ 请求者（当初说“提醒我…”的那个用户）：从 trigger 消息解析其企微 userId。
@@ -459,12 +496,30 @@ class ReminderService:
                     # 循环提醒：本次成功发出后排下一条待发任务。
                     # 每条循环序列任一时刻只有 1 条 PENDING，用户取消这条即终止整个序列。
                     await _schedule_next_recurrence(session, task, now, tz)
+                    await complete_agent_run(
+                        agent_run_id=agent_run_id,
+                        status=AGENT_RUN_COMPLETED,
+                        outcome="reminder_sent",
+                        latency_ms=int(
+                            (clock.monotonic() - run_started_at) * 1000
+                        ),
+                        output_count=1,
+                    )
                 else:
                     message.status = MessageStatus.FAILED
                     message.error = result.error if result else "channel send failed"
                     task.status = AgentReminderTaskStatus.FAILED
                     task.sent_message_id = message.id
                     task.error = message.error
+                    await complete_agent_run(
+                        agent_run_id=agent_run_id,
+                        status=AGENT_RUN_FAILED,
+                        outcome="reminder_send_failed",
+                        latency_ms=int(
+                            (clock.monotonic() - run_started_at) * 1000
+                        ),
+                        error_type="ChannelSendFailed",
+                    )
             await session.commit()
 
     async def check_stuck_document_generation_once(self) -> None:

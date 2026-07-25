@@ -20,6 +20,7 @@ from app.services.agent.checkpoint import (
     checkpoint_config,
     get_agent_checkpointer,
 )
+from app.services.agent_observability import record_model_usage, record_tool_calls
 from app.services.agent.context_builder import build_agent_memory_context
 from app.services.agent.model import create_agent_chat_model
 from app.services.agent.prompts import AGENT_SYSTEM_PROMPT, build_agent_user_prompt
@@ -256,7 +257,38 @@ class RanrenAgentGraph:
                 "messages": [AIMessage(content="我这边暂时没能完整处理完这条消息，先不乱判断。")],
                 "llm_call_count": llm_count,
             }
-        response = await self.model.ainvoke(state.get("messages") or [])
+        started_at = time.monotonic()
+        scenario = (
+            "agent_reminder"
+            if self.context.run_kind == "scheduled_reminder"
+            else "reply_agent"
+        )
+        try:
+            response = await self.model.ainvoke(state.get("messages") or [])
+        except Exception as exc:
+            await record_model_usage(
+                agent_run_id=self.context.agent_run_id,
+                scenario=scenario,
+                service_case_id=self.context.service_case_id,
+                message_id=self.context.trigger_id,
+                model=self.settings.ai_model,
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                success=False,
+                error_type=type(exc).__name__,
+                settings=self.settings,
+            )
+            raise
+        await record_model_usage(
+            agent_run_id=self.context.agent_run_id,
+            scenario=scenario,
+            service_case_id=self.context.service_case_id,
+            message_id=self.context.trigger_id,
+            model=self.settings.ai_model,
+            elapsed_ms=int((time.monotonic() - started_at) * 1000),
+            response=response,
+            success=True,
+            settings=self.settings,
+        )
         return {"messages": [response], "llm_call_count": llm_count + 1}
 
     async def _tools_node(self, state: AgentState) -> dict[str, Any]:
@@ -315,6 +347,10 @@ class RanrenAgentGraph:
         ordered = [prepared[idx] for idx in range(len(tool_calls))]
         tool_messages = [item[0] for item in ordered]
         traces = [item[1] for item in ordered]
+        await record_tool_calls(
+            agent_run_id=self.context.agent_run_id,
+            traces=traces,
+        )
         web_search_count = int(state.get("web_search_count") or 0) + sum(
             1 for trace in traces if trace["name"] == "web_search_lifestyle" and trace.get("ok")
         )
@@ -354,11 +390,17 @@ class RanrenAgentGraph:
         name = call.get("name") or ""
         args = call.get("args") or {}
         call_id = _tool_call_id(call)
-        trace: dict[str, Any] = {"name": name, "args": args, "ok": False}
+        trace: dict[str, Any] = {
+            "name": name,
+            "args": args,
+            "ok": False,
+            "tool_call_id": call_id,
+        }
         tool = self.tools_by_name.get(name)
         if tool is None:
             content = f"TOOL_NOT_FOUND: {name}"
             trace["error"] = content
+            trace["elapsed_ms"] = 0
             self._log_tool_result(name, args, trace, elapsed_ms=0.0)
             return ToolMessage(content=content, tool_call_id=call_id), trace
         start = time.monotonic()
@@ -367,6 +409,8 @@ class RanrenAgentGraph:
             result = await asyncio.wait_for(tool.ainvoke(args), timeout=self._tool_timeout_seconds)
             trace["ok"] = not _tool_result_failed(result)
             trace["data_tool_failed"] = _is_data_tool(name) and not trace["ok"]
+            if not trace["ok"]:
+                trace["error"] = "TOOL_RETURNED_FAILURE"
             content = _stringify_tool_result(result)
         except asyncio.TimeoutError:
             trace["error"] = f"timeout>{self._tool_timeout_seconds}s"
@@ -376,7 +420,9 @@ class RanrenAgentGraph:
             trace["error"] = f"{type(exc).__name__}: {exc}"
             trace["data_tool_failed"] = _is_data_tool(name)
             content = f"TOOL_ERROR: {type(exc).__name__}: {exc}"
-        self._log_tool_result(name, args, trace, elapsed_ms=(time.monotonic() - start) * 1000)
+        elapsed_ms = (time.monotonic() - start) * 1000
+        trace["elapsed_ms"] = int(elapsed_ms)
+        self._log_tool_result(name, args, trace, elapsed_ms=elapsed_ms)
         return ToolMessage(content=content, tool_call_id=call_id), trace
 
     def _log_tool_result(
@@ -409,6 +455,8 @@ class RanrenAgentGraph:
             "args": call.get("args") or {},
             "ok": False,
             "error": content,
+            "tool_call_id": _tool_call_id(call),
+            "elapsed_ms": 0,
         }
         if data_tool_failed:
             trace["data_tool_failed"] = True
@@ -506,6 +554,7 @@ async def generate_agent_reply(
     bot_user_id: str | None = None,
     settings: Settings | None = None,
     checkpoint_thread_id: str | None = None,
+    agent_run_id: int | None = None,
 ) -> AgentReplyResult:
     settings = settings or get_settings()
     checkpointer = get_agent_checkpointer() if checkpoint_thread_id else None
@@ -522,6 +571,8 @@ async def generate_agent_reply(
         context=AgentRunContext(
             service_case_id=service_case_id,
             trigger_id=trigger_id,
+            agent_run_id=agent_run_id,
+            run_kind="interactive",
             agent_context_plan=_agent_context_plan(analysis),
             channel=channel,
             group_id=group_id,
@@ -549,6 +600,7 @@ async def generate_scheduled_reminder_reply(
     recent_messages: list[str],
     channel: str | None = None,
     settings: Settings | None = None,
+    agent_run_id: int | None = None,
 ) -> AgentReplyResult:
     settings = settings or get_settings()
     user_query = (
@@ -560,7 +612,13 @@ async def generate_scheduled_reminder_reply(
         f"提醒目标：{reminder_instruction}"
     )
     return await RanrenAgentGraph(
-        context=AgentRunContext(service_case_id=service_case_id, trigger_id=trigger_id, channel=channel),
+        context=AgentRunContext(
+            service_case_id=service_case_id,
+            trigger_id=trigger_id,
+            agent_run_id=agent_run_id,
+            run_kind="scheduled_reminder",
+            channel=channel,
+        ),
         settings=settings,
         include_reminder_tools=False,
     ).run(user_query=user_query, recent_messages=recent_messages, query_speaker="系统定时任务")

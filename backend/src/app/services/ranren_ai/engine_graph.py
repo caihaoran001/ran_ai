@@ -38,6 +38,12 @@ from app.services.agent.checkpoint import (
     checkpoint_config,
     get_agent_checkpointer,
 )
+from app.services.agent_observability import (
+    COMPLETED as AGENT_RUN_COMPLETED,
+    FAILED as AGENT_RUN_FAILED,
+    complete_agent_run,
+    ensure_agent_run,
+)
 from app.services.channels.base import ChannelMessage
 # 通过 engine 模块引用 SessionLocal / analyze_intervention / generate_agent_reply /
 # get_ai_reply_enabled / AgentDataUnavailableError：测试把补丁打在 engine 模块上
@@ -101,6 +107,7 @@ class EngineState(TypedDict, total=False):
     reply: str
     outbound_analysis: dict | None
     should_send: bool
+    agent_run_id: int | None
     _halt: bool  # reprocess_head 守卫失败 → 直接结束
     _completion_status: str
     _completion_reason: str
@@ -230,6 +237,27 @@ class EngineGraph:
                 .limit(1)
             )
         return outbound_id is not None
+
+    async def _ensure_reply_run(self, state: EngineState) -> int | None:
+        existing = state.get("agent_run_id")
+        if existing is not None:
+            return existing
+        trigger_id = state.get("trigger_id") or state.get("inbound_id")
+        if trigger_id is None:
+            return None
+        message = state.get("message")
+        return await ensure_agent_run(
+            run_key=f"reply:{trigger_id}",
+            agent_type="reply",
+            run_kind="interactive",
+            service_case_id=state.get("service_case_id"),
+            trigger_message_id=trigger_id,
+            input_count=1,
+            metadata={
+                "channel": getattr(message, "channel", None),
+                "entry_mode": state.get("entry_mode"),
+            },
+        )
 
     # ---------- fresh 节点 ----------
 
@@ -987,6 +1015,7 @@ class EngineGraph:
         analysis = state.get("analysis")
         image_analysis_content = state.get("image_analysis_content")
         recent_user_messages = state.get("recent_user_messages") or []
+        agent_run_id = await self._ensure_reply_run(state)
 
         needs_handoff = False
         case_risk_level = state.get("case_risk_level")
@@ -1029,6 +1058,7 @@ class EngineGraph:
                     "analysis": analysis,
                     "case_risk_level": case_risk_level,
                     "needs_handoff": needs_handoff,
+                    "agent_run_id": agent_run_id,
                 }
             if image_analysis_content is not None and not image_analysis_content:
                 logger.info(
@@ -1059,11 +1089,17 @@ class EngineGraph:
                 health_handoff = _requires_health_handoff(analysis, case_risk_level)
                 needs_handoff = bool(analysis.get("requires_human_intervention")) or health_handoff
 
-        return {
+        result: dict[str, Any] = {
             "analysis": analysis,
             "case_risk_level": case_risk_level,
             "needs_handoff": needs_handoff,
+            "agent_run_id": agent_run_id,
         }
+        if not service_case_id:
+            result["_completion_reason"] = "no_active_case"
+        elif state.get("purpose") != MessagePurpose.CHAT:
+            result["_completion_reason"] = "non_chat_message"
+        return result
 
     async def _handoff(self, state: EngineState) -> dict[str, Any]:
         """对应 496–515：30min 未 @ 过则 @班主任转人工；否则跳过刷屏。两分支均结束。"""
@@ -1071,13 +1107,17 @@ class EngineGraph:
         started_at = state["started_at"]
         service_case_id = state.get("service_case_id")
         inbound_id = state.get("inbound_id")
+        agent_run_id = await self._ensure_reply_run(state)
         if await self._outbound_exists_for_trigger(inbound_id):
             logger.info(
                 "RanrenAI skip resumed handoff because outbound already exists trigger_id=%s service_case_id=%s",
                 inbound_id,
                 service_case_id,
             )
-            return {}
+            return {
+                "agent_run_id": agent_run_id,
+                "_completion_reason": "handoff_already_recorded",
+            }
         if not await self.engine._recently_handed_off(service_case_id):
             await self.engine._reply_human_handoff(message, service_case_id=service_case_id, trigger_id=inbound_id)
             await self.engine._mark_handoff(service_case_id)
@@ -1086,12 +1126,17 @@ class EngineGraph:
                 message.chat_id, inbound_id, service_case_id,
                 (time.monotonic() - started_at) * 1000,
             )
+            outcome = "human_handoff"
         else:
             logger.info(
                 "RanrenAI skip duplicate handoff within 30min chat_id=%s trigger_id=%s service_case_id=%s",
                 message.chat_id, inbound_id, service_case_id,
             )
-        return {}
+            outcome = "handoff_throttled"
+        return {
+            "agent_run_id": agent_run_id,
+            "_completion_reason": outcome,
+        }
 
     # ---------- 回复尾部（直接平铺在 EngineGraph） ----------
 
@@ -1100,6 +1145,7 @@ class EngineGraph:
         message: ChannelMessage = state["message"]
         service_case_id = state.get("service_case_id")
         trigger_id = state.get("trigger_id")
+        agent_run_id = await self._ensure_reply_run(state)
         service_case: ServiceCase | None = None
         async with engine_mod.SessionLocal() as session:
             if service_case_id:
@@ -1116,7 +1162,11 @@ class EngineGraph:
                         trigger_id=trigger_id,
                         reason="recovered reply suppressed because the service case is inactive",
                     )
-                    return {"_halt": True}
+                    return {
+                        "_halt": True,
+                        "agent_run_id": agent_run_id,
+                        "_completion_reason": "inactive_case",
+                    }
             else:
                 service_case = None
 
@@ -1129,7 +1179,11 @@ class EngineGraph:
                     trigger_id=trigger_id,
                     reason="recovered reply suppressed because global AI reply is disabled",
                 )
-                return {"_halt": True}
+                return {
+                    "_halt": True,
+                    "agent_run_id": agent_run_id,
+                    "_completion_reason": "ai_disabled",
+                }
             if service_case and not service_case.ai_auto_reply_enabled:
                 logger.info(
                     "RanrenAI skip AI reply because case auto-reply disabled chat_id=%s trigger_id=%s service_case_id=%s",
@@ -1139,7 +1193,11 @@ class EngineGraph:
                     trigger_id=trigger_id,
                     reason="recovered reply suppressed because case auto-reply is disabled",
                 )
-                return {"_halt": True}
+                return {
+                    "_halt": True,
+                    "agent_run_id": agent_run_id,
+                    "_completion_reason": "case_auto_reply_disabled",
+                }
 
             recent_user_messages = (
                 await self.engine._recent_user_messages(
@@ -1154,9 +1212,17 @@ class EngineGraph:
                 "RanrenAI skip Agent reply because no active service case chat_id=%s trigger_id=%s service_case_id=%s",
                 message.chat_id, trigger_id, service_case_id,
             )
-            return {"_halt": True, "recent_user_messages": recent_user_messages}
+            return {
+                "_halt": True,
+                "recent_user_messages": recent_user_messages,
+                "agent_run_id": agent_run_id,
+                "_completion_reason": "no_active_case",
+            }
 
-        return {"recent_user_messages": recent_user_messages}
+        return {
+            "recent_user_messages": recent_user_messages,
+            "agent_run_id": agent_run_id,
+        }
 
     async def _reply_generate(self, state: EngineState) -> dict[str, Any]:
         """对应 440–493：generate_agent_reply + 异常处理。通用异常 → _halt(丢弃)。"""
@@ -1179,6 +1245,7 @@ class EngineGraph:
                 "group_id": message.chat_id if message.chat_type == "group" else None,
                 "bot_user_id": _bot_user_id_from_message(message),
                 "settings": settings,
+                "agent_run_id": state.get("agent_run_id"),
             }
             if self.checkpointer is not None and state.get("checkpoint_thread_id"):
                 agent_kwargs["checkpoint_thread_id"] = state["checkpoint_thread_id"]
@@ -1255,7 +1322,10 @@ class EngineGraph:
                 trigger_id=trigger_id,
                 reason="recovered reply superseded because the model chose no-reply",
             )
-            return {"_halt": True}
+            return {
+                "_halt": True,
+                "_completion_reason": "intentional_no_reply",
+            }
 
         should_send = False
         if reply:
@@ -1269,7 +1339,10 @@ class EngineGraph:
                     trigger_id=trigger_id,
                     reason="recovered reply suppressed because staff already replied",
                 )
-                return {"_halt": True}
+                return {
+                    "_halt": True,
+                    "_completion_reason": "staff_preempted",
+                }
             async with engine_mod.SessionLocal() as session:
                 service_case = (
                     await session.scalar(
@@ -1291,7 +1364,16 @@ class EngineGraph:
                 trigger_id=trigger_id,
                 reason="recovered reply suppressed by the final send policy",
             )
-        return {"reply": reply, "should_send": should_send}
+        return {
+            "reply": reply,
+            "should_send": should_send,
+            "_halt": not should_send,
+            **(
+                {"_completion_reason": "send_policy_suppressed"}
+                if not should_send
+                else {}
+            ),
+        }
 
     async def _reply_send(self, state: EngineState) -> dict[str, Any]:
         """对应 528–570：新消息/队列守卫 + record-first 发送。"""
@@ -1317,7 +1399,9 @@ class EngineGraph:
                 trigger_id=trigger_id,
                 reason="recovered reply suppressed because global AI reply is disabled",
             )
-            return {}
+            return {
+                "_completion_reason": "ai_disabled_before_send",
+            }
         if service_case_id and (
             service_case is None or not service_case.ai_auto_reply_enabled
         ):
@@ -1325,7 +1409,9 @@ class EngineGraph:
                 trigger_id=trigger_id,
                 reason="recovered reply suppressed because the service case cannot auto-reply",
             )
-            return {}
+            return {
+                "_completion_reason": "case_disabled_before_send",
+            }
         if await self.engine._staff_replied_after(
             service_case_id=service_case_id,
             trigger_id=trigger_id,
@@ -1334,14 +1420,18 @@ class EngineGraph:
                 trigger_id=trigger_id,
                 reason="recovered reply suppressed because staff already replied",
             )
-            return {}
+            return {
+                "_completion_reason": "staff_preempted",
+            }
         if await self._outbound_exists_for_trigger(trigger_id):
             logger.info(
                 "RanrenAI skip resumed AI reply because outbound already exists trigger_id=%s service_case_id=%s",
                 trigger_id,
                 service_case_id,
             )
-            return {}
+            return {
+                "_completion_reason": "reply_already_recorded",
+            }
         if await self.engine._has_newer_inbound_message(service_case_id=service_case_id, trigger_id=trigger_id):
             logger.info(
                 "RanrenAI skip stale AI reply chat_id=%s trigger_id=%s service_case_id=%s",
@@ -1351,7 +1441,9 @@ class EngineGraph:
                 trigger_id=trigger_id,
                 reason="recovered reply suppressed because a newer user message exists",
             )
-            return {}
+            return {
+                "_completion_reason": "stale_reply_suppressed",
+            }
         if self.engine.has_pending_newer_message and await self.engine.has_pending_newer_message(message):
             logger.info(
                 "RanrenAI skip AI reply because newer raw messages are queued chat_id=%s trigger_id=%s service_case_id=%s",
@@ -1361,25 +1453,64 @@ class EngineGraph:
                 trigger_id=trigger_id,
                 reason="recovered reply suppressed because a newer raw message is queued",
             )
-            return {}
+            return {
+                "_completion_reason": "newer_message_queued",
+            }
         send_started_at = time.monotonic()
-        result = await self.engine._send_and_record(
-            message=message,
-            service_case_id=service_case_id,
-            content=reply,
-            trigger_id=trigger_id,
-            analysis_json=outbound_analysis,
-            send=lambda: self.engine.channel.send_text(
-                message.chat_id, reply,
-                reply_to=message.message_id, reply_context=message.raw_payload,
-            ),
-        )
+        try:
+            result = await self.engine._send_and_record(
+                message=message,
+                service_case_id=service_case_id,
+                content=reply,
+                trigger_id=trigger_id,
+                analysis_json=outbound_analysis,
+                send=lambda: self.engine.channel.send_text(
+                    message.chat_id, reply,
+                    reply_to=message.message_id, reply_context=message.raw_payload,
+                ),
+            )
+        except Exception as exc:
+            delivery_outcome = await self._reply_delivery_outcome(trigger_id)
+            await complete_agent_run(
+                agent_run_id=state.get("agent_run_id"),
+                status=AGENT_RUN_FAILED,
+                outcome=delivery_outcome,
+                latency_ms=int(
+                    (time.monotonic() - state.get("started_at", send_started_at))
+                    * 1000
+                ),
+                error_type=type(exc).__name__,
+            )
+            raise
         send_elapsed_ms = (time.monotonic() - send_started_at) * 1000
         logger.info(
             "RanrenAI AI reply sent chat_id=%s trigger_id=%s success=%s channel_message_id=%s send_elapsed_ms=%.1f",
             message.chat_id, trigger_id, result.success, result.message_id, send_elapsed_ms,
         )
-        return {}
+        if result and result.success:
+            outcome = "reply_sent"
+        elif result and getattr(result, "delivery_uncertain", False):
+            outcome = "send_unknown"
+        else:
+            outcome = "send_failed"
+        return {
+            "_completion_reason": outcome,
+        }
+
+    async def _reply_delivery_outcome(self, trigger_id: int | None) -> str:
+        if trigger_id is None:
+            return "send_failed"
+        async with engine_mod.SessionLocal() as session:
+            status = await session.scalar(
+                select(Message.status)
+                .where(
+                    Message.direction == MessageDirection.OUTBOUND,
+                    Message.trigger_id == trigger_id,
+                )
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+        return "send_unknown" if status == MessageStatus.UNKNOWN else "send_failed"
 
     async def _finalize(self, state: EngineState) -> dict[str, Any]:
         """Persist one explicit business terminal after every successful graph path.
@@ -1414,6 +1545,56 @@ class EngineGraph:
                 reason=reason,
             )
             await session.commit()
+        agent_run_id = state.get("agent_run_id")
+        if agent_run_id is not None:
+            outbound_analysis = state.get("outbound_analysis") or {}
+            agent_metadata = (
+                outbound_analysis.get("agent")
+                if isinstance(outbound_analysis, dict)
+                else {}
+            )
+            agent_metadata = (
+                agent_metadata if isinstance(agent_metadata, dict) else {}
+            )
+            failed_outcomes = {
+                "agent_generation_failed",
+                "send_failed",
+                "send_unknown",
+            }
+            await complete_agent_run(
+                agent_run_id=agent_run_id,
+                status=(
+                    AGENT_RUN_FAILED
+                    if status == _REPLY_STATUS_RETRYABLE_FAILURE
+                    or reason in failed_outcomes
+                    else AGENT_RUN_COMPLETED
+                ),
+                outcome=reason,
+                latency_ms=int(
+                    (time.monotonic() - state.get("started_at", time.monotonic()))
+                    * 1000
+                ),
+                output_count=int(
+                    reason
+                    in {
+                        "reply_sent",
+                        "human_handoff",
+                        "handoff_already_recorded",
+                        "reply_already_recorded",
+                    }
+                ),
+                error_type=(
+                    "AgentGenerationError"
+                    if reason == "agent_generation_failed"
+                    else None
+                ),
+                metadata={
+                    "data_tool_failed": bool(
+                        agent_metadata.get("data_tool_failed")
+                        or agent_metadata.get("data_unavailable")
+                    )
+                },
+            )
         logger.info(
             "RanrenAI reply workflow finalized trigger_id=%s status=%s reason=%s",
             inbound_id,

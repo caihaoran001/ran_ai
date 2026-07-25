@@ -539,8 +539,8 @@ function AICostCard({ summary }: { summary?: AICostSummary }) {
 
   return (
     <Link
-      href="/dashboard/ai-costs"
-      title="查看每个用户的 AI 调用成本明细"
+      href="/agent-operations?tab=costs"
+      title="查看 AI Agent 运行与成本明细"
       className="block rounded-xl border border-cyan-200 bg-cyan-50/70 p-4 shadow-sm transition-colors duration-200 hover:border-cyan-300 hover:bg-white sm:p-5"
     >
       <div className="flex items-start justify-between gap-3">

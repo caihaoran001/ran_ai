@@ -22,6 +22,9 @@ class ArchivistExtractTrace(TimestampMixin, Base):
     __tablename__ = "archivist_extract_traces"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    agent_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_runs.id"), nullable=True, index=True
+    )
     service_case_id: Mapped[int] = mapped_column(
         ForeignKey("service_cases.id"), nullable=False, index=True
     )

@@ -97,6 +97,9 @@ Questionnaire submission → LLM generates a user profile. Service-case detail c
 - **产物**：同一次模型输出覆盖打卡、画像、成效、状态、纠正、FAQ、两类滚动小结和优秀案例候选；确定性代码校验后与水位线在同一事务写入，不设后置衍生任务。只有本批写入新正向成效且模型确认变化显著稳定时才创建优秀案例草稿。`outcome_engine.py` 是档案官调用的成效写入/评分工具，`user_state_profile.py` 仍把 outcome 投影为 JSONB `user_state_profiles`（action_focus / need_analysis / body_feedback / risk_profile），AI 回复只读取用户历程小结，不读取优秀案例素材小结。
 - 打卡追问 (`archivist/followup.py`) 由外部确定性触发：每 case 每天最多一条，共用 `ReminderEvent(rule_id="checkin_followup")` 天闸（见 memory「打卡追问线上已开启」）。
 
+### Agent observability
+`agent_runs` 是回复对话轮次、Agent 定时提醒和档案官实际运行批次的统一账本；明确记录成功、无输出、主动不回复、转人工、被新消息覆盖、功能关闭与失败等终态。回复 ReAct 的每次模型调用和档案官每批唯一一次模型调用都关联到 `ai_usage_logs.agent_run_id`，可执行工具调用写 `agent_tool_calls` 并用模型 tool-call ID 防 checkpoint 重放重复计数。观测写入使用独立异步事务、失败只告警，不改变发送、归档、水位线或 checkpoint 语义。
+
 ### Risk control
 MVP risk is identified by **LLM intent/info extraction**, not hardcoded keywords. High-risk users never auto-receive AI content (forced human review); only the preset high-risk safety script may send immediately. Content policy (`content_policy.py`): `manual_review` (default — AI content goes to human review) vs `auto_send` (low-risk auto-sends, high-risk still reviewed).
 

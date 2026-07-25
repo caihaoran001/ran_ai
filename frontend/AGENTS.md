@@ -14,6 +14,7 @@ frontend/
 │   ├── questionnaire-config/ # 问卷配置
 │   ├── checkins/           # 打卡记录
 │   ├── dashboard/          # 基础看板
+│   ├── agent-operations/   # AI 运行：回复 Agent / 档案官 / 工具 / 成本
 │   ├── login/             # 登录页
 │   ├── s/                 # 短链公开路由 (无侧边栏，需 middleware 白名单)
 │   ├── system-diagnostics/ # 系统诊断页
@@ -78,6 +79,9 @@ POST   /api/questionnaires/:token/submit # 提交问卷
 
 # 看板
 GET    /api/dashboard/summary          # 看板数据
+
+# AI 运行
+GET    /api/agent-operations?days=30   # 当前 Agent 运行、终态、工具、档案官产出与成本
 ```
 
 ## ANTI-PATTERNS

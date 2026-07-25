@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.routes import (
+    agent_operations,
     checkins,
     dashboard,
     diagnostics,
@@ -22,6 +23,11 @@ from app.api.routes import (
 )
 
 api_router = APIRouter()
+api_router.include_router(
+    agent_operations.router,
+    prefix="/agent-operations",
+    tags=["agent-operations"],
+)
 api_router.include_router(service_cases.router, prefix="/service-cases", tags=["service-cases"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(questionnaires.router, prefix="/questionnaires", tags=["questionnaires"])

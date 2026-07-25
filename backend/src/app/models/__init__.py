@@ -1,4 +1,6 @@
 from app.models.agent_reminder_task import AgentReminderTask, AgentReminderTaskStatus
+from app.models.agent_run import AgentRun
+from app.models.agent_tool_call import AgentToolCall
 from app.models.archivist_case_memory import ArchivistCaseMemory
 from app.models.archivist_extract_trace import ArchivistExtractTrace
 from app.models.archivist_progress import ArchivistProgress
@@ -34,6 +36,8 @@ __all__ = [
     "CheckinFollowupPreference",
     "AgentReminderTask",
     "AgentReminderTaskStatus",
+    "AgentRun",
+    "AgentToolCall",
     "ArchivistCaseMemory",
     "ArchivistExtractTrace",
     "ArchivistProgress",

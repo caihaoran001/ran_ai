@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +25,12 @@ from app.models.archivist_progress import ArchivistProgress
 from app.models.archivist_quarantine import ArchivistQuarantine
 from app.models.message import Message, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase
+from app.services.agent_observability import (
+    COMPLETED as AGENT_RUN_COMPLETED,
+    FAILED as AGENT_RUN_FAILED,
+    complete_agent_run,
+    ensure_agent_run,
+)
 from app.services.archivist.graph import get_or_create_progress, run_archivist
 from app.services.archivist.errors import classify_archivist_failure
 
@@ -200,6 +208,8 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
             await get_or_create_progress(session, service_case_id=cid)
             await session.commit()
         # 认领 + 干活：行锁 SKIP LOCKED 防双跑，跑完 commit 释放锁
+        agent_run_id: int | None = None
+        run_started_at = time.monotonic()
         try:
             async with SessionLocal() as session:
                 progress = await session.scalar(
@@ -224,6 +234,15 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                 service_case = await session.get(ServiceCase, cid)
                 if service_case is None:
                     continue
+                run_started_at = time.monotonic()
+                agent_run_id = await ensure_agent_run(
+                    run_key=f"archivist:{cid}:{watermark}:{uuid4().hex}",
+                    agent_type="archivist",
+                    run_kind="scheduled_scan",
+                    service_case_id=cid,
+                    trigger_reason=reason,
+                    metadata={"watermark_from": watermark or None},
+                )
                 failures = progress.quarantine_candidate_failures or 0
                 # 毒消息自愈：反复失败到阈值先缩批定位、再隔离，避免单条报错永久卡死水位线。
                 if failures >= QUARANTINE_AFTER_FAILURES:
@@ -235,9 +254,35 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                     continue
                 batch_cap = 1 if failures >= SINGLE_STEP_AFTER_FAILURES else None
                 result = await run_archivist(
-                    session, service_case=service_case, progress=progress, batch_cap=batch_cap
+                    session,
+                    service_case=service_case,
+                    progress=progress,
+                    batch_cap=batch_cap,
+                    agent_run_id=agent_run_id,
                 )
                 await session.commit()
+                output_breakdown = archivist_output_breakdown(result)
+                output_count = sum(output_breakdown.values())
+                await complete_agent_run(
+                    agent_run_id=agent_run_id,
+                    status=AGENT_RUN_COMPLETED,
+                    outcome=(
+                        "archived_with_output"
+                        if output_count
+                        else "archived_no_output"
+                    ),
+                    latency_ms=int((time.monotonic() - run_started_at) * 1000),
+                    input_count=result.delta_count,
+                    output_count=output_count,
+                    dropped_count=result.dropped_count,
+                    metadata={
+                        "watermark_from": result.watermark_from,
+                        "watermark_to": result.watermark_to,
+                        "emitted_count": result.emitted_count,
+                        "output_breakdown": output_breakdown,
+                        "batch_cap": batch_cap,
+                    },
+                )
                 stats["ran"] += 1
                 logger.info(
                     "Archivist ran service_case_id=%s reason=%s delta=%s days=%s contradictions=%s",
@@ -248,9 +293,42 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
             # 失败留痕走独立事务，避免与已回滚的事务纠缠。
             logger.exception("Archivist run failed service_case_id=%s", cid)
             stats["failed"] += 1
+            await complete_agent_run(
+                agent_run_id=agent_run_id,
+                status=AGENT_RUN_FAILED,
+                outcome="archivist_failed",
+                latency_ms=int((time.monotonic() - run_started_at) * 1000),
+                error_type=type(exc).__name__,
+                metadata={
+                    "failure_kind": classify_archivist_failure(exc).kind,
+                },
+            )
             await _record_failure(cid, error=exc, now=now)
 
     return stats
+
+
+def archivist_output_breakdown(result) -> dict[str, int]:
+    """归档成功后的确定性产出计数；用于运营效果统计，不参与业务判断。"""
+    return {
+        "checkin_days": sum(
+            1
+            for item in (result.upserts or [])
+            if item.get("created") or item.get("filled")
+        ),
+        "outcomes": int(result.outcome_written or 0),
+        "profile_facts": int(result.profile_written or 0),
+        "state_facts": int(result.state_written or 0),
+        "personal_guidance": int(result.personal_corrections_written or 0),
+        "corrections": max(
+            0,
+            int(result.corrections_recorded or 0)
+            - int(result.personal_corrections_written or 0),
+        ),
+        "faq_drafts": int(result.faq_written or 0),
+        "memory_updates": int(result.memory_written or 0),
+        "case_drafts": int(result.case_written or 0),
+    }
 
 
 async def _quarantine_oldest_message(
@@ -371,6 +449,7 @@ async def replay_archivist_quarantine(
     *,
     quarantine_id: int,
     chat_model: object | None = None,
+    agent_run_id: int | None = None,
 ):
     """在不回退正式水位线的前提下，隔离单条原位重跑一次。
 
@@ -402,6 +481,7 @@ async def replay_archivist_quarantine(
         progress=isolated_progress,
         chat_model=chat_model,
         batch_cap=1,
+        agent_run_id=agent_run_id,
     )
     if result.watermark_to != message.id:
         raise RuntimeError(

@@ -95,6 +95,8 @@ class ArchivistRunResult:
     faq_written: int = 0
     memory_written: int = 0
     case_written: int = 0
+    emitted_count: int = 0
+    dropped_count: int = 0
 
 
 def _sh_date(dt: datetime) -> date:
@@ -112,6 +114,7 @@ class ArchivistPipeline:
         progress: ArchivistProgress,
         chat_model: object | None = None,
         batch_cap: int | None = None,
+        agent_run_id: int | None = None,
     ) -> None:
         self.session = session
         self.service_case = service_case
@@ -120,6 +123,7 @@ class ArchivistPipeline:
         self.chat_model = chat_model
         # batch_cap：只处理最老 N 条增量（None=全量）。恢复期缩到 1 条以定位毒消息，见 trigger 的隔离逻辑。
         self.batch_cap = batch_cap
+        self.agent_run_id = agent_run_id
         self.settings = get_settings()
         self.result = ArchivistRunResult()
 
@@ -413,8 +417,12 @@ class ArchivistPipeline:
             checklist_context=checklist_context,
             archive_context=state.get("archive_context") or {},
             allowed_dates=dates,
+            agent_run_id=self.agent_run_id,
+            usage_message_id=state.get("watermark_to"),
         )
         trace = collector.get("_trace") or {}
+        self.result.emitted_count = len(trace.get("emitted") or [])
+        self.result.dropped_count = len(trace.get("dropped") or [])
         if trace.get("emitted") or trace.get("dropped"):
             extract_traces.append({"target_date": dates[-1], **trace})
 
@@ -656,6 +664,7 @@ class ArchivistPipeline:
         for tr in state.get("extract_traces") or []:
             self.session.add(
                 ArchivistExtractTrace(
+                    agent_run_id=self.agent_run_id,
                     service_case_id=self.service_case.id,
                     target_date=date.fromisoformat(str(tr["target_date"])),
                     watermark_to=watermark_to,
@@ -712,6 +721,7 @@ async def run_archivist(
     progress: ArchivistProgress,
     chat_model: object | None = None,
     batch_cap: int | None = None,
+    agent_run_id: int | None = None,
 ) -> ArchivistRunResult:
     """跑一次档案官（不在此 commit，由调用方在持锁事务内提交）。
 
@@ -724,5 +734,6 @@ async def run_archivist(
         progress=progress,
         chat_model=chat_model,
         batch_cap=batch_cap,
+        agent_run_id=agent_run_id,
     )
     return await pipeline.run()
