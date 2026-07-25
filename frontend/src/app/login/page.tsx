@@ -75,6 +75,7 @@ export default function LoginPage() {
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-7 shadow-2xl shadow-black/40">
           <form
             onSubmit={handleSubmit}
+            method="post"
             aria-busy={isSubmitting}
             className="space-y-5"
           >

@@ -66,3 +66,24 @@ test.describe("login flow", () => {
     await expect(page.locator("#password")).toBeEnabled();
   });
 });
+
+test.describe("login form before hydration", () => {
+  test.use({ javaScriptEnabled: false });
+
+  test("never places credentials in the URL", async ({ page }) => {
+    await page.goto("/login");
+    await page.fill("#username", "admin");
+    await page.fill("#password", "private-password");
+    const formRequest = page.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname === "/login" &&
+        request.method() === "POST",
+    );
+
+    await page.getByRole("button", { name: "登 录" }).click();
+    const request = await formRequest;
+
+    expect(request.method()).toBe("POST");
+    expect(new URL(request.url()).search).toBe("");
+  });
+});
