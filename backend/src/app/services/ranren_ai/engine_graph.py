@@ -1233,11 +1233,18 @@ class EngineGraph:
         recent_user_messages = state.get("recent_user_messages") or []
         settings = get_settings()
         user_query = _current_query_body(analysis, message.text)
+        knowledge_value = analysis.get("knowledge_query") if isinstance(analysis, dict) else None
+        knowledge_query = (
+            knowledge_value.strip()
+            if isinstance(knowledge_value, str)
+            else ""
+        )
         try:
             agent_kwargs: dict[str, Any] = {
                 "service_case_id": service_case_id,
                 "trigger_id": trigger_id,
                 "user_query": user_query,
+                "knowledge_query": knowledge_query or None,
                 "query_speaker": _current_query_speaker(analysis),
                 "recent_messages": recent_user_messages,
                 "analysis": analysis,

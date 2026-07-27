@@ -147,12 +147,15 @@ class RanrenAgentGraph:
         self,
         *,
         user_query: str,
+        knowledge_query: str | None = None,
         recent_messages: list[str],
         query_speaker: str = "用户",
         run_config: dict[str, Any] | None = None,
     ) -> AgentReplyResult:
         memory_context = await self._build_memory_context()
-        knowledge_context = await self._build_knowledge_context(user_query)
+        knowledge_context = await self._build_knowledge_context(
+            (knowledge_query or "").strip() or user_query
+        )
         bot_nickname = await self._resolve_bot_nickname()
         initial_messages: list[BaseMessage] = [
             SystemMessage(content=AGENT_SYSTEM_PROMPT),
@@ -227,10 +230,11 @@ class RanrenAgentGraph:
             return "暂无可用用户背景。"
 
     async def _build_knowledge_context(self, query: str) -> str:
-        """每轮按本轮问题预检索知识库(FAQ/markdown)注入提示词。
+        """每轮按意图识别改写后的问题预检索知识库(FAQ/markdown)注入提示词。
 
         排除 source_type='case'——优秀案例只走 search_success_case 情绪触发工具,
-        不在普通问答里冒出来。检索失败/无命中一律给占位串,绝不因知识检索拖垮回复。
+        不在普通问答里冒出来。改写缺失时调用方已回退原问题；检索失败/无命中一律给占位串,
+        绝不因知识检索拖垮回复。
         """
         clean = (query or "").strip()
         if not clean:
@@ -546,6 +550,7 @@ async def generate_agent_reply(
     service_case_id: int,
     trigger_id: int | None,
     user_query: str,
+    knowledge_query: str | None = None,
     query_speaker: str = "用户",
     recent_messages: list[str],
     analysis: dict[str, Any] | None = None,
@@ -582,6 +587,7 @@ async def generate_agent_reply(
         checkpointer=checkpointer,
     ).run(
         user_query=user_query,
+        knowledge_query=knowledge_query,
         recent_messages=recent_messages,
         query_speaker=query_speaker,
         run_config=run_config,

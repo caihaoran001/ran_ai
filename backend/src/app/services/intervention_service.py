@@ -186,6 +186,9 @@ def normalize_insight(insight: dict[str, Any], *, source: str, content: str) -> 
     if "requires_immediate_safety_reply" in insight:
         normalized["requires_immediate_safety_reply"] = bool(insight.get("requires_immediate_safety_reply"))
     normalized["health_consultation"] = bool(insight.get("health_consultation"))
+    normalized["knowledge_query"] = " ".join(
+        _string(insight.get("knowledge_query")).split()
+    )[:300]
     agent_context_plan = _normalize_agent_context_plan(insight.get("agent_context_plan"))
     if agent_context_plan is not None:
         normalized["agent_context_plan"] = agent_context_plan

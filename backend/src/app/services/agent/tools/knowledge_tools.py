@@ -12,7 +12,12 @@ class SearchSuccessCaseArgs(BaseModel):
     query: str = Field(
         min_length=1,
         max_length=300,
-        description="A short description of the user's current struggle or discouragement, used to find a similar real success case.",
+        description=(
+            "A standalone, concise search query describing the user's current struggle or discouragement. "
+            "Before calling, resolve references and omitted subjects from the recent conversation and remove "
+            "non-essential conversational wording. Preserve product names, numbers, time, negation, and uncertainty; "
+            "never add facts, conclusions, or advice that are not present in the conversation."
+        ),
     )
 
 
@@ -37,7 +42,11 @@ def build_knowledge_tools(*, settings: Settings) -> list[BaseTool]:
                 "Retrieve ONE similar real user success story to encourage the user. Call this ONLY when the "
                 "user shows discouragement, plateau frustration, self-doubt, low motivation, or an urge to give "
                 "up (e.g. '我是不是没救了' / '坚持不下去了' / '怎么又没瘦'). Do NOT call it for ordinary questions, "
-                "data lookups, or neutral chat. Returns a coaching header plus a matched case, or a note when no "
+                "data lookups, or neutral chat. "
+                "Rewrite the search query at call time into a self-contained description by resolving references, "
+                "filling only context-grounded omissions, and removing non-essential conversational wording. "
+                "Never add facts that are absent from the current or recent conversation. "
+                "Returns a coaching header plus a matched case, or a note when no "
                 "suitable case exists — in that case just comfort the user in your own words, never fabricate a case. "
                 "This tool is a behind-the-scenes source: NEVER tell the user you searched for or failed to find a "
                 "case, and never mention a 案例库/case library — just reply naturally as if the encouragement is your own."

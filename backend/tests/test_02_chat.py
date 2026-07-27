@@ -256,6 +256,33 @@ def test_intervention_normalizes_agent_context_plan():
     }
 
 
+def test_intervention_normalizes_knowledge_query():
+    insight = normalize_insight(
+        {
+            "requires_human_intervention": False,
+            "risk_flags": [],
+            "intervention_reasons": [],
+            "knowledge_query": " \n 那   经期呢？ \n",
+        },
+        source="chat_message",
+        content="那经期呢？",
+    )
+
+    assert insight["knowledge_query"] == "那 经期呢？"
+
+    long_insight = normalize_insight(
+        {
+            "requires_human_intervention": False,
+            "risk_flags": [],
+            "intervention_reasons": [],
+            "knowledge_query": "问" * 400,
+        },
+        source="chat_message",
+        content="原问题",
+    )
+    assert len(long_insight["knowledge_query"]) == 300
+
+
 @pytest.mark.asyncio
 async def test_intervention_prompt_keeps_diet_preferences_in_agent_context():
     service = AIService.__new__(AIService)
@@ -277,6 +304,9 @@ async def test_intervention_prompt_keeps_diet_preferences_in_agent_context():
     assert "需要作息、饮食模式或运动习惯时再选 habits/current_state/warnings" in prompt
     assert "复盘服务历程、评价整体进展、延续此前做法" in prompt
     assert "简单产品规则、实时数据查询和无关兴趣闲聊不要选择 case_summary" in prompt
+    assert '"knowledge_query": "专供参考问答检索的独立查询；始终输出非空字符串"' in prompt
+    assert "消解“这个/那个/这样”等指代" in prompt
+    assert "不得回答问题、不得加入对话中没有的事实" in prompt
 
 
 def test_high_risk_health_consultation_handoff():

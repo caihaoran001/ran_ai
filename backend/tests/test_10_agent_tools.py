@@ -23,6 +23,7 @@ from app.models.user_state_profile import UserStateProfile
 from app.services.agent.context_builder import build_agent_memory_context
 from app.services.agent.graph import AgentReplyResult, AgentRunContext, RanrenAgentGraph
 from app.services.agent.skill_registry import SkillRegistry
+from app.services.agent.tools.knowledge_tools import SearchSuccessCaseArgs, build_knowledge_tools
 from app.services.agent.tools.service_case_tools import build_service_case_tools
 from app.services.agent.tools.followup_preference_tools import build_followup_preference_tools
 from app.services.agent.tools.web_search_tools import _normalize_current_query_year, build_web_search_tools
@@ -101,6 +102,16 @@ class FakeFileHttpClient:
         return FakeFileResponse(self.content)
 
 
+def test_success_case_tool_keeps_single_rewritten_query_argument():
+    fields = SearchSuccessCaseArgs.model_fields
+    assert list(fields) == ["query"]
+    assert "resolve references and omitted subjects" in (fields["query"].description or "")
+
+    tool = build_knowledge_tools(settings=get_settings())[0]
+    assert "Rewrite the search query at call time" in tool.description
+    assert "Never add facts" in tool.description
+
+
 async def _case(db_session, *, started_at=None):
     user = User(name="Agent测试用户")
     db_session.add(user)
@@ -132,6 +143,56 @@ async def _inbound(db_session, service_case: ServiceCase, content: str = "我现
     db_session.add(inbound)
     await db_session.flush()
     return inbound
+
+
+@pytest.mark.asyncio
+async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
+    db_session,
+    monkeypatch,
+):
+    service_case = await _case(db_session)
+    retrieved_queries: list[str] = []
+
+    async def fake_retrieve(
+        session,
+        query,
+        *,
+        settings=None,
+        exclude_source_types=None,
+    ):
+        retrieved_queries.append(query)
+        assert exclude_source_types == {"case"}
+        return "参考问答命中"
+
+    monkeypatch.setattr(
+        "app.services.agent.graph.retrieve_indexed_knowledge",
+        fake_retrieve,
+    )
+
+    for knowledge_query, expected_query in (
+        ("经期期间晚A应该如何使用？", "经期期间晚A应该如何使用？"),
+        ("   ", "那经期呢？"),
+    ):
+        model = FakeToolCallingModel([AIMessage(content="正常回复")])
+        result = await RanrenAgentGraph(
+            context=AgentRunContext(
+                service_case_id=service_case.id,
+                trigger_id=123,
+            ),
+            settings=get_settings(),
+            chat_model=model,
+        ).run(
+            user_query="那经期呢？",
+            knowledge_query=knowledge_query,
+            recent_messages=["用户: 晚A什么时候喝？", "助教: 一般按执行方案安排。"],
+        )
+
+        assert result.reply == "正常回复"
+        prompt = model.calls[0][1].content
+        assert "【本次提问】\n用户：那经期呢？" in prompt
+        assert retrieved_queries[-1] == expected_query
+
+    assert retrieved_queries == ["经期期间晚A应该如何使用？", "那经期呢？"]
 
 
 def _docx_bytes(*paragraphs: str) -> bytes:
@@ -1433,14 +1494,18 @@ async def test_engine_uses_agent_without_global_or_case_toggle(
     calls: list[int] = []
 
     async def fake_generate_agent_reply(
-        *, service_case_id, trigger_id, user_query, query_speaker, recent_messages, analysis,
+        *, service_case_id, trigger_id, user_query, knowledge_query, query_speaker, recent_messages, analysis,
         channel=None, group_id=None, bot_user_id=None, settings, agent_run_id=None
     ):
         calls.append(service_case_id)
         assert agent_run_id is not None
+        assert knowledge_query == "当前服务进行到第几天？"
         assert query_speaker == "用户"
         assert channel == "qiwe"
-        assert analysis == {"requires_human_intervention": False}
+        assert analysis == {
+            "requires_human_intervention": False,
+            "knowledge_query": "当前服务进行到第几天？",
+        }
         return AgentReplyResult(
             reply="agent reply",
             tool_trace=[{"name": "get_service_progress", "ok": True}],
@@ -1464,7 +1529,10 @@ async def test_engine_uses_agent_without_global_or_case_toggle(
         await engine._reply_with_ai(
             message,
             service_case_id=service_case.id,
-            analysis={"requires_human_intervention": False},
+            analysis={
+                "requires_human_intervention": False,
+                "knowledge_query": "当前服务进行到第几天？",
+            },
             trigger_id=inbound.id,
         )
         assert calls == [service_case.id]
