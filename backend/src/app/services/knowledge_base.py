@@ -15,6 +15,7 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 KEYWORD_WHITELIST_FILE = "keyword_whitelist.json"
+KNOWLEDGE_SOURCES_FILE = "knowledge_sources.json"
 MAX_QUERY_TERMS = 12
 
 
@@ -87,11 +88,31 @@ def _knowledge_files(settings: AppSettings) -> list[Path]:
     kb_dir = Path(settings.knowledge_base_dir) if settings.knowledge_base_dir else _default_kb_dir()
     if not kb_dir.exists():
         return []
-    return sorted(
-        file_path
-        for file_path in kb_dir.iterdir()
-        if file_path.is_file() and file_path.suffix.lower() in {".md", ".txt"}
-    )
+    manifest_path = kb_dir / KNOWLEDGE_SOURCES_FILE
+    if not manifest_path.exists():
+        logger.warning("Knowledge source manifest is missing; no local source will be indexed")
+        return []
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.exception("Knowledge source manifest is invalid: %s", manifest_path)
+        return []
+    active = payload.get("active") if isinstance(payload, dict) else None
+    if not isinstance(active, list):
+        logger.warning("Knowledge source manifest missing active list: %s", manifest_path)
+        return []
+    files: list[Path] = []
+    for raw_name in active:
+        name = str(raw_name or "").strip()
+        if not name or Path(name).name != name:
+            logger.warning("Ignoring unsafe knowledge source name: %r", raw_name)
+            continue
+        file_path = kb_dir / name
+        if file_path.is_file() and file_path.suffix.lower() in {".md", ".txt"}:
+            files.append(file_path)
+        else:
+            logger.warning("Configured knowledge source is missing or unsupported: %s", file_path)
+    return sorted(files)
 
 
 def _default_kb_dir() -> Path:

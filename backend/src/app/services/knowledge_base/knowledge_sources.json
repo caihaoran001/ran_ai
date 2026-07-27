@@ -1,0 +1,12 @@
+{
+  "active": [],
+  "retained_legacy": [
+    "default_faq.md",
+    "ranren_ai_daily_qa_framework.md",
+    "ranren_ai_diet_structure_guide.md",
+    "ranren_ai_qa_from_excel.md",
+    "ranren_ai_service_rules.md",
+    "ranren_ai_standard_qa.md"
+  ],
+  "note": "旧 Markdown 仅保留审计，不参与运行时检索。可信知识必须经人工审核进入 knowledge_faqs 并同步 knowledge_chunks。"
+}

@@ -314,6 +314,28 @@ export type KnowledgeDraft = {
   updated_at: string;
 };
 
+export type KnowledgeBusinessConflict = {
+  code: "knowledge_business_conflict";
+  message: string;
+  reason: string;
+  draft_type: "qa" | "case" | string;
+  existing: {
+    chunk_id: number;
+    title: string;
+    question: string;
+    answer: string;
+    category?: string | null;
+    tags?: string[] | null;
+  };
+  candidate: {
+    title: string;
+    question: string;
+    answer: string;
+    category?: string | null;
+    tags?: string[] | null;
+  };
+};
+
 export type KnowledgeIndexStats = {
   total_chunks: number;
   embedded_chunks: number;

@@ -11,8 +11,13 @@ from app.schemas.knowledge_draft import (
     KnowledgeIndexSyncRequest,
     KnowledgeIndexSyncResult,
     KnowledgeDraftRead,
+    KnowledgeDraftApprovalRequest,
     KnowledgeDraftReject,
     KnowledgeDraftUpdate,
+)
+from app.services.knowledge_dedupe import (
+    KnowledgeBusinessConflict,
+    KnowledgeDedupeUnavailable,
 )
 from app.services.knowledge_evolution import approve_draft, reject_draft
 from app.services.knowledge_index import knowledge_index_stats, sync_knowledge_chunks
@@ -71,10 +76,22 @@ async def update_knowledge_draft(
 @router.post("/knowledge-drafts/{draft_id}/approve", response_model=KnowledgeDraftRead)
 async def approve_knowledge_draft(
     draft_id: int,
+    payload: KnowledgeDraftApprovalRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> KnowledgeDraft:
     draft = await _get_draft(session, draft_id)
-    return await approve_draft(session, draft)
+    try:
+        return await approve_draft(
+            session,
+            draft,
+            resolution=payload.resolution if payload else None,
+        )
+    except KnowledgeBusinessConflict as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    except KnowledgeDedupeUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/knowledge-drafts/{draft_id}/reject", response_model=KnowledgeDraftRead)

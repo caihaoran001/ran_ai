@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -40,6 +41,10 @@ class KnowledgeDraftUpdate(BaseModel):
 
 class KnowledgeDraftReject(BaseModel):
     reason: str | None = None
+
+
+class KnowledgeDraftApprovalRequest(BaseModel):
+    resolution: Literal["use_candidate", "keep_existing"] | None = None
 
 
 class KnowledgeIndexSyncRequest(BaseModel):

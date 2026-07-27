@@ -212,6 +212,18 @@ class Settings(BaseSettings):
         default=0.45,
         validation_alias="CASE_VECTOR_DISTANCE_THRESHOLD",
     )
+    knowledge_dedupe_faq_distance_threshold: float = Field(
+        default=0.30,
+        ge=0.0,
+        le=1.0,
+        validation_alias="KNOWLEDGE_DEDUPE_FAQ_DISTANCE_THRESHOLD",
+    )
+    knowledge_dedupe_case_distance_threshold: float = Field(
+        default=0.35,
+        ge=0.0,
+        le=1.0,
+        validation_alias="KNOWLEDGE_DEDUPE_CASE_DISTANCE_THRESHOLD",
+    )
 
 
 @lru_cache

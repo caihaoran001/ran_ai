@@ -5,7 +5,12 @@ import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { API_BASE, KnowledgeEvolutionSetting, KnowledgeFAQ } from "@/lib/api";
+import {
+  API_BASE,
+  KnowledgeBusinessConflict,
+  KnowledgeEvolutionSetting,
+  KnowledgeFAQ,
+} from "@/lib/api";
 import {
   Tag,
   BookOpen,
@@ -18,7 +23,8 @@ import {
   Compass,
   SlidersHorizontal,
   ChevronRight,
-  Settings2
+  Settings2,
+  AlertTriangle,
 } from "lucide-react";
 
 export function KnowledgeDraftActions({
@@ -46,9 +52,11 @@ export function KnowledgeDraftActions({
   const [tags, setTags] = useState((initialTags || []).join("、"));
   const [busy, setBusy] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [conflict, setConflict] = useState<KnowledgeBusinessConflict | null>(null);
+  const [message, setMessage] = useState("");
 
-  async function save() {
-    await fetch(`${API_BASE}/knowledge-drafts/${draftId}`, {
+  async function save(): Promise<boolean> {
+    const response = await fetch(`${API_BASE}/knowledge-drafts/${draftId}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -59,25 +67,73 @@ export function KnowledgeDraftActions({
         tags: tags.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
       }),
     });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      setMessage(errorMessage(payload, "草稿保存失败，请稍后重试"));
+      return false;
+    }
+    return true;
   }
 
-  async function approve() {
+  async function approve(resolution?: "use_candidate" | "keep_existing") {
     setBusy(true);
-    await save();
-    await fetch(`${API_BASE}/knowledge-drafts/${draftId}/approve`, { method: "POST" });
-    setBusy(false);
-    router.refresh();
+    setMessage("");
+    try {
+      if (!resolution && !(await save())) {
+        return;
+      }
+      const response = await fetch(`${API_BASE}/knowledge-drafts/${draftId}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(resolution ? { resolution } : {}),
+      });
+      const payload = await response.json().catch(() => null);
+      if (
+        response.status === 409
+        && payload?.detail?.code === "knowledge_business_conflict"
+      ) {
+        setConflict(payload.detail as KnowledgeBusinessConflict);
+        setMessage("");
+        return;
+      }
+      if (!response.ok) {
+        setMessage(errorMessage(payload, "查重或入库失败，草稿仍保留在待审核列表"));
+        return;
+      }
+      setConflict(null);
+      setMessage(
+        payload?.status === "rejected"
+          ? payload?.rejected_reason || "现有知识已覆盖，本次候选无需重复入库"
+          : "已完成查重并入库",
+      );
+      router.refresh();
+    } catch {
+      setMessage("网络请求失败，草稿仍保留在待审核列表");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function reject() {
     setBusy(true);
-    await fetch(`${API_BASE}/knowledge-drafts/${draftId}/reject`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ reason: "人工审核驳回" }),
-    });
-    setBusy(false);
-    router.refresh();
+    setMessage("");
+    try {
+      const response = await fetch(`${API_BASE}/knowledge-drafts/${draftId}/reject`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "人工审核驳回" }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        setMessage(errorMessage(payload, "驳回失败，请稍后重试"));
+        return;
+      }
+      router.refresh();
+    } catch {
+      setMessage("网络请求失败，请稍后重试");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!isEditing) {
@@ -113,6 +169,72 @@ export function KnowledgeDraftActions({
           </p>
         </div>
 
+        {conflict && (
+          <div
+            className="rounded-xl border border-amber-300 bg-amber-50/70 p-4"
+            role="alert"
+          >
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+              <div>
+                <h4 className="text-sm font-bold text-amber-950">
+                  同一{draftType === "case" ? "案例" : "问题"}存在不同业务口径
+                </h4>
+                <p className="mt-1 text-xs leading-relaxed text-amber-900">
+                  {conflict.reason}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <ConflictVersion
+                label="已入库口径"
+                question={conflict.existing.question}
+                answer={conflict.existing.answer}
+                tone="existing"
+              />
+              <ConflictVersion
+                label="本次候选口径"
+                question={conflict.candidate.question}
+                answer={conflict.candidate.answer}
+                tone="candidate"
+              />
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-amber-900">
+              请按实际业务规则选择正确内容；系统会自动处理版本留痕和检索索引。
+            </p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <Button
+                type="button"
+                className="h-11 bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-500"
+                onClick={() => approve("use_candidate")}
+                disabled={busy}
+              >
+                采用本次候选口径
+              </Button>
+              <Button
+                type="button"
+                className="h-11 border border-slate-300 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                onClick={() => approve("keep_existing")}
+                disabled={busy}
+              >
+                保留已入库口径
+              </Button>
+              <Button
+                type="button"
+                className="h-11 border border-amber-300 bg-amber-50 px-4 text-xs font-semibold text-amber-900 hover:bg-amber-100 sm:col-span-2"
+                onClick={() => {
+                  setConflict(null);
+                  setMessage("");
+                  setIsEditing(true);
+                }}
+                disabled={busy}
+              >
+                两者适用条件不同，去补充问题条件
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Tags preview */}
         {tags.trim() && (
           <div className="flex flex-wrap gap-2 items-center pt-1.5 border-t border-slate-100/60">
@@ -134,45 +256,55 @@ export function KnowledgeDraftActions({
         )}
 
         {/* Action buttons */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 mt-3">
-          <Button
-            type="button"
-            className="text-xs border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-all duration-205 active:scale-[0.97] font-semibold flex items-center gap-1.5 px-3 py-1.5 h-8.5"
-            onClick={() => setIsEditing(true)}
-          >
-            <Edit2 className="h-3.5 w-3.5 text-slate-500" />
-            <span>编辑草稿内容</span>
-          </Button>
-          <div className="flex gap-2">
+        {!conflict && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 mt-3">
             <Button
               type="button"
-              className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-2xs transition-all duration-205 active:scale-[0.97] px-4 h-8.5 flex items-center gap-1.5"
-              onClick={approve}
-              disabled={busy}
+              className="text-xs border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-all duration-205 active:scale-[0.97] font-semibold flex items-center gap-1.5 px-3 py-1.5 h-8.5"
+              onClick={() => setIsEditing(true)}
             >
-              {busy ? (
-                <>
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  <span>处理中...</span>
-                </>
-              ) : (
-                <>
-                  <Check className="h-3.5 w-3.5" />
-                  <span>批准入库</span>
-                </>
-              )}
+              <Edit2 className="h-3.5 w-3.5 text-slate-500" />
+              <span>编辑草稿内容</span>
             </Button>
-            <Button
-              type="button"
-              className="text-xs border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 hover:border-rose-300 transition-all duration-205 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
-              onClick={reject}
-              disabled={busy}
-            >
-              <X className="h-3.5 w-3.5" />
-              <span>驳回</span>
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-2xs transition-all duration-205 active:scale-[0.97] px-4 h-8.5 flex items-center gap-1.5"
+                onClick={() => approve()}
+                disabled={busy}
+              >
+                {busy ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>处理中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-3.5 w-3.5" />
+                    <span>批准入库</span>
+                  </>
+                )}
+              </Button>
+              <Button
+                type="button"
+                className="text-xs border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 hover:border-rose-300 transition-all duration-205 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
+                onClick={reject}
+                disabled={busy}
+              >
+                <X className="h-3.5 w-3.5" />
+                <span>驳回</span>
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
+        {message && (
+          <p
+            className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-800"
+            aria-live="polite"
+          >
+            {message}
+          </p>
+        )}
       </div>
     );
   }
@@ -194,7 +326,7 @@ export function KnowledgeDraftActions({
       </div>
 
       {/* Category and Tags inline grid */}
-      <div className="grid gap-4 grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center gap-1.5">
             <SlidersHorizontal className="h-3.5 w-3.5 text-slate-400" />
@@ -263,7 +395,7 @@ export function KnowledgeDraftActions({
           <Button
             type="button"
             className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-2xs transition-all duration-200 active:scale-[0.97] px-4 h-8.5 flex items-center gap-1.5"
-            onClick={approve}
+            onClick={() => approve()}
             disabled={busy}
           >
             {busy ? (
@@ -289,8 +421,68 @@ export function KnowledgeDraftActions({
           </Button>
         </div>
       </div>
+      {message && (
+        <p
+          className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-800"
+          aria-live="polite"
+        >
+          {message}
+        </p>
+      )}
     </div>
   );
+}
+
+function ConflictVersion({
+  label,
+  question,
+  answer,
+  tone,
+}: {
+  label: string;
+  question: string;
+  answer: string;
+  tone: "existing" | "candidate";
+}) {
+  return (
+    <div className={`rounded-lg border bg-white p-3 ${
+      tone === "candidate" ? "border-blue-200" : "border-slate-200"
+    }`}>
+      <div className={`text-xs font-bold ${
+        tone === "candidate" ? "text-blue-700" : "text-slate-600"
+      }`}>
+        {label}
+      </div>
+      <div className="mt-2 text-xs font-semibold leading-relaxed text-slate-800">
+        {question}
+      </div>
+      <div className="mt-2 whitespace-pre-wrap border-t border-slate-100 pt-2 text-xs leading-relaxed text-slate-600">
+        {answer}
+      </div>
+    </div>
+  );
+}
+
+function errorMessage(payload: unknown, fallback: string): string {
+  if (
+    payload
+    && typeof payload === "object"
+    && "detail" in payload
+  ) {
+    const detail = (payload as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail.trim()) {
+      return detail;
+    }
+    if (
+      detail
+      && typeof detail === "object"
+      && "message" in detail
+      && typeof (detail as { message?: unknown }).message === "string"
+    ) {
+      return (detail as { message: string }).message;
+    }
+  }
+  return fallback;
 }
 
 export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig: KnowledgeEvolutionSetting }) {

@@ -51,6 +51,8 @@ async def update_faq(
     answer: str | None = None,
     category: str | None = None,
     tags: list[str] | None = None,
+    source_type: str | None = None,
+    source_id: str | None = None,
     change_note: str | None = None,
 ) -> KnowledgeFAQ:
     if title is not None:
@@ -63,6 +65,10 @@ async def update_faq(
         faq.category = category
     if tags is not None:
         faq.tags = tags
+    if source_type is not None:
+        faq.source_type = source_type
+    if source_id is not None:
+        faq.source_id = source_id
     faq.version += 1
     faq.status = "active"
     faq.disabled_at = None

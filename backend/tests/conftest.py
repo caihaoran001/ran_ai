@@ -425,6 +425,7 @@ async def mock_ai():
     mock = MockAIService()
     import app.services.ai_service.client as client_mod
     import app.services.document_service as doc_mod
+    import app.services.knowledge_dedupe as dedupe_mod
     import app.services.knowledge_evolution as evolution_mod
     import app.services.ranren_ai.engine as engine_mod
     import app.services.intervention_service as intervention_mod
@@ -432,6 +433,7 @@ async def mock_ai():
 
     orig_client = client_mod.AIService
     orig_doc = doc_mod.AIService
+    orig_dedupe = dedupe_mod.AIService
     orig_evolution = evolution_mod.AIService
     orig_engine = engine_mod.AIService
     orig_intervention = intervention_mod.AIService
@@ -439,6 +441,7 @@ async def mock_ai():
 
     client_mod.AIService = lambda *a, **kw: mock
     doc_mod.AIService = lambda *a, **kw: mock
+    dedupe_mod.AIService = lambda *a, **kw: mock
     evolution_mod.AIService = lambda *a, **kw: mock
     engine_mod.AIService = lambda *a, **kw: mock
     intervention_mod.AIService = lambda *a, **kw: mock
@@ -448,6 +451,7 @@ async def mock_ai():
 
     client_mod.AIService = orig_client
     doc_mod.AIService = orig_doc
+    dedupe_mod.AIService = orig_dedupe
     evolution_mod.AIService = orig_evolution
     engine_mod.AIService = orig_engine
     intervention_mod.AIService = orig_intervention

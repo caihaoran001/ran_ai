@@ -180,13 +180,15 @@ MVP 风险识别通过 LLM 做意图识别与信息提取，判断是否需要�
 
 ## 知识库回复与知识沉淀
 
-机器人回复会优先检索数据库知识索引 `knowledge_chunks`，再把命中的知识块交给 DeepSeek 生成最终回复。数据库索引支持结构化 FAQ、审核通过的知识草稿、Markdown/TXT 知识块，以及可选 embedding 检索；若数据库没有命中，会降级到本地 Markdown/LlamaIndex 关键词检索。默认本地知识库目录在：
+机器人回复检索数据库知识索引 `knowledge_chunks`，再把命中的知识块交给模型生成最终回复。参考问答使用向量与白名单关键词双路 RRF；优秀案例只使用向量检索。当前没有“数据库未命中后直接读取本地 Markdown”的生产 fallback。
+
+默认本地知识素材目录在：
 
 ```text
 backend/src/app/services/knowledge_base/
 ```
 
-可以把常见问答写成 `.md` 或 `.txt` 文件放进去。也可以通过环境变量改目录：
+本地 `.md`/`.txt` 只有列入同目录 `knowledge_sources.json` 的 `active` 清单并执行索引同步后，才会成为有效 `markdown` chunk。`retained_legacy` 仅用于保留历史，不参与检索。也可以通过环境变量改目录：
 
 ```bash
 KNOWLEDGE_BASE_DIR=/path/to/faq
@@ -233,7 +235,7 @@ EMBEDDING_MODEL=text-embedding-v4
 - `knowledge_faqs`：结构化 FAQ 业务表，支持后台新增、编辑、禁用和版本管理。
 - `knowledge_chunks`：检索索引表，承接 Markdown、FAQ 和审核通过的知识草稿，用于机器人 RAG 检索。
 
-审核控制台的“结构化 FAQ”区域可直接维护 FAQ；FAQ 启用时会同步到 `knowledge_chunks`，禁用后不再参与检索。审核控制台的“知识索引”区域可以把 `knowledge_base` 目录下的 Markdown/TXT 同步到 `knowledge_chunks` 表。机器人回复时会优先查询数据库知识块；若数据库没有命中，再降级使用原 Markdown/LlamaIndex 检索。
+审核控制台的“结构化 FAQ”区域可直接维护 FAQ；FAQ 启用时会同步到 `knowledge_chunks`，禁用后不再参与检索。审核控制台的“知识索引”区域只同步 `knowledge_sources.json.active` 明确启用的本地素材；未启用的旧 Markdown 会保留在仓库和数据库历史中，但同步后状态为 `stale`。
 
 同步接口：
 
@@ -255,7 +257,7 @@ curl -X POST http://localhost:8000/api/knowledge-base/index/sync \
 
 当前生产数据库使用阿里云 RDS PostgreSQL 15，并已启用 `vector` 插件。迁移会在可用时自动创建 `knowledge_chunks.embedding_vector vector(1024)` 和 HNSW cosine 索引；同时保留 `knowledge_chunks.embedding` JSON 字段作为应用层兼容路径。
 
-长期知识自我进化已和数据库索引打通：FAQ 草稿批准后会创建结构化 FAQ，并同步到 `knowledge_chunks`，如果已配置 embedding 会同步向量化。
+长期知识自我进化已和数据库索引打通：草稿批准时先做格式归一化后的精确哈希检查，再用向量召回疑似候选；只有存在候选时才增加一次结构化 LLM 判定。普通重复会自动跳过或更新现有版本，业务口径冲突才交给审核员选择正确内容。FAQ 旧版本保存在 `knowledge_faq_versions`，案例被替代后旧 chunk 保留为 `superseded`，查重过程写入 `knowledge_dedupe_events`。
 
 审核控制台支持“知识草稿”：
 
