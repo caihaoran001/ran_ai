@@ -32,6 +32,7 @@ from app.services.content_policy import set_ai_reply_enabled
 from app.services.intervention_service import normalize_insight
 from app.services.profile_memory_service import load_profile_memory_context
 from app.services.ranren_ai.engine import RanrenAIEngine
+from app.services.ranren_ai.engine_graph import _knowledge_query_from_analysis
 
 
 class FakeToolCallingModel:
@@ -112,6 +113,14 @@ def test_success_case_tool_keeps_single_rewritten_query_argument():
     assert "Never add facts" in tool.description
 
 
+def test_knowledge_query_analysis_preserves_search_skip_and_fallback_states():
+    assert _knowledge_query_from_analysis({"knowledge_query": "  晚A怎么喝？  "}) == "晚A怎么喝？"
+    assert _knowledge_query_from_analysis({"knowledge_query": None}) == ""
+    assert _knowledge_query_from_analysis({}) is None
+    assert _knowledge_query_from_analysis({"knowledge_query": "   "}) is None
+    assert _knowledge_query_from_analysis({"knowledge_query": ["非法类型"]}) is None
+
+
 async def _case(db_session, *, started_at=None):
     user = User(name="Agent测试用户")
     db_session.add(user)
@@ -171,7 +180,7 @@ async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
 
     for knowledge_query, expected_query in (
         ("经期期间晚A应该如何使用？", "经期期间晚A应该如何使用？"),
-        ("   ", "那经期呢？"),
+        (None, "那经期呢？"),
     ):
         model = FakeToolCallingModel([AIMessage(content="正常回复")])
         result = await RanrenAgentGraph(
@@ -193,6 +202,24 @@ async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
         assert retrieved_queries[-1] == expected_query
 
     assert retrieved_queries == ["经期期间晚A应该如何使用？", "那经期呢？"]
+
+    skip_model = FakeToolCallingModel([AIMessage(content="<no_reply>")])
+    skip_result = await RanrenAgentGraph(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=124,
+        ),
+        settings=get_settings(),
+        chat_model=skip_model,
+    ).run(
+        user_query="好的",
+        knowledge_query="",
+        recent_messages=[],
+    )
+
+    assert skip_result.reply == "<no_reply>"
+    assert retrieved_queries == ["经期期间晚A应该如何使用？", "那经期呢？"]
+    assert "【参考问答】\n暂无相关参考问答。" in skip_model.calls[0][1].content
 
 
 def _docx_bytes(*paragraphs: str) -> bytes:

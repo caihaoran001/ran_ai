@@ -282,6 +282,32 @@ def test_intervention_normalizes_knowledge_query():
     )
     assert len(long_insight["knowledge_query"]) == 300
 
+    skipped_insight = normalize_insight(
+        {
+            "requires_human_intervention": False,
+            "risk_flags": [],
+            "intervention_reasons": [],
+            "knowledge_query": None,
+        },
+        source="chat_message",
+        content="好的",
+    )
+    assert "knowledge_query" in skipped_insight
+    assert skipped_insight["knowledge_query"] is None
+
+    for invalid_value in ("   ", ["非法类型"]):
+        invalid_insight = normalize_insight(
+            {
+                "requires_human_intervention": False,
+                "risk_flags": [],
+                "intervention_reasons": [],
+                "knowledge_query": invalid_value,
+            },
+            source="chat_message",
+            content="原问题",
+        )
+        assert "knowledge_query" not in invalid_insight
+
 
 @pytest.mark.asyncio
 async def test_intervention_prompt_keeps_diet_preferences_in_agent_context():
@@ -304,7 +330,11 @@ async def test_intervention_prompt_keeps_diet_preferences_in_agent_context():
     assert "需要作息、饮食模式或运动习惯时再选 habits/current_state/warnings" in prompt
     assert "复盘服务历程、评价整体进展、延续此前做法" in prompt
     assert "简单产品规则、实时数据查询和无关兴趣闲聊不要选择 case_summary" in prompt
-    assert '"knowledge_query": "专供参考问答检索的独立查询；始终输出非空字符串"' in prompt
+    assert '"knowledge_query": "专供参考问答检索的独立查询；不需要检索时为 null"' in prompt
+    assert "仅当当前消息包含需要健康服务通用知识、产品规则" in prompt
+    assert "实时数据查询、系统操作、纯数据上报、确认收尾和普通闲聊" in prompt
+    assert "只改写其中的知识问题，不得返回 null" in prompt
+    assert '不需要检索时输出 "knowledge_query": null（JSON null，不是字符串“null”）' in prompt
     assert "消解“这个/那个/这样”等指代" in prompt
     assert "不得回答问题、不得加入对话中没有的事实" in prompt
 

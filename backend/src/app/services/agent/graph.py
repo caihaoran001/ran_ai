@@ -153,8 +153,11 @@ class RanrenAgentGraph:
         run_config: dict[str, Any] | None = None,
     ) -> AgentReplyResult:
         memory_context = await self._build_memory_context()
+        effective_knowledge_query = (
+            user_query if knowledge_query is None else knowledge_query.strip()
+        )
         knowledge_context = await self._build_knowledge_context(
-            (knowledge_query or "").strip() or user_query
+            effective_knowledge_query
         )
         bot_nickname = await self._resolve_bot_nickname()
         initial_messages: list[BaseMessage] = [

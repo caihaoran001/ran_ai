@@ -70,7 +70,7 @@ Checkpoint does not replace transport durability: `inbound_events` is the cross-
 
 聊天 agent 能拿到的外部信息分**两类**：
 
-**① 每轮自动注入**（不调工具，`run()` 拼进提示词）：当前北京时间（`_current_time_context`）；本轮用户消息 + 说话人 + 近期群聊；**隐性用户背景**（`profile_memory_service` 把 `UserProfile` + `UserStateProfile` + `ArchivistCaseMemory` 压成"结论小抄"：稳定事实/历程小结/长期偏好/稳定习惯/当前状态/最近话题/风险边界，每域最多 5 条取最新、每行≤120字）；**参考问答**（首次 LLM 调用前按意图识别产出的 `knowledge_query` 预检索，缺失/空值回退本轮原问题，排除优秀案例）；skill 目录（仅名字+简介）。**完整带证据的 `state_json` 档案不再给 agent 查**——结论已在隐性背景里；完整档案给人从 `/users/{id}` 页面看。
+**① 每轮自动注入**（不调工具，`run()` 拼进提示词）：当前北京时间（`_current_time_context`）；本轮用户消息 + 说话人 + 近期群聊；**隐性用户背景**（`profile_memory_service` 把 `UserProfile` + `UserStateProfile` + `ArchivistCaseMemory` 压成"结论小抄"：稳定事实/历程小结/长期偏好/稳定习惯/当前状态/最近话题/风险边界，每域最多 5 条取最新、每行≤120字）；**参考问答**（首次 LLM 调用前按意图识别产出的 nullable `knowledge_query` 决定：字符串则预检索、明确 `null` 则跳过、字段缺失/异常则回退本轮原问题；始终排除优秀案例）；skill 目录（仅名字+简介）。**完整带证据的 `state_json` 档案不再给 agent 查**——结论已在隐性背景里；完整档案给人从 `/users/{id}` 页面看。
 
 **② 按需调工具**（22 个，`agent/tools/`）：
 - 服务单只读 7 个（`_is_data_tool`，查不到走安全兜底不编造）：`get_service_progress`、`get_recent_checkins`、`get_weight_trend`、`list_delivery_documents`+`read_delivery_document`、`list_group_files`+`read_group_file`。
@@ -85,7 +85,7 @@ Checkpoint does not replace transport durability: `inbound_events` is the cross-
 ### Knowledge retrieval / RAG (reference QA + success-case tool)
 两条链路共用 DB 表 `knowledge_chunks`，但检索时明确隔离，不混合返回：
 
-- **参考问答自动预检索**：普通用户消息进入回复 Agent 前本来就会做一次风控/运营意图识别；该模型同时结合当前消息和近期对话产出最长 300 字的 `knowledge_query`，只做指代消解、补全省略和去口语化，不得回答或新增事实，因此不增加独立 Query Rewrite 模型调用。`EngineGraph` 将原始 `user_query` 和 `knowledge_query` 分开传递；`RanrenAgentGraph.run()` 只把后者交给 `_build_knowledge_context()` → `retrieve_indexed_knowledge()`，缺失/空值（含工作人员跳过意图识别的消息）回退原问题，并始终传 `exclude_source_types={"case"}`。检索用向量（pgvector）+ 白名单关键词（pg_trgm ILIKE）双路 RRF 融合，embedding key 未配时仅走关键词，结果自动注入提示词的【参考问答】。
+- **参考问答条件预检索**：普通用户消息进入回复 Agent 前本来就会做一次风控/运营意图识别；该模型同时结合当前消息和近期对话产出 nullable `knowledge_query`，不增加独立 Query Rewrite 模型调用。仅当消息包含健康服务通用知识、产品规则、饮食/运动/执行方法问题时，输出最长 300 字的独立查询（只做指代消解、补全省略和去口语化，不得回答或新增事实）；实时数据查询、系统操作、纯数据上报、确认收尾和普通闲聊输出 JSON `null`。混合消息只改写其中的知识问题。`EngineGraph` 将原始 `user_query` 和 `knowledge_query` 分开传递，三态语义必须保留：字符串 → `_build_knowledge_context()` 检索；明确 `null` → 注入“暂无相关参考问答”且不调 embedding/DB；字段缺失、空字符串或非法类型（含工作人员跳过意图识别）→ 回退原问题检索。实际检索始终传 `exclude_source_types={"case"}`，使用向量（pgvector）+ 白名单关键词（pg_trgm ILIKE）双路 RRF；embedding key 未配时仅走关键词。
 - **优秀案例按需检索**：`search_success_case` 已在 `build_agent_tools()` 注册。只有 Agent 判断用户明显受挫、平台期挫败、自我怀疑、动力低或想放弃时才调用；Agent 在生成唯一的字符串参数 `query` 时结合最近对话完成同样的指代消解、上下文内省略补全和去口语化，保留数字/时间/否定/不确定表达，不得新增事实，不另设结构化检索条件或独立改写调用。工具调用 `retrieve_case_context_db()`，只查 `source_type='case'`，仅走向量检索、最多返回 1 条，无关键词 fallback；未配置 embedding 或无达标结果时返回无案例。
 
 本地 Markdown **不是未命中后的运行时 fallback**。`knowledge_base.py::retrieve_knowledge()` 当前没有生产调用点；本地素材只有经 `/knowledge-base/index/sync` 同步为 `source_type='markdown'` 的 DB chunk 后，才会参与上面的参考问答检索。关键词候选严格限于 `keyword_whitelist.json`，不要把任意 jieba token 都拿去查库。

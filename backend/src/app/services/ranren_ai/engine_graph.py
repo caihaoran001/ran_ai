@@ -114,6 +114,19 @@ class EngineState(TypedDict, total=False):
     _skip_finalization: bool
 
 
+def _knowledge_query_from_analysis(analysis: dict | None) -> str | None:
+    """Preserve knowledge-query tri-state: text=search, empty=skip, None=fallback."""
+    if not isinstance(analysis, dict) or "knowledge_query" not in analysis:
+        return None
+    value = analysis.get("knowledge_query")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return None
+    clean = value.strip()
+    return clean or None
+
+
 @dataclass(frozen=True)
 class _EngineGraphExecutionContext:
     """Per-invocation bindings consumed by the process-shared compiled graph."""
@@ -1233,18 +1246,13 @@ class EngineGraph:
         recent_user_messages = state.get("recent_user_messages") or []
         settings = get_settings()
         user_query = _current_query_body(analysis, message.text)
-        knowledge_value = analysis.get("knowledge_query") if isinstance(analysis, dict) else None
-        knowledge_query = (
-            knowledge_value.strip()
-            if isinstance(knowledge_value, str)
-            else ""
-        )
+        knowledge_query = _knowledge_query_from_analysis(analysis)
         try:
             agent_kwargs: dict[str, Any] = {
                 "service_case_id": service_case_id,
                 "trigger_id": trigger_id,
                 "user_query": user_query,
-                "knowledge_query": knowledge_query or None,
+                "knowledge_query": knowledge_query,
                 "query_speaker": _current_query_speaker(analysis),
                 "recent_messages": recent_user_messages,
                 "analysis": analysis,

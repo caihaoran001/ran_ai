@@ -568,7 +568,7 @@ class AIService:
                 '    "source": "来源"\n'
                 "  },\n"
                 '  "health_consultation": boolean,  // 当前消息是否在咨询需专业健康判断的建议(饮食方案/份量、运动建议、用药、产品能否用/用量、体感如何处理等);纯打卡数据上报/闲聊/感谢/确认/非健康群务为false。只看当前消息话题本身,与风险等级和 requires_human_intervention 相互独立\n'
-                '  "knowledge_query": "专供参考问答检索的独立查询；始终输出非空字符串",\n'
+                '  "knowledge_query": "专供参考问答检索的独立查询；不需要检索时为 null",\n'
                 '  "agent_context_plan": {  // 给后续 Agent 选择用户背景用，不是工具调用命令\n'
                 '    "message_scene": "必须从以下值中选择：product_rule / data_query / diet_advice / body_feedback / emotion_support / casual_interest / correction / unknown",\n'
                 '    "memory_scopes": ["从以下值中选择：stable_facts / case_summary / preferences / habits / current_state / warnings，可为空数组"],\n'
@@ -609,12 +609,16 @@ class AIService:
                 "产品规则问题优先选择 current_state/habits/warnings；查服务天数、体重、打卡等实时数据可少带或不带背景，tool_hints 给 service_case_data；"
                 "兴趣闲聊、潮玩、影视、游戏只选择 preferences，不要选择体重、饮食、产品、风险背景；"
                 "用户纠正上一轮或说半句话时用 correction，并优先 preferences。"
-                "\n8. knowledge_query 只用于参考问答检索，必须结合当前消息与最近相关对话，把当前表达改写成一条不超过300字、可独立理解的查询："
-                "消解“这个/那个/这样”等指代，补全省略的对象，去掉不影响含义的口语；"
-                "如果当前表达已经完整，就保持原意仅做最小整理。必须保留产品名、数字、时间、否定和不确定表达，"
-                "不得回答问题、不得加入对话中没有的事实、不得把工作人员的话改写成用户自身事实。"
-                "只使用离当前消息最近且确实相关的上下文，不能跨话题拼接；当前消息不是问题时也不得虚构问题，"
-                "只把当前表达整理成可检索的独立语句。"
+                "\n8. knowledge_query 只用于参考问答检索。仅当当前消息包含需要健康服务通用知识、产品规则、"
+                "饮食/运动/执行方法参考的问题时，输出一条不超过300字、可独立理解的查询；"
+                "其他情况输出 null，包括实时数据查询、系统操作、纯数据上报、确认收尾和普通闲聊。"
+                "一条消息同时包含上报内容和知识问题时，只改写其中的知识问题，不得返回 null。"
+                "输出查询时，结合当前消息与最近相关对话，消解“这个/那个/这样”等指代，补全省略的对象，"
+                "去掉不影响含义的口语；如果问题已经完整，就保持原意仅做最小整理。"
+                "必须保留产品名、数字、时间、否定和不确定表达，不得回答问题、不得加入对话中没有的事实、"
+                "不得把工作人员的话改写成用户自身事实。只使用离当前消息最近且确实相关的上下文，不能跨话题拼接。"
+                "示例：需要检索时输出 \"knowledge_query\": \"经期期间晚A应该如何使用？\"；"
+                "不需要检索时输出 \"knowledge_query\": null（JSON null，不是字符串“null”）。"
 
                 "\n\n【归档信号 archive_plan 判定】\n"
                 "archive_plan 只给后台档案官用，判断本条消息是否含值得长期沉淀的信息，与风险/转人工/续购/退款完全独立"
