@@ -257,7 +257,7 @@ curl -X POST http://localhost:8000/api/knowledge-base/index/sync \
 
 当前生产数据库使用阿里云 RDS PostgreSQL 15，并已启用 `vector` 插件。迁移会在可用时自动创建 `knowledge_chunks.embedding_vector vector(1024)` 和 HNSW cosine 索引；同时保留 `knowledge_chunks.embedding` JSON 字段作为应用层兼容路径。
 
-长期知识自我进化已和数据库索引打通：草稿批准时先做格式归一化后的精确哈希检查，再用向量召回疑似候选；只有存在候选时才增加一次结构化 LLM 判定。普通重复会自动跳过或更新现有版本，业务口径冲突才交给审核员选择正确内容。FAQ 旧版本保存在 `knowledge_faq_versions`，案例被替代后旧 chunk 保留为 `superseded`，查重过程写入 `knowledge_dedupe_events`。
+长期知识自我进化已和数据库索引打通：草稿批准时统一用向量召回疑似候选，只有存在候选时才增加一次结构化 LLM 判定，不用完全一致文本哈希决定知识重复。普通重复会自动跳过或更新现有版本，业务口径冲突才交给审核员选择正确内容。`knowledge_drafts.content_hash` 只防同一来源提取任务重放；FAQ 旧版本保存在 `knowledge_faq_versions`，案例被替代后旧 chunk 保留为 `superseded`，查重过程写入 `knowledge_dedupe_events`。
 
 审核控制台支持“知识草稿”：
 

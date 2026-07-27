@@ -90,7 +90,7 @@ Checkpoint does not replace transport durability: `inbound_events` is the cross-
 
 本地 Markdown **不是未命中后的运行时 fallback**。`knowledge_base.py::retrieve_knowledge()` 当前没有生产调用点；本地素材必须先列入 `knowledge_base/knowledge_sources.json` 的 `active` 清单，再经 `/knowledge-base/index/sync` 同步为 `source_type='markdown'` 的 DB chunk，才会参与上面的参考问答检索。旧 Markdown 目前只在 `retained_legacy` 留痕，默认不启用。关键词候选严格限于 `keyword_whitelist.json`，不要把任意 jieba token 都拿去查库。
 
-知识草稿在审核通过时执行入库查重：先做 NFKC/空白归一化后的精确哈希，再用向量只找候选，命中候选时才额外调用一次结构化 LLM 判定。普通重复由系统跳过或版本化更新；只有同一问题的业务回答冲突返回审核员选择正确口径。FAQ 历史由 `knowledge_faq_versions` 留存，优秀案例替代时旧 chunk 标为 `superseded`；每次查重与裁决追加写入 `knowledge_dedupe_events`。案例查重必须先限定同一 `service_case_id`，不能因不同用户经历相似就合并。
+知识草稿在审核通过时统一用向量只找候选，命中候选时才额外调用一次结构化 LLM 判定，不设“完全一致文本直接跳过”的业务分支。`knowledge_drafts.content_hash` 只按来源消息与扫描上下文防同一提取任务重放，不参与知识重复判断。普通重复由系统跳过或版本化更新；只有同一问题的业务回答冲突返回审核员选择正确口径。FAQ 历史由 `knowledge_faq_versions` 留存，优秀案例替代时旧 chunk 标为 `superseded`；每次查重与裁决追加写入 `knowledge_dedupe_events`。案例查重必须先限定同一 `service_case_id`，不能因不同用户经历相似就合并。
 
 ### Documents & profiles
 Questionnaire submission → LLM generates a user profile. Service-case detail can generate two delivery docs (处方单, 28天执行单) and stage reports (3/7/14/21/28-day). The 28-day point ends the current service phase and does not generate a separate graduation report. Flow: LLM emits **structured JSON** for key fields → backend templates (`document_templates.py`) render editable Markdown → persisted as `content_json`/`content_md` → only at download/send time does `docx_service.py` render a temporary `.docx` (deleted after). **The authoritative system prompts live in `backend/src/app/services/document_service.py`; `手动版提示词.md` is reference only and must not be used at runtime.**

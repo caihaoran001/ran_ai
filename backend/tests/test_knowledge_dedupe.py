@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -9,8 +10,9 @@ from app.services.knowledge_base import _knowledge_files
 from app.services.knowledge_dedupe import (
     KnowledgeCandidate,
     _judge_candidates,
+    assess_knowledge_draft,
+    knowledge_draft_idempotency_hash,
     normalize_knowledge_text,
-    normalized_content_hash,
 )
 from app.services.knowledge_evolution import KnowledgeEvolutionService
 
@@ -18,8 +20,10 @@ from app.services.knowledge_evolution import KnowledgeEvolutionService
 class StubAI:
     def __init__(self, payload: dict):
         self.payload = payload
+        self.calls = 0
 
     async def generate_text(self, **_: object) -> str:
+        self.calls += 1
         return json.dumps(self.payload, ensure_ascii=False)
 
 
@@ -55,18 +59,66 @@ def _candidate(*, draft_type: str = "qa") -> KnowledgeCandidate:
     )
 
 
-def test_exact_hash_only_normalizes_formatting() -> None:
+def test_draft_idempotency_is_scoped_to_source_evidence() -> None:
     assert normalize_knowledge_text("　晚Ａ\n  怎么喝？ ") == "晚A 怎么喝?"
-    assert normalized_content_hash("qa", "晚Ａ\n怎么喝？", "睡前喝") == normalized_content_hash(
+    first = knowledge_draft_idempotency_hash(
+        "qa",
+        "晚Ａ\n怎么喝？",
+        "睡前喝",
+        source_message_ids=[11, 12],
+        sanitized_text="用户问晚A怎么喝",
+        content_json={"scan_type": "archivist_delta", "service_case_id": 7},
+    )
+    replay = knowledge_draft_idempotency_hash(
         "qa",
         "晚A 怎么喝?",
         "睡前喝",
+        source_message_ids=[12, 11],
+        sanitized_text="用户问晚A怎么喝",
+        content_json={"scan_type": "archivist_delta", "service_case_id": 7},
     )
-    assert normalized_content_hash("qa", "晚A怎么喝？", "睡前喝") != normalized_content_hash(
+    other_evidence = knowledge_draft_idempotency_hash(
         "qa",
-        "晚A怎么喝？",
-        "随晚餐喝",
+        "晚A 怎么喝?",
+        "睡前喝",
+        source_message_ids=[21, 22],
+        sanitized_text="另一位用户问晚A怎么喝",
+        content_json={"scan_type": "archivist_delta", "service_case_id": 8},
     )
+    assert replay == first
+    assert other_evidence != first
+
+
+@pytest.mark.asyncio
+async def test_approval_does_not_shortcut_identical_text_with_hash(monkeypatch) -> None:
+    draft = _draft()
+    identical = replace(
+        _candidate(),
+        question=draft.question,
+        answer=draft.answer,
+        distance=0.0,
+    )
+
+    async def fake_candidates(*_args, **_kwargs):
+        return [identical]
+
+    monkeypatch.setattr(
+        "app.services.knowledge_dedupe._find_semantic_candidates",
+        fake_candidates,
+    )
+    ai = StubAI(
+        {
+            "matched_chunk_id": identical.chunk_id,
+            "relation": "same_meaning",
+            "answer_relation": "equivalent",
+            "reason": "内容一致，无新增信息。",
+            "canonical_question": None,
+            "canonical_answer": None,
+        }
+    )
+    decision = await assess_knowledge_draft(None, draft, ai=ai)
+    assert decision.action == "skip"
+    assert ai.calls == 1
 
 
 @pytest.mark.asyncio

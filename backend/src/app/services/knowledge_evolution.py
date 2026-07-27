@@ -24,8 +24,8 @@ from app.services.knowledge_dedupe import (
     KnowledgeDedupeUnavailable,
     assess_knowledge_draft,
     business_conflict_detail,
+    knowledge_draft_idempotency_hash,
     load_pending_conflict,
-    normalized_content_hash,
     record_dedupe_event,
 )
 from app.services.knowledge_faq_service import create_faq, update_faq
@@ -622,6 +622,8 @@ async def create_draft_candidate(
         clean_type,
         clean_question,
         clean_answer,
+        source_message_ids=source_message_ids,
+        sanitized_text=sanitized_text,
         content_json=content_json,
     )
     if await _has_draft(session, content_hash):
@@ -952,17 +954,15 @@ def _content_hash(
     question: str,
     answer: str,
     *,
+    source_message_ids: list[int] | None = None,
+    sanitized_text: str | None = None,
     content_json: dict[str, Any] | None = None,
 ) -> str:
-    service_case_id = None
-    if draft_type == "case" and isinstance(content_json, dict):
-        try:
-            service_case_id = int(content_json.get("service_case_id"))
-        except (TypeError, ValueError):
-            service_case_id = None
-    return normalized_content_hash(
+    return knowledge_draft_idempotency_hash(
         draft_type,
         question,
         answer,
-        service_case_id=service_case_id,
+        source_message_ids=source_message_ids,
+        sanitized_text=sanitized_text,
+        content_json=content_json,
     )

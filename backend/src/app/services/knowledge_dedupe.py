@@ -89,31 +89,45 @@ def normalize_knowledge_text(value: object) -> str:
 def knowledge_draft_content_hash(draft: KnowledgeDraft) -> str:
     content_json = draft.content_json if isinstance(draft.content_json, dict) else {}
     service_case_id = _positive_int(content_json.get("service_case_id")) if draft.draft_type == "case" else None
-    return normalized_content_hash(
-        draft.draft_type,
-        draft.question,
-        draft.answer,
-        service_case_id=service_case_id,
+    return _hash_parts(
+        normalize_knowledge_text(draft.draft_type).lower(),
+        f"service_case:{service_case_id}" if service_case_id else "global",
+        normalize_knowledge_text(draft.question),
+        normalize_knowledge_text(draft.answer),
     )
 
 
-def normalized_content_hash(
+def knowledge_draft_idempotency_hash(
     draft_type: str,
     question: str,
     answer: str,
     *,
-    service_case_id: int | None = None,
+    source_message_ids: list[int] | None,
+    sanitized_text: str | None,
+    content_json: dict[str, Any] | None,
 ) -> str:
-    identity = f"service_case:{service_case_id}" if draft_type == "case" else "global"
-    raw = "\n".join(
-        (
-            normalize_knowledge_text(draft_type).lower(),
-            identity,
-            normalize_knowledge_text(question),
-            normalize_knowledge_text(answer),
-        )
+    """Idempotency for extractor replay, never a knowledge-duplicate decision."""
+
+    payload = content_json if isinstance(content_json, dict) else {}
+    source_ids = sorted(set(_positive_ids(source_message_ids)))
+    source_identity = {
+        "service_case_id": _positive_int(payload.get("service_case_id")),
+        "source_message_ids": source_ids,
+        "scan_type": normalize_knowledge_text(payload.get("scan_type")),
+        "stage": normalize_knowledge_text(payload.get("stage")),
+        "window": normalize_knowledge_text(payload.get("window")),
+        "sanitized_text": normalize_knowledge_text(sanitized_text),
+    }
+    return _hash_parts(
+        normalize_knowledge_text(draft_type).lower(),
+        json.dumps(source_identity, ensure_ascii=False, sort_keys=True),
+        normalize_knowledge_text(question),
+        normalize_knowledge_text(answer),
     )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _hash_parts(*parts: str) -> str:
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 async def assess_knowledge_draft(
@@ -123,16 +137,6 @@ async def assess_knowledge_draft(
     ai: AIService | None = None,
     settings: Settings | None = None,
 ) -> KnowledgeDedupeDecision:
-    exact = await _find_exact_candidate(session, draft)
-    if exact is not None:
-        return KnowledgeDedupeDecision(
-            action="skip",
-            relation="same_story" if draft.draft_type == "case" else "same_meaning",
-            answer_relation="equivalent",
-            reason="问题与回复在基础格式归一化后与现有有效知识完全一致。",
-            target=exact,
-        )
-
     candidates = await _find_semantic_candidates(session, draft, settings=settings)
     if not candidates:
         return KnowledgeDedupeDecision(
@@ -242,69 +246,6 @@ def business_conflict_detail(
             "tags": draft.tags or [],
         },
     }
-
-
-async def _find_exact_candidate(
-    session: AsyncSession,
-    draft: KnowledgeDraft,
-) -> KnowledgeCandidate | None:
-    if draft.draft_type == "case":
-        service_case_id = _draft_service_case_id(draft)
-        if service_case_id is None:
-            return None
-        chunks = list(
-            await session.scalars(
-                select(KnowledgeChunk).where(
-                    KnowledgeChunk.status == "active",
-                    KnowledgeChunk.source_type == "case",
-                )
-            )
-        )
-        expected = normalized_content_hash(
-            "case",
-            draft.question,
-            draft.answer,
-            service_case_id=service_case_id,
-        )
-        for chunk in chunks:
-            candidate = await _candidate_from_chunk(
-                session,
-                chunk,
-                draft_type="case",
-                distance=0.0,
-            )
-            if candidate is None or candidate.service_case_id != service_case_id:
-                continue
-            actual = normalized_content_hash(
-                "case",
-                candidate.question,
-                candidate.answer,
-                service_case_id=candidate.service_case_id,
-            )
-            if actual == expected:
-                return candidate
-        return None
-
-    faqs = list(
-        await session.scalars(
-            select(KnowledgeFAQ).where(KnowledgeFAQ.status == "active")
-        )
-    )
-    expected = normalized_content_hash("qa", draft.question, draft.answer)
-    for faq in faqs:
-        if normalized_content_hash("qa", faq.question, faq.answer) != expected:
-            continue
-        chunk = await session.scalar(
-            select(KnowledgeChunk)
-            .where(
-                KnowledgeChunk.chunk_uid == f"faq:{faq.id}",
-                KnowledgeChunk.status == "active",
-            )
-            .limit(1)
-        )
-        if chunk is not None:
-            return _faq_candidate(faq, chunk.id, distance=0.0)
-    return None
 
 
 async def _find_semantic_candidates(
