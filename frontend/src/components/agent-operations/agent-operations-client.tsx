@@ -6,10 +6,8 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   Activity,
   Archive,
-  ArrowRight,
   Bot,
   CheckCircle2,
-  ChevronDown,
   CircleDollarSign,
   Clock3,
   Coins,
@@ -17,12 +15,11 @@ import {
   TriangleAlert,
   Wrench,
   Search,
-  Filter,
   RefreshCw,
-  ExternalLink,
   ChevronRight,
   MousePointerClick,
   Info,
+  ArrowRight,
 } from "lucide-react";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { RunDetailDrawer, RunDetailData } from "./run-detail-drawer";
@@ -179,6 +176,18 @@ export function AgentOperationsClient({
   const [selectedCaseCost, setSelectedCaseCost] = useState<CaseCost | null>(null);
   const [selectedOutcome, setSelectedOutcome] = useState<OutcomeDetail | null>(null);
 
+  const handleSelectRun = (run: RunDetailData) => {
+    // If it's an archivist run, find its full batch data in archivist_batches if available
+    if (run.agent_type === "archivist") {
+      const matchedBatch = data.archivist_batches.find((b) => b.id === run.id);
+      if (matchedBatch) {
+        setSelectedRun({ ...run, ...matchedBatch });
+        return;
+      }
+    }
+    setSelectedRun(run);
+  };
+
   const handleTabChange = (newTab: TabKey) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", newTab);
@@ -277,7 +286,7 @@ export function AgentOperationsClient({
           setStatusFilter={setStatusFilter}
           agentFilter={agentFilter}
           setAgentFilter={setAgentFilter}
-          onSelectRun={(run) => setSelectedRun(run)}
+          onSelectRun={handleSelectRun}
           onSelectOutcome={(out, total) =>
             setSelectedOutcome({ key: out.key, count: out.count, total })
           }
@@ -297,7 +306,7 @@ export function AgentOperationsClient({
       {initialTab === "archivist" && (
         <ArchivistSection
           data={data}
-          onSelectBatch={(batch) => setSelectedRun(batch)}
+          onSelectBatch={handleSelectRun}
         />
       )}
 

@@ -9,7 +9,6 @@ import {
   Cpu,
   Wrench,
   AlertTriangle,
-  ArrowRight,
   ExternalLink,
   MessageSquare,
   FileCheck,
@@ -151,8 +150,10 @@ export function RunDetailDrawer({
   if (!run) return null;
 
   const isArchivist = run.agent_type === "archivist";
-  const hasMessages = Boolean(run.input_messages && run.input_messages.length > 0);
-  const hasChanges = Boolean(run.changes && run.changes.length > 0);
+  const hasInputMessagesList = Boolean(run.input_messages && run.input_messages.length > 0);
+  const hasChangesList = Boolean(run.changes && run.changes.length > 0);
+  const msgCount = run.input_messages ? run.input_messages.length : (run.input_count || 0);
+  const changeCount = run.changes ? run.changes.length : (run.output_count || 0);
 
   return (
     <div className="fixed inset-0 z-[80] flex justify-end overflow-hidden bg-slate-900/60 backdrop-blur-sm animate-fade-in-up">
@@ -214,7 +215,7 @@ export function RunDetailDrawer({
                 }`}
               >
                 <MessageSquare className="h-4 w-4" />
-                输入消息 ({run.input_messages?.length || run.input_count || 0})
+                输入消息 ({msgCount})
               </button>
               <button
                 onClick={() => setActiveTab("changes")}
@@ -225,7 +226,7 @@ export function RunDetailDrawer({
                 }`}
               >
                 <FileCheck className="h-4 w-4" />
-                确定性变更 ({run.changes?.length || run.output_count || 0})
+                确定性变更 ({changeCount})
               </button>
             </>
           )}
@@ -376,7 +377,7 @@ export function RunDetailDrawer({
               <p className="text-xs text-slate-500">
                 本批次实际送入模型进行理解与归档分析的输入消息序列：
               </p>
-              {hasMessages ? (
+              {hasInputMessagesList ? (
                 <div className="space-y-3">
                   {run.input_messages!.map((msg) => (
                     <div
@@ -406,8 +407,17 @@ export function RunDetailDrawer({
                   ))}
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-slate-300 py-12 text-center text-xs text-slate-400">
-                  暂无捕获的输入消息序列
+                <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-6 text-center text-xs text-amber-900 space-y-1.5">
+                  <div className="font-bold">
+                    {run.input_count > 0
+                      ? `已处理 ${run.input_count} 条聊天输入`
+                      : "暂无聊天消息"}
+                  </div>
+                  <p className="text-slate-600 leading-5">
+                    {run.input_count > 0
+                      ? "该概览快照未拉取消息原文，请切换至【档案官】Tab 下的【逐批归档记录】中下钻查看完整上下文。"
+                      : "该批次在确定输入范围前已结束。"}
+                  </p>
                 </div>
               )}
             </div>
@@ -418,7 +428,7 @@ export function RunDetailDrawer({
               <p className="text-xs text-slate-500">
                 经由确定性代码校验通过并持久化落库的变动及丢弃提议：
               </p>
-              {hasChanges ? (
+              {hasChangesList ? (
                 <div className="space-y-3">
                   {run.changes!.map((change, idx) => (
                     <div
@@ -444,8 +454,17 @@ export function RunDetailDrawer({
                   ))}
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-slate-300 py-12 text-center text-xs text-slate-400">
-                  本批次无确定性数据写入（可能经检查无新增信息）
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center text-xs text-slate-600 space-y-1">
+                  <div className="font-bold text-slate-800">
+                    {run.output_count > 0
+                      ? `形成 ${run.output_count} 项确定性更新`
+                      : "本批次无确定性数据写入"}
+                  </div>
+                  <p className="text-slate-500">
+                    {run.output_count > 0
+                      ? "可前往【档案官】Tab 的【逐批归档记录】中下钻查看详细更新对比。"
+                      : "模型提议经检验无需新增写入（或属于历史只记数量批次）。"}
+                  </p>
                 </div>
               )}
 
