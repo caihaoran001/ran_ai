@@ -70,11 +70,11 @@ Checkpoint does not replace transport durability: `inbound_events` is the cross-
 
 聊天 agent 能拿到的外部信息分**两类**：
 
-**① 每轮自动注入**（不调工具，`run()` 拼进提示词）：当前北京时间（`_current_time_context`）；本轮用户消息 + 说话人 + 近期群聊；**隐性用户背景**（`profile_memory_service` 把 `UserProfile` + `UserStateProfile` + `ArchivistCaseMemory` 压成"结论小抄"：稳定事实/历程小结/长期偏好/稳定习惯/当前状态/最近话题/风险边界，每域最多 5 条取最新、每行≤120字）；skill 目录（仅名字+简介）。**完整带证据的 `state_json` 档案不再给 agent 查**——结论已在隐性背景里；完整档案给人从 `/users/{id}` 页面看。
+**① 每轮自动注入**（不调工具，`run()` 拼进提示词）：当前北京时间（`_current_time_context`）；本轮用户消息 + 说话人 + 近期群聊；**隐性用户背景**（`profile_memory_service` 把 `UserProfile` + `UserStateProfile` + `ArchivistCaseMemory` 压成"结论小抄"：稳定事实/历程小结/长期偏好/稳定习惯/当前状态/最近话题/风险边界，每域最多 5 条取最新、每行≤120字）；**参考问答**（首次 LLM 调用前按本轮原问题预检索，排除优秀案例）；skill 目录（仅名字+简介）。**完整带证据的 `state_json` 档案不再给 agent 查**——结论已在隐性背景里；完整档案给人从 `/users/{id}` 页面看。
 
 **② 按需调工具**（22 个，`agent/tools/`）：
 - 服务单只读 7 个（`_is_data_tool`，查不到走安全兜底不编造）：`get_service_progress`、`get_recent_checkins`、`get_weight_trend`、`list_delivery_documents`+`read_delivery_document`、`list_group_files`+`read_group_file`。
-- 知识库 1 个：`search_knowledge_base`（RAG，见下）。
+- 优秀案例 1 个：`search_success_case`（仅在用户明显受挫、平台期挫败、自我怀疑、动力低或想放弃时按需调用；普通参考问答不是工具，见下）。
 - 定时提醒 3 个：`create_group_reminder`/`list_group_reminders`/`cancel_group_reminder`（定时任务自身触发那次运行会关掉，`include_reminder_tools=False`，防提醒套提醒）。
 - 打卡追问偏好 2 个：`get_checkin_followup_preferences`/`update_checkin_followup_preferences`。
 - 五项追问清单 3 个：`get_checkin_checklist`/`set_checkin_checklist`/`restore_default_checkin_checklist`（设置/恢复只接受当前群已识别工作人员同一条消息明确 @ 机器人；清单独立版本化，不依赖系统发送文件）。
@@ -82,9 +82,13 @@ Checkpoint does not replace transport durability: `inbound_events` is the cross-
 - 技能 2 个：`skill`（读 SKILL.md 全文）/`read_skill_file`。
 - 联网 1 个：`web_search_lifestyle`（Tavily，硬拦健康/身体指标/隐私类，每轮≤2 次）。
 
-### Knowledge retrieval / RAG (two-tier with fallback)
-`search_knowledge_base` → `retrieve_indexed_knowledge`（`knowledge_index.py`）查 DB 索引 `knowledge_chunks`，命中正文交给 LLM。**检索不按 `source_type` 过滤**——所以**参考问答对（`faq`/`knowledge_draft`）和优秀案例（`case`）都在同一张表里一次混合检索返回，不分开**；另有 markdown fallback 素材（`markdown`）。检索用向量（pgvector）+ 关键词（pg_trgm ILIKE）双路 RRF 融合；embedding key 未配则仅走关键词。DB 索引全空时 fallback 到本地 Markdown/LlamaIndex 关键词检索（`backend/src/app/services/knowledge_base/`），且仅限业务白名单 `keyword_whitelist.json`——别拿每个 jieba token 都去查库。
-- **注意**：`retrieve_case_context_db`（专门只查 `source_type='case'`、带 skill 教练头的独立优秀案例检索）已定义但**当前无任何调用点**（未接线）；优秀案例目前只能靠上面的混合检索被顺带捞到，没有独立案例通道在跑。要恢复"案例专用检索"需显式接线，别以为它在生效。
+### Knowledge retrieval / RAG (reference QA + success-case tool)
+两条链路共用 DB 表 `knowledge_chunks`，但检索时明确隔离，不混合返回：
+
+- **参考问答自动预检索**：`AgentGraphHandler.run()` 在首次 LLM 调用前把本轮 `user_query` 原样交给 `_build_knowledge_context()` → `retrieve_indexed_knowledge()`，并传 `exclude_source_types={"case"}`。这里只做 trim，没有独立 Query Rewrite；`user_query` 最多已由消息层加上说话人和图片描述。检索用向量（pgvector）+ 白名单关键词（pg_trgm ILIKE）双路 RRF 融合，embedding key 未配时仅走关键词，结果自动注入提示词的【参考问答】。
+- **优秀案例按需检索**：`search_success_case` 已在 `build_agent_tools()` 注册。只有 Agent 判断用户明显受挫、平台期挫败、自我怀疑、动力低或想放弃时才调用；Agent 根据完整对话生成不超过 300 字的“当前困境/挫败”短检索词，因此可能发生隐式概括，但没有独立 Query Rewrite 节点。工具调用 `retrieve_case_context_db()`，只查 `source_type='case'`，仅走向量检索、最多返回 1 条，无关键词 fallback；未配置 embedding 或无达标结果时返回无案例。
+
+本地 Markdown **不是未命中后的运行时 fallback**。`knowledge_base.py::retrieve_knowledge()` 当前没有生产调用点；本地素材只有经 `/knowledge-base/index/sync` 同步为 `source_type='markdown'` 的 DB chunk 后，才会参与上面的参考问答检索。关键词候选严格限于 `keyword_whitelist.json`，不要把任意 jieba token 都拿去查库。
 
 ### Documents & profiles
 Questionnaire submission → LLM generates a user profile. Service-case detail can generate two delivery docs (处方单, 28天执行单) and stage reports (3/7/14/21/28-day). The 28-day point ends the current service phase and does not generate a separate graduation report. Flow: LLM emits **structured JSON** for key fields → backend templates (`document_templates.py`) render editable Markdown → persisted as `content_json`/`content_md` → only at download/send time does `docx_service.py` render a temporary `.docx` (deleted after). **The authoritative system prompts live in `backend/src/app/services/document_service.py`; `手动版提示词.md` is reference only and must not be used at runtime.**
