@@ -628,6 +628,7 @@ export function KnowledgeIndexSyncButton() {
 export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"active" | "disabled" | "archived">("active");
   const [busyId, setBusyId] = useState<number | "new" | null>(null);
   const [draft, setDraft] = useState({
     title: "",
@@ -636,6 +637,12 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
     category: "",
     tags: "",
   });
+  const statusOptions = [
+    { value: "active" as const, label: "检索中" },
+    { value: "disabled" as const, label: "已停用" },
+    { value: "archived" as const, label: "已归档" },
+  ];
+  const visibleFaqs = faqs.filter((faq) => faq.status === statusFilter);
 
   async function createFaq() {
     setBusyId("new");
@@ -662,7 +669,7 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
         <div>
           <h3 className="text-sm font-bold text-slate-800">结构化 FAQ 管理</h3>
           <p className="mt-1 text-xs text-slate-500 leading-relaxed">
-            支持标准 FAQ 的发布、编辑修改、禁用状态控制与版本库自动升级；激活的 FAQ 将被同步到向量检索块中。
+            默认只显示参与检索的 FAQ。停用内容可恢复；归档内容仅保留历史，不参与检索。
           </p>
         </div>
         <Button
@@ -769,13 +776,40 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
         </div>
       )}
 
+      <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1" aria-label="FAQ 状态筛选">
+        {statusOptions.map((option) => {
+          const count = faqs.filter((faq) => faq.status === option.value).length;
+          const selected = statusFilter === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setStatusFilter(option.value)}
+              aria-pressed={selected}
+              className={`inline-flex min-h-9 items-center gap-1.5 rounded-md px-3 text-xs font-bold transition-colors ${
+                selected
+                  ? "bg-white text-cyan-900 shadow-sm"
+                  : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
+              }`}
+            >
+              <span>{option.label}</span>
+              <span className="tabular-nums text-slate-500">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="max-h-[520px] space-y-3.5 overflow-y-auto pr-1">
-        {faqs.map((faq) => (
+        {visibleFaqs.map((faq) => (
           <KnowledgeFAQRow key={faq.id} faq={faq} busy={busyId === faq.id} setBusy={setBusyId} />
         ))}
-        {faqs.length === 0 && (
+        {visibleFaqs.length === 0 && (
           <div className="rounded-xl border border-dashed border-slate-200 py-12 text-center text-sm text-slate-400 bg-slate-50/20">
-            暂无任何结构化 FAQ，点击右上角 “新增 FAQ” 进行创建。
+            {statusFilter === "active"
+              ? "暂无参与检索的 FAQ，可点击右上角新增。"
+              : statusFilter === "disabled"
+                ? "当前没有已停用的 FAQ。"
+                : "当前没有已归档的 FAQ。"}
           </div>
         )}
       </div>
@@ -799,6 +833,8 @@ function KnowledgeFAQRow({
   const [answer, setAnswer] = useState(faq.answer);
   const [category, setCategory] = useState(faq.category || "");
   const [tags, setTags] = useState((faq.tags || []).join("、"));
+  const statusLabel =
+    faq.status === "active" ? "● 检索中" : faq.status === "archived" ? "已归档" : "○ 已停用";
 
   async function save() {
     setBusy(faq.id);
@@ -840,7 +876,7 @@ function KnowledgeFAQRow({
               ? "bg-emerald-50 text-emerald-700 border border-emerald-250/20" 
               : "bg-slate-150 text-slate-500 border border-slate-200/50"
           }`}>
-            {faq.status === "active" ? "● 启用中" : "○ 已禁用"}
+            {statusLabel}
           </span>
           <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-2xs font-semibold text-slate-500 border border-slate-200/40">
             v{faq.version}
@@ -989,14 +1025,16 @@ function KnowledgeFAQRow({
 
           {/* Action buttons in preview */}
           <div className="mt-3.5 flex flex-wrap gap-2 pt-2.5 border-t border-slate-100/60">
-            <Button 
-              type="button" 
-              className="border border-slate-250 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1" 
-              onClick={() => setEditing(true)}
-            >
-              <Edit2 className="h-3.5 w-3.5 text-slate-500" />
-              <span>编辑 FAQ</span>
-            </Button>
+            {faq.status !== "archived" && (
+              <Button
+                type="button"
+                className="border border-slate-250 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1"
+                onClick={() => setEditing(true)}
+              >
+                <Edit2 className="h-3.5 w-3.5 text-slate-500" />
+                <span>编辑 FAQ</span>
+              </Button>
+            )}
             {faq.status === "active" ? (
               <Button 
                 type="button" 
@@ -1007,7 +1045,7 @@ function KnowledgeFAQRow({
                 <X className="h-3.5 w-3.5 text-rose-500" />
                 <span>禁用</span>
               </Button>
-            ) : (
+            ) : faq.status === "disabled" ? (
               <Button 
                 type="button" 
                 className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1 shadow-3xs" 
@@ -1015,8 +1053,12 @@ function KnowledgeFAQRow({
                 disabled={busy}
               >
                 <Check className="h-3.5 w-3.5 text-white" />
-                <span>启用</span>
+                <span>重新启用</span>
               </Button>
+            ) : (
+              <span className="inline-flex min-h-8 items-center text-xs font-medium text-slate-500">
+                仅保留历史，不提供直接恢复
+              </span>
             )}
           </div>
         </div>

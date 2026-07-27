@@ -12,7 +12,6 @@ import { API_BASE } from "@/lib/api";
 import {
   KnowledgeDraftActions,
   KnowledgeFAQEditor,
-  KnowledgeIndexSyncButton,
 } from "./knowledge-draft-actions";
 import {
   BookOpen,
@@ -56,10 +55,6 @@ export function FAQEvolutionCenter({
   const [config, setConfig] = useState(evolutionConfig);
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
-
-  const sourceText = Object.entries(indexStats.by_source_type)
-    .map(([source, count]) => `${source} ${count}`)
-    .join(" · ");
 
   async function saveConfig() {
     setSaveBusy(true);
@@ -170,23 +165,19 @@ export function FAQEvolutionCenter({
 
       <div className="border-b border-slate-100 bg-slate-50/50 px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="grid gap-6 sm:grid-cols-3">
+          <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2">
             <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">数据库知识块</div>
+              <div className="text-xs font-semibold text-slate-500">可检索知识</div>
               <div className="mt-1 text-xl font-bold text-slate-900">{indexStats.total_chunks}</div>
             </div>
             <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">已向量化</div>
+              <div className="text-xs font-semibold text-slate-500">向量就绪</div>
               <div className="mt-1 text-xl font-bold text-slate-900">{indexStats.embedded_chunks}</div>
             </div>
-            <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">知识来源分布</div>
-              <div className="mt-1 max-w-xs truncate text-sm font-medium text-slate-700" title={sourceText}>
-                {sourceText || "暂无"}
-              </div>
-            </div>
+            <p className="text-xs leading-5 text-slate-600 sm:col-span-2">
+              仅统计当前参与检索的参考问答和优秀案例；旧 Markdown、已停用和已归档内容不计入召回。
+            </p>
           </div>
-          <KnowledgeIndexSyncButton />
         </div>
       </div>
 

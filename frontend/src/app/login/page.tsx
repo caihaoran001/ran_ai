@@ -67,7 +67,7 @@ export default function LoginPage() {
             R
             <span className="absolute -bottom-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-slate-950 bg-emerald-400" />
           </span>
-          <h1 className="text-2xl font-extrabold tracking-tight text-white">燃人AI 1.0</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight text-white">燃人AI 2.0</h1>
           <p className="mt-2 text-sm text-slate-400">内部智能社群运营系统</p>
         </div>
 

@@ -4,7 +4,7 @@ import "./globals.css";
 import { LayoutShell } from "@/components/layout-shell";
 
 export const metadata: Metadata = {
-  title: "燃人AI 1.0",
+  title: "燃人AI 2.0",
   description: "燃人AI内部运营系统",
 };
 

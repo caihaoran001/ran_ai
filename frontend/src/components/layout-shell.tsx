@@ -51,7 +51,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
       </span>
       {!compact && (
         <span className="min-w-0">
-          <span className="block truncate text-[0.95rem] font-extrabold leading-5 tracking-tight">燃人AI 1.0</span>
+          <span className="block truncate text-[0.95rem] font-extrabold leading-5 tracking-tight">燃人AI 2.0</span>
           <span className="mt-0.5 block truncate text-[0.7rem] font-medium text-slate-400">内部社群运营系统</span>
         </span>
       )}
@@ -180,7 +180,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
               </span>
               系统运行中
             </div>
-            <div className="mt-1 text-[0.7rem] leading-5 text-slate-400">v1.0.0 · 管理员后台</div>
+            <div className="mt-1 text-[0.7rem] leading-5 text-slate-400">v2.0.0 · 管理员后台</div>
           </div>
         </div>
       </aside>
