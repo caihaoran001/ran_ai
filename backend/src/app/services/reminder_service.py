@@ -41,7 +41,6 @@ from app.services.document_service import (
     generate_stage_report,
     retry_degraded_stage_report,
 )
-from app.services.knowledge_evolution_settings import get_knowledge_evolution_config
 from app.services.outcome_engine import generate_outcome_snapshot
 from app.services.stage_report_settings import get_stage_report_schedule
 from app.services.service_case_queries import (
@@ -84,17 +83,9 @@ class ReminderService:
         self._stage_report_schedule_at: datetime | None = None
 
     async def start(self) -> None:
-        knowledge_enabled = self.settings.knowledge_evolution_enabled
-        if not knowledge_enabled:
-            try:
-                async with SessionLocal() as session:
-                    knowledge_enabled = (await get_knowledge_evolution_config(session, settings=self.settings)).enabled
-            except Exception:
-                logger.exception("Failed to load knowledge evolution config")
         optional_services_disabled = (
             not self.settings.reminder_enabled
             and not self.settings.agent_reminders_enabled
-            and not knowledge_enabled
             and not self.settings.outcome_snapshots_enabled
             and not self.settings.checkin_followup_enabled
             and not self.settings.population_insight_enabled

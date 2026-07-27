@@ -28,12 +28,11 @@ backend/
 │   │   ├── embedding_service.py # Embedding 向量生成
 │   │   ├── intake_facts.py  # 入营事实确定性提取
 │   │   ├── intervention_service.py # 风控干预分析 (LLM 风险/意图识别)
-│   │   ├── knowledge_evolution.py  # 知识草稿自动生成
-│   │   ├── knowledge_evolution_settings.py # 知识进化配置
+│   │   ├── knowledge_evolution.py  # 知识草稿审核、查重与发布
 │   │   ├── knowledge_faq_service.py # 结构化 FAQ 管理
 │   │   ├── outcome_engine.py # 成效抽取/评分工具 (由档案官 archivist 周期调用, 非消息路径实时跑)
 │   │   ├── questionnaire_template.py # 入营问卷模板
-│   │   ├── reminder_service # 定时提醒 + 阶段报告 + 知识进化调度 + 档案官扫描调度 + 打卡追问
+│   │   ├── reminder_service # 定时提醒 + 阶段报告 + 档案官扫描调度 + 打卡追问
 │   │   ├── risk_service.py  # 风险判断
 │   │   ├── service_case_queries.py # 服务单查询辅助
 │   │   └── user_state_profile.py # 用户动态状态画像 (outcome → JSONB 投影)
@@ -131,9 +130,9 @@ Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY
 | 档案官 | `src/app/services/archivist/trigger.py` + `graph.py` | 周期扫描抽 delta：打卡投影/成效/FAQ/案例草稿；触发/行锁见 `trigger.py` |
 | QiWe 聚合 | `src/app/services/qiwe_service/aggregator.py` | 群消息聚合 |
 | 数据库知识索引 | `src/app/services/knowledge_index.py` | `knowledge_chunks` 检索，支持 embedding/关键词 fallback |
-| 知识自我进化 | `src/app/services/knowledge_evolution.py` | FAQ/案例草稿自动提取 |
+| 知识草稿发布 | `src/app/services/knowledge_evolution.py` | 档案官候选的审核、查重、FAQ/案例发布 |
 | 本地知识库 fallback | `src/app/services/knowledge_base.py` | Markdown/LlamaIndex 降级检索 |
-| 定时提醒 | `src/app/services/reminder_service.py` | 打卡提醒 + 阶段报告生成 + 知识进化调度 + 档案官扫描(`check_archivist_once`) + 打卡追问兜底 |
+| 定时提醒 | `src/app/services/reminder_service.py` | 打卡提醒 + 阶段报告生成 + 档案官扫描(`check_archivist_once`) + 打卡追问兜底 |
 | 入营事实提取 | `src/app/services/intake_facts.py` | 问卷确定性事实抽取 (BMI/减重带) |
 | 服务单查询 | `src/app/services/service_case_queries.py` | `get_active_service_case` / `get_service_case` |
 | 成效引擎 | `src/app/services/outcome_engine.py` | 成效抽取/评分工具，由档案官周期调用（非消息路径实时跑）|
@@ -148,7 +147,6 @@ Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY
 | 风险判断 | `src/app/services/risk_service.py` | `is_high_risk` 等风险判定 |
 | 打卡问卷模板 | `src/app/services/checkin_questionnaires.py` | 每日打卡问卷 schema 调度 |
 | 入营问卷模板 | `src/app/services/questionnaire_template.py` | 入营问卷字段 JSON |
-| 知识进化配置 | `src/app/services/knowledge_evolution_settings.py` | 知识进化定时参数 + 开关 |
 | 自动化测试 | `tests/` | test_01..test_15 + 专项 (Mock LLM + 真实 LLM E2E)，见 `tests/README.md` |
 
 ## CONVENTIONS

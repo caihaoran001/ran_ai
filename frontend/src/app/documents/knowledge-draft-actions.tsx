@@ -1,14 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
   API_BASE,
   KnowledgeBusinessConflict,
-  KnowledgeEvolutionSetting,
   KnowledgeFAQ,
 } from "@/lib/api";
 import {
@@ -23,7 +21,6 @@ import {
   Compass,
   SlidersHorizontal,
   ChevronRight,
-  Settings2,
   AlertTriangle,
 } from "lucide-react";
 
@@ -485,117 +482,6 @@ function errorMessage(payload: unknown, fallback: string): string {
   return fallback;
 }
 
-export function KnowledgeEvolutionConfigPanel({ initialConfig }: { initialConfig: KnowledgeEvolutionSetting }) {
-  const router = useRouter();
-  const [config, setConfig] = useState(initialConfig);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-
-  async function save() {
-    setBusy(true);
-    setMessage("");
-    const response = await fetch(`${API_BASE}/settings/knowledge-evolution`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(config),
-    });
-    setMessage(response.ok ? "已保存" : "保存失败");
-    setBusy(false);
-    router.refresh();
-  }
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/20 p-5 shadow-3xs">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-150 pb-4 mb-4">
-        <div className="flex items-start gap-2.5">
-          <Settings2 className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-          <div>
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">知识自我进化配置</h3>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">
-              控制每日 FAQ 草稿、阶段优秀案例草稿的后台定时扫描任务。未通过人工审核的内容不会自动上线到知识库中。
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3 bg-white py-1.5 px-3.5 rounded-lg border border-slate-200 shadow-3xs">
-          <span className="text-xs font-bold text-slate-700">启用定时自动进化</span>
-          <button
-            type="button"
-            onClick={() => setConfig({ ...config, enabled: !config.enabled })}
-            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
-              config.enabled ? "bg-blue-600" : "bg-slate-200"
-            }`}
-          >
-            <span
-              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
-                config.enabled ? "translate-x-4" : "translate-x-0"
-              }`}
-            />
-          </button>
-        </div>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-        <Field label="每日 FAQ 扫描时间">
-          <input
-            className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
-            type="time"
-            value={config.qa_at}
-            onChange={(event) => setConfig({ ...config, qa_at: event.target.value })}
-          />
-        </Field>
-        <Field label="系统时区">
-          <select
-            className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all font-medium cursor-pointer"
-            value={config.timezone}
-            onChange={(event) => setConfig({ ...config, timezone: event.target.value })}
-          >
-            <option value="Asia/Shanghai">亚洲/上海 (Asia/Shanghai)</option>
-          </select>
-        </Field>
-        <Field label="阶段案例天数">
-          <input
-            className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
-            value={config.case_days}
-            placeholder="3,7,14,21,28"
-            onChange={(event) => setConfig({ ...config, case_days: event.target.value })}
-          />
-        </Field>
-      </div>
-
-      <div className="mt-5 flex items-center gap-3 border-t border-slate-150 pt-4">
-        <Button 
-          type="button" 
-          onClick={save} 
-          disabled={busy}
-          className="bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-all duration-200 active:scale-[0.97] px-4 shadow-2xs h-8.5 flex items-center gap-1.5"
-        >
-          {busy ? (
-            <>
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-              <span>保存中...</span>
-            </>
-          ) : (
-            <>
-              <Check className="h-3.5 w-3.5" />
-              <span>保存配置</span>
-            </>
-          )}
-        </Button>
-        {message && <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md animate-fadeIn">{message}</span>}
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="block space-y-1">
-      <span className="block text-xs font-bold text-slate-450 uppercase tracking-wider">{label}</span>
-      {children}
-    </div>
-  );
-}
-
 export function KnowledgeIndexSyncButton() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -667,7 +553,7 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
         <div>
-          <h3 className="text-sm font-bold text-slate-800">结构化 FAQ 管理</h3>
+          <h3 className="text-sm font-bold text-slate-800">FAQ 内容管理</h3>
           <p className="mt-1 text-xs text-slate-500 leading-relaxed">
             默认只显示参与检索的 FAQ。停用内容可恢复；归档内容仅保留历史，不参与检索。
           </p>

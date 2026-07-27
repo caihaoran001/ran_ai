@@ -15,7 +15,6 @@ from app.services.knowledge_dedupe import (
     knowledge_draft_idempotency_hash,
     normalize_knowledge_text,
 )
-from app.services.knowledge_evolution import KnowledgeEvolutionService
 
 
 class StubAI:
@@ -161,14 +160,6 @@ async def test_conditional_variant_is_published_separately() -> None:
     )
     assert decision.action == "create"
     assert decision.target is None
-
-
-def test_qa_extraction_prompt_does_not_force_emotional_fluff() -> None:
-    prompt = KnowledgeEvolutionService._qa_extraction_prompt()
-    assert "禁止为了显得温暖而强行安慰" in prompt
-    assert "只有用户原问题本身是焦虑" in prompt
-    assert "首句必须共情" not in prompt
-    assert "必须赞美和表扬" not in prompt
 
 
 def test_legacy_markdown_manifest_is_fail_closed(tmp_path) -> None:

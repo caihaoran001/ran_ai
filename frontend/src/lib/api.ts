@@ -360,16 +360,6 @@ export type KnowledgeFAQ = {
   updated_at: string;
 };
 
-export type KnowledgeEvolutionSetting = {
-  enabled: boolean;
-  interval_seconds: number;
-  qa_at: string;
-  daily_qa_limit: number;
-  case_days: string;
-  case_limit_per_case: number;
-  timezone: string;
-};
-
 export type DiagnosticsSummary = {
   database: {
     status: "connected" | "failed" | "checking" | string;

@@ -5,7 +5,6 @@ import {
   KnowledgeDraft,
   KnowledgeIndexStats,
   KnowledgeFAQ,
-  KnowledgeEvolutionSetting,
   DashboardCasePendingDocuments,
 } from "@/lib/api";
 import { AutoSendToggle } from "./auto-send-toggle";
@@ -25,7 +24,6 @@ export default async function DocumentsListPage() {
     pendingKnowledgeDrafts,
     approvedKnowledgeDrafts,
     knowledgeFaqs,
-    knowledgeEvolutionConfig,
     knowledgeIndexStats,
   ] = await Promise.all([
     api<{ mode: string }>("/settings/content-delivery-policy").catch(() => ({ mode: "manual_review" })),
@@ -37,15 +35,6 @@ export default async function DocumentsListPage() {
     api<KnowledgeDraft[]>("/knowledge-drafts?status=pending").catch(() => []),
     api<KnowledgeDraft[]>("/knowledge-drafts?status=approved").catch(() => []),
     api<KnowledgeFAQ[]>("/knowledge-faqs?status=all").catch(() => []),
-    api<KnowledgeEvolutionSetting>("/settings/knowledge-evolution").catch(() => ({
-      enabled: false,
-      interval_seconds: 3600,
-      qa_at: "00:00",
-      daily_qa_limit: 500,
-      case_days: "3,7,14,21,28",
-      case_limit_per_case: 200,
-      timezone: "Asia/Shanghai",
-    })),
     api<KnowledgeIndexStats>("/knowledge-base/index/stats").catch(() => ({
       total_chunks: 0,
       embedded_chunks: 0,
@@ -105,17 +94,14 @@ export default async function DocumentsListPage() {
       {/* 3. 参考问答库 (FAQ) 进化工作台 */}
       <FAQEvolutionCenter
         pendingDrafts={pendingKnowledgeDrafts}
-        approvedDrafts={approvedKnowledgeDrafts}
         indexStats={knowledgeIndexStats}
         faqs={knowledgeFaqs}
-        evolutionConfig={knowledgeEvolutionConfig}
       />
 
       {/* 4. 优秀标杆案例库进化工作台 */}
       <ExcellentCaseEvolutionCenter
         pendingDrafts={pendingKnowledgeDrafts}
         approvedDrafts={approvedKnowledgeDrafts}
-        evolutionConfig={knowledgeEvolutionConfig}
       />
     </div>
   );

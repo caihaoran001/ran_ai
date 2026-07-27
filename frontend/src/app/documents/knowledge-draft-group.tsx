@@ -1,14 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import type {
   KnowledgeDraft,
   KnowledgeIndexStats,
   KnowledgeFAQ,
-  KnowledgeEvolutionSetting,
 } from "@/lib/api";
-import { API_BASE } from "@/lib/api";
 import {
   KnowledgeDraftActions,
   KnowledgeFAQEditor,
@@ -18,33 +15,24 @@ import {
   Award,
   Compass,
   Sparkles,
-  Settings2,
-  RefreshCw,
-  Check,
-  ChevronDown,
-  ChevronUp
+  Inbox,
+  Library,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 
 export function FAQEvolutionCenter({
   pendingDrafts,
-  approvedDrafts,
   indexStats,
   faqs,
-  evolutionConfig,
 }: {
   pendingDrafts: KnowledgeDraft[];
-  approvedDrafts: KnowledgeDraft[];
   indexStats: KnowledgeIndexStats;
   faqs: KnowledgeFAQ[];
-  evolutionConfig: KnowledgeEvolutionSetting;
 }) {
-  const [activeTab, setActiveTab] = useState<"pending" | "approved">("pending");
-  const [showConfig, setShowConfig] = useState(false);
-  const router = useRouter();
-
   const qaPending = pendingDrafts.filter((d) => d.draft_type === "qa");
-  const qaApproved = approvedDrafts.filter((d) => d.draft_type === "qa");
+  const activeFaqCount = faqs.filter((faq) => faq.status === "active").length;
+  const [activeTab, setActiveTab] = useState<"review" | "library">(
+    qaPending.length > 0 ? "review" : "library",
+  );
 
   function draftSource(draft: KnowledgeDraft) {
     return draft.content_json?.source === "archivist_staff_correction"
@@ -52,261 +40,152 @@ export function FAQEvolutionCenter({
       : "群聊问答";
   }
 
-  const [config, setConfig] = useState(evolutionConfig);
-  const [saveBusy, setSaveBusy] = useState(false);
-  const [saveMessage, setSaveMessage] = useState("");
-
-  async function saveConfig() {
-    setSaveBusy(true);
-    setSaveMessage("");
-    const response = await fetch(`${API_BASE}/settings/knowledge-evolution`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(config),
-    });
-    setSaveMessage(response.ok ? "配置已保存" : "保存失败");
-    setSaveBusy(false);
-    router.refresh();
-  }
-
   return (
-    <section className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden animate-fadeIn">
-      {/* Title block */}
-      <div className="border-b border-slate-100 px-6 py-5 bg-gradient-to-r from-blue-50/10 to-transparent">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-start gap-2.5">
-            <BookOpen className="h-6 w-6 text-blue-650 shrink-0 mt-0.5" />
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">📖 参考问答库 (FAQ) 进化工作台</h2>
-              <p className="mt-1 text-sm text-slate-500 leading-relaxed">
-                自动从每日群聊对话中识别高频提问与优秀回答，沉淀入标准 FAQ 参考问答库。
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setShowConfig(!showConfig)}
-              className="text-xs font-semibold border border-slate-200 bg-white text-slate-655 hover:bg-slate-50 hover:text-slate-800 transition-all px-3 py-1.5 rounded-lg flex items-center gap-2 shadow-2xs outline-none"
-            >
-              <Settings2 className="h-3.5 w-3.5 text-slate-500" />
-              <span>FAQ 自动提取配置</span>
-              <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold border ${
-                config.enabled ? "pill-ok" : "pill-neutral"
-              }`}>
-                {config.enabled ? "● 自动运行中" : "○ 已暂停"}
-              </span>
-              {showConfig ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </button>
-          </div>
-        </div>
-
-        {/* Config Panel */}
-        {showConfig && (
-          <div className="border-t border-slate-200/60 mt-4 pt-4 animate-slideDown">
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/60 pb-3 mb-4">
-              <h3 className="text-xs font-bold text-slate-700">FAQ 自动生成提取参数</h3>
-              <div className="flex items-center gap-3 bg-white py-1.5 px-3.5 rounded-lg border border-slate-200 shadow-3xs">
-                <span className="text-xs font-bold text-slate-700">启用每日自动生成 FAQ</span>
-                <button
-                  type="button"
-                  onClick={() => setConfig({ ...config, enabled: !config.enabled })}
-                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
-                    config.enabled ? "bg-blue-600" : "bg-slate-200"
-                  }`}
-                >
-                  <span
-                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
-                      config.enabled ? "translate-x-4" : "translate-x-0"
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 max-w-4xl">
-              <div className="space-y-1">
-                <span className="block text-2xs font-bold text-slate-450 uppercase tracking-wider">每日 FAQ 扫描时间</span>
-                <input
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all"
-                  type="time"
-                  value={config.qa_at}
-                  onChange={(event) => setConfig({ ...config, qa_at: event.target.value })}
-                />
-              </div>
-              <div className="space-y-1">
-                <span className="block text-2xs font-bold text-slate-450 uppercase tracking-wider">系统时区</span>
-                <select
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all font-medium cursor-pointer"
-                  value={config.timezone}
-                  onChange={(event) => setConfig({ ...config, timezone: event.target.value })}
-                >
-                  <option value="Asia/Shanghai">亚洲/上海 (Asia/Shanghai)</option>
-                </select>
-              </div>
-            </div>
-            <div className="mt-4 flex items-center gap-3 border-t border-slate-200/60 pt-3">
-              <Button
-                type="button"
-                onClick={saveConfig}
-                disabled={saveBusy}
-                className="bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-all duration-200 active:scale-[0.97] px-4 shadow-2xs h-8.5 flex items-center gap-1.5"
-              >
-                {saveBusy ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                <span>保存配置</span>
-              </Button>
-              {saveMessage && <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">{saveMessage}</span>}
-              <span className="text-xs font-medium text-slate-500">
-                系统会按计划自动扫描每日聊天并生成 FAQ 草稿，运营侧只需审核与修订。
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="border-b border-slate-100 bg-slate-50/50 px-6 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2">
-            <div>
-              <div className="text-xs font-semibold text-slate-500">可检索知识</div>
-              <div className="mt-1 text-xl font-bold text-slate-900">{indexStats.total_chunks}</div>
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-slate-500">向量就绪</div>
-              <div className="mt-1 text-xl font-bold text-slate-900">{indexStats.embedded_chunks}</div>
-            </div>
-            <p className="text-xs leading-5 text-slate-600 sm:col-span-2">
-              仅统计当前参与检索的参考问答和优秀案例；旧 Markdown、已停用和已归档内容不计入召回。
+    <section className="animate-fadeIn overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-100 px-6 py-5">
+        <div className="flex items-start gap-3">
+          <BookOpen className="mt-0.5 h-6 w-6 shrink-0 text-blue-650" />
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">参考问答库（FAQ）</h2>
+            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">
+              档案官从群聊中提炼候选问答；人工确认后进入 FAQ 库并参与检索。
             </p>
           </div>
         </div>
       </div>
 
-      {/* Main 2-column layout */}
-      <div className="grid gap-6 p-6 xl:grid-cols-[1.7fr_1.3fr] bg-white">
-        {/* Left Column: Drafts queue with Tab switch */}
-        <div className="space-y-4">
-          <div className="flex border-b border-slate-200">
-            <button
-              type="button"
-              onClick={() => setActiveTab("pending")}
-              className={`pb-3 text-sm font-semibold transition-all relative px-2 mr-8 outline-none ${
-                activeTab === "pending"
-                  ? "text-blue-600 font-bold"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              待审核参考问答
-              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "pending" ? "pill-info" : "pill-neutral"}`}>
-                {qaPending.length}
-              </span>
-              {activeTab === "pending" && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("approved")}
-              className={`pb-3 text-sm font-semibold transition-all relative px-2 outline-none ${
-                activeTab === "approved"
-                  ? "text-emerald-600 font-bold"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              已审核历史
-              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "approved" ? "pill-ok" : "pill-neutral"}`}>
-                {qaApproved.length}
-              </span>
-              {activeTab === "approved" && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-600 rounded-full" />
-              )}
-            </button>
-          </div>
+      <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-1" role="tablist" aria-label="FAQ 工作区">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "review"}
+            aria-controls="faq-review-panel"
+            onClick={() => setActiveTab("review")}
+            className={`inline-flex min-h-10 items-center gap-2 rounded-lg px-3.5 text-sm font-bold transition-colors ${
+              activeTab === "review"
+                ? "bg-white text-blue-700 shadow-sm"
+                : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
+            }`}
+          >
+            <Inbox className="h-4 w-4" />
+            <span>待审核</span>
+            <span className="tabular-nums text-slate-500">{qaPending.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "library"}
+            aria-controls="faq-library-panel"
+            onClick={() => setActiveTab("library")}
+            className={`inline-flex min-h-10 items-center gap-2 rounded-lg px-3.5 text-sm font-bold transition-colors ${
+              activeTab === "library"
+                ? "bg-white text-blue-700 shadow-sm"
+                : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
+            }`}
+          >
+            <Library className="h-4 w-4" />
+            <span>FAQ 库</span>
+            <span className="tabular-nums text-slate-500">{activeFaqCount}</span>
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-600">
+          <span>
+            全库可检索
+            <strong className="ml-1 tabular-nums text-slate-900">{indexStats.total_chunks}</strong>
+          </span>
+          <span>
+            向量就绪
+            <strong className="ml-1 tabular-nums text-slate-900">{indexStats.embedded_chunks}</strong>
+          </span>
+        </div>
+      </div>
 
-          <div className="min-h-[350px]">
-            {activeTab === "pending" ? (
-              qaPending.length > 0 ? (
-                <div className="space-y-5 max-h-[650px] overflow-y-auto pr-1.5 animate-fadeIn">
-                  {qaPending.map((draft) => (
-                    <div key={draft.id} className="rounded-xl border border-slate-200/80 p-5 bg-slate-50/20 shadow-2xs hover:border-slate-300 transition-all">
-                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-md bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 text-xs font-semibold">
-                            📖 参考问答
+      <div className="bg-white p-6">
+        {activeTab === "review" ? (
+          <div
+            id="faq-review-panel"
+            role="tabpanel"
+            className="mx-auto w-full max-w-5xl animate-fadeIn"
+          >
+            <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">待确认的参考问答</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  在这里核对问题、回复口径和适用范围。批准后会自动进入 FAQ 库并建立向量。
+                </p>
+              </div>
+              <span className="text-xs font-semibold text-slate-500">
+                {qaPending.length} 条待处理
+              </span>
+            </div>
+
+            {qaPending.length > 0 ? (
+              <div className="max-h-[720px] space-y-5 overflow-y-auto pr-1.5">
+                {qaPending.map((draft) => (
+                  <div
+                    key={draft.id}
+                    className="rounded-xl border border-slate-200 bg-white p-5 transition-colors hover:border-slate-300"
+                  >
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-md border border-blue-100 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                          参考问答
+                        </span>
+                        <span className="rounded-md border border-violet-100 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+                          {draftSource(draft)}
+                        </span>
+                        {draft.category && (
+                          <span className="rounded-md border border-slate-200/50 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                            {draft.category}
                           </span>
-                          <span className="rounded-md bg-violet-50 text-violet-700 border border-violet-100 px-2 py-0.5 text-xs font-medium">
-                            {draftSource(draft)}
-                          </span>
-                          {draft.category && (
-                            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 border border-slate-200/50">
-                              {draft.category}
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-xs text-slate-400 font-medium">{draft.created_at}</span>
+                        )}
                       </div>
-                      
-                      {draft.reason && (
-                        <div className="mb-3 text-xs text-amber-950 bg-amber-50/40 border border-amber-100/60 p-2.5 rounded-lg">
-                          <span className="font-semibold text-amber-800">推荐原因：</span>
-                          {draft.reason}
-                        </div>
-                      )}
-                      {draft.evidence && (
-                        <div className="mb-4 rounded-lg bg-slate-50 border border-slate-100 p-3 text-xs leading-relaxed text-slate-600">
-                          <span className="font-semibold text-slate-500 block mb-1">聊天对话证据：</span>
-                          <div className="whitespace-pre-wrap">{draft.evidence}</div>
-                        </div>
-                      )}
+                      <span className="text-xs font-medium text-slate-400">{draft.created_at}</span>
+                    </div>
 
-                      <KnowledgeDraftActions
-                        draftId={draft.id}
-                        draftType="qa"
-                        initialTitle={draft.title}
-                        initialQuestion={draft.question}
-                        initialAnswer={draft.answer}
-                        initialCategory={draft.category}
-                        initialTags={draft.tags}
-                      />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-slate-400 animate-fadeIn">
-                  <span className="text-3xl block mb-2">🎈</span>
-                  <p className="text-sm font-medium">暂无待审核参考问答</p>
-                  <p className="text-xs text-slate-400 mt-1">系统未自动生成新的候选 FAQ</p>
-                </div>
-              )
-            ) : (
-              <div className="max-h-[650px] space-y-3 overflow-y-auto pr-1.5 animate-fadeIn">
-                {qaApproved.slice(0, 30).map((draft) => (
-                  <div key={draft.id} className="rounded-lg border border-slate-200/80 p-4 text-sm bg-white hover:shadow-2xs transition-all">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="font-semibold text-slate-800 leading-relaxed">{draft.title}</div>
-                      <span className="shrink-0 rounded-full px-2 py-0.5 text-2xs font-semibold bg-blue-50 text-blue-700">
-                        FAQ
-                      </span>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between text-2xs text-slate-400 font-medium">
-                      <span>分类：{draft.category || "未分类"}</span>
-                      <span>已同步至 {draft.published_to || "结构化 FAQ 库"}</span>
-                    </div>
+                    {draft.reason && (
+                      <div className="mb-3 rounded-lg border border-amber-100/60 bg-amber-50/40 p-2.5 text-xs text-amber-950">
+                        <span className="font-semibold text-amber-800">推荐原因：</span>
+                        {draft.reason}
+                      </div>
+                    )}
+                    {draft.evidence && (
+                      <div className="mb-4 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+                        <span className="mb-1 block font-semibold text-slate-500">聊天证据：</span>
+                        <div className="whitespace-pre-wrap">{draft.evidence}</div>
+                      </div>
+                    )}
+
+                    <KnowledgeDraftActions
+                      draftId={draft.id}
+                      draftType="qa"
+                      initialTitle={draft.title}
+                      initialQuestion={draft.question}
+                      initialAnswer={draft.answer}
+                      initialCategory={draft.category}
+                      initialTags={draft.tags}
+                    />
                   </div>
                 ))}
-                {qaApproved.length === 0 && (
-                  <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-slate-400">
-                    <p className="text-sm font-medium">暂无已入库问答历史</p>
-                  </div>
-                )}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 py-16 text-center text-slate-500">
+                <Inbox className="mx-auto mb-3 h-8 w-8 text-slate-400" />
+                <p className="text-sm font-semibold">暂无待审核 FAQ 候选</p>
+                <p className="mt-1 text-xs text-slate-400">档案官尚未提炼出需要人工确认的新问答。</p>
               </div>
             )}
           </div>
-        </div>
-
-        {/* Right Column: FAQ Editor */}
-        <div className="border-t border-slate-100 pt-6 xl:border-t-0 xl:border-l xl:border-slate-100 xl:pl-6 xl:pt-0">
-          <KnowledgeFAQEditor faqs={faqs} />
-        </div>
+        ) : (
+          <div
+            id="faq-library-panel"
+            role="tabpanel"
+            className="mx-auto w-full max-w-5xl animate-fadeIn"
+          >
+            <KnowledgeFAQEditor faqs={faqs} />
+          </div>
+        )}
       </div>
     </section>
   );
@@ -315,291 +194,174 @@ export function FAQEvolutionCenter({
 export function ExcellentCaseEvolutionCenter({
   pendingDrafts,
   approvedDrafts,
-  evolutionConfig,
 }: {
   pendingDrafts: KnowledgeDraft[];
   approvedDrafts: KnowledgeDraft[];
-  evolutionConfig: KnowledgeEvolutionSetting;
 }) {
-  const [activeTab, setActiveTab] = useState<"pending" | "approved">("pending");
-  const [showConfig, setShowConfig] = useState(false);
-  const router = useRouter();
-
   const casePending = pendingDrafts.filter((d) => d.draft_type === "case");
   const caseApproved = approvedDrafts.filter((d) => d.draft_type === "case");
-
-  const [config, setConfig] = useState(evolutionConfig);
-  const [saveBusy, setSaveBusy] = useState(false);
-  const [saveMessage, setSaveMessage] = useState("");
-
-  async function saveConfig() {
-    setSaveBusy(true);
-    setSaveMessage("");
-    const response = await fetch(`${API_BASE}/settings/knowledge-evolution`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(config),
-    });
-    setSaveMessage(response.ok ? "配置已保存" : "保存失败");
-    setSaveBusy(false);
-    router.refresh();
-  }
+  const [activeTab, setActiveTab] = useState<"review" | "library">(
+    casePending.length > 0 ? "review" : "library",
+  );
 
   return (
-    <section className="rounded-xl border border-cyan-200 bg-white shadow-sm overflow-hidden animate-fadeIn">
-      {/* Title block */}
-      <div className="border-b border-cyan-100 px-6 py-5 bg-cyan-50/30">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-start gap-2.5">
-            <Award className="h-6 w-6 text-cyan-700 shrink-0 mt-0.5" />
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">优秀标杆案例库进化工作台</h2>
-              <p className="mt-1 text-sm text-slate-500 leading-relaxed">
-                按照服务阶段（3/7/14/21/28天）自动提取群聊中的金牌沟通案例与客户坚持表现。
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setShowConfig(!showConfig)}
-              className="text-xs font-semibold border border-cyan-200 bg-white text-cyan-800 hover:bg-cyan-50 transition-all px-3 py-1.5 rounded-lg flex items-center gap-2 shadow-2xs outline-none"
-            >
-              <Settings2 className="h-3.5 w-3.5 text-cyan-700" />
-              <span>案例自动提取配置</span>
-              <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold border ${
-                config.enabled ? "pill-ok" : "pill-neutral"
-              }`}>
-                {config.enabled ? "● 自动运行中" : "○ 已暂停"}
-              </span>
-              {showConfig ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </button>
-          </div>
-        </div>
-
-        {/* Config Panel */}
-        {showConfig && (
-          <div className="border-t border-cyan-200/60 mt-4 pt-4 animate-slideDown">
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-cyan-200/60 pb-3 mb-4">
-              <h3 className="text-xs font-bold text-cyan-900">案例自动提取配置</h3>
-              <div className="flex items-center gap-3 bg-white py-1.5 px-3.5 rounded-lg border border-slate-200 shadow-3xs">
-                <span className="text-xs font-bold text-slate-700">启用每日自动生成案例</span>
-                <button
-                  type="button"
-                  onClick={() => setConfig({ ...config, enabled: !config.enabled })}
-                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
-                    config.enabled ? "bg-cyan-700" : "bg-slate-200"
-                  }`}
-                >
-                  <span
-                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
-                      config.enabled ? "translate-x-4" : "translate-x-0"
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 max-w-4xl">
-              <div className="space-y-1">
-                <span className="block text-2xs font-bold text-cyan-800 uppercase tracking-wider">阶段案例天数</span>
-                <input
-                  className="w-full rounded-lg border border-cyan-200 bg-white px-3.5 py-2 text-sm text-slate-700 focus:border-cyan-600 focus:ring-4 focus:ring-cyan-100 outline-none transition-all"
-                  value={config.case_days}
-                  placeholder="3,7,14,21,28"
-                  onChange={(event) => setConfig({ ...config, case_days: event.target.value })}
-                />
-              </div>
-            </div>
-            <div className="mt-4 flex items-center gap-3 border-t border-cyan-200/60 pt-3">
-              <Button
-                type="button"
-                onClick={saveConfig}
-                disabled={saveBusy}
-                className="bg-cyan-700 hover:bg-cyan-800 text-white font-semibold transition-colors duration-200 px-4 shadow-2xs h-8.5 flex items-center gap-1.5"
-              >
-                {saveBusy ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                <span>保存配置</span>
-              </Button>
-              {saveMessage && <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">{saveMessage}</span>}
-              <span className="text-xs font-medium text-slate-500">
-                系统会在 3/7/14/21/28 天自动扫描阶段聊天，生成优秀案例草稿，运营侧只负责审核入库。
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Stats block */}
-      <div className="border-b border-cyan-100 bg-cyan-50/20 px-6 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="grid gap-6 sm:grid-cols-3">
-            <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">已入库优秀案例</div>
-              <div className="mt-1 text-xl font-bold text-cyan-800">{caseApproved.length} 个</div>
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">覆盖服务阶段</div>
-              <div className="mt-1 text-xl font-bold text-slate-900">{config.case_days ? config.case_days.split(",").length : 0} 个阶段</div>
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">检索触发场景</div>
-              <div className="mt-1 text-sm font-semibold text-slate-700">
-                群聊检测到焦虑情绪/身体不适
-              </div>
-            </div>
-          </div>
-          <div className="text-xs text-cyan-900 bg-cyan-50/70 border border-cyan-100 px-3 py-2 rounded-lg font-medium max-w-lg leading-relaxed">
-            <strong>智能检索机制：</strong>当群聊中出现用户消极、质疑或身体不适时，AI 引擎会自动在下方已入库案例中进行语义匹配，并提取最贴切的真实成功案例，用于情感承接与共鸣鼓励。
+    <section className="animate-fadeIn overflow-hidden rounded-xl border border-cyan-200 bg-white shadow-sm">
+      <div className="border-b border-cyan-100 bg-cyan-50/30 px-6 py-5">
+        <div className="flex items-start gap-2.5">
+          <Award className="mt-0.5 h-6 w-6 shrink-0 text-cyan-700" />
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">优秀标杆案例库</h2>
+            <p className="mt-1 text-sm text-slate-500 leading-relaxed">
+              档案官随群聊增量识别可复用的坚持与改善案例，人工审核后进入案例库。
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Main 2-column layout */}
-      <div className="grid gap-6 p-6 xl:grid-cols-[1.7fr_1.3fr] bg-white">
-        {/* Left Column: Drafts queue with Tab switch */}
-        <div className="space-y-4">
-          <div className="flex border-b border-slate-200">
-            <button
-              type="button"
-              onClick={() => setActiveTab("pending")}
-              className={`pb-3 text-sm font-semibold transition-all relative px-2 mr-8 outline-none ${
-                activeTab === "pending"
-                  ? "text-cyan-700 font-bold"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              待审核标杆案例
-              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "pending" ? "pill-info" : "pill-neutral"}`}>
-                {casePending.length}
-              </span>
-              {activeTab === "pending" && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-cyan-700 rounded-full" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("approved")}
-              className={`pb-3 text-sm font-semibold transition-all relative px-2 outline-none ${
-                activeTab === "approved"
-                  ? "text-emerald-600 font-bold"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              已审核历史
-              <span className={`ml-1.5 px-1.5 py-0.5 text-2xs rounded-full ${activeTab === "approved" ? "pill-ok" : "pill-neutral"}`}>
-                {caseApproved.length}
-              </span>
-              {activeTab === "approved" && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-600 rounded-full" />
-              )}
-            </button>
-          </div>
+      <div className="flex flex-col gap-3 border-b border-cyan-100 bg-cyan-50/20 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-1" role="tablist" aria-label="优秀案例工作区">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "review"}
+            aria-controls="case-review-panel"
+            onClick={() => setActiveTab("review")}
+            className={`inline-flex min-h-10 items-center gap-2 rounded-lg px-3.5 text-sm font-bold transition-colors ${
+              activeTab === "review"
+                ? "bg-white text-cyan-800 shadow-sm"
+                : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
+            }`}
+          >
+            <Inbox className="h-4 w-4" />
+            <span>待审核</span>
+            <span className="tabular-nums text-slate-500">{casePending.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "library"}
+            aria-controls="case-library-panel"
+            onClick={() => setActiveTab("library")}
+            className={`inline-flex min-h-10 items-center gap-2 rounded-lg px-3.5 text-sm font-bold transition-colors ${
+              activeTab === "library"
+                ? "bg-white text-cyan-800 shadow-sm"
+                : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
+            }`}
+          >
+            <Library className="h-4 w-4" />
+            <span>案例库</span>
+            <span className="tabular-nums text-slate-500">{caseApproved.length}</span>
+          </button>
+        </div>
+        <div className="max-w-xl text-xs font-medium leading-relaxed text-cyan-900">
+          <span className="font-bold">按需检索：</span>
+          用户明显受挫、自我怀疑、动力不足或想放弃时，回复 Agent 才会按需检索一条相关案例。
+        </div>
+      </div>
 
-          <div className="min-h-[350px]">
-            {activeTab === "pending" ? (
-              casePending.length > 0 ? (
-                <div className="space-y-5 max-h-[650px] overflow-y-auto pr-1.5 animate-fadeIn">
-                  {casePending.map((draft) => (
-                    <div key={draft.id} className="rounded-xl border border-slate-200/80 p-5 bg-slate-50/20 shadow-2xs hover:border-slate-300 transition-all">
-                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-md bg-cyan-50 text-cyan-800 border border-cyan-100 px-2 py-0.5 text-xs font-semibold">
-                            优秀案例
+      <div className="bg-white p-6">
+        {activeTab === "review" ? (
+          <div
+            id="case-review-panel"
+            role="tabpanel"
+            className="mx-auto w-full max-w-5xl animate-fadeIn"
+          >
+            <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">待确认的优秀案例</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  核对案例背景、真实证据和可复用价值。批准后才会进入案例库。
+                </p>
+              </div>
+              <span className="text-xs font-semibold text-slate-500">
+                {casePending.length} 条待处理
+              </span>
+            </div>
+
+            {casePending.length > 0 ? (
+              <div className="max-h-[720px] space-y-5 overflow-y-auto pr-1.5">
+                {casePending.map((draft) => (
+                  <div
+                    key={draft.id}
+                    className="rounded-xl border border-slate-200 bg-white p-5 transition-colors hover:border-slate-300"
+                  >
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-md border border-cyan-100 bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-800">
+                          优秀案例
+                        </span>
+                        {draft.category && (
+                          <span className="rounded-md border border-slate-200/50 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                            {draft.category}
                           </span>
-                          {draft.category && (
-                            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 border border-slate-200/50">
-                              {draft.category}
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-xs text-slate-400 font-medium">{draft.created_at}</span>
+                        )}
                       </div>
-                      
-                      {draft.reason && (
-                        <div className="mb-3 text-xs text-amber-950 bg-amber-50/40 border border-amber-100/60 p-2.5 rounded-lg">
-                          <span className="font-semibold text-amber-800">入选原因：</span>
-                          {draft.reason}
-                        </div>
-                      )}
-                      {draft.evidence && (
-                        <div className="mb-4 rounded-lg bg-slate-50 border border-slate-100 p-3 text-xs leading-relaxed text-slate-600">
-                          <span className="font-semibold text-slate-500 block mb-1">聊天对话证据：</span>
-                          <div className="whitespace-pre-wrap">{draft.evidence}</div>
-                        </div>
-                      )}
+                      <span className="text-xs font-medium text-slate-400">{draft.created_at}</span>
+                    </div>
 
-                      <KnowledgeDraftActions
-                        draftId={draft.id}
-                        draftType="case"
-                        initialTitle={draft.title}
-                        initialQuestion={draft.question}
-                        initialAnswer={draft.answer}
-                        initialCategory={draft.category}
-                        initialTags={draft.tags}
-                      />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-slate-400 animate-fadeIn">
-                  <Award className="mx-auto mb-3 h-9 w-9 text-cyan-700" />
-                  <p className="text-sm font-medium">暂无待审核优秀案例</p>
-                  <p className="text-xs text-slate-400 mt-1">系统未自动生成新的候选金牌案例</p>
-                </div>
-              )
-            ) : (
-              <div className="max-h-[650px] space-y-3 overflow-y-auto pr-1.5 animate-fadeIn">
-                {caseApproved.slice(0, 30).map((draft) => (
-                  <div key={draft.id} className="rounded-lg border border-slate-200/80 p-4 text-sm bg-white hover:shadow-2xs transition-all">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="font-semibold text-slate-800 leading-relaxed">{draft.title}</div>
-                      <span className="shrink-0 rounded-full px-2 py-0.5 text-2xs font-semibold bg-purple-50 text-purple-700">
-                        案例
-                      </span>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between text-2xs text-slate-400 font-medium">
-                      <span>分类：{draft.category || "未分类"}</span>
-                      <span>已同步至 {draft.published_to || "知识向量块"}</span>
-                    </div>
+                    {draft.reason && (
+                      <div className="mb-3 rounded-lg border border-amber-100/60 bg-amber-50/40 p-2.5 text-xs text-amber-950">
+                        <span className="font-semibold text-amber-800">入选原因：</span>
+                        {draft.reason}
+                      </div>
+                    )}
+                    {draft.evidence && (
+                      <div className="mb-4 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+                        <span className="mb-1 block font-semibold text-slate-500">聊天证据：</span>
+                        <div className="whitespace-pre-wrap">{draft.evidence}</div>
+                      </div>
+                    )}
+
+                    <KnowledgeDraftActions
+                      draftId={draft.id}
+                      draftType="case"
+                      initialTitle={draft.title}
+                      initialQuestion={draft.question}
+                      initialAnswer={draft.answer}
+                      initialCategory={draft.category}
+                      initialTags={draft.tags}
+                    />
                   </div>
                 ))}
-                {caseApproved.length === 0 && (
-                  <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-slate-400">
-                    <p className="text-sm font-medium">暂无已入库案例历史</p>
-                  </div>
-                )}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 py-16 text-center text-slate-500">
+                <Award className="mx-auto mb-3 h-8 w-8 text-cyan-700" />
+                <p className="text-sm font-semibold">暂无待审核优秀案例</p>
+                <p className="mt-1 text-xs text-slate-400">档案官尚未提炼出需要人工确认的新案例。</p>
               </div>
             )}
           </div>
-        </div>
-
-        {/* Right Column: Case Base card list */}
-        <div className="border-t border-slate-100 pt-6 xl:border-t-0 xl:border-l xl:border-slate-100 xl:pl-6 xl:pt-0">
-          <div className="space-y-4">
-            <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+        ) : (
+          <div
+            id="case-library-panel"
+            role="tabpanel"
+            className="mx-auto w-full max-w-5xl animate-fadeIn"
+          >
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-sm font-bold text-slate-800">已入库优秀案例库</h3>
-                <p className="mt-1 text-xs text-slate-500 leading-relaxed">
-                  展示由 AI 自动生成并经人工批准上线的金牌营养师服务参考案例。
+                <h3 className="text-sm font-bold text-slate-900">已入库优秀案例</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  这里只展示经人工批准、可供回复 Agent 检索的案例。
                 </p>
               </div>
-              <span className="rounded-md bg-purple-50 text-purple-700 border border-purple-100 px-2 py-0.5 text-xs font-semibold">
+              <span className="rounded-md border border-purple-100 bg-purple-50 px-2 py-1 text-xs font-semibold text-purple-700">
                 {caseApproved.length} 个案例
               </span>
             </div>
 
-            <div className="max-h-[520px] space-y-4 overflow-y-auto pr-1">
+            <div className="max-h-[620px] space-y-4 overflow-y-auto pr-1">
               {caseApproved.map((draft) => (
                 <ExcellentCaseCard key={draft.id} draft={draft} />
               ))}
               {caseApproved.length === 0 && (
-                <div className="rounded-xl border border-dashed border-slate-200 py-12 text-center text-sm text-slate-400 bg-slate-50/20">
-                  暂无任何已入库优秀案例，请在左侧“待审核标杆案例”中审核批准。
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/20 py-12 text-center text-sm text-slate-400">
+                  暂无已入库优秀案例。
                 </div>
               )}
             </div>
           </div>
-        </div>
+        )}
       </div>
     </section>
   );

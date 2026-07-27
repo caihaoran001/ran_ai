@@ -705,25 +705,6 @@ async def test_diagnostics_reset_active_run_preserves_history(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_knowledge_evolution_settings(admin_client):
-    resp = await admin_client.get("/settings/knowledge-evolution")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "enabled" in data
-
-    resp = await admin_client.post(
-        "/settings/knowledge-evolution",
-        json={"enabled": True},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["enabled"] is True
-
-    resp = await admin_client.get("/settings/knowledge-evolution")
-    assert resp.status_code == 200
-    assert resp.json()["enabled"] is True
-
-
-@pytest.mark.asyncio
 async def test_content_delivery_policy_auto_send_behaviour(
     admin_client,
     create_case,

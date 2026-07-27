@@ -10,10 +10,6 @@ from app.services.content_policy import (
     set_ai_reply_enabled,
     set_content_delivery_mode,
 )
-from app.services.knowledge_evolution_settings import (
-    get_knowledge_evolution_config,
-    set_knowledge_evolution_config,
-)
 from app.services.stage_report_settings import (
     get_stage_report_schedule,
     set_stage_report_schedule,
@@ -96,33 +92,6 @@ async def update_risk_fixed_reply_api(
 ) -> RiskFixedReply:
     from app.services.content_policy import set_risk_fixed_reply
     return RiskFixedReply(content=await set_risk_fixed_reply(payload.content, session))
-
-
-class KnowledgeEvolutionSetting(BaseModel):
-    enabled: bool = False
-    interval_seconds: int = 3600
-    qa_at: str = "00:00"
-    daily_qa_limit: int = 500
-    case_days: str = "3,7,14,21,28"
-    case_limit_per_case: int = 200
-    timezone: str = "Asia/Shanghai"
-
-
-@router.get("/settings/knowledge-evolution", response_model=KnowledgeEvolutionSetting)
-async def get_knowledge_evolution_setting_api(
-    session: AsyncSession = Depends(get_session),
-) -> KnowledgeEvolutionSetting:
-    config = await get_knowledge_evolution_config(session)
-    return KnowledgeEvolutionSetting(**config.__dict__)
-
-
-@router.post("/settings/knowledge-evolution", response_model=KnowledgeEvolutionSetting)
-async def update_knowledge_evolution_setting_api(
-    payload: KnowledgeEvolutionSetting,
-    session: AsyncSession = Depends(get_session),
-) -> KnowledgeEvolutionSetting:
-    config = await set_knowledge_evolution_config(session, payload.model_dump())
-    return KnowledgeEvolutionSetting(**config.__dict__)
 
 
 class StageReportScheduleSetting(BaseModel):
@@ -268,4 +237,3 @@ async def update_qiwei_staff_senders_api(
     rules = [rule.model_dump() for rule in payload.rules]
     saved_rules = await set_qiwei_staff_senders(rules, session)
     return StaffSenderSettings(rules=saved_rules)
-
