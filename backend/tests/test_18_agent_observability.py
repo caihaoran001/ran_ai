@@ -166,6 +166,11 @@ async def test_agent_ledger_tracks_model_tools_and_api(
     assert payload["reply"]["tool_calls"] >= 3
     assert payload["archivist"]["input_count"] >= 4
     assert payload["archivist"]["output_breakdown"]["outcomes"] >= 1
+    recent_reply = next(
+        item for item in payload["recent_runs"] if item["id"] == reply_run_id
+    )
+    assert recent_reply["prompt_tokens"] == 120
+    assert recent_reply["completion_tokens"] == 30
     batch = next(
         item
         for item in payload["archivist_batches"]

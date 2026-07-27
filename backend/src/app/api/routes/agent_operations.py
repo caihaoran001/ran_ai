@@ -526,6 +526,8 @@ async def _recent_runs(
             user_name=user_name,
             model_calls=run.model_calls,
             tool_calls=run.tool_calls,
+            prompt_tokens=run.prompt_tokens,
+            completion_tokens=run.completion_tokens,
             total_tokens=run.total_tokens,
             estimated_cost_yuan=round(
                 float(run.estimated_cost_yuan or 0.0), 6
@@ -682,6 +684,8 @@ async def _archivist_batches(
                 user_name=user_name,
                 model_calls=run.model_calls,
                 tool_calls=run.tool_calls,
+                prompt_tokens=run.prompt_tokens,
+                completion_tokens=run.completion_tokens,
                 total_tokens=run.total_tokens,
                 estimated_cost_yuan=round(
                     float(run.estimated_cost_yuan or 0.0), 6

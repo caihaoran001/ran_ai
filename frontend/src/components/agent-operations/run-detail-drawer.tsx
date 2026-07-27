@@ -54,8 +54,8 @@ export type RunDetailData = {
   model_calls: number;
   tool_calls: number;
   total_tokens: number;
-  prompt_tokens?: number;
-  completion_tokens?: number;
+  prompt_tokens: number;
+  completion_tokens: number;
   estimated_cost_yuan: number;
   input_count: number;
   output_count: number;
@@ -122,6 +122,41 @@ const CHANGE_KIND_LABELS: Record<string, string> = {
   case_material: "优秀案例素材小结",
   case_draft: "优秀案例草稿",
   user_state: "用户档案",
+  checkin_days: "打卡记录",
+  outcomes: "阶段成效",
+  profile_facts: "稳定画像",
+  state_facts: "当前状态",
+  personal_guidance_count: "个人指导",
+  corrections: "班主任纠错",
+  faq_drafts: "FAQ 草稿",
+  memory_updates: "用户小结 / 案例素材",
+  user_summary_updates: "用户历程小结",
+  case_material_updates: "优秀案例素材小结",
+  case_drafts: "优秀案例草稿",
+};
+
+const CHECKIN_FIELD_LABELS: Record<string, string> = {
+  weight: "体重",
+  waist: "腰围",
+  sleep: "睡眠",
+  water: "饮水",
+  exercise: "运动",
+  diet: "饮食",
+  mood: "情绪",
+  morning_c: "早 C",
+  noon_b: "午 B",
+  night_a: "晚 A",
+  "product_schedule.morning_c": "早 C",
+  "product_schedule.noon_b": "午 B",
+  "product_schedule.night_a": "晚 A",
+  "product_schedule.summary": "产品执行",
+};
+
+const TRIGGER_LABELS: Record<string, string> = {
+  fast_key: "发现值得归档的信息，用户停说约 3 分钟后触发",
+  B_latency: "未归档信息达到最长等待时间",
+  C_count: "未归档消息累计达到批量阈值",
+  manual_replay: "人工重新处理隔离消息",
 };
 
 export function RunDetailDrawer({
@@ -132,6 +167,12 @@ export function RunDetailDrawer({
   onClose: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"overview" | "messages" | "changes">("overview");
+
+  useEffect(() => {
+    if (run) {
+      setActiveTab("overview");
+    }
+  }, [run]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -151,9 +192,15 @@ export function RunDetailDrawer({
 
   const isArchivist = run.agent_type === "archivist";
   const hasInputMessagesList = Boolean(run.input_messages && run.input_messages.length > 0);
-  const hasChangesList = Boolean(run.changes && run.changes.length > 0);
-  const msgCount = run.input_messages ? run.input_messages.length : (run.input_count || 0);
-  const changeCount = run.changes ? run.changes.length : (run.output_count || 0);
+  const appliedChanges = (run.changes ?? []).filter(
+    (change) => change.action !== "not_applied",
+  );
+  const notAppliedChanges = (run.changes ?? []).filter(
+    (change) => change.action === "not_applied",
+  );
+  const hasChangesList = appliedChanges.length > 0;
+  const msgCount = Math.max(run.input_count || 0, run.input_messages?.length ?? 0);
+  const changeCount = appliedChanges.length || run.output_count || 0;
 
   return (
     <div className="fixed inset-0 z-[80] flex justify-end overflow-hidden bg-slate-900/60 backdrop-blur-sm animate-fade-in-up">
@@ -330,13 +377,13 @@ export function RunDetailDrawer({
                   <div className="flex justify-between items-center py-1 border-b border-slate-100">
                     <span className="text-slate-600">输入 (Prompt) Token</span>
                     <span className="font-mono text-slate-700">
-                      {run.prompt_tokens ? run.prompt_tokens.toLocaleString() : "估算占比中"}
+                      {run.prompt_tokens.toLocaleString()}
                     </span>
                   </div>
                   <div className="flex justify-between items-center py-1">
                     <span className="text-slate-600">输出 (Completion) Token</span>
                     <span className="font-mono text-slate-700">
-                      {run.completion_tokens ? run.completion_tokens.toLocaleString() : "估算占比中"}
+                      {run.completion_tokens.toLocaleString()}
                     </span>
                   </div>
                 </div>
@@ -365,7 +412,9 @@ export function RunDetailDrawer({
                 {run.trigger_reason && (
                   <div className="flex justify-between border-t border-slate-200 pt-1.5 mt-1.5">
                     <span>触发原因:</span>
-                    <span className="font-semibold text-slate-800">{run.trigger_reason}</span>
+                    <span className="max-w-[70%] text-right font-semibold text-slate-800">
+                      {formatTriggerReason(run.trigger_reason)}
+                    </span>
                   </div>
                 )}
               </div>
@@ -430,27 +479,8 @@ export function RunDetailDrawer({
               </p>
               {hasChangesList ? (
                 <div className="space-y-3">
-                  {run.changes!.map((change, idx) => (
-                    <div
-                      key={idx}
-                      className="rounded-xl border border-slate-200 bg-white p-4 space-y-2 shadow-sm"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800">
-                          {CHANGE_KIND_LABELS[change.kind] || change.kind}
-                        </span>
-                        <span className="text-xs font-bold text-slate-900">{change.title}</span>
-                      </div>
-                      {change.after && (
-                        <div className="rounded-lg bg-emerald-50/70 p-2.5 text-xs text-emerald-950">
-                          <span className="font-bold mr-1">更新内容:</span>
-                          <span className="whitespace-pre-wrap text-break">{change.after}</span>
-                        </div>
-                      )}
-                      {change.evidence && (
-                        <p className="text-xs text-slate-500 italic">依据: {change.evidence}</p>
-                      )}
-                    </div>
+                  {appliedChanges.map((change, idx) => (
+                    <ChangeDetail key={`${change.kind}-${change.title}-${idx}`} change={change} />
                   ))}
                 </div>
               ) : (
@@ -465,6 +495,22 @@ export function RunDetailDrawer({
                       ? "可前往【档案官】Tab 的【逐批归档记录】中下钻查看详细更新对比。"
                       : "模型提议经检验无需新增写入（或属于历史只记数量批次）。"}
                   </p>
+                </div>
+              )}
+
+              {notAppliedChanges.length > 0 && (
+                <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+                  <h4 className="mb-2 text-xs font-bold text-amber-900">
+                    检测到但未写入的冲突 ({notAppliedChanges.length} 项)
+                  </h4>
+                  <div className="space-y-3">
+                    {notAppliedChanges.map((change, idx) => (
+                      <ChangeDetail
+                        key={`${change.kind}-${change.title}-not-applied-${idx}`}
+                        change={change}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -501,6 +547,139 @@ export function RunDetailDrawer({
       </div>
     </div>
   );
+}
+
+function ChangeDetail({ change }: { change: ArchivistBatchChange }) {
+  const notApplied = change.action === "not_applied";
+  const kindLabel = CHANGE_KIND_LABELS[change.kind] || change.kind;
+
+  return (
+    <div
+      className={`rounded-xl border bg-white p-4 ${
+        notApplied ? "border-amber-200" : "border-slate-200"
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`status-pill ${notApplied ? "pill-warn" : "pill-ok"}`}>
+          {notApplied ? "未写入" : actionLabel(change.action)}
+        </span>
+        <span className="text-xs font-bold text-slate-900">{kindLabel}</span>
+        {change.title && change.title !== change.kind && change.title !== kindLabel && (
+          <span className="text-xs text-slate-600">{change.title}</span>
+        )}
+      </div>
+
+      {change.items.length > 0 && (
+        <dl className="mt-3 divide-y divide-slate-100 border-y border-slate-100">
+          {change.items.map((item, index) => {
+            const label =
+              item.label ||
+              CHECKIN_FIELD_LABELS[item.field || ""] ||
+              item.field ||
+              "更新项";
+            const nextValue = item.value ?? item.after;
+            return (
+              <div
+                key={`${item.field || item.label || "item"}-${index}`}
+                className="grid gap-1 py-2.5 text-xs sm:grid-cols-[7rem_minmax(0,1fr)]"
+              >
+                <dt className="font-semibold text-slate-600">{label}</dt>
+                <dd className="min-w-0 text-slate-900">
+                  {nextValue ? (
+                    <span className="text-break whitespace-pre-wrap">
+                      {notApplied ? `聊天提议：${nextValue}` : nextValue}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                  {item.before && (
+                    <span className="mt-1 block text-slate-500">
+                      {notApplied ? "已有表单值" : "更新前"}：{item.before}
+                    </span>
+                  )}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      )}
+
+      {(change.before || change.after) && (
+        <div className="mt-3 grid gap-2 text-xs">
+          {change.before && (
+            <div className="rounded-lg bg-slate-100 px-3 py-2 text-slate-700">
+              <span className="mr-2 font-semibold">更新前</span>
+              <span className="text-break whitespace-pre-wrap">
+                {formatAuditValue(change.before)}
+              </span>
+            </div>
+          )}
+          {change.after && (
+            <div
+              className={`rounded-lg px-3 py-2 ${
+                notApplied
+                  ? "bg-amber-100/70 text-amber-950"
+                  : "bg-emerald-50 text-emerald-950"
+              }`}
+            >
+              <span className="mr-2 font-semibold">
+                {notApplied ? "聊天提议" : "更新后"}
+              </span>
+              <span className="text-break whitespace-pre-wrap">
+                {formatAuditValue(change.after)}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {change.evidence && (
+        <p className="mt-3 text-xs leading-5 text-slate-600">依据：{change.evidence}</p>
+      )}
+    </div>
+  );
+}
+
+function actionLabel(action: string) {
+  return (
+    {
+      created: "新建",
+      added: "新增",
+      updated: "更新",
+      recorded: "已记录",
+      count_only: "已写入",
+    }[action] || "已写入"
+  );
+}
+
+function formatTriggerReason(reason: string) {
+  return reason
+    .split(",")
+    .map((item) => TRIGGER_LABELS[item] || item)
+    .join("；");
+}
+
+function formatAuditValue(value: string) {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return Object.entries(parsed)
+        .map(([key, item]) => {
+          const label =
+            {
+              question: "问题",
+              answer: "参考回答",
+              background: "背景",
+              case: "案例正文",
+            }[key] || key;
+          return `${label}：${String(item ?? "")}`;
+        })
+        .join("\n");
+    }
+  } catch {
+    // 普通文本直接展示。
+  }
+  return value;
 }
 
 function StatusBadge({ status }: { status: string }) {
