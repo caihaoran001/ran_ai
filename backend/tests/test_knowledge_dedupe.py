@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -180,3 +181,30 @@ def test_legacy_markdown_manifest_is_fail_closed(tmp_path) -> None:
     )
     settings = Settings(KNOWLEDGE_BASE_DIR=str(tmp_path))
     assert _knowledge_files(settings) == []
+
+
+def test_curated_legacy_faq_candidates_are_valid_and_not_active() -> None:
+    from app.services import knowledge_base
+
+    root = Path(knowledge_base.__file__).resolve().parent / "knowledge_base"
+    manifest = json.loads((root / "knowledge_sources.json").read_text(encoding="utf-8"))
+    candidate_name = "curated_legacy_faq_candidates.json"
+    payload = json.loads((root / candidate_name).read_text(encoding="utf-8"))
+    candidates = payload["candidates"]
+
+    assert candidate_name in manifest["curated_candidates"]
+    assert candidate_name not in manifest["active"]
+    assert payload["status"] == "pending_user_review"
+    assert payload["selection_summary"]["legacy_chunks_reviewed"] == 188
+    assert payload["selection_summary"]["canonical_candidates"] == len(candidates) == 20
+    assert len({item["candidate_uid"] for item in candidates}) == len(candidates)
+    assert {
+        item["disposition"] for item in candidates
+    } == {"new", "merge", "replace"}
+    for item in candidates:
+        assert item["question"].strip().endswith(("？", "?"))
+        assert item["answer"].strip()
+        assert item["information_value"].strip()
+        assert item["source_refs"]
+        assert item["metadata"]["category"]
+        assert item["metadata"]["risk_level"] in {"L0", "L1", "L2", "L3"}

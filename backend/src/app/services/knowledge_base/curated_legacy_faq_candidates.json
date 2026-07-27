@@ -1,0 +1,676 @@
+{
+  "status": "pending_user_review",
+  "created_at": "2026-07-27",
+  "purpose": "从 188 个停用的旧 Markdown chunk 中提炼可独立回答用户问题的候选知识；本文件不参与运行时检索，也不代表已经审核入库。",
+  "production_faq_snapshot": {
+    "checked_at": "2026-07-27",
+    "active_count": 90,
+    "note": "disposition 为 merge 或 replace 的候选已与当日线上有效 FAQ 对照；正式入库前仍需走现有向量候选和 LLM 语义判重。"
+  },
+  "selection_summary": {
+    "legacy_chunks_reviewed": 188,
+    "canonical_candidates": 20,
+    "new_candidates": 14,
+    "merge_candidates": 3,
+    "replace_candidates": 3,
+    "source_chunk_counts": {
+      "default_faq.md": 4,
+      "ranren_ai_daily_qa_framework.md": 68,
+      "ranren_ai_diet_structure_guide.md": 8,
+      "ranren_ai_qa_from_excel.md": 69,
+      "ranren_ai_service_rules.md": 10,
+      "ranren_ai_standard_qa.md": 29
+    }
+  },
+  "excluded_patterns": [
+    {
+      "pattern": "纯话术与情绪模板",
+      "examples": [
+        "先安慰、必须夸奖、陪伴收尾",
+        "宝宝、干杯、相信坚持就会有效",
+        "要求好评、代理招募、复购引导"
+      ],
+      "reason": "没有可复用事实，回复语气应由最终回复 Agent 根据当轮对话决定。"
+    },
+    {
+      "pattern": "未经证实的功效和身体机制",
+      "examples": [
+        "心慌、口干、出汗一定代表代谢启动",
+        "腹泻是清理肠道",
+        "MCT 不会储存为脂肪、可修复肠道或提高瘦素",
+        "第三周一定开始持续燃脂"
+      ],
+      "reason": "可能误导健康判断，不能作为事实知识。"
+    },
+    {
+      "pattern": "极端或机械化减重规则",
+      "examples": [
+        "48 小时断碳",
+        "晚餐一律不吃主食",
+        "固定承诺 28 天减重或腰围数字",
+        "所有人统一喝水 3 至 5 升"
+      ],
+      "reason": "忽略个体差异，部分做法存在健康风险。"
+    },
+    {
+      "pattern": "会变化的交易和运营口径",
+      "examples": [
+        "价格、赠品、复购优惠",
+        "退款、免单、补寄条件",
+        "发货时间和直播活动"
+      ],
+      "reason": "必须读取当前订单或由运营按最新规则确认，旧聊天不能作为长期知识。"
+    },
+    {
+      "pattern": "内部流程与文档写作规则",
+      "examples": [
+        "处方单版式",
+        "减重带和文档目标写法",
+        "QA 分类、风控和沉淀 SOP"
+      ],
+      "reason": "不是用户问答知识，且运行时已有独立提示词和确定性流程。"
+    }
+  ],
+  "external_validation_sources": {
+    "FDA_CAFFEINE": "https://www.fda.gov/consumers/consumer-updates/spilling-beans-how-much-caffeine-too-much",
+    "NIDDK_CONSTIPATION": "https://www.niddk.nih.gov/health-information/digestive-diseases/constipation/symptoms-causes",
+    "NIDDK_GI_BLEEDING": "https://www.niddk.nih.gov/health-information/digestive-diseases/gastrointestinal-bleeding/symptoms-causes",
+    "CDC_WEIGHT": "https://www.cdc.gov/healthy-weight-growth/losing-weight/index.html",
+    "CDC_ACTIVITY": "https://www.cdc.gov/physical-activity-basics/guidelines/adults.html",
+    "WHO_HEALTHY_DIET": "https://www.who.int/news-room/fact-sheets/detail/healthy-diet",
+    "NHS_WEIGHING": "https://www.england.nhs.uk/wp-content/uploads/2021/06/PRN00916-how-to-record-your-weight.pdf",
+    "PUBMED_BIA_HYDRATION": "https://pubmed.ncbi.nlm.nih.gov/37335581/",
+    "KETO_CLINICAL_RECOMMENDATIONS": "https://pmc.ncbi.nlm.nih.gov/articles/PMC8610544/"
+  },
+  "candidates": [
+    {
+      "candidate_uid": "legacy-curated-001",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "产品不能替代正餐",
+      "question": "早C、午B、晚A是代餐吗？喝了以后可以不吃饭吗？",
+      "answer": "不是代餐，不能用来替代正常饮食。应按个人方案使用，同时保留正常三餐；胃口较小时可以减少餐量，但仍应优先保留蛋白质、蔬菜和与个人情况匹配的主食，不要因为喝了产品就长期空腹或只喝产品。",
+      "information_value": "明确产品与正餐的关系，阻止只喝产品和极端节食。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0001-07",
+        "ranren_ai_qa_from_excel.md#QA-0001-09"
+      ],
+      "validation_refs": [
+        "WHO_HEALTHY_DIET"
+      ],
+      "metadata": {
+        "category": "产品使用与饮食",
+        "risk_level": "L0",
+        "requires_human": false,
+        "tags": [
+          "代餐",
+          "三餐",
+          "极端节食"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-002",
+      "disposition": "merge",
+      "existing_faq_ids": [
+        11,
+        51,
+        69,
+        75
+      ],
+      "title": "低碳不等于断碳",
+      "question": "低碳饮食是不是完全不能吃主食？",
+      "answer": "不是。低碳是减少精制碳水和重复叠加的主食，不是把碳水完全清零。日常仍应保证饮食多样，优先选择全谷物、薯类、豆类等相对少加工的碳水，并结合蛋白质和蔬菜；具体份量应根据个人目标、活动量和健康情况调整。",
+      "information_value": "纠正旧素材中早晚禁主食、断碳激活瘦素等机械规则。",
+      "source_refs": [
+        "ranren_ai_diet_structure_guide.md#低碳饮食-Low-Carb",
+        "ranren_ai_qa_from_excel.md#QA-0001-19"
+      ],
+      "validation_refs": [
+        "WHO_HEALTHY_DIET"
+      ],
+      "metadata": {
+        "category": "饮食执行",
+        "risk_level": "L0",
+        "requires_human": false,
+        "tags": [
+          "低碳",
+          "主食",
+          "断碳"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-003",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "识别需要计入主食的食物",
+      "question": "土豆、红薯、玉米、南瓜和山药算不算主食？",
+      "answer": "这些食物都含有一定量淀粉。一次吃到接近一份主食的量时，应计入当餐碳水，并相应减少米饭、面条、馒头等其他主食，避免同一餐多种主食叠加。它们不是不能吃，关键是看总量和整餐搭配。",
+      "information_value": "把分散在大量餐盘聊天里的主食替换规则合并成一个可检索答案。",
+      "source_refs": [
+        "ranren_ai_standard_qa.md#QA-DIET-001",
+        "ranren_ai_qa_from_excel.md#QA-0001-02",
+        "ranren_ai_qa_from_excel.md#QA-0011-02"
+      ],
+      "validation_refs": [
+        "WHO_HEALTHY_DIET"
+      ],
+      "metadata": {
+        "category": "饮食执行",
+        "risk_level": "L0",
+        "requires_human": false,
+        "tags": [
+          "主食替换",
+          "薯类",
+          "玉米",
+          "南瓜"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-004",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "倒班人群按清醒周期安排产品",
+      "question": "上夜班或倒班时，早C、午B、晚A应该怎么安排？",
+      "answer": "不要机械照搬早中晚的钟点，应按自己的清醒周期安排：早C放在起床后的第一餐，午B放在清醒周期中段并尽量与计划睡眠间隔至少8小时，晚A放在最后一餐或准备结束清醒周期时。若早C或午B影响睡眠，应减量、前移或暂停午B，并让班主任结合实际班次调整。",
+      "information_value": "提供倒班场景下可直接执行的相对时间规则。",
+      "source_refs": [
+        "ranren_ai_service_rules.md#十八-产品排班规则",
+        "ranren_ai_qa_from_excel.md#QA-0014"
+      ],
+      "validation_refs": [
+        "FDA_CAFFEINE"
+      ],
+      "metadata": {
+        "category": "产品使用",
+        "risk_level": "L1",
+        "requires_human": false,
+        "tags": [
+          "夜班",
+          "倒班",
+          "咖啡因",
+          "睡眠"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-005",
+      "disposition": "replace",
+      "existing_faq_ids": [
+        3
+      ],
+      "title": "咖啡因不适的处理边界",
+      "question": "喝早C或午B后心慌、手抖、失眠怎么办？",
+      "answer": "早C和午B含咖啡因，心率加快、心慌、手抖或睡眠受影响都可能是摄入过多或个人较敏感的表现，不应解释为“代谢启动”。先暂停早C、午B及其他含咖啡因饮品，不要自行加量；症状缓解后是否恢复应结合用量、服用时间和个人健康情况评估。若出现胸痛、呼吸困难、晕厥或持续明显心悸，应及时就医。",
+      "information_value": "替换线上现有“上火说明代谢加速”等不安全说法，给出明确停止和就医边界。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0002-02",
+        "ranren_ai_qa_from_excel.md#QA-0002-07",
+        "ranren_ai_standard_qa.md#QA-RISK-001"
+      ],
+      "validation_refs": [
+        "FDA_CAFFEINE"
+      ],
+      "metadata": {
+        "category": "产品使用与健康风险",
+        "risk_level": "L2",
+        "requires_human": true,
+        "tags": [
+          "咖啡因敏感",
+          "心慌",
+          "手抖",
+          "失眠"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-006",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "避免叠加咖啡因",
+      "question": "喝早C和午B期间还能喝其他咖啡或浓茶吗？",
+      "answer": "早C和午B本身含咖啡因，不建议再随意叠加咖啡、能量饮料或大量浓茶。不同人的敏感程度和药物相互影响不同；如果已经出现睡眠变差、心慌或手抖，应先停止叠加并减少含咖啡因产品。孕期、备孕、哺乳期、正在用药或有相关疾病时，应先咨询医生。",
+      "information_value": "补充现有 FAQ 缺失的总咖啡因和叠加使用边界。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0002-05",
+        "ranren_ai_qa_from_excel.md#QA-0002-08"
+      ],
+      "validation_refs": [
+        "FDA_CAFFEINE"
+      ],
+      "metadata": {
+        "category": "产品使用与健康风险",
+        "risk_level": "L1",
+        "requires_human": false,
+        "tags": [
+          "咖啡",
+          "浓茶",
+          "咖啡因叠加"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-007",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "漏喝或拿错产品不补量",
+      "question": "忘记喝、拿错早C午B晚A，或者喝得太晚了怎么办？",
+      "answer": "不要把漏掉的量集中补喝，也不要用另一款产品替代。发现拿错时先停止，漏掉的一次直接跳过，下一次按原计划恢复；若已经误喝并出现心慌、失眠、胃肠不适等症状，应暂停后续产品并及时反馈。具体产品和时间不确定时，先拍照让班主任确认。",
+      "information_value": "把旧聊天里的零散补喝、混喝问题统一成一个防误用答案。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0002-07",
+        "ranren_ai_qa_from_excel.md#QA-0002-08",
+        "ranren_ai_qa_from_excel.md#QA-0004-06"
+      ],
+      "validation_refs": [],
+      "metadata": {
+        "category": "产品使用",
+        "risk_level": "L1",
+        "requires_human": false,
+        "tags": [
+          "漏喝",
+          "拿错",
+          "补量",
+          "混喝"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-008",
+      "disposition": "replace",
+      "existing_faq_ids": [
+        22,
+        23
+      ],
+      "title": "疾病用药和特殊人群先做专业确认",
+      "question": "有疾病、正在用药、孕期或哺乳期，可以继续喝产品吗？",
+      "answer": "不能只凭群聊直接判断可以继续。先不要自行开始、加量或把产品与药物叠加，也不要自行停掉处方药；应把完整配料表、当前疾病和用药情况提供给医生或药师确认。孕期、备孕、哺乳期、未成年人，以及存在心血管、肝肾、血糖或其他明确异常的人群，都应先经过专业评估。若已经出现不适，应先停用相关产品并及时就医或转人工处理。",
+      "information_value": "替换线上现有对甲状腺等具体疾病直接回答“可以喝”的越界内容。",
+      "source_refs": [
+        "ranren_ai_standard_qa.md#QA-RISK-001",
+        "ranren_ai_qa_from_excel.md#QA-0011-01",
+        "ranren_ai_daily_qa_framework.md#P08-安全边界优先"
+      ],
+      "validation_refs": [
+        "FDA_CAFFEINE"
+      ],
+      "metadata": {
+        "category": "健康风险",
+        "risk_level": "L3",
+        "requires_human": true,
+        "tags": [
+          "疾病",
+          "用药",
+          "孕期",
+          "哺乳期",
+          "体检异常"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-009",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "产品后胃肠不适先停用观察",
+      "question": "喝产品后腹痛、恶心、呕吐或腹泻怎么办？",
+      "answer": "先暂停当天相关产品，不要把腹泻、腹痛或呕吐解释为“排毒”或“清理肠道”，也不要自行加量。少量补水并记录喝了哪款、用量、时间、是否空腹及症状持续多久。若疼痛持续或明显加重、反复呕吐、无法排气、发热、脱水，或便中带血，应及时就医。",
+      "information_value": "把旧素材中危险的“正向反应”话术改为可执行的安全处理。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0005-04",
+        "ranren_ai_qa_from_excel.md#QA-0005-05"
+      ],
+      "validation_refs": [
+        "NIDDK_CONSTIPATION"
+      ],
+      "metadata": {
+        "category": "产品使用与健康风险",
+        "risk_level": "L2",
+        "requires_human": true,
+        "tags": [
+          "腹痛",
+          "恶心",
+          "呕吐",
+          "腹泻"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-010",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "黑便和血便不能归因于咖啡",
+      "question": "喝咖啡后大便颜色很深甚至发黑，正常吗？",
+      "answer": "普通深褐色可能受食物、铁剂等因素影响，但黑色柏油样便、便中鲜血，或同时出现腹痛、头晕、乏力时，不能简单归因于咖啡，应尽快就医排查消化道出血。出现这类情况时先暂停产品，并保留照片、用药和饮食信息供医生判断。",
+      "information_value": "纠正旧素材“咖啡不会导致黑便所以不用担心”的过度判断。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0005-03"
+      ],
+      "validation_refs": [
+        "NIDDK_GI_BLEEDING"
+      ],
+      "metadata": {
+        "category": "健康风险",
+        "risk_level": "L3",
+        "requires_human": true,
+        "tags": [
+          "黑便",
+          "血便",
+          "消化道出血"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-011",
+      "disposition": "replace",
+      "existing_faq_ids": [
+        27,
+        35,
+        87
+      ],
+      "title": "便秘先做基础调整并识别红旗",
+      "question": "减重期间便秘或总觉得排不干净，应该怎么调整？",
+      "answer": "先从基础因素排查：饮水是否适合自己的活动量和身体情况、蔬菜水果和其他膳食纤维是否足够、是否久坐、作息是否变化，并逐步增加活动和固定排便时间。不要为了排便自行猛灌水、长期依赖泻药或随意加大胶囊剂量。若自我调整后仍不缓解，或同时出现便血、持续腹痛、无法排气、呕吐、发热或非主动体重下降，应及时就医。",
+      "information_value": "合并三条重复 FAQ，并删除“异地先吃豆腐”“喝水到5升”等不可靠建议。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0005-01",
+        "ranren_ai_qa_from_excel.md#QA-0005-02",
+        "ranren_ai_qa_from_excel.md#QA-0005-03"
+      ],
+      "validation_refs": [
+        "NIDDK_CONSTIPATION"
+      ],
+      "metadata": {
+        "category": "身体体感",
+        "risk_level": "L1",
+        "requires_human": false,
+        "tags": [
+          "便秘",
+          "排便不尽",
+          "膳食纤维"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-012",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "单日涨重通常不等于长脂肪",
+      "question": "为什么一顿饭后或第二天体重突然上涨？",
+      "answer": "单日体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响，不能直接等同于长了同样重量的脂肪。先保持原有饮食和作息，不要用断食或加大产品剂量补偿；在相同条件下继续记录，并观察一周左右的趋势。若体重持续快速增加并伴随明显水肿、气短或其他不适，应及时就医。",
+      "information_value": "提供高频“吃一顿就暴涨”的机制解释和正确后续动作。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0003-01",
+        "ranren_ai_qa_from_excel.md#QA-0003-02",
+        "ranren_ai_qa_from_excel.md#QA-0003-04"
+      ],
+      "validation_refs": [
+        "CDC_WEIGHT"
+      ],
+      "metadata": {
+        "category": "体重数据",
+        "risk_level": "L0",
+        "requires_human": false,
+        "tags": [
+          "体重波动",
+          "涨秤",
+          "水分",
+          "盐分"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-013",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "统一条件称重",
+      "question": "怎样称体重，数据才更适合比较？",
+      "answer": "尽量使用同一台秤、放在平整硬地面，并在相近时间和状态下测量；通常可固定在早晨、穿相近衣物且不穿鞋时称重。记录后看连续趋势，不要拿早晚体重或不同秤的单次数字直接比较，也不要让一天的小数变化决定当天是否节食。",
+      "information_value": "补充线上 FAQ 缺失的称重标准，减少无效的早晚数字比较。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0003-05",
+        "ranren_ai_qa_from_excel.md#QA-0012-01"
+      ],
+      "validation_refs": [
+        "NHS_WEIGHING"
+      ],
+      "metadata": {
+        "category": "体重数据",
+        "risk_level": "L0",
+        "requires_human": false,
+        "tags": [
+          "称重",
+          "晨重",
+          "趋势"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-014",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "家用体脂秤看趋势不看单次小数",
+      "question": "体脂秤的体脂率忽高忽低，应该相信哪个数？",
+      "answer": "家用体脂秤多用生物电阻抗估算，饮水、进食、运动、皮肤温度和测量时间都可能影响结果。应尽量在同一时间、相近饮水和进食状态下使用同一台设备，重点看多次趋势，不把单次小数变化当成真实脂肪增减；同时结合体重和腰围判断。",
+      "information_value": "解释体脂秤波动来源，避免把测量误差包装成产品效果。",
+      "source_refs": [
+        "ranren_ai_standard_qa.md#体重结果与阶段反馈",
+        "ranren_ai_qa_from_excel.md#QA-0003-04"
+      ],
+      "validation_refs": [
+        "PUBMED_BIA_HYDRATION"
+      ],
+      "metadata": {
+        "category": "体重数据",
+        "risk_level": "L0",
+        "requires_human": false,
+        "tags": [
+          "体脂秤",
+          "体脂率",
+          "测量误差"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-015",
+      "disposition": "merge",
+      "existing_faq_ids": [
+        4,
+        14,
+        24,
+        25,
+        65,
+        67
+      ],
+      "title": "没有变化时做系统复核",
+      "question": "已经执行一段时间，但体重和腰围都没有变化，应该检查什么？",
+      "answer": "先确认比较方式一致，再一起复核连续趋势、实际饮食和饮料、睡眠、活动量、排便、生理期、近期药物和身体不适。不要默认“身体正在修复”或靠加量、断食解释一切；如果记录显示确实没有变化，应调整饮食和活动方案，并在存在疾病、用药或持续不适时请医生参与评估。",
+      "information_value": "把六条重复、偏安慰和偏功效承诺的线上 FAQ 收敛为可检查的变量清单。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0006-02",
+        "ranren_ai_qa_from_excel.md#QA-0006-03",
+        "ranren_ai_qa_from_excel.md#QA-0006-04"
+      ],
+      "validation_refs": [
+        "CDC_WEIGHT"
+      ],
+      "metadata": {
+        "category": "体重结果",
+        "risk_level": "L1",
+        "requires_human": false,
+        "tags": [
+          "平台期",
+          "无变化",
+          "复核"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-016",
+      "disposition": "merge",
+      "existing_faq_ids": [
+        12,
+        15,
+        41,
+        49,
+        50,
+        61,
+        84,
+        85
+      ],
+      "title": "经期波动与异常情况分开处理",
+      "question": "生理期体重上涨，或者月经提前、推迟时应该怎么办？",
+      "answer": "经期前后受激素和水分变化影响，体重短期波动并不少见，应与经期结束后的同条件数据比较，不需要断食或加大产品剂量。但不能直接保证月经变化与产品无关：如果出现明显提前或推迟、异常出血、剧烈疼痛、持续不适或有怀孕可能，应先暂停相关产品并及时就医；早C、午B含咖啡因，个人不适时也应减量或暂停并反馈。",
+      "information_value": "把八条重复经期 FAQ 合并，同时删除“植物萃取一定不影响内分泌”的绝对承诺。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0008-01",
+        "ranren_ai_qa_from_excel.md#QA-0008-02"
+      ],
+      "validation_refs": [
+        "FDA_CAFFEINE"
+      ],
+      "metadata": {
+        "category": "生理期与健康风险",
+        "risk_level": "L2",
+        "requires_human": true,
+        "tags": [
+          "生理期",
+          "月经推迟",
+          "异常出血",
+          "水肿"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-017",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "不跑步也可以从低门槛活动开始",
+      "question": "不爱运动、没时间，或者膝盖脚踝有伤时，减重运动怎么安排？",
+      "answer": "不需要强行跑步。没有伤病时，可以从短时间快走、饭后散步、骑行、家务等容易坚持的活动开始，分成多次完成并逐步增加。膝盖、脚踝或腰部有伤时，不要用爬楼、跑跳等动作硬顶，应选择不会加重疼痛的低冲击活动，并根据医生或康复人员建议调整。任何活动中出现胸痛、明显气短、晕厥或异常心悸都应立即停止并就医。",
+      "information_value": "把“最低摩擦运动”从话术改成具体活动和伤病边界。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0014",
+        "ranren_ai_daily_qa_framework.md#运动与生活方式-低摩擦运动"
+      ],
+      "validation_refs": [
+        "CDC_ACTIVITY"
+      ],
+      "metadata": {
+        "category": "运动与生活方式",
+        "risk_level": "L1",
+        "requires_human": false,
+        "tags": [
+          "运动",
+          "散步",
+          "膝盖",
+          "脚踝"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-018",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "限制性饮食不作为默认减重方案",
+      "question": "生酮、纯肉或AIP饮食适合自己尝试减重吗？",
+      "answer": "这些都属于限制性较强的饮食方式，不应作为所有人的默认减重方案，也不建议自行长期执行。它们可能带来便秘、恶心、营养不均衡或血脂等问题；孕期和哺乳期、进食障碍史、肝肾或胰腺疾病、结石风险，以及使用降糖等药物的人群尤其需要专业评估。日常体重管理优先选择能长期坚持、食物多样的饮食结构。",
+      "information_value": "保留旧饮食指南中真正有用的“限制性饮食需评估”边界，删除主动推荐纯肉和48小时断碳。",
+      "source_refs": [
+        "ranren_ai_diet_structure_guide.md#生酮饮食-Keto",
+        "ranren_ai_diet_structure_guide.md#纯肉饮食-All-Meat",
+        "ranren_ai_diet_structure_guide.md#AIP-自免疫协议饮食"
+      ],
+      "validation_refs": [
+        "WHO_HEALTHY_DIET",
+        "KETO_CLINICAL_RECOMMENDATIONS"
+      ],
+      "metadata": {
+        "category": "饮食安全",
+        "risk_level": "L2",
+        "requires_human": false,
+        "tags": [
+          "生酮",
+          "纯肉",
+          "AIP",
+          "限制性饮食"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-019",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "问卷用于个性化服务",
+      "question": "为什么要填写入营问卷？",
+      "answer": "问卷用于记录基础信息、目标、生活习惯和需要注意的健康边界，系统会据此生成用户画像，并为后续个性化处方单、28天执行标准和服务调整提供依据。遇到不理解或不愿填写的敏感字段时，可以先询问字段用途，不应要求用户在群里公开身份证号等敏感信息。",
+      "information_value": "保留 default FAQ 中稳定的问卷用途，同时补上敏感信息边界。",
+      "source_refs": [
+        "default_faq.md#为什么要填写问卷",
+        "ranren_ai_qa_from_excel.md#QA-0002-03"
+      ],
+      "validation_refs": [],
+      "metadata": {
+        "category": "服务流程",
+        "risk_level": "L1",
+        "requires_human": false,
+        "tags": [
+          "入营问卷",
+          "用户画像",
+          "隐私"
+        ]
+      }
+    },
+    {
+      "candidate_uid": "legacy-curated-020",
+      "disposition": "new",
+      "existing_faq_ids": [],
+      "title": "聚餐饮酒后不要极端补偿",
+      "question": "聚餐或饮酒后体重上涨，第二天应该怎么调整？",
+      "answer": "聚餐后的盐分、碳水、酒精和胃肠内容物都可能让第二天体重暂时上涨。不要用完全不吃饭、额外运动或加大产品剂量来补偿；恢复正常三餐，选择清淡、少加工的食物，按需补水并保持正常活动，再观察后续趋势。若饮酒后明显不适，应暂停产品并及时处理身体症状。",
+      "information_value": "给出聚餐后可执行的恢复方式，替代“轻断食、加量或产品护肝”等旧说法。",
+      "source_refs": [
+        "ranren_ai_qa_from_excel.md#QA-0003-02",
+        "ranren_ai_qa_from_excel.md#QA-0003-03",
+        "ranren_ai_qa_from_excel.md#QA-0003-06"
+      ],
+      "validation_refs": [
+        "CDC_WEIGHT",
+        "WHO_HEALTHY_DIET"
+      ],
+      "metadata": {
+        "category": "饮食与体重数据",
+        "risk_level": "L1",
+        "requires_human": false,
+        "tags": [
+          "聚餐",
+          "饮酒",
+          "涨秤"
+        ]
+      }
+    }
+  ],
+  "not_ready_for_faq": [
+    {
+      "topic": "瓶盖、刻度、克数和冲泡水量",
+      "reason": "旧素材内部同时存在“1大刻度=2盖”“1大刻度=3小刻度”“1盖=半份/一份”等冲突，必须先用当前包装说明和产品负责人确认唯一口径。"
+    },
+    {
+      "topic": "MCT或卡点钥匙的具体成分、功效、剂量和保存",
+      "reason": "旧素材混用了椰子油、MCT油、咖啡因和通便产品，且包含直接燃脂、修复肠道、提高瘦素等未经证实的表述。"
+    },
+    {
+      "topic": "退款、免单、价格、赠品和补寄",
+      "reason": "旧聊天口径互相冲突且会随活动变化，应接订单系统或由运营按最新规则确认。"
+    },
+    {
+      "topic": "固定28天减重目标和四带数字",
+      "reason": "旧规则给出机械化体重承诺，不能作为对所有用户的长期 FAQ。"
+    },
+    {
+      "topic": "交付文件生成时间和中午提醒",
+      "reason": "default FAQ 描述的是旧流程，当前系统的文档生成和提醒机制已经变化，应从实时服务单状态回答。"
+    }
+  ]
+}

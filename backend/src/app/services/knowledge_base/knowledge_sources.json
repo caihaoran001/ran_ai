@@ -8,5 +8,8 @@
     "ranren_ai_service_rules.md",
     "ranren_ai_standard_qa.md"
   ],
-  "note": "旧 Markdown 仅保留审计，不参与运行时检索。可信知识必须经人工审核进入 knowledge_faqs 并同步 knowledge_chunks。"
+  "curated_candidates": [
+    "curated_legacy_faq_candidates.json"
+  ],
+  "note": "旧 Markdown 仅保留审计，不参与运行时检索。清洗候选也不直接参与检索；可信知识必须经人工审核进入 knowledge_faqs 并同步 knowledge_chunks。"
 }
