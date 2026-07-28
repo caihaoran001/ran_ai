@@ -50,7 +50,10 @@ ENERGY_FIELD_SPEC = {
     "leptin_sensitivity": "饱腹感、晚间失控、食欲边界等生活方式信号。保留兼容字段名，但用户可见内容不得写成瘦素抵抗诊断。",
     "hormone_stage": "年龄、睡眠、压力、恢复能力相关影响。保留兼容字段名，但用户可见内容不得写成内分泌或激素诊断。",
     "priority_direction": "当前最该先抓的方向",
-    "priority_items": ["真正需要优先解决的三件事，严格3项，按优先级排列"],
+    "priority_items": [
+        "真正需要优先解决的三件事，严格3项，按优先级排列。"
+        "每项写「问题 + 为什么它排在前面」，不写份量、次数、时长、时间点这类可量化执行参数——那些属于 week_actions"
+    ],
     "success_path": {
         "intro": "成功路径总述",
         "weight_band": "当前管理带",
@@ -70,7 +73,11 @@ ENERGY_FIELD_SPEC = {
         "day7": "前7天变化",
         "day14_28": "第14-28天变化",
     },
-    "week_actions": ["本周直接执行，固定3条。至少包含1条运动建议，且运动建议必须写出类型+频率+时长+禁忌时间窗口"],
+    "week_actions": [
+        "本周直接执行，4-5条。每条必须带数字和时间或场景，不解释原因（原因写在 priority_items）。"
+        "至少包含1条运动建议，且运动建议必须写出类型+频率+时长+禁忌时间窗口。"
+        "必须覆盖 priority_items 三件事之外的维度（产品节律 / 睡眠 / 情绪与环境设计中至少一项）"
+    ],
     "product_schedule": {
         "morning_c": "早C",
         "noon_b": "午B",
@@ -120,8 +127,8 @@ EXECUTION_FIELD_SPEC = {
             "options": "answer_type=yes_no 固定 [\"是\",\"否\"]；score_1_5 固定 [\"1\",\"2\",\"3\",\"4\",\"5\"]；number 和 text 为空数组 []",
         }
     ],
-    "weekly_standard": "每周通过标准，1句 ≤96字，必须包含4要素：个案产品排班完成情况 + 关键饮食动作 + 运动/步数达标 + 至少1次体重/围度/体感记录。减量或暂停用户不得写三杯完成要求。",
-    "adjust_stop_conditions": "调整与停止条件，1句 ≤110字。必须说明什么情况减半、前移、暂停、联系班主任、及时就医。不要写成医疗方案。",
+    "weekly_standard": "每周通过标准，1句 ≤76字，必须包含4要素：个案产品排班完成情况 + 关键饮食动作 + 运动/步数达标 + 至少1次体重/围度/体感记录。减量或暂停用户不得写三杯完成要求。",
+    "adjust_stop_conditions": "调整与停止条件，1句 ≤88字。必须说明什么情况减半、前移、暂停、联系班主任、及时就医。不要写成医疗方案。",
 }
 
 
@@ -246,7 +253,7 @@ def _build_energy(title: str, user_name: str, display_name: str | None, fields: 
         _rhythm_recovery_block(fields),
         _module_block(fields),
         _product_block(fields),
-        _list_block("week_actions", "10. 本周直接执行", fields.get("week_actions"), limit=3),
+        _list_block("week_actions", "10. 本周直接执行", fields.get("week_actions"), limit=5),
         _expected_block(fields),
         _text_block("special_reminder", "12. 特别提醒", fields.get("special_reminder")),
         _missing_information_block(fields),
@@ -297,7 +304,7 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
         if not actions_val:
             actions_val = fixed_actions[week]
         else:
-            actions_val = _execution_sentence(actions_val, max_parts=3, max_len=58)
+            actions_val = _execution_sentence(actions_val, max_parts=2, max_len=46)
 
         table_rows.append(
             [
@@ -841,7 +848,7 @@ def _execution_sentence(value: Any, *, max_parts: int, max_len: int) -> str:
 
 
 def _weekly_standard_text(value: Any) -> str:
-    text_val = _execution_sentence(value, max_parts=3, max_len=96)
+    text_val = _execution_sentence(value, max_parts=3, max_len=76)
     if not text_val:
         return "每周至少5天完成个案产品排班和关键饮食动作；运动或步数达到计划；至少记录1次体重、围度或体感。"
     if "体重" not in text_val and "围度" not in text_val and "体感" not in text_val:
@@ -850,7 +857,7 @@ def _weekly_standard_text(value: Any) -> str:
 
 
 def _adjust_stop_conditions_text(value: Any) -> str:
-    text_val = _execution_sentence(value, max_parts=3, max_len=110)
+    text_val = _execution_sentence(value, max_parts=2, max_len=88)
     if text_val:
         return text_val
     return "心慌、睡眠明显变差或胃部不适时，早C/午B先减半并前移；持续不适、胸痛、呼吸困难、明显心悸或异常疼痛时，暂停执行并及时就医。"

@@ -290,6 +290,18 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "严禁单独用它们证明「正在上升」「正在下降」「持续变沉」" in prompt
     assert "「每餐」不得与蔬菜份量同句出现" in prompt
 
+    # 诊断报告第6节只讲原因、第10节只讲动作，两节不得互相复述
+    assert "priority_items 回答「为什么是这三件」，week_actions 回答「这周具体怎么做」" in prompt
+    assert "priority_items 每项写成「问题 + 为什么它排在前面」" in prompt
+    assert "严禁出现份量（拳/掌心/克）、次数、时长、具体时间点这类可量化执行参数" in prompt
+    assert "week_actions 必须 4-5 条，每条带数字和时间或场景，且不解释原因" in prompt
+    assert "禁止与 priority_items 逐条一一对应地复述" in prompt
+    assert "至少 1 条来自产品节律 / 睡眠 / 情绪和环境设计" in prompt
+    assert "「优先解决的三件事」只讲原因、「本周直接执行」只讲动作，两节不得互相复述" in prompt
+    # 旧规则会主动要求两节对应，是重复的来源
+    assert "至少 2 条 week_actions 要能对应 priority_items 中的前两项" not in prompt
+    assert "本周执行严格3条" not in prompt
+
     # 一页硬预算
     assert "【一页硬预算】" in prompt
     assert "目标摘要只输出执行需要的三项" in prompt
@@ -431,6 +443,8 @@ async def test_questionnaire_submit_creates_profile_and_documents(
         "13. 需要补充的信息",
         "14. 说明",
     ]
+    # 本周直接执行放宽到最多5条，第4条不再被截断——参考设计要求3-5条覆盖三件事之外的维度
+    assert "22:30手机熄屏，23:00前关灯" in diagnosis.content_md
     assert execution.title == "28天高燃人生执行建议书"
     assert execution.content_json["title"].endswith("｜28天高燃人生执行建议书")
     execution_block_keys = [block["key"] for block in execution.content_json["blocks"]]
