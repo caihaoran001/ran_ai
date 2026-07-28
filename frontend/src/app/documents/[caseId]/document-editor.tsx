@@ -90,8 +90,28 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
     }
   }
 
+  // 内部复核标记只存在于 content_json 顶层元数据，不在用户可见的 blocks / content_md 里。
+  const internalReview = contentJson?.internal_review ?? document.content_json?.internal_review;
+  const manualReviewRequired = Boolean(internalReview?.manual_review_required);
+  const manualReviewReasons = internalReview?.reasons ?? [];
+
   return (
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      {manualReviewRequired && (
+        <div className="rounded-t-xl border-b border-rose-200 bg-rose-50 px-6 py-4">
+          <p className="text-sm font-bold text-rose-900">需人工复核，请检查个案方案后发送</p>
+          <p className="mt-1 text-xs leading-relaxed text-rose-800">
+            系统已阻止这份入营文件自动发送。请确认安全边界、产品排班与目标设定无误（必要时直接在下方编辑），再点击「确认发送」。
+          </p>
+          {manualReviewReasons.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-xs font-medium text-rose-800">
+              {manualReviewReasons.map((reason) => (
+                <li key={reason}>· {reason}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
         <div>
           <div className="text-sm text-slate-500">{document.document_type}</div>

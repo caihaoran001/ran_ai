@@ -4,7 +4,20 @@ import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent } fr
 import Link from "next/link";
 import { api, UserDocument, DashboardCasePendingDocuments, API_BASE } from "@/lib/api";
 import { useSSE } from "@/hooks/use-sse";
-import { FileText, Search, RefreshCw, Eye, CheckCircle, ArrowRight, Clock, ShieldCheck } from "lucide-react";
+import {
+  FileText,
+  Search,
+  RefreshCw,
+  Eye,
+  ArrowRight,
+  Clock,
+  ShieldCheck,
+  ShieldAlert,
+  X,
+  User,
+  Phone,
+  FileCheck2,
+} from "lucide-react";
 
 type ReviewDocument = {
   id: number;
@@ -18,6 +31,9 @@ type ReviewDocument = {
   group_id: string;
   user_name: string;
   user_phone: string;
+  /** 内部运营状态：需人工复核的入营文件不会自动发送，必须运营检查后手动确认发送。 */
+  manual_review_required?: boolean;
+  manual_review_reasons?: string[];
 };
 
 export function DocumentSearchList() {
@@ -106,9 +122,9 @@ export function DocumentSearchList() {
   };
 
   const statusConfig: Record<string, { label: string; className: string }> = {
-    reviewing: { label: "待审核", className: "bg-amber-50 text-amber-700 border-amber-200/80" },
-    approved: { label: "已批准", className: "bg-emerald-50 text-emerald-700 border-emerald-200/80" },
-    sent: { label: "已发送", className: "bg-blue-50 text-blue-700 border-blue-200/80" },
+    reviewing: { label: "待审核", className: "bg-amber-50 text-amber-700 border-amber-200/90" },
+    approved: { label: "已批准", className: "bg-emerald-50 text-emerald-700 border-emerald-200/90" },
+    sent: { label: "已发送", className: "bg-cyan-50 text-cyan-800 border-cyan-200/90" },
     draft: { label: "草稿", className: "bg-slate-100 text-slate-600 border-slate-200" },
     archived: { label: "未发送", className: "bg-slate-100 text-slate-500 border-slate-300" },
   };
@@ -121,7 +137,6 @@ export function DocumentSearchList() {
         ? historyDocuments
         : [...pendingDocuments, ...historyDocuments];
     return documents.filter((doc) => {
-      // Search filter
       const query = searchQuery.trim().toLowerCase();
       const matchesSearch =
         !query ||
@@ -130,7 +145,6 @@ export function DocumentSearchList() {
         doc.user_phone.toLowerCase().includes(query) ||
         doc.case_no.toLowerCase().includes(query);
 
-      // Status filter
       if (!matchesSearch) return false;
       if (statusFilter === "pending") {
         return doc.status === "reviewing" || doc.status === "draft";
@@ -142,33 +156,28 @@ export function DocumentSearchList() {
     });
   }, [pendingDocuments, historyDocuments, searchQuery, statusFilter]);
 
-  const pendingCount = useMemo(() => {
-    return pendingDocuments.length;
-  }, [pendingDocuments]);
-
-  const reviewedCount = useMemo(() => {
-    return historyDocuments.length;
-  }, [historyDocuments]);
+  const pendingCount = pendingDocuments.length;
+  const reviewedCount = historyDocuments.length;
   const allCountLabel = historyLoaded ? String(pendingCount + reviewedCount) : `${pendingCount}+`;
 
   if (loadingPending) {
     return (
       <div className="space-y-6">
         <div className="panel flex animate-pulse flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="h-10 w-full rounded-lg bg-slate-100 sm:w-80" />
-          <div className="h-10 w-full rounded-lg bg-slate-100 sm:w-64" />
+          <div className="h-11 w-full rounded-xl bg-slate-100 sm:w-80" />
+          <div className="h-11 w-full rounded-xl bg-slate-100 sm:w-72" />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="panel space-y-4 p-5">
             <div className="h-6 w-32 animate-pulse rounded bg-slate-100" />
-            <div className="h-32 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
-            <div className="h-32 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
+            <div className="h-36 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
+            <div className="h-36 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
           </div>
           <div className="panel space-y-4 p-5">
             <div className="h-6 w-32 animate-pulse rounded bg-slate-100" />
-            <div className="h-32 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
-            <div className="h-32 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
+            <div className="h-36 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
+            <div className="h-36 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
           </div>
         </div>
       </div>
@@ -185,138 +194,186 @@ export function DocumentSearchList() {
 
   return (
     <div className="space-y-6">
-      <div className="panel flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative min-w-0 flex-1 sm:max-w-md">
+      {/* 搜索与筛选控制栏 */}
+      <div className="panel relative flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div className="relative min-w-0 flex-1 sm:max-w-lg">
           <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             placeholder="搜索文档名称、客户姓名、电话、服务单号..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-11 w-full rounded-lg border border-slate-200 bg-slate-50/60 pl-10 pr-4 text-sm text-slate-900 transition-colors placeholder:text-slate-500 hover:bg-slate-50 focus:border-cyan-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-100"
+            className="h-11 w-full rounded-xl border border-slate-200/90 bg-slate-50/70 pl-10 pr-9 text-sm text-slate-900 transition-all placeholder:text-slate-400 hover:bg-slate-50 focus:border-cyan-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
           />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="segmented-control grid-cols-3 text-center">
+        <div className="flex flex-wrap items-center gap-3 sm:justify-end">
+          <div className="inline-flex rounded-xl border border-slate-200/90 bg-slate-100/80 p-1 shadow-inner">
             <button
               onClick={() => setStatusFilter("all")}
-              className={`min-h-10 rounded-md px-2 py-2 text-xs font-bold transition-colors sm:px-4 ${
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all ${
                 statusFilter === "all"
-                  ? "bg-white text-slate-950 shadow-sm"
-                  : "text-slate-700 hover:text-slate-950"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              全部 ({allCountLabel})
+              <span>全部</span>
+              <span
+                className={`rounded-full px-2 py-0.5 font-mono text-[11px] tabular ${
+                  statusFilter === "all" ? "bg-slate-100 text-slate-800" : "bg-slate-200/70 text-slate-600"
+                }`}
+              >
+                {allCountLabel}
+              </span>
             </button>
             <button
               onClick={() => setStatusFilter("pending")}
-              className={`min-h-10 rounded-md px-2 py-2 text-xs font-bold transition-colors sm:px-4 ${
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all ${
                 statusFilter === "pending"
-                  ? "bg-white text-amber-800 shadow-sm"
-                  : "text-slate-700 hover:text-amber-800"
+                  ? "bg-white text-amber-900 shadow-sm"
+                  : "text-slate-600 hover:text-amber-900"
               }`}
             >
-              待审核 ({pendingCount})
+              <span>待审核</span>
+              <span
+                className={`rounded-full px-2 py-0.5 font-mono text-[11px] tabular ${
+                  statusFilter === "pending" ? "bg-amber-100 text-amber-800" : "bg-amber-100/60 text-amber-700"
+                }`}
+              >
+                {pendingCount}
+              </span>
             </button>
             <button
               onClick={() => setStatusFilter("reviewed")}
-              className={`min-h-10 rounded-md px-2 py-2 text-xs font-bold transition-colors sm:px-4 ${
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all ${
                 statusFilter === "reviewed"
-                  ? "bg-white text-emerald-800 shadow-sm"
-                  : "text-slate-700 hover:text-emerald-800"
+                  ? "bg-white text-emerald-900 shadow-sm"
+                  : "text-slate-600 hover:text-emerald-900"
               }`}
             >
-              已审核 ({historyLoaded ? reviewedCount : "加载"})
+              <span>已审核</span>
+              <span
+                className={`rounded-full px-2 py-0.5 font-mono text-[11px] tabular ${
+                  statusFilter === "reviewed" ? "bg-emerald-100 text-emerald-800" : "bg-emerald-100/60 text-emerald-700"
+                }`}
+              >
+                {historyLoaded ? reviewedCount : "..."}
+              </span>
             </button>
           </div>
 
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="admin-button-secondary px-3 text-cyan-800"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-xs transition-all hover:border-cyan-300 hover:bg-cyan-50/50 hover:text-cyan-800 active:scale-95 disabled:opacity-50"
             title="刷新文档"
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin text-cyan-700" : ""}`} />
           </button>
         </div>
       </div>
 
       {visibleDocuments.length === 0 && statusFilter === "pending" ? (
         <div className="empty-state sm:p-12">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
-            <FileText className="h-6 w-6 text-slate-400" />
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-xs">
+            <FileCheck2 className="h-6 w-6 text-slate-400" />
           </div>
-          <p className="text-base font-bold text-slate-800">暂无交付文件</p>
-          <p className="mx-auto mt-2 max-w-sm text-xs leading-relaxed text-slate-500">
-            用户提交入营问卷后，系统将使用大语言模型（LLM）基于专业健康评估引擎自动生成。
+          <p className="text-base font-bold text-slate-800">暂无待审核的交付文件</p>
+          <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-slate-500">
+            客户提交入营问卷后，AI 将自动评估并生成专属 28 天交付方案。
           </p>
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Column 1: Pending */}
+        <div className={statusFilter === "all" ? "grid gap-6 lg:grid-cols-2" : "w-full space-y-6"}>
+          {/* 第一列 / 单栏全宽：待审核列表 */}
           {(statusFilter === "all" || statusFilter === "pending") && (
             <section className="panel flex flex-col overflow-hidden">
               <div className="panel-header-clean flex items-center justify-between">
                 <div>
-                  <h2 className="flex items-center gap-2 text-sm font-bold text-slate-800">
-                    <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+                    </span>
                     文件待审核
                   </h2>
-                  <p className="mt-1 text-xs text-slate-500">新生成、需要教练二次复核并确认发送的交付件</p>
+                  <p className="mt-0.5 text-xs text-slate-500">新生成，需要教练二次复核并确认发送的交付件</p>
                 </div>
-                <span className="status-pill border-amber-200 bg-amber-50 text-amber-700">
+                <span className="status-pill border-amber-200/90 bg-amber-50 font-mono text-amber-800">
                   {pendingDocs.length} 份
                 </span>
               </div>
-              <div className="flex flex-1 flex-col bg-slate-50/60 p-4 sm:p-5">
+
+              <div className="flex flex-1 flex-col bg-slate-50/50 p-4 sm:p-5">
                 {pendingDocs.length > 0 ? (
-                  <div className="max-h-[500px] space-y-3.5 overflow-y-auto pr-1.5">
+                  <div
+                    className={
+                      statusFilter === "all"
+                        ? "max-h-[600px] space-y-3.5 overflow-y-auto pr-1"
+                        : "max-h-[650px] grid gap-4 md:grid-cols-2 overflow-y-auto pr-1 p-0.5"
+                    }
+                  >
                     {pendingDocs.map((doc) => (
                       <DocumentCard key={doc.id} doc={doc} statusConfig={statusConfig} onDiscard={fetchPendingDocuments} />
                     ))}
                   </div>
                 ) : (
-                  <div className="empty-state flex flex-1 flex-col items-center justify-center bg-white/70">
-                    <Clock className="mb-2 h-6 w-6" />
-                    <p className="text-xs font-bold text-slate-600">暂无待审核文件</p>
+                  <div className="empty-state flex flex-1 flex-col items-center justify-center bg-white py-12">
+                    <Clock className="mb-2 h-7 w-7 text-slate-300" />
+                    <p className="text-xs font-bold text-slate-600">当前没有需要审核的文件</p>
                   </div>
                 )}
               </div>
             </section>
           )}
 
-          {/* Column 2: Reviewed */}
+          {/* 第二列 / 单栏全宽：已审核列表 */}
           {(statusFilter === "all" || statusFilter === "reviewed") && (
             <section className="panel flex flex-col overflow-hidden">
               <div className="panel-header-clean flex items-center justify-between">
                 <div>
-                  <h2 className="flex items-center gap-2 text-sm font-bold text-slate-800">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
                     已审核
                   </h2>
-                  <p className="mt-1 text-xs text-slate-500">已经教练确认发送、或审批归档的交付件</p>
+                  <p className="mt-0.5 text-xs text-slate-500">已经教练确认发送、或审批归档的交付件</p>
                 </div>
-                <span className="status-pill border-emerald-200 bg-emerald-50 text-emerald-700">
+                <span className="status-pill border-emerald-200/90 bg-emerald-50 font-mono text-emerald-800">
                   {reviewedDocs.length} 份
                 </span>
               </div>
-              <div className="flex flex-1 flex-col bg-slate-50/60 p-4 sm:p-5">
+
+              <div className="flex flex-1 flex-col bg-slate-50/50 p-4 sm:p-5">
                 {reviewedDocs.length > 0 ? (
-                  <div className="max-h-[500px] space-y-3.5 overflow-y-auto pr-1.5">
+                  <div
+                    className={
+                      statusFilter === "all"
+                        ? "max-h-[600px] space-y-3.5 overflow-y-auto pr-1"
+                        : "max-h-[650px] grid gap-4 md:grid-cols-2 overflow-y-auto pr-1 p-0.5"
+                    }
+                  >
                     {reviewedDocs.map((doc) => (
                       <DocumentCard key={doc.id} doc={doc} statusConfig={statusConfig} />
                     ))}
                   </div>
                 ) : loadingHistory ? (
-                  <div className="empty-state flex flex-1 flex-col items-center justify-center bg-white/70">
-                    <RefreshCw className="mb-2 h-6 w-6 animate-spin" />
-                    <p className="text-xs font-bold text-slate-600">正在加载已审核历史</p>
+                  <div className="empty-state flex flex-1 flex-col items-center justify-center bg-white py-12">
+                    <RefreshCw className="mb-2 h-7 w-7 animate-spin text-cyan-600" />
+                    <p className="text-xs font-bold text-slate-600">正在加载已审核历史记录...</p>
                   </div>
                 ) : (
-                  <div className="empty-state flex flex-1 flex-col items-center justify-center bg-white/70">
-                    <ShieldCheck className="mb-2 h-6 w-6" />
-                    <p className="text-xs font-bold text-slate-600">暂无已审核文件</p>
+                  <div className="empty-state flex flex-1 flex-col items-center justify-center bg-white py-12">
+                    <ShieldCheck className="mb-2 h-7 w-7 text-slate-300" />
+                    <p className="text-xs font-bold text-slate-600">暂无已审核记录</p>
                   </div>
                 )}
               </div>
@@ -342,6 +399,8 @@ function flattenPendingDocuments(items: DashboardCasePendingDocuments[]): Review
       group_id: item.case.group_name || item.case.group_id,
       user_name: item.case.user_name || "未知客户",
       user_phone: item.case.user_phone || "无手机号",
+      manual_review_required: doc.manual_review_required,
+      manual_review_reasons: doc.manual_review_reasons,
     })),
   );
 }
@@ -381,48 +440,95 @@ function DocumentCard({
   return (
     <Link
       href={`/documents/${doc.id}`}
-      className="group relative block rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-cyan-300 hover:bg-white"
+      className="group relative flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-cyan-400/80 hover:shadow-md"
     >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-1.5">
-          <div className="text-break text-sm font-bold leading-snug text-slate-900 transition-colors group-hover:text-cyan-700">
-            {doc.title}
+      <div className="space-y-3">
+        {/* 卡片头部：图标 + 标题 + 状态 Pill */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-50/80 text-cyan-700 border border-cyan-100/70 transition-colors group-hover:bg-cyan-600 group-hover:text-white group-hover:border-cyan-600">
+              <FileText className="h-4.5 w-4.5" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold leading-snug text-slate-900 transition-colors group-hover:text-cyan-800 text-break">
+                {doc.title}
+              </h3>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-slate-500">
-            <span className="font-bold text-slate-700">{doc.user_name}</span>
-            <span className="text-slate-300">·</span>
-            <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-medium text-slate-600">
-              {doc.user_phone}
+
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <span className={`rounded-md border px-2.5 py-1 text-xs font-bold ${status.className}`}>
+              {status.label}
             </span>
-            <span className="text-slate-300">·</span>
-            <span className="text-break font-mono text-xs text-slate-500">{doc.case_no}</span>
+            {doc.manual_review_required && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-rose-100 px-2 py-1 text-xs font-bold text-rose-800">
+                <ShieldAlert className="h-3.5 w-3.5" />
+                需人工复核
+              </span>
+            )}
           </div>
         </div>
-        <span
-          className={`shrink-0 rounded-md border px-2 py-1 text-xs font-bold ${status.className}`}
-        >
-          {status.label}
-        </span>
+
+        {doc.manual_review_required && (
+          <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold leading-relaxed text-rose-800">
+            已阻止自动发送，请检查个案方案后再确认发送
+            {doc.manual_review_reasons && doc.manual_review_reasons.length > 0 && (
+              <span className="mt-1 block font-medium text-rose-700">
+                触发原因：{doc.manual_review_reasons.join("；")}
+              </span>
+            )}
+          </p>
+        )}
+
+        {/* 客户与服务单号元信息 */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-slate-500">
+          <span className="inline-flex items-center gap-1 font-bold text-slate-800">
+            <User className="h-3.5 w-3.5 text-slate-400" />
+            {doc.user_name}
+          </span>
+
+          <span className="text-slate-300">·</span>
+
+          <span className="inline-flex items-center gap-1 font-mono text-slate-600">
+            <Phone className="h-3 w-3 text-slate-400" />
+            {doc.user_phone}
+          </span>
+
+          <span className="text-slate-300">·</span>
+
+          <span className="rounded-md border border-slate-200/70 bg-slate-100/80 px-2 py-0.5 font-mono text-[11px] font-medium text-slate-600">
+            {doc.case_no}
+          </span>
+        </div>
       </div>
-      
-      <div className="mt-3.5 flex flex-col gap-3 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-1 text-xs text-slate-500 transition-colors">
-          <Eye className="h-3 w-3" />
+
+      {/* 底部操作与链接 */}
+      <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+        <div className="flex items-center gap-1 text-xs font-medium text-slate-400 transition-colors group-hover:text-cyan-700">
+          <Eye className="h-3.5 w-3.5" />
           <span>查看详情</span>
         </div>
-        <div className="flex flex-wrap items-center gap-3 sm:justify-end">
+
+        <div className="flex items-center gap-2">
           {isPending && onDiscard && (
             <button
               type="button"
               onClick={handleDiscard}
               disabled={discarding}
-              className="admin-button-danger min-h-9 px-3 text-xs"
+              className="inline-flex min-h-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50/60 px-3 text-xs font-bold text-rose-700 transition-all hover:border-rose-300 hover:bg-rose-100 hover:text-rose-800 active:scale-95 disabled:opacity-50"
             >
               {discarding ? "处理中…" : "不发送"}
             </button>
           )}
-          <div className="flex min-h-9 items-center gap-0.5 text-xs font-bold text-cyan-700 transition-colors group-hover:text-cyan-600">
-            {isPending ? "编辑并审核" : "继续并审核"}
+
+          <div
+            className={`inline-flex min-h-8 items-center justify-center gap-1 rounded-lg px-3 text-xs font-bold transition-all ${
+              isPending
+                ? "bg-cyan-700 text-white shadow-xs group-hover:bg-cyan-600"
+                : "border border-slate-200 bg-slate-50 text-slate-700 group-hover:border-cyan-300 group-hover:bg-cyan-50 group-hover:text-cyan-800"
+            }`}
+          >
+            <span>{isPending ? "编辑并审核" : "继续并审核"}</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </div>
         </div>

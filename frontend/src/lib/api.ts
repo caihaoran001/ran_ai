@@ -160,6 +160,9 @@ export type DashboardPendingDocument = {
   status: string;
   created_at: string;
   updated_at: string;
+  /** 内部运营状态：需人工复核的入营文件不会自动发送，必须运营检查后手动确认发送。 */
+  manual_review_required?: boolean;
+  manual_review_reasons?: string[];
 };
 
 export type DashboardCasePendingDocuments = {
@@ -182,12 +185,22 @@ export type DocumentContentBlock = {
   rows?: DocumentTableCell[][];
 };
 
+/** 内部复核元数据：只存在于 content_json 顶层，不参与 DOCX / Markdown 正文渲染。 */
+export type DocumentInternalReview = {
+  manual_review_required?: boolean;
+  reasons?: string[];
+  safety_status?: string;
+  provisional_band?: boolean;
+  band_confidence?: string;
+};
+
 export type DocumentContentJson = {
   template_version: string;
   title: string;
   recipient?: string;
   stage?: string;
   blocks: DocumentContentBlock[];
+  internal_review?: DocumentInternalReview;
 };
 
 export type Checkin = {

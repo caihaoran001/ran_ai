@@ -250,6 +250,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                       {document.title}
                     </Link>
                     <div className="flex flex-wrap items-center gap-3">
+                      {document.content_json?.internal_review?.manual_review_required && (
+                        <span className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-rose-100 px-2 py-1 text-xs font-bold text-rose-800">
+                          需人工复核
+                        </span>
+                      )}
                       <StatusBadge status={document.status} />
                       <a
                         suppressHydrationWarning
