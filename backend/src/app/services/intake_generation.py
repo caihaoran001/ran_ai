@@ -18,6 +18,83 @@ from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.document_prompts import _intake_generation_system_prompt
 
 
+MANAGEMENT_BANDS = (
+    "A带｜修复塑形",
+    "B带｜轻盈启动",
+    "C带｜明确减脂",
+    "D带｜系统减重",
+    "增肌增能带",
+)
+
+# 内部运营标签：只允许留在 shared_analysis / profile_json 的内部字段和后台界面里。
+# 用户拿到的两份交付文件（管理带、正文、表格、打卡题面）中一个都不能出现。
+INTERNAL_REVIEW_LABELS = (
+    "需人工复核",
+    "需要人工复核",
+    "人工复核",
+    "待复核",
+    "需复核",
+    "manual_review",
+    "manual review",
+    "red风险",
+    "红色风险",
+    "风险等级",
+)
+
+
+def _contains_internal_review_label(text: str) -> bool:
+    lowered = text.lower()
+    return any(label.lower() in lowered for label in INTERNAL_REVIEW_LABELS)
+
+
+def _resolve_management_band(shared: dict[str, object], facts: dict[str, object]) -> str:
+    """把管理带收敛为业务带位；内部复核标签不得占用带位。
+
+    模型仍可能把「需人工复核」写进 weight_band（历史提示词遗留行为）。这种情况下
+    回退到 intake_facts 里按 BMI 得出的确定性初判带，而不是把内部状态透给用户。
+    「需补充身高体重后判断」是真实的数据缺失状态、不是内部标签，保持原样。
+    """
+
+    raw = str(shared.get("weight_band") or "").strip()
+    if raw and not _contains_internal_review_label(raw):
+        return raw
+    return str(facts.get("weight_loss_band") or "").strip()
+
+
+def _strip_internal_review_labels(payloads: dict[str, dict]) -> None:
+    """从用户可见文档内容里剔除内部复核标签，按整句丢弃避免留下残句。"""
+
+    for payload in payloads.values():
+        if isinstance(payload, dict):
+            _strip_internal_labels_in_place(payload)
+
+
+def _strip_internal_labels_in_place(value: object) -> None:
+    if isinstance(value, dict):
+        for key, item in list(value.items()):
+            if isinstance(item, str):
+                value[key] = _drop_internal_label_clauses(item)
+            else:
+                _strip_internal_labels_in_place(item)
+    elif isinstance(value, list):
+        for index, item in enumerate(list(value)):
+            if isinstance(item, str):
+                value[index] = _drop_internal_label_clauses(item)
+            else:
+                _strip_internal_labels_in_place(item)
+
+
+def _drop_internal_label_clauses(text: str) -> str:
+    if not text or not _contains_internal_review_label(text):
+        return text
+    kept = [
+        clause
+        for clause in re.split(r"(?<=[。；;\n])", text)
+        if clause.strip() and not _contains_internal_review_label(clause)
+    ]
+    return "".join(kept).strip()
+
+
 async def _generate_intake_analysis_package(
     *,
     session: AsyncSession,
@@ -47,6 +124,13 @@ async def _generate_intake_analysis_package(
         payload = payload["intake_analysis_package"]
     shared = payload.get("shared_analysis") if isinstance(payload.get("shared_analysis"), dict) else {}
     document_root = payload.get("documents") if isinstance(payload.get("documents"), dict) else payload
+    # 管理带改由 LLM 综合判断（BMI 值降为兜底初判），但带位只能是业务带位：
+    # 「需人工复核」是独立的内部安全状态，不占管理带；模型写成带位时回退到确定性初判。
+    # 解析必须发生在文档归一化之前 → profile 与两份文档三处仍以单一来源对齐、天然一致。
+    resolved_band = _resolve_management_band(shared, intake_facts)
+    if resolved_band:
+        shared["weight_band"] = resolved_band
+        intake_facts["weight_loss_band"] = resolved_band
     document_payloads = _normalize_combined_document_payload(
         document_root,
         user_name,
@@ -54,12 +138,11 @@ async def _generate_intake_analysis_package(
     )
     if not document_payloads:
         raise RuntimeError("intake analysis package generated empty document content")
-    # 减重带改由 LLM 综合判断：用 package 里 LLM 判的带回填 intake_facts（BMI 值降为兜底初判）。
-    # 后续强制同步逻辑保持不变 → profile 与两份文档三处仍以单一来源对齐、天然一致。
-    _llm_band = str(shared.get("weight_band") or "").strip()
-    if _llm_band:
-        intake_facts["weight_loss_band"] = _llm_band
     _apply_intake_facts_to_document_payloads(document_payloads, intake_facts)
+    # 人工复核是内部运营状态，不是管理带：即使模型仍把内部标签写进正文，也要在落库前清出用户可见内容。
+    _strip_internal_review_labels(document_payloads)
+    # 五项打卡在这里收敛成严格 5 项结构化数组，之后画像、执行文档和 H5 问卷都读同一份结构。
+    _normalize_daily_checkin_in_payloads(document_payloads, intake_facts)
     profile_json = _normalize_profile_from_package(payload, document_payloads, intake_facts)
     summary = str(profile_json.get("summary") or _profile_summary_from_documents(document_payloads) or "")[:2000]
     if not summary:
@@ -75,13 +158,20 @@ async def _generate_intake_analysis_package(
 def _intake_package_schema() -> dict[str, object]:
     return {
         "shared_analysis": {
-            "safety_status": "只能取 standard / cautious / manual_review",
-            "manual_review_required": "布尔值；孕哺、未成年人、明显疾病/用药/持续不适、非主动消瘦或资料冲突时为 true",
-            "weight_band": "综合判断后的最终管理带：A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 增肌增能带 / 需人工复核",
+            "safety_status": "内部字段，只能取 standard / cautious / manual_review",
+            "manual_review_required": "内部字段（布尔值）；孕哺、未成年人、明显疾病/用药/持续不适、非主动消瘦或资料冲突时为 true。"
+            "它不是管理带，为 true 时 weight_band 仍要给正常业务带位",
+            "manual_review_reasons": ["内部字段；需要人工复核的1-3条原因，只给运营看，禁止写进两份交付文件"],
+            "weight_band": "综合判断后的最终业务管理带，只能取：A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 增肌增能带。"
+            "禁止写「需人工复核」等内部标签",
+            "band_confidence": "内部字段，high / medium / low；资料缺失或安全闸门触发时写 low",
+            "provisional_band": "内部字段（布尔值）；带位为待人工确认的暂定结论时为 true",
             "band_basis": ["支持管理带的2-3条问卷事实或确定性指标"],
             "body_trend": "仅依据入营问卷反映的近3个月趋势：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
             "body_trend_summary": "一句话解释近3个月趋势；不得写入营后的变化",
-            "body_trend_evidence": ["支持趋势结论的2-3条问卷判断依据；信息不足时可为空"],
+            "body_trend_direct_evidence": "1条能证明变化方向的直接趋势事实，优先来自问卷「最近3个月体重变化」。"
+            "当前BMI/体重/腰围是单点状态，不能放在这里；问卷没有前后对比信息时写明未提供",
+            "body_trend_support_signals": ["1-2条当前状态支持信号：腰腹体感、睡眠、精力、食欲边界、晚间失控、活动量等"],
             "body_trend_confidence": "high / medium / low",
             "core_problem": "核心问题，只基于问卷事实",
             "base_goal": "基础目标；用户没有明确数字时不得编造斤数",
@@ -142,10 +232,18 @@ def _normalize_profile_from_package(
             or "需补充身高体重后判断"
         )
         profile["body_trend"] = str(shared.get("body_trend") or "信息不足")
-        profile["body_trend_evidence"] = _clean_list(shared.get("body_trend_evidence"))
+        direct_evidence, support_signals = _trend_evidence_parts(shared)
+        profile["body_trend_direct_evidence"] = direct_evidence
+        profile["body_trend_support_signals"] = support_signals
+        # 兼容字段：历史消费方（后台画像展示、阶段报告上下文）仍读这个合并列表。
+        profile["body_trend_evidence"] = [item for item in [direct_evidence, *support_signals] if item]
+        # 内部运营字段：只给后台和人工复核看，不进入用户交付文件正文。
         profile["manual_review_required"] = _boolean_value(
             shared.get("manual_review_required")
         )
+        profile["manual_review_reasons"] = _clean_list(shared.get("manual_review_reasons"))
+        profile["band_confidence"] = str(shared.get("band_confidence") or "").strip()
+        profile["provisional_band"] = _boolean_value(shared.get("provisional_band"))
     profile.setdefault("risks", "暂无明确风险")
     profile["need_analysis"] = _normalize_need_analysis(profile.get("need_analysis"), intake_facts, shared)
     profile.setdefault("notes", "建议围绕问卷中明确的执行卡点进行轻量陪跑，避免一次性增加太多动作。")
@@ -216,6 +314,24 @@ def _normalize_need_analysis(value: object, facts: dict[str, object], shared: di
     }
 
 
+def _trend_evidence_parts(shared: dict[str, object]) -> tuple[str, list[str]]:
+    """拆出「1条直接趋势证据」与「1-2条当前状态支持信号」。
+
+    直接趋势证据要能证明变化方向（优先来自近3个月体重变化）；当前 BMI/腰围这类单点
+    状态只能作为支持信号。历史输出只有合并的 body_trend_evidence，此时把第一条当作
+    趋势证据、其余当作支持信号，保持旧文档可读。
+    """
+
+    direct = str(shared.get("body_trend_direct_evidence") or "").strip()
+    supports = _clean_list(shared.get("body_trend_support_signals"))[:2]
+    if direct or supports:
+        return direct, supports
+    legacy = _clean_list(shared.get("body_trend_evidence"))
+    if not legacy:
+        return "", []
+    return legacy[0], legacy[1:3]
+
+
 def _split_need_text(value: object) -> list[str]:
     text = str(value or "").strip()
     if not text or text in {"未提供", "暂无数据"}:
@@ -262,28 +378,277 @@ def personalized_checkin_fields_from_document_payloads(document_payloads: dict[s
 
 
 def _personalized_checkin_fields_from_documents(document_payloads: dict[str, dict]) -> list[dict[str, object]]:
+    """把执行建议书的五项打卡转成问卷字段。
+
+    读取路径：不套用生成期的文风规则、也不补兜底题，拿不到完整 5 项就返回空列表，
+    让上层继续回落画像字段或默认清单——这样历史文档和历史打卡展示保持原样。
+    """
+
     execution = document_payloads.get(DocumentType.DAY28_EXECUTION_STANDARD.value, {})
     if not isinstance(execution, dict):
         return []
-    daily_items = _parse_daily_checkin_items(_daily_checkin_value_from_execution(execution))
-    if not daily_items:
-        return []
+    daily_items = normalize_daily_checkin_items(
+        _daily_checkin_value_from_execution(execution),
+        strict_style=False,
+        allow_fallback=False,
+    )
     fields = []
-    for index, item in enumerate(daily_items[:5], start=1):
-        field_type = "RADIO" if "是否" in item else "SIMPLE"
+    for index, item in enumerate(daily_items, start=1):
+        answer_type = str(item.get("answer_type") or "text")
+        title = str(item.get("title") or "")
         fields.append(
             {
                 "id": f"personalized_checkin_{index}",
                 "key": f"personalized_checkin_{index}",
-                "type": field_type,
-                "title": item,
-                "label": item,
+                "type": checkin_field_type_for(answer_type),
+                "title": title,
+                "label": title,
                 "subtitle": "",
                 "required": True,
-                "options": ["是", "否"] if field_type == "RADIO" else [],
+                "options": checkin_options_for(answer_type),
+                "answer_type": answer_type,
+                "category": str(item.get("category") or ""),
             }
         )
     return fields
+
+
+DAILY_CHECKIN_SIZE = 5
+CHECKIN_ANSWER_TYPES = ("yes_no", "score_1_5", "number", "text")
+CHECKIN_CATEGORIES = ("product", "diet", "activity", "sleep", "state")
+CHECKIN_YES_NO_OPTIONS = ["是", "否"]
+CHECKIN_SCORE_OPTIONS = ["1", "2", "3", "4", "5"]
+MAX_CHECKIN_TITLE_CHARS = 80
+
+# 「问题的形状」标记：用来判断一条题面是不是真的能被回答，而不是栏目标题或说明文字。
+# 这不是业务分类，只是把模型输出约束成可转成问卷字段的结构；类别一律由 category 字段承载。
+_JUDGEMENT_MARKERS = ("是否", "有无", "有没有")
+_SCORE_MARKERS = ("评分", "打分")
+_REQUEST_MARKERS = ("请", "多少", "几点", "几次", "几分")
+# 一条题面里出现两个及以上回答意图就是复合问题，必须拆开或只留优先级更高的那个。
+_SECOND_INTENT_MARKERS = ("请记录", "请填写", "并填写", "并记录", "同时记录", "同时填写", "并写下")
+# 并列连词把两个独立动作串成一题（如「20点前完成并且主食≤1拳」同时问时间和饮食结构），
+# 必须拆开或只留优先级更高的一个。「或」是同一动作的多种达标方式，不算复合。
+_COMPOSITE_CONJUNCTIONS = ("并且", "同时", "以及", "，并", ",并", "并且要", "而且")
+_RELATIVE_TIME_WORDS = ("今天", "今日", "今早", "今晚", "昨天", "昨日", "昨晚", "当天", "本日")
+
+
+def _normalize_daily_checkin_in_payloads(
+    payloads: dict[str, dict],
+    facts: dict[str, object],
+) -> None:
+    execution = payloads.get(DocumentType.DAY28_EXECUTION_STANDARD.value)
+    if not isinstance(execution, dict):
+        return
+    execution["daily_checkin"] = normalize_daily_checkin_items(
+        execution.get("daily_checkin"),
+        facts=facts,
+    )
+
+
+def normalize_daily_checkin_items(
+    value: object,
+    *,
+    facts: dict[str, object] | None = None,
+    strict_style: bool = True,
+    allow_fallback: bool = True,
+) -> list[dict[str, object]]:
+    """把 daily_checkin 收敛成正好 5 项、order 1-5 的结构化数组。
+
+    接受三种输入：新的结构化数组、历史的字符串列表、历史的整段文本。校验不合格的项
+    （栏目标题、复合问题、答题类型与题面不匹配）被丢弃，而不是直接截前5条；
+    数量不足时用确定性兜底题补齐，保证画像、执行文档和 H5 问卷永远拿到同一份 5 项。
+
+    生成链路用默认参数（strict_style + 兜底补齐）。读取历史文档时传
+    strict_style=False, allow_fallback=False：历史题面本来就带「今日/昨晚」等相对时间词，
+    不能因为新的文风规则把已发出去的打卡清单判成无效，也不能悄悄换成兜底题。
+    """
+
+    accepted: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for candidate in _daily_checkin_candidates(value):
+        item = _validated_checkin_item(candidate, strict_style=strict_style)
+        if item is None:
+            continue
+        key = _checkin_dedupe_key(str(item["title"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        accepted.append(item)
+        if len(accepted) >= DAILY_CHECKIN_SIZE:
+            break
+
+    if allow_fallback and len(accepted) < DAILY_CHECKIN_SIZE:
+        for fallback in _fallback_checkin_items(facts or {}):
+            key = _checkin_dedupe_key(str(fallback["title"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            accepted.append(fallback)
+            if len(accepted) >= DAILY_CHECKIN_SIZE:
+                break
+
+    if allow_fallback and len(accepted) < DAILY_CHECKIN_SIZE:
+        # 兜底题池就是5项，走到这里说明兜底配置被改坏了，宁可让上层报空也不发半套清单。
+        return []
+    for order, item in enumerate(accepted[:DAILY_CHECKIN_SIZE], start=1):
+        item["order"] = order
+    return accepted[:DAILY_CHECKIN_SIZE]
+
+
+def _daily_checkin_candidates(value: object) -> list[object]:
+    """结构化数组直接用；历史字符串格式退回按行/序号拆分。"""
+
+    if isinstance(value, list) and any(isinstance(item, dict) for item in value):
+        ordered = [item for item in value if isinstance(item, dict)]
+        ordered.sort(key=lambda item: _checkin_order_value(item.get("order")))
+        return list(ordered)
+    return list(_parse_daily_checkin_items(value))
+
+
+def _checkin_order_value(value: object) -> float:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _validated_checkin_item(candidate: object, *, strict_style: bool = True) -> dict[str, object] | None:
+    if isinstance(candidate, dict):
+        title = _clean_checkin_item_text(
+            candidate.get("title") or candidate.get("label") or candidate.get("text")
+        )
+        answer_type = str(candidate.get("answer_type") or "").strip()
+        category = str(candidate.get("category") or "").strip()
+    else:
+        title = _clean_checkin_item_text(candidate)
+        answer_type = ""
+        category = ""
+
+    if not _is_valid_checkin_title(title, strict_style=strict_style):
+        return None
+    if answer_type not in CHECKIN_ANSWER_TYPES:
+        answer_type = _infer_checkin_answer_type(title)
+    if not _answer_type_matches_title(answer_type, title):
+        return None
+    return {
+        "order": 0,
+        "category": category if category in CHECKIN_CATEGORIES else _infer_checkin_category(answer_type),
+        "title": title,
+        "answer_type": answer_type,
+        "options": checkin_options_for(answer_type),
+    }
+
+
+def _is_valid_checkin_title(title: str, *, strict_style: bool = True) -> bool:
+    if not title or len(title) > MAX_CHECKIN_TITLE_CHARS:
+        return False
+    if strict_style and any(word in title for word in _RELATIVE_TIME_WORDS):
+        return False
+    # 分号说明这一项塞了两个独立句子，拆不开就丢弃。
+    if "；" in title or ";" in title:
+        return False
+    if any(conjunction in title for conjunction in _COMPOSITE_CONJUNCTIONS):
+        return False
+    intents = sum(
+        [
+            any(marker in title for marker in _JUDGEMENT_MARKERS),
+            any(marker in title for marker in _SCORE_MARKERS),
+            any(marker in title for marker in _SECOND_INTENT_MARKERS),
+        ]
+    )
+    return intents <= 1
+
+
+def _answer_type_matches_title(answer_type: str, title: str) -> bool:
+    """题面形状必须和答题类型对得上，否则转成问卷字段就会答非所问。
+
+    这同时挡掉「每日固定打卡」「5项打卡」这类栏目标题——它们没有任何可回答的形状。
+    """
+
+    if answer_type == "yes_no":
+        return any(marker in title for marker in _JUDGEMENT_MARKERS)
+    if answer_type == "score_1_5":
+        return any(marker in title for marker in _SCORE_MARKERS)
+    if answer_type == "number":
+        return "（" in title or "(" in title or any(marker in title for marker in _REQUEST_MARKERS)
+    return _looks_like_question(title)
+
+
+def _looks_like_question(title: str) -> bool:
+    if title.endswith(("？", "?")):
+        return True
+    if "（" in title or "(" in title:
+        return True
+    return any(
+        marker in title
+        for marker in (*_JUDGEMENT_MARKERS, *_SCORE_MARKERS, *_REQUEST_MARKERS)
+    )
+
+
+def infer_checkin_answer_type(title: str) -> str:
+    """按题面形状推断答题类型；只用于没有结构化定义的人工改写清单。"""
+
+    return _infer_checkin_answer_type(title)
+
+
+def _infer_checkin_answer_type(title: str) -> str:
+    if any(marker in title for marker in _JUDGEMENT_MARKERS):
+        return "yes_no"
+    if any(marker in title for marker in _SCORE_MARKERS):
+        return "score_1_5"
+    if "（" in title or "(" in title:
+        return "number"
+    return "text"
+
+
+def _infer_checkin_category(answer_type: str) -> str:
+    """类别只由模型的 category 字段承载，不从题面或答题类型倒猜（猜出来一定是错的）。
+
+    历史字符串格式没有这个字段，留空表示未知；消费方目前只用 category 做展示分组。
+    """
+
+    return ""
+
+
+def checkin_options_for(answer_type: str) -> list[str]:
+    if answer_type == "yes_no":
+        return list(CHECKIN_YES_NO_OPTIONS)
+    if answer_type == "score_1_5":
+        return list(CHECKIN_SCORE_OPTIONS)
+    return []
+
+
+def checkin_field_type_for(answer_type: str) -> str:
+    return "RADIO" if answer_type in {"yes_no", "score_1_5"} else "SIMPLE"
+
+
+def _checkin_dedupe_key(title: str) -> str:
+    return re.sub(r"[\s，,。！？!?；;：:（）()]+", "", title).casefold()
+
+
+def _fallback_checkin_items(facts: dict[str, object]) -> list[dict[str, object]]:
+    """确定性兜底：沿用默认五项个性化打卡（含按体重换算的饮水量），并去掉相对时间词。"""
+
+    items: list[dict[str, object]] = []
+    for field in _fallback_personalized_checkin_fields(facts):
+        title = _clean_checkin_item_text(field.get("title") or field.get("label"))
+        for word in _RELATIVE_TIME_WORDS:
+            title = title.replace(word, "")
+        title = title.strip(" ，,。")
+        if not title:
+            continue
+        answer_type = "yes_no" if any(marker in title for marker in _JUDGEMENT_MARKERS) else "number"
+        items.append(
+            {
+                "order": 0,
+                "category": _infer_checkin_category(answer_type),
+                "title": title,
+                "answer_type": answer_type,
+                "options": checkin_options_for(answer_type),
+            }
+        )
+    return items
 
 
 def _daily_checkin_value_from_execution(execution: dict[str, object]) -> object:
@@ -307,7 +672,14 @@ def _daily_checkin_value_from_execution(execution: dict[str, object]) -> object:
             continue
         key = str(block.get("key") or "").strip()
         title = str(block.get("title") or "").strip()
-        value = block.get("content") or block.get("items") or block.get("value") or block.get("text")
+        # 结构化项优先：渲染后的 content 只剩「1. 题面」文本，answer_type/options 会丢。
+        value = (
+            block.get("checkin_items")
+            or block.get("content")
+            or block.get("items")
+            or block.get("value")
+            or block.get("text")
+        )
         if not value:
             continue
         if key == "daily_checkin" or "每日固定打卡" in title:
@@ -402,7 +774,9 @@ def _normalize_combined_document_payload(
     _sync_if_missing(core_conclusions, "band_explanation", _first_clean_item(shared.get("band_basis")))
     _sync_if_missing(core_conclusions, "body_trend", shared.get("body_trend"))
     _sync_if_missing(core_conclusions, "trend_explanation", shared.get("body_trend_summary"))
-    _sync_if_missing(core_conclusions, "trend_evidence", shared.get("body_trend_evidence"))
+    shared_direct, shared_supports = _trend_evidence_parts(shared)
+    _sync_if_missing(core_conclusions, "trend_direct_evidence", shared_direct)
+    _sync_if_missing(core_conclusions, "trend_support_signals", shared_supports)
     _sync_if_missing(core_conclusions, "day28_task", shared.get("day28_task"))
     _sync_if_missing(core_conclusions, "long_term_defense", shared.get("long_term_defense"))
     if core_conclusions:

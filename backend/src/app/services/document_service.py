@@ -56,6 +56,8 @@ from app.services.stage_report import (
 from app.services.document_delivery import (
     _should_auto_send,
     create_temporary_document_file,
+    document_manual_review_hold,
+    documents_manual_review_hold,
     send_case_documents,
     send_one_document,
 )
@@ -70,6 +72,8 @@ __all__ = [
     "retry_degraded_stage_report",
     "rewrite_document_file",
     "create_temporary_document_file",
+    "document_manual_review_hold",
+    "documents_manual_review_hold",
     "send_case_documents",
     "send_one_document",
     "personalized_checkin_fields_from_document_payloads",
@@ -139,6 +143,7 @@ async def generate_profile_and_documents(
         profile_json=package["profile_json"],
         intake_facts=intake_facts,
     )
+    internal_review = _internal_review_metadata(package["profile_json"])
     documents: list[UserDocument] = []
     for document_type, title in DOCUMENT_DEFINITIONS.items():
         fields_payload = package["document_payloads"].get(document_type.value) or {}
@@ -149,6 +154,10 @@ async def generate_profile_and_documents(
             display_name=display_name,
             fields=fields_payload,
         )
+        if internal_review:
+            # 顶层非渲染元数据：docx/Markdown 只渲染 blocks，所以运营能在后台看到复核标记，
+            # 用户拿到的文件里不会出现。绝不能写进 blocks 或 content_md。
+            content_json["internal_review"] = internal_review
         content = render_document_content(content_json)
         if not _document_content_is_sufficient(content):
             raise RuntimeError(f"{title} generated empty content")
@@ -181,7 +190,15 @@ async def generate_profile_and_documents(
     await session.refresh(profile)
     for document in documents:
         await session.refresh(document)
-    if (auto_send and not is_high_risk(service_case)) or await _should_auto_send(session, service_case):
+    # 需人工复核的入营文件一律不自动发送：显式 auto_send 参数和全局 auto_send 策略都不能绕过。
+    # 运营在后台看到标记、检查或编辑文件后，仍可走原有「确认发送」人工路径。
+    if documents_manual_review_hold(documents):
+        logger.info(
+            "Intake documents held for manual review service_case_id=%s reasons=%s",
+            service_case.id,
+            internal_review.get("reasons"),
+        )
+    elif (auto_send and not is_high_risk(service_case)) or await _should_auto_send(session, service_case):
         await send_case_documents(session, service_case.id)
     return profile, documents
 
@@ -358,6 +375,32 @@ async def rewrite_document_file(session: AsyncSession, document: UserDocument) -
     await session.commit()
     await session.refresh(document)
     return document
+
+
+def _internal_review_metadata(profile_json: object) -> dict[str, object]:
+    """把画像里的内部安全状态收成一份非渲染元数据，供后台标记与发送闸门使用。
+
+    只在真的需要人工复核时返回内容；不需要时返回空 dict，避免给每份文档都塞噪声字段。
+    """
+
+    if not isinstance(profile_json, dict):
+        return {}
+    if not profile_json.get("manual_review_required"):
+        return {}
+    reasons = profile_json.get("manual_review_reasons")
+    metadata: dict[str, object] = {
+        "manual_review_required": True,
+        "reasons": [str(item).strip() for item in reasons if str(item).strip()]
+        if isinstance(reasons, list)
+        else [],
+        "safety_status": str(profile_json.get("safety_status") or "manual_review"),
+    }
+    if profile_json.get("provisional_band"):
+        metadata["provisional_band"] = True
+    band_confidence = str(profile_json.get("band_confidence") or "").strip()
+    if band_confidence:
+        metadata["band_confidence"] = band_confidence
+    return metadata
 
 
 def _document_content_is_sufficient(content: str) -> bool:

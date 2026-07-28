@@ -234,6 +234,26 @@ async def _should_auto_send(session: AsyncSession, service_case: ServiceCase) ->
     return await get_content_delivery_mode(session) == "auto_send" and not is_high_risk(service_case)
 
 
+def document_manual_review_hold(document: UserDocument) -> bool:
+    """这份文档是否被内部人工复核标记扣住、禁止自动发送。
+
+    标记来源是 content_json 顶层的非渲染元数据 internal_review，和后台界面读的是同一份
+    持久化状态；用户可见的 blocks / content_md 里不含它。
+    """
+
+    content_json = document.content_json
+    if not isinstance(content_json, dict):
+        return False
+    internal_review = content_json.get("internal_review")
+    if not isinstance(internal_review, dict):
+        return False
+    return bool(internal_review.get("manual_review_required"))
+
+
+def documents_manual_review_hold(documents: list[UserDocument]) -> bool:
+    return any(document_manual_review_hold(document) for document in documents)
+
+
 async def _document_intro_already_sent(session: AsyncSession, service_case: ServiceCase) -> bool:
     message = await session.scalar(
         select(Message.id)

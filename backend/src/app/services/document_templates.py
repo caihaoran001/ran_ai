@@ -22,11 +22,14 @@ ENERGY_FIELD_SPEC = {
     },
     "one_sentence": "一句话结论",
     "core_conclusions": {
-        "management_band": "管理带，格式为「A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 需人工复核」",
+        "management_band": "业务管理带，只能取「A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 增肌增能带」之一。"
+        "禁止写「需人工复核」等内部运营标签，用户看不到内部状态",
         "band_explanation": "用一句用户能听懂的话解释为什么属于这个管理带",
         "body_trend": "入营问卷反映的近3个月身体趋势，只能取：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
         "trend_explanation": "用一句话解释近3个月趋势；信息不足时明确无法判断，不得补编长期变化",
-        "trend_evidence": ["支持趋势结论的2-3条问卷判断依据，只能来自本次入营问卷或确定性计算指标"],
+        "trend_direct_evidence": "1条能证明变化方向的直接趋势事实，优先来自问卷「最近3个月体重变化」；"
+        "当前BMI/体重/腰围属于单点状态，不能写在这里",
+        "trend_support_signals": ["1-2条当前状态支持信号，例如腰腹体感、睡眠、精力、食欲边界、活动量"],
         "day28_task": "这28天先解决什么，用一句话说清",
         "long_term_defense": "长期如何避免回到原来的上升或失控轨迹，用一句话说清",
     },
@@ -81,40 +84,44 @@ ENERGY_FIELD_SPEC = {
 
 
 EXECUTION_FIELD_SPEC = {
-    "weight_band": "当前管理带，格式为「A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 需人工复核」",
-    "body_trend": "入营问卷反映的近3个月身体趋势：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
-    "base_goal": "基础目标；用户没有明确数字目标时不得编造斤数",
-    "challenge_goal": "条件性挑战目标；不适合冲刺、风险较高或资料不足时写不设置",
-    "long_term_goal": "长期方向，包含体重之外的腰围、体态、力量、睡眠或精力目标",
-    "current_mainline": "当前唯一主线，例如保肌减脂、节律稳定、睡眠修复、饮食结构修复、系统化管理",
-    "path_goal": "更适合的12周总路径目标。只在用户明确提出数字目标且资料支持时使用数字；否则用体重趋势和非体重结果表达，不得机械套固定斤数。",
-    "day28_goal": "第一个28天目标，1-2句完整描述。必须同时包含阶段任务和观察结果；没有明确数字目标时不得编造斤数。",
-    "current_phase_goal": "当前阶段目标，用「先解决{核心问题}，不是{反面}」句式，聚焦排序而非平铺罗列，例如「先解决节律稳定，不是追求失控式掉秤」。",
-    "principle": "执行总原则，保持两段递进结构「先守{底盘动作}，再{放大动作}」，是通用指导语，不嵌入具体参数（时间点、拳数）。例如「先守底盘，再抓结果；先连续完成，再逐步加码」。",
+    "weight_band": "当前业务管理带，只能取「A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 增肌增能带」之一。"
+    "禁止写「需人工复核」等内部运营标签",
+    "current_mainline": "当前唯一主线，≤16字，例如保肌减脂、节律稳定、睡眠修复、饮食结构修复、系统化管理",
+    "day28_goal": "这28天要完成的任务，≤48字，同时包含阶段任务和要观察的结果；没有明确数字目标时不得编造斤数或厘米数。",
+    "current_phase_goal": "当前阶段目标，≤32字，用「先解决{核心问题}，不是{反面}」句式，聚焦排序而非平铺罗列，例如「先解决节律稳定，不是追求失控式掉秤」。",
+    "principle": "执行总原则，≤28字，保持两段递进结构「先守{底盘动作}，再{放大动作}」，是通用指导语，不嵌入具体参数（时间点、拳数）。例如「先守底盘，再抓结果；先连续完成，再逐步加码」。",
     "product_schedule": {
-        "morning_c": "早C个案剂量与时间；需要暂停时明确写暂停",
-        "noon_b": "午B个案剂量与时间；需要减量、前移或暂停时明确写",
-        "night_a": "晚A个案剂量与时间；需要暂停时明确写",
+        "morning_c": "早C个案剂量与时间，≤22字；需要暂停时明确写暂停",
+        "noon_b": "午B个案剂量与时间，≤22字；需要减量、前移或暂停时明确写",
+        "night_a": "晚A个案剂量与时间，≤22字；需要暂停时明确写",
     },
-    "diet_rules": ["对应用户真实生活场景的饮食规则，最多4条"],
-    "exercise_rules": ["运动频率、单次时长、强度、动作和替代方案，最多3条"],
+    "diet_rules": ["对应用户真实生活场景的饮食规则，最多3条，每条≤34字"],
+    "exercise_rules": ["运动频率、单次时长、强度、动作和替代方案，最多2条，每条≤44字"],
     "weekly_plan": [
         {"week": "第1周", "core_task": "稳住底盘", "acceptance_standard": "1个短句，例如：按个案产品排班完成；晚餐主食≤1拳；完成计划内活动。"},
         {"week": "第2周", "core_task": "提高一致性", "acceptance_standard": "1个短句，例如：连续5天不漏早餐；晚餐后走15–20分钟；应酬日不加宵夜。"},
         {"week": "第3周", "core_task": "抓结果指标", "acceptance_standard": "1个短句，例如：每周2次轻力量；记录腰围和体重。"},
         {"week": "第4周", "core_task": "稳定复现", "acceptance_standard": "1个短句，例如：把睡前收口、计划内活动和2次轻力量做满。"},
     ],
-    "daily_checkin": "每日固定打卡要求。包含5项打卡清单，且针对用户的具体痛点进行个性化定制。"
-                     "第1项固定为个案产品排班完成情况；如方案要求减量或暂停，题目必须按减量/暂停方案写，禁止继续要求三杯全部完成。"
-                     "5项中必须包含1项运动/步数完成情况（如「是否完成30分钟快走或≥7000步」）。"
-                     "至少2项打卡必须是正向动作（做到什么），不能全是限制项。"
-                     "每项必须天然适合转成问卷字段：要么是含「是否」的判断题，要么是需要用户填写数值/描述的填空题。"
-                     "情绪稳定度评分和饭后困评分是两个独立候选问题，严禁合并为1项综合观察；"
-                     "两项同时入选时各占1项，名额不足时按用户具体卡点只保留优先级更高的一项。"
-                     "不要输出硬编码的通用套话。"
-                     "禁止在每项后加括号注释（如「正向动作」「限制动作」）。",
-    "weekly_standard": "每周通过标准，1句，必须包含4要素：个案产品排班完成情况 + 关键饮食动作 + 运动/步数达标 + 至少1次体重/围度/体感记录。减量或暂停用户不得写三杯完成要求。",
-    "adjust_stop_conditions": "调整与停止条件，1-3句。必须说明什么情况减半、前移、暂停、联系班主任、及时就医。不要写成医疗方案。",
+    "daily_checkin": [
+        {
+            "order": "1-5 的整数，唯一、连续、严格递增；数组长度必须正好5项，禁止4项或6项",
+            "category": "只能取 product / diet / activity / sleep / state；第1项固定 product，5项中必须有1项 activity",
+            "title": "实际可回答的问题本身，针对这位用户的具体卡点定制。"
+            "禁止写「每日固定打卡」「5项打卡」「打卡清单」等栏目标题或说明文字——那是章节名不是问题。"
+            "不含「1.」「①」等显示序号（序号由程序按 order 渲染），不含括号注释（如「正向动作」「限制动作」），"
+            "不含「今天/今日/今早/今晚/昨天/昨日/昨晚/当天/本日」等相对时间词。"
+            "每项只能有一个回答意图：禁止「是否……并填写……」「是否……同时记录……」，"
+            "也禁止一道题同时问时间和饮食结构；情绪稳定度评分和饭后困评分是两个独立问题，严禁合并成一项综合评分。"
+            "涉及蔬菜只能写每日总量（如「蔬菜总量是否至少2拳」），禁止写「每餐蔬菜至少2拳」",
+            "answer_type": "只能取 yes_no / score_1_5 / number / text，且必须与 title 匹配："
+            "yes_no 对应「是否……」判断题；score_1_5 对应「……评分（1-5）」评分题；"
+            "number 对应必须写明单位的填数题（如「晨起体重（kg）」）；text 对应必须用户描述的情况",
+            "options": "answer_type=yes_no 固定 [\"是\",\"否\"]；score_1_5 固定 [\"1\",\"2\",\"3\",\"4\",\"5\"]；number 和 text 为空数组 []",
+        }
+    ],
+    "weekly_standard": "每周通过标准，1句 ≤96字，必须包含4要素：个案产品排班完成情况 + 关键饮食动作 + 运动/步数达标 + 至少1次体重/围度/体感记录。减量或暂停用户不得写三杯完成要求。",
+    "adjust_stop_conditions": "调整与停止条件，1句 ≤110字。必须说明什么情况减半、前移、暂停、联系班主任、及时就医。不要写成医疗方案。",
 }
 
 
@@ -302,21 +309,23 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
 
     blocks = [
         _execution_goal_summary_block(fields),
-        _text_block("current_phase_goal", "2. 当前阶段目标", fields.get("current_phase_goal")),
+        _text_block(
+            "current_phase_goal",
+            "2. 当前阶段目标",
+            _compact_field(fields.get("current_phase_goal"), max_len=32),
+        ),
         _text_block(
             "principle",
             "3. 执行总原则",
-            fields.get("principle") or "先守底盘，再抓结果；先连续完成，再逐步加码。",
+            _compact_field(fields.get("principle"), max_len=28)
+            or "先守底盘，再抓结果；先连续完成，再逐步加码。",
         ),
         _execution_product_block(fields),
-        _list_block("diet_rules", "5. 饮食规则", fields.get("diet_rules"), limit=4),
-        _list_block("exercise_rules", "6. 运动规则", fields.get("exercise_rules"), limit=3),
+        # 一页预算：饮食最多3条、运动最多2条，每条限长，避免真实模型输出把版面顶到第二页。
+        _list_block("diet_rules", "5. 饮食规则", fields.get("diet_rules"), limit=3, max_item_len=34),
+        _list_block("exercise_rules", "6. 运动规则", fields.get("exercise_rules"), limit=2, max_item_len=44),
         {"key": "weekly_plan", "title": "7. 四周执行表", "kind": "table", "rows": table_rows},
-        _text_block(
-            "daily_checkin",
-            "8. 每日固定打卡（每天只打这5项）",
-            _daily_checkin_text(fields.get("daily_checkin")),
-        ),
+        _daily_checkin_block(fields.get("daily_checkin")),
         _text_block("weekly_standard", "9. 每周通过标准", _weekly_standard_text(fields.get("weekly_standard"))),
         _text_block("adjust_stop_conditions", "10. 调整和停止条件", _adjust_stop_conditions_text(fields.get("adjust_stop_conditions"))),
     ]
@@ -380,13 +389,40 @@ def _inline_block(key: str, title: str, content: Any) -> dict[str, Any]:
     }
 
 
-def _list_block(key: str, title: str, items: Any, *, limit: int | None = None) -> dict[str, Any]:
+def _list_block(
+    key: str,
+    title: str,
+    items: Any,
+    *,
+    limit: int | None = None,
+    max_item_len: int | None = None,
+) -> dict[str, Any]:
     if not isinstance(items, list):
         items = [_text(items)] if _text(items) else []
     cleaned = [_clean_text(item) for item in items if _text(item)]
     if limit is not None:
         cleaned = cleaned[:limit]
+    if max_item_len is not None:
+        cleaned = [_compact_field(item, max_len=max_item_len) for item in cleaned]
     return {"key": key, "title": title, "kind": "list", "items": cleaned}
+
+
+def _compact_field(value: Any, *, max_len: int) -> str:
+    """按内容预算裁到限长，优先在句读边界断开，不硬切半个词。
+
+    这是版面兜底，不是主约束：提示词已经给了同一套字数上限，这里只保证真实模型
+    偶尔写长时仍然落在一页内。
+    """
+
+    text_val = _clean_text(value).replace("\n", " ")
+    if not text_val or len(text_val) <= max_len:
+        return text_val
+    head = text_val[:max_len]
+    for separator in ("；", "。", "，", "、", " "):
+        cut = head.rfind(separator)
+        if cut >= max_len // 2:
+            return head[:cut].rstrip("；。，、 ")
+    return head.rstrip("；。，、 ")
 
 
 def _non_negotiable_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -454,17 +490,25 @@ def _core_conclusions_block(fields: dict[str, Any]) -> dict[str, Any]:
     overview = _dict(fields.get("overview"))
     management_band = _text(value.get("management_band") or success_path.get("weight_band"))
     body_trend = _text(value.get("body_trend") or overview.get("recent_change")) or "信息不足"
-    evidence = value.get("trend_evidence")
-    if not isinstance(evidence, list):
-        evidence = []
-    evidence_text = "；".join(_clean_text(item) for item in evidence[:3] if _text(item))
+    # 趋势依据分两层：直接趋势证据能证明变化方向，支持信号只是当前状态，不能互相冒充。
+    direct_evidence = _clean_text(value.get("trend_direct_evidence"))
+    support_signals = value.get("trend_support_signals")
+    if not isinstance(support_signals, list):
+        support_signals = [support_signals] if _text(support_signals) else []
+    support_text = "；".join(_clean_text(item) for item in support_signals[:2] if _text(item))
+    if not direct_evidence and not support_text:
+        legacy = value.get("trend_evidence")
+        if isinstance(legacy, list) and legacy:
+            direct_evidence = _clean_text(legacy[0])
+            support_text = "；".join(_clean_text(item) for item in legacy[1:3] if _text(item))
     lines = [
         _text(fields.get("one_sentence")),
         f"管理带：{management_band}" if management_band else "",
         f"管理带解释：{_text(value.get('band_explanation'))}" if _text(value.get("band_explanation")) else "",
         f"近3个月身体趋势：{body_trend}",
         f"趋势解释：{_text(value.get('trend_explanation'))}" if _text(value.get("trend_explanation")) else "",
-        f"问卷判断依据：{evidence_text}" if evidence_text else "",
+        f"近3个月趋势依据：{direct_evidence}" if direct_evidence else "",
+        f"当前状态支持信号：{support_text}" if support_text else "",
         f"这28天先做什么：{_text(value.get('day28_task'))}" if _text(value.get("day28_task")) else "",
         f"长期防线：{_text(value.get('long_term_defense'))}" if _text(value.get("long_term_defense")) else "",
     ]
@@ -542,13 +586,16 @@ def _missing_information_block(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
+    """目标摘要只留执行需要的三项。
+
+    身体趋势、基础/挑战/长期目标是分析性结论，写在《个人能量重启诊断报告》里；
+    在这份一页执行纸上重复展开会直接把版面顶到第二页。
+    """
+
     lines = [
         f"当前管理带：{_text(fields.get('weight_band'))}",
-        f"近3个月身体趋势：{_text(fields.get('body_trend'))}",
-        f"基础目标：{_text(fields.get('base_goal') or fields.get('day28_goal'))}",
-        f"挑战目标：{_text(fields.get('challenge_goal'))}",
-        f"长期目标：{_text(fields.get('long_term_goal') or fields.get('path_goal'))}",
-        f"当前阶段主线：{_text(fields.get('current_mainline'))}",
+        f"28天任务：{_compact_field(fields.get('day28_goal') or fields.get('base_goal'), max_len=48)}",
+        f"当前主线：{_compact_field(fields.get('current_mainline'), max_len=16)}",
     ]
     return _text_block(
         "goal_summary",
@@ -558,17 +605,28 @@ def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _execution_product_block(fields: dict[str, Any]) -> dict[str, Any]:
+    """产品排班压成一行：三段式内容短，占三行纯属浪费一页执行纸的版面。"""
+
     value = _dict(fields.get("product_schedule"))
-    lines = [
-        f"早C：{_text(value.get('morning_c'))}" if _text(value.get("morning_c")) else "",
-        f"午B：{_text(value.get('noon_b'))}" if _text(value.get("noon_b")) else "",
-        f"晚A：{_text(value.get('night_a'))}" if _text(value.get("night_a")) else "",
+    parts = [
+        _product_slot_text("早C", value.get("morning_c")),
+        _product_slot_text("午B", value.get("noon_b")),
+        _product_slot_text("晚A", value.get("night_a")),
     ]
     return _text_block(
         "product_schedule",
         "4. 产品排班",
-        "\n".join(line for line in lines if line),
+        " ｜ ".join(part for part in parts if part),
     )
+
+
+def _product_slot_text(label: str, value: Any) -> str:
+    """渲染「早C 半份随早餐」这类一段排班；模型自带前缀时不重复写标签。"""
+
+    text_val = _clean_prefix(_clean_text(value), label)
+    if not text_val:
+        return ""
+    return f"{label} {_compact_field(text_val, max_len=22)}"
 
 
 def _first_week_signals_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -783,7 +841,7 @@ def _execution_sentence(value: Any, *, max_parts: int, max_len: int) -> str:
 
 
 def _weekly_standard_text(value: Any) -> str:
-    text_val = _execution_sentence(value, max_parts=3, max_len=98)
+    text_val = _execution_sentence(value, max_parts=3, max_len=96)
     if not text_val:
         return "每周至少5天完成个案产品排班和关键饮食动作；运动或步数达到计划；至少记录1次体重、围度或体感。"
     if "体重" not in text_val and "围度" not in text_val and "体感" not in text_val:
@@ -792,7 +850,7 @@ def _weekly_standard_text(value: Any) -> str:
 
 
 def _adjust_stop_conditions_text(value: Any) -> str:
-    text_val = _execution_sentence(value, max_parts=3, max_len=120)
+    text_val = _execution_sentence(value, max_parts=3, max_len=110)
     if text_val:
         return text_val
     return "心慌、睡眠明显变差或胃部不适时，早C/午B先减半并前移；持续不适、胸痛、呼吸困难、明显心悸或异常疼痛时，暂停执行并及时就医。"
@@ -827,6 +885,35 @@ def _default_week_standard(week: str) -> str:
     return defaults.get(week, "")
 
 
+def _daily_checkin_block(value: Any) -> dict[str, Any]:
+    """每日打卡块：content 供 DOCX/Markdown 渲染，checkin_items 保留结构化定义。
+
+    结构化项不参与正文渲染（渲染只读 content），但让 H5 每日行动问卷、五项追问清单和
+    画像字段都能拿到同一份 answer_type/options，不必再靠题面关键词猜答题类型。
+    """
+
+    block = _text_block(
+        "daily_checkin",
+        "8. 每日固定打卡（每天只打这5项）",
+        _daily_checkin_text(value),
+    )
+    if isinstance(value, list):
+        items = [
+            {
+                "order": index,
+                "category": str(item.get("category") or ""),
+                "title": _clean_text(item.get("title") or item.get("label")),
+                "answer_type": str(item.get("answer_type") or ""),
+                "options": [str(option) for option in item.get("options") or []],
+            }
+            for index, item in enumerate(value, start=1)
+            if isinstance(item, dict) and _clean_text(item.get("title") or item.get("label"))
+        ]
+        if items:
+            block["checkin_items"] = items
+    return block
+
+
 def _daily_checkin_text(value: Any) -> str:
     if not value:
         return (
@@ -840,7 +927,9 @@ def _daily_checkin_text(value: Any) -> str:
     if isinstance(value, list):
         cleaned_items = []
         for idx, item in enumerate(value, 1):
-            cleaned = _clean_text(item)
+            # 结构化项只取题面；显示序号由这里按顺序渲染，题面本身不带序号。
+            raw = item.get("title") or item.get("label") if isinstance(item, dict) else item
+            cleaned = _clean_text(raw)
             if cleaned:
                 cleaned_items.append(f"{idx}. {cleaned}")
         if cleaned_items:

@@ -150,6 +150,9 @@ class DashboardPendingDocument(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    # 内部运营状态：需人工复核的入营文件不会自动发送，后台必须醒目标记。
+    manual_review_required: bool = False
+    manual_review_reasons: list[str] = Field(default_factory=list)
 
 
 class DashboardCasePendingDocuments(BaseModel):

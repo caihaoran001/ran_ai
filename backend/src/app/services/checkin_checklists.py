@@ -26,11 +26,11 @@ TRACKING_PRODUCT_SCHEDULE = "product_schedule"
 class DailyChecklist:
     source_type: str
     source_ref: str
-    items: list[dict[str, str]]
+    items: list[dict[str, Any]]
     version_no: int | None = None
     source_document_id: int | None = None
 
-    def resolved_items(self) -> list[dict[str, str]]:
+    def resolved_items(self) -> list[dict[str, Any]]:
         return [
             {
                 "id": f"{self.source_ref}:{index}",
@@ -40,6 +40,10 @@ class DailyChecklist:
                     if item.get("tracking_kind")
                     else {}
                 ),
+                # 答题类型与选项来自执行建议书的结构化打卡定义；人工改写的清单只有题面，
+                # 这两个键缺失，由消费方按题面形状兜底推断。
+                **({"answer_type": item["answer_type"]} if item.get("answer_type") else {}),
+                **({"options": item["options"]} if item.get("options") else {}),
             }
             for index, item in enumerate(self.items, start=1)
         ]
@@ -66,41 +70,61 @@ def normalize_manual_checklist_items(values: Iterable[object]) -> list[dict[str,
     return [{"text": question} for question in questions]
 
 
-def _snapshot_items(raw: object) -> list[dict[str, str]]:
+def _snapshot_items(raw: object) -> list[dict[str, Any]]:
     if not isinstance(raw, list) or len(raw) != CHECKLIST_SIZE:
         return []
-    items: list[dict[str, str]] = []
+    items: list[dict[str, Any]] = []
     for value in raw:
+        answer_type = ""
+        options: list[str] = []
         if isinstance(value, dict):
             text = _clean_question(value.get("text"))
             tracking_kind = _clean_question(value.get("tracking_kind"))
+            answer_type = _clean_question(value.get("answer_type"))
+            raw_options = value.get("options")
+            if isinstance(raw_options, list):
+                options = [str(option) for option in raw_options if str(option).strip()]
         else:
             text = _clean_question(value)
             tracking_kind = ""
         if not text:
             return []
-        item = {"text": text}
+        item: dict[str, Any] = {"text": text}
         if tracking_kind:
             item["tracking_kind"] = tracking_kind
+        if answer_type:
+            item["answer_type"] = answer_type
+        if options:
+            item["options"] = options
         items.append(item)
     return items
 
 
 def _items_from_fields(
     fields: object, *, track_first_product_schedule: bool
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     if not isinstance(fields, list) or len(fields) < CHECKLIST_SIZE:
         return []
+    selected = list(fields[:CHECKLIST_SIZE])
     questions = [
         _clean_question(field.get("title") or field.get("label"))
         if isinstance(field, dict)
         else _clean_question(field)
-        for field in fields[:CHECKLIST_SIZE]
+        for field in selected
     ]
     try:
         items = normalize_manual_checklist_items(questions)
     except ValueError:
         return []
+    for item, field in zip(items, selected):
+        if not isinstance(field, dict):
+            continue
+        answer_type = str(field.get("answer_type") or "").strip()
+        options = field.get("options")
+        if answer_type:
+            item["answer_type"] = answer_type
+        if isinstance(options, list) and options:
+            item["options"] = [str(option) for option in options]
     if track_first_product_schedule:
         items[0]["tracking_kind"] = TRACKING_PRODUCT_SCHEDULE
     return items

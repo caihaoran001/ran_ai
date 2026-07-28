@@ -24,6 +24,11 @@ from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.services.checkin_checklists import get_effective_daily_checklist
+from app.services.intake_generation import (
+    checkin_field_type_for,
+    checkin_options_for,
+    infer_checkin_answer_type as _infer_checkin_answer_type,
+)
 from app.services.checkin_service import normalize_checkin_json
 from app.schemas.questionnaire import (
     QuestionnairePublic,
@@ -471,18 +476,27 @@ async def _personalized_checkin_fields(session: AsyncSession, service_case: Serv
         service_case_id=service_case.id,
         sent_documents_only=False,
     )
-    return [
-        {
-            "id": f"personalized_checkin_{index}",
-            "key": f"personalized_checkin_{index}",
-            "type": "RADIO" if "是否" in item["label"] else "SIMPLE",
-            "title": item["label"],
-            "label": item["label"],
-            "required": True,
-            "options": ["是", "否"] if "是否" in item["label"] else [],
-        }
-        for index, item in enumerate(checklist.resolved_items(), start=1)
-    ]
+    fields: list[dict[str, Any]] = []
+    for index, item in enumerate(checklist.resolved_items(), start=1):
+        label = item["label"]
+        # 答题类型优先用执行建议书里的结构化定义；人工改写的清单只有题面，
+        # 才按题面形状推断，保证画像、执行文档和这里三处字段完全一致。
+        answer_type = str(item.get("answer_type") or "") or _infer_checkin_answer_type(label)
+        options = item.get("options")
+        if not (isinstance(options, list) and options):
+            options = checkin_options_for(answer_type)
+        fields.append(
+            {
+                "id": f"personalized_checkin_{index}",
+                "key": f"personalized_checkin_{index}",
+                "type": checkin_field_type_for(answer_type),
+                "title": label,
+                "label": label,
+                "required": True,
+                "options": [str(option) for option in options],
+            }
+        )
+    return fields
 
 
 async def _send_intake_submit_reply(service_case_id: int) -> None:

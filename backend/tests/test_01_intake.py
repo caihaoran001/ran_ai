@@ -9,14 +9,22 @@ from sqlalchemy import select
 
 from app.models.outcome import OutcomeEvent, OutcomeStageState
 from app.models.service_case import ServiceCase, ServiceCaseStatus
-from app.models.user_document import DocumentType, UserDocument
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.document_service import (
     _apply_intake_facts_to_document_payloads,
     _intake_generation_system_prompt,
 )
 from app.services.document_delivery import _document_filename
-from app.services.document_templates import _daily_checkin_text, combined_prompt_schema
+from app.services.document_templates import (
+    _daily_checkin_text,
+    build_document_content_json,
+    combined_prompt_schema,
+)
+from app.services.intake_generation import (
+    checkin_options_for,
+    normalize_daily_checkin_items,
+)
 from app.services.intake_facts import _weight_loss_band, build_intake_fact_summary
 from app.services.questionnaire_template import default_questionnaire_template
 
@@ -24,13 +32,39 @@ from app.services.questionnaire_template import default_questionnaire_template
 INTAKE_SYSTEM_PROMPT_PREFIX = "你是加速燃「高燃人生28天训练营」的首席能量教练"
 
 
-def _make_intake_mock_response(*, weight_band: str = "A带｜修复塑形", bmi: str = "21.2") -> str:
+def _make_intake_mock_response(
+    *,
+    weight_band: str = "A带｜修复塑形",
+    bmi: str = "21.2",
+    manual_review: bool = False,
+) -> str:
+    """构造入营 package。
+
+    manual_review=True 模拟「用药需要人工复核」样本，并故意复刻真实模型的两种越界行为：
+    把「需人工复核」写成管理带、把内部标签漏进用户可见正文。用来验证确定性兜底。
+    """
+
+    safety_fields = (
+        {
+            "safety_status": "manual_review",
+            "manual_review_required": True,
+            "manual_review_reasons": ["问卷填写当前长期用药", "关键指标需医生确认后才能加码"],
+            "band_confidence": "low",
+            "provisional_band": True,
+            # 模型仍把内部标签当带位写 → 必须被回退成业务带位
+            "weight_band": "需人工复核",
+        }
+        if manual_review
+        else {
+            "safety_status": "standard",
+            "manual_review_required": False,
+            "weight_band": weight_band,
+        }
+    )
     return json.dumps({
         "intake_analysis_package": {
             "shared_analysis": {
-                "safety_status": "standard",
-                "manual_review_required": False,
-                "weight_band": weight_band,
+                **safety_fields,
                 "band_basis": [
                     "BMI 21.2 → 当前处于健康体重范围",
                     "最近3个月体重基本稳定 → 暂无继续上升信号",
@@ -156,7 +190,12 @@ def _make_intake_mock_response(*, weight_band: str = "A带｜修复塑形", bmi:
                         "summary": "早C随早餐，午B随午餐，晚A随晚餐",
                     },
                     "product_meaning": "饮食和运动本身有效；产品只用于帮助执行个案节律，不是减重捷径。",
-                    "special_reminder": "您的体重已经在健康范围，不要追求更瘦。这28天的目标是让身体在高压白班下也能稳定运转。",
+                    "special_reminder": (
+                        # 模型把内部复核标签漏进用户可见正文 → 必须被整句剔除，且不留残句
+                        "本方案需人工复核后才能执行。"
+                        if manual_review
+                        else ""
+                    ) + "您的体重已经在健康范围，不要追求更瘦。这28天的目标是让身体在高压白班下也能稳定运转。",
                     "missing_information": ["腰围和体脂率待补测"],
                 },
                 "day28_execution_standard": {
@@ -190,13 +229,18 @@ def _make_intake_mock_response(*, weight_band: str = "A带｜修复塑形", bmi:
                         {"week": "第4周", "core_task": "稳定复现",
                          "acceptance_standard": "综合执行前三周所有核心动作"},
                     ],
-                    "daily_checkin": (
-                        "1. 个案产品排班是否按方案完成？（是/否）\n"
-                        "2. 是否在23:30前上床？（是/否）\n"
-                        "3. 蔬菜总量是否达到2拳？（是/否）\n"
-                        "4. 是否完成7000步或有氧30分钟？（是/否）\n"
-                        "5. 饭后困评分（1-5分，1很困5分不困）"
-                    ),
+                    "daily_checkin": [
+                        {"order": 1, "category": "product", "title": "个案产品排班是否按方案完成",
+                         "answer_type": "yes_no", "options": ["是", "否"]},
+                        {"order": 2, "category": "sleep", "title": "是否在23:30前上床",
+                         "answer_type": "yes_no", "options": ["是", "否"]},
+                        {"order": 3, "category": "diet", "title": "蔬菜总量是否达到2拳",
+                         "answer_type": "yes_no", "options": ["是", "否"]},
+                        {"order": 4, "category": "activity", "title": "是否完成7000步或有氧30分钟",
+                         "answer_type": "yes_no", "options": ["是", "否"]},
+                        {"order": 5, "category": "state", "title": "饭后困评分（1分很困、5分不困）",
+                         "answer_type": "score_1_5", "options": ["1", "2", "3", "4", "5"]},
+                    ],
                     "weekly_standard": "个案产品排班和晚间收口至少完成5天；完成计划运动；至少记录1次体重或围度/体感",
                     "adjust_stop_conditions": "持续心慌或睡眠明显恶化时暂停并联系班主任；胸痛、呼吸困难或明显不适时及时就医。",
                 },
@@ -208,18 +252,20 @@ def _make_intake_mock_response(*, weight_band: str = "A带｜修复塑形", bmi:
 def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     prompt = _intake_generation_system_prompt()
 
+    # 五项打卡改为结构化数组：数量、序号、单一意图、题面污染、答题类型都要在提示词里说清
+    assert "daily_checkin 输出 JSON 数组，正好5个对象" in prompt
+    assert "order / category / title / answer_type / options 五个键" in prompt
+    assert "唯一、连续、严格递增；数组长度必须正好是5，多了删、少了补，禁止输出4项或6项" in prompt
+    assert "禁止把「每日固定打卡」「5项打卡」「每天只打这5项」「打卡清单」等" in prompt
+    assert "栏目标题或说明文字当成一项写进数组" in prompt
+    assert "序号由程序按 order 渲染" in prompt
     assert (
-        "daily_checkin 必须严格输出5项且每项只能对应一个独立回答意图："
-        "第1项固定为个案产品排班完成情况；"
-        "如果方案要求减量、前移或暂停，第1项必须按该方案写，禁止继续要求早C/午B/晚A全部完成。"
-        "后4项围绕用户具体卡点定制；"
-        "候选问题超过5个时只保留优先级最高的5个并舍弃其余，禁止合并多个问题，"
-        "尤其禁止「是否……？请记录……」「是否……并填写……」「是否……同时记录……」等把判断题和填空/评分题塞进同一项的句式。"
-    ) in prompt
-    assert (
-        "daily_checkin 的5项题面一律禁止包含「"
         "今天/今日/今早/今晚/昨天/昨日/昨晚/当天/本日」等相对时间词"
     ) in prompt
+    assert "也禁止一道题同时问时间和饮食结构" in prompt
+    assert "answer_type 只能取 yes_no / score_1_5 / number / text" in prompt
+    assert "category 只能取 product / diet / activity / sleep / state" in prompt
+    assert "禁止所有用户都输出同一套固定五题" in prompt
     assert "蔬菜总量是否至少2拳" in prompt
     assert "今天是否至少吃到2拳蔬菜" not in prompt
     assert "今日是否心慌" not in prompt
@@ -228,22 +274,52 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "情绪稳定度与饭后困综合评分必须固定" not in prompt
     assert "情绪稳定度和饭后困综合评分（1-5）" not in prompt
     assert "只描述用户提交问卷之前的近3个月" in prompt
-    assert "不得为了匹配管理带而编造固定斤数" in prompt
-    assert "不得为了凑 A–D 把医疗复核用户包装成 A 带" in prompt
+
+    # 管理带与人工复核彻底分开：内部标签不再是带位，也不得进入用户可见内容
+    assert "manual_review_required=true 时 weight_band 仍必须输出正常业务带位" in prompt
+    assert "以上五个带位是 weight_band 的全部合法取值，没有第六种" in prompt
+    assert "严禁把「需人工复核」「人工复核」「待复核」「red风险」「高风险」「风险等级」等内部标签写进 weight_band" in prompt
+    assert "无法安全自动判带时 weight_band 写「需人工复核」" not in prompt
+    assert "需人工复核：安全闸门未通过或资料冲突导致无法自动给出安全管理带" not in prompt
+
+    # 数字来源与趋势证据
+    assert "都必须能追溯到问卷里用户自己写下的明确数字答案" in prompt
+    assert "严禁生成「腰围缩减1–3cm」「腰围少5cm」这类数字区间" in prompt
+    assert "body_trend_direct_evidence（1条，字符串）" in prompt
+    assert "body_trend_support_signals（1-2条，字符串数组）" in prompt
+    assert "严禁单独用它们证明「正在上升」「正在下降」「持续变沉」" in prompt
+    assert "「每餐」不得与蔬菜份量同句出现" in prompt
+
+    # 一页硬预算
+    assert "【一页硬预算】" in prompt
+    assert "目标摘要只输出执行需要的三项" in prompt
+    assert "diet_rules 最多3条，每条 ≤34字" in prompt
+    assert "exercise_rules 最多2条，每条 ≤44字" in prompt
 
     schema = combined_prompt_schema()
     energy_spec = schema[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
     execution_spec = schema[DocumentType.DAY28_EXECUTION_STANDARD.value]
     assert "core_conclusions" in energy_spec
     assert "body_trend" in energy_spec["core_conclusions"]
+    assert "trend_direct_evidence" in energy_spec["core_conclusions"]
+    assert "trend_support_signals" in energy_spec["core_conclusions"]
+    assert "需人工复核" not in energy_spec["core_conclusions"]["management_band"].replace("禁止写「需人工复核」等内部运营标签", "")
     assert "diet_rules" in execution_spec
     assert "exercise_rules" in execution_spec
+    # 分析性目标不再在执行建议书重复输出，避免顶到第二页
+    assert "base_goal" not in execution_spec
+    assert "challenge_goal" not in execution_spec
+    assert "long_term_goal" not in execution_spec
 
     daily_checkin_spec = execution_spec["daily_checkin"]
-    assert "情绪稳定度评分和饭后困评分是两个独立候选问题" in daily_checkin_spec
-    assert "两项同时入选时各占1项" in daily_checkin_spec
-    assert "必须合并为1项" not in daily_checkin_spec
-    assert "禁止继续要求三杯全部完成" in daily_checkin_spec
+    assert isinstance(daily_checkin_spec, list) and len(daily_checkin_spec) == 1
+    item_spec = daily_checkin_spec[0]
+    assert set(item_spec) == {"order", "category", "title", "answer_type", "options"}
+    assert "数组长度必须正好5项，禁止4项或6项" in item_spec["order"]
+    assert "第1项固定 product，5项中必须有1项 activity" in item_spec["category"]
+    assert "严禁合并成一项综合评分" in item_spec["title"]
+    assert "禁止写「每餐蔬菜至少2拳」" in item_spec["title"]
+    assert "只能取 yes_no / score_1_5 / number / text" in item_spec["answer_type"]
 
     fallback = _daily_checkin_text(None)
     assert "个案产品排班是否按方案完成" in fallback
@@ -301,21 +377,20 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     personalized_fields = (profile.profile_json or {}).get("personalized_checkin_fields") or []
     assert len(personalized_fields) == 5
 
-    # 内容准确性验证：Profile 字段与预期完全一致
-    expected_labels = [
-        "个案产品排班是否按方案完成？（是/否）",
-        "是否在23:30前上床？（是/否）",
-        "蔬菜总量是否达到2拳？（是/否）",
-        "是否完成7000步或有氧30分钟？（是/否）",
-        "饭后困评分（1-5分，1很困5分不困）",
+    # 内容准确性验证：Profile 字段与结构化 daily_checkin 完全一致（顺序、标题、类型、选项）
+    expected_fields = [
+        ("个案产品排班是否按方案完成", "RADIO", ["是", "否"]),
+        ("是否在23:30前上床", "RADIO", ["是", "否"]),
+        ("蔬菜总量是否达到2拳", "RADIO", ["是", "否"]),
+        ("是否完成7000步或有氧30分钟", "RADIO", ["是", "否"]),
+        # 评分题由 answer_type=score_1_5 决定，选项固定 1-5，不再退化成自由填空
+        ("饭后困评分（1分很困、5分不困）", "RADIO", ["1", "2", "3", "4", "5"]),
     ]
-    for i, (pf, expected) in enumerate(zip(personalized_fields, expected_labels)):
-        assert pf["label"] == expected, f"第 {i+1} 项标签不一致"
-        if "是否" in expected:
-            assert pf["type"] == "RADIO"
-            assert pf["options"] == ["是", "否"]
-        else:
-            assert pf["type"] == "SIMPLE"
+    for i, (pf, (label, field_type, options)) in enumerate(zip(personalized_fields, expected_fields)):
+        assert pf["label"] == label, f"第 {i + 1} 项标签不一致"
+        assert pf["type"] == field_type, f"第 {i + 1} 项类型不一致"
+        assert pf["options"] == options, f"第 {i + 1} 项选项不一致"
+        assert pf["required"] is True
 
     # 验证打卡链接 API 返回与 Profile 一致
     resp = await admin_client.get(f"/questionnaires/{token}?template=personalized_checkin")
@@ -324,7 +399,9 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     assert len(api_fields) == 5
     for i, (af, pf) in enumerate(zip(api_fields, personalized_fields)):
         assert af["label"] == pf["label"], f"API 第 {i+1} 项与 Profile 不一致"
-        assert af["type"] == pf["type"]
+        assert af["type"] == pf["type"], f"API 第 {i+1} 项类型与 Profile 不一致"
+        assert af["options"] == pf["options"], f"API 第 {i+1} 项选项与 Profile 不一致"
+        assert af["required"] == pf["required"]
 
     docs = list(await db_session.scalars(
         select(UserDocument).where(UserDocument.service_case_id == case_id)
@@ -544,9 +621,15 @@ async def test_personalized_checkin_uses_latest_document_daily_checkin_block(adm
     assert resp.status_code == 200, resp.text
     fields = resp.json()["fields"]
     assert len(fields) == 5
+    # 历史文档是字符串格式、题面带「今日」等相对时间词：新的文风规则不能把它判成无效，
+    # 已发出去的打卡清单必须原样可读。
     assert fields[0]["title"] == "今日是否完成早C/午B/晚A？（是/否）"
     assert fields[0]["type"] == "RADIO"
-    assert fields[4]["type"] == "SIMPLE"
+    assert fields[0]["options"] == ["是", "否"]
+    # 第5项是评分题：现在按 1-5 分制给固定选项，不再退化成自由填空
+    assert fields[4]["title"] == "今日饭后困评分（1-5分，1很困5分不困）"
+    assert fields[4]["type"] == "RADIO"
+    assert fields[4]["options"] == ["1", "2", "3", "4", "5"]
     assert all(not field["title"].startswith("旧默认项") for field in fields)
 
 
@@ -679,3 +762,315 @@ async def test_failed_generation_reverts_status(
     assert "失败" in notes or "Error" in notes or "error" in notes.lower(), (
         f"Expected error in notes, got: {notes[:200]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 管理带 vs 人工复核、五项打卡结构、执行建议书内容预算
+# ---------------------------------------------------------------------------
+
+
+def test_daily_checkin_rejects_heading_pollution_from_legacy_string_output():
+    """真实模型曾把「每日固定打卡/5项打卡」当成第一题，真正的第5项被截掉。
+
+    源头结构校验必须把栏目标题判为无效并保留5个真问题，而不是直接截前5条。
+    """
+
+    inline_heading = (
+        "1. 每日固定打卡：1. 个案产品排班是否按方案完成 2. 蔬菜总量是否至少2拳 "
+        "3. 是否完成计划内快走 4. 睡眠是否按计划收口 5. 饭后困评分（1分很困、5分不困）"
+    )
+    numbered_heading = (
+        "1. 5项打卡：\n"
+        "2. 个案产品排班是否按方案完成\n"
+        "3. 蔬菜总量是否至少2拳\n"
+        "4. 是否完成计划内快走\n"
+        "5. 睡眠是否按计划收口\n"
+        "6. 饭后困评分（1分很困、5分不困）"
+    )
+    expected_titles = [
+        "个案产品排班是否按方案完成",
+        "蔬菜总量是否至少2拳",
+        "是否完成计划内快走",
+        "睡眠是否按计划收口",
+        "饭后困评分（1分很困、5分不困）",
+    ]
+
+    for raw in (inline_heading, numbered_heading):
+        items = normalize_daily_checkin_items(raw, facts={"weight_kg": "68"})
+        assert [item["title"] for item in items] == expected_titles
+        assert [item["order"] for item in items] == [1, 2, 3, 4, 5]
+        assert not any("每日固定打卡" in item["title"] for item in items)
+        assert not any("5项打卡" in item["title"] for item in items)
+
+
+def test_daily_checkin_structure_is_strictly_five_ordered_items():
+    """结构化数组：正好5项、order 1-5 连续唯一、复合问题与相对时间词被丢弃。"""
+
+    items = normalize_daily_checkin_items(
+        [
+            {"order": 1, "category": "product", "title": "每日固定打卡", "answer_type": "text", "options": []},
+            {"order": 2, "category": "product", "title": "早C与午B是否按半份方案完成",
+             "answer_type": "yes_no", "options": ["是", "否"]},
+            # 复合问题：同时问时间和饮食结构
+            {"order": 3, "category": "diet", "title": "晚餐是否在20点前完成并且主食≤1拳",
+             "answer_type": "yes_no", "options": ["是", "否"]},
+            {"order": 4, "category": "activity", "title": "是否完成30分钟快走或7000步",
+             "answer_type": "yes_no", "options": ["是", "否"]},
+            # 相对时间词：题面里不允许带「今晚」
+            {"order": 5, "category": "sleep", "title": "今晚是否23:30前闭眼",
+             "answer_type": "yes_no", "options": ["是", "否"]},
+            {"order": 6, "category": "state", "title": "情绪稳定度评分（1分很差、5分很好）",
+             "answer_type": "score_1_5", "options": ["1", "2", "3", "4", "5"]},
+            {"order": 7, "category": "diet", "title": "蔬菜总量是否至少2拳",
+             "answer_type": "yes_no", "options": ["是", "否"]},
+            {"order": 8, "category": "state", "title": "是否出现心慌",
+             "answer_type": "yes_no", "options": ["是", "否"]},
+        ],
+        facts={"weight_kg": "78"},
+    )
+
+    assert len(items) == 5
+    assert [item["order"] for item in items] == [1, 2, 3, 4, 5]
+    titles = [item["title"] for item in items]
+    assert "每日固定打卡" not in titles
+    assert "晚餐是否在20点前完成并且主食≤1拳" not in titles
+    assert "今晚是否23:30前闭眼" not in titles
+    # 被丢弃的名额由后续合格项补上，不是截前5条
+    assert "是否出现心慌" in titles
+    for item in items:
+        assert item["answer_type"] in {"yes_no", "score_1_5", "number", "text"}
+        if item["answer_type"] == "yes_no":
+            assert item["options"] == ["是", "否"]
+        if item["answer_type"] == "score_1_5":
+            assert item["options"] == ["1", "2", "3", "4", "5"]
+
+
+def test_daily_checkin_falls_back_deterministically_when_all_items_invalid():
+    """全部不合格时走确定性兜底，仍然是完整5项，而不是发半套清单。"""
+
+    items = normalize_daily_checkin_items(
+        ["每日固定打卡", "5项打卡", "打卡清单"],
+        facts={"weight_kg": "70"},
+    )
+
+    assert len(items) == 5
+    assert [item["order"] for item in items] == [1, 2, 3, 4, 5]
+    assert all(item["title"] for item in items)
+    assert not any("打卡清单" in item["title"] for item in items)
+    # 兜底题也要满足答题类型与选项一致
+    for item in items:
+        assert item["options"] == checkin_options_for(item["answer_type"])
+
+
+def test_execution_document_keeps_single_page_content_budget():
+    """一页执行纸的内容预算：目标摘要3行、产品排班1行、饮食≤3条、运动≤2条。"""
+
+    content_json = build_document_content_json(
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28天高燃人生执行建议书",
+        user_name="预算用户",
+        display_name="预算用户",
+        fields={
+            "weight_band": "C带｜明确减脂",
+            "current_mainline": "保肌减脂与节律稳定并重，同时兼顾睡眠修复",
+            "day28_goal": "先把晚间收口和午餐结构稳住，观察腰腹围度、下午精力和睡眠连续性的变化趋势，并记录每周体感",
+            "body_trend": "缓慢变沉",
+            "base_goal": "基础目标不该出现在执行建议书",
+            "challenge_goal": "挑战目标不该出现在执行建议书",
+            "long_term_goal": "长期目标不该出现在执行建议书",
+            "product_schedule": {
+                "morning_c": "早C半份随早餐7:30，观察三天无心慌后再上满份",
+                "noon_b": "午B半份13:30前完成，保证睡前8小时以外",
+                "night_a": "晚A随晚餐后或睡前1-2小时",
+            },
+            "diet_rules": ["规则一" * 20, "规则二", "规则三", "规则四"],
+            "exercise_rules": ["运动一" * 20, "运动二", "运动三"],
+            "daily_checkin": normalize_daily_checkin_items(
+                [
+                    {"order": 1, "category": "product", "title": "个案产品排班是否按方案完成",
+                     "answer_type": "yes_no", "options": ["是", "否"]},
+                    {"order": 2, "category": "diet", "title": "蔬菜总量是否至少2拳",
+                     "answer_type": "yes_no", "options": ["是", "否"]},
+                    {"order": 3, "category": "activity", "title": "是否完成30分钟快走或7000步",
+                     "answer_type": "yes_no", "options": ["是", "否"]},
+                    {"order": 4, "category": "sleep", "title": "是否在23:30前闭眼",
+                     "answer_type": "yes_no", "options": ["是", "否"]},
+                    {"order": 5, "category": "state", "title": "饭后困评分（1分很困、5分不困）",
+                     "answer_type": "score_1_5", "options": ["1", "2", "3", "4", "5"]},
+                ],
+                facts={"weight_kg": "78"},
+            ),
+        },
+    )
+    blocks = {block["key"]: block for block in content_json["blocks"]}
+
+    goal_lines = blocks["goal_summary"]["content"].splitlines()
+    assert len(goal_lines) == 3
+    assert goal_lines[0].startswith("当前管理带：")
+    assert goal_lines[1].startswith("28天任务：")
+    assert goal_lines[2].startswith("当前主线：")
+    # 分析性目标与身体趋势只写在诊断报告，不在这份文件重复
+    summary_text = blocks["goal_summary"]["content"]
+    assert "基础目标" not in summary_text
+    assert "挑战目标" not in summary_text
+    assert "长期目标" not in summary_text
+    assert "近3个月身体趋势" not in summary_text
+
+    # 产品排班压成一行，且不重复写「早C 早C」这种前缀
+    product_content = blocks["product_schedule"]["content"]
+    assert len(product_content.splitlines()) == 1
+    assert "早C 早C" not in product_content
+    assert product_content.count("｜") == 2
+
+    assert len(blocks["diet_rules"]["items"]) == 3
+    assert len(blocks["exercise_rules"]["items"]) == 2
+    assert all(len(item) <= 34 for item in blocks["diet_rules"]["items"])
+    assert all(len(item) <= 44 for item in blocks["exercise_rules"]["items"])
+
+    # 结构化打卡定义随文档一起保存，H5 问卷才能拿到同一份 answer_type/options
+    checkin_block = blocks["daily_checkin"]
+    assert len(checkin_block["checkin_items"]) == 5
+    assert [item["order"] for item in checkin_block["checkin_items"]] == [1, 2, 3, 4, 5]
+    assert checkin_block["content"].splitlines()[0].startswith("1. ")
+    assert "每日固定打卡" not in checkin_block["content"]
+
+
+@pytest.mark.asyncio
+async def test_manual_review_keeps_business_band_and_blocks_auto_send(
+    admin_client,
+    create_case,
+    db_session,
+    mock_ai,
+    cai_haoran_answers,
+    wait_background,
+):
+    """用药样本：内部复核标记生效，但管理带仍是业务带位、用户正文不含内部标签、自动发送被阻止。"""
+
+    mock_ai._responses = {
+        INTAKE_SYSTEM_PROMPT_PREFIX: _make_intake_mock_response(manual_review=True),
+    }
+    # 全局策略开成 auto_send：需人工复核的入营文件仍然不得自动发送
+    await admin_client.post("/settings/content-delivery-policy", json={"mode": "auto_send"})
+    try:
+        group_id = f"test-manual-review-{secrets.token_hex(6)}"
+        resp = await create_case({
+            "group_id": group_id,
+            "user": {"name": "用药复核用户"},
+        })
+        assert resp.status_code == 201, resp.text
+        sc = resp.json()
+        token = sc["questionnaire_token"]
+        case_id = sc["id"]
+
+        submit_resp = await admin_client.post(
+            f"/questionnaires/{token}/submit?template=intake",
+            json={"answers": cai_haoran_answers},
+        )
+        assert submit_resp.status_code == 201, submit_resp.text
+        await wait_background()
+
+        profile = await db_session.scalar(
+            select(UserProfile).where(UserProfile.service_case_id == case_id)
+        )
+        assert profile is not None
+        # 管理带回退成按 BMI 得出的业务带位，「需人工复核」不占带位
+        assert profile.profile_json["management_band"] == "A带｜修复塑形"
+        assert "复核" not in profile.profile_json["management_band"]
+        # 内部字段仍然保留，供后台和人工复核使用
+        assert profile.profile_json["manual_review_required"] is True
+        assert profile.profile_json["safety_status"] == "manual_review"
+        assert profile.profile_json["manual_review_reasons"] == [
+            "问卷填写当前长期用药",
+            "关键指标需医生确认后才能加码",
+        ]
+        assert profile.profile_json["provisional_band"] is True
+        assert profile.profile_json["band_confidence"] == "low"
+
+        documents = list(await db_session.scalars(
+            select(UserDocument).where(UserDocument.service_case_id == case_id)
+        ))
+        assert len(documents) == 2
+        for document in documents:
+            # 文档保持待审核，绝不能自动发出去
+            assert document.status == DocumentStatus.REVIEWING, document.title
+            assert document.sent_at is None
+            # 内部标记在 content_json 顶层元数据里，后台能读到
+            internal_review = document.content_json["internal_review"]
+            assert internal_review["manual_review_required"] is True
+            assert internal_review["reasons"] == [
+                "问卷填写当前长期用药",
+                "关键指标需医生确认后才能加码",
+            ]
+            # 用户可见正文（blocks / content_md）一个内部标签都不能有
+            rendered = json.dumps(document.content_json["blocks"], ensure_ascii=False)
+            for label in ("需人工复核", "人工复核", "待复核", "red风险", "风险等级"):
+                assert label not in rendered, f"{document.title} 的 blocks 泄漏了 {label}"
+                assert label not in document.content_md, f"{document.title} 的正文泄漏了 {label}"
+            # 整句剔除，不留「本方案。」这类残句
+            assert "本方案。" not in document.content_md
+
+        # 后台审核列表能拿到醒目标记
+        resp = await admin_client.get("/dashboard/pending-documents")
+        assert resp.status_code == 200, resp.text
+        pending = [
+            document
+            for group in resp.json()
+            if group["case"]["service_case_id"] == case_id
+            for document in group["documents"]
+        ]
+        assert len(pending) == 2
+        assert all(document["manual_review_required"] is True for document in pending)
+        assert all(
+            document["manual_review_reasons"] == [
+                "问卷填写当前长期用药",
+                "关键指标需医生确认后才能加码",
+            ]
+            for document in pending
+        )
+    finally:
+        await admin_client.post("/settings/content-delivery-policy", json={"mode": "manual_review"})
+
+
+@pytest.mark.asyncio
+async def test_manual_review_document_can_still_be_sent_by_operator(
+    admin_client,
+    create_case,
+    db_session,
+    mock_ai,
+    cai_haoran_answers,
+    wait_background,
+):
+    """人工检查/修改后点「确认发送」仍然可用——阻断的是自动发送，不是人工发送。"""
+
+    mock_ai._responses = {
+        INTAKE_SYSTEM_PROMPT_PREFIX: _make_intake_mock_response(manual_review=True),
+    }
+    group_id = f"test-manual-review-send-{secrets.token_hex(6)}"
+    resp = await create_case({
+        "group_id": group_id,
+        "user": {"name": "人工发送用户"},
+    })
+    assert resp.status_code == 201, resp.text
+    sc = resp.json()
+    token = sc["questionnaire_token"]
+    case_id = sc["id"]
+
+    submit_resp = await admin_client.post(
+        f"/questionnaires/{token}/submit?template=intake",
+        json={"answers": cai_haoran_answers},
+    )
+    assert submit_resp.status_code == 201, submit_resp.text
+    await wait_background()
+
+    document = await db_session.scalar(
+        select(UserDocument).where(
+            UserDocument.service_case_id == case_id,
+            UserDocument.document_type == DocumentType.DAY28_EXECUTION_STANDARD,
+        )
+    )
+    assert document is not None
+    assert document.status == DocumentStatus.REVIEWING
+
+    resp = await admin_client.post(f"/documents/{document.id}/send")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "sent"

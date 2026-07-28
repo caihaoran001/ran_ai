@@ -1353,6 +1353,13 @@ async def dashboard_pending_documents(
         if item is None:
             item = DashboardCasePendingDocuments(case=_case_ref(service_case, user), documents=[])
             grouped[service_case.id] = item
+        internal_review = (
+            document.content_json.get("internal_review")
+            if isinstance(document.content_json, dict)
+            else None
+        )
+        internal_review = internal_review if isinstance(internal_review, dict) else {}
+        reasons = internal_review.get("reasons")
         item.documents.append(
             DashboardPendingDocument(
                 document_id=document.id,
@@ -1361,6 +1368,12 @@ async def dashboard_pending_documents(
                 status=document.status.value,
                 created_at=document.created_at,
                 updated_at=document.updated_at,
+                manual_review_required=bool(internal_review.get("manual_review_required")),
+                manual_review_reasons=[
+                    str(reason).strip() for reason in reasons if str(reason).strip()
+                ]
+                if isinstance(reasons, list)
+                else [],
             )
         )
     return list(grouped.values())
