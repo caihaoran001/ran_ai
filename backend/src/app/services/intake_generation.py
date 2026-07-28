@@ -848,6 +848,25 @@ def _normalize_combined_document_payload(
     _sync_if_missing(shared_path, "weight_band", execution_payload.get("weight_band"))
     _sync_if_missing(shared_path, "total_goal", execution_payload.get("path_goal"))
     _sync_if_missing(shared_path, "day28_goal", execution_payload.get("day28_goal"))
+
+    # 两份文件里必须逐字一致的事实，以 shared_analysis 为唯一来源强制覆写，
+    # 而不是靠模型自觉在两处各写一遍。模型独立生成同一事实时会同义改写
+    # （「腰腹缩围和精力转折」/「腰腹围度收紧和精力转向」），既冗余又会带数字漂移。
+    # 这和 BMI 由 intake_facts 强制覆写是同一套做法。
+    # 执行建议书的目标摘要由渲染层压到 48 字内，所以覆写更长的权威文案不会顶到第二页。
+    for target, key, source in (
+        (shared_path, "day28_goal", shared.get("day28_goal")),
+        (execution_payload, "day28_goal", shared.get("day28_goal")),
+        (shared_path, "total_goal", shared.get("long_term_goal")),
+        (execution_payload, "path_goal", shared.get("long_term_goal")),
+        (execution_payload, "body_trend", shared.get("body_trend")),
+        (core_conclusions, "day28_task", shared.get("day28_task")),
+    ):
+        _force_sync(target, key, source)
+    # core_conclusions 可能在上面因为全空而没挂回 energy_payload，强制覆写后要重新挂。
+    if core_conclusions:
+        energy_payload["core_conclusions"] = core_conclusions
+
     if shared_path:
         energy_payload["success_path"] = shared_path
     if _flatten_payload_text_length(energy_payload) < 80 or _flatten_payload_text_length(execution_payload) < 50:
@@ -947,6 +966,20 @@ def _with_unit(value: object, unit: str) -> str:
 def _sync_if_missing(target: dict, key: str, value: object) -> None:
     if not target.get(key) and value:
         target[key] = value
+
+
+def _force_sync(target: dict, key: str, value: object) -> None:
+    """单一来源：source 非空就覆写，不管目标原来写了什么。
+
+    只用于两份交付文件必须逐字一致的事实。source 为空时保留原值，
+    宁可用模型在文档里写的那一份，也不要把字段清空。
+    """
+
+    if not isinstance(target, dict) or not value:
+        return
+    if isinstance(value, str) and not value.strip():
+        return
+    target[key] = value
 
 
 def _flatten_payload_text_length(value: object) -> int:

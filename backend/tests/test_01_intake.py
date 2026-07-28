@@ -24,6 +24,7 @@ from app.services.document_templates import (
 )
 from app.services.intake_generation import (
     CHECKIN_CATEGORIES,
+    _normalize_combined_document_payload,
     checkin_options_for,
     normalize_daily_checkin_items,
 )
@@ -287,6 +288,10 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     # 数字来源与趋势证据
     assert "都必须能追溯到问卷里用户自己写下的明确数字答案" in prompt
     assert "严禁生成「腰围缩减1–3cm」「腰围少5cm」这类数字区间" in prompt
+    # 问卷选项文字自带填写示例，模型曾把占位符替换成自己挑的数字（腰围缩小5cm以上）
+    assert "括号里的 X 公斤、XX 厘米是问卷给用户看的填写格式示例，不是用户的答案" in prompt
+    assert "严禁把示例里的占位符替换成一个自己挑的数字" in prompt
+    assert "不只是 day28_goal" in prompt
     assert "body_trend_direct_evidence（1条，字符串）" in prompt
     assert "body_trend_support_signals（1-2条，字符串数组）" in prompt
     assert "严禁单独用它们证明「正在上升」「正在下降」「持续变沉」" in prompt
@@ -1144,3 +1149,70 @@ async def test_manual_review_document_can_still_be_sent_by_operator(
     resp = await admin_client.post(f"/documents/{document.id}/send")
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "sent"
+
+
+def test_shared_analysis_is_the_single_source_for_cross_document_facts():
+    """28天任务、总路径目标、身体趋势以 shared_analysis 为唯一来源强制覆写。
+
+    真实模型会在两份文件里各写一遍同一件事，写成同义改写（「腰腹缩围和精力转折」
+    对「腰腹围度收紧和精力转向」），既冗余又会带数字漂移。这里用观测到的真实
+    漂移文本当输入，确认两份文件落地后逐字一致。
+    """
+
+    shared = {
+        "day28_goal": "用均衡餐盘替代原高碳结构，收住晚餐后进食，每日温和活动，实现腰腹缩围和精力转折",
+        "long_term_goal": "12周建立可长期复制的节律，腰腹围度持续收紧",
+        "body_trend": "缓慢变沉",
+        "day28_task": "先把晚餐收口和餐盘结构稳定下来",
+    }
+    payload = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "one_sentence": "一句话结论" * 20,
+            "core_conclusions": {"management_band": "C带｜明确减脂", "day28_task": "先抓晚间收口"},
+            "success_path": {
+                "day28_goal": "用均衡餐盘取代高碳结构，三餐收口并启动每日温和活动，实现腰腹围度收紧和精力转向",
+                "total_goal": "12周把节律固定下来，围度继续下行",
+            },
+        },
+        DocumentType.DAY28_EXECUTION_STANDARD.value: {
+            "day28_goal": "均衡餐盘加晚间收口，配合每日温和活动，让腰腹围度和精力一起转向",
+            "path_goal": "12周形成稳定节律，围度稳步收紧",
+            "body_trend": "基本稳定",
+            "principle": "先守底盘，再抓结果" * 5,
+        },
+    }
+
+    normalized = _normalize_combined_document_payload(payload, "单一来源用户", shared_analysis=shared)
+
+    energy = normalized[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
+    execution = normalized[DocumentType.DAY28_EXECUTION_STANDARD.value]
+    assert energy["success_path"]["day28_goal"] == shared["day28_goal"]
+    assert execution["day28_goal"] == shared["day28_goal"]
+    assert energy["success_path"]["total_goal"] == shared["long_term_goal"]
+    assert execution["path_goal"] == shared["long_term_goal"]
+    # 趋势不能一份写「缓慢变沉」另一份写「基本稳定」
+    assert execution["body_trend"] == shared["body_trend"]
+    assert energy["core_conclusions"]["day28_task"] == shared["day28_task"]
+
+
+def test_force_sync_keeps_document_text_when_shared_analysis_is_empty():
+    """shared_analysis 缺字段时保留文档里模型写的那份，不能把字段清空。"""
+
+    payload = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "one_sentence": "一句话结论" * 20,
+            "success_path": {"day28_goal": "先稳定三餐节律", "total_goal": "12周维持"},
+        },
+        DocumentType.DAY28_EXECUTION_STANDARD.value: {
+            "day28_goal": "先稳定三餐节律",
+            "path_goal": "12周维持",
+            "principle": "先守底盘，再抓结果" * 5,
+        },
+    }
+
+    normalized = _normalize_combined_document_payload(
+        payload, "缺字段用户", shared_analysis={"day28_goal": "", "long_term_goal": None}
+    )
+
+    assert normalized[DocumentType.DAY28_EXECUTION_STANDARD.value]["day28_goal"] == "先稳定三餐节律"
+    assert normalized[DocumentType.DAY28_EXECUTION_STANDARD.value]["path_goal"] == "12周维持"
