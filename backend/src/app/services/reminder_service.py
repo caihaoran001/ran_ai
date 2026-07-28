@@ -257,7 +257,6 @@ class ReminderService:
         self,
         *,
         now: datetime | None = None,
-        ai_service: object | None = None,
     ) -> None:
         """Five-item daily review plus low-frequency measurements, capped at three sends per cycle."""
         if not self.settings.checkin_followup_enabled:
@@ -318,11 +317,7 @@ class ReminderService:
                     )
                     if event is None:
                         continue
-                    followup = await render_scheduled_followup(
-                        plan,
-                        service_case=service_case,
-                        ai_service=ai_service,
-                    )
+                    followup = render_scheduled_followup(plan)
                     if cycle is None:
                         cycle = CheckinFollowupCycle(
                             service_case_id=service_case.id, cycle_date=today

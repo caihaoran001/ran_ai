@@ -4,7 +4,7 @@
 - 档案官触发器：含关键类目(checkin/profile_fact/outcome)且用户停说≥3min → fast 快触发；
   仅闲聊 worthy 且未到 24h → 不触发。
 - compose_scheduled_followups 组织候选：五项清单(次日回顾昨天) / 矛盾核对 / 次晨空腹打卡提醒；
-  各类各占时间窗与天闸、每天最多 3 条；LLM 生成提醒话术、失败或时间语义跑偏时回退模板。
+  各类各占时间窗与天闸、每天最多 3 条；三类均使用固定模板，不调用 LLM。
 - 里程碑档：服务第 6/13/20/27 天检测出 milestone；need_waist/need_weight 按腰围/体重记录决定。
 - 矛盾核对：表单值≠聊天值→记矛盾→自然语言核对→标 asked(去重)+字段降级→用户新值覆盖表单。
 """
@@ -97,23 +97,6 @@ async def _form_checkin_with_weight(
     db_session.add(checkin)
     await db_session.flush()
     return checkin
-
-
-class _FakeAI:
-    """注入用假 AIService：generate_text 返回预设串并记录调用。"""
-
-    def __init__(self, text: str = "假的复盘追问～"):
-        self.text = text
-        self.calls: list[dict] = []
-
-    async def generate_text(self, *, system_prompt, user_prompt, **kwargs):
-        self.calls.append({"system": system_prompt, "user": user_prompt, **kwargs})
-        return self.text
-
-
-class _RaisingAI:
-    async def generate_text(self, *, system_prompt, user_prompt, **kwargs):
-        raise RuntimeError("LLM 挂了")
 
 
 # ---------------------------------------------------------------------------
@@ -241,32 +224,17 @@ async def test_milestone_need_waist_false_when_recent_waist_exists(db_session):
 
 
 # ---------------------------------------------------------------------------
-# 里程碑前夜：次晨空腹打卡提醒（LLM + 兜底）
+# 里程碑前夜：次晨空腹打卡固定模板
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_milestone_followup_uses_injected_llm(db_session):
-    case = await _case(db_session, started_days_ago=5)
-    fake = _FakeAI("今晚先提醒一下，明早起床如厕后空腹量好腰围，再发群里打卡～")
-    msg = await compose_milestone_followup(
-        service_case=case, milestone_day=7, need_waist=True, ai_service=fake
+async def test_milestone_followup_uses_fixed_next_morning_template(db_session):
+    await _case(db_session, started_days_ago=5)
+    msg = compose_milestone_followup(
+        milestone_day=7,
+        need_waist=True,
     )
-    assert msg == fake.text
-    assert fake.calls and fake.calls[0]["scenario"] == "checkin_followup"
-    assert "明早" in fake.calls[0]["system"]
-    assert "如厕后" in fake.calls[0]["system"]
-    assert "空腹" in fake.calls[0]["system"]
-    assert "今晚" in fake.calls[0]["user"]
-
-
-@pytest.mark.asyncio
-async def test_milestone_followup_falls_back_on_llm_error(db_session):
-    case = await _case(db_session, started_days_ago=5)
-    msg = await compose_milestone_followup(
-        service_case=case, milestone_day=7, need_waist=True, ai_service=_RaisingAI()
-    )
-    # 回退固定模板：晚间只提醒，测量明确放到次晨如厕后空腹状态。
     assert "腰围" in msg
     assert "明早" in msg and "如厕后" in msg and "空腹" in msg
     assert "今晚不用测" in msg
@@ -274,43 +242,38 @@ async def test_milestone_followup_falls_back_on_llm_error(db_session):
 
 
 @pytest.mark.asyncio
-async def test_milestone_followup_rejects_copy_that_asks_for_evening_measurement(
+async def test_milestone_followup_never_asks_for_evening_measurement(
     db_session,
 ):
-    case = await _case(db_session, started_days_ago=5)
-    fake = _FakeAI("今晚称一下体重，再说说这阶段最大的变化～")
-    msg = await compose_milestone_followup(
-        service_case=case,
+    await _case(db_session, started_days_ago=5)
+    msg = compose_milestone_followup(
         milestone_day=7,
         need_waist=True,
         need_weight=True,
-        ai_service=fake,
     )
-    assert msg != fake.text
     assert "明早" in msg and "如厕后" in msg and "空腹" in msg
     assert "今晚称" not in msg
 
 
 @pytest.mark.asyncio
-async def test_milestone_fallback_skips_waist_when_not_needed(db_session):
-    case = await _case(db_session, started_days_ago=5)
-    msg = await compose_milestone_followup(
-        service_case=case, milestone_day=14, need_waist=False, ai_service=_RaisingAI()
+async def test_milestone_template_skips_waist_when_not_needed(db_session):
+    await _case(db_session, started_days_ago=5)
+    msg = compose_milestone_followup(
+        milestone_day=14,
+        need_waist=False,
     )
     assert "腰围" not in msg
     assert "明早" in msg and "如厕后" in msg and "空腹" in msg
 
 
 @pytest.mark.asyncio
-async def test_milestone_fallback_includes_weight_when_needed(db_session):
+async def test_milestone_template_includes_weight_when_needed(db_session):
     # 体重不再单独追问，need_weight 时由前夜提醒用户次晨空腹称重。
-    case = await _case(db_session, started_days_ago=5)
-    msg = await compose_milestone_followup(
-        service_case=case,
+    await _case(db_session, started_days_ago=5)
+    msg = compose_milestone_followup(
         milestone_day=7,
         need_waist=True,
         need_weight=True,
-        ai_service=_RaisingAI(),
     )
     assert "体重" in msg and "腰围" in msg
     assert "明早" in msg and "今晚不用测" in msg
@@ -348,12 +311,24 @@ def test_followup_v2_scheduler_has_cycle_cap_and_silence_brake():
     assert "len(sent_kinds) >= 3" in src
     assert "checkin_followup:" in src
     assert src.index("_reserve_reminder_event") < src.index(
-        "followup = await render_scheduled_followup"
+        "followup = render_scheduled_followup"
     )
 
 
+def test_followup_copy_path_has_no_llm_dependency():
+    from app.services.archivist import followup as followup_module
+    from app.services.reminder_service import ReminderService
+
+    copy_source = inspect.getsource(followup_module)
+    scheduler_source = inspect.getsource(ReminderService.check_checkin_followup_v2_once)
+    assert "AIService" not in copy_source
+    assert "generate_text" not in copy_source
+    assert "ai_service" not in copy_source
+    assert "ai_service" not in scheduler_source
+
+
 @pytest.mark.asyncio
-async def test_followup_scheduler_calls_llm_only_once_when_send_is_due(
+async def test_followup_scheduler_sends_fixed_copy_once_when_due(
     db_session,
     monkeypatch,
 ):
@@ -393,7 +368,6 @@ async def test_followup_scheduler_calls_llm_only_once_when_send_is_due(
         "_send_channel_text_with_retries",
         fake_send,
     )
-    fake_ai = _FakeAI("早上好，补一下昨天的五项，回我一句就行～")
     service = reminder_module.ReminderService(
         Settings(
             CHECKIN_FOLLOWUP_ENABLED=True,
@@ -403,20 +377,16 @@ async def test_followup_scheduler_calls_llm_only_once_when_send_is_due(
     today = datetime.now(_TZ)
 
     await service.check_checkin_followup_v2_once(
-        now=today.replace(hour=8, minute=0, second=0, microsecond=0),
-        ai_service=fake_ai,
+        now=today.replace(hour=8, minute=0, second=0, microsecond=0)
     )
-    assert fake_ai.calls == []
     assert sent == []
 
     due = today.replace(hour=10, minute=29, second=59, microsecond=0)
-    await service.check_checkin_followup_v2_once(now=due, ai_service=fake_ai)
-    assert len(fake_ai.calls) == 1
-    assert fake_ai.calls[0]["scenario"] == "checkin_followup"
+    await service.check_checkin_followup_v2_once(now=due)
     assert len(sent) == 1
+    assert sent[0][1].startswith("早上好，补一下昨天的打卡：")
 
-    await service.check_checkin_followup_v2_once(now=due, ai_service=fake_ai)
-    assert len(fake_ai.calls) == 1
+    await service.check_checkin_followup_v2_once(now=due)
     assert len(sent) == 1
 
     messages = list(
@@ -482,7 +452,9 @@ async def test_document_checklist_reviews_yesterday_and_only_missing_items(db_se
     db_session.add(checkin)
     await db_session.flush()
     followup = await compose_document_checklist_followup(
-        db_session, service_case=case, target_date=yesterday, ai_service=_RaisingAI()
+        db_session,
+        service_case=case,
+        target_date=yesterday,
     )
     assert followup is not None
     assert followup.target_date == yesterday
@@ -493,12 +465,6 @@ async def test_document_checklist_reviews_yesterday_and_only_missing_items(db_se
     ]
     assert "早C" not in followup.text
     assert "回我一句，我记上，后面好帮你调整～" in followup.text
-
-    fake = _FakeAI("早上好，补一下昨天的运动和睡眠～回我一句，我记上，后面好帮你调整～")
-    await compose_document_checklist_followup(
-        db_session, service_case=case, target_date=yesterday, ai_service=fake
-    )
-    assert "助教会记上并据此帮助后续调整" in fake.calls[0]["system"]
 
 
 @pytest.mark.asyncio
@@ -523,7 +489,9 @@ async def test_document_checklist_first_item_only_asks_missing_products(db_sessi
     db_session.add(checkin)
     await db_session.flush()
     followup = await compose_document_checklist_followup(
-        db_session, service_case=case, target_date=yesterday, ai_service=_RaisingAI()
+        db_session,
+        service_case=case,
+        target_date=yesterday,
     )
     assert followup is not None
     # 只剩第1项，且 label 只含午B/晚A、不含早C
@@ -630,7 +598,10 @@ async def test_followup_preferences_filter_proactive_topics(db_session):
     )
     assert (
         await compose_scheduled_followups(
-            db_session, service_case=case, now=now, tz=_TZ, ai_service=_RaisingAI()
+            db_session,
+            service_case=case,
+            now=now,
+            tz=_TZ,
         )
         == []
     )
@@ -643,7 +614,10 @@ async def test_followup_preferences_filter_proactive_topics(db_session):
         source_message_id=None,
     )
     candidates = await compose_scheduled_followups(
-        db_session, service_case=case, now=now, tz=_TZ, ai_service=_RaisingAI()
+        db_session,
+        service_case=case,
+        now=now,
+        tz=_TZ,
     )
     assert [item.kind for item in candidates] == ["milestone"]
     assert "腰围" not in candidates[0].text

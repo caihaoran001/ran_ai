@@ -4,8 +4,8 @@ H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部
 每 case 每天最多几条"（不注入系统 prompt 让 agent 自由裁量），由调度器
 `reminder_service.check_checkin_followup_v2_once` 周期扫描、调 `plan_scheduled_followups`
 无模型地组织候选；调度器通过时间窗与天级去重闸
-（`ReminderEvent(rule_id="checkin_followup:{kind}")`）后，才调用 `render_scheduled_followup`
-生成真正要发送的文案。每天最多 3 条：
+（`ReminderEvent(rule_id="checkin_followup:{kind}")`）后，再由 `render_scheduled_followup`
+填充固定模板。整条追问链路不调用 LLM，每天最多 3 条：
 
 - 五项清单（daily_checklist）：早上回顾**昨天**当前生效清单里尚未回答的项；系统清单第1项跟踪早C/午B/晚A，工作人员自定义清单不强加该语义。
 - 矛盾核对（contradiction）：表单值≠聊天值时下午发一句自然核对。
@@ -198,10 +198,10 @@ def compose_followup_message(
     return " ".join(parts)
 
 
-def _milestone_fallback_message(
+def compose_milestone_followup(
     milestone_day: int, need_waist: bool, need_weight: bool = False
 ) -> str:
-    """里程碑前夜提醒的固定模板兜底（LLM 不可用或语义跑偏时使用）。"""
+    """里程碑前夜的固定模板：提醒用户次晨如厕后空腹打卡。"""
     actions = [
         action
         for action, needed in (("称好体重", need_weight), ("量好腰围", need_waist))
@@ -214,87 +214,6 @@ def _milestone_fallback_message(
         f"明天是服务第{milestone_day}天，今晚先提醒一下："
         f"明早起床如厕后，空腹状态下{checkin_action}。今晚不用测，早点休息～"
     )
-
-
-def _is_valid_next_morning_checkin_reminder(text: str) -> bool:
-    """确保 LLM 没有把“晚间提醒”写成“晚间测量”。"""
-    has_morning = any(marker in text for marker in ("明早", "明天早上", "明天早起"))
-    forbidden = (
-        "今晚称",
-        "今晚量",
-        "今晚打卡",
-        "晚上称",
-        "晚上量",
-        "晚上打卡",
-        "现在称",
-        "现在量",
-        "现在测",
-        "现在打卡",
-        "马上称",
-        "马上量",
-        "马上测",
-        "马上打卡",
-    )
-    return (
-        has_morning
-        and "如厕后" in text
-        and "空腹" in text
-        and not any(phrase in text for phrase in forbidden)
-    )
-
-
-async def compose_milestone_followup(
-    *,
-    service_case: ServiceCase,
-    milestone_day: int,
-    need_waist: bool,
-    need_weight: bool = False,
-    context_hint: str = "",
-    ai_service: object | None = None,
-) -> str:
-    """里程碑前夜：生成“次晨如厕后空腹打卡”提醒；失败或时间语义跑偏则回退固定模板。
-
-    体重/腰围只在 need_weight/need_waist 时带上，不再要求用户当晚复盘或测量。
-    """
-    try:
-        if ai_service is None:
-            from app.services.ai_service.client import AIService
-
-            ai_service = AIService()
-        system_prompt = (
-            "你是燃人健康管理的贴心助理，正在企业微信群里发一条晚间提醒。"
-            "要求：亲切自然、不超过 80 字、不要罗列编号。"
-            "必须明确写出『明早』、『如厕后』和『空腹』，让用户到明天早上再测量并打卡。"
-            "绝对不能让用户今晚、现在或马上称重、量腰围或打卡。"
-            "不要追问阶段变化、卡点或下阶段计划。"
-        )
-        measures = [
-            label
-            for label, need in (("体重", need_weight), ("腰围", need_waist))
-            if need
-        ]
-        measure_hint = (
-            f"明早需要用户在如厕后、空腹状态下测量{'、'.join(measures)}，再发群里打卡。"
-            if measures
-            else "体重、腰围最近已记录，只提醒用户明早如厕后空腹打卡。"
-        )
-        user_prompt = (
-            f"今晚是用户服务第 {milestone_day} 天的前一晚。{measure_hint}"
-            f"{('用户近况：' + context_hint) if context_hint else ''}"
-            "请生成一句自然、简短、亲切的次晨空腹打卡提醒。"
-        )
-        text = await ai_service.generate_text(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            scenario="checkin_followup",
-            service_case_id=service_case.id,
-        )
-        text = (text or "").strip()
-        if text and _is_valid_next_morning_checkin_reminder(text):
-            return text
-    except Exception:  # noqa: BLE001 - 追问失败不能阻塞，回退模板
-        pass
-    return _milestone_fallback_message(milestone_day, need_waist, need_weight)
 
 
 @dataclass
@@ -419,34 +338,10 @@ async def plan_document_checklist_followup(
     )
 
 
-async def _compose_document_checklist_followup_text(
-    *,
-    service_case: ServiceCase,
-    missing: list[dict[str, str]],
-    ai_service: object | None = None,
-) -> str:
-    """Render one due checklist reminder; failure falls back to a fixed template."""
+def _compose_document_checklist_followup_text(*, missing: list[dict[str, str]]) -> str:
+    """Fill the fixed daily-checklist template with yesterday's missing items."""
     labels = "；".join(item["label"] for item in missing)
-    fallback = f"早上好，补一下昨天的打卡：{labels}。回我一句，我记上，后面好帮你调整～"
-    try:
-        if ai_service is None:
-            from app.services.ai_service.client import AIService
-
-            ai_service = AIService()
-        text = await ai_service.generate_text(
-            system_prompt=(
-                "你是燃人微信群健康助教。用一句不超过100字、口语化的中文，请用户回顾昨天尚未回答的打卡项。"
-                "可将多个问题自然合并，但不得增加清单外的问题，不要使用编号。"
-                "结尾自然说明用户回一句即可，助教会记上并据此帮助后续调整；简短、不施压。"
-            ),
-            user_prompt=f"昨天尚未回答的打卡项：{labels}",
-            scenario="checkin_followup",
-            service_case_id=service_case.id,
-        )
-        text = (text or "").strip() or fallback
-    except Exception:  # noqa: BLE001 - proactive reminder must never stop the scheduler
-        text = fallback
-    return text
+    return f"早上好，补一下昨天的打卡：{labels}。回我一句，我记上，后面好帮你调整～"
 
 
 async def compose_document_checklist_followup(
@@ -454,7 +349,6 @@ async def compose_document_checklist_followup(
     *,
     service_case: ServiceCase,
     target_date: date,
-    ai_service: object | None = None,
 ) -> ScheduledFollowup | None:
     """Compatibility helper for direct composition outside the scheduler."""
     plan = await plan_document_checklist_followup(
@@ -464,11 +358,7 @@ async def compose_document_checklist_followup(
     )
     if plan is None:
         return None
-    return await render_scheduled_followup(
-        plan,
-        service_case=service_case,
-        ai_service=ai_service,
-    )
+    return render_scheduled_followup(plan)
 
 
 async def plan_scheduled_followups(
@@ -525,28 +415,17 @@ async def plan_scheduled_followups(
     return candidates
 
 
-async def render_scheduled_followup(
-    plan: ScheduledFollowupPlan,
-    *,
-    service_case: ServiceCase,
-    ai_service: object | None = None,
-) -> ScheduledFollowup:
-    """Render a candidate only after the scheduler's time/dedupe reservation."""
+def render_scheduled_followup(plan: ScheduledFollowupPlan) -> ScheduledFollowup:
+    """Fill a fixed template after the scheduler's time/dedupe reservation."""
     if plan.fixed_text is not None:
         text = plan.fixed_text
     elif plan.kind == "daily_checklist":
-        text = await _compose_document_checklist_followup_text(
-            service_case=service_case,
-            missing=plan.expected_items,
-            ai_service=ai_service,
-        )
+        text = _compose_document_checklist_followup_text(missing=plan.expected_items)
     elif plan.kind == "milestone" and plan.milestone_day is not None:
-        text = await compose_milestone_followup(
-            service_case=service_case,
+        text = compose_milestone_followup(
             milestone_day=plan.milestone_day,
             need_waist=plan.need_waist,
             need_weight=plan.need_weight,
-            ai_service=ai_service,
         )
     else:
         raise ValueError(f"Unsupported followup plan: {plan.kind}")
@@ -565,7 +444,6 @@ async def compose_scheduled_followups(
     service_case: ServiceCase,
     now: datetime,
     tz: ZoneInfo,
-    ai_service: object | None = None,
 ) -> list[ScheduledFollowup]:
     """Compatibility helper that plans and renders all candidates immediately."""
     plans = await plan_scheduled_followups(
@@ -574,14 +452,7 @@ async def compose_scheduled_followups(
         now=now,
         tz=tz,
     )
-    return [
-        await render_scheduled_followup(
-            plan,
-            service_case=service_case,
-            ai_service=ai_service,
-        )
-        for plan in plans
-    ]
+    return [render_scheduled_followup(plan) for plan in plans]
 
 
 async def finalize_checkin_followup_cycles(

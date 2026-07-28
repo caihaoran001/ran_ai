@@ -18,7 +18,9 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.agent.state import AgentRunContext
-from app.services.agent.tools.checkin_checklist_tools import build_checkin_checklist_tools
+from app.services.agent.tools.checkin_checklist_tools import (
+    build_checkin_checklist_tools,
+)
 from app.services.archivist.followup import compose_document_checklist_followup
 from app.services.checkin_checklists import (
     get_effective_daily_checklist,
@@ -220,7 +222,9 @@ async def test_restore_default_creates_next_version_without_erasing_history(db_s
 
 
 @pytest.mark.asyncio
-async def test_manual_version_wins_over_unsent_document_and_generated_profile(db_session):
+async def test_manual_version_wins_over_unsent_document_and_generated_profile(
+    db_session,
+):
     service_case = await _case(db_session)
     db_session.add(
         UserDocument(
@@ -230,7 +234,10 @@ async def test_manual_version_wins_over_unsent_document_and_generated_profile(db
             content_md="内部内容",
             content_json={
                 "blocks": [
-                    {"key": "daily_checkin", "items": [f"内部问题{i}" for i in range(1, 6)]}
+                    {
+                        "key": "daily_checkin",
+                        "items": [f"内部问题{i}" for i in range(1, 6)],
+                    }
                 ]
             },
             status=DocumentStatus.REVIEWING,
@@ -286,11 +293,6 @@ async def test_manual_question_ids_restore_historical_labels(db_session):
     assert labels[f"checklist:{version.id}:2"] == QUESTIONS[1]
 
 
-class _FollowupAI:
-    async def generate_text(self, **kwargs):
-        return "补一下昨天的五项，回我一句就行。"
-
-
 @pytest.mark.asyncio
 async def test_followup_uses_manual_questions_without_document(db_session):
     service_case = await _case(db_session)
@@ -303,7 +305,6 @@ async def test_followup_uses_manual_questions_without_document(db_session):
         db_session,
         service_case=service_case,
         target_date=date.today(),
-        ai_service=_FollowupAI(),
     )
 
     assert followup is not None
