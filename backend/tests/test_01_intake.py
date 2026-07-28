@@ -254,24 +254,28 @@ def _make_intake_mock_response(
 
 def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     prompt = _intake_generation_system_prompt()
+    # 模型收到的是 system prompt + user prompt 里的字段结构，两段合起来才是完整指令。
+    # daily_checkin 的结构规则单一来源在字段结构里，系统提示词只补出题判断，不再逐条复述。
+    instructions = prompt + json.dumps(combined_prompt_schema(), ensure_ascii=False)
 
-    # 五项打卡改为结构化数组：数量、序号、单一意图、题面污染、答题类型都要在提示词里说清
-    assert "daily_checkin 输出 JSON 数组，正好5个对象" in prompt
-    assert "order / category / title / answer_type / options 五个键" in prompt
-    assert "唯一、连续、严格递增；数组长度必须正好是5，多了删、少了补，禁止输出4项或6项" in prompt
-    assert "禁止把「每日固定打卡」「5项打卡」「每天只打这5项」「打卡清单」等" in prompt
-    assert "栏目标题或说明文字当成一项写进数组" in prompt
-    assert "序号由程序按 order 渲染" in prompt
+    # 五项打卡改为结构化数组：数量、序号、单一意图、题面污染、答题类型都要说清
+    assert "唯一、连续、严格递增；数组长度必须正好5项，禁止4项或6项" in instructions
+    assert "禁止写「每日固定打卡」「5项打卡」「打卡清单」等栏目标题或说明文字" in instructions
+    assert "序号由程序按 order 渲染" in instructions
     assert (
         "今天/今日/今早/今晚/昨天/昨日/昨晚/当天/本日」等相对时间词"
-    ) in prompt
-    assert "也禁止一道题同时问时间和饮食结构" in prompt
-    assert "answer_type 只能取 yes_no / score_1_5 / number / text" in prompt
-    assert "category 只能取 product / diet / activity / sleep / state" in prompt
+    ) in instructions
+    assert "也禁止一道题同时问时间和饮食结构" in instructions
+    assert "只能取 yes_no / score_1_5 / number / text" in instructions
+    assert "只能取 product / diet / activity / sleep / state" in instructions
+    assert "蔬菜总量是否至少2拳" in instructions
+    assert "今天是否至少吃到2拳蔬菜" not in instructions
+    assert "今日是否心慌" not in instructions
+    # 出题判断留在系统提示词
     assert "禁止所有用户都输出同一套固定五题" in prompt
-    assert "蔬菜总量是否至少2拳" in prompt
-    assert "今天是否至少吃到2拳蔬菜" not in prompt
-    assert "今日是否心慌" not in prompt
+    assert "恰好 1 项 category=activity" in prompt
+    assert "至少2项设计成正向动作" in prompt
+    assert "禁止把两个问题合并成一项来腾名额" in prompt
     assert "「情绪稳定度评分」与「饭后困评分」是两个独立候选问题" in prompt
     assert "若两项同时入选 daily_checkin，必须各占 1 项" in prompt
     assert "情绪稳定度与饭后困综合评分必须固定" not in prompt
