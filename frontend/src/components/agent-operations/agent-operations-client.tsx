@@ -185,7 +185,43 @@ export function AgentOperationsClient({
         return;
       }
     }
-    setSelectedRun(run);
+    if (run.agent_type !== "reply") {
+      setSelectedRun(run);
+      return;
+    }
+
+    setSelectedRun({
+      ...run,
+      detail_loading: true,
+      detail_error: null,
+    });
+    void fetch(`/api/backend/agent-operations/runs/${run.id}`, {
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`详情接口返回 ${response.status}`);
+        }
+        return (await response.json()) as RunDetailData;
+      })
+      .then((detail) => {
+        setSelectedRun((current) =>
+          current?.id === run.id ? detail : current,
+        );
+      })
+      .catch((error: unknown) => {
+        const message =
+          error instanceof Error ? error.message : "未知网络错误";
+        setSelectedRun((current) =>
+          current?.id === run.id
+            ? {
+                ...current,
+                detail_loading: false,
+                detail_error: `${message}，请关闭后重新打开详情。`,
+              }
+            : current,
+        );
+      });
   };
 
   const handleTabChange = (newTab: TabKey) => {

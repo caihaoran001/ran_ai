@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, timezone
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -9,6 +10,13 @@ from sqlalchemy import func, select
 from app.models.agent_run import AgentRun
 from app.models.agent_tool_call import AgentToolCall
 from app.models.ai_usage import AIUsageLog
+from app.models.message import (
+    Message,
+    MessageDirection,
+    MessagePurpose,
+    MessageSenderType,
+    MessageStatus,
+)
 from app.services.agent_observability import (
     COMPLETED,
     complete_agent_run,
@@ -24,20 +32,36 @@ async def test_agent_ledger_tracks_model_tools_and_api(
     create_case,
     db_session,
 ):
+    group_id = f"agent-observability-{secrets.token_hex(6)}"
     response = await create_case(
         {
-            "group_id": f"agent-observability-{secrets.token_hex(6)}",
+            "group_id": group_id,
             "user": {"name": "Agent 统计测试"},
         }
     )
     assert response.status_code == 201, response.text
     service_case_id = response.json()["id"]
 
+    inbound = Message(
+        service_case_id=service_case_id,
+        group_id=group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="是的，没有",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(inbound)
+    await db_session.flush()
+    await db_session.commit()
+
     reply_run_id = await ensure_agent_run(
         run_key=f"reply:test:{secrets.token_hex(8)}",
         agent_type="reply",
         run_kind="interactive",
         service_case_id=service_case_id,
+        trigger_message_id=inbound.id,
         input_count=1,
     )
     assert reply_run_id is not None
@@ -98,6 +122,20 @@ async def test_agent_ledger_tracks_model_tools_and_api(
         latency_ms=420,
         output_count=1,
     )
+    outbound = Message(
+        service_case_id=service_case_id,
+        group_id=group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.BOT,
+        message_type="markdown",
+        content="没有心慌就很好。继续半份观察满3天。",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.SENT,
+        trigger_id=inbound.id,
+        sent_at=datetime.now(timezone.utc),
+    )
+    db_session.add(outbound)
+    await db_session.commit()
 
     archivist_run_id = await ensure_agent_run(
         run_key=f"archivist:test:{secrets.token_hex(8)}",
@@ -171,6 +209,18 @@ async def test_agent_ledger_tracks_model_tools_and_api(
     )
     assert recent_reply["prompt_tokens"] == 120
     assert recent_reply["completion_tokens"] == 30
+    detail_response = await admin_client.get(
+        f"/agent-operations/runs/{reply_run_id}"
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    detail = detail_response.json()
+    assert detail["input_message"]["id"] == inbound.id
+    assert detail["input_message"]["content"] == "是的，没有"
+    assert detail["input_message"]["role"] == "用户"
+    assert detail["output_message"]["id"] == outbound.id
+    assert detail["output_message"]["content"] == "没有心慌就很好。继续半份观察满3天。"
+    assert detail["output_message"]["role"] == "AI 助教"
+    assert detail["output_message"]["status"] == "sent"
     batch = next(
         item
         for item in payload["archivist_batches"]

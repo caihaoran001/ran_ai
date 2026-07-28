@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,12 +14,19 @@ from app.models.agent_tool_call import AgentToolCall
 from app.models.ai_usage import AIUsageLog
 from app.models.archivist_extract_trace import ArchivistExtractTrace
 from app.models.knowledge_draft import KnowledgeDraft
-from app.models.message import Message, MessagePurpose, MessageSenderType
+from app.models.message import (
+    Message,
+    MessageDirection,
+    MessagePurpose,
+    MessageSenderType,
+)
 from app.models.service_case import ServiceCase
 from app.models.user import User
 from app.schemas.agent_operations import (
     AgentOperationsOverview,
+    AgentConversationMessage,
     AgentOutcomeCount,
+    AgentRunDetail,
     AgentRuntimeSummary,
     AgentToolStat,
     AICostCaseStat,
@@ -33,6 +40,54 @@ from app.schemas.agent_operations import (
 )
 
 router = APIRouter()
+
+
+@router.get("/runs/{run_id}", response_model=AgentRunDetail)
+async def get_agent_run_detail(
+    run_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> AgentRunDetail:
+    row = (
+        await session.execute(
+            select(AgentRun, ServiceCase.case_no, User.name)
+            .outerjoin(ServiceCase, AgentRun.service_case_id == ServiceCase.id)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(
+                AgentRun.id == run_id,
+                AgentRun.is_diagnostic.is_(False),
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+
+    run, case_no, user_name = row
+    input_message: Message | None = None
+    output_message: Message | None = None
+    if run.agent_type == "reply" and run.trigger_message_id is not None:
+        input_message = await session.scalar(
+            select(Message).where(
+                Message.id == run.trigger_message_id,
+                Message.direction == MessageDirection.INBOUND,
+            )
+        )
+        output_message = await session.scalar(
+            select(Message)
+            .where(
+                Message.trigger_id == run.trigger_message_id,
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.sender_type == MessageSenderType.BOT,
+                Message.purpose == MessagePurpose.CHAT,
+            )
+            .order_by(Message.id.desc())
+            .limit(1)
+        )
+
+    return AgentRunDetail(
+        **_recent_run_payload(run, case_no=case_no, user_name=user_name),
+        input_message=_conversation_message(input_message),
+        output_message=_conversation_message(output_message),
+    )
 
 
 @router.get("", response_model=AgentOperationsOverview)
@@ -516,28 +571,7 @@ async def _recent_runs(
     ).all()
     return [
         RecentAgentRun(
-            id=run.id,
-            agent_type=run.agent_type,
-            run_kind=run.run_kind,
-            status=run.status,
-            outcome=run.outcome,
-            service_case_id=run.service_case_id,
-            case_no=case_no,
-            user_name=user_name,
-            model_calls=run.model_calls,
-            tool_calls=run.tool_calls,
-            prompt_tokens=run.prompt_tokens,
-            completion_tokens=run.completion_tokens,
-            total_tokens=run.total_tokens,
-            estimated_cost_yuan=round(
-                float(run.estimated_cost_yuan or 0.0), 6
-            ),
-            input_count=run.input_count,
-            output_count=run.output_count,
-            latency_ms=run.latency_ms,
-            error_type=run.error_type,
-            started_at=run.started_at,
-            finished_at=run.finished_at,
+            **_recent_run_payload(run, case_no=case_no, user_name=user_name)
         )
         for run, case_no, user_name in rows
     ]
@@ -726,6 +760,60 @@ def _optional_int(value: Any) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _recent_run_payload(
+    run: AgentRun,
+    *,
+    case_no: str | None,
+    user_name: str | None,
+) -> dict[str, Any]:
+    return {
+        "id": run.id,
+        "agent_type": run.agent_type,
+        "run_kind": run.run_kind,
+        "status": run.status,
+        "outcome": run.outcome,
+        "service_case_id": run.service_case_id,
+        "case_no": case_no,
+        "user_name": user_name,
+        "model_calls": run.model_calls,
+        "tool_calls": run.tool_calls,
+        "prompt_tokens": run.prompt_tokens,
+        "completion_tokens": run.completion_tokens,
+        "total_tokens": run.total_tokens,
+        "estimated_cost_yuan": round(
+            float(run.estimated_cost_yuan or 0.0), 6
+        ),
+        "input_count": run.input_count,
+        "output_count": run.output_count,
+        "latency_ms": run.latency_ms,
+        "error_type": run.error_type,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+    }
+
+
+def _conversation_message(
+    message: Message | None,
+) -> AgentConversationMessage | None:
+    if message is None or message.created_at is None:
+        return None
+    role = {
+        MessageSenderType.USER: "用户",
+        MessageSenderType.STAFF: "班主任",
+        MessageSenderType.BOT: "AI 助教",
+    }.get(message.sender_type, message.sender_type.value)
+    return AgentConversationMessage(
+        id=message.id,
+        role=role,
+        content=message.content or "",
+        message_type=message.message_type,
+        status=message.status.value,
+        created_at=message.created_at,
+        sent_at=message.sent_at,
+        error=message.error,
+    )
 
 
 def _archivist_role(sender_type: MessageSenderType) -> str:

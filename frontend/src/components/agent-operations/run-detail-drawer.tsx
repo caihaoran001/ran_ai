@@ -42,6 +42,17 @@ type ArchivistBatchChange = {
   }>;
 };
 
+type AgentConversationMessage = {
+  id: number;
+  role: string;
+  content: string;
+  message_type: string;
+  status: string;
+  created_at: string;
+  sent_at?: string | null;
+  error?: string | null;
+};
+
 export type RunDetailData = {
   id: number;
   agent_type: string;
@@ -63,6 +74,10 @@ export type RunDetailData = {
   error_type?: string | null;
   started_at: string;
   finished_at?: string | null;
+  input_message?: AgentConversationMessage | null;
+  output_message?: AgentConversationMessage | null;
+  detail_loading?: boolean;
+  detail_error?: string | null;
   // Archivist extra fields
   trigger_reason?: string | null;
   input_source?: "exact" | "watermark_range" | "unavailable";
@@ -306,6 +321,10 @@ export function RunDetailDrawer({
                 )}
               </div>
 
+              {run.agent_type === "reply" && (
+                <ReplyConversationEvidence run={run} />
+              )}
+
               {/* Service Case Info */}
               <div className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
@@ -548,6 +567,181 @@ export function RunDetailDrawer({
     </div>
   );
 }
+
+function ReplyConversationEvidence({ run }: { run: RunDetailData }) {
+  if (run.detail_loading) {
+    return (
+      <section className="rounded-xl border border-cyan-200 bg-cyan-50/40 p-4">
+        <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900">
+          <MessageSquare className="h-4 w-4 text-cyan-700" />
+          本轮对话
+        </h3>
+        <div className="mt-4 space-y-3 animate-pulse">
+          <div className="h-16 rounded-lg bg-white/80" />
+          <div className="h-20 rounded-lg bg-white/80" />
+        </div>
+      </section>
+    );
+  }
+
+  if (run.detail_error) {
+    return (
+      <section className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+        <h3 className="flex items-center gap-1.5 text-sm font-bold text-rose-900">
+          <AlertTriangle className="h-4 w-4 text-rose-600" />
+          对话原文加载失败
+        </h3>
+        <p className="mt-2 text-xs leading-5 text-rose-800">
+          {run.detail_error}
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4">
+      <h3 className="flex items-center gap-1.5 text-sm font-bold text-slate-900">
+        <MessageSquare className="h-4 w-4 text-cyan-700" />
+        本轮对话
+      </h3>
+      <p className="mt-1 text-xs text-slate-500">
+        运行账本关联的触发消息与实际出站记录。
+      </p>
+
+      <div className="mt-4 space-y-3">
+        {run.input_message ? (
+          <ConversationMessageCard
+            label="用户消息"
+            message={run.input_message}
+            tone="user"
+          />
+        ) : (
+          <ConversationEmptyState
+            title="未找到触发消息"
+            description={
+              run.input_count > 0
+                ? "运行账本记录了输入，但对应的消息原文无法读取。"
+                : "本轮运行没有关联用户输入。"
+            }
+            tone="warn"
+          />
+        )}
+
+        {run.output_message ? (
+          <ConversationMessageCard
+            label="AI 回复"
+            message={run.output_message}
+            tone="assistant"
+          />
+        ) : (
+          <ConversationEmptyState
+            title={
+              run.output_count > 0
+                ? "未找到关联的出站消息"
+                : "本轮没有发送回复"
+            }
+            description={
+              run.output_count > 0
+                ? "运行账本记录了输出，但对应的出站消息无法读取。"
+                : `执行终态：${
+                    OUTCOME_LABELS[run.outcome ?? "running"] ??
+                    run.outcome ??
+                    "进行中"
+                  }`
+            }
+            tone={run.output_count > 0 ? "warn" : "neutral"}
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ConversationMessageCard({
+  label,
+  message,
+  tone,
+}: {
+  label: string;
+  message: AgentConversationMessage;
+  tone: "user" | "assistant";
+}) {
+  const statusLabel = MESSAGE_STATUS_LABELS[message.status] ?? message.status;
+  const isDeliveryProblem =
+    message.status === "failed" || message.status === "unknown";
+  return (
+    <article
+      className={`rounded-lg border p-3.5 ${
+        tone === "user"
+          ? "border-cyan-200 bg-cyan-50/60"
+          : isDeliveryProblem
+            ? "border-rose-200 bg-rose-50/60"
+            : "border-emerald-200 bg-emerald-50/60"
+      }`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-slate-900">{label}</span>
+          <span className="text-slate-500">{message.role}</span>
+          {tone === "assistant" && (
+            <span
+              className={`rounded-full border px-2 py-0.5 font-semibold ${
+                isDeliveryProblem
+                  ? "border-rose-200 bg-white text-rose-700"
+                  : "border-emerald-200 bg-white text-emerald-700"
+              }`}
+            >
+              {statusLabel}
+            </span>
+          )}
+        </div>
+        <span className="font-mono text-slate-400">
+          #{message.id} · {formatChinaShortDateTime(message.created_at)}
+        </span>
+      </div>
+      <p className="mt-2 whitespace-pre-wrap text-break text-sm leading-6 text-slate-900">
+        {message.content || "（空消息）"}
+      </p>
+      {message.error && isDeliveryProblem && (
+        <p className="mt-2 rounded-md bg-white/80 px-2.5 py-2 text-xs leading-5 text-rose-800">
+          发送错误：{message.error}
+        </p>
+      )}
+    </article>
+  );
+}
+
+function ConversationEmptyState({
+  title,
+  description,
+  tone,
+}: {
+  title: string;
+  description: string;
+  tone: "neutral" | "warn";
+}) {
+  return (
+    <div
+      className={`rounded-lg border px-3.5 py-3 text-xs ${
+        tone === "warn"
+          ? "border-amber-200 bg-amber-50 text-amber-950"
+          : "border-slate-200 bg-slate-50 text-slate-700"
+      }`}
+    >
+      <div className="font-bold">{title}</div>
+      <p className="mt-1 leading-5 text-slate-600">{description}</p>
+    </div>
+  );
+}
+
+const MESSAGE_STATUS_LABELS: Record<string, string> = {
+  received: "已接收",
+  pending: "等待发送",
+  sending: "发送中",
+  sent: "已发送",
+  failed: "发送失败",
+  unknown: "发送结果未知",
+};
 
 function ChangeDetail({ change }: { change: ArchivistBatchChange }) {
   const notApplied = change.action === "not_applied";

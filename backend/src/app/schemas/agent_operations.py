@@ -80,6 +80,17 @@ class AICostOverview(BaseModel):
     cases: list[AICostCaseStat] = Field(default_factory=list)
 
 
+class AgentConversationMessage(BaseModel):
+    id: int
+    role: str
+    content: str
+    message_type: str
+    status: str
+    created_at: datetime
+    sent_at: datetime | None = None
+    error: str | None = None
+
+
 class RecentAgentRun(BaseModel):
     id: int
     agent_type: str
@@ -101,6 +112,11 @@ class RecentAgentRun(BaseModel):
     error_type: str | None = None
     started_at: datetime
     finished_at: datetime | None = None
+
+
+class AgentRunDetail(RecentAgentRun):
+    input_message: AgentConversationMessage | None = None
+    output_message: AgentConversationMessage | None = None
 
 
 class ArchivistInputMessage(BaseModel):
