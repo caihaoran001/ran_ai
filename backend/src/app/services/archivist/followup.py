@@ -2,9 +2,10 @@
 
 H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部来源**。追问为"外部确定性触发、
 每 case 每天最多几条"（不注入系统 prompt 让 agent 自由裁量），由调度器
-`reminder_service.check_checkin_followup_v2_once` 周期扫描、调 `compose_scheduled_followups`
-组织候选，各类各占各的时间窗与天级去重闸（`ReminderEvent(rule_id="checkin_followup:{kind}")`）、
-每天最多 3 条：
+`reminder_service.check_checkin_followup_v2_once` 周期扫描、调 `plan_scheduled_followups`
+无模型地组织候选；调度器通过时间窗与天级去重闸
+（`ReminderEvent(rule_id="checkin_followup:{kind}")`）后，才调用 `render_scheduled_followup`
+生成真正要发送的文案。每天最多 3 条：
 
 - 五项清单（daily_checklist）：早上回顾**昨天**当前生效清单里尚未回答的项；系统清单第1项跟踪早C/午B/晚A，工作人员自定义清单不强加该语义。
 - 矛盾核对（contradiction）：表单值≠聊天值时下午发一句自然核对。
@@ -88,7 +89,12 @@ def _pending_confirmations(parsed_json: dict | None) -> list[dict]:
 
 
 async def _has_field_recently(
-    session: AsyncSession, *, service_case_id: int, field_key: str, today: date, days: int
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    field_key: str,
+    today: date,
+    days: int,
 ) -> bool:
     """最近 days 天内是否有某字段的记录（用于避免重复追问体重/腰围）。"""
     since = today - timedelta(days=days - 1)
@@ -127,7 +133,9 @@ async def detect_followup(
             Checkin.deleted_at.is_(None),
         )
     )
-    confirmations = _pending_confirmations(today_checkin.parsed_json if today_checkin else None)
+    confirmations = _pending_confirmations(
+        today_checkin.parsed_json if today_checkin else None
+    )
 
     # 体重不再单独一类主动追问，只在里程碑前夕的“次晨打卡”提醒中带上：
     # 仅当最近 N 天都没有记录才提醒次晨称重，避免刚报过又问。
@@ -199,7 +207,9 @@ def _milestone_fallback_message(
         for action, needed in (("称好体重", need_weight), ("量好腰围", need_waist))
         if needed
     ]
-    checkin_action = f"{'、'.join(actions)}，再发群里打卡" if actions else "完成打卡并发到群里"
+    checkin_action = (
+        f"{'、'.join(actions)}，再发群里打卡" if actions else "完成打卡并发到群里"
+    )
     return (
         f"明天是服务第{milestone_day}天，今晚先提醒一下："
         f"明早起床如厕后，空腹状态下{checkin_action}。今晚不用测，早点休息～"
@@ -225,8 +235,11 @@ def _is_valid_next_morning_checkin_reminder(text: str) -> bool:
         "马上测",
         "马上打卡",
     )
-    return has_morning and "如厕后" in text and "空腹" in text and not any(
-        phrase in text for phrase in forbidden
+    return (
+        has_morning
+        and "如厕后" in text
+        and "空腹" in text
+        and not any(phrase in text for phrase in forbidden)
     )
 
 
@@ -255,7 +268,11 @@ async def compose_milestone_followup(
             "绝对不能让用户今晚、现在或马上称重、量腰围或打卡。"
             "不要追问阶段变化、卡点或下阶段计划。"
         )
-        measures = [label for label, need in (("体重", need_weight), ("腰围", need_waist)) if need]
+        measures = [
+            label
+            for label, need in (("体重", need_weight), ("腰围", need_waist))
+            if need
+        ]
         measure_hint = (
             f"明早需要用户在如厕后、空腹状态下测量{'、'.join(measures)}，再发群里打卡。"
             if measures
@@ -291,6 +308,20 @@ class ScheduledFollowup:
     confirmation_fields: list[str] = field(default_factory=list)
 
 
+@dataclass
+class ScheduledFollowupPlan:
+    """A model-free candidate; rendering is deferred until the send gate is won."""
+
+    kind: str
+    target_date: date
+    expected_items: list[dict[str, str]] = field(default_factory=list)
+    confirmation_fields: list[str] = field(default_factory=list)
+    fixed_text: str | None = None
+    milestone_day: int | None = None
+    need_waist: bool = False
+    need_weight: bool = False
+
+
 async def get_active_daily_checklist(
     session: AsyncSession, *, service_case_id: int
 ) -> tuple[str, list[dict[str, str]]] | None:
@@ -302,12 +333,16 @@ async def get_active_daily_checklist(
     return (checklist.source_ref, items) if len(items) == 5 else None
 
 
-def _answered_checklist_items(checkin: Checkin | None, items: list[dict[str, str]]) -> set[str]:
+def _answered_checklist_items(
+    checkin: Checkin | None, items: list[dict[str, str]]
+) -> set[str]:
     """已答的自定义清单项（custom_checkin）。
 
     系统清单第1项若标记为早C/午B/晚A三合一，则按子产品逐项判缺；工作人员自定义项正常按 item_id 判定。
     """
-    parsed = checkin.parsed_json if checkin and isinstance(checkin.parsed_json, dict) else {}
+    parsed = (
+        checkin.parsed_json if checkin and isinstance(checkin.parsed_json, dict) else {}
+    )
     answers = parsed.get("custom_checkin") if isinstance(parsed, dict) else None
     return {
         str(item_id)
@@ -316,7 +351,9 @@ def _answered_checklist_items(checkin: Checkin | None, items: list[dict[str, str
     }
 
 
-def _first_item_missing_label(checkin: Checkin | None, items: list[dict[str, str]]) -> str | None:
+def _first_item_missing_label(
+    checkin: Checkin | None, items: list[dict[str, str]]
+) -> str | None:
     """第1项(早C/午B/晚A三合一)要追问的标签；三项都已上报则返回 None(不追)。
 
     按 `_PRODUCT_SLOTS` 逐个子产品判缺：全缺时用清单原始题面，部分缺时只列尚未上报的子产品
@@ -324,8 +361,12 @@ def _first_item_missing_label(checkin: Checkin | None, items: list[dict[str, str
     """
     if not items:
         return None
-    parsed = checkin.parsed_json if checkin and isinstance(checkin.parsed_json, dict) else {}
-    product_schedule = parsed.get("product_schedule") if isinstance(parsed, dict) else None
+    parsed = (
+        checkin.parsed_json if checkin and isinstance(checkin.parsed_json, dict) else {}
+    )
+    product_schedule = (
+        parsed.get("product_schedule") if isinstance(parsed, dict) else None
+    )
     product_schedule = product_schedule if isinstance(product_schedule, dict) else {}
     missing_slots = [
         label
@@ -339,15 +380,16 @@ def _first_item_missing_label(checkin: Checkin | None, items: list[dict[str, str
     return "、".join(missing_slots)
 
 
-async def compose_document_checklist_followup(
+async def plan_document_checklist_followup(
     session: AsyncSession,
     *,
     service_case: ServiceCase,
     target_date: date,
-    ai_service: object | None = None,
-) -> ScheduledFollowup | None:
-    """Ask only unanswered items from yesterday's effective five-item checklist."""
-    checklist = await get_active_daily_checklist(session, service_case_id=service_case.id)
+) -> ScheduledFollowupPlan | None:
+    """Resolve yesterday's unanswered checklist items without calling a model."""
+    checklist = await get_active_daily_checklist(
+        session, service_case_id=service_case.id
+    )
     if checklist is None:
         return None
     _, items = checklist
@@ -370,6 +412,20 @@ async def compose_document_checklist_followup(
             missing.append(item)
     if not missing:
         return None
+    return ScheduledFollowupPlan(
+        kind="daily_checklist",
+        target_date=target_date,
+        expected_items=missing,
+    )
+
+
+async def _compose_document_checklist_followup_text(
+    *,
+    service_case: ServiceCase,
+    missing: list[dict[str, str]],
+    ai_service: object | None = None,
+) -> str:
+    """Render one due checklist reminder; failure falls back to a fixed template."""
     labels = "；".join(item["label"] for item in missing)
     fallback = f"早上好，补一下昨天的打卡：{labels}。回我一句，我记上，后面好帮你调整～"
     try:
@@ -390,8 +446,116 @@ async def compose_document_checklist_followup(
         text = (text or "").strip() or fallback
     except Exception:  # noqa: BLE001 - proactive reminder must never stop the scheduler
         text = fallback
+    return text
+
+
+async def compose_document_checklist_followup(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    target_date: date,
+    ai_service: object | None = None,
+) -> ScheduledFollowup | None:
+    """Compatibility helper for direct composition outside the scheduler."""
+    plan = await plan_document_checklist_followup(
+        session,
+        service_case=service_case,
+        target_date=target_date,
+    )
+    if plan is None:
+        return None
+    return await render_scheduled_followup(
+        plan,
+        service_case=service_case,
+        ai_service=ai_service,
+    )
+
+
+async def plan_scheduled_followups(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    now: datetime,
+    tz: ZoneInfo,
+) -> list[ScheduledFollowupPlan]:
+    """Build independent candidates without generating any LLM copy."""
+    detect = await detect_followup(session, service_case=service_case, now=now, tz=tz)
+    preferences = await get_followup_preference_states(
+        session, service_case_id=service_case.id
+    )
+    candidates: list[ScheduledFollowupPlan] = []
+    confirmations = detect.get("confirmations") or []
+    confirmation_text = compose_followup_message(confirmations=confirmations)
+    if confirmation_text and preferences["contradiction"]:
+        candidates.append(
+            ScheduledFollowupPlan(
+                kind="contradiction",
+                target_date=now.date(),
+                expected_items=[
+                    {"id": f"contradiction:{item['field']}", "label": item["label"]}
+                    for item in confirmations
+                ],
+                confirmation_fields=[item["field"] for item in confirmations],
+                fixed_text=confirmation_text,
+            )
+        )
+    milestone = detect.get("milestone")
+    if milestone and preferences["milestone_review"]:
+        candidates.append(
+            ScheduledFollowupPlan(
+                kind="milestone",
+                target_date=now.date() + timedelta(days=1),
+                expected_items=[
+                    {"id": "milestone_morning_checkin", "label": "次晨空腹打卡"}
+                ],
+                milestone_day=milestone["milestone_day"],
+                need_waist=bool(milestone["need_waist"] and preferences["waist"]),
+                need_weight=bool(milestone["need_weight"] and preferences["weight"]),
+            )
+        )
+    if preferences["daily_checklist"]:
+        daily = await plan_document_checklist_followup(
+            session,
+            service_case=service_case,
+            target_date=now.date() - timedelta(days=1),
+        )
+        if daily:
+            candidates.append(daily)
+    # 体重不再单独一类主动追问，已并入里程碑前夜的次晨空腹打卡提醒。
+    return candidates
+
+
+async def render_scheduled_followup(
+    plan: ScheduledFollowupPlan,
+    *,
+    service_case: ServiceCase,
+    ai_service: object | None = None,
+) -> ScheduledFollowup:
+    """Render a candidate only after the scheduler's time/dedupe reservation."""
+    if plan.fixed_text is not None:
+        text = plan.fixed_text
+    elif plan.kind == "daily_checklist":
+        text = await _compose_document_checklist_followup_text(
+            service_case=service_case,
+            missing=plan.expected_items,
+            ai_service=ai_service,
+        )
+    elif plan.kind == "milestone" and plan.milestone_day is not None:
+        text = await compose_milestone_followup(
+            service_case=service_case,
+            milestone_day=plan.milestone_day,
+            need_waist=plan.need_waist,
+            need_weight=plan.need_weight,
+            ai_service=ai_service,
+        )
+    else:
+        raise ValueError(f"Unsupported followup plan: {plan.kind}")
     return ScheduledFollowup(
-        kind="daily_checklist", text=text, target_date=target_date, expected_items=missing
+        kind=plan.kind,
+        text=text,
+        target_date=plan.target_date,
+        expected_items=plan.expected_items,
+        confirmation_fields=plan.confirmation_fields,
     )
 
 
@@ -403,54 +567,26 @@ async def compose_scheduled_followups(
     tz: ZoneInfo,
     ai_service: object | None = None,
 ) -> list[ScheduledFollowup]:
-    """Build independent candidates; the scheduler applies time windows and the three-message cap."""
-    detect = await detect_followup(session, service_case=service_case, now=now, tz=tz)
-    preferences = await get_followup_preference_states(session, service_case_id=service_case.id)
-    candidates: list[ScheduledFollowup] = []
-    confirmations = detect.get("confirmations") or []
-    confirmation_text = compose_followup_message(confirmations=confirmations)
-    if confirmation_text and preferences["contradiction"]:
-        candidates.append(
-            ScheduledFollowup(
-                kind="contradiction",
-                text=confirmation_text,
-                target_date=now.date(),
-                expected_items=[{"id": f"contradiction:{item['field']}", "label": item["label"]} for item in confirmations],
-                confirmation_fields=[item["field"] for item in confirmations],
-            )
-        )
-    milestone = detect.get("milestone")
-    if milestone and preferences["milestone_review"]:
-        candidates.append(
-            ScheduledFollowup(
-                kind="milestone",
-                text=await compose_milestone_followup(
-                    service_case=service_case,
-                    milestone_day=milestone["milestone_day"],
-                    need_waist=bool(milestone["need_waist"] and preferences["waist"]),
-                    need_weight=bool(milestone["need_weight"] and preferences["weight"]),
-                    ai_service=ai_service,
-                ),
-                target_date=now.date() + timedelta(days=1),
-                expected_items=[
-                    {"id": "milestone_morning_checkin", "label": "次晨空腹打卡"}
-                ],
-            )
-        )
-    if preferences["daily_checklist"]:
-        daily = await compose_document_checklist_followup(
-            session,
+    """Compatibility helper that plans and renders all candidates immediately."""
+    plans = await plan_scheduled_followups(
+        session,
+        service_case=service_case,
+        now=now,
+        tz=tz,
+    )
+    return [
+        await render_scheduled_followup(
+            plan,
             service_case=service_case,
-            target_date=now.date() - timedelta(days=1),
             ai_service=ai_service,
         )
-        if daily:
-            candidates.append(daily)
-    # 体重不再单独一类主动追问，已并入里程碑前夜的次晨空腹打卡提醒。
-    return candidates
+        for plan in plans
+    ]
 
 
-async def finalize_checkin_followup_cycles(session: AsyncSession, *, today: date) -> None:
+async def finalize_checkin_followup_cycles(
+    session: AsyncSession, *, today: date
+) -> None:
     """Close older open cycles; only a completed calendar cycle counts as one silence."""
     rows = list(
         await session.scalars(
@@ -466,9 +602,7 @@ async def finalize_checkin_followup_cycles(session: AsyncSession, *, today: date
         row.finalized_at = now
 
 
-async def is_followup_paused(
-    session: AsyncSession, *, service_case_id: int
-) -> bool:
+async def is_followup_paused(session: AsyncSession, *, service_case_id: int) -> bool:
     """Pause after two consecutive finished cycles without a valid expected answer."""
     rows = list(
         await session.scalars(

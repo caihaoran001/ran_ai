@@ -91,7 +91,9 @@ class ReminderService:
             and not self.settings.population_insight_enabled
         )
         if optional_services_disabled:
-            logger.info("Optional scheduled services are disabled; lifecycle maintenance remains enabled")
+            logger.info(
+                "Optional scheduled services are disabled; lifecycle maintenance remains enabled"
+            )
         self._stopped.clear()
         self._task = asyncio.create_task(self._run_loop(), name="reminder-service")
         logger.info("Reminder service started")
@@ -112,7 +114,9 @@ class ReminderService:
             try:
                 async with _scheduler_advisory_lock() as acquired:
                     if not acquired:
-                        logger.debug("Reminder scheduler skipped: advisory lock is held by another worker")
+                        logger.debug(
+                            "Reminder scheduler skipped: advisory lock is held by another worker"
+                        )
                     else:
                         await self.check_service_starts_once()
                         await self.check_service_phase_ends_once()
@@ -174,7 +178,9 @@ class ReminderService:
             return
         self._last_population_insight_check_date = current.date()
         async with SessionLocal() as session:
-            result = await refresh_population_insight(session, now=current.astimezone(timezone.utc))
+            result = await refresh_population_insight(
+                session, now=current.astimezone(timezone.utc)
+            )
         if result.ran:
             logger.info(
                 "Population insight auto-refresh completed reason=%s snapshot_id=%s",
@@ -182,7 +188,9 @@ class ReminderService:
                 result.snapshot_id,
             )
         else:
-            logger.debug("Population insight auto-refresh skipped reason=%s", result.reason)
+            logger.debug(
+                "Population insight auto-refresh skipped reason=%s", result.reason
+            )
 
     async def check_service_phase_ends_once(self, now: datetime | None = None) -> None:
         timezone = ZoneInfo(self.settings.reminder_timezone)
@@ -201,7 +209,9 @@ class ReminderService:
                 if not service_window_ended(service_case, now, timezone):
                     continue
                 service_case.status = ServiceCaseStatus.COMPLETED
-                service_case.ended_at = service_case.ended_at or service_phase_end_at(service_case, timezone)
+                service_case.ended_at = service_case.ended_at or service_phase_end_at(
+                    service_case, timezone
+                )
                 changed = True
             if changed:
                 await session.commit()
@@ -243,19 +253,27 @@ class ReminderService:
                     aligned,
                 )
 
-    async def check_checkin_followup_v2_once(self) -> None:
+    async def check_checkin_followup_v2_once(
+        self,
+        *,
+        now: datetime | None = None,
+        ai_service: object | None = None,
+    ) -> None:
         """Five-item daily review plus low-frequency measurements, capped at three sends per cycle."""
         if not self.settings.checkin_followup_enabled:
             return
-        from app.services.archivist.checkin_projection import mark_contradictions_pending_confirmation
+        from app.services.archivist.checkin_projection import (
+            mark_contradictions_pending_confirmation,
+        )
         from app.services.archivist.followup import (
-            compose_scheduled_followups,
             finalize_checkin_followup_cycles,
             is_followup_paused,
+            plan_scheduled_followups,
+            render_scheduled_followup,
         )
 
         tz = ZoneInfo(self.settings.reminder_timezone)
-        now = datetime.now(tz)
+        now = now or datetime.now(tz)
         today = now.date()
         async with SessionLocal() as session:
             await finalize_checkin_followup_cycles(session, today=today)
@@ -279,29 +297,36 @@ class ReminderService:
                     )
                 )
                 sent_kinds = list(cycle.sent_kinds or []) if cycle is not None else []
-                candidates = await compose_scheduled_followups(
+                plans = await plan_scheduled_followups(
                     session, service_case=service_case, now=now, tz=tz
                 )
-                for followup in candidates:
-                    if len(sent_kinds) >= 3 or followup.kind in sent_kinds:
+                for plan in plans:
+                    if len(sent_kinds) >= 3 or plan.kind in sent_kinds:
                         continue
-                    start, end = _CHECKIN_FOLLOWUP_WINDOWS[followup.kind]
+                    start, end = _CHECKIN_FOLLOWUP_WINDOWS[plan.kind]
                     target = _deterministic_followup_time(
-                        service_case.id, today, followup.kind, start, end
+                        service_case.id, today, plan.kind, start, end
                     )
                     if not (start <= now.time() < end) or now.time() < target:
                         continue
                     event = await _reserve_reminder_event(
                         session,
                         service_case.id,
-                        rule_id=f"checkin_followup:{followup.kind}",
+                        rule_id=f"checkin_followup:{plan.kind}",
                         event_date=today,
                         event_type=ReminderEventType.REMINDED,
                     )
                     if event is None:
                         continue
+                    followup = await render_scheduled_followup(
+                        plan,
+                        service_case=service_case,
+                        ai_service=ai_service,
+                    )
                     if cycle is None:
-                        cycle = CheckinFollowupCycle(service_case_id=service_case.id, cycle_date=today)
+                        cycle = CheckinFollowupCycle(
+                            service_case_id=service_case.id, cycle_date=today
+                        )
                         session.add(cycle)
                         await session.flush()
                     context = {
@@ -331,15 +356,26 @@ class ReminderService:
                     )
                     session.add(message)
                     await session.flush()
-                    result = await _send_channel_text_with_retries(service_case.group_id, followup.text)
+                    result = await _send_channel_text_with_retries(
+                        service_case.group_id, followup.text
+                    )
                     if not result.success:
-                        message.status, message.error = MessageStatus.FAILED, result.error
+                        message.status, message.error = (
+                            MessageStatus.FAILED,
+                            result.error,
+                        )
                         continue
-                    message.status, message.wecom_message_id = MessageStatus.SENT, result.message_id
+                    message.status, message.wecom_message_id = (
+                        MessageStatus.SENT,
+                        result.message_id,
+                    )
                     sent_kinds.append(followup.kind)
                     cycle.sent_kinds = sent_kinds
                     cycle.message_ids = list(cycle.message_ids or []) + [message.id]
-                    if followup.kind == "contradiction" and followup.confirmation_fields:
+                    if (
+                        followup.kind == "contradiction"
+                        and followup.confirmation_fields
+                    ):
                         today_checkin = await session.scalar(
                             select(Checkin).where(
                                 Checkin.service_case_id == service_case.id,
@@ -349,10 +385,13 @@ class ReminderService:
                         )
                         if today_checkin is not None:
                             mark_contradictions_pending_confirmation(
-                                today_checkin, followup.confirmation_fields)
+                                today_checkin, followup.confirmation_fields
+                            )
             await session.commit()
 
-    async def check_agent_reminder_tasks_once(self, now: datetime | None = None) -> None:
+    async def check_agent_reminder_tasks_once(
+        self, now: datetime | None = None
+    ) -> None:
         if not self.settings.agent_reminders_enabled:
             return
         tz = ZoneInfo(self.settings.reminder_timezone)
@@ -384,7 +423,9 @@ class ReminderService:
                 stale_minutes = self.settings.reminder_stale_after_minutes
                 if now_utc - task.remind_at > timedelta(minutes=stale_minutes):
                     task.status = AgentReminderTaskStatus.SKIPPED
-                    task.error = f"stale: remind_at past by >{int(stale_minutes)}min, skipped"
+                    task.error = (
+                        f"stale: remind_at past by >{int(stale_minutes)}min, skipped"
+                    )
                     await _schedule_next_recurrence(session, task, now, tz)
                     continue
                 if not service_case.ai_auto_reply_enabled:
@@ -395,7 +436,9 @@ class ReminderService:
                 task.error = None
                 await session.flush()
 
-                recent_messages = await _recent_chat_lines(session, task.service_case_id)
+                recent_messages = await _recent_chat_lines(
+                    session, task.service_case_id
+                )
                 run_started_at = clock.monotonic()
                 agent_run_id = await ensure_agent_run(
                     run_key=f"reminder:{task.id}",
@@ -430,16 +473,16 @@ class ReminderService:
                         "reminder_instruction": task.content,
                     }
                 except Exception as exc:
-                    logger.exception("Scheduled agent reminder generation failed task_id=%s", task.id)
+                    logger.exception(
+                        "Scheduled agent reminder generation failed task_id=%s", task.id
+                    )
                     task.status = AgentReminderTaskStatus.FAILED
                     task.error = f"agent generation failed: {type(exc).__name__}: {exc}"
                     await complete_agent_run(
                         agent_run_id=agent_run_id,
                         status=AGENT_RUN_FAILED,
                         outcome="reminder_generation_failed",
-                        latency_ms=int(
-                            (clock.monotonic() - run_started_at) * 1000
-                        ),
+                        latency_ms=int((clock.monotonic() - run_started_at) * 1000),
                         error_type=type(exc).__name__,
                     )
                     continue
@@ -450,15 +493,15 @@ class ReminderService:
                         agent_run_id=agent_run_id,
                         status=AGENT_RUN_FAILED,
                         outcome="reminder_empty",
-                        latency_ms=int(
-                            (clock.monotonic() - run_started_at) * 1000
-                        ),
+                        latency_ms=int((clock.monotonic() - run_started_at) * 1000),
                         error_type="EmptyReply",
                     )
                     continue
 
                 # 提醒默认原生 @ 请求者（当初说“提醒我…”的那个用户）：从 trigger 消息解析其企微 userId。
-                at_target = await _resolve_reminder_at_target(session, task.trigger_message_id)
+                at_target = await _resolve_reminder_at_target(
+                    session, task.trigger_message_id
+                )
 
                 message = Message(
                     service_case_id=task.service_case_id,
@@ -475,7 +518,9 @@ class ReminderService:
                 session.add(message)
                 await session.flush()
 
-                result, sent_content = await _send_reminder_with_at(task.group_id, outbound_content, at_target)
+                result, sent_content = await _send_reminder_with_at(
+                    task.group_id, outbound_content, at_target
+                )
                 message.content = sent_content
                 if result and result.success:
                     message.status = MessageStatus.SENT
@@ -491,9 +536,7 @@ class ReminderService:
                         agent_run_id=agent_run_id,
                         status=AGENT_RUN_COMPLETED,
                         outcome="reminder_sent",
-                        latency_ms=int(
-                            (clock.monotonic() - run_started_at) * 1000
-                        ),
+                        latency_ms=int((clock.monotonic() - run_started_at) * 1000),
                         output_count=1,
                     )
                 else:
@@ -506,9 +549,7 @@ class ReminderService:
                         agent_run_id=agent_run_id,
                         status=AGENT_RUN_FAILED,
                         outcome="reminder_send_failed",
-                        latency_ms=int(
-                            (clock.monotonic() - run_started_at) * 1000
-                        ),
+                        latency_ms=int((clock.monotonic() - run_started_at) * 1000),
                         error_type="ChannelSendFailed",
                     )
             await session.commit()
@@ -535,11 +576,14 @@ class ReminderService:
                 )
                 try:
                     await generate_profile_and_documents(
-                        session, service_case, auto_send=self.settings.auto_send_documents
+                        session,
+                        service_case,
+                        auto_send=self.settings.auto_send_documents,
                     )
                 except Exception:
                     logger.exception(
-                        "Retry stuck document generation failed service_case_id=%s", service_case.id
+                        "Retry stuck document generation failed service_case_id=%s",
+                        service_case.id,
                     )
                     await session.rollback()
 
@@ -561,7 +605,11 @@ class ReminderService:
                 )
             )
             for document in documents:
-                cj = document.content_json if isinstance(document.content_json, dict) else {}
+                cj = (
+                    document.content_json
+                    if isinstance(document.content_json, dict)
+                    else {}
+                )
                 if not cj.get("degraded"):
                     continue
                 if int(cj.get("degraded_retry_count", 0)) >= 5:
@@ -569,7 +617,9 @@ class ReminderService:
                 try:
                     await retry_degraded_stage_report(session, document)
                 except Exception:
-                    logger.exception("Retry degraded stage report failed doc_id=%s", document.id)
+                    logger.exception(
+                        "Retry degraded stage report failed doc_id=%s", document.id
+                    )
                     await session.rollback()
 
     async def check_unsent_channel_messages_once(self) -> None:
@@ -599,7 +649,9 @@ class ReminderService:
                 try:
                     result = await send_channel_text(message.group_id, message.content)
                 except Exception:
-                    logger.exception("Resend unsent channel message failed id=%s", message.id)
+                    logger.exception(
+                        "Resend unsent channel message failed id=%s", message.id
+                    )
                     continue
                 if result.success:
                     message.status = MessageStatus.SENT
@@ -618,9 +670,13 @@ class ReminderService:
                 return
             try:
                 await generate_stage_report(session, service_case, stage=stage)
-                logger.info(f"Concurrently generated stage report {stage} for case {case_id}")
+                logger.info(
+                    f"Concurrently generated stage report {stage} for case {case_id}"
+                )
             except Exception:
-                logger.exception(f"Failed to generate stage report {stage} for case {case_id}")
+                logger.exception(
+                    f"Failed to generate stage report {stage} for case {case_id}"
+                )
 
     async def check_image_cache_cleanup_once(self, now: datetime | None = None) -> None:
         """清理过期的图片缓存(.wecom_cache/images)：保留最近 60 天，每天清理一次更老的文件。
@@ -629,7 +685,10 @@ class ReminderService:
         只清掉很久以前的；前端对已清理的图做"图片已过期"兜底。要调整保留期改 retention_days 即可。
         """
         now = now or datetime.now(ZoneInfo(self.settings.reminder_timezone))
-        if self._last_image_cache_cleanup and (now - self._last_image_cache_cleanup).total_seconds() < 24 * 3600:
+        if (
+            self._last_image_cache_cleanup
+            and (now - self._last_image_cache_cleanup).total_seconds() < 24 * 3600
+        ):
             return
         self._last_image_cache_cleanup = now
         retention_days = 60
@@ -646,7 +705,11 @@ class ReminderService:
             except Exception:
                 logger.exception("Failed to remove cached image %s", f)
         if removed:
-            logger.info("Image cache cleanup removed %d expired files (>%d days)", removed, retention_days)
+            logger.info(
+                "Image cache cleanup removed %d expired files (>%d days)",
+                removed,
+                retention_days,
+            )
 
     async def check_room_names_once(self, now: datetime | None = None) -> None:
         """回填/刷新服务单的 QiWe 群名(group_name)，用于按群名搜索服务单。
@@ -690,7 +753,11 @@ class ReminderService:
             if full_refresh:
                 self._last_room_name_full_refresh = now
         if updated:
-            logger.info("Refreshed %d service-case group names (full_refresh=%s)", updated, full_refresh)
+            logger.info(
+                "Refreshed %d service-case group names (full_refresh=%s)",
+                updated,
+                full_refresh,
+            )
 
     async def _resolve_stage_report_time(self, now: datetime) -> tuple[int, int]:
         """阶段报告生成的 (hour, minute)，来自运营规则配置；带 5 分钟 TTL 缓存。
@@ -743,36 +810,59 @@ class ReminderService:
             existing_reports = set()
             for doc in documents:
                 if isinstance(doc.content_json, dict) and doc.content_json.get("stage"):
-                    existing_reports.add((doc.service_case_id, doc.content_json.get("stage")))
+                    existing_reports.add(
+                        (doc.service_case_id, doc.content_json.get("stage"))
+                    )
 
         # Define the task list for parallel execution using distinct sessions
         tasks = []
         for service_case in service_cases:
             for stage in _due_stage_reports(
-                service_case, now, tz, existing_reports, generate_hour=gen_hour, generate_minute=gen_minute
+                service_case,
+                now,
+                tz,
+                existing_reports,
+                generate_hour=gen_hour,
+                generate_minute=gen_minute,
             ):
-                tasks.append(self._generate_report_for_case_worker(service_case.id, stage))
+                tasks.append(
+                    self._generate_report_for_case_worker(service_case.id, stage)
+                )
 
         if tasks:
-            logger.info(f"Concurrently generating {len(tasks)} stage reports via scheduler")
+            logger.info(
+                f"Concurrently generating {len(tasks)} stage reports via scheduler"
+            )
             # 分批并发：21:00 集中生成时，在服务的用户可能有几十个，一次性 gather 会瞬时打爆 LLM
             # 并发/限流。阶段报告是多段落生成、比成效快照更重，批量取更小的 3。
             batch_size = 3
             for i in range(0, len(tasks), batch_size):
-                await asyncio.gather(*tasks[i:i + batch_size], return_exceptions=True)
+                await asyncio.gather(*tasks[i : i + batch_size], return_exceptions=True)
 
-    async def _generate_outcome_snapshot_for_case_worker(self, case_id: int, milestone: str) -> None:
+    async def _generate_outcome_snapshot_for_case_worker(
+        self, case_id: int, milestone: str
+    ) -> None:
         async with SessionLocal() as session:
             service_case = await session.get(ServiceCase, case_id)
             if not service_case:
-                logger.error("Service case %s not found in outcome snapshot worker", case_id)
+                logger.error(
+                    "Service case %s not found in outcome snapshot worker", case_id
+                )
                 return
             try:
-                await generate_outcome_snapshot(session, service_case, milestone=milestone)
+                await generate_outcome_snapshot(
+                    session, service_case, milestone=milestone
+                )
                 await session.commit()
-                logger.info("Generated outcome snapshot %s for case %s", milestone, case_id)
+                logger.info(
+                    "Generated outcome snapshot %s for case %s", milestone, case_id
+                )
             except Exception:
-                logger.exception("Failed to generate outcome snapshot %s for case %s", milestone, case_id)
+                logger.exception(
+                    "Failed to generate outcome snapshot %s for case %s",
+                    milestone,
+                    case_id,
+                )
 
     async def check_outcome_snapshots_once(self) -> None:
         now = datetime.now(ZoneInfo(self.settings.reminder_timezone))
@@ -790,16 +880,24 @@ class ReminderService:
                 return
             snapshots = list(
                 await session.scalars(
-                    select(OutcomeSnapshot).where(OutcomeSnapshot.service_case_id.in_(case_ids))
+                    select(OutcomeSnapshot).where(
+                        OutcomeSnapshot.service_case_id.in_(case_ids)
+                    )
                 )
             )
-            snapshot_map = {(item.service_case_id, item.milestone): item for item in snapshots}
+            snapshot_map = {
+                (item.service_case_id, item.milestone): item for item in snapshots
+            }
             states = list(
                 await session.scalars(
-                    select(OutcomeStageState).where(OutcomeStageState.service_case_id.in_(case_ids))
+                    select(OutcomeStageState).where(
+                        OutcomeStageState.service_case_id.in_(case_ids)
+                    )
                 )
             )
-            state_map = {(item.service_case_id, item.milestone): item for item in states}
+            state_map = {
+                (item.service_case_id, item.milestone): item for item in states
+            }
 
         tasks = []
         for service_case in service_cases:
@@ -822,23 +920,25 @@ class ReminderService:
             ):
                 snapshot = snapshot_map.get((service_case.id, milestone))
                 state = state_map.get((service_case.id, milestone))
-                should_refresh = (
-                    snapshot is None
-                    or (
-                        state is not None
-                        and (
-                            snapshot.generated_at is None
-                            or state.updated_at > snapshot.generated_at
-                        )
+                should_refresh = snapshot is None or (
+                    state is not None
+                    and (
+                        snapshot.generated_at is None
+                        or state.updated_at > snapshot.generated_at
                     )
                 )
                 if days >= threshold and should_refresh:
-                    tasks.append(self._generate_outcome_snapshot_for_case_worker(service_case.id, milestone))
+                    tasks.append(
+                        self._generate_outcome_snapshot_for_case_worker(
+                            service_case.id, milestone
+                        )
+                    )
         if tasks:
             logger.info("Generating %s outcome snapshots via scheduler", len(tasks))
             batch_size = 5
             for i in range(0, len(tasks), batch_size):
-                await asyncio.gather(*tasks[i:i + batch_size], return_exceptions=True)
+                await asyncio.gather(*tasks[i : i + batch_size], return_exceptions=True)
+
 
 async def mark_seen(service_case_id: int, event_date: date | None = None) -> None:
     async with SessionLocal() as session:
@@ -879,7 +979,9 @@ async def _send_channel_text_with_retries(chat_id: str, content: str):
         )
         await asyncio.sleep(CHANNEL_SEND_RETRY_DELAY_SECONDS)
     if last_result is not None:
-        last_result.error = f"{last_result.error or 'channel send failed'} (attempts={attempt})"
+        last_result.error = (
+            f"{last_result.error or 'channel send failed'} (attempts={attempt})"
+        )
         logger.warning(
             "Reminder channel send failed after retries: chat_id=%s attempts=%s error=%s",
             chat_id,
@@ -889,7 +991,9 @@ async def _send_channel_text_with_retries(chat_id: str, content: str):
     return last_result
 
 
-async def _resolve_reminder_at_target(session, trigger_message_id: int | None) -> tuple[str, str] | None:
+async def _resolve_reminder_at_target(
+    session, trigger_message_id: int | None
+) -> tuple[str, str] | None:
     """取提醒请求者的企微 (userId, 昵称)，用于到点原生 @。
 
     仅当 trigger 是用户(USER)消息、且能从 analysis_json._qiwe_meta 拿到 sender_id 时返回；
@@ -901,7 +1005,11 @@ async def _resolve_reminder_at_target(session, trigger_message_id: int | None) -
     if trigger is None or trigger.sender_type != MessageSenderType.USER:
         return None
     analysis = trigger.analysis_json if isinstance(trigger.analysis_json, dict) else {}
-    meta = analysis.get("_qiwe_meta") if isinstance(analysis.get("_qiwe_meta"), dict) else {}
+    meta = (
+        analysis.get("_qiwe_meta")
+        if isinstance(analysis.get("_qiwe_meta"), dict)
+        else {}
+    )
     user_id = str(meta.get("sender_id") or "").strip()
     if not user_id:
         return None
@@ -909,7 +1017,9 @@ async def _resolve_reminder_at_target(session, trigger_message_id: int | None) -
     return user_id, name
 
 
-async def _send_reminder_with_at(chat_id: str, content: str, at_target: tuple[str, str] | None):
+async def _send_reminder_with_at(
+    chat_id: str, content: str, at_target: tuple[str, str] | None
+):
     """发送定时提醒：能拿到 @ 目标且渠道支持 hypertext 时，用原生 @（企微高亮），否则纯文本。
 
     返回 (send_result, db_content)：db_content 反映实际发出的内容（带 "@昵称 " 前缀或纯文本），
@@ -942,7 +1052,9 @@ async def _send_reminder_with_at(chat_id: str, content: str, at_target: tuple[st
     return result, content
 
 
-def _next_recurrence_at(remind_at: datetime, recurrence: str, now: datetime, tz: ZoneInfo) -> datetime | None:
+def _next_recurrence_at(
+    remind_at: datetime, recurrence: str, now: datetime, tz: ZoneInfo
+) -> datetime | None:
     """按循环规则算出严格晚于 now 的下一次触发时间（本地时区推进，跳过已错过的时段）。
 
     daily=+1天，weekly=+7天；带迭代上限防呆（调度器长时间停机也不会死循环）。
@@ -950,7 +1062,11 @@ def _next_recurrence_at(remind_at: datetime, recurrence: str, now: datetime, tz:
     step = {"daily": timedelta(days=1), "weekly": timedelta(weeks=1)}.get(recurrence)
     if step is None:
         return None
-    base = remind_at.astimezone(tz) if remind_at.tzinfo else remind_at.replace(tzinfo=timezone.utc).astimezone(tz)
+    base = (
+        remind_at.astimezone(tz)
+        if remind_at.tzinfo
+        else remind_at.replace(tzinfo=timezone.utc).astimezone(tz)
+    )
     now_local = now.astimezone(tz)
     nxt = base + step
     for _ in range(400):  # 上限覆盖 >1 年的 daily，正常只推进 1 次
@@ -980,7 +1096,9 @@ async def _schedule_next_recurrence(session, task, now: datetime, tz: ZoneInfo) 
     )
 
 
-async def _recent_chat_lines(session, service_case_id: int, *, limit: int = 10) -> list[str]:
+async def _recent_chat_lines(
+    session, service_case_id: int, *, limit: int = 10
+) -> list[str]:
     result = await session.scalars(
         select(Message)
         .where(
@@ -988,14 +1106,20 @@ async def _recent_chat_lines(session, service_case_id: int, *, limit: int = 10) 
             or_(
                 and_(
                     Message.direction == MessageDirection.INBOUND,
-                    Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
+                    Message.sender_type.in_(
+                        [MessageSenderType.USER, MessageSenderType.STAFF]
+                    ),
                     Message.purpose == MessagePurpose.CHAT,
                     Message.status == MessageStatus.RECEIVED,
                 ),
                 and_(
                     Message.direction == MessageDirection.OUTBOUND,
-                    Message.sender_type.in_([MessageSenderType.BOT, MessageSenderType.STAFF]),
-                    Message.purpose.in_([MessagePurpose.CHAT, MessagePurpose.DOCUMENT_DELIVERY]),
+                    Message.sender_type.in_(
+                        [MessageSenderType.BOT, MessageSenderType.STAFF]
+                    ),
+                    Message.purpose.in_(
+                        [MessagePurpose.CHAT, MessagePurpose.DOCUMENT_DELIVERY]
+                    ),
                     Message.status == MessageStatus.SENT,
                 ),
             ),
@@ -1022,7 +1146,9 @@ async def _scheduler_advisory_lock():
         if session.in_transaction():
             acquired = bool(
                 await session.scalar(
-                    text("SELECT pg_try_advisory_xact_lock(:key)").bindparams(key=SCHEDULER_ADVISORY_LOCK_KEY)
+                    text("SELECT pg_try_advisory_xact_lock(:key)").bindparams(
+                        key=SCHEDULER_ADVISORY_LOCK_KEY
+                    )
                 )
             )
             yield acquired
@@ -1030,7 +1156,9 @@ async def _scheduler_advisory_lock():
             async with session.begin():
                 acquired = bool(
                     await session.scalar(
-                        text("SELECT pg_try_advisory_xact_lock(:key)").bindparams(key=SCHEDULER_ADVISORY_LOCK_KEY)
+                        text("SELECT pg_try_advisory_xact_lock(:key)").bindparams(
+                            key=SCHEDULER_ADVISORY_LOCK_KEY
+                        )
                     )
                 )
                 yield acquired
@@ -1104,7 +1232,13 @@ def _parse_int_list(value: str) -> list[int]:
     return [int(item.strip()) for item in value.split(",") if item.strip().isdigit()]
 
 
-_STAGE_MILESTONES = ((3, "day3"), (7, "day7"), (14, "day14"), (21, "day21"), (28, "day28"))
+_STAGE_MILESTONES = (
+    (3, "day3"),
+    (7, "day7"),
+    (14, "day14"),
+    (21, "day21"),
+    (28, "day28"),
+)
 
 
 def _due_stage_reports(
@@ -1133,7 +1267,10 @@ def _due_stage_reports(
     service_day = effective_service_day(service_case, now, tz)
     due: list[str] = []
     for threshold, stage in _STAGE_MILESTONES:
-        if service_day >= threshold and (service_case.id, stage) not in existing_reports:
+        if (
+            service_day >= threshold
+            and (service_case.id, stage) not in existing_reports
+        ):
             due.append(stage)
     return due
 
