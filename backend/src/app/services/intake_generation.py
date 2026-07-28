@@ -3,6 +3,7 @@ from __future__ import annotations
 """入营建档：LLM 生成 intake_analysis_package，并归一化画像/文档 payload、派生打卡字段。"""
 
 import json
+import logging
 import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,8 @@ from app.services.checkin_questionnaires import personalized_checkin_fields_with
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.document_prompts import _intake_generation_system_prompt
 
+
+logger = logging.getLogger(__name__)
 
 MANAGEMENT_BANDS = (
     "A带｜修复塑形",
@@ -430,6 +433,16 @@ _SECOND_INTENT_MARKERS = ("请记录", "请填写", "并填写", "并记录", "�
 # 并列连词把两个独立动作串成一题（如「20点前完成并且主食≤1拳」同时问时间和饮食结构），
 # 必须拆开或只留优先级更高的一个。「或」是同一动作的多种达标方式，不算复合。
 _COMPOSITE_CONJUNCTIONS = ("并且", "同时", "以及", "，并", ",并", "并且要", "而且")
+# 栏目标题/说明文字，不是题目。这是唯一需要显式识别的形状，其余判断都靠上面的回答意图标记。
+_CHECKIN_HEADING_MARKERS = ("每日固定打卡", "每日打卡", "打卡清单", "打卡内容", "打卡项", "项打卡", "打卡如下")
+# 兜底题池是代码写死的默认五项，类别按 key 直接标注，不靠倒猜。
+_FALLBACK_CHECKIN_CATEGORIES = {
+    "personalized_weight": "state",
+    "personalized_water": "diet",
+    "personalized_sleep": "sleep",
+    "personalized_diet": "diet",
+    "personalized_exercise": "activity",
+}
 _RELATIVE_TIME_WORDS = ("今天", "今日", "今早", "今晚", "昨天", "昨日", "昨晚", "当天", "本日")
 
 
@@ -466,18 +479,23 @@ def normalize_daily_checkin_items(
 
     accepted: list[dict[str, object]] = []
     seen: set[str] = set()
+    rejected: list[str] = []
+    duplicated: list[str] = []
     for candidate in _daily_checkin_candidates(value):
         item = _validated_checkin_item(candidate, strict_style=strict_style)
         if item is None:
+            rejected.append(_candidate_title_for_log(candidate))
             continue
         key = _checkin_dedupe_key(str(item["title"]))
         if key in seen:
+            duplicated.append(str(item["title"]))
             continue
         seen.add(key)
         accepted.append(item)
         if len(accepted) >= DAILY_CHECKIN_SIZE:
             break
 
+    substituted: list[str] = []
     if allow_fallback and len(accepted) < DAILY_CHECKIN_SIZE:
         for fallback in _fallback_checkin_items(facts or {}):
             key = _checkin_dedupe_key(str(fallback["title"]))
@@ -485,8 +503,19 @@ def normalize_daily_checkin_items(
                 continue
             seen.add(key)
             accepted.append(fallback)
+            substituted.append(str(fallback["title"]))
             if len(accepted) >= DAILY_CHECKIN_SIZE:
                 break
+
+    # 换题必须留痕：兜底题一顶上来，个性化打卡就被通用题替掉了，
+    # 而后台只看得到最终这 5 项，看不出哪一项不是模型挑的。
+    if rejected or duplicated or substituted:
+        logger.warning(
+            "daily_checkin normalized with substitutions: rejected=%s duplicated=%s fallback_used=%s",
+            rejected,
+            duplicated,
+            substituted,
+        )
 
     if allow_fallback and len(accepted) < DAILY_CHECKIN_SIZE:
         # 兜底题池就是5项，走到这里说明兜底配置被改坏了，宁可让上层报空也不发半套清单。
@@ -494,6 +523,12 @@ def normalize_daily_checkin_items(
     for order, item in enumerate(accepted[:DAILY_CHECKIN_SIZE], start=1):
         item["order"] = order
     return accepted[:DAILY_CHECKIN_SIZE]
+
+
+def _candidate_title_for_log(candidate: object) -> str:
+    if isinstance(candidate, dict):
+        return str(candidate.get("title") or candidate.get("label") or candidate.get("text") or "")[:80]
+    return str(candidate or "")[:80]
 
 
 def _daily_checkin_candidates(value: object) -> list[object]:
@@ -543,6 +578,8 @@ def _validated_checkin_item(candidate: object, *, strict_style: bool = True) -> 
 def _is_valid_checkin_title(title: str, *, strict_style: bool = True) -> bool:
     if not title or len(title) > MAX_CHECKIN_TITLE_CHARS:
         return False
+    if any(marker in title for marker in _CHECKIN_HEADING_MARKERS):
+        return False
     if strict_style and any(word in title for word in _RELATIVE_TIME_WORDS):
         return False
     # 分号说明这一项塞了两个独立句子，拆不开就丢弃。
@@ -561,17 +598,19 @@ def _is_valid_checkin_title(title: str, *, strict_style: bool = True) -> bool:
 
 
 def _answer_type_matches_title(answer_type: str, title: str) -> bool:
-    """题面形状必须和答题类型对得上，否则转成问卷字段就会答非所问。
-
-    这同时挡掉「每日固定打卡」「5项打卡」这类栏目标题——它们没有任何可回答的形状。
-    """
+    """题面形状必须和答题类型对得上，否则转成问卷字段就会答非所问。"""
 
     if answer_type == "yes_no":
         return any(marker in title for marker in _JUDGEMENT_MARKERS)
     if answer_type == "score_1_5":
         return any(marker in title for marker in _SCORE_MARKERS)
     if answer_type == "number":
-        return "（" in title or "(" in title or any(marker in title for marker in _REQUEST_MARKERS)
+        # 填数字的题只要不和别的答题类型冲突就放行。曾经要求题面必须带单位括号，
+        # 结果把「夜间醒来次数」这类完全合法的题判废、换成通用兜底题，白丢个性化。
+        # 单位该不该写、写什么由提示词管（体重题必须写清 kg），代码不做事后审核也不猜。
+        return not any(
+            marker in title for marker in (*_JUDGEMENT_MARKERS, *_SCORE_MARKERS)
+        )
     return _looks_like_question(title)
 
 
@@ -642,7 +681,9 @@ def _fallback_checkin_items(facts: dict[str, object]) -> list[dict[str, object]]
         items.append(
             {
                 "order": 0,
-                "category": _infer_checkin_category(answer_type),
+                # 兜底题是代码写死的，类别直接按 key 标注：这不是从题面倒猜模型的分类，
+                # 而是我们自己定义的题本来就属于哪一类。
+                "category": _FALLBACK_CHECKIN_CATEGORIES.get(str(field.get("key") or ""), ""),
                 "title": title,
                 "answer_type": answer_type,
                 "options": checkin_options_for(answer_type),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from unittest.mock import AsyncMock, patch
 
@@ -22,6 +23,7 @@ from app.services.document_templates import (
     combined_prompt_schema,
 )
 from app.services.intake_generation import (
+    CHECKIN_CATEGORIES,
     checkin_options_for,
     normalize_daily_checkin_items,
 )
@@ -874,6 +876,60 @@ def test_daily_checkin_falls_back_deterministically_when_all_items_invalid():
     # 兜底题也要满足答题类型与选项一致
     for item in items:
         assert item["options"] == checkin_options_for(item["answer_type"])
+
+
+def test_daily_checkin_keeps_number_question_without_unit_bracket():
+    """填数字的题面不带单位括号也必须保留，不能被换成通用兜底题。
+
+    真实模型给过「夜间醒来次数」这道很贴合该用户（几乎每天夜醒）的睡眠题，
+    旧规则要求 number 题面必须带括号，把它判废后顶上通用的「晨起体重」，
+    个性化被静默吃掉。单位由提示词约束，代码不做事后审核。
+    """
+
+    items = normalize_daily_checkin_items(
+        [
+            {"order": 1, "category": "product", "title": "是否按个案方案完成早C、午B和晚A？", "answer_type": "yes_no"},
+            {"order": 2, "category": "diet", "title": "蔬菜总量是否至少2拳？", "answer_type": "yes_no"},
+            {"order": 3, "category": "diet", "title": "晚餐后是否未吃任何零食或加餐？", "answer_type": "yes_no"},
+            {"order": 4, "category": "activity", "title": "是否完成计划内步数或力量训练？", "answer_type": "yes_no"},
+            {"order": 5, "category": "sleep", "title": "夜间醒来次数", "answer_type": "number"},
+        ],
+        facts={"weight_kg": "62"},
+    )
+
+    assert [item["title"] for item in items][4] == "夜间醒来次数"
+    assert items[4]["category"] == "sleep"
+    assert items[4]["answer_type"] == "number"
+    assert not any("晨起体重" in item["title"] for item in items)
+    # 类型冲突仍要挡：题面在问是否，就不能声明成填数字
+    conflicting = normalize_daily_checkin_items(
+        [{"order": 1, "category": "sleep", "title": "是否在23:30前入睡？", "answer_type": "number"}],
+        allow_fallback=False,
+    )
+    assert conflicting == []
+
+
+def test_daily_checkin_fallback_items_carry_their_category():
+    """兜底题是代码写死的，类别必须直接标注，不能留空。"""
+
+    items = normalize_daily_checkin_items(["每日固定打卡"], facts={"weight_kg": "70"})
+
+    assert len(items) == 5
+    assert all(item["category"] in CHECKIN_CATEGORIES for item in items), [
+        (item["title"], item["category"]) for item in items
+    ]
+
+
+def test_daily_checkin_logs_every_substitution(caplog):
+    """换题必须留痕：后台只看得到最终5项，看不出哪项不是模型挑的。"""
+
+    with caplog.at_level(logging.WARNING, logger="app.services.intake_generation"):
+        normalize_daily_checkin_items(["每日固定打卡", "打卡清单"], facts={"weight_kg": "70"})
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("daily_checkin normalized with substitutions" in message for message in messages)
+    assert any("每日固定打卡" in message for message in messages)
+    assert any("fallback_used=" in message for message in messages)
 
 
 def test_execution_document_keeps_single_page_content_budget():
