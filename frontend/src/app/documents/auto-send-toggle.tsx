@@ -25,7 +25,7 @@ export function AutoSendToggle({ initialValue }: { initialValue: boolean }) {
         <div>
           <h3 className="font-semibold text-slate-950">文件自动发送策略</h3>
           <p className="mt-1 text-sm leading-6 text-slate-500">
-            控制《处方单》及《阶段报告》的自动下发。开启后，非风险文件将跳过审核直接发送给用户。
+            控制《入营交付文件》及《阶段报告》的自动下发。开启后，非风险文件将跳过审核直接发送给用户。
           </p>
         </div>
         <label className="relative inline-flex cursor-pointer items-center">

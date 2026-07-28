@@ -40,7 +40,7 @@ type ScheduleConfig = {
 };
 
 const DEFAULT_INTAKE_REPLY =
-  "问卷已收到，正在生成专属方案。\n\n我们会基于你的填写结果生成：\n1.《个人能量重启处方单》\n2.《28天执行标准与打卡要求》\n\n生成完成后会第一时间发送给你，请稍等。";
+  "问卷已收到，正在生成专属方案。\n\n我们会基于你的填写结果生成：\n1.《个人能量重启诊断报告》\n2.《28天高燃人生执行建议书》\n\n生成完成后会第一时间发送给你，请稍等。";
 
 const TEMPLATE_LABELS: Record<string, string> = {
   intake: "入营问卷",

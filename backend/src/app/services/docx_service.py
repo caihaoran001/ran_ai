@@ -100,18 +100,23 @@ def write_template_docx(content_json: dict[str, Any], output_path: Path) -> None
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
     title = str(content_json.get("title") or "交付文件")
-    compact_execution = "28天执行标准与打卡要求" in title
+    compact_execution = any(
+        marker in title
+        for marker in ("28天高燃人生执行建议书", "28天执行标准与打卡要求")
+    )
     section = doc.sections[0]
+    section.page_width = Cm(21.0)
+    section.page_height = Cm(29.7)
     if compact_execution:
         section.top_margin = Cm(1.45)
         section.bottom_margin = Cm(1.45)
         section.left_margin = Cm(1.45)
         section.right_margin = Cm(1.45)
     else:
-        section.top_margin = Cm(2.0)
-        section.bottom_margin = Cm(2.0)
-        section.left_margin = Cm(1.8)
-        section.right_margin = Cm(1.8)
+        section.top_margin = Cm(2.2)
+        section.bottom_margin = Cm(2.2)
+        section.left_margin = Cm(2.0)
+        section.right_margin = Cm(2.0)
     _setup_styles(doc, compact=compact_execution)
 
     if content_json.get("show_header_brand", True):
@@ -288,13 +293,19 @@ def _add_inline_paragraph(doc: Document, title: str, content: str, *, compact: b
 
 
 def _apply_execution_table_widths(table: Any, rows: list, *, compact: bool) -> None:
-    """28天逐周执行标准表：周次窄、执行标准列加宽（仅对含「执行标准」表头的表生效）。"""
+    """28天四周执行表：周次窄、验收标准列加宽。"""
     header = rows[0] if rows else []
     header_texts = [str((c.get("value") if isinstance(c, dict) else c) or "").strip() for c in header]
-    if "执行标准" not in header_texts:
+    if not ({"执行标准", "验收标准"} & set(header_texts)):
         return
     avail_cm = 18.0 if compact else 17.0
-    weight_map = {"周次": 1.1, "重点": 2.2, "执行标准": 3.7}
+    weight_map = {
+        "周次": 1.1,
+        "重点": 2.2,
+        "核心任务": 2.2,
+        "执行标准": 3.7,
+        "验收标准": 3.7,
+    }
     weights = [weight_map.get(text, 2.0) for text in header_texts]
     total = sum(weights) or 1
     widths = [Cm(round(avail_cm * weight / total, 2)) for weight in weights]

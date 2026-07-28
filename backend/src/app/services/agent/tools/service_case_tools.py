@@ -85,8 +85,8 @@ _MAX_FILE_SCAN = 20
 _MAX_DOCUMENT_SCAN = 30
 
 _DOCUMENT_TYPE_LABELS: dict[DocumentType, str] = {
-    DocumentType.ENERGY_RESTART_PRESCRIPTION: "能量重启处方单",
-    DocumentType.DAY28_EXECUTION_STANDARD: "28天执行单",
+    DocumentType.ENERGY_RESTART_PRESCRIPTION: "个人能量重启诊断报告",
+    DocumentType.DAY28_EXECUTION_STANDARD: "28天高燃人生执行建议书",
     DocumentType.STAGE_REPORT: "阶段报告",
 }
 

@@ -41,7 +41,7 @@ async def _send_document_reading_reminder(session: AsyncSession, service_case: S
     """两份文件发送后，提醒用户先阅读、随时答疑。"""
     content = (
         "两份专属文件都发给您啦 📄\n\n"
-        "请先花几分钟仔细阅读《个人能量重启处方单》和《28天执行标准与打卡要求》，把今天的方案看明白；"
+        "请先花几分钟仔细阅读《个人能量重启诊断报告》和《28天高燃人生执行建议书》，把今天的方案看明白；"
         "任何有疑问的地方都可以随时在群里提出来，我和班主任都会帮您解答。\n\n"
         "今天先安心熟悉文件、不用急着执行，我们一步步来，陪您把这 28 天走扎实 🌟"
     )
@@ -92,7 +92,7 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
         document.status == DocumentStatus.SENT for document in documents
     ) and not await _document_intro_already_sent(session, service_case)
     if should_send_intro:
-        intro = "两份专属文件已生成，请查收：\n1.《个人能量重启处方单》\n2.《28 天执行标准与打卡要求》"
+        intro = "两份专属文件已生成，请查收：\n1.《个人能量重启诊断报告》\n2.《28天高燃人生执行建议书》"
         intro_result = await send_channel_text(service_case.group_id, intro)
         session.add(
             Message(
@@ -284,8 +284,8 @@ def _document_filename(
     # 性别以入营问卷为准（男→先生 / 女→女士 / 未提供→不带后缀），
     # 不再靠扫描正文关键词猜，避免同一用户各文件称呼不一致。
     suffix = {"男": "先生", "女": "女士"}.get((gender or "").strip(), "")
-    version = datetime.now().strftime("%Y%m%d%H%M%S")
-    return safe_filename(f"{user_name} {title} {user_name}{suffix} {document_type.value} {version}.docx")
+    display_name = f"{user_name}{suffix}" if suffix else user_name
+    return safe_filename(f"{display_name}_{title}.docx")
 
 
 def _utc_now():

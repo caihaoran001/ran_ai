@@ -710,7 +710,7 @@ async def test_list_delivery_documents_lists_current_case_with_real_document_typ
     assert "其他服务单处方单" not in titles
     first = result["documents"][0]
     assert first["document_type"] == DocumentType.ENERGY_RESTART_PRESCRIPTION.value
-    assert first["document_type_label"] == "能量重启处方单"
+    assert first["document_type_label"] == "个人能量重启诊断报告"
     assert first["readable"] is True
     assert {"document_id", "status", "created_at", "updated_at", "text_length"} <= set(first)
 

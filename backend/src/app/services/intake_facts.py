@@ -154,12 +154,12 @@ def _weight_loss_band(bmi: float | None) -> str:
     if bmi < 18.5:
         return "增肌增能带"
     if bmi < 24:
-        return "维持优化带（A带）"
+        return "A带｜修复塑形"
     if bmi < 28:
-        return "5斤带（B带）"
+        return "B带｜轻盈启动"
     if bmi < 32:
-        return "10斤带（C带）"
-    return "20斤及以上带（D带）"
+        return "C带｜明确减脂"
+    return "D带｜系统减重"
 
 
 # 客户分型标签：单标签、互斥、带优先级。这是在两个已有大模型结构化产出之上

@@ -17,8 +17,8 @@ from app.services.questionnaire_template import get_active_questionnaire_fields
 
 
 DOCUMENT_DEFINITIONS = {
-    DocumentType.ENERGY_RESTART_PRESCRIPTION: "个人能量重启处方单",
-    DocumentType.DAY28_EXECUTION_STANDARD: "28天执行标准与打卡要求",
+    DocumentType.ENERGY_RESTART_PRESCRIPTION: "个人能量重启诊断报告",
+    DocumentType.DAY28_EXECUTION_STANDARD: "28天高燃人生执行建议书",
 }
 
 
@@ -42,7 +42,7 @@ async def _user_name(session: AsyncSession, service_case: ServiceCase) -> str:
 async def _recipient_name_and_gender(
     session: AsyncSession, service_case: ServiceCase
 ) -> tuple[str, str]:
-    """确定性称呼 + 性别，与处方单/执行单同源（入营问卷「性别」字段）。
+    """确定性称呼 + 性别，与诊断报告/执行建议书同源（入营问卷「性别」字段）。
 
     - 称呼：男/女时带「先生/女士」后缀（如「小明 先生」），性别未提供时不带后缀。
     - 性别：返回「男」「女」或「未提供」。

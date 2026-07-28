@@ -59,8 +59,8 @@ QiWe 通道 → 聚合去重 + 引擎失败兜底 (健康自测 07)
 uv run python -c "
 from app.services.intake_facts import build_intake_fact_summary, _calculate_bmi, _weight_loss_band
 assert _calculate_bmi(175, 65)  # → 21.2
-assert _weight_loss_band(21.2) == '维持优化带（A带）'
-assert _weight_loss_band(26.0) == '5斤带（B带）'
+assert _weight_loss_band(21.2) == 'A带｜修复塑形'
+assert _weight_loss_band(26.0) == 'B带｜轻盈启动'
 assert _weight_loss_band(30.0)  # → check
 print('PASS')
 "

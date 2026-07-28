@@ -21,6 +21,15 @@ ENERGY_FIELD_SPEC = {
         "current_focus": "当前主线",
     },
     "one_sentence": "一句话结论",
+    "core_conclusions": {
+        "management_band": "管理带，格式为「A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 需人工复核」",
+        "band_explanation": "用一句用户能听懂的话解释为什么属于这个管理带",
+        "body_trend": "入营问卷反映的近3个月身体趋势，只能取：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
+        "trend_explanation": "用一句话解释近3个月趋势；信息不足时明确无法判断，不得补编长期变化",
+        "trend_evidence": ["支持趋势结论的2-3条问卷判断依据，只能来自本次入营问卷或确定性计算指标"],
+        "day28_task": "这28天先解决什么，用一句话说清",
+        "long_term_defense": "长期如何避免回到原来的上升或失控轨迹，用一句话说清",
+    },
     "goal_response": {
         "goal_type": "specific 或 general。specific=用户写了明确数字/明确结果；general=用户只勾选了期待变化或泛化诉求",
         "judgement_type": "reasonable 或 needs_adjustment。needs_adjustment=目标过激、当前不建议或需先安全复核",
@@ -38,15 +47,15 @@ ENERGY_FIELD_SPEC = {
     "leptin_sensitivity": "饱腹感、晚间失控、食欲边界等生活方式信号。保留兼容字段名，但用户可见内容不得写成瘦素抵抗诊断。",
     "hormone_stage": "年龄、睡眠、压力、恢复能力相关影响。保留兼容字段名，但用户可见内容不得写成内分泌或激素诊断。",
     "priority_direction": "当前最该先抓的方向",
+    "priority_items": ["真正需要优先解决的三件事，严格3项，按优先级排列"],
     "success_path": {
         "intro": "成功路径总述",
-        "weight_band": "当前所属减重带",
+        "weight_band": "当前管理带",
         "total_goal": "总路径目标",
         "day28_goal": "第一个28天目标",
         "week5_8": "第5-8周目标",
         "week9_12": "第9-12周目标",
     },
-    "constitution": "长期体质和当前失衡初步判断",
     "module_diagnosis": {
         "rhythm": "节律",
         "diet": "饮食",
@@ -58,40 +67,45 @@ ENERGY_FIELD_SPEC = {
         "day7": "前7天变化",
         "day14_28": "第14-28天变化",
     },
-    "non_negotiable": {
-        "title": "短标签，2-12 字。例如「23:30 前闭眼」「守住午B 时间」",
-        "content": "这28天最不能打折的具体动作 + 一句原因。必须来自用户最特异的个人风险信号或成败卡点，禁止写通用答案",
-    },
     "week_actions": ["本周直接执行，固定3条。至少包含1条运动建议，且运动建议必须写出类型+频率+时长+禁忌时间窗口"],
     "product_schedule": {
         "morning_c": "早C",
         "noon_b": "午B",
         "night_a": "晚A",
-        "summary": "产品排班总结",
+        "summary": "产品排班总结；必须服从个案安全、耐受和暂停结论",
     },
+    "product_meaning": "说明饮食和运动本身有效，产品只用于帮助执行和稳定节律，不是减重捷径，也不替代医疗建议",
     "special_reminder": "特别提醒，包含必要就医/检测提示",
-    "first_week_signals": "前7天重点看4个信号",
+    "missing_information": ["仍缺失或需要补测的信息；没有则输出空列表"],
 }
 
 
 EXECUTION_FIELD_SPEC = {
-    "weight_band": "当前所属减重带，格式为「{带名}：{通俗描述}」，例如「A带：0-2斤维持优化带」「D带：20斤及以上带」。禁止「维持优化带（A带）」这种括号反转写法。",
-    "path_goal": "更适合的总路径目标（= 12 周累计目标，不是逐段相加）。必须包含具体数字锚点，且数字必须与所属减重带的 12 周累计目标一致、不得超出：A带维持(0-3斤) / B带约5斤 / C带10-12斤 / D带16-20斤。例如 C带「10-12斤，先把BMI和腰腹维度拉回更安全区间」、A带「维持63-65kg，重点提升精力、情绪稳定度和下午续航」。",
-    "day28_goal": "第一个 28 天目标（必须 1-2 句完整描述，至少 25 字）。"
-                   "必须以数字范围开头、再用分号接解释；数字范围必须与所属减重带匹配（A带 0-2斤 / B带 3-5斤 / C带 6-8斤 / D带 8-12斤），例如「6-8斤；C带超重阶段，重点是减脂同时稳住节律」。"
-                   "禁止以否定句开头（如「不以减重数字为核心目标」），数字范围必须在最前面。"
-                   "A带/增肌增能带：先写斤数范围，再用分号写本 28 天主线（关联 priority_direction），最后以「仅作参考」收尾。"
-                   "B/C/D带：先写斤数范围，再写配套策略。",
+    "weight_band": "当前管理带，格式为「A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 需人工复核」",
+    "body_trend": "入营问卷反映的近3个月身体趋势：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
+    "base_goal": "基础目标；用户没有明确数字目标时不得编造斤数",
+    "challenge_goal": "条件性挑战目标；不适合冲刺、风险较高或资料不足时写不设置",
+    "long_term_goal": "长期方向，包含体重之外的腰围、体态、力量、睡眠或精力目标",
+    "current_mainline": "当前唯一主线，例如保肌减脂、节律稳定、睡眠修复、饮食结构修复、系统化管理",
+    "path_goal": "更适合的12周总路径目标。只在用户明确提出数字目标且资料支持时使用数字；否则用体重趋势和非体重结果表达，不得机械套固定斤数。",
+    "day28_goal": "第一个28天目标，1-2句完整描述。必须同时包含阶段任务和观察结果；没有明确数字目标时不得编造斤数。",
     "current_phase_goal": "当前阶段目标，用「先解决{核心问题}，不是{反面}」句式，聚焦排序而非平铺罗列，例如「先解决节律稳定，不是追求失控式掉秤」。",
     "principle": "执行总原则，保持两段递进结构「先守{底盘动作}，再{放大动作}」，是通用指导语，不嵌入具体参数（时间点、拳数）。例如「先守底盘，再抓结果；先连续完成，再逐步加码」。",
+    "product_schedule": {
+        "morning_c": "早C个案剂量与时间；需要暂停时明确写暂停",
+        "noon_b": "午B个案剂量与时间；需要减量、前移或暂停时明确写",
+        "night_a": "晚A个案剂量与时间；需要暂停时明确写",
+    },
+    "diet_rules": ["对应用户真实生活场景的饮食规则，最多4条"],
+    "exercise_rules": ["运动频率、单次时长、强度、动作和替代方案，最多3条"],
     "weekly_plan": [
-        {"week": "第1周", "focus": "稳住节律 / 先守底盘", "required_actions": "执行标准，1个短句，例如：醒后早C、工作中段午B、晚间晚A；晚餐主食≤1拳；每天7000步。"},
-        {"week": "第2周", "focus": "拉高关键动作一致性", "required_actions": "执行标准，1个短句，例如：连续5天不漏早餐；晚餐后走15–20分钟；应酬日不加宵夜。"},
-        {"week": "第3周", "focus": "开始抓结果指标", "required_actions": "执行标准，1个短句，例如：每周2次轻力量；记录腰围和体重。"},
-        {"week": "第4周", "focus": "稳定复现 / 做实结果", "required_actions": "执行标准，1个短句，例如：把睡前收口、7000步、2次轻力量做满。"},
+        {"week": "第1周", "core_task": "稳住底盘", "acceptance_standard": "1个短句，例如：按个案产品排班完成；晚餐主食≤1拳；完成计划内活动。"},
+        {"week": "第2周", "core_task": "提高一致性", "acceptance_standard": "1个短句，例如：连续5天不漏早餐；晚餐后走15–20分钟；应酬日不加宵夜。"},
+        {"week": "第3周", "core_task": "抓结果指标", "acceptance_standard": "1个短句，例如：每周2次轻力量；记录腰围和体重。"},
+        {"week": "第4周", "core_task": "稳定复现", "acceptance_standard": "1个短句，例如：把睡前收口、计划内活动和2次轻力量做满。"},
     ],
     "daily_checkin": "每日固定打卡要求。包含5项打卡清单，且针对用户的具体痛点进行个性化定制。"
-                     "第1项固定为早C/午B/晚A合并打卡。"
+                     "第1项固定为个案产品排班完成情况；如方案要求减量或暂停，题目必须按减量/暂停方案写，禁止继续要求三杯全部完成。"
                      "5项中必须包含1项运动/步数完成情况（如「是否完成30分钟快走或≥7000步」）。"
                      "至少2项打卡必须是正向动作（做到什么），不能全是限制项。"
                      "每项必须天然适合转成问卷字段：要么是含「是否」的判断题，要么是需要用户填写数值/描述的填空题。"
@@ -99,14 +113,8 @@ EXECUTION_FIELD_SPEC = {
                      "两项同时入选时各占1项，名额不足时按用户具体卡点只保留优先级更高的一项。"
                      "不要输出硬编码的通用套话。"
                      "禁止在每项后加括号注释（如「正向动作」「限制动作」）。",
-    "week5_12": "第5-8周和第9-12周提前说明：必须分别写到『第5-8周』和『第9-12周』两段的预期（前28天建立底盘后的自然延伸），用连贯的一两句话自然表达、不要做成生硬的列表分段；整体简洁，总长控制在约120字以内。",
-    "weekly_standard": "每周通过标准，1句，必须包含4要素：三杯完成≥5天 + 关键饮食动作≥5天 + 运动/步数达标 + 至少1次体重/围度/体感记录。",
+    "weekly_standard": "每周通过标准，1句，必须包含4要素：个案产品排班完成情况 + 关键饮食动作 + 运动/步数达标 + 至少1次体重/围度/体感记录。减量或暂停用户不得写三杯完成要求。",
     "adjust_stop_conditions": "调整与停止条件，1-3句。必须说明什么情况减半、前移、暂停、联系班主任、及时就医。不要写成医疗方案。",
-    "reminder": "个性化提醒，总共控制在2句内。"
-                "第一句必须是定心丸（如「结果看连续性，不看单日完美」）。"
-                "第二句是不适处理指引（如「出现持续不适、明显心慌，先停下异常动作并及时咨询专业人士」），结合用户作息/运动/睡眠/不适/夜班等信息。"
-                "禁止在reminder中重复non_negotiable的具体内容（它已经单独在处方单中）。"
-                "禁止写成长段说明书。必要时提醒就医。",
 }
 
 
@@ -210,9 +218,6 @@ def render_document_content(content_json: dict[str, Any]) -> str:
 
 def _build_energy(title: str, user_name: str, display_name: str | None, fields: dict[str, Any]) -> dict[str, Any]:
     overview = _dict(fields.get("overview"))
-    display_title = title
-    if "v6.3" not in display_title:
-        display_title = f"{display_title} v6.3"
     blocks = [
         {
             "key": "overview",
@@ -226,36 +231,25 @@ def _build_energy(title: str, user_name: str, display_name: str | None, fields: 
                 [_label("主要诉求"), _editable(overview.get("main_need")), _label("当前主线"), _editable(overview.get("current_focus"))],
             ],
         },
-        _text_block("one_sentence", "2. 一句话结论", fields.get("one_sentence")),
+        _core_conclusions_block(fields),
         _goal_response_block(fields),
         _list_block("judgement_points", "4. 为什么我会这样判断", fields.get("judgement_points")),
-        _text_block(
-            "current_state",
-            "5. 您现在的身体状态，真正该关注什么",
-            "\n".join(
-                item
-                for item in [
-                    _text(fields.get("current_state")),
-                    f"食欲边界与饭后困相关信号：{_text(fields.get('insulin_resistance'))}",
-                    f"饱腹感与晚间失控相关信号：{_text(fields.get('leptin_sensitivity'))}",
-                    f"年龄、睡眠与恢复能力相关影响：{_text(fields.get('hormone_stage'))}",
-                    f"当前最该先抓的方向：{_text(fields.get('priority_direction'))}",
-                ]
-                if item and not item.endswith("：")
-            ),
-        ),
         _success_path_block(fields),
-        _text_block("constitution", "7. 长期体质和当前失衡初步判断", fields.get("constitution")),
+        _priority_items_block(fields),
+        _rhythm_recovery_block(fields),
         _module_block(fields),
-        _expected_block(fields),
-        _non_negotiable_block(fields),
-        _list_block("week_actions", "11. 本周直接执行：不要等想明白再开始", fields.get("week_actions"), limit=3),
         _product_block(fields),
-        _text_block("special_reminder", "13. 特别提醒", fields.get("special_reminder")),
-        _first_week_signals_block(fields),
-        _text_block("notice", "15. 说明", "本处方单用于生活方式管理和燃人AI 28天训练营执行指导，不替代医疗诊断、药物治疗或医生建议。"),
+        _list_block("week_actions", "10. 本周直接执行", fields.get("week_actions"), limit=3),
+        _expected_block(fields),
+        _text_block("special_reminder", "12. 特别提醒", fields.get("special_reminder")),
+        _missing_information_block(fields),
+        _text_block(
+            "notice",
+            "14. 说明",
+            "本报告用于生活方式和体重管理参考，不替代医生诊断、治疗或药物调整。如出现胸痛、明显心悸、呼吸困难、持续头晕、黑便、便血、腹痛、呕吐或其他明显不适，请暂停执行并及时就医。",
+        ),
     ]
-    return _payload(title=display_title, recipient=fields.get("recipient") or display_name or user_name, blocks=blocks)
+    return _payload(title=title, recipient=fields.get("recipient") or display_name or user_name, blocks=blocks)
 
 
 def _build_execution(title: str, user_name: str, display_name: str | None, fields: dict[str, Any]) -> dict[str, Any]:
@@ -263,33 +257,41 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
     if not isinstance(rows, list):
         rows = []
     rows_by_week = {str(row.get("week")): row for row in rows if isinstance(row, dict)}
-    table_rows = [[_label("周次"), _label("重点"), _label("执行标准")]]
-    
+    table_rows = [[_label("周次"), _label("核心任务"), _label("验收标准")]]
+
     fixed_focus = {
         "第1周": "稳住节律 / 先守底盘",
         "第2周": "拉高关键动作一致性",
         "第3周": "开始抓结果指标",
         "第4周": "稳定复现 / 做实结果",
     }
-    
+
     fixed_actions = {
-        "第1周": "早C午B晚A不断；每天至少吃2拳蔬菜；完成每周3次30分钟快走。",
-        "第2周": "连续5天守住三杯节律；每周2次15分钟徒手力量；晚餐后步行15–20分钟。",
+        "第1周": "按个案产品排班完成；每天至少吃2拳蔬菜；完成计划内活动。",
+        "第2周": "连续5天完成关键饮食动作；每周2次15分钟徒手力量；晚餐后步行15–20分钟。",
         "第3周": "记录体重和腰围；继续快走和轻力量；观察睡眠、饭后困和排便变化。",
         "第4周": "把蔬菜、快走和轻力量做满；复现有效动作，不过度加码。",
     }
     
     for week in ("第1周", "第2周", "第3周", "第4周"):
         row = rows_by_week.get(week, {})
-        focus_val = _execution_sentence(row.get("focus") or fixed_focus[week], max_parts=1, max_len=18)
-        
-        # Backward compatibility for old single 'standard' field
-        actions_val = row.get("required_actions") or row.get("standard")
+        focus_val = _execution_sentence(
+            row.get("core_task") or row.get("focus") or fixed_focus[week],
+            max_parts=1,
+            max_len=18,
+        )
+
+        # Backward compatibility for the old focus / required_actions shape.
+        actions_val = (
+            row.get("acceptance_standard")
+            or row.get("required_actions")
+            or row.get("standard")
+        )
         if not actions_val:
             actions_val = fixed_actions[week]
         else:
             actions_val = _execution_sentence(actions_val, max_parts=3, max_len=58)
-            
+
         table_rows.append(
             [
                 _label(week),
@@ -297,32 +299,28 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
                 _editable(actions_val),
             ]
         )
-        
+
     blocks = [
-        _inline_block("weight_band", "您当前所属减重带", _execution_sentence(fields.get("weight_band"), max_parts=1, max_len=38)),
-        _inline_block("path_goal", "更适合的总路径目标", _execution_sentence(fields.get("path_goal"), max_parts=1, max_len=80)),
-        _inline_block("day28_goal", "第一个28天目标", _execution_sentence(fields.get("day28_goal"), max_parts=3, max_len=140)),
-        _inline_block("current_phase_goal", "当前阶段目标", _execution_sentence(fields.get("current_phase_goal"), max_parts=1, max_len=80)),
-        _inline_block("principle", "执行总原则", _execution_sentence(fields.get("principle") or "先守底盘，再抓结果；先连续完成，再逐步加码。", max_parts=2, max_len=72)),
+        _execution_goal_summary_block(fields),
+        _text_block("current_phase_goal", "2. 当前阶段目标", fields.get("current_phase_goal")),
         _text_block(
-            "fixed_rhythm",
-            "",
-            "这28天，早C / 午B / 晚A按时饮用，是整个执行标准的底盘：它在每天重复给身体“启动—续航—收口”的节律信号，帮助白天更稳、下午不塌、晚上更容易收口。",
+            "principle",
+            "3. 执行总原则",
+            fields.get("principle") or "先守底盘，再抓结果；先连续完成，再逐步加码。",
         ),
-        {"key": "weekly_plan", "title": "28天逐周执行标准", "kind": "table", "rows": table_rows},
+        _execution_product_block(fields),
+        _list_block("diet_rules", "5. 饮食规则", fields.get("diet_rules"), limit=4),
+        _list_block("exercise_rules", "6. 运动规则", fields.get("exercise_rules"), limit=3),
+        {"key": "weekly_plan", "title": "7. 四周执行表", "kind": "table", "rows": table_rows},
         _text_block(
             "daily_checkin",
-            "每日固定打卡（每天只打这5项）",
+            "8. 每日固定打卡（每天只打这5项）",
             _daily_checkin_text(fields.get("daily_checkin")),
         ),
-        # 这节天然要装"第5-8周+第9-12周"两段，长度控制改由提示词(EXECUTION_FIELD_SPEC["week5_12"])约束 LLM 直接产出；
-        # 这里的截断只作宽松兜底防极端啰嗦(放宽到 3 段/200 字)，正常两段不会被砍掉 9-12 周。
-        _text_block("week5_12", "第5–8周和第9–12周提前说明", _execution_sentence(fields.get("week5_12") or "第5–8周继续放大已经稳定的动作，第9–12周再根据体重、腰围、睡眠和排便反馈微调目标；不要在第一个28天里一次性加太多动作。", max_parts=3, max_len=200)),
-        _text_block("weekly_standard", "每周通过标准", _weekly_standard_text(fields.get("weekly_standard"))),
-        _text_block("adjust_stop_conditions", "调整与停止条件", _adjust_stop_conditions_text(fields.get("adjust_stop_conditions"))),
-        _text_block("reminder", "提醒", _reminder_text(fields.get("reminder"))),
+        _text_block("weekly_standard", "9. 每周通过标准", _weekly_standard_text(fields.get("weekly_standard"))),
+        _text_block("adjust_stop_conditions", "10. 调整和停止条件", _adjust_stop_conditions_text(fields.get("adjust_stop_conditions"))),
     ]
-    payload = _payload(title=f"{display_name or user_name}｜{title}（1页版）", recipient="", blocks=blocks)
+    payload = _payload(title=f"{display_name or user_name}｜{title}", recipient="", blocks=blocks)
     payload["show_recipient"] = False
     payload["show_footer_brand"] = False
     return payload
@@ -450,6 +448,129 @@ def _goal_response_block(fields: dict[str, Any]) -> dict[str, Any]:
     return _text_block("goal_response", title, "\n".join(line for line in lines if not line.endswith("：")))
 
 
+def _core_conclusions_block(fields: dict[str, Any]) -> dict[str, Any]:
+    value = _dict(fields.get("core_conclusions"))
+    success_path = _dict(fields.get("success_path"))
+    overview = _dict(fields.get("overview"))
+    management_band = _text(value.get("management_band") or success_path.get("weight_band"))
+    body_trend = _text(value.get("body_trend") or overview.get("recent_change")) or "信息不足"
+    evidence = value.get("trend_evidence")
+    if not isinstance(evidence, list):
+        evidence = []
+    evidence_text = "；".join(_clean_text(item) for item in evidence[:3] if _text(item))
+    lines = [
+        _text(fields.get("one_sentence")),
+        f"管理带：{management_band}" if management_band else "",
+        f"管理带解释：{_text(value.get('band_explanation'))}" if _text(value.get("band_explanation")) else "",
+        f"近3个月身体趋势：{body_trend}",
+        f"趋势解释：{_text(value.get('trend_explanation'))}" if _text(value.get("trend_explanation")) else "",
+        f"问卷判断依据：{evidence_text}" if evidence_text else "",
+        f"这28天先做什么：{_text(value.get('day28_task'))}" if _text(value.get("day28_task")) else "",
+        f"长期防线：{_text(value.get('long_term_defense'))}" if _text(value.get("long_term_defense")) else "",
+    ]
+    return _text_block(
+        "core_conclusions",
+        "2. 一句话结论与两项核心判断",
+        "\n".join(line for line in lines if line),
+    )
+
+
+def _priority_items_block(fields: dict[str, Any]) -> dict[str, Any]:
+    items = fields.get("priority_items")
+    if not isinstance(items, list):
+        items = []
+    if not items:
+        week_actions = fields.get("week_actions")
+        first_week_action = week_actions[0] if isinstance(week_actions, list) and week_actions else None
+        fallback = [
+            fields.get("priority_direction"),
+            _dict(fields.get("non_negotiable")).get("content"),
+            first_week_action,
+        ]
+        items = [_text(item) for item in fallback if _text(item)]
+    return _list_block(
+        "priority_items",
+        "6. 您真正需要优先解决的三件事",
+        items,
+        limit=3,
+    )
+
+
+def _rhythm_recovery_block(fields: dict[str, Any]) -> dict[str, Any]:
+    lines = [
+        _text(fields.get("current_state")),
+        (
+            f"食欲与饭后状态：{_text(fields.get('insulin_resistance'))}"
+            if _text(fields.get("insulin_resistance"))
+            else ""
+        ),
+        (
+            f"饱腹感与晚间收口：{_text(fields.get('leptin_sensitivity'))}"
+            if _text(fields.get("leptin_sensitivity"))
+            else ""
+        ),
+        (
+            f"睡眠、压力与恢复：{_text(fields.get('hormone_stage'))}"
+            if _text(fields.get("hormone_stage"))
+            else ""
+        ),
+        (
+            f"当前最该先抓的方向：{_text(fields.get('priority_direction'))}"
+            if _text(fields.get("priority_direction"))
+            else ""
+        ),
+    ]
+    return _text_block(
+        "rhythm_recovery",
+        "7. 代谢节律与恢复状态评估",
+        "\n".join(line for line in lines if line),
+    )
+
+
+def _missing_information_block(fields: dict[str, Any]) -> dict[str, Any]:
+    value = fields.get("missing_information")
+    if isinstance(value, list):
+        items = value
+    elif _text(value):
+        items = [_text(value)]
+    else:
+        overview = _dict(fields.get("overview"))
+        items = []
+        if "未提供" in _text(overview.get("waist_bodyfat")) or "暂未测量" in _text(overview.get("waist_bodyfat")):
+            items.append("腰围或体脂率待补测")
+    return _list_block("missing_information", "13. 需要补充的信息", items)
+
+
+def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
+    lines = [
+        f"当前管理带：{_text(fields.get('weight_band'))}",
+        f"近3个月身体趋势：{_text(fields.get('body_trend'))}",
+        f"基础目标：{_text(fields.get('base_goal') or fields.get('day28_goal'))}",
+        f"挑战目标：{_text(fields.get('challenge_goal'))}",
+        f"长期目标：{_text(fields.get('long_term_goal') or fields.get('path_goal'))}",
+        f"当前阶段主线：{_text(fields.get('current_mainline'))}",
+    ]
+    return _text_block(
+        "goal_summary",
+        "1. 目标摘要",
+        "\n".join(line for line in lines if not line.endswith("：")),
+    )
+
+
+def _execution_product_block(fields: dict[str, Any]) -> dict[str, Any]:
+    value = _dict(fields.get("product_schedule"))
+    lines = [
+        f"早C：{_text(value.get('morning_c'))}" if _text(value.get("morning_c")) else "",
+        f"午B：{_text(value.get('noon_b'))}" if _text(value.get("noon_b")) else "",
+        f"晚A：{_text(value.get('night_a'))}" if _text(value.get("night_a")) else "",
+    ]
+    return _text_block(
+        "product_schedule",
+        "4. 产品排班",
+        "\n".join(line for line in lines if line),
+    )
+
+
 def _first_week_signals_block(fields: dict[str, Any]) -> dict[str, Any]:
     value = fields.get("first_week_signals")
     if isinstance(value, list):
@@ -471,7 +592,7 @@ def _success_path_block(fields: dict[str, Any]) -> dict[str, Any]:
     wb = _text(value.get("weight_band"))
     if wb:
         if not wb.startswith("•"):
-            wb = f"• 您当前所属减重带：{_clean_prefix(wb, '您当前所属减重带')}"
+            wb = f"• 您当前管理带：{_clean_prefix(_clean_prefix(wb, '您当前管理带'), '您当前所属减重带')}"
         bullets.append(wb)
         
     tg = _text(value.get("total_goal"))
@@ -499,7 +620,7 @@ def _success_path_block(fields: dict[str, Any]) -> dict[str, Any]:
         bullets.append(w9_12)
         
     lines = [intro] + bullets
-    return _text_block("success_path", "6. 您当前所属减重带与成功路径", "\n".join(line for line in lines if line))
+    return _text_block("success_path", "5. 您的成功路径，不是只看这28天", "\n".join(line for line in lines if line))
 
 
 def _module_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -520,7 +641,12 @@ def _expected_block(fields: dict[str, Any]) -> dict[str, Any]:
         _text(value.get("day7")),
         _text(value.get("day14_28")),
     ]
-    return _text_block("expected_changes", "9. 这28天您更可能看到的变化", "\n".join(line for line in lines if line))
+    labelled = []
+    if lines[0]:
+        labelled.append(f"前7天先看：{lines[0]}")
+    if lines[1]:
+        labelled.append(f"第14–28天再看：{lines[1]}")
+    return _text_block("expected_changes", "11. 您可能先看到的变化", "\n".join(labelled))
 
 
 def _product_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -549,7 +675,15 @@ def _product_block(fields: dict[str, Any]) -> dict[str, Any]:
         lines.append(summary)
     lines.extend(bullets)
     
-    return _text_block("product_schedule", "12. 产品排班：早C / 午B / 晚A", "\n".join(line for line in lines if line))
+    meaning = _text(fields.get("product_meaning")) or (
+        "饮食和运动本身有效；早C、午B、晚A的作用是配合个案排班帮助执行和稳定节律，"
+        "不是减重捷径，也不替代饮食、运动或医疗建议。"
+    )
+    return _text_block(
+        "product_schedule",
+        "9. 早C、午B、晚A对您的意义",
+        "\n".join([meaning, *[line for line in lines if line]]),
+    )
 
 
 def _normalize_rows(rows: Any) -> list[list[dict[str, Any]]]:
@@ -651,7 +785,7 @@ def _execution_sentence(value: Any, *, max_parts: int, max_len: int) -> str:
 def _weekly_standard_text(value: Any) -> str:
     text_val = _execution_sentence(value, max_parts=3, max_len=98)
     if not text_val:
-        return "每周至少5天完成三杯节律；至少记录1次体重或围度/体感；结果不稳时先看睡眠、排便和晚餐边界。"
+        return "每周至少5天完成个案产品排班和关键饮食动作；运动或步数达到计划；至少记录1次体重、围度或体感。"
     if "体重" not in text_val and "围度" not in text_val and "体感" not in text_val:
         text_val = text_val.rstrip("。") + "；至少记录1次体重或围度/体感。"
     return text_val
@@ -685,8 +819,8 @@ def re_split_standard(value: str) -> list[str]:
 
 def _default_week_standard(week: str) -> str:
     defaults = {
-        "第1周": "早C/午B/晚A按时完成；晚餐主食控制在1拳内；每天完成基础步数。",
-        "第2周": "连续5天守住三杯节律；晚餐后走15–20分钟；不额外加宵夜。",
+        "第1周": "按个案产品排班完成；晚餐主食控制在1拳内；完成计划内活动。",
+        "第2周": "连续5天完成关键饮食动作；晚餐后走15–20分钟；不额外加宵夜。",
         "第3周": "记录体重和腰围；每周安排2次轻力量；继续观察睡眠和排便。",
         "第4周": "把收口、步数和轻力量做满；复盘腰腹、睡眠和排便变化。",
     }
@@ -695,7 +829,13 @@ def _default_week_standard(week: str) -> str:
 
 def _daily_checkin_text(value: Any) -> str:
     if not value:
-        return "1. 早C/午B/晚A是否全部完成\n2. 今天是否至少吃到2拳蔬菜\n3. 今天是否完成计划内快走/力量训练\n4. 睡眠是否按计划收口\n5. 饭后困评分（1分很困、5分不困）。"
+        return (
+            "1. 个案产品排班是否按方案完成\n"
+            "2. 蔬菜总量是否至少2拳\n"
+            "3. 是否完成计划内快走或力量训练\n"
+            "4. 睡眠是否按计划收口\n"
+            "5. 饭后困评分（1分很困、5分不困）。"
+        )
     
     if isinstance(value, list):
         cleaned_items = []

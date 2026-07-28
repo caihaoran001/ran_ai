@@ -15,21 +15,41 @@ from app.services.document_service import (
     _apply_intake_facts_to_document_payloads,
     _intake_generation_system_prompt,
 )
+from app.services.document_delivery import _document_filename
 from app.services.document_templates import _daily_checkin_text, combined_prompt_schema
-from app.services.intake_facts import build_intake_fact_summary
+from app.services.intake_facts import _weight_loss_band, build_intake_fact_summary
 from app.services.questionnaire_template import default_questionnaire_template
 
 
 INTAKE_SYSTEM_PROMPT_PREFIX = "你是加速燃「高燃人生28天训练营」的首席能量教练"
 
 
-def _make_intake_mock_response(*, weight_band: str = "维持优化带（A带）", bmi: str = "21.2") -> str:
+def _make_intake_mock_response(*, weight_band: str = "A带｜修复塑形", bmi: str = "21.2") -> str:
     return json.dumps({
         "intake_analysis_package": {
             "shared_analysis": {
+                "safety_status": "standard",
+                "manual_review_required": False,
                 "weight_band": weight_band,
+                "band_basis": [
+                    "BMI 21.2 → 当前处于健康体重范围",
+                    "最近3个月体重基本稳定 → 暂无继续上升信号",
+                ],
+                "body_trend": "基本稳定",
+                "body_trend_summary": "近3个月体重基本稳定，当前更需要改善节律和精力，而不是追求快速掉秤",
+                "body_trend_evidence": [
+                    "最近3个月体重基本稳定",
+                    "自述晚餐后基本能收口",
+                    "当前运动仅为偶尔散步快走",
+                ],
+                "body_trend_confidence": "high",
                 "core_problem": "晚睡压力导致的情绪性进食和执行波动",
-                "day28_goal": "维持体重0-2斤，重点优化睡眠节律和晚餐收口",
+                "base_goal": "稳定睡眠节律和晚间收口，体重保持在健康范围",
+                "challenge_goal": "不设置减重挑战目标",
+                "long_term_goal": "保持健康体重，同时改善腰围体态、力量、睡眠和精力",
+                "day28_goal": "保持健康体重，重点优化睡眠节律和晚餐收口",
+                "day28_task": "先把入睡时间和晚间收口稳定下来",
+                "long_term_defense": "用规律睡眠、饮食结构和力量训练守住健康体重与精力",
                 "execution_principle": "先稳节律再抓减脂，守住晚间收口和睡眠时间",
                 "evidence_notes": [
                     "入睡时间23:30-00:30 → 晚睡会拉高夜间皮质醇和食欲",
@@ -53,7 +73,7 @@ def _make_intake_mock_response(*, weight_band: str = "维持优化带（A带）"
                 },
                 "state": "当前处于功能勉强够用的状态，白天靠咖啡因提神，下午容易犯困",
                 "main_problem": "晚睡压力导致的情绪性进食和执行波动",
-                "day28_goal": "维持体重0-2斤，重点优化睡眠节律和晚餐收口",
+                "day28_goal": "保持健康体重，重点优化睡眠节律和晚餐收口",
                 "risks": "暂无明确风险",
                 "notes": "建议围绕晚间收口、睡眠时间和情绪管理三个维度进行轻量陪跑",
             },
@@ -76,6 +96,14 @@ def _make_intake_mock_response(*, weight_band: str = "维持优化带（A带）"
                         "您的核心挑战不是减重，而是在高压白班生活里，给身体一个稳定的"
                         "启动-续航-收口信号，让精力不再来得快去得也快。"
                     ),
+                    "goal_response": {
+                        "goal_type": "general",
+                        "judgement_type": "reasonable",
+                        "title": "3. 对您目标的直接回应",
+                        "content": "您希望白天更有精神、睡眠更稳。当前更适合先稳定睡眠和晚间收口，不设置减重挑战目标；连续执行达到标准后再评估体态变化。",
+                        "base_goal": "稳定睡眠节律和晚间收口",
+                        "challenge_goal": "不设置减重挑战目标",
+                    },
                     "judgement_points": [
                         f"BMI {bmi} → 已在健康体重范围，当前重点不是减重而是稳定节律",
                         "入睡23:30-00:30 → 长期晚睡会干扰瘦素敏感度和次日食欲节律",
@@ -86,11 +114,16 @@ def _make_intake_mock_response(*, weight_band: str = "维持优化带（A带）"
                     "leptin_sensitivity": "晚餐后基本能收口但压力大时会打破 → 提示压力状态下瘦素信号可能被抑制",
                     "hormone_stage": "30岁男性，长期高压白班可能加速恢复能力下滑",
                     "priority_direction": "保肌减脂、稳定节律",
+                    "priority_items": [
+                        "把入睡时间前移并稳定下来",
+                        "守住晚餐后的进食边界",
+                        "加入低门槛规律活动",
+                    ],
                     "success_path": {
                         "intro": "12周成功路径，先稳定再微调",
                         "weight_band": weight_band,
                         "total_goal": "12周维持体重、优化腰围体态、重建稳定睡眠节律",
-                        "day28_goal": "维持体重0-2斤，睡眠时间提前至23:00前",
+                        "day28_goal": "保持健康体重，睡眠时间提前至23:00前",
                         "week5_8": "0-3斤微幅调整，腰围开始收紧",
                         "week9_12": "维持稳定，腰围体态进一步优化",
                     },
@@ -122,40 +155,50 @@ def _make_intake_mock_response(*, weight_band: str = "维持优化带（A带）"
                         "night_a": "晚A随晚餐",
                         "summary": "早C随早餐，午B随午餐，晚A随晚餐",
                     },
+                    "product_meaning": "饮食和运动本身有效；产品只用于帮助执行个案节律，不是减重捷径。",
                     "special_reminder": "您的体重已经在健康范围，不要追求更瘦。这28天的目标是让身体在高压白班下也能稳定运转。",
-                    "first_week_signals": "前7天重点看4个信号：入睡时间、晚餐收口成功率、下午犯困程度、咖啡因需求变化",
+                    "missing_information": ["腰围和体脂率待补测"],
                 },
                 "day28_execution_standard": {
                     "recipient": "蔡浩然",
                     "weight_band": weight_band,
                     "path_goal": "12周维持体重、优化腰围体态、重建稳定睡眠节律",
-                    "day28_goal": "维持体重0-2斤，睡眠时间提前至23:00前，减少咖啡因依赖",
+                    "day28_goal": "保持健康体重，睡眠时间提前至23:00前，减少咖啡因依赖",
                     "current_phase_goal": "第1-4周以稳定节律和建立晚间收口为核心",
                     "principle": "先稳节律再抓减脂，第1-2周只抓睡眠和晚餐收口两个动作",
+                    "product_schedule": {
+                        "morning_c": "随早餐",
+                        "noon_b": "随午餐，咖啡因敏感者从半份起",
+                        "night_a": "随晚餐",
+                    },
+                    "diet_rules": [
+                        "午餐主食控制在1拳内",
+                        "每天至少吃2拳蔬菜",
+                        "晚餐后不再加水果、坚果、甜饮和零食",
+                    ],
+                    "exercise_rules": [
+                        "每周3次30分钟快走，中低强度，以能正常说话为准",
+                        "忙碌日改为晚餐后步行15分钟",
+                    ],
                     "weekly_plan": [
-                        {"week": "第1周", "focus": "建立晚间收口和入睡时间的底线意识",
-                         "required_actions": "晚餐后不再吃任何东西；22:30熄屏23:00前关灯",
-                         "pass_standard": "7天中至少5天晚餐后成功收口"},
-                        {"week": "第2周", "focus": "稳定睡眠节奏减少咖啡因依赖",
-                         "required_actions": "继续维持晚间收口；午B从半份起",
-                         "pass_standard": "7天中至少5天晚餐后收口"},
-                        {"week": "第3周", "focus": "加入运动和饮食结构调整",
-                         "required_actions": "每周3次30分钟快走；午餐主食控制在1拳内",
-                         "pass_standard": "完成2次以上快走"},
-                        {"week": "第4周", "focus": "整合节奏验证可持续性",
-                         "required_actions": "综合执行前三周所有核心动作",
-                         "pass_standard": "综合执行率>=70%"},
+                        {"week": "第1周", "core_task": "稳住底盘",
+                         "acceptance_standard": "晚餐后不再吃任何东西；22:30熄屏23:00前关灯"},
+                        {"week": "第2周", "core_task": "提高一致性",
+                         "acceptance_standard": "继续维持晚间收口；午B从半份起"},
+                        {"week": "第3周", "core_task": "抓结果指标",
+                         "acceptance_standard": "每周3次30分钟快走；午餐主食控制在1拳内"},
+                        {"week": "第4周", "core_task": "稳定复现",
+                         "acceptance_standard": "综合执行前三周所有核心动作"},
                     ],
                     "daily_checkin": (
-                        "1. 今日是否完成早C/午B/晚A？（是/否）\n"
-                        "2. 今日是否在23:30前上床？（是/否）\n"
-                        "3. 今日蔬菜摄入是否达到2拳？（是/否）\n"
-                        "4. 今日是否完成7000步或有氧30分钟？（是/否）\n"
-                        "5. 今日饭后困评分（1-5分，1很困5分不困）"
+                        "1. 个案产品排班是否按方案完成？（是/否）\n"
+                        "2. 是否在23:30前上床？（是/否）\n"
+                        "3. 蔬菜总量是否达到2拳？（是/否）\n"
+                        "4. 是否完成7000步或有氧30分钟？（是/否）\n"
+                        "5. 饭后困评分（1-5分，1很困5分不困）"
                     ),
-                    "week5_12": "第5-8周在睡眠稳定后逐步拉高运动频率和饮食精细度。第9-12周进入维持模式。",
-                    "weekly_standard": "每周通过标准：每周至少完成1次体重+腰围记录；晚间收口>=5天/周；23:00前入睡>=4天/周",
-                    "reminder": "结果看连续性不看单日完美。如果今天回家晚了或者忍不住吃了夜宵不要破罐破摔，明天就是新的一天。",
+                    "weekly_standard": "个案产品排班和晚间收口至少完成5天；完成计划运动；至少记录1次体重或围度/体感",
+                    "adjust_stop_conditions": "持续心慌或睡眠明显恶化时暂停并联系班主任；胸痛、呼吸困难或明显不适时及时就医。",
                 },
             },
         }
@@ -167,7 +210,9 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
 
     assert (
         "daily_checkin 必须严格输出5项且每项只能对应一个独立回答意图："
-        "第1项固定为早C/午B/晚A合并打卡，后4项围绕用户具体卡点定制；"
+        "第1项固定为个案产品排班完成情况；"
+        "如果方案要求减量、前移或暂停，第1项必须按该方案写，禁止继续要求早C/午B/晚A全部完成。"
+        "后4项围绕用户具体卡点定制；"
         "候选问题超过5个时只保留优先级最高的5个并舍弃其余，禁止合并多个问题，"
         "尤其禁止「是否……？请记录……」「是否……并填写……」「是否……同时记录……」等把判断题和填空/评分题塞进同一项的句式。"
     ) in prompt
@@ -182,15 +227,26 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "若两项同时入选 daily_checkin，必须各占 1 项" in prompt
     assert "情绪稳定度与饭后困综合评分必须固定" not in prompt
     assert "情绪稳定度和饭后困综合评分（1-5）" not in prompt
+    assert "只描述用户提交问卷之前的近3个月" in prompt
+    assert "不得为了匹配管理带而编造固定斤数" in prompt
+    assert "不得为了凑 A–D 把医疗复核用户包装成 A 带" in prompt
 
-    daily_checkin_spec = combined_prompt_schema()[
-        DocumentType.DAY28_EXECUTION_STANDARD.value
-    ]["daily_checkin"]
+    schema = combined_prompt_schema()
+    energy_spec = schema[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
+    execution_spec = schema[DocumentType.DAY28_EXECUTION_STANDARD.value]
+    assert "core_conclusions" in energy_spec
+    assert "body_trend" in energy_spec["core_conclusions"]
+    assert "diet_rules" in execution_spec
+    assert "exercise_rules" in execution_spec
+
+    daily_checkin_spec = execution_spec["daily_checkin"]
     assert "情绪稳定度评分和饭后困评分是两个独立候选问题" in daily_checkin_spec
     assert "两项同时入选时各占1项" in daily_checkin_spec
     assert "必须合并为1项" not in daily_checkin_spec
+    assert "禁止继续要求三杯全部完成" in daily_checkin_spec
 
     fallback = _daily_checkin_text(None)
+    assert "个案产品排班是否按方案完成" in fallback
     assert "饭后困评分（1分很困、5分不困）" in fallback
     assert "情绪稳定度和饭后困综合评分" not in fallback
 
@@ -237,6 +293,9 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     assert profile is not None
     overview = (profile.profile_json or {}).get("overview") or {}
     assert overview.get("bmi") == "21.2"
+    assert profile.profile_json.get("management_band") == "A带｜修复塑形"
+    assert profile.profile_json.get("body_trend") == "基本稳定"
+    assert profile.profile_json.get("manual_review_required") is False
     tags = (profile.profile_json or {}).get("tags") or []
     assert tags == ["A带", "晚睡习惯", "下午犯困"]
     personalized_fields = (profile.profile_json or {}).get("personalized_checkin_fields") or []
@@ -244,11 +303,11 @@ async def test_questionnaire_submit_creates_profile_and_documents(
 
     # 内容准确性验证：Profile 字段与预期完全一致
     expected_labels = [
-        "今日是否完成早C/午B/晚A？（是/否）",
-        "今日是否在23:30前上床？（是/否）",
-        "今日蔬菜摄入是否达到2拳？（是/否）",
-        "今日是否完成7000步或有氧30分钟？（是/否）",
-        "今日饭后困评分（1-5分，1很困5分不困）",
+        "个案产品排班是否按方案完成？（是/否）",
+        "是否在23:30前上床？（是/否）",
+        "蔬菜总量是否达到2拳？（是/否）",
+        "是否完成7000步或有氧30分钟？（是/否）",
+        "饭后困评分（1-5分，1很困5分不困）",
     ]
     for i, (pf, expected) in enumerate(zip(personalized_fields, expected_labels)):
         assert pf["label"] == expected, f"第 {i+1} 项标签不一致"
@@ -273,6 +332,52 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     doc_types = {d.document_type for d in docs}
     assert DocumentType.ENERGY_RESTART_PRESCRIPTION in doc_types
     assert DocumentType.DAY28_EXECUTION_STANDARD in doc_types
+    docs_by_type = {document.document_type: document for document in docs}
+    diagnosis = docs_by_type[DocumentType.ENERGY_RESTART_PRESCRIPTION]
+    execution = docs_by_type[DocumentType.DAY28_EXECUTION_STANDARD]
+    assert diagnosis.title == "个人能量重启诊断报告"
+    assert diagnosis.content_json["title"] == "个人能量重启诊断报告"
+    assert "近3个月身体趋势：基本稳定" in diagnosis.content_md
+    assert [block["title"] for block in diagnosis.content_json["blocks"]] == [
+        "1. 用户信息概览表",
+        "2. 一句话结论与两项核心判断",
+        "3. 对您目标的直接回应",
+        "4. 为什么我会这样判断",
+        "5. 您的成功路径，不是只看这28天",
+        "6. 您真正需要优先解决的三件事",
+        "7. 代谢节律与恢复状态评估",
+        "8. 模块诊断：节律 / 饮食 / 睡眠 / 压力 / 身体活动",
+        "9. 早C、午B、晚A对您的意义",
+        "10. 本周直接执行",
+        "11. 您可能先看到的变化",
+        "12. 特别提醒",
+        "13. 需要补充的信息",
+        "14. 说明",
+    ]
+    assert execution.title == "28天高燃人生执行建议书"
+    assert execution.content_json["title"].endswith("｜28天高燃人生执行建议书")
+    execution_block_keys = [block["key"] for block in execution.content_json["blocks"]]
+    assert execution_block_keys == [
+        "goal_summary",
+        "current_phase_goal",
+        "principle",
+        "product_schedule",
+        "diet_rules",
+        "exercise_rules",
+        "weekly_plan",
+        "daily_checkin",
+        "weekly_standard",
+        "adjust_stop_conditions",
+    ]
+    assert "fixed_rhythm" not in execution_block_keys
+    for document in (diagnosis, execution):
+        download_resp = await admin_client.get(f"/documents/{document.id}/download")
+        assert download_resp.status_code == 200, download_resp.text
+        assert download_resp.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        assert download_resp.content.startswith(b"PK")
+        assert len(download_resp.content) > 1000
 
     updated_case = await db_session.get(ServiceCase, case_id)
     assert updated_case is not None
@@ -453,9 +558,43 @@ async def test_intake_facts_bmi_calculation(cai_haoran_answers):
     facts = build_intake_fact_summary(fields, cai_haoran_answers)
 
     assert facts["bmi"] == "21.2", f"Expected BMI '21.2', got '{facts['bmi']}'"
-    assert facts["weight_loss_band"] == "维持优化带（A带）", (
+    assert facts["weight_loss_band"] == "A带｜修复塑形", (
         f"Expected A带, got '{facts['weight_loss_band']}'"
     )
+
+
+@pytest.mark.parametrize(
+    ("bmi", "expected"),
+    [
+        (21.2, "A带｜修复塑形"),
+        (26.0, "B带｜轻盈启动"),
+        (30.0, "C带｜明确减脂"),
+        (33.0, "D带｜系统减重"),
+    ],
+)
+def test_bmi_initial_reference_uses_new_management_band_names(
+    bmi: float,
+    expected: str,
+):
+    assert _weight_loss_band(bmi) == expected
+
+
+def test_delivery_filename_uses_customer_facing_document_title():
+    diagnosis = _document_filename(
+        user_name="小燃",
+        document_type=DocumentType.ENERGY_RESTART_PRESCRIPTION,
+        title="个人能量重启诊断报告",
+        gender="女",
+    )
+    execution = _document_filename(
+        user_name="小燃",
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28天高燃人生执行建议书",
+        gender="女",
+    )
+
+    assert diagnosis == "小燃女士_个人能量重启诊断报告.docx"
+    assert execution == "小燃女士_28天高燃人生执行建议书.docx"
 
 
 def test_document_payload_bmi_is_overwritten_by_intake_facts():

@@ -45,14 +45,18 @@ async def _generate_intake_analysis_package(
     payload = parse_json_object(text)
     if isinstance(payload.get("intake_analysis_package"), dict):
         payload = payload["intake_analysis_package"]
+    shared = payload.get("shared_analysis") if isinstance(payload.get("shared_analysis"), dict) else {}
     document_root = payload.get("documents") if isinstance(payload.get("documents"), dict) else payload
-    document_payloads = _normalize_combined_document_payload(document_root, user_name)
+    document_payloads = _normalize_combined_document_payload(
+        document_root,
+        user_name,
+        shared_analysis=shared,
+    )
     if not document_payloads:
         raise RuntimeError("intake analysis package generated empty document content")
     # 减重带改由 LLM 综合判断：用 package 里 LLM 判的带回填 intake_facts（BMI 值降为兜底初判）。
     # 后续强制同步逻辑保持不变 → profile 与两份文档三处仍以单一来源对齐、天然一致。
-    _shared = payload.get("shared_analysis") if isinstance(payload.get("shared_analysis"), dict) else {}
-    _llm_band = str(_shared.get("weight_band") or "").strip()
+    _llm_band = str(shared.get("weight_band") or "").strip()
     if _llm_band:
         intake_facts["weight_loss_band"] = _llm_band
     _apply_intake_facts_to_document_payloads(document_payloads, intake_facts)
@@ -71,9 +75,21 @@ async def _generate_intake_analysis_package(
 def _intake_package_schema() -> dict[str, object]:
     return {
         "shared_analysis": {
-            "weight_band": "综合判断后的【最终减重带】，带名只能取 A带/B带/C带/D带/增肌增能带之一；可不同于 intake_facts 的 BMI 初判，profile 与两份文档都以此为准",
+            "safety_status": "只能取 standard / cautious / manual_review",
+            "manual_review_required": "布尔值；孕哺、未成年人、明显疾病/用药/持续不适、非主动消瘦或资料冲突时为 true",
+            "weight_band": "综合判断后的最终管理带：A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 增肌增能带 / 需人工复核",
+            "band_basis": ["支持管理带的2-3条问卷事实或确定性指标"],
+            "body_trend": "仅依据入营问卷反映的近3个月趋势：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
+            "body_trend_summary": "一句话解释近3个月趋势；不得写入营后的变化",
+            "body_trend_evidence": ["支持趋势结论的2-3条问卷判断依据；信息不足时可为空"],
+            "body_trend_confidence": "high / medium / low",
             "core_problem": "核心问题，只基于问卷事实",
+            "base_goal": "基础目标；用户没有明确数字时不得编造斤数",
+            "challenge_goal": "条件性挑战目标；不适合时写不设置",
+            "long_term_goal": "长期方向，必须包含非体重结果",
             "day28_goal": "28天目标",
+            "day28_task": "这28天先解决什么",
+            "long_term_defense": "长期如何避免回到原来的上升或失控轨迹",
             "execution_principle": "执行总原则",
             "evidence_notes": ["关键判断对应的问卷证据，3-5条"],
         },
@@ -85,7 +101,7 @@ def _intake_package_schema() -> dict[str, object]:
                 "height_weight": "身高 / 体重，必须与 intake_facts 一致",
                 "bmi": "必须与 intake_facts.bmi 一致",
                 "waist": "腰围，必须与 intake_facts 一致",
-                "weight_loss_band": "与 shared_analysis.weight_band 一致（综合判断后的最终减重带）",
+                "weight_loss_band": "与 shared_analysis.weight_band 一致（综合判断后的最终管理带）",
             },
             "state": "当前状态评估",
             "main_problem": "核心主要问题",
@@ -118,6 +134,18 @@ def _normalize_profile_from_package(
         profile.setdefault("main_problem", shared.get("core_problem"))
         profile.setdefault("day28_goal", shared.get("day28_goal"))
     profile = sanitize_profile_json(dict(profile), intake_facts)
+    if shared:
+        profile["safety_status"] = str(shared.get("safety_status") or "standard")
+        profile["management_band"] = str(
+            shared.get("weight_band")
+            or intake_facts.get("weight_loss_band")
+            or "需补充身高体重后判断"
+        )
+        profile["body_trend"] = str(shared.get("body_trend") or "信息不足")
+        profile["body_trend_evidence"] = _clean_list(shared.get("body_trend_evidence"))
+        profile["manual_review_required"] = _boolean_value(
+            shared.get("manual_review_required")
+        )
     profile.setdefault("risks", "暂无明确风险")
     profile["need_analysis"] = _normalize_need_analysis(profile.get("need_analysis"), intake_facts, shared)
     profile.setdefault("notes", "建议围绕问卷中明确的执行卡点进行轻量陪跑，避免一次性增加太多动作。")
@@ -201,6 +229,16 @@ def _clean_list(value: object) -> list[str]:
     if isinstance(value, str):
         return _split_need_text(value)
     return []
+
+
+def _boolean_value(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    if isinstance(value, (int, float)):
+        return value != 0
+    return False
 
 
 def _profile_summary_from_documents(document_payloads: dict[str, dict]) -> str:
@@ -329,7 +367,12 @@ def _text_from_payload(value: object) -> str:
     return str(value).strip()
 
 
-def _normalize_combined_document_payload(payload: dict, user_name: str) -> dict[str, dict]:
+def _normalize_combined_document_payload(
+    payload: dict,
+    user_name: str,
+    *,
+    shared_analysis: dict[str, object] | None = None,
+) -> dict[str, dict]:
     energy_key = DocumentType.ENERGY_RESTART_PRESCRIPTION.value
     execution_key = DocumentType.DAY28_EXECUTION_STANDARD.value
     energy_payload = payload.get(energy_key)
@@ -342,10 +385,51 @@ def _normalize_combined_document_payload(payload: dict, user_name: str) -> dict[
         return {}
     energy_payload.setdefault("recipient", user_name)
     execution_payload.setdefault("recipient", user_name)
+    shared = shared_analysis or {}
     shared_path = energy_payload.get("success_path") if isinstance(energy_payload.get("success_path"), dict) else {}
+    core_conclusions = (
+        energy_payload.get("core_conclusions")
+        if isinstance(energy_payload.get("core_conclusions"), dict)
+        else {}
+    )
+    goal_response = (
+        energy_payload.get("goal_response")
+        if isinstance(energy_payload.get("goal_response"), dict)
+        else {}
+    )
+
+    _sync_if_missing(core_conclusions, "management_band", shared.get("weight_band"))
+    _sync_if_missing(core_conclusions, "band_explanation", _first_clean_item(shared.get("band_basis")))
+    _sync_if_missing(core_conclusions, "body_trend", shared.get("body_trend"))
+    _sync_if_missing(core_conclusions, "trend_explanation", shared.get("body_trend_summary"))
+    _sync_if_missing(core_conclusions, "trend_evidence", shared.get("body_trend_evidence"))
+    _sync_if_missing(core_conclusions, "day28_task", shared.get("day28_task"))
+    _sync_if_missing(core_conclusions, "long_term_defense", shared.get("long_term_defense"))
+    if core_conclusions:
+        energy_payload["core_conclusions"] = core_conclusions
+
+    _sync_if_missing(goal_response, "base_goal", shared.get("base_goal"))
+    _sync_if_missing(goal_response, "challenge_goal", shared.get("challenge_goal"))
+    if goal_response:
+        energy_payload["goal_response"] = goal_response
+
+    _sync_if_missing(shared_path, "weight_band", shared.get("weight_band"))
+    _sync_if_missing(shared_path, "total_goal", shared.get("long_term_goal"))
+    _sync_if_missing(shared_path, "day28_goal", shared.get("day28_goal"))
     _sync_if_missing(execution_payload, "weight_band", shared_path.get("weight_band"))
     _sync_if_missing(execution_payload, "path_goal", shared_path.get("total_goal"))
     _sync_if_missing(execution_payload, "day28_goal", shared_path.get("day28_goal"))
+    _sync_if_missing(execution_payload, "body_trend", shared.get("body_trend"))
+    _sync_if_missing(execution_payload, "base_goal", shared.get("base_goal"))
+    _sync_if_missing(execution_payload, "challenge_goal", shared.get("challenge_goal"))
+    _sync_if_missing(execution_payload, "long_term_goal", shared.get("long_term_goal"))
+    _sync_if_missing(execution_payload, "current_mainline", energy_payload.get("priority_direction"))
+    _sync_if_missing(execution_payload, "principle", shared.get("execution_principle"))
+    _sync_if_missing(
+        execution_payload,
+        "product_schedule",
+        energy_payload.get("product_schedule"),
+    )
     _sync_if_missing(shared_path, "weight_band", execution_payload.get("weight_band"))
     _sync_if_missing(shared_path, "total_goal", execution_payload.get("path_goal"))
     _sync_if_missing(shared_path, "day28_goal", execution_payload.get("day28_goal"))
@@ -354,6 +438,15 @@ def _normalize_combined_document_payload(payload: dict, user_name: str) -> dict[
     if _flatten_payload_text_length(energy_payload) < 80 or _flatten_payload_text_length(execution_payload) < 50:
         return {}
     return {energy_key: energy_payload, execution_key: execution_payload}
+
+
+def _first_clean_item(value: object) -> str:
+    if isinstance(value, list):
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                return text
+    return str(value or "").strip() if isinstance(value, str) else ""
 
 
 def _apply_intake_facts_to_document_payloads(payloads: dict[str, dict], facts: dict[str, object]) -> None:
