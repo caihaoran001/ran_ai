@@ -83,7 +83,7 @@ class Settings(BaseSettings):
         default=24.0,
         validation_alias="QWEN_COMPLETION_COST_OVER_256K_PER_1M_TOKENS",
     )
-    ai_timeout_seconds: float = Field(default=60.0, validation_alias="AI_TIMEOUT_SECONDS")
+    ai_timeout_seconds: float = Field(default=300.0, validation_alias="AI_TIMEOUT_SECONDS")
     ai_max_concurrent_requests: int = Field(
         default=10,
         validation_alias="AI_MAX_CONCURRENT_REQUESTS",

@@ -702,8 +702,8 @@ class AIService:
 
 def _normalized_timeout(value: float | None) -> float:
     if value is None or value <= 0:
-        return 60.0
-    return min(float(value), 120.0)
+        return 300.0
+    return min(float(value), 300.0)
 
 
 def _normalized_image_timeout(value: float | None) -> float:
