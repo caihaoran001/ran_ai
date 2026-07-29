@@ -1448,6 +1448,65 @@ def test_shared_analysis_is_the_single_source_for_cross_document_facts():
     assert execution["current_mainline"] == shared["current_mainline"]
 
 
+def test_a_band_user_visible_goal_contract_replaces_model_numbers():
+    shared = {
+        "weight_band": "A带｜修复塑形",
+        "base_goal": "保持体重基本稳定，修复睡眠和精力",
+        "challenge_goal": "不设置减重挑战目标",
+        "day28_goal": "修复睡眠和精力，观察体态变化",
+        "long_term_goal": "建立可持续的恢复节律",
+        "body_trend": "基本稳定",
+        "day28_task": "先修复睡眠和精力",
+        "current_mainline": "睡眠修复",
+    }
+    payload = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "one_sentence": "一句话结论" * 20,
+            "overview": {"current_focus": "睡眠修复"},
+            "core_conclusions": {
+                "management_band": "A带｜修复塑形",
+                "band_explanation": "安全减重空间不到2公斤",
+            },
+            "goal_response": {
+                "content": "您希望28天减重10斤，但当前不建议。",
+                "user_goal": "28天减重10斤",
+                "judgement": "减重10斤不适合",
+                "base_goal": "保持体重基本稳定",
+                "challenge_goal": "不设置减重挑战目标",
+            },
+            "success_path": {
+                "weight_band": "A带｜修复塑形",
+                "day28_goal": "修复睡眠和精力，观察体态变化",
+                "total_goal": "建立可持续的恢复节律",
+            },
+        },
+        DocumentType.DAY28_EXECUTION_STANDARD.value: {
+            "day28_goal": "修复睡眠和精力，观察体态变化",
+            "path_goal": "建立可持续的恢复节律",
+            "body_trend": "基本稳定",
+            "current_mainline": "睡眠修复",
+            "principle": "先守底盘，再抓结果" * 5,
+        },
+    }
+
+    normalized = _normalize_combined_document_payload(
+        payload,
+        "A带定性回应用户",
+        shared_analysis=shared,
+    )
+    energy = normalized[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
+    visible_text = (
+        energy["core_conclusions"]["band_explanation"]
+        + energy["goal_response"]["content"]
+    )
+
+    assert "10斤" not in visible_text
+    assert "2公斤" not in visible_text
+    assert "安全减重空间" not in visible_text
+    assert energy["goal_response"]["user_goal"] == "希望尽快看到体重和体态变化"
+    assert energy["goal_response"]["challenge_goal"] == shared["challenge_goal"]
+
+
 def test_force_sync_keeps_document_text_when_shared_analysis_is_empty():
     """shared_analysis 缺字段时保留文档里模型写的那份，不能把字段清空。"""
 

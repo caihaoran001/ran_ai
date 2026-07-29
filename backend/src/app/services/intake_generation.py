@@ -980,6 +980,7 @@ def _normalize_combined_document_payload(
         (execution_payload, "current_mainline", shared.get("current_mainline")),
     ):
         _force_sync(target, key, source)
+    _apply_a_band_user_visible_contract(shared, core_conclusions, goal_response)
     # core_conclusions 可能在上面因为全空而没挂回 energy_payload，强制覆写后要重新挂。
     if core_conclusions:
         energy_payload["core_conclusions"] = core_conclusions
@@ -993,6 +994,35 @@ def _normalize_combined_document_payload(
     if _flatten_payload_text_length(energy_payload) < 80 or _flatten_payload_text_length(execution_payload) < 50:
         return {}
     return {energy_key: energy_payload, execution_key: execution_payload}
+
+
+def _apply_a_band_user_visible_contract(
+    shared: dict[str, object],
+    core_conclusions: dict[str, object],
+    goal_response: dict[str, object],
+) -> None:
+    """A带正文只给定性结论，不让模型复述用户斤数或内部安全空间数字。"""
+
+    if _text_from_payload(shared.get("weight_band")) != "A带｜修复塑形":
+        return
+    core_conclusions["band_explanation"] = (
+        "当前更适合修复塑形，不设置体重下降指标，重点观察围度、体态和身体状态变化。"
+    )
+    goal_response.update(
+        {
+            "goal_type": "specific",
+            "judgement_type": "needs_adjustment",
+            "content": (
+                "您希望尽快看到体重和体态变化。结合当前状态，这28天不建议设置减重数字目标，"
+                "更适合先保持体重基本稳定，把重点放在体态、睡眠、精力、恢复和执行一致性上。"
+                "当前不设置减重挑战目标；基础动作稳定完成、睡眠和精力没有变差后，"
+                "再与班主任评估下一阶段。"
+            ),
+            "user_goal": "希望尽快看到体重和体态变化",
+            "judgement": "当前阶段不建议设置减重数字目标，更适合先保持体重基本稳定并修复体态与状态。",
+            "conditions": "基础动作稳定完成、睡眠和精力没有变差后，再与班主任评估下一阶段。",
+        }
+    )
 
 
 def _first_clean_item(value: object) -> str:
