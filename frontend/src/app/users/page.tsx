@@ -136,7 +136,11 @@ function ServiceCaseCard({ serviceCase }: { serviceCase: ServiceCase }) {
           <div className="min-w-0">
             <h3 className="text-lg font-bold text-slate-950">
               {user ? (
-                <Link href={`/users/${user.id}`} className="text-break transition-colors hover:text-cyan-700">
+                <Link
+                  href={`/users/${user.id}`}
+                  prefetch={false}
+                  className="text-break transition-colors hover:text-cyan-700"
+                >
                   {user.name}
                 </Link>
               ) : (
@@ -248,6 +252,7 @@ function ServiceCaseItem({ serviceCase }: { serviceCase: ServiceCase }) {
   return (
     <Link
       href={`/cases/${serviceCase.id}`}
+      prefetch={false}
       className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-4 transition-colors hover:border-cyan-300 hover:bg-white sm:flex-row sm:items-center sm:justify-between"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-3">

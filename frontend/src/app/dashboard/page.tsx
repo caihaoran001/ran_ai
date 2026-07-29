@@ -296,7 +296,11 @@ function CaseHealthMobileCard({ item }: { item: CaseHealthItem }) {
   const checkinStale = item.last_checkin_date == null || (item.days_since_checkin ?? 0) >= 2;
 
   return (
-    <Link href={`/cases/${item.service_case_id}`} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-cyan-300 hover:bg-cyan-50/30">
+    <Link
+      href={`/cases/${item.service_case_id}`}
+      prefetch={false}
+      className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-cyan-300 hover:bg-cyan-50/30"
+    >
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-break font-semibold text-slate-950">{item.user_name || "未命名"}</div>
@@ -336,7 +340,11 @@ function CaseHealthRow({ item }: { item: CaseHealthItem }) {
   return (
     <tr className="border-b border-slate-50 hover:bg-slate-50/60">
       <td className="px-4 py-3">
-        <Link href={`/cases/${item.service_case_id}`} className="font-medium text-cyan-700 hover:underline">
+        <Link
+          href={`/cases/${item.service_case_id}`}
+          prefetch={false}
+          className="font-medium text-cyan-700 hover:underline"
+        >
           {item.user_name || "未命名"}
         </Link>
         <div className="text-xs text-slate-400">{item.group_id}</div>
