@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -85,7 +86,7 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
     weight = _first_number(weight_raw)
     bmi = _calculate_bmi(height, weight)
     weight_loss_band = _weight_loss_band(bmi)
-    protected_lower, safe_room, day28_max_loss = _safe_reduction_facts(height, weight)
+    protected_lower, room_exhausted, goal_cap = _safe_reduction_facts(height, weight)
 
     return {
         "name": legal_name or "未提供",
@@ -99,10 +100,12 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
         "weight_kg": _format_number(weight) if weight else "未提供",
         "bmi": f"{bmi:.1f}" if bmi else "暂无数据",
         "weight_loss_band": weight_loss_band,
-        # 安全余量三项：内部约束，只喂给分析提示词用来给目标设天花板，不得出现在交付文件里。
+        # 安全余量：内部约束，只用来给目标设天花板，不得出现在交付文件里。
+        # 只传下限体重（要和用户目标体重比大小）、是否已无空间、打过折的规划上限；
+        # 真实上限和空间公斤数刻意不传，少一个数字就少一处可被原样引用的泄漏点。
         "protected_lower_weight_kg": f"{protected_lower:.1f}" if protected_lower else "暂无数据",
-        "safe_reduction_room_kg": f"{safe_room:.1f}" if safe_room is not None else "暂无数据",
-        "day28_max_loss_kg": f"{day28_max_loss:.1f}" if day28_max_loss is not None else "暂无数据",
+        "weight_loss_room_exhausted": "暂无数据" if room_exhausted is None else ("是" if room_exhausted else "否"),
+        "day28_goal_cap_kg": f"{goal_cap:.1f}" if goal_cap is not None else "暂无数据",
         "waist": waist or "未提供",
         "bodyfat": bodyfat or "未提供",
         "health_note": health_note or "未提供",
@@ -163,13 +166,18 @@ def _normalize_height_cm(value: float | None) -> float | None:
 
 def _safe_reduction_facts(
     height_cm: float | None, weight_kg: float | None
-) -> tuple[float | None, float | None, float | None]:
+) -> tuple[float | None, bool | None, float | None]:
     """安全减重空间：先算这个人还能安全减多少，再谈目标。
 
     - protected_lower_weight_kg = 20 × 身高m²：自动方案不得突破的保护性下限，
       是系统复核线而不是医学诊断线，也不代表建议用户减到这个体重。
-    - safe_reduction_room_kg = 基线体重 − 保护性下限，不为负。
-    - day28_max_loss_kg = min(基线体重5%, 4kg, 安全空间)：28天减重上限。
+    - 安全空间 = 基线体重 − 保护性下限。空间本身不给模型，只给「是否已耗尽」——
+      判断只需要这个布尔结论，把公斤数传过去等于多给一个可被原样引用的数字。
+    - day28_goal_cap_kg = min(基线体重5%, 4kg, 安全空间) × 0.8，向下取整到 0.5kg。
+
+    打 8 折是实测得出的：真实模型会把上限当靶心（上限 3.2 就写到 3.0），
+    留缓冲让「贴着上限写」也落在安全区内；取整到 0.5kg（=1斤）也让这个数看起来
+    像人定的档位，而不是可被原样抄进交付文件的计算结果。上限为 0 表示不给数字目标。
 
     只作为目标的天花板使用，不参与管理带判断——BMI 22 的健康体重用户也能算出
     7kg 空间，拿它分带会把正常体重的人系统性推去减脂。
@@ -180,8 +188,9 @@ def _safe_reduction_facts(
     height_m = height_cm / 100
     protected_lower = 20 * height_m * height_m
     safe_room = max(0.0, weight_kg - protected_lower)
-    day28_max_loss = min(weight_kg * 0.05, 4.0, safe_room)
-    return protected_lower, safe_room, day28_max_loss
+    true_cap = min(weight_kg * 0.05, 4.0, safe_room)
+    goal_cap = math.floor(true_cap * 0.8 * 2) / 2
+    return protected_lower, safe_room <= 0, goal_cap
 
 
 def _calculate_bmi(height_cm: float | None, weight_kg: float | None) -> float | None:

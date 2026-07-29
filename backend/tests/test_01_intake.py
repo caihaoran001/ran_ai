@@ -25,6 +25,7 @@ from app.services.document_templates import (
 )
 from app.services.intake_generation import (
     CHECKIN_CATEGORIES,
+    _scrub_internal_text,
     _normalize_combined_document_payload,
     checkin_options_for,
     normalize_daily_checkin_items,
@@ -690,15 +691,31 @@ def test_bmi_initial_reference_uses_new_management_band_names(
 
 @pytest.mark.asyncio
 async def test_intake_facts_expose_safe_reduction_room(cai_haoran_answers):
-    """安全余量三项：目标的天花板，175cm/65kg → 下限 61.25kg、空间 3.75kg、28天上限 3.25kg。"""
+    """175cm/65kg → 下限 61.25kg，空间 3.75kg 未耗尽，真实上限 3.25kg 打折后规划上限 2.5kg。"""
 
     template = default_questionnaire_template("intake")
     facts = build_intake_fact_summary(template.get("fields", []), cai_haoran_answers)
 
     assert facts["protected_lower_weight_kg"] == "61.2"
-    assert facts["safe_reduction_room_kg"] == "3.8"
-    # min(65*5%=3.25, 4, 3.75) → 基线5% 起作用
-    assert facts["day28_max_loss_kg"] == "3.2"
+    assert facts["weight_loss_room_exhausted"] == "否"
+    # min(65*5%=3.25, 4, 3.75)=3.25 → ×0.8=2.6 → 向下取整到 0.5kg
+    assert facts["day28_goal_cap_kg"] == "2.5"
+    # 真实上限和空间公斤数刻意不进提示词，少一个可被原样引用的数字
+    assert "day28_max_loss_kg" not in facts
+    assert "safe_reduction_room_kg" not in facts
+
+
+def test_intake_facts_room_exhausted_blocks_numeric_goal():
+    """空间耗尽（BMI 18.6 的真实用户）→ 标记为「是」且规划上限归零。"""
+
+    fields = [
+        {"key": "h", "title": "您的身高（cm/厘米）"},
+        {"key": "w", "title": "您当前体重（kg/公斤）"},
+    ]
+    facts = build_intake_fact_summary(fields, {"h": "166", "w": "51.3"})
+
+    assert facts["weight_loss_room_exhausted"] == "是"
+    assert facts["day28_goal_cap_kg"] == "0.0"
 
 
 def test_intake_facts_safe_room_missing_without_height_or_weight():
@@ -708,8 +725,8 @@ def test_intake_facts_safe_room_missing_without_height_or_weight():
     )
 
     assert facts["protected_lower_weight_kg"] == "暂无数据"
-    assert facts["safe_reduction_room_kg"] == "暂无数据"
-    assert facts["day28_max_loss_kg"] == "暂无数据"
+    assert facts["weight_loss_room_exhausted"] == "暂无数据"
+    assert facts["day28_goal_cap_kg"] == "暂无数据"
 
 
 def test_intake_facts_normalize_height_written_in_meters():
@@ -724,6 +741,23 @@ def test_intake_facts_normalize_height_written_in_meters():
     assert facts["height_cm"] == "175"
     assert facts["bmi"] == "21.2"
     assert facts["weight_loss_band"] == "A带｜修复塑形"
+
+
+def test_internal_jargon_is_reworded_not_deleted():
+    """真实模型会把「保护性下限」写进正文（提示词禁了也照写）。
+
+    这两句承载核心结论，删整句会留残文，所以按词换成用户话；
+    带「人工复核」的整句仍然丢弃——那是纯内部状态，用户不该看到。
+    """
+
+    assert _scrub_internal_text(
+        "当前体重54公斤已经低于您身体的保护性下限，继续减重容易反弹。"
+    ) == "当前体重54公斤已经低于您身体的安全下限，继续减重容易反弹。"
+    # 模型爱写「体重保护性下限」，替换词不能再带「体重」二字
+    assert _scrub_internal_text("由于甲状腺切除和体重保护性下限，早C从半份开始。") == (
+        "由于甲状腺切除和体重安全下限，早C从半份开始。"
+    )
+    assert _scrub_internal_text("当前体重已低于保护性下限，需人工复核。") == ""
 
 
 def test_adjust_stop_conditions_keeps_medical_escalation():

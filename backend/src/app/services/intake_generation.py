@@ -65,7 +65,7 @@ def _resolve_management_band(shared: dict[str, object], facts: dict[str, object]
 
 
 def _strip_internal_review_labels(payloads: dict[str, dict]) -> None:
-    """从用户可见文档内容里剔除内部复核标签，按整句丢弃避免留下残句。"""
+    """清掉用户可见文档里的内部痕迹：内部术语换成用户话，复核标签按整句丢弃。"""
 
     for payload in payloads.values():
         if isinstance(payload, dict):
@@ -76,19 +76,38 @@ def _strip_internal_labels_in_place(value: object) -> None:
     if isinstance(value, dict):
         for key, item in list(value.items()):
             if isinstance(item, str):
-                value[key] = _drop_internal_label_clauses(item)
+                value[key] = _scrub_internal_text(item)
             else:
                 _strip_internal_labels_in_place(item)
     elif isinstance(value, list):
         for index, item in enumerate(list(value)):
             if isinstance(item, str):
-                value[index] = _drop_internal_label_clauses(item)
+                value[index] = _scrub_internal_text(item)
             else:
                 _strip_internal_labels_in_place(item)
 
 
-def _drop_internal_label_clauses(text: str) -> str:
-    if not text or not _contains_internal_review_label(text):
+# 内部术语 → 用户能听懂的说法。这些词本身不含数字，删整句会丢掉承载结论的正文，
+# 所以按词替换而不是丢句。提示词已经明令禁写它们，真实模型照样会写——「保护性下限」
+# 是个自然的中文表达，模型认为这样讲用户更懂，只靠提示词封不住。
+# 替换词故意不带「体重」二字：模型常写「体重保护性下限」，带上就成了「体重安全体重下限」。
+INTERNAL_JARGON = {
+    "保护性下限": "安全下限",
+    "复核线": "安全下限",
+    "安全减重空间": "可减重空间",
+    "规划上限": "安全上限",
+}
+
+
+def _scrub_internal_text(text: str) -> str:
+    """把用户可见文本里的内部痕迹清掉：术语换成用户话，复核标签整句丢弃。"""
+
+    if not text:
+        return text
+    for jargon, plain in INTERNAL_JARGON.items():
+        if jargon in text:
+            text = text.replace(jargon, plain)
+    if not _contains_internal_review_label(text):
         return text
     kept = [
         clause
