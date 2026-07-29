@@ -18,7 +18,7 @@ ENERGY_FIELD_SPEC = {
         "schedule": "作息状态",
         "exercise": "运动基础",
         "main_need": "主要诉求",
-        "current_focus": "当前主线",
+        "current_focus": "当前主线，与 shared_analysis.current_mainline 一致",
     },
     "one_sentence": "一句话结论",
     "core_conclusions": {
@@ -93,9 +93,7 @@ ENERGY_FIELD_SPEC = {
 
 
 EXECUTION_FIELD_SPEC = {
-    "weight_band": "当前业务管理带，只能取「A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 增肌增能带」之一。"
-    "禁止写「需人工复核」等内部运营标签",
-    "current_mainline": "当前唯一主线，≤16字，例如保肌减脂、节律稳定、睡眠修复、饮食结构修复、系统化管理",
+    "current_mainline": "与 shared_analysis.current_mainline 一致的当前唯一主线，≤16字",
     "day28_goal": "这28天要完成的任务，≤48字，同时包含阶段任务和要观察的结果；没有明确数字目标时不得编造斤数或厘米数。",
     "current_phase_goal": "当前阶段目标，≤32字，用「先解决{核心问题}，不是{反面}」句式，聚焦排序而非平铺罗列，例如「先解决节律稳定，不是追求失控式掉秤」。",
     "principle": "执行总原则，≤28字，保持两段递进结构「先守{底盘动作}，再{放大动作}」，是通用指导语，不嵌入具体参数（时间点、拳数）。例如「先守底盘，再抓结果；先连续完成，再逐步加码」。",
@@ -595,14 +593,13 @@ def _missing_information_block(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
-    """目标摘要只留执行需要的三项。
+    """目标摘要只留执行需要的两项。
 
-    身体趋势、基础/挑战/长期目标是分析性结论，写在《个人能量重启诊断报告》里；
+    管理带、身体趋势、基础/挑战/长期目标是分析性结论，写在《个人能量重启诊断报告》里；
     在这份一页执行纸上重复展开会直接把版面顶到第二页。
     """
 
     lines = [
-        f"当前管理带：{_text(fields.get('weight_band'))}",
         f"28天任务：{_compact_field(fields.get('day28_goal') or fields.get('base_goal'), max_len=48)}",
         f"当前主线：{_compact_field(fields.get('current_mainline'), max_len=16)}",
     ]

@@ -196,6 +196,7 @@ def _intake_package_schema() -> dict[str, object]:
             "body_trend_support_signals": ["1-2条当前状态支持信号：腰腹体感、睡眠、精力、食欲边界、晚间失控、活动量等"],
             "body_trend_confidence": "high / medium / low",
             "core_problem": "核心问题，只基于问卷事实",
+            "current_mainline": "当前唯一主线，只能取：保肌减脂 / 节律稳定 / 睡眠修复 / 饮食结构修复 / 系统化管理",
             "base_goal": "基础目标；用户没有明确数字时不得编造斤数",
             "challenge_goal": "条件性挑战目标；不适合时写不设置",
             "long_term_goal": "长期方向，必须包含非体重结果",
@@ -819,6 +820,7 @@ def _normalize_combined_document_payload(
     execution_payload.setdefault("recipient", user_name)
     shared = shared_analysis or {}
     shared_path = energy_payload.get("success_path") if isinstance(energy_payload.get("success_path"), dict) else {}
+    overview = energy_payload.get("overview") if isinstance(energy_payload.get("overview"), dict) else {}
     core_conclusions = (
         energy_payload.get("core_conclusions")
         if isinstance(energy_payload.get("core_conclusions"), dict)
@@ -857,7 +859,18 @@ def _normalize_combined_document_payload(
     _sync_if_missing(execution_payload, "base_goal", shared.get("base_goal"))
     _sync_if_missing(execution_payload, "challenge_goal", shared.get("challenge_goal"))
     _sync_if_missing(execution_payload, "long_term_goal", shared.get("long_term_goal"))
-    _sync_if_missing(execution_payload, "current_mainline", energy_payload.get("priority_direction"))
+    current_mainline = _text_from_payload(shared.get("current_mainline"))
+    if not current_mainline:
+        current_mainline = _text_from_payload(
+            overview.get("current_focus")
+            or execution_payload.get("current_mainline")
+            or energy_payload.get("priority_direction")
+        )
+        if current_mainline:
+            # 兼容旧模型输出：先收回共享分析，再由同一来源下发到两份文件。
+            shared["current_mainline"] = current_mainline
+    _sync_if_missing(overview, "current_focus", current_mainline)
+    _sync_if_missing(execution_payload, "current_mainline", current_mainline)
     _sync_if_missing(execution_payload, "principle", shared.get("execution_principle"))
     _sync_if_missing(
         execution_payload,
@@ -880,11 +893,15 @@ def _normalize_combined_document_payload(
         (execution_payload, "path_goal", shared.get("long_term_goal")),
         (execution_payload, "body_trend", shared.get("body_trend")),
         (core_conclusions, "day28_task", shared.get("day28_task")),
+        (overview, "current_focus", shared.get("current_mainline")),
+        (execution_payload, "current_mainline", shared.get("current_mainline")),
     ):
         _force_sync(target, key, source)
     # core_conclusions 可能在上面因为全空而没挂回 energy_payload，强制覆写后要重新挂。
     if core_conclusions:
         energy_payload["core_conclusions"] = core_conclusions
+    if overview:
+        energy_payload["overview"] = overview
 
     if shared_path:
         energy_payload["success_path"] = shared_path

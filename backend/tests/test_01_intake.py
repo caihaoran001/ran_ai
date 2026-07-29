@@ -317,7 +317,8 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
 
     # 一页硬预算
     assert "【一页硬预算】" in prompt
-    assert "目标摘要只输出执行需要的三项" in prompt
+    assert "目标摘要只输出执行需要的两项" in prompt
+    assert "current_mainline 必须逐字复制 shared_analysis.current_mainline" in prompt
     assert "diet_rules 最多3条，每条 ≤34字" in prompt
     assert "exercise_rules 最多2条，每条 ≤44字" in prompt
 
@@ -335,6 +336,7 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "base_goal" not in execution_spec
     assert "challenge_goal" not in execution_spec
     assert "long_term_goal" not in execution_spec
+    assert "weight_band" not in execution_spec
 
     daily_checkin_spec = execution_spec["daily_checkin"]
     assert isinstance(daily_checkin_spec, list) and len(daily_checkin_spec) == 1
@@ -1036,7 +1038,7 @@ def test_daily_checkin_logs_every_substitution(caplog):
 
 
 def test_execution_document_keeps_single_page_content_budget():
-    """一页执行纸的内容预算：目标摘要3行、产品排班1行、饮食≤3条、运动≤2条。"""
+    """一页执行纸的内容预算：目标摘要2行、产品排班1行、饮食≤3条、运动≤2条。"""
 
     content_json = build_document_content_json(
         document_type=DocumentType.DAY28_EXECUTION_STANDARD,
@@ -1078,16 +1080,16 @@ def test_execution_document_keeps_single_page_content_budget():
     blocks = {block["key"]: block for block in content_json["blocks"]}
 
     goal_lines = blocks["goal_summary"]["content"].splitlines()
-    assert len(goal_lines) == 3
-    assert goal_lines[0].startswith("当前管理带：")
-    assert goal_lines[1].startswith("28天任务：")
-    assert goal_lines[2].startswith("当前主线：")
+    assert len(goal_lines) == 2
+    assert goal_lines[0].startswith("28天任务：")
+    assert goal_lines[1].startswith("当前主线：")
     # 分析性目标与身体趋势只写在诊断报告，不在这份文件重复
     summary_text = blocks["goal_summary"]["content"]
     assert "基础目标" not in summary_text
     assert "挑战目标" not in summary_text
     assert "长期目标" not in summary_text
     assert "近3个月身体趋势" not in summary_text
+    assert "管理带" not in summary_text
 
     # 产品排班压成一行，且不重复写「早C 早C」这种前缀
     product_content = blocks["product_schedule"]["content"]
@@ -1250,7 +1252,7 @@ async def test_manual_review_document_can_still_be_sent_by_operator(
 
 
 def test_shared_analysis_is_the_single_source_for_cross_document_facts():
-    """28天任务、总路径目标、身体趋势以 shared_analysis 为唯一来源强制覆写。
+    """28天任务、总路径目标、身体趋势和当前主线以 shared_analysis 为唯一来源强制覆写。
 
     真实模型会在两份文件里各写一遍同一件事，写成同义改写（「腰腹缩围和精力转折」
     对「腰腹围度收紧和精力转向」），既冗余又会带数字漂移。这里用观测到的真实
@@ -1262,10 +1264,12 @@ def test_shared_analysis_is_the_single_source_for_cross_document_facts():
         "long_term_goal": "12周建立可长期复制的节律，腰腹围度持续收紧",
         "body_trend": "缓慢变沉",
         "day28_task": "先把晚餐收口和餐盘结构稳定下来",
+        "current_mainline": "节律稳定",
     }
     payload = {
         DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
             "one_sentence": "一句话结论" * 20,
+            "overview": {"current_focus": "保肌减脂"},
             "core_conclusions": {"management_band": "C带｜明确减脂", "day28_task": "先抓晚间收口"},
             "success_path": {
                 "day28_goal": "用均衡餐盘取代高碳结构，三餐收口并启动每日温和活动，实现腰腹围度收紧和精力转向",
@@ -1276,6 +1280,7 @@ def test_shared_analysis_is_the_single_source_for_cross_document_facts():
             "day28_goal": "均衡餐盘加晚间收口，配合每日温和活动，让腰腹围度和精力一起转向",
             "path_goal": "12周形成稳定节律，围度稳步收紧",
             "body_trend": "基本稳定",
+            "current_mainline": "睡眠修复",
             "principle": "先守底盘，再抓结果" * 5,
         },
     }
@@ -1291,6 +1296,8 @@ def test_shared_analysis_is_the_single_source_for_cross_document_facts():
     # 趋势不能一份写「缓慢变沉」另一份写「基本稳定」
     assert execution["body_trend"] == shared["body_trend"]
     assert energy["core_conclusions"]["day28_task"] == shared["day28_task"]
+    assert energy["overview"]["current_focus"] == shared["current_mainline"]
+    assert execution["current_mainline"] == shared["current_mainline"]
 
 
 def test_force_sync_keeps_document_text_when_shared_analysis_is_empty():
