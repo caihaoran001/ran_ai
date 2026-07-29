@@ -93,6 +93,7 @@ npm run test:e2e     # Playwright
 - **保护生产依赖**：Next.js standalone 运行时所需的 node_modules 位于 `frontend/.next/standalone/node_modules/`。
   - 编写 `.dockerignore` 时，**严禁**全局排除 `node_modules`，必须使用前缀锚定（如 `/node_modules`）以保留子目录下的生产依赖。
   - 编写 `tar` 打包命令时，**严禁**全局过滤 `node_modules`（如 `--exclude='node_modules'`），必须限定为开发依赖目录（如 `--exclude='frontend/node_modules'`）。
+  - 在临时 worktree/发布目录构建时，**严禁**把 `frontend/node_modules` 整体符号链接到主工作区后执行 `npm run build`；Next.js 文件追踪可能漏掉运行时依赖，出现“构建通过但容器启动时报 `MODULE_NOT_FOUND`”。必须使用真实依赖目录，并在上传前从 `.next/standalone` 启动一次 `server.js` 冒烟验证。
 - **容器内部健康检查**：Alpine/Slim 生产镜像中通常没有 `curl`。严禁在 `docker exec` 中直接执行 `curl` 进行健康状态探测，必须使用容器内已有的运行时引擎发起探测：
   - **后端（Python）**：`docker exec ran_ai-backend-1 python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"`
   - **前端（Node）**：`docker exec ran_ai-frontend-1 node -e "const http = require('http'); http.get('http://localhost:3000')"`
