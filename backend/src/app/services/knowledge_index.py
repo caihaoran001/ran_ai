@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 VECTOR_DISTANCE_THRESHOLD = 0.4
 
 
+# 命中标记前缀。检索结果按 f"{KNOWLEDGE_HIT_PREFIX}{n}]" 逐条编号，调用方据此统计召回条数，
+# 改格式必须同时改 agent/graph.py 的计数逻辑。
+KNOWLEDGE_HIT_PREFIX = "[知识库命中 "
+
+
 @dataclass
 class KnowledgeSyncResult:
     scanned: int = 0
@@ -242,7 +247,10 @@ async def retrieve_indexed_knowledge(
     ranked_ids = sorted(scores.keys(), key=lambda cid: scores[cid], reverse=True)
     top_ids = ranked_ids[:settings.knowledge_base_top_k]
 
-    return "\n\n".join(f"[知识库命中 {index + 1}]\n{contents[cid]}" for index, cid in enumerate(top_ids))
+    return "\n\n".join(
+        f"{KNOWLEDGE_HIT_PREFIX}{index + 1}]\n{contents[cid]}"
+        for index, cid in enumerate(top_ids)
+    )
 
 
 async def retrieve_case_context_db(

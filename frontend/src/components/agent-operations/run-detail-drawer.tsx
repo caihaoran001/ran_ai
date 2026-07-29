@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   XCircle,
   HelpCircle,
+  BookOpen,
 } from "lucide-react";
 import { formatChinaShortDateTime } from "@/lib/format";
 
@@ -53,6 +54,13 @@ type AgentConversationMessage = {
   error?: string | null;
 };
 
+type AgentKnowledgeDecision = {
+  decision: string;
+  query?: string | null;
+  hit_count?: number | null;
+  skipped_product_terms?: string[];
+};
+
 export type RunDetailData = {
   id: number;
   agent_type: string;
@@ -76,6 +84,7 @@ export type RunDetailData = {
   finished_at?: string | null;
   input_message?: AgentConversationMessage | null;
   output_message?: AgentConversationMessage | null;
+  knowledge?: AgentKnowledgeDecision | null;
   detail_loading?: boolean;
   detail_error?: string | null;
   // Archivist extra fields
@@ -652,8 +661,88 @@ function ReplyConversationEvidence({ run }: { run: RunDetailData }) {
             tone={run.output_count > 0 ? "warn" : "neutral"}
           />
         )}
+
+        <KnowledgeDecisionCard knowledge={run.knowledge} />
       </div>
     </section>
+  );
+}
+
+const KNOWLEDGE_DECISION_LABELS: Record<string, string> = {
+  searched: "已按改写问题检索",
+  skipped: "判定无需检索，未查知识库",
+  fallback: "改写缺失，退回原问题检索",
+};
+
+function KnowledgeDecisionCard({
+  knowledge,
+}: {
+  knowledge?: AgentKnowledgeDecision | null;
+}) {
+  if (!knowledge) return null;
+
+  const skipped = knowledge.decision === "skipped";
+  const missedProductTerms = knowledge.skipped_product_terms ?? [];
+  // 提到产品名却没查库 = 产品规则这轮可能没进提示词，是最需要人工回看的情况。
+  const isSuspect = skipped && missedProductTerms.length > 0;
+  const emptyHit = knowledge.hit_count === 0;
+
+  return (
+    <article
+      className={`rounded-lg border p-3.5 ${
+        isSuspect
+          ? "border-amber-300 bg-amber-50/70"
+          : "border-slate-200 bg-slate-50/70"
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="flex items-center gap-1.5 font-bold text-slate-900">
+          <BookOpen className="h-3.5 w-3.5 text-cyan-700" />
+          参考问答检索
+        </span>
+        <span
+          className={`rounded-full border px-2 py-0.5 font-semibold ${
+            skipped
+              ? "border-slate-300 bg-white text-slate-600"
+              : "border-cyan-200 bg-white text-cyan-700"
+          }`}
+        >
+          {KNOWLEDGE_DECISION_LABELS[knowledge.decision] ?? knowledge.decision}
+        </span>
+        {!skipped && typeof knowledge.hit_count === "number" && (
+          <span
+            className={`rounded-full border px-2 py-0.5 font-semibold ${
+              emptyHit
+                ? "border-amber-300 bg-white text-amber-700"
+                : "border-emerald-200 bg-white text-emerald-700"
+            }`}
+          >
+            {emptyHit ? "命中 0 条" : `命中 ${knowledge.hit_count} 条`}
+          </span>
+        )}
+      </div>
+
+      {knowledge.query && (
+        <p className="mt-2 break-words text-xs text-slate-700">
+          <span className="text-slate-500">检索问题：</span>
+          {knowledge.query}
+        </p>
+      )}
+
+      {isSuspect && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs font-semibold text-amber-800">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          用户消息提到 {missedProductTerms.join("、")}，但本轮没查知识库，
+          产品规则可能没进提示词——请回看回复是否准确。
+        </p>
+      )}
+
+      {emptyHit && !skipped && (
+        <p className="mt-2 text-xs text-amber-800">
+          查了知识库但没有匹配内容，说明这类问题缺 FAQ，可考虑补充。
+        </p>
+      )}
+    </article>
   );
 }
 
@@ -759,7 +848,9 @@ function ChangeDetail({ change }: { change: ArchivistBatchChange }) {
         </span>
         <span className="text-xs font-bold text-slate-900">{kindLabel}</span>
         {change.title && change.title !== change.kind && change.title !== kindLabel && (
-          <span className="text-xs text-slate-600">{change.title}</span>
+          <span className="text-xs text-slate-600">
+            {formatChangeTitle(change.title)}
+          </span>
         )}
       </div>
 
@@ -844,6 +935,13 @@ function actionLabel(action: string) {
       count_only: "已写入",
     }[action] || "已写入"
   );
+}
+
+function formatChangeTitle(title: string) {
+  if (!title) return "";
+  return title
+    .replace(/\s*·\s*value$/i, "")
+    .replace(/\.value$/i, "");
 }
 
 function formatTriggerReason(reason: string) {

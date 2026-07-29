@@ -29,7 +29,7 @@ from app.services.agent.state import AgentRunContext, AgentState
 from app.services.agent.tools import build_agent_tools
 from app.services.channels.registry import get_current_channel
 from app.services.content_policy import get_qiwe_group_nickname, get_qiwe_nickname
-from app.services.knowledge_index import retrieve_indexed_knowledge
+from app.services.knowledge_index import KNOWLEDGE_HIT_PREFIX, retrieve_indexed_knowledge
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -64,6 +64,9 @@ class AgentReplyResult:
     reply: str
     tool_trace: list[dict[str, Any]] = field(default_factory=list)
     data_tool_failed: bool = False
+    # 本轮参考问答召回条数。None = 跳过检索（意图识别判定不需要）或检索异常，0 = 查了但库里没有匹配。
+    # 纯观测字段，不参与任何回复判断。
+    knowledge_hit_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -156,7 +159,7 @@ class RanrenAgentGraph:
         effective_knowledge_query = (
             user_query if knowledge_query is None else knowledge_query.strip()
         )
-        knowledge_context = await self._build_knowledge_context(
+        knowledge_context, knowledge_hit_count = await self._build_knowledge_context(
             effective_knowledge_query
         )
         bot_nickname = await self._resolve_bot_nickname()
@@ -217,6 +220,7 @@ class RanrenAgentGraph:
             reply=reply,
             tool_trace=list(result.get("tool_trace") or []),
             data_tool_failed=bool(result.get("data_tool_failed")),
+            knowledge_hit_count=knowledge_hit_count,
         )
 
     async def _build_memory_context(self) -> str:
@@ -232,16 +236,19 @@ class RanrenAgentGraph:
             logger.exception("Failed to build agent memory context service_case_id=%s", self.context.service_case_id)
             return "暂无可用用户背景。"
 
-    async def _build_knowledge_context(self, query: str) -> str:
+    async def _build_knowledge_context(self, query: str) -> tuple[str, int | None]:
         """每轮按意图识别改写后的问题预检索知识库(FAQ/markdown)注入提示词。
 
         排除 source_type='case'——优秀案例只走 search_success_case 情绪触发工具,
         不在普通问答里冒出来。改写缺失时调用方已回退原问题；检索失败/无命中一律给占位串,
         绝不因知识检索拖垮回复。
+
+        返回 (注入文本, 召回条数)。条数只供观测: None 表示没查(空查询=意图识别判定不需要检索)
+        或检索抛异常, 0 表示查了但库里没有匹配——这两种是不同的病, 不能混成一个数。
         """
         clean = (query or "").strip()
         if not clean:
-            return "暂无相关参考问答。"
+            return "暂无相关参考问答。", None
         try:
             async with db_session_module.SessionLocal() as session:
                 result = await retrieve_indexed_knowledge(
@@ -250,12 +257,15 @@ class RanrenAgentGraph:
                     settings=self.settings,
                     exclude_source_types={"case"},
                 )
-            return result or "暂无相关参考问答。"
+            return (
+                (result or "暂无相关参考问答。"),
+                (result or "").count(KNOWLEDGE_HIT_PREFIX),
+            )
         except Exception:
             logger.exception(
                 "Failed to build agent knowledge context service_case_id=%s", self.context.service_case_id
             )
-            return "暂无相关参考问答。"
+            return "暂无相关参考问答。", None
 
     async def _agent_node(self, state: AgentState) -> dict[str, Any]:
         llm_count = int(state.get("llm_call_count") or 0)

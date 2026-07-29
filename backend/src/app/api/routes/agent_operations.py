@@ -25,6 +25,7 @@ from app.models.user import User
 from app.schemas.agent_operations import (
     AgentOperationsOverview,
     AgentConversationMessage,
+    AgentKnowledgeDecision,
     AgentOutcomeCount,
     AgentRunDetail,
     AgentRuntimeSummary,
@@ -87,6 +88,29 @@ async def get_agent_run_detail(
         **_recent_run_payload(run, case_no=case_no, user_name=user_name),
         input_message=_conversation_message(input_message),
         output_message=_conversation_message(output_message),
+        knowledge=_knowledge_decision(run),
+    )
+
+
+def _knowledge_decision(run: AgentRun) -> AgentKnowledgeDecision | None:
+    """回复轮次的参考问答检索决策。历史运行没有这个字段，返回 None 而不是伪造。"""
+    metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+    knowledge = metadata.get("knowledge")
+    if not isinstance(knowledge, dict) or not knowledge.get("decision"):
+        return None
+    return AgentKnowledgeDecision(
+        decision=str(knowledge.get("decision")),
+        query=(
+            str(knowledge["query"])
+            if isinstance(knowledge.get("query"), str)
+            else None
+        ),
+        hit_count=_optional_int(knowledge.get("hit_count")),
+        skipped_product_terms=[
+            str(term)
+            for term in (knowledge.get("skipped_product_terms") or [])
+            if isinstance(term, str)
+        ],
     )
 
 

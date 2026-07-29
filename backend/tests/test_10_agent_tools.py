@@ -32,7 +32,12 @@ from app.services.content_policy import set_ai_reply_enabled
 from app.services.intervention_service import normalize_insight
 from app.services.profile_memory_service import load_profile_memory_context
 from app.services.ranren_ai.engine import RanrenAIEngine
-from app.services.ranren_ai.engine_graph import _knowledge_query_from_analysis
+from app.services.knowledge_index import KNOWLEDGE_HIT_PREFIX
+from app.services.ranren_ai.engine_graph import (
+    _knowledge_observation,
+    _knowledge_query_from_analysis,
+    _reply_run_metadata,
+)
 
 
 class FakeToolCallingModel:
@@ -121,6 +126,49 @@ def test_knowledge_query_analysis_preserves_search_skip_and_fallback_states():
     assert _knowledge_query_from_analysis({"knowledge_query": ["非法类型"]}) is None
 
 
+def test_knowledge_observation_records_decision_hits_and_skipped_product_terms():
+    """三态决策 + 召回条数 + 跳过时的产品词探针，都要落到可观测记录里。"""
+    searched = _knowledge_observation(
+        knowledge_query="经期期间晚A应该如何使用？",
+        user_query="那经期呢？",
+        hit_count=3,
+    )
+    assert searched == {
+        "decision": "searched",
+        "query": "经期期间晚A应该如何使用？",
+        "hit_count": 3,
+    }
+
+    # 查了但库里没有 → hit_count 0，与"根本没查"必须区分开。
+    assert _knowledge_observation(
+        knowledge_query="卡点钥匙怎么用？", user_query="卡点钥匙咋用", hit_count=0
+    )["hit_count"] == 0
+
+    fallback = _knowledge_observation(knowledge_query=None, user_query="我现在第几天？")
+    assert fallback == {"decision": "fallback", "query": "我现在第几天？"}
+
+    # 跳过检索且用户提到产品名 → 这正是删掉 product_usage skill 后最可能漏规则的轮次，必须能捞出来。
+    skipped = _knowledge_observation(
+        knowledge_query="", user_query="今天体重78.2，午B忘了喝"
+    )
+    assert skipped == {"decision": "skipped", "skipped_product_terms": ["午B"]}
+    # 跳过检索但与产品无关（普通闲聊/上报）→ 不记产品词，避免噪声。
+    assert _knowledge_observation(knowledge_query="", user_query="今天心情不错") == {
+        "decision": "skipped"
+    }
+    # 跳过时不记召回条数：没查库，任何数字都是假的。
+    assert "hit_count" not in _knowledge_observation(
+        knowledge_query="", user_query="好的", hit_count=5
+    )
+
+    # 观测字段进 agent_runs.metadata_json；缺 knowledge 的历史结构不应凭空造出该键。
+    assert _reply_run_metadata({"data_tool_failed": False, "knowledge": skipped}) == {
+        "data_tool_failed": False,
+        "knowledge": skipped,
+    }
+    assert _reply_run_metadata({"data_unavailable": True}) == {"data_tool_failed": True}
+
+
 async def _case(db_session, *, started_at=None):
     user = User(name="Agent测试用户")
     db_session.add(user)
@@ -171,7 +219,8 @@ async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
     ):
         retrieved_queries.append(query)
         assert exclude_source_types == {"case"}
-        return "参考问答命中"
+        # 用真实命中格式，好让召回条数统计有意义（观测字段按命中标记数数）。
+        return f"{KNOWLEDGE_HIT_PREFIX}1]\n参考问答命中\n\n{KNOWLEDGE_HIT_PREFIX}2]\n另一条"
 
     monkeypatch.setattr(
         "app.services.agent.graph.retrieve_indexed_knowledge",
@@ -200,6 +249,8 @@ async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
         prompt = model.calls[0][1].content
         assert "【本次提问】\n用户：那经期呢？" in prompt
         assert retrieved_queries[-1] == expected_query
+        # 观测：searched / fallback 两种都查了库，召回条数按命中标记计数。
+        assert result.knowledge_hit_count == 2
 
     assert retrieved_queries == ["经期期间晚A应该如何使用？", "那经期呢？"]
 
@@ -220,6 +271,8 @@ async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
     assert skip_result.reply == "<no_reply>"
     assert retrieved_queries == ["经期期间晚A应该如何使用？", "那经期呢？"]
     assert "【参考问答】\n暂无相关参考问答。" in skip_model.calls[0][1].content
+    # 观测：跳过检索时召回条数必须是 None，不能是 0——"根本没查"和"查了没命中"是两种病。
+    assert skip_result.knowledge_hit_count is None
 
 
 def _docx_bytes(*paragraphs: str) -> bytes:

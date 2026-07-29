@@ -42,6 +42,7 @@ from app.services.agent_observability import (
     COMPLETED as AGENT_RUN_COMPLETED,
     FAILED as AGENT_RUN_FAILED,
     complete_agent_run,
+    detect_product_terms,
     ensure_agent_run,
 )
 from app.services.channels.base import ChannelMessage
@@ -125,6 +126,58 @@ def _knowledge_query_from_analysis(analysis: dict | None) -> str | None:
         return None
     clean = value.strip()
     return clean or None
+
+
+def _reply_run_metadata(agent_metadata: dict[str, Any]) -> dict[str, Any]:
+    """回复轮次落进 agent_runs.metadata_json 的观测字段。"""
+    metadata: dict[str, Any] = {
+        "data_tool_failed": bool(
+            agent_metadata.get("data_tool_failed")
+            or agent_metadata.get("data_unavailable")
+        )
+    }
+    knowledge = agent_metadata.get("knowledge")
+    if isinstance(knowledge, dict) and knowledge:
+        metadata["knowledge"] = knowledge
+    return metadata
+
+
+def _knowledge_observation(
+    *,
+    knowledge_query: str | None,
+    user_query: str,
+    hit_count: int | None = None,
+) -> dict[str, Any]:
+    """把本轮参考问答检索的决策压成观测记录，写进 agent_runs.metadata_json。
+
+    纯观测，不参与任何业务判断。三个决策对应 `_knowledge_query_from_analysis` 的三态：
+    - searched: 意图识别给了独立查询，按该查询检索
+    - skipped:  意图识别明确判定本轮不需要知识库，**完全没查库**
+    - fallback: 字段缺失/非法，退回用本轮原问题检索
+
+    `hit_count` 为 0 说明查了但库里没有匹配，跟 skipped 的"根本没查"是两种病，必须分开看。
+    skipped 时额外记下用户消息里出现的产品名，供事后捞误判轮次（见 detect_product_terms 注释）。
+    """
+    if knowledge_query is None:
+        decision = "fallback"
+        query = (user_query or "").strip()
+    elif not knowledge_query.strip():
+        decision = "skipped"
+        query = ""
+    else:
+        decision = "searched"
+        query = knowledge_query.strip()
+
+    observation: dict[str, Any] = {"decision": decision}
+    if query:
+        observation["query"] = query[:300]
+    if decision == "skipped":
+        terms = detect_product_terms(user_query)
+        if terms:
+            observation["skipped_product_terms"] = terms
+    elif hit_count is not None:
+        observation["hit_count"] = int(hit_count)
+    return observation
 
 
 @dataclass(frozen=True)
@@ -1273,6 +1326,11 @@ class EngineGraph:
                 "context_plan": analysis.get("agent_context_plan") if isinstance(analysis, dict) else None,
                 "tool_trace": agent_result.tool_trace,
                 "data_tool_failed": agent_result.data_tool_failed,
+                "knowledge": _knowledge_observation(
+                    knowledge_query=knowledge_query,
+                    user_query=user_query,
+                    hit_count=agent_result.knowledge_hit_count,
+                ),
             }
             info_gap = _build_agent_info_gap(
                 query=user_query,
@@ -1294,6 +1352,11 @@ class EngineGraph:
                     "data_unavailable": True,
                     "info_gap": _build_agent_info_gap(
                         query=user_query, tool_trace=None, data_unavailable=True
+                    ),
+                    # 走安全兜底也要留下检索决策：召回条数拿不到（agent 结果被异常替掉），决策本身仍有效。
+                    "knowledge": _knowledge_observation(
+                        knowledge_query=knowledge_query,
+                        user_query=user_query,
                     ),
                 }
             }
@@ -1603,12 +1666,7 @@ class EngineGraph:
                     if reason == "agent_generation_failed"
                     else None
                 ),
-                metadata={
-                    "data_tool_failed": bool(
-                        agent_metadata.get("data_tool_failed")
-                        or agent_metadata.get("data_unavailable")
-                    )
-                },
+                metadata=_reply_run_metadata(agent_metadata),
             )
         logger.info(
             "RanrenAI reply workflow finalized trigger_id=%s status=%s reason=%s",

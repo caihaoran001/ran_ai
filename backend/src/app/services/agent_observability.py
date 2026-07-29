@@ -23,6 +23,20 @@ COMPLETED = "completed"
 FAILED = "failed"
 _WRITE_TIMEOUT_SECONDS = 2.0
 
+# 产品名探针。**只用于事后统计**：当意图识别判定本轮不需要检索知识库时，记录用户消息里出现的产品名，
+# 好让运营事后一条 SQL 就能捞出"提到产品却没查库"的可疑轮次（例如打卡时顺口一句"今天午B忘了喝"
+# 被判成纯数据上报）。绝不参与风险判断、回复内容或是否检索的决策——那些一律由模型结构化输出决定，
+# 所以这里不违反"杜绝关键词硬编码规则"。
+_PRODUCT_TERM_PROBES = ("早C", "午B", "晚A", "卡点钥匙", "MCT", "加油包")
+
+
+def detect_product_terms(text: str | None) -> list[str]:
+    """列出文本里命中的产品名，仅供观测统计使用。"""
+    content = text or ""
+    if not content:
+        return []
+    return [term for term in _PRODUCT_TERM_PROBES if term in content]
+
 
 def _diagnostic_context() -> tuple[bool, str | None]:
     run_id = (os.getenv("RAN_AI_DIAGNOSTIC_RUN_ID") or "").strip() or None

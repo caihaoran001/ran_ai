@@ -522,10 +522,12 @@ async def test_agent_data_unavailable_records_safe_reply(
     )
     assert msg is not None
     # 数据查不到时除固定安全标记外，还结构化留痕信息缺口(第2点)：type + 触发本轮的用户原问作 topic。
+    # 走安全兜底也要留下参考问答检索决策：本例 analysis={} 无 knowledge_query 字段 → fallback。
     assert msg.analysis_json["agent"] == {
         "enabled": True,
         "data_unavailable": True,
         "info_gap": {"type": "data_unavailable", "query": "用户：我现在第几天？"},
+        "knowledge": {"decision": "fallback", "query": "用户：我现在第几天？"},
     }
     assert msg.analysis_json["_delivery"]["state_machine"] == "agent_outbound_v1"
 
