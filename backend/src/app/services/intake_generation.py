@@ -188,7 +188,7 @@ def _intake_package_schema() -> dict[str, object]:
             "禁止写「需人工复核」等内部标签",
             "band_confidence": "内部字段，high / medium / low；资料缺失或安全闸门触发时写 low",
             "provisional_band": "内部字段（布尔值）；带位为待人工确认的暂定结论时为 true",
-            "band_basis": ["支持管理带的2-3条问卷事实或确定性指标"],
+            "band_basis": ["支持管理带的2-3条事实，只来自BMI/体重状态、腰围体脂或腰腹体感、近3个月直接趋势"],
             "body_trend": "仅依据入营问卷反映的近3个月趋势：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
             "body_trend_summary": "一句话解释近3个月趋势；不得写入营后的变化",
             "body_trend_direct_evidence": "1条能证明变化方向的直接趋势事实，优先来自问卷「最近3个月体重变化」。"
@@ -196,7 +196,7 @@ def _intake_package_schema() -> dict[str, object]:
             "body_trend_support_signals": ["1-2条当前状态支持信号：腰腹体感、睡眠、精力、食欲边界、晚间失控、活动量等"],
             "body_trend_confidence": "high / medium / low",
             "core_problem": "核心问题，只基于问卷事实",
-            "current_mainline": "当前唯一主线，只能取：保肌减脂 / 节律稳定 / 睡眠修复 / 饮食结构修复 / 系统化管理",
+            "current_mainline": "当前唯一主线，只能取：保肌减脂 / 节律稳定 / 睡眠修复 / 饮食结构修复 / 系统化管理；主要依据睡眠、精力、饮食、食欲边界、晚间失控、运动和恢复状态选择",
             "base_goal": "基础目标；用户没有明确数字时不得编造斤数；A带/增肌增能带禁止任何减重数字",
             "challenge_goal": "条件性挑战目标；A带/增肌增能带固定写不设置减重挑战目标",
             "long_term_goal": "长期方向，必须包含非体重结果；A带/增肌增能带禁止任何减重数字",

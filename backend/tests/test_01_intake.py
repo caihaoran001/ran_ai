@@ -290,6 +290,12 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "严禁把「需人工复核」「人工复核」「待复核」「red风险」「高风险」「风险等级」等内部标签写进 weight_band" in prompt
     assert "无法安全自动判带时 weight_band 写「需人工复核」" not in prompt
     assert "需人工复核：安全闸门未通过或资料冲突导致无法自动给出安全管理带" not in prompt
+    # 管理带看身体状态和趋势；执行困难用于选主线，不能直接抬高档位
+    assert "【证据职责分开】" in prompt
+    assert "只由身高体重/BMI、腰围体脂（有则用）和近3个月直接趋势证据综合判断" in prompt
+    assert "不能仅因为晚睡、外卖多、精力差或运动少就把用户升到更高管理带" in prompt
+    assert "不能单独作为管理带升档或降档依据" in prompt
+    assert "不得把晚睡、外卖多、精力差或运动少单独写成带位依据" in prompt
 
     # 数字来源与趋势证据
     assert "都必须能追溯到问卷里用户自己写下的明确数字答案" in prompt
