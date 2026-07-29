@@ -298,6 +298,13 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "括号里的 X 公斤、XX 厘米是问卷给用户看的填写格式示例，不是用户的答案" in prompt
     assert "严禁把示例里的占位符替换成一个自己挑的数字" in prompt
     assert "不只是 day28_goal" in prompt
+    # A带不是“小幅减重带”，不允许用 0-2斤 等象征性区间安慰式落点
+    assert "【A带与增肌增能带的无数字目标】" in prompt
+    assert "即使用户在问卷里明确填写了想减多少斤或公斤" in prompt
+    assert "「0-2斤」「0–2斤」「1-2斤」「维持0-2斤波动」" in prompt
+    assert "覆盖所有用户可见字段" in prompt
+    assert "challenge_goal 固定写「不设置减重挑战目标」" in prompt
+    assert "不得把原数字改写成另一个更小的建议区间" in prompt
     assert "body_trend_direct_evidence（1条，字符串）" in prompt
     assert "body_trend_support_signals（1-2条，字符串数组）" in prompt
     assert "严禁单独用它们证明「正在上升」「正在下降」「持续变沉」" in prompt
@@ -330,6 +337,8 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "trend_direct_evidence" in energy_spec["core_conclusions"]
     assert "trend_support_signals" in energy_spec["core_conclusions"]
     assert "需人工复核" not in energy_spec["core_conclusions"]["management_band"].replace("禁止写「需人工复核」等内部运营标签", "")
+    assert "A带/增肌增能带禁止任何减重数字" in energy_spec["goal_response"]["base_goal"]
+    assert "A带/增肌增能带固定写不设置减重挑战目标" in energy_spec["goal_response"]["challenge_goal"]
     assert "diet_rules" in execution_spec
     assert "exercise_rules" in execution_spec
     # 分析性目标不再在执行建议书重复输出，避免顶到第二页
