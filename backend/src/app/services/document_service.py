@@ -112,7 +112,7 @@ async def generate_profile_and_documents(
 
     user_name = await _user_name(session, service_case)
     ai = AIService()
-    llm_output_at = datetime.now(timezone.utc)
+    generation_started_at = datetime.now(timezone.utc)
     package = await _generate_intake_analysis_package(
         session=session,
         ai=ai,
@@ -174,11 +174,12 @@ async def generate_profile_and_documents(
         session.add(document)
         documents.append(document)
     service_case.content_generated_at = llm_output_at
-    if submission.created_at:
-        service_case.questionnaire_to_llm_output_ms = max(
-            int((llm_output_at - submission.created_at).total_seconds() * 1000),
-            0,
-        )
+    # 页面展示的是最近一次内容生成耗时。每次生成都从本次任务开始计时，
+    # 不能在重新生成时继续拿首次问卷提交时间计算，否则旧服务单会得到数十天的伪耗时并溢出 int32。
+    service_case.questionnaire_to_llm_output_ms = max(
+        int((llm_output_at - generation_started_at).total_seconds() * 1000),
+        0,
+    )
     tz = ZoneInfo(get_settings().reminder_timezone)
     set_pre_service_status_or_activate(
         service_case,

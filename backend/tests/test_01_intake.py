@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
 
 from app.models.outcome import OutcomeEvent, OutcomeStageState
+from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
@@ -418,6 +420,17 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     assert submit_resp.status_code == 201, submit_resp.text
     await wait_background()
 
+    # 重新生成必须只记录本次任务耗时，不能用首次问卷时间累计；旧算法会在超过约24.8天后溢出 int32。
+    submission = await db_session.scalar(
+        select(QuestionnaireSubmission).where(
+            QuestionnaireSubmission.service_case_id == case_id,
+            QuestionnaireSubmission.template_key == "intake",
+        )
+    )
+    assert submission is not None
+    submission.created_at = datetime.now(timezone.utc) - timedelta(days=60)
+    await db_session.commit()
+
     gen_resp = await admin_client.post(
         f"/service-cases/{case_id}/generate-documents"
     )
@@ -522,6 +535,8 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     updated_case = await db_session.get(ServiceCase, case_id)
     assert updated_case is not None
     assert updated_case.status in (ServiceCaseStatus.REVIEWING, ServiceCaseStatus.IN_SERVICE)
+    assert updated_case.questionnaire_to_llm_output_ms is not None
+    assert 0 <= updated_case.questionnaire_to_llm_output_ms < 60_000
 
 
 @pytest.mark.asyncio
