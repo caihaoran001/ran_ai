@@ -859,10 +859,28 @@ def _weekly_standard_text(value: Any) -> str:
 
 
 def _adjust_stop_conditions_text(value: Any) -> str:
+    """调整与停止条件：一页预算可以砍长度，但不能把「及时就医」砍掉。
+
+    这一栏的分句天然按严重度递增排列（减量 → 前移 → 暂停 → 联系班主任 → 就医），
+    所以固定只留前两句，丢掉的正好是最重的那句安全边界，而落库的 content_md
+    看不出被砍过。做法与 _weekly_standard_text 一致：截断后缺就医就补回来。
+    """
+
+    fallback_medical = "持续不适或出现胸痛、呼吸困难、明显心悸时，暂停执行并及时就医。"
     text_val = _execution_sentence(value, max_parts=2, max_len=88)
-    if text_val:
+    if not text_val:
+        return (
+            "心慌、睡眠明显变差或胃部不适时，早C/午B先减半并前移；"
+            f"{fallback_medical}"
+        )
+    if "就医" in text_val:
         return text_val
-    return "心慌、睡眠明显变差或胃部不适时，早C/午B先减半并前移；持续不适、胸痛、呼吸困难、明显心悸或异常疼痛时，暂停执行并及时就医。"
+    medical = next(
+        (part.strip() for part in re_split_standard(_clean_text(value)) if "就医" in part),
+        "",
+    )
+    tail = medical.strip("；，,。 ") or fallback_medical.rstrip("。")
+    return f"{text_val.rstrip('。')}；{tail}。"
 
 
 def _reminder_text(value: Any) -> str:

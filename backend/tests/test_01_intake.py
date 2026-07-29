@@ -18,6 +18,7 @@ from app.services.document_service import (
 )
 from app.services.document_delivery import _document_filename
 from app.services.document_templates import (
+    _adjust_stop_conditions_text,
     _daily_checkin_text,
     build_document_content_json,
     combined_prompt_schema,
@@ -685,6 +686,65 @@ def test_bmi_initial_reference_uses_new_management_band_names(
     expected: str,
 ):
     assert _weight_loss_band(bmi) == expected
+
+
+@pytest.mark.asyncio
+async def test_intake_facts_expose_safe_reduction_room(cai_haoran_answers):
+    """安全余量三项：目标的天花板，175cm/65kg → 下限 61.25kg、空间 3.75kg、28天上限 3.25kg。"""
+
+    template = default_questionnaire_template("intake")
+    facts = build_intake_fact_summary(template.get("fields", []), cai_haoran_answers)
+
+    assert facts["protected_lower_weight_kg"] == "61.2"
+    assert facts["safe_reduction_room_kg"] == "3.8"
+    # min(65*5%=3.25, 4, 3.75) → 基线5% 起作用
+    assert facts["day28_max_loss_kg"] == "3.2"
+
+
+def test_intake_facts_safe_room_missing_without_height_or_weight():
+    facts = build_intake_fact_summary(
+        [{"key": "h", "title": "您的身高（cm/厘米）"}],
+        {"h": "暂未测量"},
+    )
+
+    assert facts["protected_lower_weight_kg"] == "暂无数据"
+    assert facts["safe_reduction_room_kg"] == "暂无数据"
+    assert facts["day28_max_loss_kg"] == "暂无数据"
+
+
+def test_intake_facts_normalize_height_written_in_meters():
+    """身高填「1.75」时不再把 BMI 算成 20 万——否则会被覆写到交付文件每一处 BMI。"""
+
+    fields = [
+        {"key": "h", "title": "您的身高（cm/厘米）"},
+        {"key": "w", "title": "您当前体重（kg/公斤）"},
+    ]
+    facts = build_intake_fact_summary(fields, {"h": "1.75", "w": "65"})
+
+    assert facts["height_cm"] == "175"
+    assert facts["bmi"] == "21.2"
+    assert facts["weight_loss_band"] == "A带｜修复塑形"
+
+
+def test_adjust_stop_conditions_keeps_medical_escalation():
+    """一页预算可以砍长度，但「及时就医」是最重的那句，不能被静默砍掉。"""
+
+    written = (
+        "心慌或睡眠明显变差时早C/午B减半并前移；"
+        "持续胃部不适或明显心悸时暂停产品并联系班主任；"
+        "出现胸痛、呼吸困难、黑便、便血或持续呕吐请立即停止执行并及时就医。"
+    )
+
+    rendered = _adjust_stop_conditions_text(written)
+
+    assert "就医" in rendered
+    assert "联系班主任" in rendered
+
+
+def test_adjust_stop_conditions_falls_back_when_model_omits_medical_line():
+    rendered = _adjust_stop_conditions_text("心慌时早C减半；睡眠变差时午B前移")
+
+    assert "就医" in rendered
 
 
 def test_delivery_filename_uses_customer_facing_document_title():

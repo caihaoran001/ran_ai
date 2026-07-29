@@ -81,10 +81,11 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
     pressure_reaction = value_for("压力大时")
     diet_pattern = value_for("长期饮食模式")
 
-    height = _first_number(height_raw)
+    height = _normalize_height_cm(_first_number(height_raw))
     weight = _first_number(weight_raw)
     bmi = _calculate_bmi(height, weight)
     weight_loss_band = _weight_loss_band(bmi)
+    protected_lower, safe_room, day28_max_loss = _safe_reduction_facts(height, weight)
 
     return {
         "name": legal_name or "未提供",
@@ -98,6 +99,10 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
         "weight_kg": _format_number(weight) if weight else "未提供",
         "bmi": f"{bmi:.1f}" if bmi else "暂无数据",
         "weight_loss_band": weight_loss_band,
+        # 安全余量三项：内部约束，只喂给分析提示词用来给目标设天花板，不得出现在交付文件里。
+        "protected_lower_weight_kg": f"{protected_lower:.1f}" if protected_lower else "暂无数据",
+        "safe_reduction_room_kg": f"{safe_room:.1f}" if safe_room is not None else "暂无数据",
+        "day28_max_loss_kg": f"{day28_max_loss:.1f}" if day28_max_loss is not None else "暂无数据",
         "waist": waist or "未提供",
         "bodyfat": bodyfat or "未提供",
         "health_note": health_note or "未提供",
@@ -139,6 +144,44 @@ def _first_number(value: str) -> float | None:
     if not match:
         return None
     return float(match.group())
+
+
+def _normalize_height_cm(value: float | None) -> float | None:
+    """身高单位归一：问卷标题写了 cm，用户照样会填「1.65」。
+
+    1.2–2.3 之间的数不可能是厘米，按米换算。体重的斤/公斤没有这种不重叠区间
+    （110 既可能是斤也可能是大基数公斤），不可判就不猜，留给人工复核。
+    不做这一步的话，1.65 会让 BMI 变成 20 万，并被 _replace_bmi_text 覆写到全文每一处。
+    """
+
+    if value is None or value <= 0:
+        return None
+    if 1.2 <= value <= 2.3:
+        return value * 100
+    return value
+
+
+def _safe_reduction_facts(
+    height_cm: float | None, weight_kg: float | None
+) -> tuple[float | None, float | None, float | None]:
+    """安全减重空间：先算这个人还能安全减多少，再谈目标。
+
+    - protected_lower_weight_kg = 20 × 身高m²：自动方案不得突破的保护性下限，
+      是系统复核线而不是医学诊断线，也不代表建议用户减到这个体重。
+    - safe_reduction_room_kg = 基线体重 − 保护性下限，不为负。
+    - day28_max_loss_kg = min(基线体重5%, 4kg, 安全空间)：28天减重上限。
+
+    只作为目标的天花板使用，不参与管理带判断——BMI 22 的健康体重用户也能算出
+    7kg 空间，拿它分带会把正常体重的人系统性推去减脂。
+    """
+
+    if not height_cm or not weight_kg or height_cm <= 0:
+        return None, None, None
+    height_m = height_cm / 100
+    protected_lower = 20 * height_m * height_m
+    safe_room = max(0.0, weight_kg - protected_lower)
+    day28_max_loss = min(weight_kg * 0.05, 4.0, safe_room)
+    return protected_lower, safe_room, day28_max_loss
 
 
 def _calculate_bmi(height_cm: float | None, weight_kg: float | None) -> float | None:
