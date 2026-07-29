@@ -17,6 +17,7 @@ from app.services.intake_facts import build_intake_fact_summary, sanitize_profil
 from app.services.checkin_questionnaires import personalized_checkin_fields_with_weight
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.document_prompts import _intake_generation_system_prompt
+from app.services.risk_service import is_high_risk
 
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,15 @@ MANAGEMENT_BANDS = (
     "B带｜轻盈启动",
     "C带｜明确减脂",
     "D带｜系统减重",
-    "增肌增能带",
+)
+
+BAND_CALCULATION_FIELDS = (
+    "baseline_weight_kg",
+    "baseline_weight_provisional",
+    "absolute_low_weight_boundary_kg",
+    "automatic_review_weight_kg",
+    "protected_lower_weight_kg",
+    "safe_reduction_room_kg",
 )
 
 # 内部运营标签：只允许留在 shared_analysis / profile_json 的内部字段和后台界面里。
@@ -50,18 +59,83 @@ def _contains_internal_review_label(text: str) -> bool:
     return any(label.lower() in lowered for label in INTERNAL_REVIEW_LABELS)
 
 
-def _resolve_management_band(shared: dict[str, object], facts: dict[str, object]) -> str:
-    """把管理带收敛为业务带位；内部复核标签不得占用带位。
+def _resolve_management_band(_shared: dict[str, object], facts: dict[str, object]) -> str:
+    """最终管理带只接受安全减重空间的确定性结果，模型无权改带。"""
 
-    模型仍可能把「需人工复核」写进 weight_band（历史提示词遗留行为）。这种情况下
-    回退到 intake_facts 里按 BMI 得出的确定性初判带，而不是把内部状态透给用户。
-    「需补充身高体重后判断」是真实的数据缺失状态、不是内部标签，保持原样。
-    """
-
-    raw = str(shared.get("weight_band") or "").strip()
-    if raw and not _contains_internal_review_label(raw):
-        return raw
     return str(facts.get("weight_loss_band") or "").strip()
+
+
+def _apply_deterministic_band(
+    shared: dict[str, object],
+    facts: dict[str, object],
+) -> None:
+    """把四带计算字段和结论收进 shared_analysis，供画像与两份文件共用。"""
+
+    for key in BAND_CALCULATION_FIELDS:
+        shared[key] = facts.get(key)
+    band = _resolve_management_band(shared, facts)
+    if band:
+        shared["weight_band"] = band
+        facts["weight_loss_band"] = band
+    shared["band_basis"] = _deterministic_band_basis(facts, band)
+    if facts.get("baseline_weight_provisional"):
+        shared["provisional_band"] = True
+    if band not in MANAGEMENT_BANDS:
+        reasons = _clean_list(shared.get("manual_review_reasons"))
+        reason = "缺少可信身高或体重，暂不能计算A-D管理带"
+        if reason not in reasons:
+            reasons.append(reason)
+        shared["manual_review_required"] = True
+        shared["manual_review_reasons"] = reasons[:3]
+        shared["safety_status"] = "manual_review"
+        shared["provisional_band"] = True
+
+
+def _deterministic_band_basis(
+    facts: dict[str, object],
+    band: str,
+) -> list[str]:
+    baseline = str(facts.get("baseline_weight_kg") or "").strip()
+    protected = str(facts.get("protected_lower_weight_kg") or "").strip()
+    room = str(facts.get("safe_reduction_room_kg") or "").strip()
+    if any(value in {"", "暂无数据"} for value in (baseline, protected, room)):
+        return ["缺少可信身高或体重，暂不能计算安全减重空间"]
+    boundaries = {
+        "A带｜修复塑形": "小于2.5kg",
+        "B带｜轻盈启动": "2.5kg至不足5kg",
+        "C带｜明确减脂": "5kg至不足10kg",
+        "D带｜系统减重": "不低于10kg",
+    }
+    return [
+        (
+            f"当前基线体重{baseline}kg与安全下限{protected}kg之间的"
+            f"可管理空间为{room}kg，落在{boundaries.get(band, '待确认')}边界"
+        ),
+        "管理带按可管理空间确定，用户期待斤数和执行状态不参与改带",
+    ]
+
+
+def _force_high_risk_manual_review(
+    shared: dict[str, object],
+    service_case: ServiceCase,
+) -> None:
+    """服务单持续高风险必须稳定映射到文档复核标记，模型只能补原因、不能取消。"""
+
+    if not is_high_risk(service_case):
+        return
+    reasons = _clean_list(shared.get("manual_review_reasons"))
+    risk_flags = service_case.risk_flags if isinstance(service_case.risk_flags, list) else []
+    for flag in risk_flags:
+        if not isinstance(flag, dict) or str(flag.get("level") or "").lower() != "high":
+            continue
+        reason = str(flag.get("reason") or "").strip()
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    if not reasons:
+        reasons.append("服务单已标记持续健康高风险，需重点人工复核")
+    shared["manual_review_required"] = True
+    shared["manual_review_reasons"] = reasons[:3]
+    shared["safety_status"] = "manual_review"
 
 
 def _strip_internal_review_labels(payloads: dict[str, dict]) -> None:
@@ -146,13 +220,10 @@ async def _generate_intake_analysis_package(
         payload = payload["intake_analysis_package"]
     shared = payload.get("shared_analysis") if isinstance(payload.get("shared_analysis"), dict) else {}
     document_root = payload.get("documents") if isinstance(payload.get("documents"), dict) else payload
-    # 管理带改由 LLM 综合判断（BMI 值降为兜底初判），但带位只能是业务带位：
-    # 「需人工复核」是独立的内部安全状态，不占管理带；模型写成带位时回退到确定性初判。
-    # 解析必须发生在文档归一化之前 → profile 与两份文档三处仍以单一来源对齐、天然一致。
-    resolved_band = _resolve_management_band(shared, intake_facts)
-    if resolved_band:
-        shared["weight_band"] = resolved_band
-        intake_facts["weight_loss_band"] = resolved_band
+    # 四带结论由安全减重空间确定性计算，LLM只负责解释和选择当前主线。
+    # 持续高风险与A-D带并存；服务单高风险无条件强制页面重点人工复核。
+    _apply_deterministic_band(shared, intake_facts)
+    _force_high_risk_manual_review(shared, service_case)
     document_payloads = _normalize_combined_document_payload(
         document_root,
         user_name,
@@ -184,11 +255,17 @@ def _intake_package_schema() -> dict[str, object]:
             "manual_review_required": "内部字段（布尔值）；孕哺、未成年人、明显疾病/用药/持续不适、非主动消瘦或资料冲突时为 true。"
             "它不是管理带，为 true 时 weight_band 仍要给正常业务带位",
             "manual_review_reasons": ["内部字段；需要人工复核的1-3条原因，只给运营看，禁止写进两份交付文件"],
-            "weight_band": "综合判断后的最终业务管理带，只能取：A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重 / 增肌增能带。"
-            "禁止写「需人工复核」等内部标签",
+            "baseline_weight_kg": "内部确定性字段；当前问卷最新可信体重",
+            "baseline_weight_provisional": "内部确定性字段；未取得连续3天晨重均值时为 true",
+            "absolute_low_weight_boundary_kg": "内部确定性字段；18.5 × 身高m²",
+            "automatic_review_weight_kg": "内部确定性字段；20 × 身高m²",
+            "protected_lower_weight_kg": "内部确定性字段；当前自动方案采用的保护性下限",
+            "safe_reduction_room_kg": "内部确定性字段；基线体重减保护性下限，是四带唯一数值主轴",
+            "weight_band": "系统已经按安全减重空间算好的最终业务管理带，只能逐字复制：A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重。"
+            "模型不得改带，也禁止写「需人工复核」等内部标签",
             "band_confidence": "内部字段，high / medium / low；资料缺失或安全闸门触发时写 low",
             "provisional_band": "内部字段（布尔值）；带位为待人工确认的暂定结论时为 true",
-            "band_basis": ["支持管理带的2-3条事实，只来自BMI/体重状态、腰围体脂或腰腹体感、近3个月直接趋势"],
+            "band_basis": ["系统根据基线体重、保护性下限和安全减重空间生成的确定性分带依据，模型不得改写"],
             "body_trend": "仅依据入营问卷反映的近3个月趋势：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
             "body_trend_summary": "一句话解释近3个月趋势；不得写入营后的变化",
             "body_trend_direct_evidence": "1条能证明变化方向的直接趋势事实，优先来自问卷「最近3个月体重变化」。"
@@ -197,10 +274,10 @@ def _intake_package_schema() -> dict[str, object]:
             "body_trend_confidence": "high / medium / low",
             "core_problem": "核心问题，只基于问卷事实",
             "current_mainline": "当前唯一主线，只能取：保肌减脂 / 节律稳定 / 睡眠修复 / 饮食结构修复 / 系统化管理；主要依据睡眠、精力、饮食、食欲边界、晚间失控、运动和恢复状态选择",
-            "base_goal": "基础目标；用户没有明确数字时不得编造斤数；A带/增肌增能带禁止任何减重数字",
-            "challenge_goal": "条件性挑战目标；A带/增肌增能带固定写不设置减重挑战目标",
-            "long_term_goal": "长期方向，必须包含非体重结果；A带/增肌增能带禁止任何减重数字",
-            "day28_goal": "28天目标；A带/增肌增能带只写体重稳定或恢复、体态、力量、睡眠、精力和执行目标，不写减重数字",
+            "base_goal": "基础目标；用户没有明确数字时不得编造斤数；A带禁止任何减重数字",
+            "challenge_goal": "条件性挑战目标；A带固定写不设置减重挑战目标",
+            "long_term_goal": "长期方向，必须包含非体重结果；A带禁止任何减重数字",
+            "day28_goal": "28天目标；A带只写体重稳定或恢复、体态、力量、睡眠、精力和执行目标，不写减重数字",
             "day28_task": "这28天先解决什么",
             "long_term_defense": "长期如何避免回到原来的上升或失控轨迹",
             "execution_principle": "执行总原则",
@@ -214,7 +291,7 @@ def _intake_package_schema() -> dict[str, object]:
                 "height_weight": "身高 / 体重，必须与 intake_facts 一致",
                 "bmi": "必须与 intake_facts.bmi 一致",
                 "waist": "腰围，必须与 intake_facts 一致",
-                "weight_loss_band": "与 shared_analysis.weight_band 一致（综合判断后的最终管理带）",
+                "weight_loss_band": "与 shared_analysis.weight_band 一致（系统按安全减重空间确定的最终管理带）",
             },
             "state": "当前状态评估",
             "main_problem": "核心主要问题",
@@ -267,6 +344,8 @@ def _normalize_profile_from_package(
         profile["manual_review_reasons"] = _clean_list(shared.get("manual_review_reasons"))
         profile["band_confidence"] = str(shared.get("band_confidence") or "").strip()
         profile["provisional_band"] = _boolean_value(shared.get("provisional_band"))
+        for key in BAND_CALCULATION_FIELDS:
+            profile[key] = shared.get(key)
     profile.setdefault("risks", "暂无明确风险")
     profile["need_analysis"] = _normalize_need_analysis(profile.get("need_analysis"), intake_facts, shared)
     profile.setdefault("notes", "建议围绕问卷中明确的执行卡点进行轻量陪跑，避免一次性增加太多动作。")

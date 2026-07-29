@@ -25,12 +25,17 @@ from app.services.document_templates import (
 )
 from app.services.intake_generation import (
     CHECKIN_CATEGORIES,
+    _force_high_risk_manual_review,
+    _resolve_management_band,
     _scrub_internal_text,
     _normalize_combined_document_payload,
     checkin_options_for,
     normalize_daily_checkin_items,
 )
-from app.services.intake_facts import _weight_loss_band, build_intake_fact_summary
+from app.services.intake_facts import (
+    _management_band_from_safe_room,
+    build_intake_fact_summary,
+)
 from app.services.questionnaire_template import default_questionnaire_template
 
 
@@ -39,7 +44,7 @@ INTAKE_SYSTEM_PROMPT_PREFIX = "你是加速燃「高燃人生28天训练营」�
 
 def _make_intake_mock_response(
     *,
-    weight_band: str = "A带｜修复塑形",
+    weight_band: str = "B带｜轻盈启动",
     bmi: str = "21.2",
     manual_review: bool = False,
 ) -> str:
@@ -71,8 +76,8 @@ def _make_intake_mock_response(
             "shared_analysis": {
                 **safety_fields,
                 "band_basis": [
-                    "BMI 21.2 → 当前处于健康体重范围",
-                    "最近3个月体重基本稳定 → 暂无继续上升信号",
+                    "当前基线体重65kg与安全下限61.25kg之间的可管理空间为3.75kg",
+                    "安全减重空间落在2.5kg至不足5kg边界",
                 ],
                 "body_trend": "基本稳定",
                 "body_trend_summary": "近3个月体重基本稳定，当前更需要改善节律和精力，而不是追求快速掉秤",
@@ -98,11 +103,11 @@ def _make_intake_mock_response(
             },
             "profile": {
                 "summary": (
-                    "30岁男性，BMI 21.2（维持优化带），白班作息，主要挑战是晚睡压力导致的"
+                    "30岁男性，BMI 21.2（B带），白班作息，主要挑战是晚睡压力导致的"
                     "情绪性进食和执行波动。当前体重健康，核心方向不是减重而是重建稳定节律"
                     "和减少晚间失控。"
                 ),
-                "tags": ["A带", "晚睡习惯", "下午犯困"],
+                "tags": ["B带", "晚睡习惯", "下午犯困"],
                 "overview": {
                     "gender_age": "男 / 30",
                     "height_weight": "175cm / 65kg",
@@ -285,27 +290,33 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "只描述用户提交问卷之前的近3个月" in prompt
 
     # 管理带与人工复核彻底分开：内部标签不再是带位，也不得进入用户可见内容
-    assert "manual_review_required=true 时 weight_band 仍必须输出正常业务带位" in prompt
-    assert "以上五个带位是 weight_band 的全部合法取值，没有第六种" in prompt
+    assert "manual_review_required=true 时 weight_band 仍必须逐字复制系统算好的正常业务带位" in prompt
+    assert "以上四个带位是 weight_band 的全部合法取值，没有第五种" in prompt
     assert "严禁把「需人工复核」「人工复核」「待复核」「red风险」「高风险」「风险等级」等内部标签写进 weight_band" in prompt
     assert "无法安全自动判带时 weight_band 写「需人工复核」" not in prompt
     assert "需人工复核：安全闸门未通过或资料冲突导致无法自动给出安全管理带" not in prompt
-    # 管理带看身体状态和趋势；执行困难用于选主线，不能直接抬高档位
+    # 安全减重空间是唯一分带主轴；执行困难和用户期待均不能改带
     assert "【证据职责分开】" in prompt
-    assert "只由身高体重/BMI、腰围体脂（有则用）和近3个月直接趋势证据综合判断" in prompt
+    assert "只由 intake_facts.safe_reduction_room_kg 按精确边界确定" in prompt
+    assert "用户希望减多少斤、近3个月趋势和腰腹体感都不能在安全空间计算后改带" in prompt
     assert "不能仅因为晚睡、外卖多、精力差或运动少就把用户升到更高管理带" in prompt
-    assert "不能单独作为管理带升档或降档依据" in prompt
-    assert "不得把晚睡、外卖多、精力差或运动少单独写成带位依据" in prompt
+    assert "模型不得凭BMI标签、腰腹体感、趋势或执行状态推翻系统已算好的 weight_loss_band" in prompt
+    assert "2.5kg ≤ safe_reduction_room_kg < 5kg" in prompt
+    assert "5kg ≤ safe_reduction_room_kg < 10kg" in prompt
+    assert "safe_reduction_room_kg ≥ 10kg" in prompt
+    assert "正常BMI也不能单独判A带" in prompt
+    assert "孕哺、疾病或用药用户" in prompt
+    assert "仍按安全减重空间正常得到 A-D 带" in prompt
 
     # 数字来源与趋势证据
-    assert "都必须能追溯到问卷里用户自己写下的明确数字答案" in prompt
+    assert "问卷里用户自己写下的明确数字答案，或上面B/C/D带的系统管理区间" in prompt
     assert "严禁生成「腰围缩减1–3cm」「腰围少5cm」这类数字区间" in prompt
     # 问卷选项文字自带填写示例，模型曾把占位符替换成自己挑的数字（腰围缩小5cm以上）
     assert "括号里的 X 公斤、XX 厘米是问卷给用户看的填写格式示例，不是用户的答案" in prompt
     assert "严禁把示例里的占位符替换成一个自己挑的数字" in prompt
     assert "不只是 day28_goal" in prompt
     # A带不是“小幅减重带”，不允许用 0-2斤 等象征性区间安慰式落点
-    assert "【A带与增肌增能带的无数字目标】" in prompt
+    assert "【A带的无数字目标】" in prompt
     assert "即使用户在问卷里明确填写了想减多少斤或公斤" in prompt
     assert "「0-2斤」「0–2斤」「1-2斤」「维持0-2斤波动」" in prompt
     assert "覆盖所有用户可见字段" in prompt
@@ -343,8 +354,8 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "trend_direct_evidence" in energy_spec["core_conclusions"]
     assert "trend_support_signals" in energy_spec["core_conclusions"]
     assert "需人工复核" not in energy_spec["core_conclusions"]["management_band"].replace("禁止写「需人工复核」等内部运营标签", "")
-    assert "A带/增肌增能带禁止任何减重数字" in energy_spec["goal_response"]["base_goal"]
-    assert "A带/增肌增能带固定写不设置减重挑战目标" in energy_spec["goal_response"]["challenge_goal"]
+    assert "A带禁止任何减重数字" in energy_spec["goal_response"]["base_goal"]
+    assert "A带固定写不设置减重挑战目标" in energy_spec["goal_response"]["challenge_goal"]
     assert "diet_rules" in execution_spec
     assert "exercise_rules" in execution_spec
     # 分析性目标不再在执行建议书重复输出，避免顶到第二页
@@ -411,11 +422,11 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     assert profile is not None
     overview = (profile.profile_json or {}).get("overview") or {}
     assert overview.get("bmi") == "21.2"
-    assert profile.profile_json.get("management_band") == "A带｜修复塑形"
+    assert profile.profile_json.get("management_band") == "B带｜轻盈启动"
     assert profile.profile_json.get("body_trend") == "基本稳定"
     assert profile.profile_json.get("manual_review_required") is False
     tags = (profile.profile_json or {}).get("tags") or []
-    assert tags == ["A带", "晚睡习惯", "下午犯困"]
+    assert tags == ["B带", "晚睡习惯", "下午犯困"]
     personalized_fields = (profile.profile_json or {}).get("personalized_checkin_fields") or []
     assert len(personalized_fields) == 5
 
@@ -685,41 +696,89 @@ async def test_intake_facts_bmi_calculation(cai_haoran_answers):
     facts = build_intake_fact_summary(fields, cai_haoran_answers)
 
     assert facts["bmi"] == "21.2", f"Expected BMI '21.2', got '{facts['bmi']}'"
-    assert facts["weight_loss_band"] == "A带｜修复塑形", (
-        f"Expected A带, got '{facts['weight_loss_band']}'"
+    assert facts["weight_loss_band"] == "B带｜轻盈启动", (
+        f"Expected B带, got '{facts['weight_loss_band']}'"
     )
 
 
 @pytest.mark.parametrize(
-    ("bmi", "expected"),
+    ("safe_room_kg", "expected"),
     [
-        (21.2, "A带｜修复塑形"),
-        (26.0, "B带｜轻盈启动"),
-        (30.0, "C带｜明确减脂"),
-        (33.0, "D带｜系统减重"),
+        (0.0, "A带｜修复塑形"),
+        (2.49, "A带｜修复塑形"),
+        (2.5, "B带｜轻盈启动"),
+        (4.99, "B带｜轻盈启动"),
+        (5.0, "C带｜明确减脂"),
+        (9.99, "C带｜明确减脂"),
+        (10.0, "D带｜系统减重"),
     ],
 )
-def test_bmi_initial_reference_uses_new_management_band_names(
-    bmi: float,
+def test_safe_reduction_room_uses_exact_management_band_boundaries(
+    safe_room_kg: float,
     expected: str,
 ):
-    assert _weight_loss_band(bmi) == expected
+    assert _management_band_from_safe_room(safe_room_kg) == expected
+
+
+def test_model_and_user_goal_cannot_override_safe_room_band():
+    facts = {
+        "weight_loss_band": "B带｜轻盈启动",
+        "safe_reduction_room_kg": "3.75",
+        "day28_expectation": "28天减重10斤",
+    }
+
+    assert (
+        _resolve_management_band({"weight_band": "D带｜系统减重"}, facts)
+        == "B带｜轻盈启动"
+    )
+
+
+def test_service_case_high_risk_forces_manual_review_even_when_model_cancels_it():
+    service_case = ServiceCase(
+        risk_level="high",
+        risk_flags=[
+            {
+                "code": "pregnancy",
+                "level": "high",
+                "reason": "用户明确处于孕期",
+                "evidence": "当前怀孕",
+                "source": "questionnaire",
+            }
+        ],
+    )
+    shared = {
+        "safety_status": "standard",
+        "manual_review_required": False,
+        "manual_review_reasons": [],
+        "weight_band": "B带｜轻盈启动",
+    }
+
+    _force_high_risk_manual_review(shared, service_case)
+
+    assert shared["weight_band"] == "B带｜轻盈启动"
+    assert shared["manual_review_required"] is True
+    assert shared["safety_status"] == "manual_review"
+    assert shared["manual_review_reasons"] == ["用户明确处于孕期"]
 
 
 @pytest.mark.asyncio
 async def test_intake_facts_expose_safe_reduction_room(cai_haoran_answers):
-    """175cm/65kg → 下限 61.25kg，空间 3.75kg 未耗尽，真实上限 3.25kg 打折后规划上限 2.5kg。"""
+    """175cm/65kg → 空间3.75kg，正常BMI仍按唯一数值主轴进入B带。"""
 
     template = default_questionnaire_template("intake")
     facts = build_intake_fact_summary(template.get("fields", []), cai_haoran_answers)
 
-    assert facts["protected_lower_weight_kg"] == "61.2"
+    assert facts["baseline_weight_kg"] == "65"
+    assert facts["baseline_weight_provisional"] is True
+    assert facts["absolute_low_weight_boundary_kg"] == "56.66"
+    assert facts["automatic_review_weight_kg"] == "61.25"
+    assert facts["protected_lower_weight_kg"] == "61.25"
+    assert facts["safe_reduction_room_kg"] == "3.75"
+    assert facts["weight_loss_band"] == "B带｜轻盈启动"
     assert facts["weight_loss_room_exhausted"] == "否"
-    # min(65*5%=3.25, 4, 3.75)=3.25 → ×0.8=2.6 → 向下取整到 0.5kg
-    assert facts["day28_goal_cap_kg"] == "2.5"
-    # 真实上限和空间公斤数刻意不进提示词，少一个可被原样引用的数字
+    # 客户公式：min(65*5%=3.25, 4, 3.75)=3.25，不再混入旧的0.8折扣。
+    assert facts["day28_goal_cap_kg"] == "3.25"
     assert "day28_max_loss_kg" not in facts
-    assert "safe_reduction_room_kg" not in facts
 
 
 def test_intake_facts_room_exhausted_blocks_numeric_goal():
@@ -732,7 +791,9 @@ def test_intake_facts_room_exhausted_blocks_numeric_goal():
     facts = build_intake_fact_summary(fields, {"h": "166", "w": "51.3"})
 
     assert facts["weight_loss_room_exhausted"] == "是"
-    assert facts["day28_goal_cap_kg"] == "0.0"
+    assert facts["safe_reduction_room_kg"] == "0"
+    assert facts["weight_loss_band"] == "A带｜修复塑形"
+    assert facts["day28_goal_cap_kg"] == "0"
 
 
 def test_intake_facts_safe_room_missing_without_height_or_weight():
@@ -742,6 +803,8 @@ def test_intake_facts_safe_room_missing_without_height_or_weight():
     )
 
     assert facts["protected_lower_weight_kg"] == "暂无数据"
+    assert facts["safe_reduction_room_kg"] == "暂无数据"
+    assert facts["weight_loss_band"] == "需补充身高体重后判断"
     assert facts["weight_loss_room_exhausted"] == "暂无数据"
     assert facts["day28_goal_cap_kg"] == "暂无数据"
 
@@ -757,7 +820,7 @@ def test_intake_facts_normalize_height_written_in_meters():
 
     assert facts["height_cm"] == "175"
     assert facts["bmi"] == "21.2"
-    assert facts["weight_loss_band"] == "A带｜修复塑形"
+    assert facts["weight_loss_band"] == "B带｜轻盈启动"
 
 
 def test_internal_jargon_is_reworded_not_deleted():
@@ -1163,8 +1226,8 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
             select(UserProfile).where(UserProfile.service_case_id == case_id)
         )
         assert profile is not None
-        # 管理带回退成按 BMI 得出的业务带位，「需人工复核」不占带位
-        assert profile.profile_json["management_band"] == "A带｜修复塑形"
+        # 模型即使把复核标签写成带位，最终仍使用安全减重空间算出的B带
+        assert profile.profile_json["management_band"] == "B带｜轻盈启动"
         assert "复核" not in profile.profile_json["management_band"]
         # 内部字段仍然保留，供后台和人工复核使用
         assert profile.profile_json["manual_review_required"] is True
@@ -1219,6 +1282,59 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
         )
     finally:
         await admin_client.post("/settings/content-delivery-policy", json={"mode": "manual_review"})
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_high_risk_forces_document_review_marker(
+    admin_client,
+    create_case,
+    db_session,
+    mock_ai,
+    cai_haoran_answers,
+    wait_background,
+):
+    """孕期仍正常计算A-D；即使文档模型返回false，服务单高风险也必须点亮页面复核标记。"""
+
+    mock_ai._responses = {
+        INTAKE_SYSTEM_PROMPT_PREFIX: _make_intake_mock_response(manual_review=False),
+    }
+    answers = dict(cai_haoran_answers)
+    answers["SIMPLE1774108071693mn0i515a"] = "当前明确怀孕"
+    group_id = f"test-pregnancy-review-{secrets.token_hex(6)}"
+    resp = await create_case({
+        "group_id": group_id,
+        "user": {"name": "孕期复核用户"},
+    })
+    assert resp.status_code == 201, resp.text
+    case = resp.json()
+
+    submit_resp = await admin_client.post(
+        f"/questionnaires/{case['questionnaire_token']}/submit?template=intake",
+        json={"answers": answers},
+    )
+    assert submit_resp.status_code == 201, submit_resp.text
+    await wait_background()
+
+    service_case = await db_session.get(ServiceCase, case["id"])
+    assert service_case is not None
+    assert service_case.risk_level == "high"
+
+    profile = await db_session.scalar(
+        select(UserProfile).where(UserProfile.service_case_id == case["id"])
+    )
+    assert profile is not None
+    assert profile.profile_json["management_band"] == "B带｜轻盈启动"
+    assert profile.profile_json["manual_review_required"] is True
+    assert profile.profile_json["safety_status"] == "manual_review"
+
+    documents = list(await db_session.scalars(
+        select(UserDocument).where(UserDocument.service_case_id == case["id"])
+    ))
+    assert len(documents) == 2
+    assert all(
+        document.content_json["internal_review"]["manual_review_required"] is True
+        for document in documents
+    )
 
 
 @pytest.mark.asyncio

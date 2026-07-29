@@ -26,7 +26,7 @@ backend/
 │   │   ├── document_templates.py # 文档模板引擎 (处方单/执行单/阶段报告)
 │   │   ├── docx_service.py  # python-docx 渲染落盘
 │   │   ├── embedding_service.py # Embedding 向量生成
-│   │   ├── intake_facts.py  # 入营事实确定性提取
+│   │   ├── intake_facts.py  # 入营事实 + 安全减重空间/A-D带确定性计算
 │   │   ├── intervention_service.py # 风控干预分析 (LLM 风险/意图识别)
 │   │   ├── knowledge_evolution.py  # 知识草稿审核、查重与发布
 │   │   ├── knowledge_faq_service.py # 结构化 FAQ 管理
@@ -92,7 +92,7 @@ Checkpoint does not replace transport durability: `inbound_events` is the cross-
 知识草稿在审核通过时统一用向量只找候选，命中候选时才额外调用一次结构化 LLM 判定，不设“完全一致文本直接跳过”的业务分支。`knowledge_drafts.content_hash` 只按来源消息与扫描上下文防同一提取任务重放，不参与知识重复判断。普通重复由系统跳过或版本化更新；只有同一问题的业务回答冲突返回审核员选择正确口径。FAQ 历史由 `knowledge_faq_versions` 留存，优秀案例替代时旧 chunk 标为 `superseded`；每次查重与裁决追加写入 `knowledge_dedupe_events`。案例查重必须先限定同一 `service_case_id`，不能因不同用户经历相似就合并。
 
 ### Documents & profiles
-Questionnaire submission → LLM generates a user profile. Service-case detail can generate two delivery docs (处方单, 28天执行单) and stage reports (3/7/14/21/28-day). The 28-day point ends the current service phase and does not generate a separate graduation report. Flow: LLM emits **structured JSON** for key fields → backend templates (`document_templates.py`) render editable Markdown → persisted as `content_json`/`content_md` → only at download/send time does `docx_service.py` render a temporary `.docx` (deleted after). **The authoritative system prompts live in `backend/src/app/services/document_service.py`; `手动版提示词.md` is reference only and must not be used at runtime.**
+Questionnaire submission → deterministic intake facts calculate the safe-reduction room and exact A/B/C/D band → LLM generates a user profile and explains that fixed band. Pregnancy/lactation and other persistent high-risk states do not replace the band; they independently force the document-review marker. Service-case detail can generate two delivery docs (处方单, 28天执行单) and stage reports (3/7/14/21/28-day). The 28-day point ends the current service phase and does not generate a separate graduation report. Flow: LLM emits **structured JSON** for key fields → backend templates (`document_templates.py`) render editable Markdown → persisted as `content_json`/`content_md` → only at download/send time does `docx_service.py` render a temporary `.docx` (deleted after). **The authoritative system prompts live in `backend/src/app/services/document_service.py`; `手动版提示词.md` is reference only and must not be used at runtime.**
 
 ### Archivist — outcome / check-in / knowledge extraction (NOT per-message, NOT on the reply path)
 成效抽取**不在消息主链路上实时跑**。消息进来只负责入库/回复；结构化抽取由独立的「档案官」`app/services/archivist/` 承担，在 **scheduler 进程** (`ran-ai-scheduler`) 里周期扫描完成：
@@ -133,7 +133,7 @@ Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY
 | 知识草稿发布 | `src/app/services/knowledge_evolution.py` | 档案官候选的审核、查重、FAQ/案例发布 |
 | 本地知识库 fallback | `src/app/services/knowledge_base.py` | Markdown/LlamaIndex 降级检索 |
 | 定时提醒 | `src/app/services/reminder_service.py` | 打卡提醒 + 阶段报告生成 + 档案官扫描(`check_archivist_once`) + 打卡追问兜底 |
-| 入营事实提取 | `src/app/services/intake_facts.py` | 问卷确定性事实抽取 (BMI/减重带) |
+| 入营事实提取 | `src/app/services/intake_facts.py` | 问卷确定性事实抽取（BMI/安全减重空间/A-D带） |
 | 服务单查询 | `src/app/services/service_case_queries.py` | `get_active_service_case` / `get_service_case` |
 | 成效引擎 | `src/app/services/outcome_engine.py` | 成效抽取/评分工具，由档案官周期调用（非消息路径实时跑）|
 | 用户状态画像 | `src/app/services/user_state_profile.py` | outcome events → JSONB state 投影 (action_focus / need_analysis / body_feedback) |

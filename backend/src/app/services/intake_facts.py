@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 from typing import Any
 
@@ -85,8 +84,10 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
     height = _normalize_height_cm(_first_number(height_raw))
     weight = _first_number(weight_raw)
     bmi = _calculate_bmi(height, weight)
-    weight_loss_band = _weight_loss_band(bmi)
-    protected_lower, room_exhausted, goal_cap = _safe_reduction_facts(height, weight)
+    safe_reduction = _safe_reduction_facts(height, weight)
+    weight_loss_band = _management_band_from_safe_room(
+        safe_reduction["safe_reduction_room_kg"]
+    )
 
     return {
         "name": legal_name or "未提供",
@@ -100,12 +101,33 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
         "weight_kg": _format_number(weight) if weight else "未提供",
         "bmi": f"{bmi:.1f}" if bmi else "暂无数据",
         "weight_loss_band": weight_loss_band,
-        # 安全余量：内部约束，只用来给目标设天花板，不得出现在交付文件里。
-        # 只传下限体重（要和用户目标体重比大小）、是否已无空间、打过折的规划上限；
-        # 真实上限和空间公斤数刻意不传，少一个数字就少一处可被原样引用的泄漏点。
-        "protected_lower_weight_kg": f"{protected_lower:.1f}" if protected_lower else "暂无数据",
-        "weight_loss_room_exhausted": "暂无数据" if room_exhausted is None else ("是" if room_exhausted else "否"),
-        "day28_goal_cap_kg": f"{goal_cap:.1f}" if goal_cap is not None else "暂无数据",
+        # 四带引擎的确定性内部事实。管理带只读 safe_reduction_room_kg 的精确边界，
+        # 模型、BMI标签、腰腹体感和用户期待斤数都无权改带。
+        "baseline_weight_kg": _format_safe_measurement(
+            safe_reduction["baseline_weight_kg"]
+        ),
+        # 入营问卷当前只有最新可信体重，没有连续3天晨重均值；按客户规则标为暂定基线。
+        "baseline_weight_provisional": safe_reduction["baseline_weight_kg"] is not None,
+        "absolute_low_weight_boundary_kg": _format_safe_measurement(
+            safe_reduction["absolute_low_weight_boundary_kg"]
+        ),
+        "automatic_review_weight_kg": _format_safe_measurement(
+            safe_reduction["automatic_review_weight_kg"]
+        ),
+        "protected_lower_weight_kg": _format_safe_measurement(
+            safe_reduction["protected_lower_weight_kg"]
+        ),
+        "safe_reduction_room_kg": _format_safe_measurement(
+            safe_reduction["safe_reduction_room_kg"]
+        ),
+        "weight_loss_room_exhausted": (
+            "暂无数据"
+            if safe_reduction["room_exhausted"] is None
+            else ("是" if safe_reduction["room_exhausted"] else "否")
+        ),
+        "day28_goal_cap_kg": _format_safe_measurement(
+            safe_reduction["day28_goal_cap_kg"]
+        ),
         "waist": waist or "未提供",
         "bodyfat": bodyfat or "未提供",
         "health_note": health_note or "未提供",
@@ -166,31 +188,39 @@ def _normalize_height_cm(value: float | None) -> float | None:
 
 def _safe_reduction_facts(
     height_cm: float | None, weight_kg: float | None
-) -> tuple[float | None, bool | None, float | None]:
-    """安全减重空间：先算这个人还能安全减多少，再谈目标。
+) -> dict[str, float | bool | None]:
+    """按 V2.1 计算四带唯一数值主轴及28天自动上限。
 
-    - protected_lower_weight_kg = 20 × 身高m²：自动方案不得突破的保护性下限，
-      是系统复核线而不是医学诊断线，也不代表建议用户减到这个体重。
-    - 安全空间 = 基线体重 − 保护性下限。空间本身不给模型，只给「是否已耗尽」——
-      判断只需要这个布尔结论，把公斤数传过去等于多给一个可被原样引用的数字。
-    - day28_goal_cap_kg = min(基线体重5%, 4kg, 安全空间) × 0.8，向下取整到 0.5kg。
-
-    打 8 折是实测得出的：真实模型会把上限当靶心（上限 3.2 就写到 3.0），
-    留缓冲让「贴着上限写」也落在安全区内；取整到 0.5kg（=1斤）也让这个数看起来
-    像人定的档位，而不是可被原样抄进交付文件的计算结果。上限为 0 表示不给数字目标。
-
-    只作为目标的天花板使用，不参与管理带判断——BMI 22 的健康体重用户也能算出
-    7kg 空间，拿它分带会把正常体重的人系统性推去减脂。
+    入营问卷暂时只有最新可信体重，因此 baseline 直接使用当前体重并在事实摘要中
+    标记 provisional。protected_lower 先采用 BMI 20 自动复核线；需要因可靠肌肉、
+    疾病、用药或恢复力证据上调时，由页面上的重点人工复核处理，模型不得编造公斤线。
     """
 
     if not height_cm or not weight_kg or height_cm <= 0:
-        return None, None, None
+        return {
+            "baseline_weight_kg": None,
+            "absolute_low_weight_boundary_kg": None,
+            "automatic_review_weight_kg": None,
+            "protected_lower_weight_kg": None,
+            "safe_reduction_room_kg": None,
+            "room_exhausted": None,
+            "day28_goal_cap_kg": None,
+        }
     height_m = height_cm / 100
-    protected_lower = 20 * height_m * height_m
+    absolute_low = 18.5 * height_m * height_m
+    automatic_review = 20 * height_m * height_m
+    protected_lower = automatic_review
     safe_room = max(0.0, weight_kg - protected_lower)
-    true_cap = min(weight_kg * 0.05, 4.0, safe_room)
-    goal_cap = math.floor(true_cap * 0.8 * 2) / 2
-    return protected_lower, safe_room <= 0, goal_cap
+    goal_cap = min(weight_kg * 0.05, 4.0, safe_room)
+    return {
+        "baseline_weight_kg": weight_kg,
+        "absolute_low_weight_boundary_kg": absolute_low,
+        "automatic_review_weight_kg": automatic_review,
+        "protected_lower_weight_kg": protected_lower,
+        "safe_reduction_room_kg": safe_room,
+        "room_exhausted": safe_room <= 0,
+        "day28_goal_cap_kg": goal_cap,
+    }
 
 
 def _calculate_bmi(height_cm: float | None, weight_kg: float | None) -> float | None:
@@ -200,16 +230,16 @@ def _calculate_bmi(height_cm: float | None, weight_kg: float | None) -> float | 
     return weight_kg / (height_m * height_m)
 
 
-def _weight_loss_band(bmi: float | None) -> str:
-    if bmi is None:
+def _management_band_from_safe_room(safe_room_kg: float | None) -> str:
+    """安全减重空间是 A/B/C/D 的唯一数值分带主轴。"""
+
+    if safe_room_kg is None:
         return "需补充身高体重后判断"
-    if bmi < 18.5:
-        return "增肌增能带"
-    if bmi < 24:
+    if safe_room_kg < 2.5:
         return "A带｜修复塑形"
-    if bmi < 28:
+    if safe_room_kg < 5:
         return "B带｜轻盈启动"
-    if bmi < 32:
+    if safe_room_kg < 10:
         return "C带｜明确减脂"
     return "D带｜系统减重"
 
@@ -230,7 +260,7 @@ CUSTOMER_TYPES = (
 def derive_customer_type(risk_level: str | None, weight_loss_band: str | None) -> str:
     """按优先级把用户投影到唯一客户分型。
 
-    优先级：疾病管理型(高风险) > 减重攻坚型(C/D 带，BMI≥28) > 健康投资型(兜底)。
+    优先级：疾病管理型(高风险) > 减重攻坚型(C/D 带) > 健康投资型(兜底)。
     带位缺失且非高风险时兜底为健康投资型，避免出现空标签。
     """
     if (risk_level or "").strip().lower() == "high":
@@ -260,6 +290,14 @@ def customer_type_for_profile(profile_json: Any, risk_level: str | None) -> str:
 
 def _format_number(value: float) -> str:
     return str(int(value)) if value.is_integer() else f"{value:g}"
+
+
+def _format_safe_measurement(value: float | bool | None) -> str:
+    """内部体重计算保留两位精度，避免2.49显示成2.5却仍落A带的审计歧义。"""
+
+    if value is None or isinstance(value, bool):
+        return "暂无数据"
+    return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
 def _join_non_empty(values: list[Any], sep: str) -> str:
