@@ -321,6 +321,10 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "「0-2斤」「0–2斤」「1-2斤」「维持0-2斤波动」" in prompt
     assert "覆盖所有用户可见字段" in prompt
     assert "challenge_goal 固定写「不设置减重挑战目标」" in prompt
+    assert "只能定性概括为「希望尽快看到体重和体态变化」等意图" in prompt
+    assert "严禁原样复述具体数字" in prompt
+    assert "A带的 core_conclusions.band_explanation 只能定性说明" in prompt
+    assert "goal_response.content、user_goal 和 judgement 都不得原样复述" in prompt
     assert "不得把原数字改写成另一个更小的建议区间" in prompt
     assert "body_trend_direct_evidence（1条，字符串）" in prompt
     assert "body_trend_support_signals（1-2条，字符串数组）" in prompt
@@ -354,6 +358,10 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "trend_direct_evidence" in energy_spec["core_conclusions"]
     assert "trend_support_signals" in energy_spec["core_conclusions"]
     assert "需人工复核" not in energy_spec["core_conclusions"]["management_band"].replace("禁止写「需人工复核」等内部运营标签", "")
+    assert "A带只能定性说明更适合修复塑形" in energy_spec["core_conclusions"]["band_explanation"]
+    assert "A带只能定性概括数字减重诉求" in energy_spec["goal_response"]["content"]
+    assert "A带不得复述具体减重斤数" in energy_spec["goal_response"]["user_goal"]
+    assert "A带只做定性判断" in energy_spec["goal_response"]["judgement"]
     assert "A带禁止任何减重数字" in energy_spec["goal_response"]["base_goal"]
     assert "A带固定写不设置减重挑战目标" in energy_spec["goal_response"]["challenge_goal"]
     assert "diet_rules" in execution_spec
