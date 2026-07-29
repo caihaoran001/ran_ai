@@ -51,7 +51,12 @@ export default async function CasesPage() {
 
       <div className="mobile-card-list">
         {cases.map((item) => (
-          <Link key={item.id} href={`/cases/${item.id}`} className="mobile-record-card transition-colors hover:border-cyan-300 hover:bg-white">
+          <Link
+            key={item.id}
+            href={`/cases/${item.id}`}
+            prefetch={false}
+            className="mobile-record-card transition-colors hover:border-cyan-300 hover:bg-white"
+          >
             <div className="flex min-w-0 items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-break font-semibold text-slate-950">{item.case_no}</div>
@@ -85,7 +90,7 @@ export default async function CasesPage() {
             {cases.map((item) => (
               <tr key={item.id}>
                 <td>
-                  <Link className="admin-link text-slate-950" href={`/cases/${item.id}`}>
+                  <Link className="admin-link text-slate-950" href={`/cases/${item.id}`} prefetch={false}>
                     {item.case_no}
                   </Link>
                 </td>
@@ -93,7 +98,7 @@ export default async function CasesPage() {
                 <td className="text-break font-mono text-xs text-slate-500">{item.group_id}</td>
                 <td><CaseStatusCell serviceCase={item} /></td>
                 <td>
-                  <Link className="admin-link" href={`/q/${item.questionnaire_token}`}>
+                  <Link className="admin-link" href={`/q/${item.questionnaire_token}`} prefetch={false}>
                     打开问卷
                   </Link>
                 </td>
