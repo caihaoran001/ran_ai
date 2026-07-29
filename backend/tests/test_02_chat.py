@@ -618,6 +618,66 @@ async def test_agent_error_is_recorded_on_inbound_without_outbound(
 
 
 @pytest.mark.asyncio
+async def test_skipped_knowledge_search_lands_in_agent_run_metadata(
+    db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch
+):
+    """删掉 product_usage skill 后，"提到产品却跳过检索"必须真的落进 agent_runs 才可验证。
+
+    走完整回复链路，不是单独调观测函数——观测挂在 finalize 上，只测纯函数会漏掉接线错误。
+    """
+    from app.models.agent_run import AgentRun
+    from app.services.agent.graph import AgentReplyResult
+    import app.services.ranren_ai.engine as engine_mod
+
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    engine = RanrenAIEngine(mock_message_channel)
+    inbound = Message(
+        service_case_id=case_id,
+        group_id=group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="今天体重78.2，午B忘了喝",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(inbound)
+    await db_session.flush()
+
+    async def _fake_agent(**kwargs):
+        # knowledge_query 明确为 null（意图识别判成纯数据上报）→ 引擎传空串 → agent 不查库。
+        assert kwargs["knowledge_query"] == ""
+        return AgentReplyResult(reply="收到，体重记下了。", knowledge_hit_count=None)
+
+    monkeypatch.setattr(engine_mod, "generate_agent_reply", _fake_agent)
+
+    await engine._reply_with_ai(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="今天体重78.2，午B忘了喝",
+            message_id="m-knowledge-1",
+        ),
+        service_case_id=case_id,
+        analysis={"knowledge_query": None},
+        trigger_id=inbound.id,
+    )
+
+    run = await db_session.scalar(
+        select(AgentRun)
+        .where(AgentRun.trigger_message_id == inbound.id)
+        .order_by(AgentRun.id.desc())
+        .limit(1)
+    )
+    assert run is not None
+    assert run.metadata_json["knowledge"] == {
+        "decision": "skipped",
+        "skipped_product_terms": ["午B"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_recent_chat_history_includes_document_delivery(db_session, mock_message_channel, cai_haoran_answers):
     case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
     db_session.add(
