@@ -1260,6 +1260,9 @@ def test_shared_analysis_is_the_single_source_for_cross_document_facts():
     """
 
     shared = {
+        "weight_band": "B带｜轻盈启动",
+        "base_goal": "28天先稳定节律并建立可持续的小幅减脂趋势",
+        "challenge_goal": "基础动作稳定后再评估是否加码",
         "day28_goal": "用均衡餐盘替代原高碳结构，收住晚餐后进食，每日温和活动，实现腰腹缩围和精力转折",
         "long_term_goal": "12周建立可长期复制的节律，腰腹围度持续收紧",
         "body_trend": "缓慢变沉",
@@ -1271,7 +1274,9 @@ def test_shared_analysis_is_the_single_source_for_cross_document_facts():
             "one_sentence": "一句话结论" * 20,
             "overview": {"current_focus": "保肌减脂"},
             "core_conclusions": {"management_band": "C带｜明确减脂", "day28_task": "先抓晚间收口"},
+            "goal_response": {"base_goal": "直接冲刺减重", "challenge_goal": "继续加码"},
             "success_path": {
+                "weight_band": "D带｜系统减重",
                 "day28_goal": "用均衡餐盘取代高碳结构，三餐收口并启动每日温和活动，实现腰腹围度收紧和精力转向",
                 "total_goal": "12周把节律固定下来，围度继续下行",
             },
@@ -1291,6 +1296,10 @@ def test_shared_analysis_is_the_single_source_for_cross_document_facts():
     execution = normalized[DocumentType.DAY28_EXECUTION_STANDARD.value]
     assert energy["success_path"]["day28_goal"] == shared["day28_goal"]
     assert execution["day28_goal"] == shared["day28_goal"]
+    assert energy["core_conclusions"]["management_band"] == shared["weight_band"]
+    assert energy["success_path"]["weight_band"] == shared["weight_band"]
+    assert energy["goal_response"]["base_goal"] == shared["base_goal"]
+    assert energy["goal_response"]["challenge_goal"] == shared["challenge_goal"]
     assert energy["success_path"]["total_goal"] == shared["long_term_goal"]
     assert execution["path_goal"] == shared["long_term_goal"]
     # 趋势不能一份写「缓慢变沉」另一份写「基本稳定」

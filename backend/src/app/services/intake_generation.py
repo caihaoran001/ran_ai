@@ -887,6 +887,10 @@ def _normalize_combined_document_payload(
     # 这和 BMI 由 intake_facts 强制覆写是同一套做法。
     # 执行建议书的目标摘要由渲染层压到 48 字内，所以覆写更长的权威文案不会顶到第二页。
     for target, key, source in (
+        (core_conclusions, "management_band", shared.get("weight_band")),
+        (shared_path, "weight_band", shared.get("weight_band")),
+        (goal_response, "base_goal", shared.get("base_goal")),
+        (goal_response, "challenge_goal", shared.get("challenge_goal")),
         (shared_path, "day28_goal", shared.get("day28_goal")),
         (execution_payload, "day28_goal", shared.get("day28_goal")),
         (shared_path, "total_goal", shared.get("long_term_goal")),
@@ -900,6 +904,8 @@ def _normalize_combined_document_payload(
     # core_conclusions 可能在上面因为全空而没挂回 energy_payload，强制覆写后要重新挂。
     if core_conclusions:
         energy_payload["core_conclusions"] = core_conclusions
+    if goal_response:
+        energy_payload["goal_response"] = goal_response
     if overview:
         energy_payload["overview"] = overview
 
