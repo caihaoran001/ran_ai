@@ -18,8 +18,8 @@ BAND_A = "A带｜修复塑形"
 #
 # 为什么是 0.5 / 封顶 1.5：165cm 的用户从 BMI 20 抬到 21.5 是 54.5kg → 58.5kg，
 # 下限抬高 4kg，足以把 safe_room 8kg（C带）压到 4kg（B带）——有实际约束力。
-# 再往上抬会让多数有既往病史的用户直接掉进 A 带，那属于"安全不允许减"的判断，
-# 应当由下面的 band_override 显式做出，而不是被上调档位的算术副作用推过去。
+# 再往上抬会让多数有既往病史的用户直接掉进 A 带；风险该不该让人停止减重是人工复核
+# 要判断的事，不该由上调档位的算术副作用替运营做掉。
 PROTECTED_LOWER_BASE_BMI = 20.0
 PROTECTED_LOWER_STEP_BMI = 0.5
 PROTECTED_LOWER_MAX_UPLIFT_BMI = 1.5
@@ -120,10 +120,9 @@ def build_intake_fact_summary(
     weight = _first_number(weight_raw)
     bmi = _calculate_bmi(height, weight)
     safe_reduction = _safe_reduction_facts(height, weight, safety_factors)
-    band_override = _safety_band_override(safety_factors)
+    safety_review = _safety_review_required(safety_factors)
     weight_loss_band = _management_band_from_safe_room(
-        safe_reduction["safe_reduction_room_kg"],
-        band_override=band_override,
+        safe_reduction["safe_reduction_room_kg"]
     )
 
     return {
@@ -154,14 +153,14 @@ def build_intake_fact_summary(
         "protected_lower_weight_kg": _format_safe_measurement(
             safe_reduction["protected_lower_weight_kg"]
         ),
-        # 下限被抬高了多少、依据是什么，必须可复算可审计：运营看到一个 safe_room 很大
-        # 却判 A 带的用户时，要能立刻分辨是上调档位所致还是安全条件覆盖所致。
+        # 下限被抬高了多少、依据是什么，必须可复算可审计：运营看到带位比预期低时，
+        # 要能立刻分辨是本来空间就小，还是被风险因子把下限抬上去了。
         "protected_lower_uplift_bmi": _format_safe_measurement(
             safe_reduction["protected_lower_uplift_bmi"]
         ),
         "protected_lower_uplift_reasons": safe_reduction["protected_lower_uplift_reasons"],
-        "band_override_by_safety": band_override,
-        "safety_band_override_reasons": _override_reasons(safety_factors) if band_override else [],
+        "safety_review_required": safety_review,
+        "safety_review_reasons": _safety_review_reasons(safety_factors) if safety_review else [],
         "safe_reduction_room_kg": _format_safe_measurement(
             safe_reduction["safe_reduction_room_kg"]
         ),
@@ -325,37 +324,35 @@ def _calculate_bmi(height_cm: float | None, weight_kg: float | None) -> float | 
     return weight_kg / (height_m * height_m)
 
 
-def _override_reasons(safety_factors: dict[str, Any] | None) -> list[str]:
+def _safety_review_reasons(safety_factors: dict[str, Any] | None) -> list[str]:
     if not isinstance(safety_factors, dict):
         return []
-    raw = safety_factors.get("safety_band_override_reasons")
+    raw = safety_factors.get("safety_review_reasons")
     if not isinstance(raw, list):
         return []
     return [str(item).strip() for item in raw if str(item).strip()][:3]
 
 
-def _safety_band_override(safety_factors: dict[str, Any] | None) -> bool:
-    """红色风险等安全条件是否优先于斤数目标直接定 A 带（客户 V2.1 §7.1/§7.5）。"""
+def _safety_review_required(safety_factors: dict[str, Any] | None) -> bool:
+    """问卷是否暴露了必须人工复核的安全条件。
+
+    注意它**不改带位**：A-D 带始终按安全减重空间的数值边界判定。红色风险、孕哺、
+    青少年等条件通过强制人工复核起作用——文档内容照常按带位生成，但会被扣住不
+    自动发送，由运营确认后再发。
+    """
 
     if not isinstance(safety_factors, dict):
         return False
-    return safety_factors.get("safety_band_override") is True
+    return safety_factors.get("safety_review_required") is True
 
 
-def _management_band_from_safe_room(
-    safe_room_kg: float | None,
-    *,
-    band_override: bool = False,
-) -> str:
-    """安全减重空间是 A/B/C/D 的数值分带主轴，但安全条件优先于它。
+def _management_band_from_safe_room(safe_room_kg: float | None) -> str:
+    """安全减重空间是 A/B/C/D 的唯一数值分带主轴。
 
-    客户 V2.1 §7.5：红色风险、低体重、孕产哺乳、青少年和进食障碍风险要"先处理"，
-    优先于任何斤数目标。命中这些条件时无论算出多大空间都进 A 带——A 带同时承载
-    "空间不足"和"安全不允许继续减"两种语义，这是文档 §7.1 的原意。
+    安全条件（红风险、孕哺、青少年等）不参与分带，只触发人工复核；上调后的
+    保护性下限已经把这些风险折算进 safe_room，带位本身不需要再被绕过。
     """
 
-    if band_override:
-        return BAND_A
     if safe_room_kg is None:
         return UNRESOLVED_BAND
     if safe_room_kg < 2.5:

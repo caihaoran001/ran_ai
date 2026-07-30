@@ -314,14 +314,15 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "5kg ≤ safe_reduction_room_kg < 10kg" in prompt
     assert "safe_reduction_room_kg ≥ 10kg" in prompt
     assert "正常BMI也不能单独判A带" in prompt
-    # 红风险默认入A带：安全条件优先于斤数目标，且带位由代码定死、模型不得质疑
-    assert "【安全条件优先于斤数目标】" in prompt
-    assert "系统在计算带位时已直接判为 A带｜修复塑形并同时标记重点人工复核" in prompt
-    assert "不要因为算出的可管理空间很大就质疑它" in prompt
-    assert "A带同时承载「可管理空间不足」和「安全上不允许继续减」两种含义" in prompt
-    # 旧口径（高风险仍走正常 A-D 带）已经作废，不能留在提示词里自相矛盾
-    assert "不得为了凑带位把孕哺、疾病或用药用户包装成 A 带" not in prompt
-    assert "仍按安全减重空间正常得到 A-D 带" not in prompt
+    # 安全条件只强制人工复核，不改带位；风险已通过上调保护性下限折算进可管理空间
+    assert "【安全条件不改带位，只强制复核】" in prompt
+    assert "仍按安全减重空间正常得到 A-D 带" in prompt
+    assert "不得为了凑带位把孕哺、疾病或用药用户包装成 A 带" in prompt
+    assert "也不得因为标记了复核就不给带位" in prompt
+    assert "带位随之下移是这一步的正常结果，不要再在带位上二次调整" in prompt
+    # 曾短暂改成"红风险直接判A带"，已回退，不能留在提示词里自相矛盾
+    assert "系统在计算带位时已直接判为 A带" not in prompt
+    assert "A带同时承载" not in prompt
 
     # 12周阶段路径：客户 V2.1 §7.2-7.4 的各带累计区间与转段条件
     assert "【12周阶段路径】" in prompt
@@ -940,66 +941,44 @@ def test_doctor_specified_floor_ignored_when_looser_or_invalid():
         assert facts["protected_lower_weight_kg"] == "55.81"
 
 
-def test_safety_band_override_forces_a_band_regardless_of_room():
-    """红风险优先于斤数目标：空间 15.55kg 也直接进 A 带。"""
+def test_safety_review_does_not_change_the_band():
+    """安全条件只强制复核，不改带位：空间 15.55kg 仍是 D 带。"""
 
     facts = build_intake_fact_summary(
         _band_fields(),
         {"h": "165", "w": "70"},
         {
-            "safety_band_override": True,
-            "safety_band_override_reasons": ["问卷填写当前处于哺乳期"],
+            "safety_review_required": True,
+            "safety_review_reasons": ["问卷填写当前处于哺乳期"],
         },
     )
 
-    assert facts["weight_loss_band"] == "A带｜修复塑形"
-    assert facts["band_override_by_safety"] is True
-    # 空间本身照常算出来，供运营核对，只是不再决定带位。
+    assert facts["weight_loss_band"] == "D带｜系统减重"
+    assert facts["safety_review_required"] is True
     assert facts["safe_reduction_room_kg"] == "15.55"
-    assert facts["safety_band_override_reasons"] == ["问卷填写当前处于哺乳期"]
+    assert facts["safety_review_reasons"] == ["问卷填写当前处于哺乳期"]
 
 
-def test_safety_band_override_also_forces_manual_review_and_explains_basis():
+def test_safety_review_forces_manual_review_marker():
+    """带位照常给，但文档会被扣住不自动发送，原因写给运营看。"""
+
     facts = build_intake_fact_summary(
         _band_fields(),
         {"h": "165", "w": "70"},
         {
-            "safety_band_override": True,
-            "safety_band_override_reasons": ["问卷填写当前处于哺乳期"],
+            "safety_review_required": True,
+            "safety_review_reasons": ["问卷填写当前处于哺乳期"],
         },
     )
     shared: dict[str, object] = {}
     _apply_deterministic_band(shared, facts)
 
-    assert shared["weight_band"] == "A带｜修复塑形"
+    assert shared["weight_band"] == "D带｜系统减重"
     assert shared["manual_review_required"] is True
     assert shared["safety_status"] == "manual_review"
     assert "问卷填写当前处于哺乳期" in shared["manual_review_reasons"]
-    # 依据必须先讲安全条件，否则运营看到大空间判 A 带会以为算错了。
-    assert "安全条件" in shared["band_basis"][0]
-    assert "直接进入修复塑形带" in shared["band_basis"][0]
-
-
-def test_safety_a_band_copy_does_not_invent_a_weight_goal():
-    """安全覆盖进A带的用户未必想减重，不能套用「您希望尽快看到体重变化」。"""
-
-    core_conclusions: dict[str, object] = {}
-    goal_response: dict[str, object] = {}
-    shared = {"weight_band": "A带｜修复塑形", "band_override_by_safety": True}
-
-    _apply_a_band_user_visible_contract(shared, core_conclusions, goal_response)
-
-    assert "希望尽快看到体重" not in goal_response["user_goal"]
-    assert "希望尽快看到体重" not in goal_response["content"]
-    assert "稳妥恢复" in goal_response["judgement"]
-    assert "班主任" in goal_response["conditions"]
-
-    # 空间不足进A带的用户保持原有话术。
-    core_conclusions, goal_response = {}, {}
-    _apply_a_band_user_visible_contract(
-        {"weight_band": "A带｜修复塑形"}, core_conclusions, goal_response
-    )
-    assert goal_response["user_goal"] == "希望尽快看到体重和体态变化"
+    # 分带依据只讲可管理空间，安全条件不参与带位。
+    assert "可管理空间" in shared["band_basis"][0]
 
 
 class _StubAI:
@@ -1019,8 +998,8 @@ async def test_extract_safety_factors_parses_model_output():
     ai = _StubAI(
         json.dumps(
             {
-                "safety_band_override": True,
-                "safety_band_override_reasons": ["问卷填写当前处于哺乳期"],
+                "safety_review_required": True,
+                "safety_review_reasons": ["问卷填写当前处于哺乳期"],
                 "muscle_insufficiency": False,
                 "disease_or_medication_limit": True,
                 "recovery_risk": False,
@@ -1036,53 +1015,15 @@ async def test_extract_safety_factors_parses_model_output():
     )
 
     assert ai.scenarios == ["intake_safety_factors"]
-    assert factors["safety_band_override"] is True
-    assert factors["safety_band_override_reasons"] == ["问卷填写当前处于哺乳期"]
+    assert factors["safety_review_required"] is True
+    assert factors["safety_review_reasons"] == ["问卷填写当前处于哺乳期"]
     assert factors["disease_or_medication_limit"] is True
     assert factors["doctor_specified_lower_weight_kg"] == 58.0
 
 
 @pytest.mark.asyncio
-async def test_case_level_high_risk_forces_override_even_if_questionnaire_is_clean():
-    """风险等级由风控在全过程判定；重新生成文档时问卷没变但等级可能已升级。"""
-
-    ai = _StubAI(json.dumps({"safety_band_override": False}, ensure_ascii=False))
-
-    factors = await _extract_safety_factors(
-        ai=ai,
-        service_case=SimpleNamespace(id=1, risk_level="high"),
-        readable_answers="- 健康情况: 无",
-    )
-
-    assert factors["safety_band_override"] is True
-    assert "服务单已标记持续健康高风险" in factors["safety_band_override_reasons"]
-
-
-@pytest.mark.asyncio
-async def test_case_risk_override_does_not_erase_questionnaire_reasons():
-    ai = _StubAI(
-        json.dumps(
-            {
-                "safety_band_override": True,
-                "safety_band_override_reasons": ["问卷填写当前处于哺乳期"],
-            },
-            ensure_ascii=False,
-        )
-    )
-
-    factors = await _extract_safety_factors(
-        ai=ai,
-        service_case=SimpleNamespace(id=1, risk_level="high"),
-        readable_answers="- 健康情况: 哺乳期",
-    )
-
-    assert factors["safety_band_override_reasons"][0] == "问卷填写当前处于哺乳期"
-    assert "服务单已标记持续健康高风险" in factors["safety_band_override_reasons"]
-
-
-@pytest.mark.asyncio
 async def test_extract_safety_factors_does_not_block_intake_on_failure():
-    """抽取挂掉不能挡住交付：退回不上调、不改带，等同历史行为。"""
+    """抽取挂掉不能挡住交付：退回不上调、不标复核，等同历史行为。"""
 
     ai = _StubAI(RuntimeError("model timeout"))
 
@@ -1090,16 +1031,16 @@ async def test_extract_safety_factors_does_not_block_intake_on_failure():
         ai=ai, service_case=SimpleNamespace(id=1, risk_level=None), readable_answers="- 健康情况: 无"
     )
 
-    assert factors["safety_band_override"] is False
+    assert factors["safety_review_required"] is False
     assert factors["doctor_specified_lower_weight_kg"] is None
 
 
 def test_safety_factors_normalize_to_no_adjustment_on_garbage():
     """抽取失败或字段乱填时退回不上调、不改带，而不是靠猜把人推进A带。"""
 
-    for payload in (None, {}, "not-json", {"safety_band_override": "maybe"}):
+    for payload in (None, {}, "not-json", {"safety_review_required": "maybe"}):
         factors = _normalize_safety_factors(payload)
-        assert factors["safety_band_override"] is False
+        assert factors["safety_review_required"] is False
         assert factors["muscle_insufficiency"] is False
         assert factors["doctor_specified_lower_weight_kg"] is None
 
@@ -1669,10 +1610,10 @@ async def test_questionnaire_high_risk_forces_document_review_marker(
     cai_haoran_answers,
     wait_background,
 ):
-    """孕期直接进A带且强制复核；即使文档模型返回 manual_review=false 也必须点亮标记。
+    """孕期仍正常计算A-D；即使文档模型返回 manual_review=false，服务单高风险也必须点亮复核标记。
 
-    这条同时端到端覆盖了服务单风险兜底：mock 的安全审阅员没识别出孕期（返回默认
-    响应），带位仍被风控判定的 high 风险抬进 A 带。
+    这条同时覆盖了两条复核来源的分工：mock 的安全审阅员没识别出孕期
+    （safety_review_required 为 false），标记仍由风控判定的 high 风险点亮。
     """
 
     mock_ai._responses = {
@@ -1703,9 +1644,10 @@ async def test_questionnaire_high_risk_forces_document_review_marker(
         select(UserProfile).where(UserProfile.service_case_id == case["id"])
     )
     assert profile is not None
-    # 安全条件优先于斤数目标：孕期用户不再按可管理空间拿 B 带的减重目标。
-    assert profile.profile_json["management_band"] == "A带｜修复塑形"
-    assert profile.profile_json["band_override_by_safety"] is True
+    # 安全条件不改带位：孕期用户照常按可管理空间拿 B 带。
+    assert profile.profile_json["management_band"] == "B带｜轻盈启动"
+    # 问卷抽取这一路没识别出来，复核标记由服务单风险等级点亮。
+    assert profile.profile_json["safety_review_required"] is False
     assert profile.profile_json["manual_review_required"] is True
     assert profile.profile_json["safety_status"] == "manual_review"
 

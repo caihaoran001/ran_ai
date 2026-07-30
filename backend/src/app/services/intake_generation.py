@@ -59,8 +59,8 @@ BAND_CALCULATION_FIELDS = (
     "protected_lower_uplift_bmi",
     "protected_lower_uplift_reasons",
     "safe_reduction_room_kg",
-    "band_override_by_safety",
-    "safety_band_override_reasons",
+    "safety_review_required",
+    "safety_review_reasons",
 )
 
 # 内部运营标签：只允许留在 shared_analysis / profile_json 的内部字段和后台界面里。
@@ -118,12 +118,15 @@ def _apply_deterministic_band(
         shared["safety_status"] = "manual_review"
         shared["provisional_band"] = True
 
-    # 客户规范是"优先进入A带**或**医疗复核"，实践上两者都要：带位保证不给减重数字，
-    # 复核标记保证有人真的看过。只做前者会让红风险用户悄悄走完自动流程。
-    if facts.get("band_override_by_safety"):
+    # 问卷暴露的安全条件（红风险、孕哺、青少年等）不改带位——A-D 带始终由安全减重
+    # 空间的数值边界决定，风险已经通过上调保护性下限折算进 safe_room。它们在这里
+    # 强制人工复核：文档照常按带位生成，但会被扣住不自动发送，由运营确认后再发。
+    # 这比 _force_high_risk_manual_review 更早生效：风控可能还没把服务单判成高风险，
+    # 问卷里已经写明了孕期或术后。
+    if facts.get("safety_review_required"):
         reasons = _clean_list(shared.get("manual_review_reasons"))
-        for reason in _clean_list(facts.get("safety_band_override_reasons")) or [
-            "问卷出现优先于斤数目标的安全条件"
+        for reason in _clean_list(facts.get("safety_review_reasons")) or [
+            "问卷出现需要人工确认的安全条件"
         ]:
             if reason not in reasons:
                 reasons.append(reason)
@@ -139,15 +142,6 @@ def _deterministic_band_basis(
     baseline = str(facts.get("baseline_weight_kg") or "").strip()
     protected = str(facts.get("protected_lower_weight_kg") or "").strip()
     room = str(facts.get("safe_reduction_room_kg") or "").strip()
-    # 安全条件覆盖优先于数值分带，依据也要先讲这一条：否则运营看到 safe_room 很大
-    # 却判 A 带，会以为算错了。
-    override_reasons = _clean_list(facts.get("safety_band_override_reasons"))
-    if facts.get("band_override_by_safety"):
-        detail = "；".join(override_reasons) if override_reasons else "问卷出现安全优先条件"
-        return [
-            f"存在优先于斤数目标的安全条件（{detail}），按规范直接进入修复塑形带",
-            "安全条件优先于安全减重空间的数值边界，本带位不由可管理空间决定",
-        ]
     if any(value in {"", "暂无数据"} for value in (baseline, protected, room)):
         return ["缺少可信身高或体重，暂不能计算安全减重空间"]
     boundaries = {
@@ -249,12 +243,12 @@ def _scrub_internal_text(text: str) -> str:
 
 
 SAFETY_FACTOR_SCHEMA = {
-    "safety_band_override": "布尔值。命中客户规范的红色风险或安全优先条件时为 true："
+    "safety_review_required": "布尔值。命中客户规范的红色风险或安全条件时为 true："
     "心脏支架/冠心病/心律失常、未控制的高血压、明显贫血或异常血常规、甲状腺全切或功能异常、"
     "肿瘤或胃肠术后、备孕/怀孕/哺乳、严重低血糖、青少年（未成年）、进食障碍风险、"
     "低体重仍要求快速减重、胸痛/呼吸困难/黑便/便血/持续呕吐等红旗症状。"
-    "这些条件优先于任何斤数目标。仅仅是资料缺失、数据冲突或执行困难不算，一律 false",
-    "safety_band_override_reasons": ["触发上一条的1-3条原因，引用问卷原文事实，只给运营看"],
+    "它只用于强制人工复核，不改变管理带。仅仅是资料缺失、数据冲突或执行困难不算，一律 false",
+    "safety_review_reasons": ["触发上一条的1-3条原因，引用问卷原文事实，只给运营看"],
     "muscle_insufficiency": "布尔值。有可靠体脂率或肌肉数据、且显示肌肉量明显不足时为 true。"
     "没有体脂/肌肉数据时一律 false，不得凭体重或BMI推断",
     "disease_or_medication_limit": "布尔值。存在重大疾病或长期用药、需要更保守的体重下限时为 true",
@@ -275,8 +269,8 @@ def _normalize_safety_factors(payload: object) -> dict[str, object]:
 
     data = payload if isinstance(payload, dict) else {}
     factors: dict[str, object] = {
-        "safety_band_override": _boolean_value(data.get("safety_band_override")),
-        "safety_band_override_reasons": _clean_list(data.get("safety_band_override_reasons"))[:3],
+        "safety_review_required": _boolean_value(data.get("safety_review_required")),
+        "safety_review_reasons": _clean_list(data.get("safety_review_reasons"))[:3],
         "evidence_notes": _clean_list(data.get("evidence_notes"))[:4],
     }
     for key in ("muscle_insufficiency", "disease_or_medication_limit", "recovery_risk"):
@@ -337,29 +331,6 @@ async def _extract_safety_factors(
             service_case.id,
         )
         factors = _normalize_safety_factors(None)
-    return _merge_case_risk_override(factors, service_case)
-
-
-def _merge_case_risk_override(
-    factors: dict[str, object],
-    service_case: ServiceCase,
-) -> dict[str, object]:
-    """服务单已判持续高风险时直接覆盖带位，不依赖问卷这一次抽得准不准。
-
-    风险等级是风控 LLM 在聊天和问卷全过程中判定的，比单次问卷抽取看得更全；
-    重新生成文档时问卷内容不变、风险等级却可能已经升级，只看问卷会漏掉这些人。
-    单向生效：只会把 override 从 false 抬成 true，不会因为服务单还没判高风险
-    就把问卷已经识别出的安全条件抹掉。
-    """
-
-    if not is_high_risk(service_case):
-        return factors
-    reasons = _clean_list(factors.get("safety_band_override_reasons"))
-    reason = "服务单已标记持续健康高风险"
-    if reason not in reasons:
-        reasons.append(reason)
-    factors["safety_band_override"] = True
-    factors["safety_band_override_reasons"] = reasons[:3]
     return factors
 
 
@@ -1183,33 +1154,9 @@ def _apply_a_band_user_visible_contract(
     core_conclusions: dict[str, object],
     goal_response: dict[str, object],
 ) -> None:
-    """A带正文只给定性结论，不让模型复述用户斤数或内部安全空间数字。
-
-    A带有两种来源，用户读到的话必须分开：可管理空间不足（用户通常确实想减，
-    只是当前不适合追数字）和安全条件覆盖（孕哺、术后、青少年等，这类用户未必
-    以减重为诉求，套用"您希望尽快看到体重变化"就是在替他脑补目标）。
-    """
+    """A带正文只给定性结论，不让模型复述用户斤数或内部安全空间数字。"""
 
     if _text_from_payload(shared.get("weight_band")) != "A带｜修复塑形":
-        return
-    if shared.get("band_override_by_safety"):
-        core_conclusions["band_explanation"] = (
-            "结合您当前的身体情况，这28天以稳妥恢复和状态管理为主，不设置体重下降指标。"
-        )
-        goal_response.update(
-            {
-                "goal_type": "general",
-                "judgement_type": "needs_adjustment",
-                "content": (
-                    "结合您在问卷中说明的身体情况，这28天不适合设置减重数字目标，"
-                    "更适合先把三餐节律、睡眠、精力和身体舒适度稳住，并按医生的建议执行。"
-                    "当前不设置减重挑战目标；请先与班主任确认您的具体情况，再决定后续是否调整方向。"
-                ),
-                "user_goal": "希望在身体允许的前提下改善状态",
-                "judgement": "当前阶段以稳妥恢复和状态管理为主，不设置减重数字目标。",
-                "conditions": "请先与班主任确认您的具体身体情况，必要时先完成医生评估，再决定后续方向。",
-            }
-        )
         return
     core_conclusions["band_explanation"] = (
         "当前更适合修复塑形，不设置体重下降指标，重点观察围度、体态和身体状态变化。"
