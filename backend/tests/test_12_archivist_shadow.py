@@ -1,7 +1,7 @@
 """档案官成效/画像收编——直写真表健康自测（决策 A：档案官独家抽取）。
 
-验证：档案官 extract 单轮一次性抽打卡+成效+画像；commit 里打卡照常 live upsert、
-成效/画像经 apply_archived_outcome **直接写真表**——outcome_events(source=archivist、
+验证：档案官 extract 单轮一次性抽成效+画像；成效/画像经 apply_archived_outcome
+**直接写真表**——outcome_events(source=archivist、
 message_id=anchor、当前里程碑)、user_state_profiles 出现对应 domain、outcome_stage_states
 更新；影子对账已删除，archivist_shadow_outcomes 不再写入。无可上报内容时零写入。
 """
@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -20,7 +19,6 @@ from app.models.archivist_extract_trace import ArchivistExtractTrace
 from app.models.archivist_progress import ArchivistProgress
 from app.models.archivist_shadow_outcome import ArchivistShadowOutcome
 from app.models.checkin import Checkin
-from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.knowledge_draft import KnowledgeDraft
 from app.models.message import (
     Message,
@@ -32,7 +30,6 @@ from app.models.message import (
 from app.models.outcome import OutcomeEvent, OutcomeStageState
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
-from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_state_profile import UserStateProfile
 from app.services.archivist.graph import run_archivist
 from app.services.profile_memory_service import load_profile_memory_context
@@ -58,43 +55,9 @@ class FakeToolCallingModel:
 
 
 @pytest.mark.asyncio
-async def test_archivist_maps_normal_chat_to_delivered_checklist_item(db_session):
-    """不是回复机器人提醒的普通聊天，也必须进入执行单对应题目并恢复追问资格。"""
+async def test_archivist_does_not_bind_or_write_report_checkin(db_session):
+    """历史 report_checkin 即使被模型误发，也只留未知工具痕迹，不再写打卡。"""
     case, msgs, progress = await _setup_case_with_messages(db_session)
-    document = UserDocument(
-        service_case_id=case.id,
-        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
-        title="28天执行标准与打卡要求",
-        content_md="test",
-        content_json={
-            "blocks": [
-                {"key": "daily_checkin", "items": [
-                    "早C/午B/晚A是否全部完成",
-                    "今天是否至少吃到2拳蔬菜",
-                    "今天是否完成计划内快走",
-                    "睡眠是否按计划收口",
-                    "情绪稳定度评分",
-                ]}
-            ]
-        },
-        status=DocumentStatus.SENT,
-        sent_at=datetime.now(timezone.utc),
-    )
-    db_session.add(document)
-    normal_chat = Message(
-        service_case_id=case.id,
-        group_id=case.group_id,
-        direction=MessageDirection.INBOUND,
-        sender_type=MessageSenderType.USER,
-        message_type="text",
-        content="今天蔬菜吃够两拳了。",
-        purpose=MessagePurpose.CHAT,
-        status=MessageStatus.RECEIVED,
-    )
-    db_session.add(normal_chat)
-    await db_session.flush()
-    target_date = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
-    item_id = f"document:{document.id}:2"
     fake = FakeToolCallingModel([
         AIMessage(
             content="",
@@ -102,17 +65,10 @@ async def test_archivist_maps_normal_chat_to_delivered_checklist_item(db_session
                 {
                     "name": "report_checkin",
                     "args": {
-                        "target_date": target_date,
-                        "checklist_answers": [
-                            {
-                                "item_id": item_id,
-                                "target_date": target_date,
-                                "answer": "蔬菜吃够两拳",
-                                "evidence_message_id": str(normal_chat.id),
-                            }
-                        ]
+                        "target_date": "2026-07-29",
+                        "weight": "168斤",
                     },
-                    "id": "normal-checklist-answer",
+                    "id": "retired-checkin-tool",
                 }
             ],
         )
@@ -122,27 +78,16 @@ async def test_archivist_maps_normal_chat_to_delivered_checklist_item(db_session
     await db_session.flush()
 
     checkin = await db_session.scalar(
-        select(Checkin).where(
-            Checkin.service_case_id == case.id,
-            Checkin.checkin_date == datetime.fromisoformat(target_date).date(),
-        )
+        select(Checkin).where(Checkin.service_case_id == case.id)
     )
-    assert checkin is not None
-    assert checkin.parsed_json["custom_checkin"][item_id]["answer"] == "蔬菜吃够两拳"
-    assert checkin.parsed_json["custom_checkin"][item_id]["question"] == "今天是否至少吃到2拳蔬菜"
-    assert checkin.parsed_json["custom_checkin"][item_id]["source"] == "chat"
-    assert "<daily_checklist_context>" in fake.calls[0][1].content
+    assert checkin is None
+    assert "report_checkin" not in {tool.name for tool in fake.bound_tools}
+    assert "<daily_checklist_context>" not in fake.calls[0][1].content
 
 
 async def _setup_case_with_messages(db_session):
-    # Shared developer test DB can lag migration head; production applies this table.
-    connection = await db_session.connection()
-    await connection.run_sync(
-        lambda sync_connection: CheckinFollowupCycle.__table__.create(
-            sync_connection, checkfirst=True
-        )
-    )
     # 抽取观测留痕表（R1）：commit 节点凡有 emit/丢弃就写，故所有档案官测试都需它存在。
+    connection = await db_session.connection()
     await connection.run_sync(
         lambda sync_connection: ArchivistExtractTrace.__table__.create(
             sync_connection, checkfirst=True
@@ -187,22 +132,11 @@ async def _setup_case_with_messages(db_session):
 @pytest.mark.asyncio
 async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
     case, msgs, progress = await _setup_case_with_messages(db_session)
-    target_date = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
-
-    # 假模型：两条消息同一自然日 → 一次 ainvoke，emit 打卡+成效+画像 report。
+    # 假模型：两条消息同一自然日 → 一次 ainvoke，emit 成效+画像 report。
     fake = FakeToolCallingModel([
         AIMessage(
             content="",
             tool_calls=[
-                {
-                    "name": "report_checkin",
-                    "args": {
-                        "target_date": target_date,
-                        "weight": "168斤",
-                        "product_schedule": {"morning_c": "已喝"},
-                    },
-                    "id": "c1",
-                },
                 {
                     "name": "report_outcome",  # day7 白名单内
                     "args": {"field_key": "weight_change", "event_type": "improved", "value": "瘦了2斤", "evidence_text": "这周瘦了2斤", "confidence": 0.9},
@@ -246,15 +180,9 @@ async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
     # 当前状态是同一次 extract 调用里的新 report-only 工具，不另起一次 LLM。
     assert len(fake.calls) == 1
     assert "report_state_fact" in {tool.name for tool in fake.bound_tools}
+    assert "report_checkin" not in {tool.name for tool in fake.bound_tools}
 
-    # 1) 打卡照常 live upsert（Agent report_checkin 落库）。
-    checkin = await db_session.scalar(
-        select(Checkin).where(Checkin.service_case_id == case.id, Checkin.deleted_at.is_(None))
-    )
-    assert checkin is not None
-    assert (checkin.parsed_json or {}).get("weight") == "168斤"
-
-    # 2) 成效直写真表：两条合法事件落库，source=archivist、message_id=anchor(最后一条)、里程碑 day7；
+    # 1) 成效直写真表：两条合法事件落库，source=archivist、message_id=anchor(最后一条)、里程碑 day7；
     #    非白名单 mood_change 被丢弃。
     events = list(await db_session.scalars(
         select(OutcomeEvent).where(OutcomeEvent.service_case_id == case.id)
@@ -265,7 +193,7 @@ async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
     assert all(e.message_id == msgs[-1].id for e in events)
     assert result.outcome_written == 2
 
-    # 3) 画像投影：user_state_profiles 出现成效 domain（weight_change→outcome_changes）+ 画像信号 domain。
+    # 2) 画像投影：user_state_profiles 出现成效 domain（weight_change→outcome_changes）+ 画像信号 domain。
     profile = await db_session.scalar(
         select(UserStateProfile).where(UserStateProfile.service_case_id == case.id)
     )
@@ -743,43 +671,8 @@ async def test_archivist_general_correction_never_creates_faq_draft(db_session):
 
 @pytest.mark.asyncio
 async def test_archivist_extract_trace_records_kept_and_dropped(db_session):
-    """R1 观测性：抽取留痕记 LLM 原始 emit、存活项、越界丢弃项及原因。"""
+    """R1 观测性：退役打卡工具被丢弃，其他合法档案产物照常存活。"""
     case, msgs, progress = await _setup_case_with_messages(db_session)
-    document = UserDocument(
-        service_case_id=case.id,
-        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
-        title="28天执行标准与打卡要求",
-        content_md="test",
-        content_json={
-            "blocks": [
-                {"key": "daily_checkin", "items": [
-                    "早C/午B/晚A是否全部完成",
-                    "今天是否至少吃到2拳蔬菜",
-                    "今天是否完成计划内快走",
-                    "睡眠是否按计划收口",
-                    "情绪稳定度评分",
-                ]}
-            ]
-        },
-        status=DocumentStatus.SENT,
-        sent_at=datetime.now(timezone.utc),
-    )
-    db_session.add(document)
-    normal_chat = Message(
-        service_case_id=case.id,
-        group_id=case.group_id,
-        direction=MessageDirection.INBOUND,
-        sender_type=MessageSenderType.USER,
-        message_type="text",
-        content="今天蔬菜吃够两拳了。",
-        purpose=MessagePurpose.CHAT,
-        status=MessageStatus.RECEIVED,
-    )
-    db_session.add(normal_chat)
-    await db_session.flush()
-    target_date = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
-    kept_id = f"document:{document.id}:2"       # 在已发执行单白名单内 → 存活
-    dropped_id = f"document:{document.id}:99"   # 越界 → 丢弃
     fake = FakeToolCallingModel([
         AIMessage(
             content="",
@@ -787,24 +680,21 @@ async def test_archivist_extract_trace_records_kept_and_dropped(db_session):
                 {
                     "name": "report_checkin",
                     "args": {
-                        "target_date": target_date,
-                        "checklist_answers": [
-                            {
-                                "item_id": kept_id,
-                                "target_date": target_date,
-                                "answer": "蔬菜吃够两拳",
-                                "evidence_message_id": str(normal_chat.id),
-                            },
-                            {
-                                "item_id": dropped_id,
-                                "target_date": target_date,
-                                "answer": "越界题目",
-                                "evidence_message_id": str(normal_chat.id),
-                            },
-                        ]
+                        "target_date": "2026-07-29",
+                        "weight": "168斤",
                     },
-                    "id": "checklist-with-oob",
-                }
+                    "id": "retired-checkin-tool",
+                },
+                {
+                    "name": "report_state_fact",
+                    "args": {
+                        "state_type": "current_obstacle",
+                        "value": "晚上经常忘记执行",
+                        "evidence_text": "晚上总忘了",
+                        "confidence": 0.86,
+                    },
+                    "id": "valid-state",
+                },
             ],
         )
     ])
@@ -822,21 +712,15 @@ async def test_archivist_extract_trace_records_kept_and_dropped(db_session):
     assert len(traces) == 1
     trace = traces[0]
     # emitted：LLM 原始 tool_call 原样落库（含被丢弃那条）。
-    assert len(trace.emitted_json) == 1
+    assert len(trace.emitted_json) == 2
     assert trace.emitted_json[0]["name"] == "report_checkin"
-    emitted_ids = {
-        a.get("item_id")
-        for a in trace.emitted_json[0]["args"]["checklist_answers"]
-    }
-    assert emitted_ids == {kept_id, dropped_id}
-    # kept：命中白名单的项存活。
-    assert kept_id in trace.kept_json["checklist_item_ids"]
-    assert dropped_id not in trace.kept_json["checklist_item_ids"]
-    # dropped：越界项被记，且带精确原因。
-    dropped = [d for d in trace.dropped_json if d.get("item_id") == dropped_id]
-    assert len(dropped) == 1
-    assert dropped[0]["reason"] == "checklist_not_in_whitelist"
-    assert dropped[0]["bucket"] == "checklist"
+    assert trace.kept_json["state"] == 1
+    dropped = [
+        item
+        for item in trace.dropped_json
+        if item.get("bucket") == "report_checkin"
+    ]
+    assert dropped == [{"bucket": "report_checkin", "reason": "unknown_tool"}]
 
 
 @pytest.mark.asyncio

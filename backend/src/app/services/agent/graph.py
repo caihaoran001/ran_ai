@@ -21,7 +21,10 @@ from app.services.agent.checkpoint import (
     get_agent_checkpointer,
 )
 from app.services.agent_observability import record_model_usage, record_tool_calls
-from app.services.agent.context_builder import build_agent_memory_context
+from app.services.agent.context_builder import (
+    build_agent_checkin_context,
+    build_agent_memory_context,
+)
 from app.services.agent.model import create_agent_chat_model
 from app.services.agent.prompts import AGENT_SYSTEM_PROMPT, build_agent_user_prompt
 from app.services.agent.skill_registry import SkillRegistry
@@ -156,6 +159,7 @@ class RanrenAgentGraph:
         run_config: dict[str, Any] | None = None,
     ) -> AgentReplyResult:
         memory_context = await self._build_memory_context()
+        checkin_context = await self._build_checkin_context()
         effective_knowledge_query = (
             user_query if knowledge_query is None else knowledge_query.strip()
         )
@@ -174,6 +178,7 @@ class RanrenAgentGraph:
                     current_time_context=_current_time_context(),
                     memory_context=memory_context,
                     knowledge_context=knowledge_context,
+                    checkin_context=checkin_context,
                     bot_nickname=bot_nickname,
                 )
             ),
@@ -235,6 +240,22 @@ class RanrenAgentGraph:
         except Exception:
             logger.exception("Failed to build agent memory context service_case_id=%s", self.context.service_case_id)
             return "暂无可用用户背景。"
+
+    async def _build_checkin_context(self) -> str:
+        if self.context.run_kind != "interactive":
+            return "本轮是系统定时任务，不处理用户打卡。"
+        try:
+            async with db_session_module.SessionLocal() as session:
+                return await build_agent_checkin_context(
+                    session,
+                    service_case_id=self.context.service_case_id,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to build agent checkin context service_case_id=%s",
+                self.context.service_case_id,
+            )
+            return "当前没有可用的五项打卡清单。"
 
     async def _build_knowledge_context(self, query: str) -> tuple[str, int | None]:
         """每轮按意图识别改写后的问题预检索知识库(FAQ/markdown)注入提示词。

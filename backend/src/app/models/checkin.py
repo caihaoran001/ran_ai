@@ -29,7 +29,7 @@ class Checkin(TimestampMixin, Base):
     raw_message_id: Mapped[str | None] = mapped_column(String(128))
     parsed_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     # 软删除：配合 (service_case_id, checkin_date) WHERE deleted_at IS NULL 条件唯一索引，
-    # 支撑档案官"按天 UPSERT"合并同一天的多次打卡投影。
+    # 支撑打卡记录服务"按天 UPSERT"合并同一天的多次打卡事实。
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     service_case: Mapped[ServiceCase] = relationship(back_populates="checkins")

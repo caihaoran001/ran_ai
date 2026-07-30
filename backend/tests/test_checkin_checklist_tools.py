@@ -21,7 +21,7 @@ from app.services.agent.state import AgentRunContext
 from app.services.agent.tools.checkin_checklist_tools import (
     build_checkin_checklist_tools,
 )
-from app.services.archivist.followup import compose_document_checklist_followup
+from app.services.checkin_followup import compose_document_checklist_followup
 from app.services.checkin_checklists import (
     get_effective_daily_checklist,
     normalize_manual_checklist_items,

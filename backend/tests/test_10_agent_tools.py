@@ -14,18 +14,23 @@ from app.core.config import get_settings
 from app.models.archivist_case_memory import ArchivistCaseMemory
 from app.models.checkin import Checkin
 from app.models.checkin_followup_preference import CheckinFollowupPreference
+from app.models.checkin_message_receipt import CheckinMessageReceipt
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
-from app.services.agent.context_builder import build_agent_memory_context
+from app.services.agent.context_builder import (
+    build_agent_checkin_context,
+    build_agent_memory_context,
+)
 from app.services.agent.graph import AgentReplyResult, AgentRunContext, RanrenAgentGraph
 from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.tools.knowledge_tools import SearchSuccessCaseArgs, build_knowledge_tools
 from app.services.agent.tools.service_case_tools import build_service_case_tools
 from app.services.agent.tools.followup_preference_tools import build_followup_preference_tools
+from app.services.agent.tools.checkin_recording_tools import build_checkin_recording_tools
 from app.services.agent.tools.web_search_tools import _normalize_current_query_year, build_web_search_tools
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_enabled
@@ -126,6 +131,25 @@ def test_knowledge_query_analysis_preserves_search_skip_and_fallback_states():
     assert _knowledge_query_from_analysis({"knowledge_query": ["非法类型"]}) is None
 
 
+def test_intervention_normalization_drops_retired_checkin_archive_signal():
+    normalized = normalize_insight(
+        {
+            "requires_human_intervention": False,
+            "risk_flags": [],
+            "archive_plan": {
+                "worthy": True,
+                "kinds": ["checkin"],
+                "reason": "旧契约打卡信号",
+            },
+        },
+        source="chat_message",
+        content="午B喝了",
+    )
+
+    assert normalized["archive_plan"]["worthy"] is False
+    assert normalized["archive_plan"]["kinds"] == []
+
+
 def test_knowledge_observation_records_decision_hits_and_skipped_product_terms():
     """三态决策 + 召回条数 + 跳过时的产品词探针，都要落到可观测记录里。"""
     searched = _knowledge_observation(
@@ -200,6 +224,276 @@ async def _inbound(db_session, service_case: ServiceCase, content: str = "我现
     db_session.add(inbound)
     await db_session.flush()
     return inbound
+
+
+@pytest.mark.asyncio
+async def test_record_checkin_tool_writes_sparse_cross_midnight_backfill_and_replays(
+    db_session,
+):
+    service_case = await _case(db_session)
+    inbound = await _inbound(
+        db_session,
+        service_case,
+        "现在是7月30日凌晨1:50，补一下7月29日：早C喝了，饭后困5分。",
+    )
+    tool = build_checkin_recording_tools(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=inbound.id,
+            channel="qiwe",
+            group_id=service_case.group_id,
+        ),
+        settings=get_settings(),
+    )[0]
+    args = {
+        "target_date": "2026-07-29",
+        "product_schedule": {"morning_c": "已完成"},
+        "checklist_answers": [
+            {
+                "item_id": "default:v1:5",
+                "answer": "饭后困5分",
+                "evidence_type": "text",
+            }
+        ],
+    }
+
+    first = await tool.ainvoke(args)
+    replay = await tool.ainvoke(
+        {
+            **args,
+            "product_schedule": {"morning_c": "未完成"},
+        }
+    )
+
+    assert first["ok"] is True
+    assert first["target_date"] == "2026-07-29"
+    assert first["idempotent_replay"] is False
+    assert first["written_fields"] == ["product_schedule.morning_c"]
+    assert first["written_checklist_item_ids"] == ["default:v1:5"]
+    assert replay["ok"] is True
+    assert replay["idempotent_replay"] is True
+    assert replay["receipt_id"] == first["receipt_id"]
+
+    row = await db_session.scalar(
+        select(Checkin).where(
+            Checkin.service_case_id == service_case.id,
+            Checkin.checkin_date == date(2026, 7, 29),
+        )
+    )
+    assert row is not None
+    assert row.parsed_json["product_schedule"]["morning_c"] == "已完成"
+    assert row.parsed_json["custom_checkin"]["default:v1:5"]["answer"] == "饭后困5分"
+    receipts = list(
+        await db_session.scalars(
+            select(CheckinMessageReceipt).where(
+                CheckinMessageReceipt.service_case_id == service_case.id
+            )
+        )
+    )
+    assert len(receipts) == 1
+
+
+@pytest.mark.asyncio
+async def test_record_checkin_tool_merges_different_sparse_messages_same_day(
+    db_session,
+):
+    service_case = await _case(db_session)
+    first_source = await _inbound(db_session, service_case, "早C喝了")
+    first_tool = build_checkin_recording_tools(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=first_source.id,
+            channel="qiwe",
+        ),
+        settings=get_settings(),
+    )[0]
+    await first_tool.ainvoke(
+        {
+            "target_date": "2026-07-29",
+            "product_schedule": {"morning_c": "已完成"},
+        }
+    )
+
+    second_source = await _inbound(db_session, service_case, "午B也喝了")
+    second_tool = build_checkin_recording_tools(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=second_source.id,
+            channel="qiwe",
+        ),
+        settings=get_settings(),
+    )[0]
+    second = await second_tool.ainvoke(
+        {
+            "target_date": "2026-07-29",
+            "product_schedule": {"noon_b": "已完成"},
+        }
+    )
+
+    assert second["ok"] is True
+    row = await db_session.scalar(
+        select(Checkin).where(
+            Checkin.service_case_id == service_case.id,
+            Checkin.checkin_date == date(2026, 7, 29),
+        )
+    )
+    assert row is not None
+    assert row.parsed_json["product_schedule"] == {
+        "morning_c": "已完成",
+        "noon_b": "已完成",
+    }
+    receipts = list(
+        await db_session.scalars(
+            select(CheckinMessageReceipt).where(
+                CheckinMessageReceipt.service_case_id == service_case.id
+            )
+        )
+    )
+    assert len(receipts) == 2
+
+
+@pytest.mark.asyncio
+async def test_record_checkin_tool_keeps_image_evidence_for_single_item(
+    db_session,
+):
+    service_case = await _case(db_session)
+    inbound = await _inbound(
+        db_session,
+        service_case,
+        "【图片解析】早餐桌上有一杯咖啡和一盘蔬菜。",
+    )
+    tool = build_checkin_recording_tools(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=inbound.id,
+            channel="qiwe",
+            group_id=service_case.group_id,
+        ),
+        settings=get_settings(),
+    )[0]
+
+    result = await tool.ainvoke(
+        {
+            "target_date": "2026-07-29",
+            "product_schedule": {"morning_c": "已完成"},
+            "diet": "早餐有蔬菜",
+            "checklist_answers": [
+                {
+                    "item_id": "default:v1:2",
+                    "answer": "早餐有蔬菜",
+                    "evidence_type": "image",
+                }
+            ],
+        }
+    )
+
+    assert result["ok"] is True
+    row = await db_session.scalar(
+        select(Checkin).where(
+            Checkin.service_case_id == service_case.id,
+            Checkin.checkin_date == date(2026, 7, 29),
+        )
+    )
+    assert row is not None
+    assert row.parsed_json["product_schedule"]["morning_c"] == "已完成"
+    assert row.parsed_json["diet"] == "早餐有蔬菜"
+    assert row.parsed_json["custom_checkin"]["default:v1:2"]["source"] == "chat_image"
+
+
+@pytest.mark.asyncio
+async def test_record_checkin_tool_rejects_invalid_calendar_date_without_write(
+    db_session,
+):
+    service_case = await _case(db_session)
+    inbound = await _inbound(db_session, service_case, "7月289日打卡")
+    tool = build_checkin_recording_tools(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=inbound.id,
+            channel="qiwe",
+            group_id=service_case.group_id,
+        ),
+        settings=get_settings(),
+    )[0]
+
+    result = await tool.ainvoke(
+        {
+            "target_date": "2026-02-30",
+            "product_schedule": {"morning_c": "已完成"},
+        }
+    )
+
+    assert result["ok"] is False
+    assert "有效的自然日" in result["error"]
+    assert await db_session.scalar(
+        select(Checkin).where(Checkin.service_case_id == service_case.id)
+    ) is None
+    assert await db_session.scalar(
+        select(CheckinMessageReceipt).where(
+            CheckinMessageReceipt.service_case_id == service_case.id
+        )
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_agent_records_checkin_before_generating_success_reply(db_session):
+    service_case = await _case(db_session)
+    inbound = await _inbound(db_session, service_case, "午B喝了")
+    model = FakeToolCallingModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "record_checkin",
+                        "args": {
+                            "target_date": "2026-07-29",
+                            "product_schedule": {"noon_b": "已完成"},
+                        },
+                        "id": "call-record-checkin",
+                    }
+                ],
+            ),
+            AIMessage(content="午B已经记到7月29日了。"),
+        ]
+    )
+
+    result = await RanrenAgentGraph(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=inbound.id,
+            channel="qiwe",
+            group_id=service_case.group_id,
+        ),
+        settings=get_settings(),
+        chat_model=model,
+    ).run(user_query=inbound.content, recent_messages=[])
+
+    assert result.reply == "午B已经记到7月29日了。"
+    assert result.tool_trace[0]["name"] == "record_checkin"
+    assert result.tool_trace[0]["ok"] is True
+    assert len(model.calls) == 2
+    assert "idempotent_replay" in model.calls[1][-1].content
+    receipt = await db_session.scalar(
+        select(CheckinMessageReceipt).where(
+            CheckinMessageReceipt.source_message_id == inbound.id
+        )
+    )
+    assert receipt is not None
+
+
+@pytest.mark.asyncio
+async def test_agent_prompt_injects_compact_active_checkin_ids(db_session):
+    service_case = await _case(db_session)
+
+    context = await build_agent_checkin_context(
+        db_session, service_case_id=service_case.id
+    )
+
+    assert "来源：default:v1" in context
+    assert "[default:v1:1]" in context
+    assert "[default:v1:5]" in context
+    assert context.count("\n") == 5
 
 
 @pytest.mark.asyncio

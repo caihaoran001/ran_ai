@@ -1,9 +1,9 @@
 """档案官单轮抽取器使用的 report-only schema。
 
-LLM 读增量后一次返回零到多个 report_* tool_calls（一条消息可同时是打卡+成效+画像）。
+LLM 读增量后一次返回零到多个 report_* tool_calls（一条消息可同时有成效、画像和状态）。
 **关键：这些工具只"上报"、不落库**——
 它们仅承载 LLM 抽出的结构化意图（供 bind_tools 让模型看到 schema），真正的 DB 写
-（按天 UPSERT、成效/画像投影等）全部留在 pipeline 的 commit 阶段确定性代码里。
+（成效/画像投影等）全部留在 pipeline 的 commit 阶段确定性代码里。
 
 因此这里工具函数是 no-op 占位（返回 "ok"）；extract_agent 直接读 AIMessage.tool_calls，
 用下面的 Pydantic 模型校验入参后收集，不依赖 StructuredTool 的执行副作用。
@@ -17,7 +17,6 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 # 工具名（extract_agent 按名分流到 collector 的各个桶）。
-REPORT_CHECKIN = "report_checkin"
 REPORT_OUTCOME = "report_outcome"
 REPORT_PROFILE_FACT = "report_profile_fact"
 REPORT_STATE_FACT = "report_state_fact"
@@ -27,7 +26,6 @@ REPORT_MEMORY = "report_memory"
 REPORT_CASE_CANDIDATE = "report_case_candidate"
 
 # report_* 工具对应 collector 的桶名。
-KIND_CHECKIN = "checkin"
 KIND_OUTCOME = "outcome"
 KIND_PROFILE = "profile"
 KIND_STATE = "state"
@@ -35,49 +33,6 @@ KIND_CORRECTION = "correction"
 KIND_FAQ = "faq"
 KIND_MEMORY = "memory"
 KIND_CASE = "case"
-
-
-class ReportCheckinArgs(BaseModel):
-    """上报当天可结构化的打卡字段；只填用户明确说了的，没提到的留空。"""
-
-    target_date: str = Field(
-        pattern=r"^\d{4}-\d{2}-\d{2}$",
-        description="这条打卡所属的北京时间自然日，必须来自输入里的日期分组（YYYY-MM-DD）",
-    )
-    product_schedule: dict[str, str] | None = Field(
-        default=None,
-        description=(
-            "产品三段依从，子键 morning_c(早C)/noon_b(午B)/night_a(晚A)/summary；"
-            "仅当用户明确说了喝没喝对应产品时填'已喝/未喝'，否则整个留空。"
-        ),
-    )
-    water: str | None = Field(default=None, description="喝水量（保留原话口径，如'3升'）")
-    sleep: str | None = Field(default=None, description="睡眠（时长或作息，如'睡了6小时'）")
-    mood: str | None = Field(default=None, description="情绪/状态")
-    exercise: str | None = Field(default=None, description="运动")
-    weight: str | None = Field(default=None, description="体重（保留原话口径，如'168斤'）")
-    waist: str | None = Field(default=None, description="腰围/围度")
-    diet: str | None = Field(default=None, description="饮食内容（含餐食图描述）")
-    bowel: str | None = Field(default=None, description="排便")
-    hunger: str | None = Field(default=None, description="饥饿感")
-    sensation: str | None = Field(default=None, description="身体感受")
-    discomfort: str | None = Field(default=None, description="不适")
-    tomorrow_focus: str | None = Field(default=None, description="明日重点")
-    followup_answers: list[dict[str, str]] | None = Field(
-        default=None,
-        description=(
-            "仅当追问上下文明确列出了待答 item_id 时填写。每项包含 item_id、cycle_date(YYYY-MM-DD)、"
-            "target_date(YYYY-MM-DD)、answer、evidence_message_id；只能记录用户对该追问的直接回答。"
-        ),
-    )
-    checklist_answers: list[dict[str, str]] | None = Field(
-        default=None,
-        description=(
-            "根据上下文给出的当前每日五项，把用户在普通聊天中明确回答的个性化项上报。"
-            "每项包含 item_id、target_date(YYYY-MM-DD)、answer、evidence_message_id；"
-            "只填上下文中给出的题目，未明确回答不得猜测。"
-        ),
-    )
 
 
 class ReportOutcomeArgs(BaseModel):
@@ -291,7 +246,6 @@ class ReportCaseCandidateArgs(BaseModel):
 
 # 工具名 → (Pydantic 模型, collector 桶名)。extract_agent 用它校验入参并归桶。
 REPORT_SPECS: dict[str, tuple[type[BaseModel], str]] = {
-    REPORT_CHECKIN: (ReportCheckinArgs, KIND_CHECKIN),
     REPORT_OUTCOME: (ReportOutcomeArgs, KIND_OUTCOME),
     REPORT_PROFILE_FACT: (ReportProfileFactArgs, KIND_PROFILE),
     REPORT_STATE_FACT: (ReportStateFactArgs, KIND_STATE),
@@ -310,11 +264,10 @@ def _noop(**_: Any) -> str:
 def build_report_tools(kinds: list[str]) -> list[StructuredTool]:
     """按启用的 kinds 构建 report-only 工具（仅供 bind_tools 让 LLM 看到 schema）。
 
-    kinds 取值：checkin / outcome / profile / state / correction / faq / memory / case。
+    kinds 取值：outcome / profile / state / correction / faq / memory / case。
     """
     tools: list[StructuredTool] = []
     specs = [
-        (REPORT_CHECKIN, KIND_CHECKIN, ReportCheckinArgs, "上报当天可结构化的打卡字段。"),
         (REPORT_OUTCOME, KIND_OUTCOME, ReportOutcomeArgs, "上报一条成效事件（进展/变化）。"),
         (
             REPORT_PROFILE_FACT,
