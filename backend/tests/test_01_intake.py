@@ -269,6 +269,42 @@ def _make_intake_mock_response(
     })
 
 
+def test_intake_prompt_keeps_goal_rules_free_of_contradictions():
+    """三处曾经互相打架的目标规则，必须各有一条明确的优先级说明。
+
+    模型无法自己解决"两条规则都在、没有优先级"的冲突，只能猜；这里逐条锁住裁决口径。
+    """
+
+    prompt = _intake_generation_system_prompt()
+
+    # 1. 人工复核只改发送方式，不降级正文。原先一边说"复核用户不给减重数字"、
+    #    一边说"文档照常按带位生成"，一个用药中的 D 带用户两条都命中。
+    assert "【复核不降级正文】" in prompt
+    assert "manual_review_required=true 只改变发送方式，不改变文件内容" in prompt
+    assert "不要因为标记了复核就把目标改成定性表达、砍掉挑战目标或不给减重数字" in prompt
+    assert "仅仅是 manual_review_required=true 或风险较高不构成理由" in prompt
+    # 旧的降级表述不能回来
+    assert "manual_review_required=true 的用户不设置挑战目标" not in prompt
+    assert "manual_review、资料不足或风险较高用户同样不设置减重挑战目标" not in prompt
+    # 目标体重过低 ≠ 没有可减重空间，两者的处置不同
+    assert "而用户目标体重过低但仍有可减重空间时，只是不接受用户那个目标体重" in prompt
+
+    # 2. A带的 cap 是 min(体重×5%, 4.0, safe_room)，safe_room<2.5kg 时仍可能是 2.4kg。
+    #    非零上限会被读成"可以写1-2斤"，必须显式声明A带禁令优先。
+    assert "【这条上限不是A带的许可】" in prompt
+    assert "那条禁令优先于本条上限" in prompt
+    assert "本条只约束 B/C/D 带" in prompt
+
+    # 3. 带位算不出时照抄哨兵值，不许挑一个顶上——否则带位显示"待补齐"、正文写着C带斤数。
+    assert "【带位算不出时照抄，不要挑一个顶上】" in prompt
+    assert UNRESOLVED_BAND in prompt
+    assert "严禁自己挑一个 A/B/C/D 顶上" in prompt
+    assert "这种情况下全文不得出现任何减重斤数、公斤数或目标体重" in prompt
+    # 旧句要求"给出最稳妥的带位"，是模型猜带位的源头
+    assert "不是不给带位，而是给出最稳妥的带位并降低置信度" not in prompt
+    assert "不是自己另选一个更稳妥的带位" in prompt
+
+
 def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     prompt = _intake_generation_system_prompt()
     # 模型收到的是 system prompt + user prompt 里的字段结构，两段合起来才是完整指令。
