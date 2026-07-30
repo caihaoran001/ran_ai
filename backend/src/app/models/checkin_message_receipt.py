@@ -11,7 +11,15 @@ from app.models.mixins import TimestampMixin
 
 
 class CheckinMessageReceipt(TimestampMixin, Base):
-    """One durable check-in write receipt for an inbound turn and target date."""
+    """One durable check-in write receipt for an inbound turn and target date.
+
+    **已退役，运行时零写入零读取**：这张表只服务过"回复 Agent 的 record_checkin
+    工具按来源消息幂等写打卡"那条链路（`b4dffce`），该设计已在 `fa11dc5` 回退——
+    打卡抽取交回档案官，后者靠 `archivist_progress` 水位线幂等，不需要来源回执。
+    模型与迁移 `20260730_0063` 一并保留：迁移可能已在库上 upgrade（按铁律不动已跑
+    迁移），保留映射也避免 autogenerate 生成 DROP。要恢复按来源消息幂等的即时打卡
+    写入时可直接复用；在那之前别把它当作在用的表。
+    """
 
     __tablename__ = "checkin_message_receipts"
     __table_args__ = (
