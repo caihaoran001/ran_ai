@@ -1149,31 +1149,74 @@ def _normalize_combined_document_payload(
     return {energy_key: energy_payload, execution_key: execution_payload}
 
 
+# 用户可见字段里的减重数字。业务判断仍以模型的 goal_type 为准，这个只做最后一道
+# 格式兜底：A带的整个话术契约存在的理由就是提示词封不住数字，所以放行前再查一次。
+_WEIGHT_NUMBER_PATTERN = re.compile(r"\d+(?:\.\d+)?\s*(?:斤|公斤|千克|[kK][gG])")
+
+
+def _has_specific_weight_goal(goal_response: dict[str, object]) -> bool:
+    if _text_from_payload(goal_response.get("goal_type")).strip().lower() == "specific":
+        return True
+    return bool(
+        _WEIGHT_NUMBER_PATTERN.search(_text_from_payload(goal_response.get("user_goal")))
+    )
+
+
 def _apply_a_band_user_visible_contract(
     shared: dict[str, object],
     core_conclusions: dict[str, object],
     goal_response: dict[str, object],
 ) -> None:
-    """A带正文只给定性结论，不让模型复述用户斤数或内部安全空间数字。"""
+    """A带正文只给定性结论，不让模型复述用户斤数或内部安全空间数字。
+
+    话术按用户**实际填了什么**分两种，不能一套通吃：
+
+    - specific（用户写了减重斤数或目标体重）：先复述诉求再给判断。复述必须去掉数字——
+      这个数字是要被否掉的，白纸黑字留在诊断报告里只会变成用户记住的锚点，
+      还容易顺着"全文数字一致"的要求扩散到成功路径和预期变化里。
+    - general（用户只勾了睡眠、精力、体态这类期待）：直接给判断和方向，不写"您希望…"。
+      这类用户压根没提减重，替他复述一个减重诉求，等于先编一个目标再当面否掉它，
+      而他真正提的诉求反而没被回应。此时 user_goal 保留模型写的那份——
+      模型看得到问卷，知道他要的是睡眠还是精力。
+
+    goal_type 缺失或非法时按 general 处理：最坏结果只是少复述一句，
+    比编造用户没说过的诉求轻。但 general 分支会保留模型写的 user_goal，
+    所以先用 _has_specific_weight_goal 兜一层——模型把斤数写进 user_goal 却漏填
+    goal_type 时，仍要走 specific 的脱敏改写，不能让数字从这里漏进报告。
+    """
 
     if _text_from_payload(shared.get("weight_band")) != "A带｜修复塑形":
         return
     core_conclusions["band_explanation"] = (
         "当前更适合修复塑形，不设置体重下降指标，重点观察围度、体态和身体状态变化。"
     )
+    goal_response["judgement_type"] = "needs_adjustment"
+    if _has_specific_weight_goal(goal_response):
+        goal_response.update(
+            {
+                "content": (
+                    "您希望尽快看到体重和体态变化。结合当前状态，这28天不建议设置减重数字目标，"
+                    "更适合先保持体重基本稳定，把重点放在体态、睡眠、精力、恢复和执行一致性上。"
+                    "当前不设置减重挑战目标；基础动作稳定完成、睡眠和精力没有变差后，"
+                    "再与班主任评估下一阶段。"
+                ),
+                "user_goal": "希望尽快看到体重和体态变化",
+                "judgement": "当前阶段不建议设置减重数字目标，更适合先保持体重基本稳定并修复体态与状态。",
+                "conditions": "基础动作稳定完成、睡眠和精力没有变差后，再与班主任评估下一阶段。",
+            }
+        )
+        return
     goal_response.update(
         {
-            "goal_type": "specific",
-            "judgement_type": "needs_adjustment",
+            "goal_type": "general",
             "content": (
-                "您希望尽快看到体重和体态变化。结合当前状态，这28天不建议设置减重数字目标，"
-                "更适合先保持体重基本稳定，把重点放在体态、睡眠、精力、恢复和执行一致性上。"
-                "当前不设置减重挑战目标；基础动作稳定完成、睡眠和精力没有变差后，"
+                "结合您在问卷中填写的情况，这28天更适合先把身体状态和执行节律稳住，"
+                "不设置体重下降指标，重点观察围度体态、力量、睡眠、精力和执行一致性的变化。"
+                "当前不设置减重挑战目标；基础动作稳定完成、睡眠和精力持续改善后，"
                 "再与班主任评估下一阶段。"
             ),
-            "user_goal": "希望尽快看到体重和体态变化",
-            "judgement": "当前阶段不建议设置减重数字目标，更适合先保持体重基本稳定并修复体态与状态。",
-            "conditions": "基础动作稳定完成、睡眠和精力没有变差后，再与班主任评估下一阶段。",
+            "judgement": "当前阶段更适合先修复身体状态和执行节律，不设置减重数字目标。",
+            "conditions": "基础动作稳定完成、睡眠和精力持续改善后，再与班主任评估下一阶段。",
         }
     )
 

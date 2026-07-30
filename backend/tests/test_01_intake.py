@@ -981,6 +981,91 @@ def test_safety_review_forces_manual_review_marker():
     assert "可管理空间" in shared["band_basis"][0]
 
 
+def _a_band_goal_response(goal_type: object, **extra: object) -> dict[str, object]:
+    payload: dict[str, object] = {"user_goal": "希望睡眠更好、白天更有精神"}
+    if goal_type is not None:
+        payload["goal_type"] = goal_type
+    payload.update(extra)
+    return payload
+
+
+def test_a_band_specific_goal_restates_intent_without_the_number():
+    """用户写了斤数：复述诉求但去掉数字，避免数字变成留在报告里的锚点。"""
+
+    core_conclusions: dict[str, object] = {}
+    goal_response = _a_band_goal_response("specific", user_goal="希望28天减10斤")
+
+    _apply_a_band_user_visible_contract(
+        {"weight_band": "A带｜修复塑形"}, core_conclusions, goal_response
+    )
+
+    assert goal_response["user_goal"] == "希望尽快看到体重和体态变化"
+    assert "10斤" not in goal_response["content"]
+    assert "希望尽快看到体重和体态变化" in goal_response["content"]
+    assert goal_response["judgement_type"] == "needs_adjustment"
+
+
+def test_a_band_general_goal_does_not_invent_a_weight_target():
+    """用户只勾了睡眠和精力：不能替他复述一个没提过的减重诉求。"""
+
+    core_conclusions: dict[str, object] = {}
+    goal_response = _a_band_goal_response("general")
+
+    _apply_a_band_user_visible_contract(
+        {"weight_band": "A带｜修复塑形"}, core_conclusions, goal_response
+    )
+
+    assert "希望尽快看到体重" not in goal_response["content"]
+    assert "您希望" not in goal_response["content"]
+    # 用户真实期待由模型写，代码不覆盖——它看得到问卷，知道要的是睡眠还是精力。
+    assert goal_response["user_goal"] == "希望睡眠更好、白天更有精神"
+    assert "不设置体重下降指标" in goal_response["content"]
+    assert goal_response["judgement_type"] == "needs_adjustment"
+
+
+def test_a_band_missing_goal_type_falls_back_to_general():
+    """判不出类型时宁可少复述一句，也不要编造用户没说过的诉求。"""
+
+    for goal_type in (None, "", "unknown", 123):
+        goal_response = _a_band_goal_response(goal_type)
+        _apply_a_band_user_visible_contract(
+            {"weight_band": "A带｜修复塑形"}, {}, goal_response
+        )
+        assert "希望尽快看到体重" not in goal_response["content"]
+        assert goal_response["goal_type"] == "general"
+
+
+def test_a_band_weight_number_in_user_goal_forces_the_desensitised_copy():
+    """模型漏填 goal_type 却把斤数写进 user_goal：仍走脱敏改写，数字不能漏进报告。"""
+
+    for raw_goal in ("28天减重10斤", "目标体重 55kg", "想减 5 公斤", "希望减3千克"):
+        goal_response = _a_band_goal_response(None, user_goal=raw_goal)
+        _apply_a_band_user_visible_contract(
+            {"weight_band": "A带｜修复塑形"}, {}, goal_response
+        )
+        assert goal_response["user_goal"] == "希望尽快看到体重和体态变化"
+
+    # 不带重量单位的数字不该误触发脱敏，否则泛化期待用户又被扣回编造话术。
+    goal_response = _a_band_goal_response("general", user_goal="希望每天7000步、睡够7小时")
+    _apply_a_band_user_visible_contract(
+        {"weight_band": "A带｜修复塑形"}, {}, goal_response
+    )
+    assert goal_response["user_goal"] == "希望每天7000步、睡够7小时"
+
+
+def test_non_a_band_goal_response_is_untouched():
+    core_conclusions: dict[str, object] = {}
+    goal_response = _a_band_goal_response("specific", content="C带原文", user_goal="希望减10斤")
+
+    _apply_a_band_user_visible_contract(
+        {"weight_band": "C带｜明确减脂"}, core_conclusions, goal_response
+    )
+
+    assert goal_response["content"] == "C带原文"
+    assert goal_response["user_goal"] == "希望减10斤"
+    assert core_conclusions == {}
+
+
 class _StubAI:
     def __init__(self, text: str | Exception):
         self._text = text
