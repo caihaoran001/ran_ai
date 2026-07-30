@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -324,27 +325,18 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "系统在计算带位时已直接判为 A带" not in prompt
     assert "A带同时承载" not in prompt
 
-    # 12周阶段路径：客户 V2.1 §7.2-7.4 的各带累计区间与转段条件
+    # 12周阶段路径：区间查表和安全空间封顶都在代码里（见 _stage_targets 的单测），
+    # 提示词只剩"照抄"这一条。真实验证过：把查表交给模型要十几行约束才勉强围住，D带仍然越界。
     assert "【12周阶段路径】" in prompt
-    assert "从入营当天起算的累计管理区间" in prompt
-    assert "A带：全程不设累计减重指标" in prompt
-    # A带这两格来自客户 1.jpg 的四带表，docx 只笼统写了"以身体组成和稳定维持为主"
-    assert "第5-8周以体态与力量提升为主" in prompt
-    assert "第9-12周稳定体重、改善身体组成" in prompt
-    assert "B带：第5-8周累计5-8斤" in prompt
-    assert "第9-12周累计7-10斤" in prompt
-    assert "C带：第5-8周累计8-12斤" in prompt
-    assert "第9-12周累计10-16斤" in prompt
-    assert "D带：第5-8周按第一个28天的实际结果、耐受度和肌肉保护情况继续推进" in prompt
-    assert "第9-12周累计16-20斤左右" in prompt
-    # 阶段累计受安全空间硬顶，但不受28天上限约束——用 day28 上限砍阶段区间会让它永远超限
-    assert "任何阶段的累计目标都不得超过 safe_reduction_room_kg" in prompt
-    assert "day28_goal_cap_kg 只约束第一个28天，不约束第5-8周和第9-12周的累计值" in prompt
-    assert "A带在任何情况下都不得出现阶段减重数字" in prompt
+    assert "必须逐字使用 intake_facts.stage_targets 里对应的表述" in prompt
+    assert "不得改动、放大、换算或删除其中的数字" in prompt
+    # 旧的整张区间表已从提示词移除，留着会和 stage_targets 形成两个数字来源
+    assert "B带：第5-8周累计5-8斤" not in prompt
+    assert "任何阶段的累计目标都不得超过 safe_reduction_room_kg" not in prompt
 
     # 数字来源与趋势证据
-    assert "第5-8周和第9-12周用【12周阶段路径】给出的累计区间且不突破 safe_reduction_room_kg" in prompt
-    assert "除这两类来源外，任何位置都不得自拟数字" in prompt
+    assert "intake_facts.stage_targets 里已经算好的阶段累计表述" in prompt
+    assert "除这三类来源外，任何位置都不得自拟数字" in prompt
     assert "严禁生成「腰围缩减1–3cm」「腰围少5cm」这类数字区间" in prompt
     # 问卷选项文字自带填写示例，模型曾把占位符替换成自己挑的数字（腰围缩小5cm以上）
     assert "括号里的 X 公斤、XX 厘米是问卷给用户看的填写格式示例，不是用户的答案" in prompt
@@ -870,6 +862,50 @@ def _band_fields() -> list[dict[str, object]]:
         {"key": "h", "title": "您的身高（cm/厘米）"},
         {"key": "w", "title": "您当前体重（kg/公斤）"},
     ]
+
+
+def _stage_targets_for(height: str, weight: str) -> dict[str, str]:
+    return build_intake_fact_summary(_band_fields(), {"h": height, "w": weight})["stage_targets"]
+
+
+def test_stage_targets_follow_the_band_table():
+    """区间由代码查表，客户 V2.1 §7.2-7.4 的数字逐带核对。"""
+
+    # 165cm：BMI20 线 54.45kg
+    b_band = _stage_targets_for("165", "58")  # room 3.55kg → B带
+    assert "累计5-7斤" in b_band["week5_8"]  # 上界被 3.55kg=7.1斤 封顶
+    # 封顶后上界取整正好等于下界（7）时不能写成「7-7斤」——真实验证里出现过。
+    assert b_band["week9_12"] == "从入营起算累计不超过7斤，达到条件后再评估"
+    c_band = _stage_targets_for("165", "62")  # room 7.55kg → C带
+    assert c_band["week5_8"] == "从入营起算累计8-12斤"
+    assert c_band["week9_12"] == "从入营起算累计10-15斤，或提前达到适宜目标后转入维持"
+    d_band = _stage_targets_for("170", "95")  # room 37.2kg → D带
+    assert d_band["week5_8"] == "不预设累计斤数，按第一个28天的实际结果、耐受度和肌肉保护情况继续推进"
+    assert d_band["week9_12"] == "从入营起算累计16-20斤，或提前达到适宜目标后转入维持"
+
+
+def test_stage_targets_capped_by_safe_room():
+    """默认区间上界可能超出这个人的安全空间，必须收窄——C带下沿就会踩到。"""
+
+    # 165cm/60kg：room 5.55kg = 11.1斤。C带第9-12周默认 10-16 斤，上界超了。
+    targets = _stage_targets_for("165", "60")
+    assert targets["week9_12"] == "从入营起算累计10-11斤，或提前达到适宜目标后转入维持"
+
+    # 空间连下界都撑不住时不给区间，只给上限。165cm/57.5kg：room 3.05kg = 6.1斤 < 7。
+    targets = _stage_targets_for("165", "57.5")
+    assert targets["week9_12"] == "从入营起算累计不超过6斤，达到条件后再评估"
+
+
+def test_stage_targets_for_band_a_and_unknown_band_carry_no_numbers():
+    a_band = _stage_targets_for("175", "63")  # room 1.75kg → A带
+    assert a_band["week5_8"] == "不设减重指标，以体态与力量提升为主"
+    assert "减重指标" in a_band["week9_12"] and "转入B带节奏" in a_band["week9_12"]
+    assert not re.search(r"\d+\s*斤", a_band["week5_8"] + a_band["week9_12"])
+
+    unknown = build_intake_fact_summary(
+        [{"key": "h", "title": "您的身高（cm/厘米）"}], {"h": "暂未测量"}
+    )["stage_targets"]
+    assert unknown["week5_8"] == "待补齐身高体重后确定"
 
 
 def test_protected_lower_uplift_moves_user_down_a_band():

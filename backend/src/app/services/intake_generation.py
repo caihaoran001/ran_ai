@@ -150,11 +150,11 @@ def _deterministic_band_basis(
         "C带｜明确减脂": "5kg至不足10kg",
         "D带｜系统减重": "不低于10kg",
     }
+    # 这条依据会在模型没写 band_explanation 时兜底填进用户可见的核心判断，
+    # 所以不能嵌基线体重、安全下限、可管理空间这些内部计算数字。
+    # 具体公斤数留在 shared_analysis 的独立字段里给运营审计，不进正文。
     basis = [
-        (
-            f"当前基线体重{baseline}kg与安全下限{protected}kg之间的"
-            f"可管理空间为{room}kg，落在{boundaries.get(band, '待确认')}边界"
-        ),
+        f"按可管理空间落在{boundaries.get(band, '待确认')}边界确定当前管理带",
         "管理带按可管理空间确定，用户期待斤数和执行状态不参与改带",
     ]
     uplift_reasons = _clean_list(facts.get("protected_lower_uplift_reasons"))

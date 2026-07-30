@@ -161,6 +161,10 @@ def build_intake_fact_summary(
         "protected_lower_uplift_reasons": safe_reduction["protected_lower_uplift_reasons"],
         "safety_review_required": safety_review,
         "safety_review_reasons": _safety_review_reasons(safety_factors) if safety_review else [],
+        # 12周阶段目标由代码查表并按安全空间封顶，模型只负责照抄和补个案重点。
+        "stage_targets": _stage_targets(
+            weight_loss_band, safe_reduction["safe_reduction_room_kg"]
+        ),
         "safe_reduction_room_kg": _format_safe_measurement(
             safe_reduction["safe_reduction_room_kg"]
         ),
@@ -322,6 +326,60 @@ def _calculate_bmi(height_cm: float | None, weight_kg: float | None) -> float | 
         return None
     height_m = height_cm / 100
     return weight_kg / (height_m * height_m)
+
+
+# 12周阶段路径（客户 V2.1 §7.2-7.4）。这里是查表 + 封顶的确定性计算，不交给模型：
+# 让模型自己"查表→判累计→校验安全空间→空间不够时收窄"要写十几行约束才勉强围得住，
+# 真实验证里 D 带两个样例仍然全部越界。代码算好一句话给它照抄，规则就不需要了。
+#
+# 区间单位是斤，从入营当天起算累计。None 表示这一格不给数字。
+_STAGE_RANGES = {
+    "B带｜轻盈启动": {"week5_8": (5, 8), "week9_12": (7, 10)},
+    "C带｜明确减脂": {"week5_8": (8, 12), "week9_12": (10, 16)},
+    "D带｜系统减重": {"week5_8": None, "week9_12": (16, 20)},
+}
+
+_STAGE_SUFFIX = {"week9_12": "，或提前达到适宜目标后转入维持"}
+
+# 不给数字的那几格照抄客户表述，模型不需要自己组织。
+_STAGE_TEXT_A_BAND = {
+    "week5_8": "不设减重指标，以体态与力量提升为主",
+    "week9_12": "不设减重指标，稳定体重、改善身体组成，达到条件后再评估是否转入B带节奏",
+}
+_STAGE_TEXT_D_WEEK5_8 = "不预设累计斤数，按第一个28天的实际结果、耐受度和肌肉保护情况继续推进"
+_STAGE_TEXT_UNKNOWN = "待补齐身高体重后确定"
+
+
+def _stage_targets(band: str, safe_room_kg: float | None) -> dict[str, str]:
+    """按管理带生成两个阶段的目标表述，并用安全减重空间封顶。
+
+    封顶是这里唯一的判断：默认区间的上界可能超出这个人的安全空间（例如 C 带下沿
+    只有 5kg 空间，而 C 带第9-12周默认到 16 斤＝8kg），此时必须收窄。
+    """
+
+    if band == BAND_A:
+        return dict(_STAGE_TEXT_A_BAND)
+    ranges = _STAGE_RANGES.get(band)
+    if ranges is None:
+        return {"week5_8": _STAGE_TEXT_UNKNOWN, "week9_12": _STAGE_TEXT_UNKNOWN}
+
+    room_jin = safe_room_kg * 2 if safe_room_kg is not None else None
+    targets: dict[str, str] = {}
+    for stage, bounds in ranges.items():
+        if bounds is None:
+            targets[stage] = _STAGE_TEXT_D_WEEK5_8
+            continue
+        low, high = bounds
+        suffix = _STAGE_SUFFIX.get(stage, "")
+        if room_jin is None or high <= room_jin:
+            targets[stage] = f"从入营起算累计{low}-{high}斤{suffix}"
+        elif low < int(room_jin):
+            # 取整后仍高于下界才给区间；否则会写出「累计7-7斤」这种退化区间。
+            targets[stage] = f"从入营起算累计{low}-{int(room_jin)}斤{suffix}"
+        else:
+            # 安全空间连区间下界都撑不住：不给区间，只给上限。
+            targets[stage] = f"从入营起算累计不超过{int(room_jin)}斤，达到条件后再评估"
+    return targets
 
 
 def _safety_review_reasons(safety_factors: dict[str, Any] | None) -> list[str]:

@@ -63,10 +63,8 @@ ENERGY_FIELD_SPEC = {
         "weight_band": "当前管理带",
         "total_goal": "总路径目标",
         "day28_goal": "第一个28天目标",
-        "week5_8": "第5-8周目标：按管理带写出从入营起算的累计管理区间和本阶段重点；"
-        "A带不写减重数字，只写身体组成与稳定维持方向",
-        "week9_12": "第9-12周目标：累计管理区间 + 转入维持或进入下一周期的条件；"
-        "A带写身体组成与稳定维持方向，以及达到条件后再评估是否转入B带节奏",
+        "week5_8": "逐字使用 intake_facts.stage_targets.week5_8，可在其后补一句本阶段执行重点，不得改动其中数字",
+        "week9_12": "逐字使用 intake_facts.stage_targets.week9_12，可在其后补一句本阶段执行重点，不得改动其中数字",
     },
     "module_diagnosis": {
         "rhythm": "节律",
