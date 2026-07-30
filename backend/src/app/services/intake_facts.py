@@ -10,6 +10,27 @@ CUSTOM_ANSWER_LABEL = "其他（用户补充）"
 # dashboard 分类统计和人群画像都按它过滤未采集用户，改字面量会静默破坏那些统计。
 UNRESOLVED_BAND = "需补充身高体重后判断"
 
+BAND_A = "A带｜修复塑形"
+
+# 保护性下限的上调档位。客户 V2.1 §6.5 只说了"可将该下限上调"，没有给幅度，
+# 这套档位是我们定的可审计规则：以 BMI 20 自动复核线为起点，每命中一类风险抬 0.5 个
+# BMI 单位，累计封顶 1.5 个（即最高按 BMI 21.5 计）。
+#
+# 为什么是 0.5 / 封顶 1.5：165cm 的用户从 BMI 20 抬到 21.5 是 54.5kg → 58.5kg，
+# 下限抬高 4kg，足以把 safe_room 8kg（C带）压到 4kg（B带）——有实际约束力。
+# 再往上抬会让多数有既往病史的用户直接掉进 A 带，那属于"安全不允许减"的判断，
+# 应当由下面的 band_override 显式做出，而不是被上调档位的算术副作用推过去。
+PROTECTED_LOWER_BASE_BMI = 20.0
+PROTECTED_LOWER_STEP_BMI = 0.5
+PROTECTED_LOWER_MAX_UPLIFT_BMI = 1.5
+
+# 每一档对应的用户不可见依据文案，用于 band_basis 审计。
+PROTECTED_LOWER_UPLIFT_FACTORS = {
+    "muscle_insufficiency": "可靠体脂/肌肉数据显示肌肉量明显不足",
+    "disease_or_medication_limit": "存在重大疾病或长期用药限制",
+    "recovery_risk": "月经或恢复力风险",
+}
+
 
 def structured_answer_values(
     fields: list[dict[str, Any]],
@@ -55,8 +76,18 @@ def structured_answer_values(
     return []
 
 
-def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, Any]) -> dict[str, Any]:
-    """Extract deterministic facts shared by profile and document generation."""
+def build_intake_fact_summary(
+    fields: list[dict[str, Any]],
+    answers: dict[str, Any],
+    safety_factors: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Extract deterministic facts shared by profile and document generation.
+
+    ``safety_factors`` 是安全因子抽取阶段的结构化结论（见
+    ``intake_generation._extract_safety_factors``）。它决定保护性下限上调多少，
+    以及是否因红色风险直接进入 A 带。缺省为 None 时退化成纯 BMI 20 下限，
+    行为与历史一致。
+    """
 
     title_by_key = {
         str(field.get("key") or field.get("id") or ""): str(field.get("title") or field.get("label") or "")
@@ -88,9 +119,11 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
     height = _normalize_height_cm(_first_number(height_raw))
     weight = _first_number(weight_raw)
     bmi = _calculate_bmi(height, weight)
-    safe_reduction = _safe_reduction_facts(height, weight)
+    safe_reduction = _safe_reduction_facts(height, weight, safety_factors)
+    band_override = _safety_band_override(safety_factors)
     weight_loss_band = _management_band_from_safe_room(
-        safe_reduction["safe_reduction_room_kg"]
+        safe_reduction["safe_reduction_room_kg"],
+        band_override=band_override,
     )
 
     return {
@@ -121,6 +154,14 @@ def build_intake_fact_summary(fields: list[dict[str, Any]], answers: dict[str, A
         "protected_lower_weight_kg": _format_safe_measurement(
             safe_reduction["protected_lower_weight_kg"]
         ),
+        # 下限被抬高了多少、依据是什么，必须可复算可审计：运营看到一个 safe_room 很大
+        # 却判 A 带的用户时，要能立刻分辨是上调档位所致还是安全条件覆盖所致。
+        "protected_lower_uplift_bmi": _format_safe_measurement(
+            safe_reduction["protected_lower_uplift_bmi"]
+        ),
+        "protected_lower_uplift_reasons": safe_reduction["protected_lower_uplift_reasons"],
+        "band_override_by_safety": band_override,
+        "safety_band_override_reasons": _override_reasons(safety_factors) if band_override else [],
         "safe_reduction_room_kg": _format_safe_measurement(
             safe_reduction["safe_reduction_room_kg"]
         ),
@@ -190,14 +231,53 @@ def _normalize_height_cm(value: float | None) -> float | None:
     return value
 
 
+def _protected_lower_uplift(
+    safety_factors: dict[str, Any] | None,
+) -> tuple[float, list[str]]:
+    """按命中的风险类别累加保护性下限的上调幅度（BMI 单位）。
+
+    返回 (上调的 BMI 单位数, 依据文案)。风险类别由模型结构化输出，不在这里做
+    关键词判断；这里只负责把布尔因子换算成确定性的、可复算的公斤线。
+    """
+
+    if not isinstance(safety_factors, dict):
+        return 0.0, []
+    reasons: list[str] = []
+    steps = 0
+    for key, label in PROTECTED_LOWER_UPLIFT_FACTORS.items():
+        if safety_factors.get(key) is True:
+            steps += 1
+            reasons.append(label)
+    uplift = min(steps * PROTECTED_LOWER_STEP_BMI, PROTECTED_LOWER_MAX_UPLIFT_BMI)
+    return uplift, reasons
+
+
+def _doctor_specified_floor(safety_factors: dict[str, Any] | None) -> float | None:
+    """医生明确给出的体重下限优先于档位换算，但只接受可解析的正数。"""
+
+    if not isinstance(safety_factors, dict):
+        return None
+    raw = safety_factors.get("doctor_specified_lower_weight_kg")
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _safe_reduction_facts(
-    height_cm: float | None, weight_kg: float | None
-) -> dict[str, float | bool | None]:
+    height_cm: float | None,
+    weight_kg: float | None,
+    safety_factors: dict[str, Any] | None = None,
+) -> dict[str, float | bool | list[str] | None]:
     """按 V2.1 计算四带唯一数值主轴及28天自动上限。
 
     入营问卷暂时只有最新可信体重，因此 baseline 直接使用当前体重并在事实摘要中
-    标记 provisional。protected_lower 先采用 BMI 20 自动复核线；需要因可靠肌肉、
-    疾病、用药或恢复力证据上调时，由页面上的重点人工复核处理，模型不得编造公斤线。
+    标记 provisional。protected_lower 以 BMI 20 自动复核线为起点，再按客户 §6.5
+    的四类证据上调：肌肉量明显不足、重大疾病或用药、月经/恢复力风险由模型结构化
+    输出的布尔因子驱动，医生明确的公斤线直接取用并覆盖档位结果（取更保守的一个）。
     """
 
     if not height_cm or not weight_kg or height_cm <= 0:
@@ -206,21 +286,32 @@ def _safe_reduction_facts(
             "absolute_low_weight_boundary_kg": None,
             "automatic_review_weight_kg": None,
             "protected_lower_weight_kg": None,
+            "protected_lower_uplift_bmi": None,
+            "protected_lower_uplift_reasons": [],
             "safe_reduction_room_kg": None,
             "room_exhausted": None,
             "day28_goal_cap_kg": None,
         }
     height_m = height_cm / 100
-    absolute_low = 18.5 * height_m * height_m
-    automatic_review = 20 * height_m * height_m
-    protected_lower = automatic_review
+    height_sq = height_m * height_m
+    absolute_low = 18.5 * height_sq
+    automatic_review = PROTECTED_LOWER_BASE_BMI * height_sq
+    uplift_bmi, uplift_reasons = _protected_lower_uplift(safety_factors)
+    protected_lower = (PROTECTED_LOWER_BASE_BMI + uplift_bmi) * height_sq
+    doctor_floor = _doctor_specified_floor(safety_factors)
+    if doctor_floor is not None and doctor_floor > protected_lower:
+        protected_lower = doctor_floor
+        uplift_reasons = [*uplift_reasons, "医生明确的体重下限"]
     safe_room = max(0.0, weight_kg - protected_lower)
     goal_cap = min(weight_kg * 0.05, 4.0, safe_room)
     return {
         "baseline_weight_kg": weight_kg,
         "absolute_low_weight_boundary_kg": absolute_low,
+        # 自动复核线始终是未上调的 BMI 20 线，上调后的下限单独记在 protected_lower。
         "automatic_review_weight_kg": automatic_review,
         "protected_lower_weight_kg": protected_lower,
+        "protected_lower_uplift_bmi": uplift_bmi,
+        "protected_lower_uplift_reasons": uplift_reasons,
         "safe_reduction_room_kg": safe_room,
         "room_exhausted": safe_room <= 0,
         "day28_goal_cap_kg": goal_cap,
@@ -234,13 +325,41 @@ def _calculate_bmi(height_cm: float | None, weight_kg: float | None) -> float | 
     return weight_kg / (height_m * height_m)
 
 
-def _management_band_from_safe_room(safe_room_kg: float | None) -> str:
-    """安全减重空间是 A/B/C/D 的唯一数值分带主轴。"""
+def _override_reasons(safety_factors: dict[str, Any] | None) -> list[str]:
+    if not isinstance(safety_factors, dict):
+        return []
+    raw = safety_factors.get("safety_band_override_reasons")
+    if not isinstance(raw, list):
+        return []
+    return [str(item).strip() for item in raw if str(item).strip()][:3]
 
+
+def _safety_band_override(safety_factors: dict[str, Any] | None) -> bool:
+    """红色风险等安全条件是否优先于斤数目标直接定 A 带（客户 V2.1 §7.1/§7.5）。"""
+
+    if not isinstance(safety_factors, dict):
+        return False
+    return safety_factors.get("safety_band_override") is True
+
+
+def _management_band_from_safe_room(
+    safe_room_kg: float | None,
+    *,
+    band_override: bool = False,
+) -> str:
+    """安全减重空间是 A/B/C/D 的数值分带主轴，但安全条件优先于它。
+
+    客户 V2.1 §7.5：红色风险、低体重、孕产哺乳、青少年和进食障碍风险要"先处理"，
+    优先于任何斤数目标。命中这些条件时无论算出多大空间都进 A 带——A 带同时承载
+    "空间不足"和"安全不允许继续减"两种语义，这是文档 §7.1 的原意。
+    """
+
+    if band_override:
+        return BAND_A
     if safe_room_kg is None:
         return UNRESOLVED_BAND
     if safe_room_kg < 2.5:
-        return "A带｜修复塑形"
+        return BAND_A
     if safe_room_kg < 5:
         return "B带｜轻盈启动"
     if safe_room_kg < 10:

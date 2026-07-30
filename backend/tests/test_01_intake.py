@@ -4,6 +4,7 @@ import json
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -28,8 +29,11 @@ from app.services.document_templates import (
 from app.services.intake_generation import (
     CHECKIN_CATEGORIES,
     UNRESOLVED_BAND_USER_TEXT,
+    _apply_a_band_user_visible_contract,
     _apply_deterministic_band,
+    _extract_safety_factors,
     _force_high_risk_manual_review,
+    _normalize_safety_factors,
     _resolve_management_band,
     _scrub_internal_text,
     _normalize_combined_document_payload,
@@ -295,7 +299,7 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "只描述用户提交问卷之前的近3个月" in prompt
 
     # 管理带与人工复核彻底分开：内部标签不再是带位，也不得进入用户可见内容
-    assert "manual_review_required=true 时 weight_band 仍必须逐字复制系统算好的正常业务带位" in prompt
+    assert "weight_band 永远只能逐字复制系统算好的业务带位" in prompt
     assert "以上四个带位是 weight_band 的全部合法取值，没有第五种" in prompt
     assert "严禁把「需人工复核」「人工复核」「待复核」「red风险」「高风险」「风险等级」等内部标签写进 weight_band" in prompt
     assert "无法安全自动判带时 weight_band 写「需人工复核」" not in prompt
@@ -310,8 +314,14 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "5kg ≤ safe_reduction_room_kg < 10kg" in prompt
     assert "safe_reduction_room_kg ≥ 10kg" in prompt
     assert "正常BMI也不能单独判A带" in prompt
-    assert "孕哺、疾病或用药用户" in prompt
-    assert "仍按安全减重空间正常得到 A-D 带" in prompt
+    # 红风险默认入A带：安全条件优先于斤数目标，且带位由代码定死、模型不得质疑
+    assert "【安全条件优先于斤数目标】" in prompt
+    assert "系统在计算带位时已直接判为 A带｜修复塑形并同时标记重点人工复核" in prompt
+    assert "不要因为算出的可管理空间很大就质疑它" in prompt
+    assert "A带同时承载「可管理空间不足」和「安全上不允许继续减」两种含义" in prompt
+    # 旧口径（高风险仍走正常 A-D 带）已经作废，不能留在提示词里自相矛盾
+    assert "不得为了凑带位把孕哺、疾病或用药用户包装成 A 带" not in prompt
+    assert "仍按安全减重空间正常得到 A-D 带" not in prompt
 
     # 12周阶段路径：客户 V2.1 §7.2-7.4 的各带累计区间与转段条件
     assert "【12周阶段路径】" in prompt
@@ -849,6 +859,217 @@ def test_intake_facts_safe_room_missing_without_height_or_weight():
     assert facts["weight_loss_band"] == "需补充身高体重后判断"
     assert facts["weight_loss_room_exhausted"] == "暂无数据"
     assert facts["day28_goal_cap_kg"] == "暂无数据"
+
+
+def _band_fields() -> list[dict[str, object]]:
+    return [
+        {"key": "h", "title": "您的身高（cm/厘米）"},
+        {"key": "w", "title": "您当前体重（kg/公斤）"},
+    ]
+
+
+def test_protected_lower_uplift_moves_user_down_a_band():
+    """165cm/70kg：无因子时空间 15.55kg 判D带；两类风险抬高下限后落到 C 带。"""
+
+    answers = {"h": "165", "w": "70"}
+    plain = build_intake_fact_summary(_band_fields(), answers)
+    assert plain["protected_lower_weight_kg"] == "54.45"
+    assert plain["safe_reduction_room_kg"] == "15.55"
+    assert plain["weight_loss_band"] == "D带｜系统减重"
+    assert plain["protected_lower_uplift_bmi"] == "0"
+
+    adjusted = build_intake_fact_summary(
+        _band_fields(),
+        answers,
+        {"muscle_insufficiency": True, "disease_or_medication_limit": True},
+    )
+    # BMI 20 → 21，165cm 上是 54.45kg → 57.17kg，空间收窄 2.72kg。
+    assert adjusted["protected_lower_uplift_bmi"] == "1"
+    assert adjusted["protected_lower_weight_kg"] == "57.17"
+    assert adjusted["safe_reduction_room_kg"] == "12.83"
+    assert adjusted["protected_lower_uplift_reasons"] == [
+        "可靠体脂/肌肉数据显示肌肉量明显不足",
+        "存在重大疾病或长期用药限制",
+    ]
+    # 自动复核线是未上调的 BMI 20 线，不能跟着抬——它是文档要求单独输出的字段。
+    assert adjusted["automatic_review_weight_kg"] == "54.45"
+
+
+def test_protected_lower_uplift_is_capped():
+    """三类风险全中也只抬 1.5 个 BMI，避免算术副作用把人推进 A 带。"""
+
+    facts = build_intake_fact_summary(
+        _band_fields(),
+        {"h": "165", "w": "70"},
+        {
+            "muscle_insufficiency": True,
+            "disease_or_medication_limit": True,
+            "recovery_risk": True,
+        },
+    )
+
+    assert facts["protected_lower_uplift_bmi"] == "1.5"
+    assert facts["protected_lower_weight_kg"] == "58.53"
+
+
+def test_doctor_specified_floor_overrides_uplift_when_more_conservative():
+    facts = build_intake_fact_summary(
+        _band_fields(),
+        {"h": "165", "w": "70"},
+        {"muscle_insufficiency": True, "doctor_specified_lower_weight_kg": 62},
+    )
+
+    assert facts["protected_lower_weight_kg"] == "62"
+    assert facts["safe_reduction_room_kg"] == "8"
+    assert facts["weight_loss_band"] == "C带｜明确减脂"
+    assert "医生明确的体重下限" in facts["protected_lower_uplift_reasons"]
+
+
+def test_doctor_specified_floor_ignored_when_looser_or_invalid():
+    """医生给的线比档位结果宽松，或根本解析不出来时，取更保守的档位结果。"""
+
+    for doctor_value in (50, "无", None, -3, True):
+        facts = build_intake_fact_summary(
+            _band_fields(),
+            {"h": "165", "w": "70"},
+            {
+                "muscle_insufficiency": True,
+                "doctor_specified_lower_weight_kg": doctor_value,
+            },
+        )
+        assert facts["protected_lower_weight_kg"] == "55.81"
+
+
+def test_safety_band_override_forces_a_band_regardless_of_room():
+    """红风险优先于斤数目标：空间 15.55kg 也直接进 A 带。"""
+
+    facts = build_intake_fact_summary(
+        _band_fields(),
+        {"h": "165", "w": "70"},
+        {
+            "safety_band_override": True,
+            "safety_band_override_reasons": ["问卷填写当前处于哺乳期"],
+        },
+    )
+
+    assert facts["weight_loss_band"] == "A带｜修复塑形"
+    assert facts["band_override_by_safety"] is True
+    # 空间本身照常算出来，供运营核对，只是不再决定带位。
+    assert facts["safe_reduction_room_kg"] == "15.55"
+    assert facts["safety_band_override_reasons"] == ["问卷填写当前处于哺乳期"]
+
+
+def test_safety_band_override_also_forces_manual_review_and_explains_basis():
+    facts = build_intake_fact_summary(
+        _band_fields(),
+        {"h": "165", "w": "70"},
+        {
+            "safety_band_override": True,
+            "safety_band_override_reasons": ["问卷填写当前处于哺乳期"],
+        },
+    )
+    shared: dict[str, object] = {}
+    _apply_deterministic_band(shared, facts)
+
+    assert shared["weight_band"] == "A带｜修复塑形"
+    assert shared["manual_review_required"] is True
+    assert shared["safety_status"] == "manual_review"
+    assert "问卷填写当前处于哺乳期" in shared["manual_review_reasons"]
+    # 依据必须先讲安全条件，否则运营看到大空间判 A 带会以为算错了。
+    assert "安全条件" in shared["band_basis"][0]
+    assert "直接进入修复塑形带" in shared["band_basis"][0]
+
+
+def test_safety_a_band_copy_does_not_invent_a_weight_goal():
+    """安全覆盖进A带的用户未必想减重，不能套用「您希望尽快看到体重变化」。"""
+
+    core_conclusions: dict[str, object] = {}
+    goal_response: dict[str, object] = {}
+    shared = {"weight_band": "A带｜修复塑形", "band_override_by_safety": True}
+
+    _apply_a_band_user_visible_contract(shared, core_conclusions, goal_response)
+
+    assert "希望尽快看到体重" not in goal_response["user_goal"]
+    assert "希望尽快看到体重" not in goal_response["content"]
+    assert "稳妥恢复" in goal_response["judgement"]
+    assert "班主任" in goal_response["conditions"]
+
+    # 空间不足进A带的用户保持原有话术。
+    core_conclusions, goal_response = {}, {}
+    _apply_a_band_user_visible_contract(
+        {"weight_band": "A带｜修复塑形"}, core_conclusions, goal_response
+    )
+    assert goal_response["user_goal"] == "希望尽快看到体重和体态变化"
+
+
+class _StubAI:
+    def __init__(self, text: str | Exception):
+        self._text = text
+        self.scenarios: list[str] = []
+
+    async def generate_text(self, *, scenario, **kwargs):
+        self.scenarios.append(scenario)
+        if isinstance(self._text, Exception):
+            raise self._text
+        return self._text
+
+
+@pytest.mark.asyncio
+async def test_extract_safety_factors_parses_model_output():
+    ai = _StubAI(
+        json.dumps(
+            {
+                "safety_band_override": True,
+                "safety_band_override_reasons": ["问卷填写当前处于哺乳期"],
+                "muscle_insufficiency": False,
+                "disease_or_medication_limit": True,
+                "recovery_risk": False,
+                "doctor_specified_lower_weight_kg": "58",
+                "evidence_notes": ["健康情况填写：哺乳期，医生建议不低于58kg"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    factors = await _extract_safety_factors(
+        ai=ai, service_case=SimpleNamespace(id=1), readable_answers="- 健康情况: 哺乳期"
+    )
+
+    assert ai.scenarios == ["intake_safety_factors"]
+    assert factors["safety_band_override"] is True
+    assert factors["safety_band_override_reasons"] == ["问卷填写当前处于哺乳期"]
+    assert factors["disease_or_medication_limit"] is True
+    assert factors["doctor_specified_lower_weight_kg"] == 58.0
+
+
+@pytest.mark.asyncio
+async def test_extract_safety_factors_does_not_block_intake_on_failure():
+    """抽取挂掉不能挡住交付：退回不上调、不改带，等同历史行为。"""
+
+    ai = _StubAI(RuntimeError("model timeout"))
+
+    factors = await _extract_safety_factors(
+        ai=ai, service_case=SimpleNamespace(id=1), readable_answers="- 健康情况: 无"
+    )
+
+    assert factors["safety_band_override"] is False
+    assert factors["doctor_specified_lower_weight_kg"] is None
+
+
+def test_safety_factors_normalize_to_no_adjustment_on_garbage():
+    """抽取失败或字段乱填时退回不上调、不改带，而不是靠猜把人推进A带。"""
+
+    for payload in (None, {}, "not-json", {"safety_band_override": "maybe"}):
+        factors = _normalize_safety_factors(payload)
+        assert factors["safety_band_override"] is False
+        assert factors["muscle_insufficiency"] is False
+        assert factors["doctor_specified_lower_weight_kg"] is None
+
+    facts = build_intake_fact_summary(
+        _band_fields(), {"h": "165", "w": "70"}, _normalize_safety_factors(None)
+    )
+    assert facts["weight_loss_band"] == "D带｜系统减重"
+    assert facts["protected_lower_uplift_bmi"] == "0"
 
 
 def test_unresolved_band_sentinel_never_reaches_user_documents():

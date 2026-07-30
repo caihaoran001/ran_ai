@@ -56,7 +56,11 @@ BAND_CALCULATION_FIELDS = (
     "absolute_low_weight_boundary_kg",
     "automatic_review_weight_kg",
     "protected_lower_weight_kg",
+    "protected_lower_uplift_bmi",
+    "protected_lower_uplift_reasons",
     "safe_reduction_room_kg",
+    "band_override_by_safety",
+    "safety_band_override_reasons",
 )
 
 # 内部运营标签：只允许留在 shared_analysis / profile_json 的内部字段和后台界面里。
@@ -114,6 +118,19 @@ def _apply_deterministic_band(
         shared["safety_status"] = "manual_review"
         shared["provisional_band"] = True
 
+    # 客户规范是"优先进入A带**或**医疗复核"，实践上两者都要：带位保证不给减重数字，
+    # 复核标记保证有人真的看过。只做前者会让红风险用户悄悄走完自动流程。
+    if facts.get("band_override_by_safety"):
+        reasons = _clean_list(shared.get("manual_review_reasons"))
+        for reason in _clean_list(facts.get("safety_band_override_reasons")) or [
+            "问卷出现优先于斤数目标的安全条件"
+        ]:
+            if reason not in reasons:
+                reasons.append(reason)
+        shared["manual_review_required"] = True
+        shared["manual_review_reasons"] = reasons[:3]
+        shared["safety_status"] = "manual_review"
+
 
 def _deterministic_band_basis(
     facts: dict[str, object],
@@ -122,6 +139,15 @@ def _deterministic_band_basis(
     baseline = str(facts.get("baseline_weight_kg") or "").strip()
     protected = str(facts.get("protected_lower_weight_kg") or "").strip()
     room = str(facts.get("safe_reduction_room_kg") or "").strip()
+    # 安全条件覆盖优先于数值分带，依据也要先讲这一条：否则运营看到 safe_room 很大
+    # 却判 A 带，会以为算错了。
+    override_reasons = _clean_list(facts.get("safety_band_override_reasons"))
+    if facts.get("band_override_by_safety"):
+        detail = "；".join(override_reasons) if override_reasons else "问卷出现安全优先条件"
+        return [
+            f"存在优先于斤数目标的安全条件（{detail}），按规范直接进入修复塑形带",
+            "安全条件优先于安全减重空间的数值边界，本带位不由可管理空间决定",
+        ]
     if any(value in {"", "暂无数据"} for value in (baseline, protected, room)):
         return ["缺少可信身高或体重，暂不能计算安全减重空间"]
     boundaries = {
@@ -130,13 +156,20 @@ def _deterministic_band_basis(
         "C带｜明确减脂": "5kg至不足10kg",
         "D带｜系统减重": "不低于10kg",
     }
-    return [
+    basis = [
         (
             f"当前基线体重{baseline}kg与安全下限{protected}kg之间的"
             f"可管理空间为{room}kg，落在{boundaries.get(band, '待确认')}边界"
         ),
         "管理带按可管理空间确定，用户期待斤数和执行状态不参与改带",
     ]
+    uplift_reasons = _clean_list(facts.get("protected_lower_uplift_reasons"))
+    if uplift_reasons:
+        basis.insert(
+            1,
+            f"安全下限已在自动复核线基础上上调，依据：{'；'.join(uplift_reasons)}",
+        )
+    return basis
 
 
 def _force_high_risk_manual_review(
@@ -215,6 +248,97 @@ def _scrub_internal_text(text: str) -> str:
     return "".join(kept).strip()
 
 
+SAFETY_FACTOR_SCHEMA = {
+    "safety_band_override": "布尔值。命中客户规范的红色风险或安全优先条件时为 true："
+    "心脏支架/冠心病/心律失常、未控制的高血压、明显贫血或异常血常规、甲状腺全切或功能异常、"
+    "肿瘤或胃肠术后、备孕/怀孕/哺乳、严重低血糖、青少年（未成年）、进食障碍风险、"
+    "低体重仍要求快速减重、胸痛/呼吸困难/黑便/便血/持续呕吐等红旗症状。"
+    "这些条件优先于任何斤数目标。仅仅是资料缺失、数据冲突或执行困难不算，一律 false",
+    "safety_band_override_reasons": ["触发上一条的1-3条原因，引用问卷原文事实，只给运营看"],
+    "muscle_insufficiency": "布尔值。有可靠体脂率或肌肉数据、且显示肌肉量明显不足时为 true。"
+    "没有体脂/肌肉数据时一律 false，不得凭体重或BMI推断",
+    "disease_or_medication_limit": "布尔值。存在重大疾病或长期用药、需要更保守的体重下限时为 true",
+    "recovery_risk": "布尔值。存在月经紊乱或恢复力明显不足的证据时为 true。"
+    "当前问卷未采集月经相关信息，仅当用户在健康情况自由填写里主动提到时才为 true，否则 false",
+    "doctor_specified_lower_weight_kg": "数字或 null。用户明确写了医生交代的体重下限（公斤）时填该数字；"
+    "没有明确数字时必须填 null，禁止自己推算",
+    "evidence_notes": ["以上每个 true 判断对应的问卷原文依据，1-4条；全部为 false 时输出空列表"],
+}
+
+
+def _normalize_safety_factors(payload: object) -> dict[str, object]:
+    """把模型输出收敛成确定性布尔/数字，缺字段一律按最宽松（不上调）处理。
+
+    这里刻意不做兜底推断：抽不到证据就不上调下限、不改带，让用户走正常业务带位，
+    而不是靠猜把人往 A 带推。
+    """
+
+    data = payload if isinstance(payload, dict) else {}
+    factors: dict[str, object] = {
+        "safety_band_override": _boolean_value(data.get("safety_band_override")),
+        "safety_band_override_reasons": _clean_list(data.get("safety_band_override_reasons"))[:3],
+        "evidence_notes": _clean_list(data.get("evidence_notes"))[:4],
+    }
+    for key in ("muscle_insufficiency", "disease_or_medication_limit", "recovery_risk"):
+        factors[key] = _boolean_value(data.get(key))
+    factors["doctor_specified_lower_weight_kg"] = _positive_number_or_none(
+        data.get("doctor_specified_lower_weight_kg")
+    )
+    return factors
+
+
+def _positive_number_or_none(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+async def _extract_safety_factors(
+    *,
+    ai: AIService,
+    service_case: ServiceCase,
+    readable_answers: str,
+) -> dict[str, object]:
+    """先抽安全因子，再算带位——顺序不能反。
+
+    保护性下限的上调依据（疾病、用药、医生限制）散在问卷的自由文本里，只能靠模型
+    结构化抽取。而带位一旦确定就会被写进全文的目标和路径，所以必须在生成两份文件
+    之前定下来；放在主调用里输出会导致正文按旧带写完、带位事后才变，全文不一致。
+
+    抽取失败不阻断入营：退回全 false，等同于历史行为（BMI 20 下限、纯数值分带），
+    并留日志。宁可少上调，也不要因为一次模型抖动把用户挡在交付之外。
+    """
+
+    try:
+        text = await ai.generate_text(
+            scenario="intake_safety_factors",
+            temperature=0.0,
+            service_case_id=service_case.id,
+            system_prompt=(
+                "你是健康服务的安全审阅员。只根据问卷中明确出现的事实做结构化判断，"
+                "不推测、不补编、不做医学诊断。只输出一个 JSON 对象，不要解释或 Markdown。"
+                "判断不确定时一律输出 false 或 null——漏判会由人工复核兜底，"
+                "误判会直接改变用户拿到的目标，代价更大。"
+            ),
+            user_prompt=(
+                f"请严格按这个字段结构填值：\n"
+                f"{json.dumps(SAFETY_FACTOR_SCHEMA, ensure_ascii=False, indent=2)}\n\n"
+                f"问卷结果：\n{readable_answers}"
+            ),
+        )
+        return _normalize_safety_factors(parse_json_object(text))
+    except Exception:
+        logger.exception(
+            "safety factor extraction failed for case %s; falling back to no adjustment",
+            service_case.id,
+        )
+        return _normalize_safety_factors(None)
+
+
 async def _generate_intake_analysis_package(
     *,
     session: AsyncSession,
@@ -225,7 +349,12 @@ async def _generate_intake_analysis_package(
 ) -> dict[str, object]:
     fields = await get_active_questionnaire_fields(session, "intake")
     readable_answers = _readable_answers(fields, submission.answers_json)
-    intake_facts = build_intake_fact_summary(fields, submission.answers_json)
+    safety_factors = await _extract_safety_factors(
+        ai=ai,
+        service_case=service_case,
+        readable_answers=readable_answers,
+    )
+    intake_facts = build_intake_fact_summary(fields, submission.answers_json, safety_factors)
     text = await ai.generate_text(
         scenario="intake_doc",
         temperature=0.3,
@@ -1030,9 +1159,33 @@ def _apply_a_band_user_visible_contract(
     core_conclusions: dict[str, object],
     goal_response: dict[str, object],
 ) -> None:
-    """A带正文只给定性结论，不让模型复述用户斤数或内部安全空间数字。"""
+    """A带正文只给定性结论，不让模型复述用户斤数或内部安全空间数字。
+
+    A带有两种来源，用户读到的话必须分开：可管理空间不足（用户通常确实想减，
+    只是当前不适合追数字）和安全条件覆盖（孕哺、术后、青少年等，这类用户未必
+    以减重为诉求，套用"您希望尽快看到体重变化"就是在替他脑补目标）。
+    """
 
     if _text_from_payload(shared.get("weight_band")) != "A带｜修复塑形":
+        return
+    if shared.get("band_override_by_safety"):
+        core_conclusions["band_explanation"] = (
+            "结合您当前的身体情况，这28天以稳妥恢复和状态管理为主，不设置体重下降指标。"
+        )
+        goal_response.update(
+            {
+                "goal_type": "general",
+                "judgement_type": "needs_adjustment",
+                "content": (
+                    "结合您在问卷中说明的身体情况，这28天不适合设置减重数字目标，"
+                    "更适合先把三餐节律、睡眠、精力和身体舒适度稳住，并按医生的建议执行。"
+                    "当前不设置减重挑战目标；请先与班主任确认您的具体情况，再决定后续是否调整方向。"
+                ),
+                "user_goal": "希望在身体允许的前提下改善状态",
+                "judgement": "当前阶段以稳妥恢复和状态管理为主，不设置减重数字目标。",
+                "conditions": "请先与班主任确认您的具体身体情况，必要时先完成医生评估，再决定后续方向。",
+            }
+        )
         return
     core_conclusions["band_explanation"] = (
         "当前更适合修复塑形，不设置体重下降指标，重点观察围度、体态和身体状态变化。"
