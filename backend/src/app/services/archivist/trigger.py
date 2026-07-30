@@ -1,7 +1,6 @@
 """档案官触发：DB 派生扫描 + 行锁，不用内存 timer（重启不丢，呼应"重启丢在途"教训）。
 
-闸门（必须先满足）：水位线之后有 ≥1 条 archive_plan.worthy=true 的用户消息，
-或有 ≥1 条**从未经过意图识别**且已滞留 ≥24h 的用户消息（见 `_is_unjudged`）。
+闸门（必须先满足）：水位线之后有 ≥1 条 archive_plan.worthy=true 的用户消息。
 三条"或"（满足其一即跑）：
   Fast 关键信息：delta 含关键类目（checkin/profile_fact/outcome）且用户停说 ≥ 3min（去抖批处理）；
   B 最大滞留：距上次归档 ≥ 24h（无归档记录则按最早未归档消息计）——非关键 worthy 的兜底；
@@ -94,25 +93,6 @@ def _has_key_kind(analysis_json: object, sender_type: MessageSenderType = Messag
     return analysis_json.get("image_parse_status") == "ok"
 
 
-def _is_unjudged(analysis_json: object, sender_type: MessageSenderType) -> bool:
-    """本条用户消息**从未经过意图识别**——不是"判过不值得"，而是"根本没判"。
-
-    静音期（班主任让机器人退下）、非文本仅存档、恢复时被更新消息顶掉等路径，在
-    `EngineGraph` 走到风控节点之前就结束了整轮处理，因此永远拿不到 `archive_plan`。
-    这类消息里可能含打卡等事实，靠 worthy 闸门永远开不了闸，会一直等到用户回到
-    正常回复路径才被连带抽走（静音可能持续数天）。故给它们一条滞留兜底。
-
-    与 `archive_plan.worthy=false` 严格区分：后者是意图识别明确判过"不值得沉淀"，
-    继续保持不开闸（纯闲聊不该每天白跑一次抽取）。开闸后水位线随之推进，这条兜底
-    对同一批消息只会付一次批次成本，不会反复触发。
-    """
-    if sender_type == MessageSenderType.STAFF:
-        return False
-    if not isinstance(analysis_json, dict):
-        return True
-    return not isinstance(analysis_json.get("archive_plan"), dict)
-
-
 async def _candidate_case_ids(session: AsyncSession) -> list[int]:
     """有"水位线之后新用户消息"的在服务单（未归档增量非空）。已归档的会随水位线推进自动退出。"""
     stmt = (
@@ -179,14 +159,7 @@ async def _evaluate(
             )
         )
     worthy_any = followup_reply_possible or any(_is_worthy(aj, sender_type) for _, _, aj, sender_type in rows)
-    # 从未经过意图识别、且已滞留满 MAX_LATENCY_SECONDS 的消息也放行（见 _is_unjudged）。
-    stale_unjudged = any(
-        _is_unjudged(aj, sender_type)
-        and ct is not None
-        and (now - _aware(ct)).total_seconds() >= MAX_LATENCY_SECONDS
-        for _, ct, aj, sender_type in rows
-    )
-    if not (worthy_any or stale_unjudged):
+    if not worthy_any:
         return False, "gate_no_worthy"
 
     count = len(rows)
@@ -201,22 +174,12 @@ async def _evaluate(
         and (now - last_user_at).total_seconds() >= KEY_INFO_SETTLE_SECONDS
     )
     anchor = _aware(last_archived_at) or first_user_at
-    cond_b = stale_unjudged or (
-        anchor is not None and (now - anchor).total_seconds() >= MAX_LATENCY_SECONDS
-    )
+    cond_b = anchor is not None and (now - anchor).total_seconds() >= MAX_LATENCY_SECONDS
     cond_c = count >= MAX_DELTA_COUNT
 
     if cond_fast or cond_b or cond_c:
         reason = ",".join(
-            k
-            for k, v in (
-                ("fast_key", cond_fast),
-                ("B_latency", cond_b),
-                ("C_count", cond_c),
-                # 留痕本次是被"没判过"兜底放行的，便于事后看静音/早退路径的实际发生量。
-                ("stale_unjudged", stale_unjudged),
-            )
-            if v
+            k for k, v in (("fast_key", cond_fast), ("B_latency", cond_b), ("C_count", cond_c)) if v
         )
         return True, reason
     return False, "not_due"

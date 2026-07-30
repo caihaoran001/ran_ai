@@ -785,39 +785,6 @@ async def test_trigger_gate_no_worthy(db_session):
 
 
 @pytest.mark.asyncio
-async def test_trigger_releases_gate_for_stale_unjudged_message(db_session):
-    """静音期等早退路径的消息没跑过意图识别（无 archive_plan），滞留满 24h 必须放行。
-
-    否则里面的打卡要等到用户回到正常回复路径才被连带抽走，静音可能持续数天。
-    """
-    case = await _case(db_session)
-    base = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
-    await _user_msg(
-        db_session,
-        case,
-        analysis_json={"_qiwe_meta": {"sender_type": "user"}},  # 早退：从未产出 archive_plan
-        created_at=base,
-    )
-    should_early, reason_early = await _evaluate(
-        db_session,
-        service_case_id=case.id,
-        watermark=0,
-        last_archived_at=None,
-        now=base + timedelta(hours=1),
-    )
-    assert should_early is False and reason_early == "gate_no_worthy"
-
-    should_late, reason_late = await _evaluate(
-        db_session,
-        service_case_id=case.id,
-        watermark=0,
-        last_archived_at=None,
-        now=base + timedelta(hours=25),
-    )
-    assert should_late is True and "stale_unjudged" in reason_late
-
-
-@pytest.mark.asyncio
 async def test_trigger_staff_message_as_correction_candidate(db_session):
     case = await _case(db_session)
     base = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
