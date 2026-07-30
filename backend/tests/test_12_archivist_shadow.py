@@ -8,7 +8,7 @@ message_id=anchor、当前里程碑)、user_state_profiles 出现对应 domain�
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -132,6 +132,93 @@ async def test_archivist_maps_normal_chat_to_delivered_checklist_item(db_session
     assert checkin.parsed_json["custom_checkin"][item_id]["question"] == "今天是否至少吃到2拳蔬菜"
     assert checkin.parsed_json["custom_checkin"][item_id]["source"] == "chat"
     assert "<daily_checklist_context>" in fake.calls[0][1].content
+
+
+def test_business_day_starts_at_three_am():
+    """打卡业务日 03:00 分界：凌晨补的卡算前一天，其余按自然日。"""
+    from app.services.archivist.graph import _sh_date
+
+    sh = ZoneInfo("Asia/Shanghai")
+    assert _sh_date(datetime(2026, 7, 30, 1, 50, tzinfo=sh)) == date(2026, 7, 29)
+    assert _sh_date(datetime(2026, 7, 30, 2, 59, tzinfo=sh)) == date(2026, 7, 29)
+    assert _sh_date(datetime(2026, 7, 30, 3, 0, tzinfo=sh)) == date(2026, 7, 30)
+    assert _sh_date(datetime(2026, 7, 30, 23, 7, tzinfo=sh)) == date(2026, 7, 30)
+    # UTC 落库时间同样按北京业务日归桶（7-29 17:50 UTC = 7-30 01:50 北京）。
+    assert _sh_date(datetime(2026, 7, 29, 17, 50, tzinfo=timezone.utc)) == date(2026, 7, 29)
+
+
+@pytest.mark.asyncio
+async def test_archivist_keeps_after_midnight_checkin_for_previous_day(db_session):
+    """凌晨补昨天的五项打卡必须落库。
+
+    线上 case 260 的真实故障：用户 7-30 01:50 发"7月29日打卡5项"，模型正确报了
+    target_date=2026-07-29，但按自然日分桶时白名单只有 2026-07-30，抽取结果被
+    checkin_date_not_in_batch / checklist_not_in_whitelist 静默丢弃，次日早上照常
+    追问"补一下昨天的打卡"。
+    """
+    case, _msgs, progress = await _setup_case_with_messages(db_session)
+    # 03:00 之前的消息（7-30 01:50 北京 = 7-29 17:50 UTC）→ 业务日 7-29。
+    after_midnight = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="7月29日打卡5项：早C午B晚A全完成，饭后困评分5",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        created_at=datetime(2026, 7, 29, 17, 50, tzinfo=timezone.utc),
+    )
+    db_session.add(after_midnight)
+    await db_session.flush()
+    progress.last_archived_message_id = after_midnight.id - 1
+    await db_session.flush()
+
+    fake = FakeToolCallingModel([
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "report_checkin",
+                    "args": {
+                        "target_date": "2026-07-29",
+                        "sensation": "饭后困评分5分（不困）",
+                        "product_schedule": {
+                            "morning_c": "已喝",
+                            "noon_b": "已喝",
+                            "night_a": "已喝",
+                        },
+                    },
+                    "id": "after-midnight-checkin",
+                }
+            ],
+        )
+    ])
+
+    await run_archivist(db_session, service_case=case, progress=progress, chat_model=fake)
+    await db_session.flush()
+
+    checkin = await db_session.scalar(
+        select(Checkin).where(
+            Checkin.service_case_id == case.id,
+            Checkin.checkin_date == date(2026, 7, 29),
+            Checkin.deleted_at.is_(None),
+        )
+    )
+    assert checkin is not None, "凌晨补的昨天打卡被丢弃了"
+    assert checkin.parsed_json["sensation"] == "饭后困评分5分（不困）"
+    assert checkin.parsed_json["product_schedule"]["night_a"] == "已喝"
+
+    trace = await db_session.scalar(
+        select(ArchivistExtractTrace)
+        .where(ArchivistExtractTrace.service_case_id == case.id)
+        .order_by(ArchivistExtractTrace.id.desc())
+    )
+    assert trace is not None
+    assert not [
+        item for item in trace.dropped_json
+        if item.get("reason") == "checkin_date_not_in_batch"
+    ]
 
 
 async def _setup_case_with_messages(db_session):

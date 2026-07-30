@@ -108,10 +108,28 @@ class ArchivistRunResult:
     change_details: list[dict[str, Any]] = field(default_factory=list)
 
 
+# 打卡业务日的起点（北京时间）：0:00-2:59 的消息算前一天。
+# 用户常在跨过午夜后才补当天的五项打卡（"7月29日打卡5项"发在 7-30 01:50），而抽取
+# 落库前会校验 target_date 必须落在本批消息的自然日内（extract_agent 的
+# checkin_date_not_in_batch / checklist_not_in_whitelist）。按自然日分桶时，这类补卡
+# 的正确日期永远不在白名单里，模型报对了也会被静默丢弃——线上 case 260 就是这么丢的
+# 7-29 一整天，导致次日早上照常追问"补一下昨天的打卡"。
+BUSINESS_DAY_START_HOUR = 3
+
+
 def _sh_date(dt: datetime) -> date:
+    """消息所属的**打卡业务日**（北京时区，03:00 分界），不是自然日。
+
+    这是全系统唯一的业务日定义；别在其他地方另算一遍，否则会出现档案官按业务日、
+    别的模块按自然日的错位。打卡追问那边比较的是 `checkins.checkin_date`（自然日语义），
+    凌晨补卡归到前一天后正好与"追问昨天"对得上。
+    """
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(_SH_TZ).date()
+    local = dt.astimezone(_SH_TZ)
+    if local.hour < BUSINESS_DAY_START_HOUR:
+        return (local - timedelta(days=1)).date()
+    return local.date()
 
 
 def _audit_text(value: Any, *, limit: int = 2000) -> str | None:
