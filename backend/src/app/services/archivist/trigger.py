@@ -2,11 +2,11 @@
 
 闸门（必须先满足）：水位线之后有 ≥1 条 archive_plan.worthy=true 的用户消息。
 三条"或"（满足其一即跑）：
-  Fast 关键信息：delta 含关键类目（profile_fact/outcome）且用户停说 ≥ 3min（去抖批处理）；
+  Fast 关键信息：delta 含关键类目（checkin/profile_fact/outcome）且用户停说 ≥ 3min（去抖批处理）；
   B 最大滞留：距上次归档 ≥ 24h（无归档记录则按最早未归档消息计）——非关键 worthy 的兜底；
   C 累积：未归档用户消息 ≥ 20 条——安全阀。
-关键信息快触发替代了原"静默 2h 才抽"：个人事实/成效在用户停说约 3 分钟后即抽；
-打卡已由回复 Agent 即时写入，不再经过本触发器。
+关键信息快触发替代了原"静默 2h 才抽"：打卡/个人事实/成效在用户停说约 3 分钟后即抽，
+让下游（打卡追问判缺口）看到的基本是最新数据；纯闲聊仍走 24h 兜底。
 数值先按此上线、边观察边调。
 """
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy import func, select
@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import SessionLocal
 from app.models.archivist_progress import ArchivistProgress
 from app.models.archivist_quarantine import ArchivistQuarantine
-from app.models.message import Message, MessagePurpose, MessageSenderType
+from app.models.message import Message, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.service_case import ServiceCase
 from app.services.agent_observability import (
     COMPLETED as AGENT_RUN_COMPLETED,
@@ -51,11 +51,8 @@ MAX_DELTA_COUNT = 20               # C 累积：20 条用户发言（安全阀�
 SINGLE_STEP_AFTER_FAILURES = 2
 QUARANTINE_AFTER_FAILURES = 3
 
-# 关键信息类目：稳定个人事实 / 阶段成效。命中即走 Fast 快触发。
-KEY_ARCHIVE_KINDS = frozenset({"profile_fact", "outcome"})
-ACTIVE_ARCHIVE_KINDS = frozenset(
-    {"profile_fact", "outcome", "correction", "knowledge_qa"}
-)
+# 关键信息类目：可结构化打卡 / 稳定个人事实 / 阶段成效。命中即走 Fast 快触发。
+KEY_ARCHIVE_KINDS = frozenset({"checkin", "profile_fact", "outcome"})
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -75,15 +72,14 @@ def _is_worthy(analysis_json: object, sender_type: MessageSenderType) -> bool:
         return False
     plan = analysis_json.get("archive_plan")
     if isinstance(plan, dict) and plan.get("worthy"):
-        raw_kinds = plan.get("kinds")
-        if isinstance(raw_kinds, list) and raw_kinds:
-            return any(kind in ACTIVE_ARCHIVE_KINDS for kind in raw_kinds)
         return True
-    return False
+    # 纯图片单发不走意图识别(视觉不进风控的既有决定)，故无 archive_plan；
+    # 但成功解析的餐食图/体重秤图是打卡主来源，视为可归档，交给档案官抽取判断。
+    return analysis_json.get("image_parse_status") == "ok"
 
 
 def _has_key_kind(analysis_json: object, sender_type: MessageSenderType = MessageSenderType.USER) -> bool:
-    """本条是否含"关键信息"(稳定个人事实/阶段成效) —— 命中即走 Fast 快触发。"""
+    """本条是否含"关键信息"(可结构化打卡/稳定个人事实/阶段成效) —— 命中即走 Fast 快触发。"""
     if sender_type == MessageSenderType.STAFF:
         return True
     if not isinstance(analysis_json, dict):
@@ -93,7 +89,8 @@ def _has_key_kind(analysis_json: object, sender_type: MessageSenderType = Messag
         kinds = plan.get("kinds")
         if isinstance(kinds, list) and any(k in KEY_ARCHIVE_KINDS for k in kinds):
             return True
-    return False
+    # 成功解析的餐食图/体重秤图无 archive_plan，但本身就是打卡主来源，比照关键信息。
+    return analysis_json.get("image_parse_status") == "ok"
 
 
 async def _candidate_case_ids(session: AsyncSession) -> list[int]:
@@ -141,19 +138,35 @@ async def _evaluate(
 
     created_times = [_aware(ct) for _, ct, _, _ in rows if ct is not None]
     last_user_at = max(created_times) if created_times else None
-    worthy_any = any(
-        _is_worthy(aj, sender_type) for _, _, aj, sender_type in rows
-    )
+    # A terse response such as “完成” is normally not archive-worthy on its own,
+    # but it may be the direct answer to a structured follow-up. Let the extractor
+    # decide whether it really answers an expected item; without this exception the
+    # silence brake could never be released by concise users.
+    followup_reply_possible = False
+    if last_user_at is not None:
+        followup_reply_possible = bool(
+            await session.scalar(
+                select(Message.id)
+                .where(
+                    Message.service_case_id == service_case_id,
+                    Message.sender_type == MessageSenderType.SYSTEM,
+                    Message.purpose == MessagePurpose.REMINDER,
+                    Message.status == MessageStatus.SENT,
+                    Message.created_at <= last_user_at,
+                    Message.created_at >= last_user_at - timedelta(hours=48),
+                )
+                .limit(1)
+            )
+        )
+    worthy_any = followup_reply_possible or any(_is_worthy(aj, sender_type) for _, _, aj, sender_type in rows)
     if not worthy_any:
         return False, "gate_no_worthy"
 
     count = len(rows)
     first_user_at = min(created_times) if created_times else None
-    key_any = any(
-        _has_key_kind(aj, sender_type) for _, _, aj, sender_type in rows
-    )
+    key_any = followup_reply_possible or any(_has_key_kind(aj, sender_type) for _, _, aj, sender_type in rows)
 
-    # Fast：含关键信息(个人事实/成效)且用户已停说 KEY_INFO_SETTLE_SECONDS —— 3 分钟去抖，
+    # Fast：含关键信息(打卡/个人事实/成效)且用户已停说 KEY_INFO_SETTLE_SECONDS —— 3 分钟去抖，
     # 把连发的几条批一次抽，既及时(≈3min 而非旧的 2h)又不至于每条都抽。
     cond_fast = (
         key_any
@@ -275,8 +288,8 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                 )
                 stats["ran"] += 1
                 logger.info(
-                    "Archivist ran service_case_id=%s reason=%s delta=%s outputs=%s",
-                    cid, reason, result.delta_count, output_count,
+                    "Archivist ran service_case_id=%s reason=%s delta=%s days=%s contradictions=%s",
+                    cid, reason, result.delta_count, result.days_processed, len(result.contradictions),
                 )
         except Exception as exc:
             # 归档失败：主事务已回滚（未 commit），水位线保持不动，下轮重试。
@@ -301,6 +314,11 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
 def archivist_output_breakdown(result) -> dict[str, int]:
     """归档成功后的确定性产出计数；用于运营效果统计，不参与业务判断。"""
     return {
+        "checkin_days": sum(
+            1
+            for item in (result.upserts or [])
+            if item.get("created") or item.get("filled")
+        ),
         "outcomes": int(result.outcome_written or 0),
         "profile_facts": int(result.profile_written or 0),
         "state_facts": int(result.state_written or 0),

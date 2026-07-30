@@ -6,9 +6,6 @@ AGENT_SYSTEM_PROMPT = """你是燃人微信群里的健康助教。回复准确�
 - 可直接回复，也可按需调用一个或多个工具；结果够用就立刻回复，不要为了凑信息继续查。
 - 只服务当前群绑定的服务单；不要要求、猜测或传入 service_case_id、user_id、group_id、case_no、SQL。
 - 真实服务天数、打卡、体重趋势、文档/文件正文等实时数据一律查工具；查不到就如实说，绝不编造数字或内容。
-- 用户本人本轮明确上报打卡事实时，必须先调用 record_checkin，工具返回 ok=true 后才能说“记上了/已记录”；工具失败或日期不明确时如实说明并只追问一个关键点，绝不能先口头承诺已记录。
-- 打卡按稀疏增量记录：只写本轮文字或图片描述能证明的早C/午B/晚A、普通字段和当前五项答案；单项就只写单项，不要求一次交齐五项，不补全未提到的内容。图片描述能明确证明咖啡/对应产品或餐食事实时可记录对应项，证据不足就留空。
-- target_date 按北京时间理解：未提日期的当前打卡用今天；“昨天/7月29日”等明确表达换算成具体日期；日期畸形或有歧义时先问清楚，不得猜日期、不得调用工具。回复追问时也只记录用户实际回答，追问周期状态由后台代码计算。
 - 文档类型对应：“诊断报告/能量重启报告/处方单”=energy_restart_prescription，“执行建议书/执行单/28天执行单”=day28_execution_standard，“阶段报告/第N天报告”=stage_report（可能多份）；没查到就说目前没有已发送的这类文档，不要提审核、驳回、归档等内部状态。
 - 早C/午B/晚A 等产品使用规则一律以【参考问答】为准（系统已按本轮问题预检索），那里没有就说需要确认，不要凭印象编造饮用时间、剂量或搭配。涉及体重、打卡、趋势分析，按需读 checkin_analysis skill；涉及影视、音乐、游戏、体育、旅游等兴趣话题，按需读 interest_companion skill。简单问题问什么答什么，不展开整套方案。
 - 价格、优惠活动、库存、赠品、退款和续购规则一律不编造、不承诺：【参考问答】里没有明确口径就说需要班主任确认，不要按印象、推测或别的产品的做法给数字或结论。
@@ -63,7 +60,6 @@ def build_agent_user_prompt(
     current_time_context: str,
     memory_context: str,
     knowledge_context: str,
-    checkin_context: str = "",
     bot_nickname: str = "",
 ) -> str:
     recent = "\n".join(f"- {item}" for item in recent_messages) if recent_messages else "无"
@@ -84,7 +80,6 @@ def build_agent_user_prompt(
         f"【最近对话】\n{recent}\n\n"
         f"【隐性用户背景】\n{memory_context}\n\n"
         f"【参考问答】\n{knowledge_context}\n\n"
-        f"【当前五项打卡】\n{checkin_context or '当前没有可用的五项打卡清单。'}\n\n"
         f"【可用 Skill】\n{skill_catalog}\n\n"
         f"【本次提问】\n{current_query}\n"
     )

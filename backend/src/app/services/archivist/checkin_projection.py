@@ -1,4 +1,4 @@
-"""打卡记录：把聊天中确认的打卡事实确定性地落到 checkins 表。
+"""打卡投影：把聊天抽取出的打卡字段确定性地落到 checkins 表。
 
 铁律（见设计 §2.3 / §7）：
 - **表单字段权威，聊天只补空**：用户在打卡表单里填过的字段，聊天推断值绝不覆盖。
@@ -13,29 +13,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.checkin import Checkin
-from app.models.checkin_message_receipt import CheckinMessageReceipt
-from app.models.message import (
-    Message,
-    MessageDirection,
-    MessagePurpose,
-    MessageSenderType,
-)
 from app.models.service_case import ServiceCase
-from app.services.checkin_checklists import get_effective_daily_checklist
-from app.services.checkin_followup import (
-    reconcile_followup_cycles_after_checkin_write,
-)
 from app.services.checkin_presentation import (
     load_personalized_checkin_labels,
 )
 from app.services.checkin_service import CHECKIN_KEYS
-from app.services.service_case_queries import select_active_service_cases
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +46,6 @@ class CheckinUpsertResult:
     contradictions: list[dict] = field(default_factory=list)  # 表单值≠聊天值，留痕待人工
 
 
-class CheckinRecordValidationError(ValueError):
-    """The requested write is invalid business input, not an infrastructure failure."""
-
-
 def _is_empty(value: object) -> bool:
     if value is None:
         return True
@@ -71,22 +54,6 @@ def _is_empty(value: object) -> bool:
     if isinstance(value, dict):
         return all(_is_empty(v) for v in value.values())
     return False
-
-
-def _receipt_payload(
-    receipt: CheckinMessageReceipt, *, idempotent_replay: bool
-) -> dict[str, Any]:
-    payload = dict(receipt.result_json or {})
-    payload.update(
-        {
-            "ok": True,
-            "receipt_id": receipt.id,
-            "checkin_id": receipt.checkin_id,
-            "target_date": receipt.target_date.isoformat(),
-            "idempotent_replay": idempotent_replay,
-        }
-    )
-    return payload
 
 
 def _equivalent(a: object, b: object) -> bool:
@@ -131,10 +98,6 @@ def _merge_product_schedule(
     cur = parsed.get("product_schedule")
     if not isinstance(cur, dict):
         cur = {}
-    else:
-        # JSON 列不会跟踪嵌套 dict 的原地修改；复制后再整体赋值，确保同日后续消息
-        # 只补午B/晚A时也能被 ORM 判定为真实变更。
-        cur = dict(cur)
     changed = False
     for sub in _PRODUCT_SCHEDULE_SUBKEYS:
         inc = incoming.get(sub)
@@ -278,7 +241,7 @@ async def upsert_checkin(
     if result.contradictions:
         meta["contradictions"].extend(result.contradictions)
         logger.warning(
-            "Checkin contradiction service_case_id=%s date=%s items=%s",
+            "Archivist checkin contradiction service_case_id=%s date=%s items=%s",
             service_case.id,
             checkin_date,
             result.contradictions,
@@ -295,155 +258,6 @@ async def upsert_checkin(
     ):
         checkin.parsed_json = parsed
     return result
-
-
-async def record_checkin_from_message(
-    session: AsyncSession,
-    *,
-    service_case_id: int,
-    source_message_id: int,
-    target_date: date,
-    fields: dict[str, Any],
-    checklist_answers: list[dict[str, Any]] | None = None,
-    channel: str | None = None,
-    group_id: str | None = None,
-) -> dict[str, Any]:
-    """Atomically merge one inbound turn into a daily check-in and persist its receipt.
-
-    The service-case row is locked first, so concurrent ReAct/checkpoint replays for the
-    same case serialize before checking the stable receipt key.
-    """
-
-    service_case = await session.scalar(
-        select_active_service_cases(
-            ServiceCase.id == service_case_id
-        ).with_for_update()
-    )
-    if service_case is None:
-        raise CheckinRecordValidationError("当前服务单不存在或已结束，不能记录打卡。")
-    if group_id is not None and group_id != service_case.group_id:
-        raise CheckinRecordValidationError("当前群与服务单不匹配，不能记录打卡。")
-
-    source = await session.scalar(
-        select(Message).where(
-            Message.id == source_message_id,
-            Message.service_case_id == service_case_id,
-            Message.group_id == service_case.group_id,
-            Message.direction == MessageDirection.INBOUND,
-            Message.sender_type == MessageSenderType.USER,
-            Message.purpose == MessagePurpose.CHAT,
-        )
-    )
-    if source is None:
-        raise CheckinRecordValidationError("当前来源不是本服务用户的有效群聊消息，不能记录打卡。")
-
-    existing = await session.scalar(
-        select(CheckinMessageReceipt).where(
-            CheckinMessageReceipt.service_case_id == service_case_id,
-            CheckinMessageReceipt.source_message_id == source_message_id,
-            CheckinMessageReceipt.target_date == target_date,
-        )
-    )
-    if existing is not None:
-        return _receipt_payload(existing, idempotent_replay=True)
-
-    checklist = await get_effective_daily_checklist(
-        session, service_case_id=service_case_id
-    )
-    checklist_items = {
-        str(item["id"]): item for item in checklist.resolved_items()
-    }
-    accepted_answers: list[dict[str, Any]] = []
-    rejected_answers: list[dict[str, str]] = []
-    for raw in checklist_answers or []:
-        item_id = str(raw.get("item_id") or "").strip()
-        answer = str(raw.get("answer") or "").strip()
-        evidence_type = str(raw.get("evidence_type") or "text").strip()
-        item = checklist_items.get(item_id)
-        if item is None:
-            rejected_answers.append(
-                {"item_id": item_id, "reason": "该项目不在当前生效的五项打卡清单中。"}
-            )
-            continue
-        if not answer:
-            rejected_answers.append(
-                {"item_id": item_id, "reason": "答案为空，未写入。"}
-            )
-            continue
-        accepted_answers.append(
-            {
-                "item_id": item_id,
-                "answer": answer,
-                "question": str(item.get("label") or ""),
-                "source": f"chat_{evidence_type}",
-                "evidence_message_id": source_message_id,
-            }
-        )
-
-    clean_fields = {
-        key: value
-        for key, value in (fields or {}).items()
-        if key in CHECKIN_KEYS and not _is_empty(value)
-    }
-    if not clean_fields and not accepted_answers:
-        raise CheckinRecordValidationError("没有可写入的明确打卡事实。")
-
-    merge = await upsert_checkin(
-        session,
-        service_case=service_case,
-        checkin_date=target_date,
-        fields=clean_fields,
-        evidence_msg_ids=[source_message_id],
-        content_hint=source.content,
-        custom_answers=accepted_answers,
-    )
-    await session.flush()
-    checkin = await _find_active_checkin(
-        session,
-        service_case_id=service_case_id,
-        checkin_date=target_date,
-    )
-    if checkin is None:
-        raise RuntimeError("打卡合并完成后未找到目标日期记录。")
-
-    result_json: dict[str, Any] = {
-        "created": merge.created,
-        "written_fields": list(merge.filled),
-        "written_checklist_item_ids": list(merge.custom_answers_written),
-        "unchanged_fields": list(merge.skipped_same),
-        "kept_form_fields": list(merge.kept_form),
-        "contradictions": list(merge.contradictions),
-        "rejected_checklist_answers": rejected_answers,
-        "checklist_source_ref": checklist.source_ref,
-    }
-    request_json = {
-        "target_date": target_date.isoformat(),
-        "fields": clean_fields,
-        "checklist_answers": accepted_answers,
-    }
-    receipt = CheckinMessageReceipt(
-        service_case_id=service_case_id,
-        source_message_id=source_message_id,
-        target_date=target_date,
-        checkin_id=checkin.id,
-        channel=(channel or "").strip() or None,
-        checklist_source_ref=checklist.source_ref,
-        request_json=request_json,
-        result_json=result_json,
-    )
-    session.add(receipt)
-    await session.flush()
-    await reconcile_followup_cycles_after_checkin_write(
-        session,
-        service_case_id=service_case_id,
-        target_date=target_date,
-        source_message_id=source_message_id,
-        changed_item_ids=[
-            *merge.filled,
-            *merge.custom_answers_written,
-        ],
-    )
-    return _receipt_payload(receipt, idempotent_replay=False)
 
 
 async def _with_question_snapshots(

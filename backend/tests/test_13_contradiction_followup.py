@@ -1,7 +1,7 @@
 """打卡追问（H5 完整替代）——外部确定性触发、每 case 每天最多一条 + 档案官关键信息快触发。
 
 覆盖：
-- 档案官触发器：含关键类目(profile_fact/outcome)且用户停说≥3min → fast 快触发；
+- 档案官触发器：含关键类目(checkin/profile_fact/outcome)且用户停说≥3min → fast 快触发；
   仅闲聊 worthy 且未到 24h → 不触发。
 - compose_scheduled_followups 组织候选：五项清单(次日回顾昨天) / 矛盾核对 / 次晨空腹打卡提醒；
   各类各占时间窗与天闸、每天最多 3 条；三类均使用固定模板，不调用 LLM。
@@ -34,20 +34,21 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.channels import ChannelSendResult
-from app.services.checkin_recording import (
+from app.services.archivist.checkin_projection import (
     SOURCE_FORM,
     SOURCE_USER_CONFIRMED,
     mark_contradictions_pending_confirmation,
     upsert_checkin,
 )
-from app.services.checkin_followup import (
+from app.services.archivist.followup import (
     compose_followup_message,
     compose_milestone_followup,
     detect_followup,
     compose_document_checklist_followup,
     finalize_checkin_followup_cycles,
     is_followup_paused,
-    reconcile_followup_cycles_after_checkin_write,
+    mark_followup_answers,
+    mark_latest_followup_cycle_answered,
     compose_scheduled_followups,
 )
 from app.services.checkin_followup_preferences import set_followup_preference_states
@@ -315,7 +316,7 @@ def test_followup_v2_scheduler_has_cycle_cap_and_silence_brake():
 
 
 def test_followup_copy_path_has_no_llm_dependency():
-    from app.services import checkin_followup as followup_module
+    from app.services.archivist import followup as followup_module
     from app.services.reminder_service import ReminderService
 
     copy_source = inspect.getsource(followup_module)
@@ -503,7 +504,7 @@ async def test_document_checklist_first_item_only_asks_missing_products(db_sessi
 
 
 @pytest.mark.asyncio
-async def test_two_unanswered_cycles_pause(db_session):
+async def test_two_unanswered_cycles_pause_and_valid_answer_reopens(db_session):
     # The shared developer test database may lag Alembic head; CI applies migrations.
     connection = await db_session.connection()
     await connection.run_sync(
@@ -524,10 +525,16 @@ async def test_two_unanswered_cycles_pause(db_session):
     await db_session.flush()
     await finalize_checkin_followup_cycles(db_session, today=today)
     assert await is_followup_paused(db_session, service_case_id=case.id) is True
+    await mark_followup_answers(
+        db_session,
+        service_case_id=case.id,
+        cycle_dates_and_items=[(today - timedelta(days=1), "weight")],
+    )
+    assert await is_followup_paused(db_session, service_case_id=case.id) is False
 
 
 @pytest.mark.asyncio
-async def test_structured_checkin_change_reopens_matching_paused_cycle(db_session):
+async def test_normal_chat_checkin_reopens_latest_paused_cycle(db_session):
     connection = await db_session.connection()
     await connection.run_sync(
         lambda sync_connection: CheckinFollowupCycle.__table__.create(
@@ -536,65 +543,31 @@ async def test_structured_checkin_change_reopens_matching_paused_cycle(db_sessio
     )
     case = await _case(db_session)
     today = date.today()
-    older = CheckinFollowupCycle(
-        service_case_id=case.id,
-        cycle_date=today - timedelta(days=2),
-        status="unanswered",
-    )
-    latest = CheckinFollowupCycle(
-        service_case_id=case.id,
-        cycle_date=today - timedelta(days=1),
-        status="unanswered",
-    )
-    db_session.add_all([older, latest])
-    await db_session.flush()
-    reminder = Message(
-        service_case_id=case.id,
-        group_id=case.group_id,
-        direction=MessageDirection.OUTBOUND,
-        sender_type=MessageSenderType.SYSTEM,
-        content="补一下昨天的打卡",
-        purpose=MessagePurpose.REMINDER,
-        status=MessageStatus.SENT,
-        analysis_json={
-            "checkin_followup": {
-                "target_date": (today - timedelta(days=2)).isoformat(),
-                "items": [{"item_id": "document:99:2"}],
-            }
-        },
-    )
-    db_session.add(reminder)
-    await db_session.flush()
-    latest.message_ids = [reminder.id]
-    source = Message(
-        service_case_id=case.id,
-        group_id=case.group_id,
-        direction=MessageDirection.INBOUND,
-        sender_type=MessageSenderType.USER,
-        content="昨天蔬菜够两拳",
-        purpose=MessagePurpose.CHAT,
-        status=MessageStatus.RECEIVED,
-    )
-    db_session.add(source)
+    for offset in (2, 1):
+        db_session.add(
+            CheckinFollowupCycle(
+                service_case_id=case.id,
+                cycle_date=today - timedelta(days=offset),
+                status="unanswered",
+            )
+        )
     await db_session.flush()
     assert await is_followup_paused(db_session, service_case_id=case.id) is True
 
-    await reconcile_followup_cycles_after_checkin_write(
+    await mark_latest_followup_cycle_answered(
         db_session,
         service_case_id=case.id,
-        target_date=today - timedelta(days=2),
-        source_message_id=source.id,
-        changed_item_ids=["document:99:2"],
+        item_ids=["document:99:2"],
     )
 
     assert await is_followup_paused(db_session, service_case_id=case.id) is False
-    latest_row = await db_session.scalar(
-        select(CheckinFollowupCycle).where(
-            CheckinFollowupCycle.id == latest.id
-        )
+    latest = await db_session.scalar(
+        select(CheckinFollowupCycle)
+        .where(CheckinFollowupCycle.service_case_id == case.id)
+        .order_by(CheckinFollowupCycle.cycle_date.desc())
     )
-    assert latest_row.status == "answered"
-    assert latest_row.answered_item_ids == ["document:99:2"]
+    assert latest.status == "answered"
+    assert latest.answered_item_ids == ["document:99:2"]
 
 
 @pytest.mark.asyncio
@@ -660,14 +633,14 @@ async def test_followup_preferences_filter_proactive_topics(db_session):
 
 
 def test_has_key_kind():
-    assert _has_key_kind({"archive_plan": {"kinds": ["checkin"]}}) is False
+    assert _has_key_kind({"archive_plan": {"kinds": ["checkin"]}}) is True
     assert (
         _has_key_kind({"archive_plan": {"kinds": ["profile_fact", "knowledge_qa"]}})
         is True
     )
     assert _has_key_kind({"archive_plan": {"kinds": ["knowledge_qa"]}}) is False
     assert _has_key_kind({"archive_plan": {"kinds": []}}) is False
-    assert _has_key_kind({"image_parse_status": "ok"}) is False
+    assert _has_key_kind({"image_parse_status": "ok"}) is True  # 餐食/体重秤图比照关键
     assert _has_key_kind({}) is False
     assert _has_key_kind(None) is False
 
@@ -698,7 +671,7 @@ async def test_trigger_fast_on_key_info_after_settle(db_session):
     await _user_msg(
         db_session,
         case,
-        analysis_json={"archive_plan": {"worthy": True, "kinds": ["profile_fact"]}},
+        analysis_json={"archive_plan": {"worthy": True, "kinds": ["checkin"]}},
         created_at=base,
     )
     now = base + timedelta(seconds=KEY_INFO_SETTLE_SECONDS + 60)  # 停说超过去抖窗口
@@ -710,30 +683,7 @@ async def test_trigger_fast_on_key_info_after_settle(db_session):
 
 
 @pytest.mark.asyncio
-async def test_historical_checkin_archive_signal_no_longer_triggers_archivist(db_session):
-    case = await _case(db_session)
-    base = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
-    await _user_msg(
-        db_session,
-        case,
-        analysis_json={"archive_plan": {"worthy": True, "kinds": ["checkin"]}},
-        created_at=base,
-    )
-
-    should, reason = await _evaluate(
-        db_session,
-        service_case_id=case.id,
-        watermark=0,
-        last_archived_at=None,
-        now=base + timedelta(hours=25),
-    )
-
-    assert should is False
-    assert reason == "gate_no_worthy"
-
-
-@pytest.mark.asyncio
-async def test_trigger_ignores_terse_checkin_reply_after_structured_followup(db_session):
+async def test_trigger_accepts_terse_reply_after_structured_followup(db_session):
     case = await _case(db_session)
     base = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
     db_session.add(
@@ -763,8 +713,8 @@ async def test_trigger_ignores_terse_checkin_reply_after_structured_followup(db_
         last_archived_at=None,
         now=base + timedelta(minutes=1, seconds=KEY_INFO_SETTLE_SECONDS + 10),
     )
-    assert should is False
-    assert reason == "gate_no_worthy"
+    assert should is True
+    assert "fast_key" in reason
 
 
 @pytest.mark.asyncio
@@ -774,7 +724,7 @@ async def test_trigger_holds_key_info_within_settle(db_session):
     await _user_msg(
         db_session,
         case,
-        analysis_json={"archive_plan": {"worthy": True, "kinds": ["outcome"]}},
+        analysis_json={"archive_plan": {"worthy": True, "kinds": ["checkin"]}},
         created_at=base,
     )
     now = base + timedelta(seconds=60)  # 刚说完 1 分钟 <3 分钟去抖

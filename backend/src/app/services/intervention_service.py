@@ -72,8 +72,9 @@ VALID_AGENT_TOOL_HINTS = frozenset({
 })
 
 # 归档信号 archive_plan.kinds 合法取值：给档案官(后台归档)判断本条含哪类可沉淀信息。
-# 打卡由回复 Agent 的 record_checkin 工具直接处理，不属于档案官归档信号。
+# checkin/profile_fact/outcome 供 P0 起用；correction/knowledge_qa 为后续阶段(P2)预留。
 VALID_ARCHIVE_KINDS = frozenset({
+    "checkin",
     "profile_fact",
     "outcome",
     "correction",
@@ -304,19 +305,13 @@ def _normalize_archive_plan(value: Any) -> dict[str, Any] | None:
     """规范化归档信号。搭车意图识别 LLM，给档案官判断本条是否含可长期沉淀的信息。
 
     与风险/转人工完全独立，只做轻量打标(worthy+kinds)，不抽具体值。
-    偏向与风控相反：可能含长期事实即 worthy=true；普通执行打卡不走此链路。
+    偏向与风控相反：可能含数据/事实即 worthy=true(误报只白跑一次抽取，漏报=打卡继续空)。
     """
     if not isinstance(value, dict):
         return None
-    raw_kinds = _string_list(value.get("kinds"))
-    kinds = [item for item in raw_kinds if item in VALID_ARCHIVE_KINDS]
+    kinds = [item for item in _string_list(value.get("kinds")) if item in VALID_ARCHIVE_KINDS]
     kinds = _dedupe_strings(kinds)
-    # 旧模型/历史契约若仍只返回已退役的 checkin 类目，不能靠原 worthy=true
-    # 继续触发档案官；有合法类目时才继承 worthy，无类目的新式兜底仍兼容。
-    worthy = (
-        bool(kinds)
-        or (not raw_kinds and bool(value.get("worthy")))
-    )
+    worthy = bool(value.get("worthy")) or bool(kinds)
     return {
         "worthy": worthy,
         "kinds": kinds,

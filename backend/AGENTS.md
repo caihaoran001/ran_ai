@@ -15,13 +15,11 @@ backend/
 │   │   ├── channels/        # 消息渠道抽象层
 │   │   ├── ranren_ai/       # 渠道无关业务引擎
 │   │   ├── agent/           # 回复生成：LangGraph ReAct Agent (graph/tools/prompts/context_builder)
-│   │   ├── archivist/       # 档案官：周期扫描抽 delta → 成效/画像/FAQ/案例草稿 (async 流水线, 见下)
+│   │   ├── archivist/       # 档案官：周期扫描抽 delta → 打卡投影/成效/FAQ/案例草稿 (async 流水线, 见下)
 │   │   ├── qiwe_service/    # QiWe 消息聚合
 │   │   ├── knowledge_base/  # 本地 Markdown FAQ fallback
 │   │   ├── case_library.py  # 优秀案例库检索
 │   │   ├── checkin_questionnaires.py  # 打卡问卷模板
-│   │   ├── checkin_recording.py # 回复 Agent 打卡的按日稀疏合并、来源回执写入
-│   │   ├── checkin_followup.py # 确定性缺项追问与回答周期对账
 │   │   ├── checkin_service  # 打卡处理
 │   │   ├── content_policy.py # 内容发送策略 (风控拦截 + AI 回复模式)
 │   │   ├── document_service # 交付文件生成
@@ -71,14 +69,13 @@ Checkpoint does not replace transport durability: `inbound_events` is the cross-
 
 聊天 agent 能拿到的外部信息分**两类**：
 
-**① 每轮自动注入**（不调工具，`run()` 拼进提示词）：当前北京时间（`_current_time_context`）；当前生效五项打卡清单的极简来源/稳定项目 ID/题面（不含追问周期或回答状态）；本轮用户消息 + 说话人 + 近期群聊；**隐性用户背景**（`profile_memory_service` 把 `UserProfile` + `UserStateProfile` + `ArchivistCaseMemory` 压成"结论小抄"：稳定事实/历程小结/长期偏好/稳定习惯/当前状态/最近话题/风险边界，每域最多 5 条取最新、每行≤120字）；**参考问答**（首次 LLM 调用前按意图识别产出的 nullable `knowledge_query` 决定：字符串则预检索、明确 `null` 则跳过、字段缺失/异常则回退本轮原问题；始终排除优秀案例）；skill 目录（仅名字+简介）。**完整带证据的 `state_json` 档案不再给 agent 查**——结论已在隐性背景里；完整档案给人从 `/users/{id}` 页面看。
+**① 每轮自动注入**（不调工具，`run()` 拼进提示词）：当前北京时间（`_current_time_context`）；本轮用户消息 + 说话人 + 近期群聊；**隐性用户背景**（`profile_memory_service` 把 `UserProfile` + `UserStateProfile` + `ArchivistCaseMemory` 压成"结论小抄"：稳定事实/历程小结/长期偏好/稳定习惯/当前状态/最近话题/风险边界，每域最多 5 条取最新、每行≤120字）；**参考问答**（首次 LLM 调用前按意图识别产出的 nullable `knowledge_query` 决定：字符串则预检索、明确 `null` 则跳过、字段缺失/异常则回退本轮原问题；始终排除优秀案例）；skill 目录（仅名字+简介）。**完整带证据的 `state_json` 档案不再给 agent 查**——结论已在隐性背景里；完整档案给人从 `/users/{id}` 页面看。
 
-**② 按需调工具**（23 个，`agent/tools/`）：
+**② 按需调工具**（22 个，`agent/tools/`）：
 - 服务单只读 7 个（`_is_data_tool`，查不到走安全兜底不编造）：`get_service_progress`、`get_recent_checkins`、`get_weight_trend`、`list_delivery_documents`+`read_delivery_document`、`list_group_files`+`read_group_file`。
 - 优秀案例 1 个：`search_success_case`（仅在用户明显受挫、平台期挫败、自我怀疑、动力低或想放弃时按需调用；普通参考问答不是工具，见下）。
 - 定时提醒 3 个：`create_group_reminder`/`list_group_reminders`/`cancel_group_reminder`（定时任务自身触发那次运行会关掉，`include_reminder_tools=False`，防提醒套提醒）。
 - 打卡追问偏好 2 个：`get_checkin_followup_preferences`/`update_checkin_followup_preferences`。
-- 打卡记录 1 个：`record_checkin`（只在用户本轮明确上报打卡事实时调用；模型只传目标日期和稀疏事实，服务单/群/来源消息/渠道由运行时绑定；按 `(service_case_id, source_message_id, target_date)` 原子写来源回执并与同日 `checkins` 合并，工具 `ok=true` 后才能向用户确认已记录）。
 - 五项追问清单 3 个：`get_checkin_checklist`/`set_checkin_checklist`/`restore_default_checkin_checklist`（设置/恢复只接受当前群已识别工作人员同一条消息明确 @ 机器人；清单独立版本化，不依赖系统发送文件）。
 - 服务生命周期 3 个：`set_service_start_date`/`continue_service`/`end_continued_service`（只能由当前群聊显式 @ 机器人的消息触发；开始日期控制 28 天按天任务且不依赖问卷，续服沿用原服务天数、不新建周期）。
 - 技能 2 个：`skill`（读 SKILL.md 全文）/`read_skill_file`。
@@ -97,13 +94,13 @@ Checkpoint does not replace transport durability: `inbound_events` is the cross-
 ### Documents & profiles
 Questionnaire submission → a structured safety-factor extraction (`_extract_safety_factors`, one small call) → deterministic intake facts calculate the safe-reduction room and exact A/B/C/D band → LLM generates a user profile and explains that fixed band. The extraction must run *before* the facts: the band is written into every goal and path in both documents, so it cannot be corrected after the main generation call. It feeds two things, and they are deliberately separate. (1) How far the protected lower bound is raised above the BMI-20 auto-review line — +0.5 BMI per risk category (muscle clearly insufficient / major illness or medication / recovery risk), capped at +1.5, with a doctor-specified floor winning when more conservative. This is the *only* way risk moves the band: a raised floor narrows the safe room, and the band follows the number. (2) Whether the questionnaire exposes a red-risk condition (pregnancy/lactation, adolescents, eating-disorder risk, major medical conditions, red-flag symptoms) — this **does not change the band**; it forces the document-review marker, which holds both documents from auto-sending (`document_manual_review_hold`, not bypassable by `auto_send`) until operations confirms. A case already at `risk_level=high` lights the same marker via `_force_high_risk_manual_review`. Extraction failure falls back to no adjustment and no marker rather than blocking delivery. Service-case detail can generate two delivery docs (处方单, 28天执行单) and stage reports (3/7/14/21/28-day). The 28-day point ends the current service phase and does not generate a separate graduation report. Flow: LLM emits **structured JSON** for key fields → backend templates (`document_templates.py`) render editable Markdown → persisted as `content_json`/`content_md` → only at download/send time does `docx_service.py` render a temporary `.docx` (deleted after). **The authoritative system prompts live in `backend/src/app/services/document_service.py`; `手动版提示词.md` is reference only and must not be used at runtime.**
 
-### Archivist — outcome / profile / knowledge extraction (NOT per-message, NOT on the reply path)
+### Archivist — outcome / check-in / knowledge extraction (NOT per-message, NOT on the reply path)
 成效抽取**不在消息主链路上实时跑**。消息进来只负责入库/回复；结构化抽取由独立的「档案官」`app/services/archivist/` 承担，在 **scheduler 进程** (`ran-ai-scheduler`) 里周期扫描完成：
 
-- **触发** (`archivist/trigger.py::run_archivist_scan`)：`reminder_service.check_archivist_once` 按 `reminder_check_interval_seconds` 周期调用。**DB 派生找候选服务单 + 行锁防双跑**（重启不丢，不用内存 timer）。闸门：仅当累积 delta 含关键类目（稳定个人事实 / 阶段成效）且用户停说约 3min 才走 Fast 快触发；纯打卡和图片解析成功不构成触发信号，无增量则 `no_delta` 跳过。
+- **触发** (`archivist/trigger.py::run_archivist_scan`)：`reminder_service.check_archivist_once` 按 `reminder_check_interval_seconds` 周期调用。**DB 派生找候选服务单 + 行锁防双跑**（重启不丢，不用内存 timer）。闸门：仅当累积 delta 含关键类目（可结构化打卡 / 稳定个人事实 / 阶段成效）且用户停说约 3min 才走 Fast 快触发；无增量则 `no_delta` 跳过。
 - **抽取** (`archivist/graph.py`)：普通 async 流水线（load_context → extract → commit），不使用 LangGraph/ReAct。每批 delta 只调用一次挂载 `report_*` schema 的模型；一批可跨多天，模型在同一响应里多次上报，工具只承载结构化输出、不落库。历史只传结构化事实、用户历程小结和优秀案例素材小结，不重复传已归档聊天原文。
-- **产物**：同一次模型输出覆盖画像、成效、状态、纠正、FAQ、两类滚动小结和优秀案例候选；`report_checkin` 已移除，档案官不写 `checkins`、不匹配五项答案、也不标记追问回答。确定性代码校验其他产物后与水位线在同一事务写入，不设后置衍生任务。只有本批写入新正向成效且模型确认变化显著稳定时才创建优秀案例草稿。`outcome_engine.py` 是档案官调用的成效写入/评分工具，`user_state_profile.py` 仍把 outcome 投影为 JSONB `user_state_profiles`（action_focus / need_analysis / body_feedback / risk_profile），AI 回复只读取用户历程小结，不读取优秀案例素材小结。
-- 打卡追问 (`checkin_followup.py`) 由确定性调度触发，直接比较目标日期 `checkins` 与当前五项清单，只追缺项；连续未回答周期根据已发送追问后实际发生的结构化打卡变化对账，不由回复 Agent 或档案官上报回答状态。
+- **产物**：同一次模型输出覆盖打卡、画像、成效、状态、纠正、FAQ、两类滚动小结和优秀案例候选；确定性代码校验后与水位线在同一事务写入，不设后置衍生任务。只有本批写入新正向成效且模型确认变化显著稳定时才创建优秀案例草稿。`outcome_engine.py` 是档案官调用的成效写入/评分工具，`user_state_profile.py` 仍把 outcome 投影为 JSONB `user_state_profiles`（action_focus / need_analysis / body_feedback / risk_profile），AI 回复只读取用户历程小结，不读取优秀案例素材小结。
+- 打卡追问 (`archivist/followup.py`) 由外部确定性触发：每 case 每天最多一条，共用 `ReminderEvent(rule_id="checkin_followup")` 天闸（见 memory「打卡追问线上已开启」）。
 
 ### Agent observability
 `agent_runs` 是回复对话轮次、Agent 定时提醒和档案官实际运行批次的统一账本；明确记录成功、无输出、主动不回复、转人工、被新消息覆盖、功能关闭与失败等终态。回复 ReAct 的每次模型调用和档案官每批唯一一次模型调用都关联到 `ai_usage_logs.agent_run_id`，可执行工具调用写 `agent_tool_calls` 并用模型 tool-call ID 防 checkpoint 重放重复计数。观测写入使用独立异步事务、失败只告警，不改变发送、归档、水位线或 checkpoint 语义。
@@ -130,9 +127,7 @@ Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY
 | 渠道注册表 | `src/app/services/channels/registry.py` | 全局渠道管理 |
 | 燃人 AI 引擎 | `src/app/services/ranren_ai/engine.py` | 渠道无关业务逻辑（风控/入库/守卫），回复委托给 agent |
 | 回复生成 Agent | `src/app/services/agent/graph.py` + `src/app/services/agent/checkpoint.py` | `generate_agent_reply` LangGraph ReAct；PostgreSQL checkpoint/初始化在 `checkpoint.py`，工具在 `agent/tools/` |
-| 档案官 | `src/app/services/archivist/trigger.py` + `graph.py` | 周期扫描抽 delta：成效/画像/FAQ/案例草稿；不处理打卡；触发/行锁见 `trigger.py` |
-| 群聊打卡记录 | `src/app/services/agent/tools/checkin_recording_tools.py` + `src/app/services/checkin_recording.py` | 回复 Agent 自主调用；稀疏合并、表单冲突、来源消息幂等回执 |
-| 打卡追问 | `src/app/services/checkin_followup.py` | 按当前清单与目标日期结构化记录确定性计算缺项、对账回答周期 |
+| 档案官 | `src/app/services/archivist/trigger.py` + `graph.py` | 周期扫描抽 delta：打卡投影/成效/FAQ/案例草稿；触发/行锁见 `trigger.py` |
 | QiWe 聚合 | `src/app/services/qiwe_service/aggregator.py` | 群消息聚合 |
 | 数据库知识索引 | `src/app/services/knowledge_index.py` | `knowledge_chunks` 检索，支持 embedding/关键词 fallback |
 | 知识草稿发布 | `src/app/services/knowledge_evolution.py` | 档案官候选的审核、查重、FAQ/案例发布 |

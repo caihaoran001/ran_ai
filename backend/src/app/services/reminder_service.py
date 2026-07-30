@@ -261,10 +261,10 @@ class ReminderService:
         """Five-item daily review plus low-frequency measurements, capped at three sends per cycle."""
         if not self.settings.checkin_followup_enabled:
             return
-        from app.services.checkin_recording import (
+        from app.services.archivist.checkin_projection import (
             mark_contradictions_pending_confirmation,
         )
-        from app.services.checkin_followup import (
+        from app.services.archivist.followup import (
             finalize_checkin_followup_cycles,
             is_followup_paused,
             plan_scheduled_followups,

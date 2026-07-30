@@ -1,4 +1,4 @@
-"""确定性打卡追问：日打卡 H5 下线后的完整度兜底（H5 的完整替代）。
+"""追问补齐：日打卡 H5 下线后的完整度兜底（H5 的完整替代）。
 
 H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部来源**。追问为"外部确定性触发、
 每 case 每天最多几条"（不注入系统 prompt 让 agent 自由裁量），由调度器
@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.checkin import Checkin
 from app.models.checkin_followup_cycle import CheckinFollowupCycle
-from app.models.message import Message, MessageStatus
 from app.models.service_case import ServiceCase
 from app.services.checkin_checklists import (
     TRACKING_PRODUCT_SCHEDULE,
@@ -490,69 +489,49 @@ async def is_followup_paused(session: AsyncSession, *, service_case_id: int) -> 
     return len(rows) == 2 and all(row.status == "unanswered" for row in rows)
 
 
-async def reconcile_followup_cycles_after_checkin_write(
+async def mark_followup_answers(
     session: AsyncSession,
     *,
     service_case_id: int,
-    target_date: date,
-    source_message_id: int,
-    changed_item_ids: list[str],
+    cycle_dates_and_items: list[tuple[date, str]],
 ) -> None:
-    """Derive answered cycles from actual structured changes after a sent reminder."""
-
-    changed = [str(item) for item in changed_item_ids if str(item).strip()]
-    if not changed:
-        return
-    cycles = list(
-        await session.scalars(
-            select(CheckinFollowupCycle)
-            .where(CheckinFollowupCycle.service_case_id == service_case_id)
-            .order_by(CheckinFollowupCycle.cycle_date.desc())
+    """Late answers may reopen a paused case by changing the original cycle to answered."""
+    for cycle_date, item_id in cycle_dates_and_items:
+        row = await session.scalar(
+            select(CheckinFollowupCycle).where(
+                CheckinFollowupCycle.service_case_id == service_case_id,
+                CheckinFollowupCycle.cycle_date == cycle_date,
+            )
         )
-    )
-    message_ids = {
-        int(message_id)
-        for cycle in cycles
-        for message_id in (cycle.message_ids or [])
-        if message_id
-    }
-    messages = (
-        {
-            message.id: message
-            for message in await session.scalars(
-                select(Message).where(
-                    Message.id.in_(message_ids),
-                    Message.status == MessageStatus.SENT,
-                )
-            )
-        }
-        if message_ids
-        else {}
-    )
-    now = datetime.now(tz=ZoneInfo("UTC"))
-    for cycle in cycles:
-        matched = False
-        for message_id in cycle.message_ids or []:
-            message = messages.get(int(message_id))
-            if message is None or message.id >= source_message_id:
-                continue
-            analysis = (
-                message.analysis_json
-                if isinstance(message.analysis_json, dict)
-                else {}
-            )
-            context = analysis.get("checkin_followup")
-            if not isinstance(context, dict):
-                continue
-            if str(context.get("target_date") or "") == target_date.isoformat():
-                matched = True
-                break
-        if not matched:
+        if row is None:
             continue
-        answered = list(cycle.answered_item_ids or [])
-        for item_id in changed:
-            if item_id not in answered:
-                answered.append(item_id)
-        cycle.answered_item_ids = answered
-        cycle.status = "answered"
-        cycle.finalized_at = now
+        answered = list(row.answered_item_ids or [])
+        if item_id not in answered:
+            answered.append(item_id)
+            row.answered_item_ids = answered
+        row.status = "answered"
+        row.finalized_at = datetime.now(tz=ZoneInfo("UTC"))
+
+
+async def mark_latest_followup_cycle_answered(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+    item_ids: list[str],
+) -> None:
+    """任一正常打卡回答都恢复追问；没有历史追问周期时无需写入。"""
+    row = await session.scalar(
+        select(CheckinFollowupCycle)
+        .where(CheckinFollowupCycle.service_case_id == service_case_id)
+        .order_by(CheckinFollowupCycle.cycle_date.desc())
+        .limit(1)
+    )
+    if row is None:
+        return
+    answered = list(row.answered_item_ids or [])
+    for item_id in item_ids:
+        if item_id and item_id not in answered:
+            answered.append(item_id)
+    row.answered_item_ids = answered
+    row.status = "answered"
+    row.finalized_at = datetime.now(tz=ZoneInfo("UTC"))

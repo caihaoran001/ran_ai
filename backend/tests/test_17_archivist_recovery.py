@@ -8,8 +8,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from langchain_core.messages import AIMessage
+from sqlalchemy import select
 
 from app.models.archivist_progress import ArchivistProgress
+from app.models.checkin import Checkin
 from app.models.message import (
     Message,
     MessageDirection,
@@ -82,7 +84,20 @@ async def test_multi_day_delta_invokes_archivist_once(db_session):
         item.created_at.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
         for item in messages
     ]
-    model = _BatchModel([])
+    model = _BatchModel(
+        [
+            {
+                "name": "report_checkin",
+                "args": {"target_date": dates[0], "sleep": "睡了7小时"},
+                "id": "day-1",
+            },
+            {
+                "name": "report_checkin",
+                "args": {"target_date": dates[1], "sleep": "睡了8小时"},
+                "id": "day-2",
+            },
+        ]
+    )
 
     result = await run_archivist(
         db_session,
@@ -96,7 +111,15 @@ async def test_multi_day_delta_invokes_archivist_once(db_session):
     prompt = model.calls[0][-1].content
     assert f"【日期 {dates[0]}】" in prompt
     assert f"【日期 {dates[1]}】" in prompt
-    assert result.delta_count == 2
+    checkins = list(
+        await db_session.scalars(
+            select(Checkin)
+            .where(Checkin.service_case_id == case.id)
+            .order_by(Checkin.checkin_date.asc())
+        )
+    )
+    assert [item.checkin_date.isoformat() for item in checkins] == dates
+    assert result.days_processed == 2
     assert progress.last_archived_message_id == messages[-1].id
 
 

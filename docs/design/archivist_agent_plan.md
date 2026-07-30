@@ -1,7 +1,5 @@
 # 档案官 Agent（Archivist）设计方案
 
-> 状态说明（2026-07-30）：本文保留最初方案的历史设计背景，其中“档案官抽取/写入打卡、`report_checkin`、`archive_plan.checkin`”已退役，不再代表当前运行边界。当前群聊打卡由回复 Agent 在本轮调用 `record_checkin` 即时写入；档案官只保留成效、画像、状态、纠错、FAQ、小结和案例候选等后台沉淀职责。实时边界以根目录及 `backend/AGENTS.md` 为准。
-
 > 状态：**设计稿，待评审**。本文件是蓝图，非实现记录。定稿并开工后，进度接力写入 `docs/wip/CURRENT_TASK.md`。
 
 ---

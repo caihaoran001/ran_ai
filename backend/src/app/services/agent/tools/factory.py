@@ -7,7 +7,6 @@ from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.state import AgentRunContext
 from app.services.agent.tools.knowledge_tools import build_knowledge_tools
 from app.services.agent.tools.checkin_checklist_tools import build_checkin_checklist_tools
-from app.services.agent.tools.checkin_recording_tools import build_checkin_recording_tools
 from app.services.agent.tools.followup_preference_tools import build_followup_preference_tools
 from app.services.agent.tools.reminder_tools import build_reminder_tools
 from app.services.agent.tools.service_lifecycle_tools import build_service_lifecycle_tools
@@ -29,7 +28,6 @@ def build_agent_tools(
     tools.extend(build_skill_tools(skill_registry))
     tools.extend(build_service_case_tools(context=context, settings=settings))
     if include_followup_preference_tools:
-        tools.extend(build_checkin_recording_tools(context=context, settings=settings))
         tools.extend(build_followup_preference_tools(context=context))
         tools.extend(build_checkin_checklist_tools(context=context))
     if include_reminder_tools:
