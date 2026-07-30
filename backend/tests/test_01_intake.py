@@ -327,7 +327,10 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     # 12周阶段路径：客户 V2.1 §7.2-7.4 的各带累计区间与转段条件
     assert "【12周阶段路径】" in prompt
     assert "从入营当天起算的累计管理区间" in prompt
-    assert "A带：第5-12周不设累计减重指标" in prompt
+    assert "A带：全程不设累计减重指标" in prompt
+    # A带这两格来自客户 1.jpg 的四带表，docx 只笼统写了"以身体组成和稳定维持为主"
+    assert "第5-8周以体态与力量提升为主" in prompt
+    assert "第9-12周稳定体重、改善身体组成" in prompt
     assert "B带：第5-8周累计5-8斤" in prompt
     assert "第9-12周累计7-10斤" in prompt
     assert "C带：第5-8周累计8-12斤" in prompt
