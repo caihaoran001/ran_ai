@@ -13,7 +13,11 @@ from app.models.service_case import ServiceCase
 from app.models.user_document import DocumentType
 from app.services.ai_service import AIService, parse_json_object
 from app.services.document_templates import combined_prompt_schema
-from app.services.intake_facts import build_intake_fact_summary, sanitize_profile_json
+from app.services.intake_facts import (
+    UNRESOLVED_BAND,
+    build_intake_fact_summary,
+    sanitize_profile_json,
+)
 from app.services.checkin_questionnaires import personalized_checkin_fields_with_weight
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.document_prompts import _intake_generation_system_prompt
@@ -28,6 +32,23 @@ MANAGEMENT_BANDS = (
     "C带｜明确减脂",
     "D带｜系统减重",
 )
+
+# 算不出带位时 intake_facts 给的是「需补充身高体重后判断」。那是后台哨兵值——
+# dashboard 的分类统计和人群画像都按它过滤未采集用户，不能改。但它同时会被下发到
+# 《诊断报告》成功路径，用户打开就看到「您当前管理带：需补充身高体重后判断」。
+# 所以哨兵值留在 shared_analysis / profile_json 里，进用户可见文档时换成这句人话。
+UNRESOLVED_BAND_USER_TEXT = "待补齐身高体重后确定，班主任会尽快与您核对"
+
+
+def _user_visible_band(band: object) -> str:
+    """把内部带位翻译成用户可见文案。
+
+    只翻译这一个哨兵值：文案说的是「缺身高体重」，套到别的未知取值上就是错的说明。
+    """
+
+    text = str(band or "").strip()
+    return UNRESOLVED_BAND_USER_TEXT if text == UNRESOLVED_BAND else text
+
 
 BAND_CALCULATION_FIELDS = (
     "baseline_weight_kg",
@@ -916,7 +937,10 @@ def _normalize_combined_document_payload(
         else {}
     )
 
-    _sync_if_missing(core_conclusions, "management_band", shared.get("weight_band"))
+    # 带位下发到两份用户可见文件时统一走用户文案；shared_analysis 保留内部哨兵值给后台。
+    visible_band = _user_visible_band(shared.get("weight_band"))
+
+    _sync_if_missing(core_conclusions, "management_band", visible_band)
     _sync_if_missing(core_conclusions, "band_explanation", _first_clean_item(shared.get("band_basis")))
     _sync_if_missing(core_conclusions, "body_trend", shared.get("body_trend"))
     _sync_if_missing(core_conclusions, "trend_explanation", shared.get("body_trend_summary"))
@@ -933,7 +957,7 @@ def _normalize_combined_document_payload(
     if goal_response:
         energy_payload["goal_response"] = goal_response
 
-    _sync_if_missing(shared_path, "weight_band", shared.get("weight_band"))
+    _sync_if_missing(shared_path, "weight_band", visible_band)
     _sync_if_missing(shared_path, "total_goal", shared.get("long_term_goal"))
     _sync_if_missing(shared_path, "day28_goal", shared.get("day28_goal"))
     _sync_if_missing(execution_payload, "weight_band", shared_path.get("weight_band"))
@@ -971,8 +995,8 @@ def _normalize_combined_document_payload(
     # 这和 BMI 由 intake_facts 强制覆写是同一套做法。
     # 执行建议书的目标摘要由渲染层压到 48 字内，所以覆写更长的权威文案不会顶到第二页。
     for target, key, source in (
-        (core_conclusions, "management_band", shared.get("weight_band")),
-        (shared_path, "weight_band", shared.get("weight_band")),
+        (core_conclusions, "management_band", visible_band),
+        (shared_path, "weight_band", visible_band),
         (goal_response, "base_goal", shared.get("base_goal")),
         (goal_response, "challenge_goal", shared.get("challenge_goal")),
         (shared_path, "day28_goal", shared.get("day28_goal")),
@@ -1054,7 +1078,8 @@ def _apply_intake_facts_to_single_payload(
     document_type: DocumentType,
     facts: dict[str, object],
 ) -> None:
-    weight_band = str(facts.get("weight_loss_band") or "").strip()
+    # facts 里存的是内部带位（可能是哨兵值），写进用户可见文档前翻译一次。
+    weight_band = _user_visible_band(facts.get("weight_loss_band"))
     bmi = str(facts.get("bmi") or "").strip()
     if bmi and bmi != "暂无数据":
         _replace_bmi_mentions(payload, bmi)

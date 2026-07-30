@@ -27,6 +27,7 @@ from app.services.document_templates import (
 )
 from app.services.intake_generation import (
     CHECKIN_CATEGORIES,
+    UNRESOLVED_BAND_USER_TEXT,
     _apply_deterministic_band,
     _force_high_risk_manual_review,
     _resolve_management_band,
@@ -36,6 +37,7 @@ from app.services.intake_generation import (
     normalize_daily_checkin_items,
 )
 from app.services.intake_facts import (
+    UNRESOLVED_BAND,
     _management_band_from_safe_room,
     build_intake_fact_summary,
 )
@@ -847,6 +849,52 @@ def test_intake_facts_safe_room_missing_without_height_or_weight():
     assert facts["weight_loss_band"] == "需补充身高体重后判断"
     assert facts["weight_loss_room_exhausted"] == "暂无数据"
     assert facts["day28_goal_cap_kg"] == "暂无数据"
+
+
+def test_unresolved_band_sentinel_never_reaches_user_documents():
+    """算不出带位时后台留哨兵值（dashboard 靠它统计），用户文档只看到人话。"""
+
+    payloads = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "success_path": {"weight_band": "LLM自写带"},
+        },
+        DocumentType.DAY28_EXECUTION_STANDARD.value: {"weight_band": "LLM自写带"},
+    }
+    facts = {"bmi": "暂无数据", "weight_loss_band": UNRESOLVED_BAND}
+
+    _apply_intake_facts_to_document_payloads(payloads, facts)
+
+    energy = payloads[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
+    execution = payloads[DocumentType.DAY28_EXECUTION_STANDARD.value]
+    assert UNRESOLVED_BAND not in energy["success_path"]["weight_band"]
+    assert UNRESOLVED_BAND not in execution["weight_band"]
+    assert energy["success_path"]["weight_band"] == UNRESOLVED_BAND_USER_TEXT
+    # 后台事实不动：dashboard 分类和人群画像仍按哨兵值过滤未采集用户。
+    assert facts["weight_loss_band"] == UNRESOLVED_BAND
+
+
+def test_unresolved_band_sentinel_not_synced_into_shared_path():
+    payloads = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "one_sentence": "当前以补齐基础数据为先，先把执行节律稳住，再谈体重目标的具体安排。",
+            "current_state": "身高体重尚未补齐，先按稳妥节律执行，并观察睡眠、精力和排便的反馈变化。",
+            "priority_direction": "先抓节律稳定，把三餐和睡前时间固定下来。",
+        },
+        DocumentType.DAY28_EXECUTION_STANDARD.value: {
+            "day28_goal": "先补齐身高体重，并稳住三餐结构与睡眠节律。",
+            "current_phase_goal": "先解决节律稳定，不是先追求掉秤。",
+            "current_mainline": "节律稳定",
+        },
+    }
+    shared = {"weight_band": UNRESOLVED_BAND, "current_mainline": "节律稳定"}
+
+    normalized = _normalize_combined_document_payload(payloads, "测试用户", shared_analysis=shared)
+
+    energy = normalized[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
+    assert energy["success_path"]["weight_band"] == UNRESOLVED_BAND_USER_TEXT
+    assert energy["core_conclusions"]["management_band"] == UNRESOLVED_BAND_USER_TEXT
+    # shared_analysis 是后台视图，哨兵值必须原样留下。
+    assert shared["weight_band"] == UNRESOLVED_BAND
 
 
 def test_provisional_band_not_forced_by_single_self_reported_weight():

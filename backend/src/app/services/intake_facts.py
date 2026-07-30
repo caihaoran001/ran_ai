@@ -6,6 +6,10 @@ from typing import Any
 
 CUSTOM_ANSWER_LABEL = "其他（用户补充）"
 
+# 身高体重缺失导致算不出安全减重空间时的带位哨兵值。这是后台口径：
+# dashboard 分类统计和人群画像都按它过滤未采集用户，改字面量会静默破坏那些统计。
+UNRESOLVED_BAND = "需补充身高体重后判断"
+
 
 def structured_answer_values(
     fields: list[dict[str, Any]],
@@ -234,7 +238,7 @@ def _management_band_from_safe_room(safe_room_kg: float | None) -> str:
     """安全减重空间是 A/B/C/D 的唯一数值分带主轴。"""
 
     if safe_room_kg is None:
-        return "需补充身高体重后判断"
+        return UNRESOLVED_BAND
     if safe_room_kg < 2.5:
         return "A带｜修复塑形"
     if safe_room_kg < 5:
