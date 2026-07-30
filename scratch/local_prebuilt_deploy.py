@@ -59,6 +59,9 @@ def main():
         "--exclude='ran_ai_deploy.tar.gz' --exclude='.codex' --exclude='.antigravitycli' "
         "--exclude='.playwright-mcp' --exclude='.sisyphus' --exclude='.agents' "
         "--exclude='.impeccable' --exclude='docs/wip' "
+        # 本地资料/调研目录不参与运行，也不该被送上生产（各几百 KB，体积不是重点）。
+        # 包体 ~80MB 的大头是 .next/standalone 里的运行时 node_modules，那是必需的，别动。
+        "--exclude='./客户调研' --exclude='./文字记录' --exclude='./第三次参考文件' "
         "--exclude='./.env' --exclude='./docker-compose.prod.yml' "
         "--exclude='frontend/.next/cache' --exclude='diagnostics/diagnostics_history.json' "
         "--warning=no-file-changed -czf ran_ai_deploy.tar.gz ."
