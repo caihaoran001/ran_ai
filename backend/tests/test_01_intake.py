@@ -310,8 +310,24 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "孕哺、疾病或用药用户" in prompt
     assert "仍按安全减重空间正常得到 A-D 带" in prompt
 
+    # 12周阶段路径：客户 V2.1 §7.2-7.4 的各带累计区间与转段条件
+    assert "【12周阶段路径】" in prompt
+    assert "从入营当天起算的累计管理区间" in prompt
+    assert "A带：第5-12周不设累计减重指标" in prompt
+    assert "B带：第5-8周累计5-8斤" in prompt
+    assert "第9-12周累计7-10斤" in prompt
+    assert "C带：第5-8周累计8-12斤" in prompt
+    assert "第9-12周累计10-16斤" in prompt
+    assert "D带：第5-8周按第一个28天的实际结果、耐受度和肌肉保护情况继续推进" in prompt
+    assert "第9-12周累计16-20斤左右" in prompt
+    # 阶段累计受安全空间硬顶，但不受28天上限约束——用 day28 上限砍阶段区间会让它永远超限
+    assert "任何阶段的累计目标都不得超过 safe_reduction_room_kg" in prompt
+    assert "day28_goal_cap_kg 只约束第一个28天，不约束第5-8周和第9-12周的累计值" in prompt
+    assert "A带在任何情况下都不得出现阶段减重数字" in prompt
+
     # 数字来源与趋势证据
-    assert "问卷里用户自己写下的明确数字答案，或上面B/C/D带的系统管理区间" in prompt
+    assert "第5-8周和第9-12周用【12周阶段路径】给出的累计区间且不突破 safe_reduction_room_kg" in prompt
+    assert "除这两类来源外，任何位置都不得自拟数字" in prompt
     assert "严禁生成「腰围缩减1–3cm」「腰围少5cm」这类数字区间" in prompt
     # 问卷选项文字自带填写示例，模型曾把占位符替换成自己挑的数字（腰围缩小5cm以上）
     assert "括号里的 X 公斤、XX 厘米是问卷给用户看的填写格式示例，不是用户的答案" in prompt
