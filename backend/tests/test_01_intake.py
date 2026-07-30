@@ -932,6 +932,95 @@ def test_stage_targets_capped_by_safe_room():
     assert targets["week9_12"] == "从入营起算累计不超过6斤，达到条件后再评估"
 
 
+def _day28_targets_for(height: str, weight: str) -> dict[str, str]:
+    return build_intake_fact_summary(_band_fields(), {"h": height, "w": weight})["day28_targets"]
+
+
+def test_day28_targets_follow_the_band_table_and_the_cap():
+    """28天基础/挑战目标由代码查表 + day28_goal_cap_kg 封顶，模型只照抄。
+
+    cap = min(体重×5%, 4.0, safe_room)，常常比带位默认区间更严，所以这里逐带核对
+    收窄后的结果，而不是核对表里的原始区间。
+    """
+
+    # 165cm/58kg：room 3.55kg → B带，cap 2.9kg = 5.8斤 → 上限取整 5 斤。
+    # 基础默认 3-5 斤正好压线通过；挑战默认 5-7 斤整体越界，不给更高区间。
+    b_band = _day28_targets_for("165", "58")
+    assert b_band["base"] == "28天减重3-5斤"
+    assert b_band["challenge"] == "不设置更高的减重挑战目标，先把基础目标做实"
+
+    # 165cm/62kg：room 7.55kg → C带，cap 3.1kg = 6.2斤 → 6 斤。
+    # 基础默认 5-8 斤被收窄成 5-6 斤。
+    c_band = _day28_targets_for("165", "62")
+    assert c_band["base"] == "28天减重5-6斤"
+
+    # 170cm/95kg：room 37.2kg → D带，但 cap 撞上 4.0kg 硬顶 = 8 斤。
+    # D带默认基础 6-10 斤被收窄成 6-8 斤；默认挑战 8-12 斤＝4-6kg 恒超 4kg 硬顶。
+    d_band = _day28_targets_for("170", "95")
+    assert d_band["base"] == "28天减重6-8斤"
+    assert d_band["challenge"] == "不设置更高的减重挑战目标，先把基础目标做实"
+
+
+def test_day28_targets_never_exceed_the_cap():
+    """封顶是硬约束：扫一批体重，任何出现的斤数都不得超过 cap 换算的斤数。"""
+
+    for height in ("155", "165", "175", "185"):
+        for weight in ("50", "55", "60", "65", "70", "80", "95", "110"):
+            facts = build_intake_fact_summary(_band_fields(), {"h": height, "w": weight})
+            cap_text = facts["day28_goal_cap_kg"]
+            targets = facts["day28_targets"]
+            numbers = [
+                int(match)
+                for text in targets.values()
+                for match in re.findall(r"(\d+)\s*斤", text)
+            ]
+            if cap_text == "暂无数据":
+                assert not numbers, f"{height}/{weight} cap 暂无数据却给了斤数 {targets}"
+                continue
+            cap_jin = float(cap_text) * 2
+            for number in numbers:
+                assert number <= cap_jin, (
+                    f"{height}cm/{weight}kg cap={cap_text}kg({cap_jin}斤) 却出现 {number} 斤：{targets}"
+                )
+
+
+def test_day28_targets_for_band_a_and_unknown_band_carry_no_numbers():
+    a_band = _day28_targets_for("175", "63")  # room 1.75kg → A带
+    assert a_band["base"] == "不设置体重下降指标，重点放在体态、睡眠、精力、恢复和执行一致性"
+    assert a_band["challenge"] == "不设置减重挑战目标"
+    assert not re.search(r"\d+\s*斤", a_band["base"] + a_band["challenge"])
+
+    # 空间归零的 A 带（cap=0）同样一个数字都不给
+    exhausted = _day28_targets_for("165", "54")
+    assert not re.search(r"\d+\s*斤", exhausted["base"] + exhausted["challenge"])
+
+    unknown = build_intake_fact_summary(
+        [{"key": "h", "title": "您的身高（cm/厘米）"}], {"h": "暂未测量"}
+    )["day28_targets"]
+    assert unknown["base"] == "待补齐身高体重后与班主任确认目标"
+    assert not re.search(r"\d+\s*斤", unknown["base"] + unknown["challenge"])
+
+
+def test_intake_prompt_delegates_day28_numbers_to_the_facts():
+    """提示词只剩照抄，不再自带带位默认区间——否则和 day28_targets 形成两个数字来源。"""
+
+    prompt = _intake_generation_system_prompt()
+    assert "【28天目标】" in prompt
+    assert "base_goal 的减重数字必须逐字使用 intake_facts.day28_targets.base" in prompt
+    assert "challenge_goal 的减重数字必须逐字使用 intake_facts.day28_targets.challenge" in prompt
+    assert "intake_facts.day28_targets 里已经算好的28天目标区间" in prompt
+    assert "严禁自己补一个斤数把它变成数字目标" in prompt
+    # "不设置更高的挑战目标"不是对用户的负面评价，别让模型写成那样
+    assert "不是他不配拿挑战目标" in prompt
+    # 旧的默认区间表已移除
+    assert "默认28天基础目标3-5斤" not in prompt
+    assert "默认28天基础目标5-8斤" not in prompt
+    assert "默认28天基础目标6-10斤" not in prompt
+    assert "挑战目标5-7斤" not in prompt
+    # 带位边界本身仍要留着（分带主轴的说明）
+    assert "2.5kg ≤ safe_reduction_room_kg < 5kg" in prompt
+
+
 def test_stage_targets_for_band_a_and_unknown_band_carry_no_numbers():
     a_band = _stage_targets_for("175", "63")  # room 1.75kg → A带
     assert a_band["week5_8"] == "不设减重指标，以体态与力量提升为主"

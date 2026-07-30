@@ -165,6 +165,10 @@ def build_intake_fact_summary(
         "stage_targets": _stage_targets(
             weight_loss_band, safe_reduction["safe_reduction_room_kg"]
         ),
+        # 28天基础/挑战目标同理：查表 + 按 day28_goal_cap_kg 封顶，模型只照抄数字。
+        "day28_targets": _day28_targets(
+            weight_loss_band, safe_reduction["day28_goal_cap_kg"]
+        ),
         "safe_reduction_room_kg": _format_safe_measurement(
             safe_reduction["safe_reduction_room_kg"]
         ),
@@ -380,6 +384,71 @@ def _stage_targets(band: str, safe_room_kg: float | None) -> dict[str, str]:
             # 安全空间连区间下界都撑不住：不给区间，只给上限。
             targets[stage] = f"从入营起算累计不超过{int(room_jin)}斤，达到条件后再评估"
     return targets
+
+
+# 28天基础/挑战目标的默认区间（斤），按管理带查表。与 _STAGE_RANGES 同源同风格：
+# 客户给的是带位默认强度，能不能落地由 day28_goal_cap_kg 说话。
+#
+# 为什么也收归代码：这两个区间必须同时满足"带位默认"和"不超过 day28_goal_cap_kg"，
+# 而 cap = min(体重×5%, 4.0, safe_room) 常常比默认区间更严——60kg 的 B 带用户
+# cap 只有 3kg（6斤），默认挑战目标 5-7 斤直接越界；D 带更极端，cap 恒 ≤4kg（8斤），
+# 而默认挑战 8-12 斤＝4-6kg，**永远**越界。让模型自己查表、换算斤/公斤再收窄，
+# 就是 _stage_targets 已经踩过的坑（真实验证里 D 带样例全部越界）。
+_DAY28_RANGES = {
+    "B带｜轻盈启动": {"base": (3, 5), "challenge": (5, 7)},
+    "C带｜明确减脂": {"base": (5, 8), "challenge": (8, 10)},
+    "D带｜系统减重": {"base": (6, 10), "challenge": (8, 12)},
+}
+
+_DAY28_TEXT_A_BAND = {
+    "base": "不设置体重下降指标，重点放在体态、睡眠、精力、恢复和执行一致性",
+    "challenge": "不设置减重挑战目标",
+}
+_DAY28_TEXT_UNKNOWN = {
+    "base": "待补齐身高体重后与班主任确认目标",
+    "challenge": "待补齐身高体重后确定",
+}
+# cap 压得比基础目标上界还低时，给不出一个"更高"的挑战区间。硬凑一个与基础重合的
+# 区间只会让用户以为挑战目标就是基础目标，不如照 A 带的既有做法明确不设。
+_DAY28_NO_CHALLENGE = "不设置更高的减重挑战目标，先把基础目标做实"
+
+
+def _day28_targets(band: str, goal_cap_kg: float | None) -> dict[str, str]:
+    """按管理带给出28天基础/挑战目标区间，并用 day28_goal_cap_kg 封顶。
+
+    单位是斤（区间表用斤，cap 用公斤，这里换算一次）。cap 取整向下，宁可少给。
+    """
+
+    if band == BAND_A:
+        return dict(_DAY28_TEXT_A_BAND)
+    ranges = _DAY28_RANGES.get(band)
+    if ranges is None or goal_cap_kg is None:
+        return dict(_DAY28_TEXT_UNKNOWN)
+
+    cap_jin = int(goal_cap_kg * 2)
+    if cap_jin <= 0:
+        # 空间归零但带位不是 A 带，理论上不该出现；真出现了也不能给数字。
+        return dict(_DAY28_TEXT_A_BAND)
+
+    base_low, base_high = ranges["base"]
+    targets = {"base": _day28_range_text(base_low, base_high, cap_jin)}
+    challenge_low, challenge_high = ranges["challenge"]
+    if cap_jin <= base_high:
+        targets["challenge"] = _DAY28_NO_CHALLENGE
+    else:
+        targets["challenge"] = _day28_range_text(challenge_low, challenge_high, cap_jin)
+    return targets
+
+
+def _day28_range_text(low: int, high: int, cap_jin: int) -> str:
+    """把一个默认区间按 cap 收窄成用户可读的目标表述。"""
+
+    if high <= cap_jin:
+        return f"28天减重{low}-{high}斤"
+    if low < cap_jin:
+        # 取整后仍高于下界才给区间，否则会写出「减重7-7斤」这种退化区间。
+        return f"28天减重{low}-{cap_jin}斤"
+    return f"28天减重不超过{cap_jin}斤"
 
 
 def _safety_review_reasons(safety_factors: dict[str, Any] | None) -> list[str]:
