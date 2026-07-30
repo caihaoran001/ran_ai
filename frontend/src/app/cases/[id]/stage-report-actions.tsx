@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { LoaderCircle } from "lucide-react";
 import { API_BASE, UserDocument } from "@/lib/api";
 
 const STAGES = [
@@ -21,19 +22,30 @@ export function StageReportActions({
 }) {
   const router = useRouter();
   const [busyStage, setBusyStage] = useState<string | null>(null);
+  const [isRefreshing, startTransition] = useTransition();
+  const [refreshStarted, setRefreshStarted] = useState(false);
   const generatedStages = new Set(
     documents
       .map((document) => document.content_json?.stage)
       .filter((stage): stage is string => Boolean(stage)),
   );
 
+  useEffect(() => {
+    if (refreshStarted && !isRefreshing) {
+      setBusyStage(null);
+      setRefreshStarted(false);
+    }
+  }, [isRefreshing, refreshStarted]);
+
   async function generate(stage: string) {
     setBusyStage(stage);
+    let shouldRefresh = false;
     try {
       const res = await fetch(`${API_BASE}/service-cases/${serviceCaseId}/stage-reports/generate?stage=${stage}`, {
         method: "POST",
       });
       if (res.ok) {
+        shouldRefresh = true;
         alert(`${STAGES.find(([s]) => s === stage)?.[1] || ""}报告生成成功！`);
       } else {
         const text = await res.text();
@@ -42,8 +54,12 @@ export function StageReportActions({
     } catch (e: any) {
       alert(`生成出错: ${e.message || e}`);
     } finally {
-      setBusyStage(null);
-      router.refresh();
+      if (shouldRefresh) {
+        setRefreshStarted(true);
+        startTransition(() => router.refresh());
+      } else {
+        setBusyStage(null);
+      }
     }
   }
 
@@ -57,13 +73,19 @@ export function StageReportActions({
             type="button"
             disabled={busyStage !== null || alreadyGenerated}
             onClick={() => generate(stage)}
+            aria-busy={busyStage === stage || undefined}
             className={
               alreadyGenerated
                 ? "cursor-not-allowed rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-400"
                 : "rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
             }
           >
-            {busyStage === stage ? "生成中..." : alreadyGenerated ? `${label}报告已生成` : `生成${label}报告`}
+            <span className="inline-flex items-center gap-1.5">
+              {busyStage === stage && (
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              )}
+              {busyStage === stage ? "生成中…" : alreadyGenerated ? `${label}报告已生成` : `生成${label}报告`}
+            </span>
           </button>
         );
       })}

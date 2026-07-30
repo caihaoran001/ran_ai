@@ -333,7 +333,8 @@ export function QuestionnaireForm({
             <Button
               type="button"
               className="h-10 bg-amber-600 px-5 hover:bg-amber-700"
-              disabled={submitting}
+              loading={submitting}
+              loadingText="提交中…"
               onClick={() => submitAnswers(answers, true)}
             >
               确认无误，继续提交
@@ -367,8 +368,12 @@ export function QuestionnaireForm({
               />
             </div>
           </div>
-          <Button disabled={submitting} className="h-11 min-w-28 shrink-0 px-5 sm:px-6">
-            {submitting ? "提交中…" : "提交问卷"}
+          <Button
+            loading={submitting}
+            loadingText="提交中…"
+            className="h-11 min-w-28 shrink-0 px-5 sm:px-6"
+          >
+            提交问卷
           </Button>
         </div>
       </div>

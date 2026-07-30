@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LoaderCircle } from "lucide-react";
 
 type QiweEntry = {
   guid: string;
@@ -74,10 +75,15 @@ export function QiweAccountConfig() {
   const load = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/settings/qiwe-account`);
+      if (!res.ok) throw new Error((await res.text()) || "账号配置加载失败");
       const data = (await res.json()) as QiweState;
       setState(data);
     } catch (err) {
       console.error(err);
+      setMessage({
+        kind: "error",
+        text: err instanceof Error ? `账号配置加载失败：${err.message}` : "账号配置加载失败，请刷新页面重试。",
+      });
     } finally {
       setLoaded(true);
     }
@@ -196,9 +202,13 @@ export function QiweAccountConfig() {
             type="button"
             onClick={() => saveNote(entry)}
             disabled={savingNote}
+            aria-busy={savingNote || undefined}
             className="shrink-0 rounded-md bg-cyan-700 px-2 py-1 text-xs font-medium text-white hover:bg-cyan-800 disabled:opacity-50"
           >
-            {savingNote ? "保存中…" : "保存"}
+            <span className="inline-flex items-center gap-1">
+              {savingNote && <LoaderCircle className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+              {savingNote ? "保存中…" : "保存"}
+            </span>
           </button>
           <button
             type="button"
@@ -231,7 +241,14 @@ export function QiweAccountConfig() {
     );
   }
 
-  if (!loaded) return null;
+  if (!loaded) {
+    return (
+      <div className="flex min-h-32 items-center justify-center rounded-xl border border-slate-200 bg-white p-6 text-sm font-medium text-slate-500" aria-busy="true">
+        <LoaderCircle className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        正在加载企微账号配置…
+      </div>
+    );
+  }
 
   const messageColor =
     message?.kind === "ok"
@@ -306,9 +323,15 @@ export function QiweAccountConfig() {
                   type="button"
                   onClick={() => switchAccount(entry)}
                   disabled={switchingGuid !== null}
+                  aria-busy={switchingGuid === entry.guid || undefined}
                   className="shrink-0 rounded-md border border-cyan-300 px-2.5 py-1 text-xs font-medium text-cyan-700 transition-all hover:border-cyan-400 hover:bg-cyan-50 active:scale-[0.98] disabled:opacity-50"
                 >
-                  {switchingGuid === entry.guid ? "切换中…" : "切换"}
+                  <span className="inline-flex items-center gap-1">
+                    {switchingGuid === entry.guid && (
+                      <LoaderCircle className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                    )}
+                    {switchingGuid === entry.guid ? "切换中…" : "切换"}
+                  </span>
                 </button>
               </div>
             ))}
@@ -345,9 +368,10 @@ export function QiweAccountConfig() {
             type="button"
             className="bg-cyan-700 hover:bg-cyan-800 text-white font-medium shadow-sm transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
             onClick={addAccount}
-            disabled={busy}
+            loading={busy}
+            loadingText="保存并切换中…"
           >
-            {busy ? "保存中…" : "保存并切换"}
+            保存并切换
           </Button>
           <span className="text-xs text-slate-400">
             保存时会自动校验凭证并获取账号昵称；出于安全，Token 不回显完整内容。

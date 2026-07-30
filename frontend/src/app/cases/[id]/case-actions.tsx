@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE } from "@/lib/api";
-import { Timer } from "lucide-react";
+import { LoaderCircle, Timer } from "lucide-react";
 
 export function CaseActions({
   caseId,
@@ -14,6 +14,8 @@ export function CaseActions({
 }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [isRefreshing, startTransition] = useTransition();
+  const pending = busy || isRefreshing;
 
   // Calculate current days served
   const getCurrentDays = () => {
@@ -41,8 +43,10 @@ export function CaseActions({
         body: JSON.stringify({ started_at: startedAtIso }),
       });
       if (res.ok) {
-        setEditing(false);
-        router.refresh();
+        startTransition(() => {
+          setEditing(false);
+          router.refresh();
+        });
       } else {
         alert("保存失败：" + (await res.text()));
       }
@@ -65,19 +69,23 @@ export function CaseActions({
           value={days}
           onChange={(e) => setDays(e.target.value)}
           className="h-9 w-14 rounded border border-slate-300 bg-white text-center text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-100"
-          disabled={busy}
+          disabled={pending}
         />
         <span className="text-xs text-slate-500 font-medium">天</span>
         <button
           onClick={saveDays}
-          disabled={busy}
+          disabled={pending}
+          aria-busy={pending || undefined}
           className="min-h-9 rounded bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"
         >
-          {busy ? "保存中" : "确认"}
+          <span className="inline-flex items-center gap-1">
+            {pending && <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+            {pending ? "保存中…" : "确认"}
+          </span>
         </button>
         <button
           onClick={() => setEditing(false)}
-          disabled={busy}
+          disabled={pending}
           className="min-h-9 rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700"
         >
           取消

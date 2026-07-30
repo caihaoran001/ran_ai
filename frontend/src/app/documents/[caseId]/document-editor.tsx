@@ -127,9 +127,10 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
                 : "bg-emerald-700 hover:bg-emerald-600 text-white")
             }
             onClick={handleSendClick}
-            disabled={busy}
+            loading={busy}
+            loadingText="发送中…"
           >
-            {busy ? "发送中..." : sent ? "重新发送" : "确认发送"}
+            {sent ? "重新发送" : "确认发送"}
           </Button>
           <a
             suppressHydrationWarning

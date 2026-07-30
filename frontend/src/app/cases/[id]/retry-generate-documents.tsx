@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { LoaderCircle } from "lucide-react";
 
 import { API_BASE } from "@/lib/api";
 
@@ -44,9 +45,11 @@ export function RetryGenerateDocuments({
         type="button"
         onClick={retryGenerate}
         disabled={busy}
+        aria-busy={busy || undefined}
         className="inline-flex h-9 items-center justify-center rounded-md border border-red-200 bg-white px-3 text-sm font-medium text-red-700 shadow-sm transition-all hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {busy ? "重新生成中..." : "重试生成"}
+        {busy && <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+        {busy ? "重新生成中…" : "重试生成"}
       </button>
       {queued && !error && <p className="pt-2 text-sm text-red-700">已提交后台重新生成，你现在离开页面也不会中断。</p>}
       {error && <p className="pt-2 text-sm text-red-700">{error}</p>}

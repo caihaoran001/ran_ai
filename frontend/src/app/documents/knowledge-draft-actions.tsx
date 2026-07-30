@@ -14,7 +14,6 @@ import {
   BookOpen,
   Sparkles,
   Database,
-  RefreshCw,
   Edit2,
   Check,
   X,
@@ -48,6 +47,7 @@ export function KnowledgeDraftActions({
   const [category, setCategory] = useState(initialCategory || "");
   const [tags, setTags] = useState((initialTags || []).join("、"));
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"approve" | "use_candidate" | "keep_existing" | "reject" | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [conflict, setConflict] = useState<KnowledgeBusinessConflict | null>(null);
   const [message, setMessage] = useState("");
@@ -73,6 +73,7 @@ export function KnowledgeDraftActions({
   }
 
   async function approve(resolution?: "use_candidate" | "keep_existing") {
+    setBusyAction(resolution ?? "approve");
     setBusy(true);
     setMessage("");
     try {
@@ -108,10 +109,12 @@ export function KnowledgeDraftActions({
       setMessage("网络请求失败，草稿仍保留在待审核列表");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   }
 
   async function reject() {
+    setBusyAction("reject");
     setBusy(true);
     setMessage("");
     try {
@@ -130,6 +133,7 @@ export function KnowledgeDraftActions({
       setMessage("网络请求失败，请稍后重试");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -205,6 +209,8 @@ export function KnowledgeDraftActions({
                 className="h-11 bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-500"
                 onClick={() => approve("use_candidate")}
                 disabled={busy}
+                loading={busyAction === "use_candidate"}
+                loadingText="保存选择中…"
               >
                 采用本次候选口径
               </Button>
@@ -213,6 +219,8 @@ export function KnowledgeDraftActions({
                 className="h-11 border border-slate-300 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 onClick={() => approve("keep_existing")}
                 disabled={busy}
+                loading={busyAction === "keep_existing"}
+                loadingText="保存选择中…"
               >
                 保留已入库口径
               </Button>
@@ -269,24 +277,19 @@ export function KnowledgeDraftActions({
                 className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-2xs transition-all duration-205 active:scale-[0.97] px-4 h-8.5 flex items-center gap-1.5"
                 onClick={() => approve()}
                 disabled={busy}
+                loading={busyAction === "approve"}
+                loadingText="处理中…"
               >
-                {busy ? (
-                  <>
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    <span>处理中...</span>
-                  </>
-                ) : (
-                  <>
-                    <Check className="h-3.5 w-3.5" />
-                    <span>批准入库</span>
-                  </>
-                )}
+                <Check className="h-3.5 w-3.5" />
+                <span>批准入库</span>
               </Button>
               <Button
                 type="button"
                 className="text-xs border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 hover:border-rose-300 transition-all duration-205 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
                 onClick={reject}
                 disabled={busy}
+                loading={busyAction === "reject"}
+                loadingText="驳回中…"
               >
                 <X className="h-3.5 w-3.5" />
                 <span>驳回</span>
@@ -394,24 +397,19 @@ export function KnowledgeDraftActions({
             className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-2xs transition-all duration-200 active:scale-[0.97] px-4 h-8.5 flex items-center gap-1.5"
             onClick={() => approve()}
             disabled={busy}
+            loading={busyAction === "approve"}
+            loadingText="处理中…"
           >
-            {busy ? (
-              <>
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                <span>处理中...</span>
-              </>
-            ) : (
-              <>
-                <Check className="h-3.5 w-3.5" />
-                <span>保存并批准入库</span>
-              </>
-            )}
+            <Check className="h-3.5 w-3.5" />
+            <span>保存并批准入库</span>
           </Button>
           <Button
             type="button"
             className="text-xs border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 hover:border-rose-300 transition-all duration-200 active:scale-[0.97] font-semibold h-8.5 flex items-center gap-1.5 px-3"
             onClick={reject}
             disabled={busy}
+            loading={busyAction === "reject"}
+            loadingText="驳回中…"
           >
             <X className="h-3.5 w-3.5" />
             <span>驳回</span>
@@ -516,6 +514,7 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
   const [creating, setCreating] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"active" | "disabled" | "archived">("active");
   const [busyId, setBusyId] = useState<number | "new" | null>(null);
+  const [createError, setCreateError] = useState("");
   const [draft, setDraft] = useState({
     title: "",
     question: "",
@@ -532,21 +531,28 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
 
   async function createFaq() {
     setBusyId("new");
-    await fetch(`${API_BASE}/knowledge-faqs`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        title: draft.title,
-        question: draft.question,
-        answer: draft.answer,
-        category: draft.category || null,
-        tags: splitTags(draft.tags),
-      }),
-    });
-    setDraft({ title: "", question: "", answer: "", category: "", tags: "" });
-    setCreating(false);
-    setBusyId(null);
-    router.refresh();
+    setCreateError("");
+    try {
+      const response = await fetch(`${API_BASE}/knowledge-faqs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: draft.title,
+          question: draft.question,
+          answer: draft.answer,
+          category: draft.category || null,
+          tags: splitTags(draft.tags),
+        }),
+      });
+      if (!response.ok) throw new Error((await response.text()) || "发布失败");
+      setDraft({ title: "", question: "", answer: "", category: "", tags: "" });
+      setCreating(false);
+      router.refresh();
+    } catch (err) {
+      setCreateError(err instanceof Error ? `FAQ 发布失败：${err.message}` : "FAQ 发布失败，请稍后再试。");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
@@ -644,20 +650,16 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
               type="button" 
               className="bg-blue-600 hover:bg-blue-500 text-white shadow-2xs font-semibold transition-all active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none mt-1 h-9 flex items-center gap-1.5 px-4"
               onClick={createFaq} 
-              disabled={busyId === "new" || !draft.title || !draft.question || !draft.answer}
+              disabled={!draft.title || !draft.question || !draft.answer}
+              loading={busyId === "new"}
+              loadingText="发布中…"
             >
-              {busyId === "new" ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                  <span>发布中...</span>
-                </>
-              ) : (
-                <>
-                  <Check className="h-4 w-4" />
-                  <span>保存并发布 FAQ</span>
-                </>
-              )}
+              <Check className="h-4 w-4" />
+              <span>保存并发布 FAQ</span>
             </Button>
+            {createError && (
+              <p className="text-xs font-medium text-rose-700" role="alert">{createError}</p>
+            )}
           </div>
         </div>
       )}
@@ -719,33 +721,53 @@ function KnowledgeFAQRow({
   const [answer, setAnswer] = useState(faq.answer);
   const [category, setCategory] = useState(faq.category || "");
   const [tags, setTags] = useState((faq.tags || []).join("、"));
+  const [busyAction, setBusyAction] = useState<"save" | "enable" | "disable" | null>(null);
+  const [error, setError] = useState("");
   const statusLabel =
     faq.status === "active" ? "● 检索中" : faq.status === "archived" ? "已归档" : "○ 已停用";
 
   async function save() {
+    setBusyAction("save");
     setBusy(faq.id);
-    await fetch(`${API_BASE}/knowledge-faqs/${faq.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        title,
-        question,
-        answer,
-        category,
-        tags: splitTags(tags),
-        change_note: "后台编辑更新",
-      }),
-    });
-    setBusy(null);
-    setEditing(false);
-    router.refresh();
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/knowledge-faqs/${faq.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title,
+          question,
+          answer,
+          category,
+          tags: splitTags(tags),
+          change_note: "后台编辑更新",
+        }),
+      });
+      if (!response.ok) throw new Error((await response.text()) || "保存失败");
+      setEditing(false);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? `保存失败：${err.message}` : "保存失败，请稍后再试。");
+    } finally {
+      setBusyAction(null);
+      setBusy(null);
+    }
   }
 
   async function setStatus(action: "enable" | "disable") {
+    setBusyAction(action);
     setBusy(faq.id);
-    await fetch(`${API_BASE}/knowledge-faqs/${faq.id}/${action}`, { method: "POST" });
-    setBusy(null);
-    router.refresh();
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/knowledge-faqs/${faq.id}/${action}`, { method: "POST" });
+      if (!response.ok) throw new Error((await response.text()) || "操作失败");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? `操作失败：${err.message}` : "操作失败，请稍后再试。");
+    } finally {
+      setBusyAction(null);
+      setBusy(null);
+    }
   }
 
   return (
@@ -849,24 +871,17 @@ function KnowledgeFAQRow({
               type="button" 
               className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-all duration-200 active:scale-[0.97] shadow-2xs px-3.5 text-xs h-8.5 flex items-center gap-1.5" 
               onClick={save} 
-              disabled={busy}
+              loading={busyAction === "save"}
+              loadingText="保存中…"
             >
-              {busy ? (
-                <>
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  <span>保存中...</span>
-                </>
-              ) : (
-                <>
-                  <Check className="h-3.5 w-3.5" />
-                  <span>保存新版本</span>
-                </>
-              )}
+              <Check className="h-3.5 w-3.5" />
+              <span>保存新版本</span>
             </Button>
             <Button 
               type="button" 
               className="border border-slate-250 bg-white text-slate-700 hover:bg-slate-50 font-semibold transition-all duration-200 active:scale-[0.97] text-xs h-8.5 px-3 flex items-center gap-1" 
               onClick={() => setEditing(false)}
+              disabled={busy}
             >
               <X className="h-3.5 w-3.5 text-slate-400" />
               <span>取消</span>
@@ -916,6 +931,7 @@ function KnowledgeFAQRow({
                 type="button"
                 className="border border-slate-250 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1"
                 onClick={() => setEditing(true)}
+                disabled={busy}
               >
                 <Edit2 className="h-3.5 w-3.5 text-slate-500" />
                 <span>编辑 FAQ</span>
@@ -926,7 +942,8 @@ function KnowledgeFAQRow({
                 type="button" 
                 className="border border-slate-250 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-100 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1" 
                 onClick={() => setStatus("disable")} 
-                disabled={busy}
+                loading={busyAction === "disable"}
+                loadingText="禁用中…"
               >
                 <X className="h-3.5 w-3.5 text-rose-500" />
                 <span>禁用</span>
@@ -936,7 +953,8 @@ function KnowledgeFAQRow({
                 type="button" 
                 className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1 shadow-3xs" 
                 onClick={() => setStatus("enable")} 
-                disabled={busy}
+                loading={busyAction === "enable"}
+                loadingText="启用中…"
               >
                 <Check className="h-3.5 w-3.5 text-white" />
                 <span>重新启用</span>
@@ -948,6 +966,11 @@ function KnowledgeFAQRow({
             )}
           </div>
         </div>
+      )}
+      {error && (
+        <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700" role="alert">
+          {error}
+        </p>
       )}
     </div>
   );

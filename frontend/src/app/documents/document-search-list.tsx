@@ -17,6 +17,7 @@ import {
   User,
   Phone,
   FileCheck2,
+  LoaderCircle,
 } from "lucide-react";
 
 type ReviewDocument = {
@@ -412,9 +413,10 @@ function DocumentCard({
 }: {
   doc: ReviewDocument;
   statusConfig: Record<string, { label: string; className: string }>;
-  onDiscard?: () => void;
+  onDiscard?: () => void | Promise<void>;
 }) {
   const [discarding, setDiscarding] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
   const status = statusConfig[doc.status] || {
     label: doc.status,
     className: "bg-slate-100 text-slate-700 border-slate-200",
@@ -428,11 +430,17 @@ function DocumentCard({
     if (!onDiscard || discarding) return;
     if (!window.confirm(`确认不发送《${doc.title}》？将移到「已审核」列并标记为「未发送」。`)) return;
     setDiscarding(true);
+    setDiscardError(null);
     try {
-      await fetch(`${API_BASE}/documents/${doc.id}/discard`, { method: "POST" });
-      onDiscard();
+      const response = await fetch(`${API_BASE}/documents/${doc.id}/discard`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error((await response.text()) || "操作失败，请稍后再试。");
+      }
+      await onDiscard();
     } catch (err) {
       console.error("discard document failed", err);
+      setDiscardError(err instanceof Error ? err.message : "操作失败，请稍后再试。");
+    } finally {
       setDiscarding(false);
     }
   }
@@ -480,6 +488,12 @@ function DocumentCard({
           </p>
         )}
 
+        {discardError && (
+          <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700" role="alert">
+            未能标记为“不发送”：{discardError}
+          </p>
+        )}
+
         {/* 客户与服务单号元信息 */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1 font-bold text-slate-800">
@@ -515,8 +529,10 @@ function DocumentCard({
               type="button"
               onClick={handleDiscard}
               disabled={discarding}
+              aria-busy={discarding || undefined}
               className="inline-flex min-h-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50/60 px-3 text-xs font-bold text-rose-700 transition-all hover:border-rose-300 hover:bg-rose-100 hover:text-rose-800 active:scale-95 disabled:opacity-50"
             >
+              {discarding && <LoaderCircle className="mr-1 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
               {discarding ? "处理中…" : "不发送"}
             </button>
           )}

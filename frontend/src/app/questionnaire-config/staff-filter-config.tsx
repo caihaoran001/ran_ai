@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { API_BASE } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Trash2, Plus } from "lucide-react";
+import { AlertCircle, LoaderCircle, Trash2, Plus } from "lucide-react";
 
 type Rule = {
   type: string; // "equals" or "contains"
@@ -19,11 +19,13 @@ export function StaffFilterConfig() {
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
         const res = await fetch(`${API_BASE}/settings/qiwei-staff-senders`);
+        if (!res.ok) throw new Error((await res.text()) || "加载失败");
         const data = await res.json();
         if (data && Array.isArray(data.rules)) {
           setRules(data.rules);
@@ -31,6 +33,7 @@ export function StaffFilterConfig() {
         }
       } catch (err) {
         console.error(err);
+        setError("配置加载失败，请刷新页面后重试。");
       } finally {
         setLoaded(true);
       }
@@ -55,23 +58,33 @@ export function StaffFilterConfig() {
 
   async function save() {
     setBusy(true);
+    setError(null);
     try {
-      await fetch(`${API_BASE}/settings/qiwei-staff-senders`, {
+      const res = await fetch(`${API_BASE}/settings/qiwei-staff-senders`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ rules }),
       });
+      if (!res.ok) throw new Error((await res.text()) || "保存失败");
       setInitialRules(rules);
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 2000);
     } catch (err) {
       console.error(err);
+      setError(err instanceof Error ? `保存失败：${err.message}` : "保存失败，请稍后再试。");
     } finally {
       setBusy(false);
     }
   }
 
-  if (!loaded) return null;
+  if (!loaded) {
+    return (
+      <div className="flex min-h-32 items-center justify-center rounded-xl border border-slate-200 bg-white p-6 text-sm font-medium text-slate-500" aria-busy="true">
+        <LoaderCircle className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        正在加载免打扰配置…
+      </div>
+    );
+  }
 
   const isDirty = JSON.stringify(rules) !== JSON.stringify(initialRules);
 
@@ -90,9 +103,11 @@ export function StaffFilterConfig() {
             type="button"
             className="shrink-0 bg-cyan-700 hover:bg-cyan-800 text-white font-medium shadow-sm transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
             onClick={save}
-            disabled={busy || !isDirty}
+            disabled={!isDirty}
+            loading={busy}
+            loadingText="保存中…"
           >
-            {busy ? "保存中..." : "保存配置"}
+            保存配置
           </Button>
         </div>
       </div>
@@ -172,6 +187,12 @@ export function StaffFilterConfig() {
         </div>
 
       </div>
+      {error && (
+        <p className="mt-3 flex items-start gap-1.5 text-sm font-medium text-rose-700" role="alert">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          {error}
+        </p>
+      )}
     </div>
   );
 }

@@ -53,10 +53,11 @@ export function DeleteServiceCaseButton({
             ? "bg-red-600 text-white hover:bg-red-700 ring-red-600 font-semibold"
             : "bg-white text-red-600 ring-red-200 hover:bg-red-50"
         }`}
-        disabled={busy}
+        loading={busy}
+        loadingText="删除中…"
         onClick={deleteServiceCase}
       >
-        {busy ? "删除中" : confirmDelete ? "确定删除？" : "删除"}
+        {confirmDelete ? "确定删除？" : "删除"}
       </Button>
     </div>
   );

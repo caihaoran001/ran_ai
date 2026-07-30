@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
@@ -163,6 +163,7 @@ export function AgentOperationsClient({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
+  const [pendingControl, setPendingControl] = useState<string | null>(null);
 
   // Active filters & search
   const [searchQuery, setSearchQuery] = useState("");
@@ -225,20 +226,28 @@ export function AgentOperationsClient({
   };
 
   const handleTabChange = (newTab: TabKey) => {
+    if (newTab === initialTab || isPending) return;
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", newTab);
+    setPendingControl(`tab:${newTab}`);
     startTransition(() => {
       router.push(`${pathname}?${params.toString()}`);
     });
   };
 
   const handleDaysChange = (newDays: number) => {
+    if (newDays === initialDays || isPending) return;
     const params = new URLSearchParams(searchParams.toString());
     params.set("days", newDays.toString());
+    setPendingControl(`days:${newDays}`);
     startTransition(() => {
       router.push(`${pathname}?${params.toString()}`);
     });
   };
+
+  useEffect(() => {
+    if (!isPending) setPendingControl(null);
+  }, [isPending]);
 
   return (
     <div className="page-stack">
@@ -281,14 +290,20 @@ export function AgentOperationsClient({
                 <button
                   key={item.key}
                   onClick={() => handleTabChange(item.key)}
+                  disabled={isPending}
+                  aria-busy={pendingControl === `tab:${item.key}` || undefined}
                   className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-bold transition-all ${
                     active
                       ? "bg-white text-cyan-900 shadow-sm"
                       : "text-slate-600 hover:bg-white/60 hover:text-slate-950"
-                  }`}
+                  } disabled:cursor-wait disabled:opacity-60`}
                 >
-                  <Icon className="h-4 w-4" />
-                  {item.label}
+                  {pendingControl === `tab:${item.key}` ? (
+                    <RefreshCw className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                  ) : (
+                    <Icon className="h-4 w-4" />
+                  )}
+                  {pendingControl === `tab:${item.key}` ? "加载中…" : item.label}
                 </button>
               );
             })}
@@ -299,13 +314,18 @@ export function AgentOperationsClient({
               <button
                 key={value}
                 onClick={() => handleDaysChange(value)}
+                disabled={isPending}
+                aria-busy={pendingControl === `days:${value}` || undefined}
                 className={`inline-flex min-h-9 items-center justify-center rounded-lg px-3.5 text-xs font-bold transition-all ${
                   initialDays === value
                     ? "bg-slate-900 text-white shadow-sm"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                }`}
+                } disabled:cursor-wait disabled:opacity-60`}
               >
-                {value} 天
+                {pendingControl === `days:${value}` && (
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                )}
+                {pendingControl === `days:${value}` ? "加载中…" : `${value} 天`}
               </button>
             ))}
           </div>

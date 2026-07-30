@@ -1,4 +1,5 @@
 import * as React from "react";
+import { LoaderCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Variant = "primary" | "secondary" | "danger" | "ghost";
@@ -13,8 +14,33 @@ const variantClass: Record<Variant, string> = {
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
+  loading?: boolean;
+  loadingText?: React.ReactNode;
 }
 
-export function Button({ className, variant = "primary", ...rest }: ButtonProps) {
-  return <button className={cn(variantClass[variant], className)} {...rest} />;
+export function Button({
+  className,
+  variant = "primary",
+  loading = false,
+  loadingText,
+  disabled,
+  children,
+  ...rest
+}: ButtonProps) {
+  return (
+    <button
+      className={cn(variantClass[variant], className)}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      {...rest}
+    >
+      {loading && (
+        <LoaderCircle
+          className="h-4 w-4 shrink-0 animate-spin motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+      )}
+      {loading ? (loadingText ?? children) : children}
+    </button>
+  );
 }

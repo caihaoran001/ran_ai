@@ -11,7 +11,6 @@ import {
   Check,
   CheckCircle2,
   FileQuestion,
-  Loader2,
   Plus,
   RotateCcw,
   Save,
@@ -175,7 +174,8 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
           <div className="flex items-center gap-2">
             <Button
               type="button"
-              disabled={resetting}
+              loading={resetting}
+              loadingText="还原中…"
               onClick={() => resetTemplates()}
               className="border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
             >
@@ -209,7 +209,8 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
               <SaveButton saveStatus={saveStatus} onClick={save} label="保存配置" />
               <Button
                 type="button"
-                disabled={resetting}
+                loading={resetting}
+                loadingText="还原中…"
                 onClick={() => resetTemplates(activeTemplate.template_key)}
                 className="border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
               >
@@ -305,7 +306,8 @@ function SaveButton({ saveStatus, onClick, label }: { saveStatus: SaveStatus; on
     <Button
       type="button"
       onClick={onClick}
-      disabled={saveStatus === "saving"}
+      loading={saveStatus === "saving"}
+      loadingText="保存中…"
       className={`shrink-0 transition-colors duration-200 ${
         saveStatus === "success"
           ? "bg-emerald-600 hover:bg-emerald-700 text-white"
@@ -314,12 +316,7 @@ function SaveButton({ saveStatus, onClick, label }: { saveStatus: SaveStatus; on
           : "bg-cyan-700 hover:bg-cyan-800 text-white"
       }`}
     >
-      {saveStatus === "saving" ? (
-        <>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          保存中...
-        </>
-      ) : saveStatus === "success" ? (
+      {saveStatus === "success" ? (
         <>
           <Check className="mr-2 h-4 w-4 animate-pulse" />
           已保存
