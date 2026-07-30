@@ -78,8 +78,11 @@ def _apply_deterministic_band(
         shared["weight_band"] = band
         facts["weight_loss_band"] = band
     shared["band_basis"] = _deterministic_band_basis(facts, band)
-    if facts.get("baseline_weight_provisional"):
-        shared["provisional_band"] = True
+    # provisional_band 是给运营挑人的信号：这个带位还需要人工确认一眼。
+    # 它曾经跟着 baseline_weight_provisional 一起置真，但入营问卷只让用户填一次体重，
+    # 永远拿不到客户规范要求的连续3天晨重均值，于是全员常亮、筛不出人。
+    # 测量方式由 baseline_weight_provisional 如实记录，带位是否暂定只看下面这两类：
+    # 关键数据缺失（此处）或模型判定的资料冲突/安全闸门（由模型按 schema 填）。
     if band not in MANAGEMENT_BANDS:
         reasons = _clean_list(shared.get("manual_review_reasons"))
         reason = "缺少可信身高或体重，暂不能计算A-D管理带"
@@ -264,7 +267,9 @@ def _intake_package_schema() -> dict[str, object]:
             "weight_band": "系统已经按安全减重空间算好的最终业务管理带，只能逐字复制：A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重。"
             "模型不得改带，也禁止写「需人工复核」等内部标签",
             "band_confidence": "内部字段，high / medium / low；资料缺失或安全闸门触发时写 low",
-            "provisional_band": "内部字段（布尔值）；带位为待人工确认的暂定结论时为 true",
+            "provisional_band": "内部字段（布尔值）；带位为待人工确认的暂定结论时为 true。"
+            "基线体重来自单次自报（baseline_weight_provisional=true）是所有入营用户的常态，不构成暂定理由；"
+            "只有关键数据缺失、数据互相冲突或安全闸门触发才置 true",
             "band_basis": ["系统根据基线体重、保护性下限和安全减重空间生成的确定性分带依据，模型不得改写"],
             "body_trend": "仅依据入营问卷反映的近3个月趋势：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
             "body_trend_summary": "一句话解释近3个月趋势；不得写入营后的变化",

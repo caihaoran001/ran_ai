@@ -27,6 +27,7 @@ from app.services.document_templates import (
 )
 from app.services.intake_generation import (
     CHECKIN_CATEGORIES,
+    _apply_deterministic_band,
     _force_high_risk_manual_review,
     _resolve_management_band,
     _scrub_internal_text,
@@ -846,6 +847,35 @@ def test_intake_facts_safe_room_missing_without_height_or_weight():
     assert facts["weight_loss_band"] == "需补充身高体重后判断"
     assert facts["weight_loss_room_exhausted"] == "暂无数据"
     assert facts["day28_goal_cap_kg"] == "暂无数据"
+
+
+def test_provisional_band_not_forced_by_single_self_reported_weight():
+    """单次自报体重是全员常态，不能让「暂定带位」信号全亮而失去筛选意义。"""
+
+    fields = [
+        {"key": "h", "title": "您的身高（cm/厘米）"},
+        {"key": "w", "title": "您当前体重（kg/公斤）"},
+    ]
+    facts = build_intake_fact_summary(fields, {"h": "175", "w": "65"})
+    shared: dict[str, object] = {}
+    _apply_deterministic_band(shared, facts)
+
+    # 测量方式仍如实记录，但它不再冒充「这个带位需要人工确认一眼」。
+    assert facts["baseline_weight_provisional"] is True
+    assert shared["weight_band"] == "B带｜轻盈启动"
+    assert "provisional_band" not in shared
+    assert "manual_review_required" not in shared
+
+
+def test_provisional_band_still_set_when_band_cannot_be_computed():
+    fields = [{"key": "h", "title": "您的身高（cm/厘米）"}]
+    facts = build_intake_fact_summary(fields, {"h": "暂未测量"})
+    shared: dict[str, object] = {}
+    _apply_deterministic_band(shared, facts)
+
+    assert shared["provisional_band"] is True
+    assert shared["manual_review_required"] is True
+    assert shared["safety_status"] == "manual_review"
 
 
 def test_intake_facts_normalize_height_written_in_meters():
