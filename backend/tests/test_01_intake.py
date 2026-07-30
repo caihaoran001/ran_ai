@@ -1032,7 +1032,7 @@ async def test_extract_safety_factors_parses_model_output():
     )
 
     factors = await _extract_safety_factors(
-        ai=ai, service_case=SimpleNamespace(id=1), readable_answers="- 健康情况: 哺乳期"
+        ai=ai, service_case=SimpleNamespace(id=1, risk_level=None), readable_answers="- 健康情况: 哺乳期"
     )
 
     assert ai.scenarios == ["intake_safety_factors"]
@@ -1043,13 +1043,51 @@ async def test_extract_safety_factors_parses_model_output():
 
 
 @pytest.mark.asyncio
+async def test_case_level_high_risk_forces_override_even_if_questionnaire_is_clean():
+    """风险等级由风控在全过程判定；重新生成文档时问卷没变但等级可能已升级。"""
+
+    ai = _StubAI(json.dumps({"safety_band_override": False}, ensure_ascii=False))
+
+    factors = await _extract_safety_factors(
+        ai=ai,
+        service_case=SimpleNamespace(id=1, risk_level="high"),
+        readable_answers="- 健康情况: 无",
+    )
+
+    assert factors["safety_band_override"] is True
+    assert "服务单已标记持续健康高风险" in factors["safety_band_override_reasons"]
+
+
+@pytest.mark.asyncio
+async def test_case_risk_override_does_not_erase_questionnaire_reasons():
+    ai = _StubAI(
+        json.dumps(
+            {
+                "safety_band_override": True,
+                "safety_band_override_reasons": ["问卷填写当前处于哺乳期"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    factors = await _extract_safety_factors(
+        ai=ai,
+        service_case=SimpleNamespace(id=1, risk_level="high"),
+        readable_answers="- 健康情况: 哺乳期",
+    )
+
+    assert factors["safety_band_override_reasons"][0] == "问卷填写当前处于哺乳期"
+    assert "服务单已标记持续健康高风险" in factors["safety_band_override_reasons"]
+
+
+@pytest.mark.asyncio
 async def test_extract_safety_factors_does_not_block_intake_on_failure():
     """抽取挂掉不能挡住交付：退回不上调、不改带，等同历史行为。"""
 
     ai = _StubAI(RuntimeError("model timeout"))
 
     factors = await _extract_safety_factors(
-        ai=ai, service_case=SimpleNamespace(id=1), readable_answers="- 健康情况: 无"
+        ai=ai, service_case=SimpleNamespace(id=1, risk_level=None), readable_answers="- 健康情况: 无"
     )
 
     assert factors["safety_band_override"] is False
@@ -1631,7 +1669,11 @@ async def test_questionnaire_high_risk_forces_document_review_marker(
     cai_haoran_answers,
     wait_background,
 ):
-    """孕期仍正常计算A-D；即使文档模型返回false，服务单高风险也必须点亮页面复核标记。"""
+    """孕期直接进A带且强制复核；即使文档模型返回 manual_review=false 也必须点亮标记。
+
+    这条同时端到端覆盖了服务单风险兜底：mock 的安全审阅员没识别出孕期（返回默认
+    响应），带位仍被风控判定的 high 风险抬进 A 带。
+    """
 
     mock_ai._responses = {
         INTAKE_SYSTEM_PROMPT_PREFIX: _make_intake_mock_response(manual_review=False),
@@ -1661,7 +1703,9 @@ async def test_questionnaire_high_risk_forces_document_review_marker(
         select(UserProfile).where(UserProfile.service_case_id == case["id"])
     )
     assert profile is not None
-    assert profile.profile_json["management_band"] == "B带｜轻盈启动"
+    # 安全条件优先于斤数目标：孕期用户不再按可管理空间拿 B 带的减重目标。
+    assert profile.profile_json["management_band"] == "A带｜修复塑形"
+    assert profile.profile_json["band_override_by_safety"] is True
     assert profile.profile_json["manual_review_required"] is True
     assert profile.profile_json["safety_status"] == "manual_review"
 

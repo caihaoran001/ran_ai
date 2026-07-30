@@ -330,13 +330,37 @@ async def _extract_safety_factors(
                 f"问卷结果：\n{readable_answers}"
             ),
         )
-        return _normalize_safety_factors(parse_json_object(text))
+        factors = _normalize_safety_factors(parse_json_object(text))
     except Exception:
         logger.exception(
             "safety factor extraction failed for case %s; falling back to no adjustment",
             service_case.id,
         )
-        return _normalize_safety_factors(None)
+        factors = _normalize_safety_factors(None)
+    return _merge_case_risk_override(factors, service_case)
+
+
+def _merge_case_risk_override(
+    factors: dict[str, object],
+    service_case: ServiceCase,
+) -> dict[str, object]:
+    """服务单已判持续高风险时直接覆盖带位，不依赖问卷这一次抽得准不准。
+
+    风险等级是风控 LLM 在聊天和问卷全过程中判定的，比单次问卷抽取看得更全；
+    重新生成文档时问卷内容不变、风险等级却可能已经升级，只看问卷会漏掉这些人。
+    单向生效：只会把 override 从 false 抬成 true，不会因为服务单还没判高风险
+    就把问卷已经识别出的安全条件抹掉。
+    """
+
+    if not is_high_risk(service_case):
+        return factors
+    reasons = _clean_list(factors.get("safety_band_override_reasons"))
+    reason = "服务单已标记持续健康高风险"
+    if reason not in reasons:
+        reasons.append(reason)
+    factors["safety_band_override"] = True
+    factors["safety_band_override_reasons"] = reasons[:3]
+    return factors
 
 
 async def _generate_intake_analysis_package(
