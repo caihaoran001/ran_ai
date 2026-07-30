@@ -3,6 +3,7 @@ import { api, User, ServiceCase } from "@/lib/api";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { DeleteServiceCaseButton } from "./user-actions";
 import { CaseSearchBox } from "./case-search-box";
+import { UserFilterTabs, type UserFilterView } from "./user-filter-tabs";
 import { ArrowRight, Clock, LoaderCircle, MessageSquare, Phone } from "lucide-react";
 
 export default async function UsersPage({
@@ -26,6 +27,7 @@ export default async function UsersPage({
   const serviceCasePath = `/service-cases${caseParams.toString() ? `?${caseParams.toString()}` : ""}`;
   const serviceCases = showDeleted ? [] : await api<ServiceCase[]>(serviceCasePath).catch(() => []);
   const filterLabel = dashboardFilter ? SERVICE_CASE_FILTER_LABELS[dashboardFilter] : undefined;
+  const currentView: UserFilterView = showDeleted ? "deleted" : showActive ? "active" : "normal";
 
   return (
     <div className="page-stack">
@@ -49,32 +51,7 @@ export default async function UsersPage({
             {showDeleted ? users.length : serviceCases.length} 条记录
           </span>
         </div>
-        <div className="mt-4 grid w-full grid-cols-3 rounded-lg border border-slate-200 bg-slate-100 p-1 text-sm shadow-inner sm:w-fit">
-          <Link
-            className={`min-h-10 rounded-md px-4 py-2 text-center font-semibold transition-colors duration-200 ${
-              !showDeleted && !showActive ? "bg-white text-cyan-800 shadow-sm" : "text-slate-700 hover:bg-white/70 hover:text-slate-950"
-            }`}
-            href="/users"
-          >
-            正常用户
-          </Link>
-          <Link
-            className={`min-h-10 rounded-md px-4 py-2 text-center font-semibold transition-colors duration-200 ${
-              showActive ? "bg-white text-cyan-800 shadow-sm" : "text-slate-700 hover:bg-white/70 hover:text-slate-950"
-            }`}
-            href="/users?active=1"
-          >
-            活跃用户
-          </Link>
-          <Link
-            className={`min-h-10 rounded-md px-4 py-2 text-center font-semibold transition-colors duration-200 ${
-              showDeleted ? "bg-white text-cyan-800 shadow-sm" : "text-slate-700 hover:bg-white/70 hover:text-slate-950"
-            }`}
-            href="/users?deleted=1"
-          >
-            已删除
-          </Link>
-        </div>
+        <UserFilterTabs currentView={currentView} />
         {/* 给运营的说明：区分「正常用户(全部)」与「活跃用户(近 24h 发言)」两个视图的含义。 */}
         <p className="mt-2 text-xs leading-relaxed text-slate-500">
           「正常用户」显示<span className="font-semibold text-slate-700">全部</span>用户；「活跃用户」只显示<span className="font-semibold text-slate-700">近 24 小时内有发言</span>的用户，便于优先处理今天在聊的客户，页面加载也更快。
