@@ -98,6 +98,7 @@ npm run test:e2e     # Playwright
   - **后端（Python）**：`docker exec ran_ai-backend-1 python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"`
   - **前端（Node）**：`docker exec ran_ai-frontend-1 node -e "const http = require('http'); http.get('http://localhost:3000')"`
 - **生产启动命令**：`docker compose -f docker-compose.prod.yml up -d --build`。完整指南：`docs/deployment.md`。
+- **改 `deploy/Caddyfile` 后必须 `docker restart ran_ai-caddy-1`**：Caddyfile 是 bind-mount，部署写入的是**新 inode 的新文件**；`docker compose up -d` 不因挂载文件内容变化重建 caddy，`caddy reload` 也只重读同一个旧 inode——两者都静默无效。不重启 caddy，改路由/换 upstream 名后它仍解析到旧 upstream（曾导致企微回调持续 502）。重启后用 `docker exec ran_ai-caddy-1 grep <新upstream> /etc/caddy/Caddyfile` 确认容器内已更新。
 - **构建缓存会滚雪球撑爆 ECS 磁盘**：后端在 ECS 上 `--build`，每次部署叠一层构建缓存且旧层永不自动删，会一路吃满磁盘（曾累积 43G，占满 85%）。`local_prebuilt_deploy.py` 已在部署收尾加 `docker builder prune -f` 兜底；若磁盘告急先跑它救急，并优先怀疑构建缓存而非业务数据（图片等占用极小）。
 - **入站图片存容器磁盘、必须挂持久卷**：聊天记录原图存后端容器内 `/app/.wecom_cache/images`（**懒创建**，无图进来时目录不存在，别误判丢失），数据库只存路径+文字描述。已在 compose 给 backend 挂 `./wecom_cache:/app/.wecom_cache` 持久化，否则容器重建即丢原图、60 天保留期形同虚设。
 
