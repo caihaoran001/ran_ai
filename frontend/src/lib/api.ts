@@ -222,6 +222,14 @@ export type Checkin = {
   created_at: string;
 };
 
+export type CheckinCustomAnswer = {
+  answer?: string;
+  question?: string;
+  source?: string;
+  evidence_message_id?: string | number | null;
+  questionnaire_submission_id?: string | number | null;
+};
+
 export type CheckinParsed = {
   product_schedule?: {
     morning_c?: string;
@@ -234,6 +242,14 @@ export type CheckinParsed = {
   mood?: string;
   exercise?: string;
   weight?: string;
+  waist?: string;
+  diet?: string;
+  bowel?: string;
+  hunger?: string;
+  sensation?: string;
+  discomfort?: string;
+  tomorrow_focus?: string;
+  custom_checkin?: Record<string, CheckinCustomAnswer | string>;
 };
 
 export type Message = {

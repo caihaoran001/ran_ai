@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { api, ServiceCase, Checkin } from "@/lib/api";
+import { StructuredCheckin } from "@/components/structured-checkin";
 
 export default async function CheckinsPage() {
   const cases = await api<ServiceCase[]>("/service-cases").catch(() => []);
@@ -43,7 +44,7 @@ export default async function CheckinsPage() {
               {checkins.slice(0, 7).map((checkin) => (
                 <div key={checkin.id} className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
                   <div className="mb-2 text-xs font-bold text-slate-600">{checkin.checkin_date}</div>
-                  <StructuredCheckin checkin={checkin} />
+                  <StructuredCheckin parsed={checkin.parsed_json} />
                 </div>
               ))}
               {checkins.length === 0 && <p className="empty-state py-6">暂无打卡</p>}
@@ -51,32 +52,6 @@ export default async function CheckinsPage() {
           </section>
         ))}
       </div>
-    </div>
-  );
-}
-
-function StructuredCheckin({ checkin }: { checkin: Checkin }) {
-  const parsed = checkin.parsed_json;
-  if (!parsed) return <span>{checkin.content}</span>;
-  const product = parsed.product_schedule || {};
-  const rows = [
-    ["早C", product.morning_c],
-    ["午B", product.noon_b],
-    ["晚A", product.night_a],
-    ["饮水", parsed.water],
-    ["睡眠", parsed.sleep],
-    ["情绪", parsed.mood],
-    ["运动", parsed.exercise],
-    ["体重", parsed.weight],
-  ].filter(([, value]) => value);
-  if (rows.length === 0) return <span>{checkin.content}</span>;
-  return (
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-      {rows.map(([label, value]) => (
-        <span key={label} className="text-break rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
-          <span className="font-bold text-slate-600">{label}：</span>{value}
-        </span>
-      ))}
     </div>
   );
 }

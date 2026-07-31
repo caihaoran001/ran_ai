@@ -13,6 +13,7 @@ import { CaseAutomationToggles } from "./case-automation-toggles";
 import { StageReportActions } from "./stage-report-actions";
 import { OutcomeSection } from "./outcome-section";
 import { HealthProfilePanel } from "@/components/health-profile-panel";
+import { StructuredCheckin } from "@/components/structured-checkin";
 import { healthProfileHeadline } from "@/lib/health-taxonomy";
 import {
   AlertTriangle,
@@ -299,7 +300,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                       <CheckCircle2 className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <StructuredCheckin checkin={checkin} />
+                      <StructuredCheckin parsed={checkin.parsed_json} />
                       <div className="mt-2 text-xs font-semibold text-slate-500">{formatDateTime(checkin.created_at)}</div>
                     </div>
                   </div>
@@ -322,32 +323,6 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           pageSize={CHAT_MESSAGE_LIMIT}
         />
       </div>
-    </div>
-  );
-}
-
-function StructuredCheckin({ checkin }: { checkin: Checkin }) {
-  const parsed = checkin.parsed_json;
-  if (!parsed) return <div className="text-break text-sm text-slate-900">{checkin.content}</div>;
-  const product = parsed.product_schedule || {};
-  const rows = [
-    ["早C", product.morning_c],
-    ["午B", product.noon_b],
-    ["晚A", product.night_a],
-    ["饮水", parsed.water],
-    ["睡眠", parsed.sleep],
-    ["情绪", parsed.mood],
-    ["运动", parsed.exercise],
-    ["体重", parsed.weight],
-  ].filter(([, value]) => value);
-  if (rows.length === 0) return <div className="text-break text-sm text-slate-900">{checkin.content}</div>;
-  return (
-    <div className="grid gap-2 text-sm text-slate-900 sm:grid-cols-2">
-      {rows.map(([label, value]) => (
-        <div key={label} className="text-break rounded-md border border-slate-200 bg-white px-2.5 py-1.5">
-          <span className="font-bold text-slate-600">{label}：</span>{value}
-        </div>
-      ))}
     </div>
   );
 }

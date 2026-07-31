@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ArrowLeft, FileText, MessageSquareText } from "lucide-react";
+import { StructuredCheckin } from "@/components/structured-checkin";
+import type { CheckinParsed } from "@/lib/api";
 import { formatChinaShortDateTime } from "@/lib/format";
 
 export type DashboardCaseRef = {
@@ -51,7 +53,7 @@ export type DashboardCheckinEvent = {
   checkin_id: number;
   checkin_date: string;
   content: string;
-  parsed_json?: Record<string, unknown> | null;
+  parsed_json?: CheckinParsed | null;
   created_at: string;
 };
 
@@ -222,7 +224,6 @@ export function CheckinDetailList({ items }: { items: DashboardCaseCheckins[] })
                   </span>
                   <span>{formatChinaShortDateTime(checkin.created_at)}</span>
                 </div>
-                <QuoteBlock title="打卡原文" content={checkin.content} />
                 <StructuredCheckin parsed={checkin.parsed_json} />
               </div>
             ))}
@@ -332,34 +333,4 @@ function InfoBox({ title, content, tone }: { title: string; content: string; ton
       {content}
     </div>
   );
-}
-
-function StructuredCheckin({ parsed }: { parsed?: Record<string, unknown> | null }) {
-  if (!parsed) return null;
-  const product = objectValue(parsed.product_schedule);
-  const rows: Array<[string, unknown]> = [
-    ["早C", product?.morning_c],
-    ["午B", product?.noon_b],
-    ["晚A", product?.night_a],
-    ["饮水", parsed.water],
-    ["睡眠", parsed.sleep],
-    ["情绪", parsed.mood],
-    ["运动", parsed.exercise],
-    ["体重", parsed.weight],
-  ].filter((row): row is [string, unknown] => row[1] !== undefined && row[1] !== null && String(row[1]).trim() !== "");
-  if (!rows.length) return null;
-  return (
-    <div className="mt-3 grid gap-2 md:grid-cols-4">
-      {rows.map(([label, value]) => (
-        <span key={label} className="text-break rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
-          <span className="text-slate-500">{label}：</span>
-          {String(value)}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function objectValue(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
