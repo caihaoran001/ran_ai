@@ -20,13 +20,20 @@
 | 你要做的 | 跑什么 | 会动什么 |
 |---|---|---|
 | **部署代码**（日常、高频） | `uv run --no-project --with paramiko python scratch/local_prebuilt_deploy.py` | 只更新代码（后端 `src`、前端 standalone）并重建/重启 `backend`、`frontend`；常驻 `ingress` 和 Caddy 不动。切换前自动执行 LangGraph checkpoint 表初始化/升级。**不碰**服务器的 `.env` 和 `docker-compose.prod.yml`（打包已排除） |
-| **改生产配置**（少见） | `uv run --with paramiko python scratch/configure_remote_files.py` | 用仓库当前 `docker-compose.prod.yml` 与脚本内 `.env` 模板**整体覆盖**服务器配置 |
+| **改 compose 结构**（少见） | `uv run --with paramiko python scratch/configure_remote_files.py` | 用仓库当前 `docker-compose.prod.yml` **整体覆盖**服务器 compose；**默认不碰 `.env`** |
+| **改 .env 密钥**（很少） | 直接在服务器上 `nano /root/ran_ai/.env` | 线上 `.env` 由人手维护、以线上为准；见下方警告 |
 
 **为什么分开**：部署代码很频繁；如果每次部署都覆盖 `.env`，一旦有人在服务器上手改过配置（如换 QiWe `guid`），就会被模板覆盖回去、搞坏线上。所以**部署代码绝不动配置**；改配置是一个单独、显式的动作。
 
-**改生产配置的正确步骤**：① compose 改仓库根目录的 `docker-compose.prod.yml`，环境变量改 `scratch/configure_remote_files.py` 内的 `.env` 模板 → ② 跑 `configure_remote_files.py` 推到服务器 → ③ 按需重启容器。
+> ⚠️ **`configure_remote_files.py` 内嵌的 `.env` 模板已严重过期**（实测 2026-07-31：线上 `QIWEI_GUID` / `AI_API_KEY` / `QWEN_API_KEY` 与模板不同，且线上多出 `AI_AGENT_ENABLED` / `WEB_SEARCH_ENABLED` / `TAVILY_API_KEY` 等键）。所以该脚本**默认只推 compose、不写 `.env`**。要改线上密钥请直接改服务器上的 `.env`；只有确认模板已和线上逐键对齐，才可用 `--with-env` 覆盖。
 
-> ⚠️ 给后续接手者（含 AI 助手）：**不要在 `local_prebuilt_deploy.py` 里加回"覆盖 .env / docker-compose.prod.yml"的步骤**。任何生产配置变更都走 `configure_remote_files.py`，保持部署代码与改配置解耦。
+**改 compose 结构的正确步骤**：① 改仓库根目录的 `docker-compose.prod.yml` → ② 跑 `configure_remote_files.py`（只推 compose）→ ③ 按需重启容器。
+
+> ⚠️ 给后续接手者（含 AI 助手）：**不要在 `local_prebuilt_deploy.py` 里加回"覆盖 .env / docker-compose.prod.yml"的步骤**。compose 结构变更走 `configure_remote_files.py`，`.env` 只在服务器上手改，保持部署代码与改配置解耦。
+
+### 一次性场景：ingress 代码或 compose 服务名变化时
+
+日常部署**故意不重建 `ingress`**（它常驻、稳定，只用旧的已知good镜像）。但当 `ingress` 的代码（新增路由、鉴权）或它在 compose 里的服务名/环境发生变化时，必须做一次性重建：① 先 `configure_remote_files.py` 推新 compose → ② `local_prebuilt_deploy.py` 部署新代码并构建新镜像（`backend`/`ingress` 共用 `ran-ai-backend:local`）→ ③ 一次性 `docker compose -f docker-compose.prod.yml up -d --remove-orphans` 让 compose 重建 `ingress`（换名时顺带清掉旧孤儿容器）、并因 `SERVER_INGRESS_BASE_URL` / Caddyfile 变化重建 `frontend` 与 `caddy`。此步会有几秒公网抖动，入站企微消息由 `inbound_events` 落库+重放兜底，不丢。
 
 ## 2. `.env` 为什么不进 git，但部署还能用
 
@@ -54,8 +61,8 @@
 生产 compose 包含：
 
 - `backend`：FastAPI 后端，启动时自动执行 Alembic migration。
-- `ingress`：稳定常驻的轻量 QiWe 回调入口，只鉴权、解析并写入 RDS `inbound_events`；日常业务部署不重启它。
-- `frontend`：Next.js standalone 生产服务。
+- `ingress`：稳定常驻的轻量【入站边缘入口】，只持 DB 连接池、绝不跑 LLM/调度器/langgraph。承载两类外部入站流量：① QiWe 回调（鉴权解析后写入 RDS `inbound_events`）；② 面向 C 端用户、免 admin key 的公开入口——公开问卷展示与提交、短链跳转。日常业务部署不重启它，`backend` 频繁重启时这些外部入口不吃 502。
+- `frontend`：Next.js standalone 生产服务。C 端三处公开调用（问卷展示 GET、问卷提交 POST、短链 GET）在 SSR/route 里经 `SERVER_INGRESS_BASE_URL` **直连 `ingress:8001`**（不走 Caddy）；后台管理 `/api/*` 仍经前端代理直连 `backend`。
 - `caddy`：公网 HTTP/HTTPS 入口。
 
 数据库使用阿里云 RDS PostgreSQL 15，不在 ECS 的 Docker Compose 中启动 PostgreSQL。后端通过 `.env` 中的 `DATABASE_URL` 连接 RDS：

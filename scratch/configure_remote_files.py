@@ -1,20 +1,25 @@
 """【生产配置推送脚本】——单独手动运行，用于把生产配置覆盖到 ECS。
 
-写两个文件到服务器 /root/ran_ai/：
-  - docker-compose.prod.yml（生产编排：Dockerfile.prod + caddy 反代）
-  - .env（生产密钥 / 数据库 / QiWe guid 等真实配置）
+默认只推 docker-compose.prod.yml（生产编排），**不碰服务器 .env**。
 
-⚠️ 重要：日常部署代码的 local_prebuilt_deploy.py 已不再调用本脚本，也不会动这两个文件。
-只有在【改动生产配置】时才手动运行本脚本；compose 取仓库根目录当前文件，
-.env 取下方模板。两者都会整体覆盖服务器文件（服务器上的手改会被覆盖）。
+⚠️ 下方内嵌的 .env 模板已【严重过期】，与线上真实 .env 漂移很大（实测 2026-07-31：
+线上 QIWEI_GUID、AI_API_KEY、QWEN_API_KEY 与模板不同，且线上多出
+AI_AGENT_ENABLED / WEB_SEARCH_ENABLED / TAVILY_API_KEY / QWEN 分档成本等键）。
+**用模板整体覆盖会直接搞坏线上**（改回旧 guid/旧 key、关掉回复 Agent 与联网）。
+线上 .env 由人手维护、以线上为准（见 docs/deployment.md §2）。因此本脚本默认
+**不写 .env**；只有确认模板已和线上逐键对齐后，才可显式加 `--with-env` 覆盖。
 
-运行：uv run --with paramiko python scratch/configure_remote_files.py
+用法：
+  uv run --with paramiko python scratch/configure_remote_files.py            # 只推 compose（安全）
+  uv run --with paramiko python scratch/configure_remote_files.py --with-env # 同时覆盖 .env（危险，需先对齐模板）
 """
 import paramiko
 import sys
 from pathlib import Path
 
 def main():
+    # 默认只推 compose；.env 覆盖是危险动作，必须显式 opt-in。
+    write_env = "--with-env" in sys.argv[1:]
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
@@ -137,7 +142,15 @@ volumes:
         f.write(docker_compose_content)
     print("  ✅ Written /root/ran_ai/docker-compose.prod.yml")
 
-    print("Writing .env on ECS...")
+    if not write_env:
+        sftp.close()
+        client.close()
+        print("ℹ️ 跳过 .env（默认不覆盖，线上 .env 以线上为准）。"
+              "如确需覆盖，先把下方模板与线上逐键对齐后再加 --with-env。")
+        print("🎉 compose 已推送。")
+        return
+
+    print("⚠️ --with-env：即将用内嵌模板整体覆盖线上 .env（确认模板已和线上对齐！）...")
     env_content = """# App config
 PUBLIC_SITE_ADDRESS=admin.humanburning.ai
 FRONTEND_PUBLIC_BASE_URL=https://admin.humanburning.ai
