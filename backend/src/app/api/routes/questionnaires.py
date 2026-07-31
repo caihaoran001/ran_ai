@@ -110,7 +110,6 @@ async def get_questionnaire(
 async def submit_questionnaire(
     token: str,
     payload: QuestionnaireSubmit,
-    background_tasks: BackgroundTasks,
     template: str = Query(default="intake"),
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnaireSubmission:
@@ -146,27 +145,31 @@ async def submit_questionnaire(
             tz=timezone,
         )
         await record_intake_profile_completed(session, service_case=service_case)
+        # 高龄高风险是纯字段判断(无 LLM)，随提交即时落库。
+        mark_intake_age_risk(service_case, fields, payload.answers)
+        # 入营重活(风险分析→画像/文档→欢迎语)全部解耦：提交只置"待生成"信号，
+        # 由 backend 的 reminder loop 周期消费。这样这个公开提交入口在常驻 ingress 上
+        # 也只做 DB 写、绝不在请求路径跑 LLM 或发消息。无 ai_api_key 时不置信号，
+        # 维持原来"没配 key 就不生成"的行为。
+        if get_settings().ai_api_key:
+            service_case.intake_pending_generation_at = datetime.now(timezone)
     elif template != "intake":
         _create_checkin_from_questionnaire(session, service_case, fields, payload.answers)
-
-    analysis = await analyze_intervention(
-        source="questionnaire",
-        content=questionnaire_content(fields, payload.answers),
-        context={
-            "service_case_id": service_case.id,
-            "case_no": service_case.case_no,
-            "template_key": template,
-        },
-    )
-    merge_case_insight(service_case, analysis)
-    if template == "intake":
-        mark_intake_age_risk(service_case, fields, payload.answers)
+        # 打卡的风险洞察仍随提交即时分析。打卡 H5 已退役(只走聊天→档案官)，此分支为
+        # 遗留入口且不路由到 ingress，保持原有实时行为不变。
+        analysis = await analyze_intervention(
+            source="questionnaire",
+            content=questionnaire_content(fields, payload.answers),
+            context={
+                "service_case_id": service_case.id,
+                "case_no": service_case.case_no,
+                "template_key": template,
+            },
+        )
+        merge_case_insight(service_case, analysis)
     session.add(submission)
     await session.commit()
     await session.refresh(submission)
-    if template == "intake" and get_settings().ai_api_key:
-        background_tasks.add_task(_send_intake_submit_reply, service_case.id)
-        background_tasks.add_task(_generate_profile_and_documents, service_case.id)
     return submission
 
 

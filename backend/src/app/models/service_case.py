@@ -70,6 +70,11 @@ class ServiceCase(TimestampMixin, Base):
     # 不建新服务周期，也不覆盖历史聊天/打卡/文档。
     service_lifecycle_events: Mapped[list[dict] | None] = mapped_column(JSON)
     content_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 入营问卷提交后的"待生成"信号：提交只落库并置此字段，重活(风险分析→画像/文档→欢迎语)
+    # 由 backend 的 reminder loop 周期消费后清空。让公开提交入口能在常驻 ingress 上只做
+    # DB 写、绝不在请求路径跑 LLM/发消息；也把它与运营 PATCH 重生成(自带 backend 后台任务、
+    # 不置此字段)区分开，避免被 loop 重复消费或误发欢迎语。
+    intake_pending_generation_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     questionnaire_to_llm_output_ms: Mapped[int | None] = mapped_column()
     notes: Mapped[str | None] = mapped_column(String(2000))
     auto_send_documents: Mapped[bool] = mapped_column(Boolean, default=False)

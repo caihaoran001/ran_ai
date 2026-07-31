@@ -47,6 +47,7 @@ from app.services.service_case_queries import (
     active_service_case_condition,
     checkin_day,
     effective_service_day,
+    get_active_service_case,
     select_active_service_cases,
     service_continuation_active,
     service_phase_end_at,
@@ -126,6 +127,7 @@ class ReminderService:
                             await self.check_stage_reports_once()
                         if self.settings.outcome_snapshots_enabled:
                             await self.check_outcome_snapshots_once()
+                        await self.check_pending_intake_generation_once()
                         await self.check_stuck_document_generation_once()
                         await self.check_retry_degraded_reports_once()
                         await self.check_unsent_channel_messages_once()
@@ -548,6 +550,91 @@ class ReminderService:
                         error_type="ChannelSendFailed",
                     )
             await session.commit()
+
+    async def check_pending_intake_generation_once(self) -> None:
+        """消费入营问卷提交留下的"待生成"信号。
+
+        提交入口(问卷 POST，可能跑在常驻 ingress 上)只落库并置
+        intake_pending_generation_at，把重活解耦到这里，由 backend 进程内的本循环
+        按 风险分析→画像/文档→欢迎语 的顺序生成。单实例 advisory lock 保证不并发重入。
+
+        与运营 PATCH 重生成互不干扰：PATCH 走自带的 backend 后台任务、不置此信号，
+        故不会被本循环重复消费或误发欢迎语。
+        """
+        if not self.settings.ai_api_key:
+            return
+        from app.api.routes.questionnaires import (
+            _append_generation_error_note,
+            _latest_submission,
+            _send_intake_submit_reply,
+        )
+        from app.services.intervention_service import (
+            analyze_intervention,
+            merge_case_insight,
+            questionnaire_content,
+        )
+        from app.services.questionnaire_template import get_active_questionnaire_fields
+
+        async with SessionLocal() as session:
+            pending = list(
+                await session.scalars(
+                    select_active_service_cases(
+                        ServiceCase.intake_pending_generation_at.isnot(None)
+                    )
+                )
+            )
+        for pending_case in pending:
+            service_case_id = pending_case.id
+            reply_ready = False
+            async with SessionLocal() as session:
+                service_case = await get_active_service_case(session, service_case_id)
+                if service_case is None or service_case.intake_pending_generation_at is None:
+                    continue
+                # 先清信号(一次性消费)：即便随后生成失败也不无限重试，失败会回落
+                # QUESTIONNAIRE_SUBMITTED 交运营 PATCH 重触发；进程硬崩溃(信号已清、状态
+                # 仍 GENERATING)由 check_stuck_document_generation_once 兜底补跑。
+                service_case.intake_pending_generation_at = None
+                await session.commit()
+                try:
+                    submission = await _latest_submission(session, service_case.id, "intake")
+                    if submission is not None:
+                        fields = await get_active_questionnaire_fields(session, "intake")
+                        analysis = await analyze_intervention(
+                            source="questionnaire",
+                            content=questionnaire_content(fields, submission.answers_json or {}),
+                            context={
+                                "service_case_id": service_case.id,
+                                "case_no": service_case.case_no,
+                                "template_key": "intake",
+                            },
+                        )
+                        merge_case_insight(service_case, analysis)
+                        await session.commit()
+                    await generate_profile_and_documents(
+                        session,
+                        service_case,
+                        auto_send=self.settings.auto_send_documents,
+                    )
+                    reply_ready = True
+                except Exception as exc:
+                    logger.exception(
+                        "Pending intake generation failed service_case_id=%s",
+                        service_case_id,
+                    )
+                    await session.rollback()
+                    failed_case = await get_active_service_case(session, service_case_id)
+                    if failed_case is not None:
+                        _append_generation_error_note(failed_case, exc)
+                        await session.commit()
+            if reply_ready:
+                # 欢迎语独立事务、失败不回滚已生成文档(与旧的 background task 语义一致)。
+                try:
+                    await _send_intake_submit_reply(service_case_id)
+                except Exception:
+                    logger.exception(
+                        "Intake submit reply failed service_case_id=%s",
+                        service_case_id,
+                    )
 
     async def check_stuck_document_generation_once(self) -> None:
         """补跑卡在 generating 的文档生成（多为部署/重启时后台任务被中断）。"""

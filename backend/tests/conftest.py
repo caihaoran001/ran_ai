@@ -114,6 +114,12 @@ async def wait_background():
             _SPAWNED_TASKS.clear()
             for func, args, kwargs in tasks_to_run:
                 await func(*args, **kwargs)
+        # 入营生成已从提交路径的 background task 解耦到 backend 的 reminder loop：
+        # 提交只置 intake_pending_generation_at 信号，真正的风险分析/画像/文档/欢迎语
+        # 由 loop 消费。测试里补跑消费函数，等价于生产中 loop 扫到信号后生成。
+        from app.services.reminder_service import ReminderService
+
+        await ReminderService().check_pending_intake_generation_once()
     return _wait
 
 
