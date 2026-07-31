@@ -1611,6 +1611,71 @@ async def test_failed_generation_reverts_status(
     assert "失败" in notes or "Error" in notes or "error" in notes.lower(), (
         f"Expected error in notes, got: {notes[:200]}"
     )
+    intake_calls = [call for call in mock_ai.calls if call.get("scenario") == "intake_doc"]
+    assert len(intake_calls) == 3
+    assert "【重新生成要求】" not in str(intake_calls[0]["user_prompt"])
+    assert "【重新生成要求】" in str(intake_calls[1]["user_prompt"])
+
+
+@pytest.mark.asyncio
+async def test_incomplete_intake_package_retries_and_recovers(
+    admin_client,
+    create_case,
+    db_session,
+    mock_ai,
+    cai_haoran_answers,
+    wait_background,
+):
+    """第一次缺两份文件时自动重新生成；第二次完整就正常落画像和正式文档。"""
+
+    mock_ai._responses = {
+        INTAKE_SYSTEM_PROMPT_PREFIX: [
+            json.dumps(
+                {
+                    "intake_analysis_package": {
+                        "shared_analysis": {},
+                        "profile": {"summary": "只有画像，没有交付文件"},
+                        "documents": {},
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            _make_intake_mock_response(),
+        ],
+    }
+
+    group_id = f"test-intake-content-retry-{secrets.token_hex(6)}"
+    resp = await create_case(
+        {
+            "group_id": group_id,
+            "user": {"name": "内容重试用户"},
+        }
+    )
+    assert resp.status_code == 201, resp.text
+    case = resp.json()
+
+    submit_resp = await admin_client.post(
+        f"/questionnaires/{case['questionnaire_token']}/submit?template=intake",
+        json={"answers": cai_haoran_answers},
+    )
+    assert submit_resp.status_code == 201, submit_resp.text
+    await wait_background()
+
+    profile = await db_session.scalar(
+        select(UserProfile).where(UserProfile.service_case_id == case["id"])
+    )
+    documents = list(
+        await db_session.scalars(
+            select(UserDocument).where(UserDocument.service_case_id == case["id"])
+        )
+    )
+    assert profile is not None
+    assert len(documents) == 2
+
+    intake_calls = [call for call in mock_ai.calls if call.get("scenario") == "intake_doc"]
+    assert len(intake_calls) == 2
+    assert "【重新生成要求】" not in str(intake_calls[0]["user_prompt"])
+    assert "must contain both delivery documents" in str(intake_calls[1]["user_prompt"])
 
 
 # ---------------------------------------------------------------------------

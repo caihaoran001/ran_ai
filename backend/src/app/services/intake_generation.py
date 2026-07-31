@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase
 from app.models.user_document import DocumentType
-from app.services.ai_service import AIService, parse_json_object
+from app.services.ai_service import AIService, RetryableAIContentError, parse_json_object
 from app.services.document_templates import combined_prompt_schema
 from app.services.intake_facts import (
     UNRESOLVED_BAND,
@@ -70,6 +70,7 @@ BAND_CALCULATION_FIELDS = (
 
 MANUAL_REVIEW_CHALLENGE_TARGET = "暂不设置挑战数字，D7复评"
 MANUAL_REVIEW_BASE_TARGET = "先完成7天基础执行，D7复评"
+INTAKE_DOCUMENT_MAX_ATTEMPTS = 3
 
 
 class DocumentGenerationBlocked(RuntimeError):
@@ -80,6 +81,10 @@ class DocumentGenerationBlocked(RuntimeError):
         self.ready_for_document_generation = False
         self.document_generation_block_reasons = list(self.reasons)
         super().__init__("；".join(self.reasons) or "关键资料尚未确认")
+
+
+class RetryableIntakePackageError(RuntimeError):
+    """模型正文存在结构或一致性问题，可在不改业务事实的前提下重新生成。"""
 
 # 内部运营标签：只允许留在 shared_analysis / profile_json 的内部字段和后台界面里。
 # 用户拿到的两份交付文件（管理带、正文、表格、打卡题面）中一个都不能出现。
@@ -532,19 +537,66 @@ async def _generate_intake_analysis_package(
         },
     )
     intake_facts = build_intake_fact_summary(fields, submission.answers_json, safety_factors)
-    text = await ai.generate_text(
-        scenario="intake_doc",
-        temperature=0.3,
-        service_case_id=service_case.id,
-        system_prompt=_intake_generation_system_prompt(),
-        user_prompt=(
-            f"当前用户：{user_name}\n"
-            f"服务单：{service_case.case_no}\n\n"
-            f"请严格按这个 package 顶层字段结构填值：\n{json.dumps(_intake_package_schema(), ensure_ascii=False, indent=2)}\n\n"
-            f"intake_facts（共同事实摘要，优先级最高）：\n{json.dumps(intake_facts, ensure_ascii=False, indent=2)}\n\n"
-            f"问卷结果：\n{readable_answers}"
-        ),
+    block_reasons = _document_generation_block_reasons(intake_facts)
+    if block_reasons:
+        raise DocumentGenerationBlocked(block_reasons)
+
+    base_user_prompt = (
+        f"当前用户：{user_name}\n"
+        f"服务单：{service_case.case_no}\n\n"
+        f"请严格按这个 package 顶层字段结构填值：\n{json.dumps(_intake_package_schema(), ensure_ascii=False, indent=2)}\n\n"
+        f"intake_facts（共同事实摘要，优先级最高）：\n{json.dumps(intake_facts, ensure_ascii=False, indent=2)}\n\n"
+        f"问卷结果：\n{readable_answers}"
     )
+    last_error: RetryableAIContentError | RetryableIntakePackageError | None = None
+    for attempt in range(1, INTAKE_DOCUMENT_MAX_ATTEMPTS + 1):
+        retry_instruction = ""
+        if last_error is not None:
+            retry_instruction = (
+                "\n\n【重新生成要求】\n"
+                f"上一次输出未通过完整性校验：{str(last_error)[:500]}。\n"
+                "请从头重新生成完整 JSON；必须同时包含 shared_analysis、profile、"
+                "energy_restart_prescription 和 day28_execution_standard，"
+                "并确保最终 JSON 全部写入 content。不要复述字段结构或问卷，"
+                "在字段齐全的前提下压缩每个文本字段，避免再次截断。"
+            )
+        try:
+            text = await ai.generate_text(
+                scenario="intake_doc",
+                temperature=0.3,
+                service_case_id=service_case.id,
+                system_prompt=_intake_generation_system_prompt(),
+                user_prompt=base_user_prompt + retry_instruction,
+            )
+            return _normalize_intake_analysis_package(
+                text=text,
+                service_case=service_case,
+                user_name=user_name,
+                intake_facts=intake_facts,
+            )
+        except (RetryableAIContentError, RetryableIntakePackageError) as exc:
+            last_error = exc
+            if attempt >= INTAKE_DOCUMENT_MAX_ATTEMPTS:
+                raise
+            logger.warning(
+                "intake document content invalid; regenerating service_case_id=%s attempt=%s/%s error=%s",
+                service_case.id,
+                attempt,
+                INTAKE_DOCUMENT_MAX_ATTEMPTS,
+                exc,
+            )
+    raise RuntimeError("intake document generation retry loop exited unexpectedly")
+
+
+def _normalize_intake_analysis_package(
+    *,
+    text: str,
+    service_case: ServiceCase,
+    user_name: str,
+    intake_facts: dict[str, object],
+) -> dict[str, object]:
+    """把一次模型正文收敛成可落库 package；内容问题交给上层重新生成。"""
+
     payload = parse_json_object(text)
     if isinstance(payload.get("intake_analysis_package"), dict):
         payload = payload["intake_analysis_package"]
@@ -555,23 +607,24 @@ async def _generate_intake_analysis_package(
     _apply_deterministic_band(shared, intake_facts)
     _force_high_risk_manual_review(shared, service_case)
     _apply_canonical_target_contract(shared, intake_facts)
-    block_reasons = _document_generation_block_reasons(intake_facts)
-    shared["ready_for_document_generation"] = not block_reasons
-    shared["document_generation_block_reasons"] = block_reasons
-    if block_reasons:
-        raise DocumentGenerationBlocked(block_reasons)
+    shared["ready_for_document_generation"] = True
+    shared["document_generation_block_reasons"] = []
     document_payloads = _normalize_combined_document_payload(
         document_root,
         user_name,
         shared_analysis=shared,
     )
     if not document_payloads:
-        raise RuntimeError("intake analysis package generated empty document content")
+        raise RetryableIntakePackageError(
+            "intake analysis package must contain both delivery documents"
+        )
     _apply_intake_facts_to_document_payloads(document_payloads, intake_facts)
     _append_waist_remeasurement_note(document_payloads, intake_facts)
     consistency_errors = _document_consistency_errors(document_payloads, shared, intake_facts)
     if consistency_errors:
-        raise RuntimeError(f"交付文件目标一致性校验未通过：{'；'.join(consistency_errors)}")
+        raise RetryableIntakePackageError(
+            f"交付文件目标一致性校验未通过：{'；'.join(consistency_errors)}"
+        )
     # 人工复核是内部运营状态，不是管理带：即使模型仍把内部标签写进正文，也要在落库前清出用户可见内容。
     _strip_internal_review_labels(document_payloads)
     # 五项打卡在这里收敛成严格 5 项结构化数组，之后画像、执行文档和 H5 问卷都读同一份结构。
@@ -579,7 +632,7 @@ async def _generate_intake_analysis_package(
     profile_json = _normalize_profile_from_package(payload, document_payloads, intake_facts)
     summary = str(profile_json.get("summary") or _profile_summary_from_documents(document_payloads) or "")[:2000]
     if not summary:
-        raise RuntimeError("intake analysis package generated empty profile content")
+        raise RetryableIntakePackageError("intake analysis package generated empty profile content")
     return {
         "profile_json": profile_json,
         "summary": summary,

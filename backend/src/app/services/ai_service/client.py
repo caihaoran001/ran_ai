@@ -42,6 +42,10 @@ _MEAL_UNSPECIFIC_MARKERS = (
 _DOCUMENT_JSON_SCENARIOS = frozenset({"intake_doc", "stage_report", "population_insight"})
 
 
+class RetryableAIContentError(RuntimeError):
+    """模型请求成功，但交付正文不完整，可安全重新生成。"""
+
+
 def _get_limiter(max_concurrent: int) -> asyncio.Semaphore:
     limit = max(1, int(max_concurrent or 1))
     limiter = _LIMITERS.get(limit)
@@ -379,18 +383,28 @@ class AIService:
                     if scenario in _DOCUMENT_JSON_SCENARIOS
                     else "AI_MAX_TOKENS"
                 )
-                raise RuntimeError(
+                error_type = (
+                    RetryableAIContentError
+                    if scenario in _DOCUMENT_JSON_SCENARIOS
+                    else RuntimeError
+                )
+                raise error_type(
                     f"AI output truncated at max_tokens={max_tokens}。"
                     f"请增大 {limit_name} 后重试。"
                 )
             message = response.choices[0].message if response.choices else None
             content = message.content if message else ""
             reasoning_content = getattr(message, "reasoning_content", None) if message else None
-            if not str(content or "").strip() and str(reasoning_content or "").strip():
-                raise RuntimeError(
-                    "AI completed reasoning but returned empty final content; "
-                    "reasoning_content is not used as a delivery document"
-                )
+            if not str(content or "").strip():
+                if scenario in _DOCUMENT_JSON_SCENARIOS:
+                    detail = (
+                        "AI completed reasoning but returned empty final content"
+                        if str(reasoning_content or "").strip()
+                        else "AI returned empty final content"
+                    )
+                    raise RetryableAIContentError(
+                        f"{detail}; reasoning_content is not used as a delivery document"
+                    )
             logger.info(
                 "llm_call scenario=%s model=%s elapsed_ms=%.1f finish_reason=%s prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s total_tokens=%s attempts=%s success=%s",
                 scenario,
@@ -526,7 +540,7 @@ class AIService:
                         request_options["response_format"] = {"type": "json_object"}
                         if model.startswith("deepseek-v4-"):
                             request_options["extra_body"] = {"thinking": {"type": "enabled"}}
-                            request_options["reasoning_effort"] = "low"
+                            request_options["reasoning_effort"] = "high"
                     response = await self._client.chat.completions.create(
                         model=model,
                         messages=[

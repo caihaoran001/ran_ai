@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.config import Settings
-from app.services.ai_service import AIService
+from app.services.ai_service import AIService, RetryableAIContentError
 
 
 class _FakeCompletions:
@@ -66,7 +66,7 @@ async def test_document_generation_keeps_thinking_json_mode_and_50000_budget() -
     assert request["max_tokens"] == 50000
     assert request["response_format"] == {"type": "json_object"}
     assert request["extra_body"] == {"thinking": {"type": "enabled"}}
-    assert request["reasoning_effort"] == "low"
+    assert request["reasoning_effort"] == "high"
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_non_document_generation_keeps_global_budget_without_document_opti
 async def test_reasoning_is_never_used_as_delivery_document_fallback() -> None:
     service, _ = _service(_response(content="", reasoning='{"documents": {}}'))
 
-    with pytest.raises(RuntimeError, match="empty final content"):
+    with pytest.raises(RetryableAIContentError, match="empty final content"):
         await service.generate_text(
             scenario="intake_doc",
             system_prompt="only output json",
@@ -102,7 +102,7 @@ async def test_reasoning_is_never_used_as_delivery_document_fallback() -> None:
 async def test_document_truncation_names_document_budget() -> None:
     service, _ = _service(_response(content="{", finish_reason="length"))
 
-    with pytest.raises(RuntimeError, match="AI_DOCUMENT_MAX_TOKENS"):
+    with pytest.raises(RetryableAIContentError, match="AI_DOCUMENT_MAX_TOKENS"):
         await service.generate_text(
             scenario="intake_doc",
             system_prompt="only output json",

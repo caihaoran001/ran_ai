@@ -196,6 +196,7 @@ class MockAIService:
     def __init__(self, responses=None):
         self._responses = responses or {}
         self.settings = get_settings()
+        self.calls: list[dict[str, object]] = []
 
     def _model_for(self, scenario: str) -> str:
         # 与真实 AIService 接口对齐：按场景返回模型名（mock 不区分，回退默认）
@@ -214,8 +215,21 @@ class MockAIService:
         return None
 
     async def generate_text(self, *, system_prompt, user_prompt, **kwargs):
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                **kwargs,
+            }
+        )
         matched = self._match(system_prompt)
         if matched is not None:
+            if isinstance(matched, list):
+                if not matched:
+                    raise AssertionError("mock AI response sequence exhausted")
+                matched = matched.pop(0)
+            if isinstance(matched, Exception):
+                raise matched
             return matched
         if "提炼出可用于标准知识检索的 QA 问答对" in system_prompt:
             return json.dumps(
