@@ -19,8 +19,8 @@ export default async function AgentOperationsPage({
     : "overview";
   const parsedDays = Number(params.days);
   // 默认只看近 7 天：单次供应商故障等历史尖峰不会永久污染首屏失败率，
-  // 需要时可切到 1 天看当前健康、或 30/90 天回溯。
-  const days = [1, 7, 30, 90].includes(parsedDays) ? parsedDays : 7;
+  // 需要时可切到近 24h/3 天看当前健康，或 30/90 天回溯。
+  const days = [1, 3, 7, 30, 90].includes(parsedDays) ? parsedDays : 7;
   
   const data = await api<AgentOperationsData>(
     `/agent-operations?days=${days}`,

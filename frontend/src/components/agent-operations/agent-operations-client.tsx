@@ -374,7 +374,7 @@ export function AgentOperationsClient({
   }, [isPending]);
 
   const rangeLabel =
-    initialDays === 1 ? "今天" : `近 ${initialDays} 天`;
+    initialDays === 1 ? "近24h" : `近${initialDays}天`;
 
   return (
     <div className="page-stack">
@@ -436,19 +436,21 @@ export function AgentOperationsClient({
             })}
           </nav>
 
-          <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white p-1">
+          <div className="grid w-full grid-cols-5 items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 sm:flex sm:w-auto sm:gap-1.5">
             {[
-              { value: 1, label: "今天" },
-              { value: 7, label: "近 7 天" },
-              { value: 30, label: "近 30 天" },
-              { value: 90, label: "近 90 天" },
+              { value: 1, label: "近24h" },
+              { value: 3, label: "近3天" },
+              { value: 7, label: "近7天" },
+              { value: 30, label: "近30天" },
+              { value: 90, label: "近90天" },
             ].map(({ value, label }) => (
               <button
                 key={value}
                 onClick={() => handleDaysChange(value)}
                 disabled={isPending}
+                aria-pressed={initialDays === value}
                 aria-busy={pendingControl === `days:${value}` || undefined}
-                className={`inline-flex min-h-9 items-center justify-center rounded-lg px-3.5 text-xs font-bold transition-all ${
+                className={`inline-flex min-h-10 min-w-0 items-center justify-center whitespace-nowrap rounded-lg px-1 text-xs font-bold transition-all sm:px-3.5 ${
                   initialDays === value
                     ? "bg-slate-900 text-white shadow-sm"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
