@@ -51,6 +51,25 @@ MAX_DELTA_COUNT = 20               # C 累积：20 条用户发言（安全阀�
 SINGLE_STEP_AFTER_FAILURES = 2
 QUARANTINE_AFTER_FAILURES = 3
 
+# 系统性/瞬时故障退避（防"供应商抖动 → 同一批 case 无退避地反复重扫重失败"打爆失败账本、持续烧钱）：
+# message 类错误由上面的缩批/隔离自愈，不在此退避（否则拖慢自愈）。只有 transient/system 类
+# （模型接口 5xx/限流/超时、缺 key、DB 抖动等）才按 consecutive_failures 指数退避——失败后
+# 在冷却期内直接跳过该 case，不建 agent_run、不调模型。任一次成功即把 consecutive_failures 清零
+# （见 graph.py 水位线推进），退避自动解除。2026-07 曾因 DeepSeek 6h 故障、同 15 个 case 被反复
+# 重扫刷出 4600+ 条失败运行，加此退避后同场景只会留下每 case 十几条。
+SYSTEM_FAILURE_BACKOFF_BASE_SECONDS = 60
+SYSTEM_FAILURE_BACKOFF_MAX_SECONDS = 30 * 60
+_BACKOFF_FAILURE_KINDS = frozenset({"transient", "system"})
+
+
+def _system_backoff_seconds(consecutive_failures: int) -> float:
+    """指数退避秒数，封顶 30min：60s, 120, 240, 480, 960, 1800, 1800…"""
+    n = max(1, int(consecutive_failures or 0))
+    return min(
+        float(SYSTEM_FAILURE_BACKOFF_MAX_SECONDS),
+        float(SYSTEM_FAILURE_BACKOFF_BASE_SECONDS) * (2 ** (n - 1)),
+    )
+
 # 关键信息类目：可结构化打卡 / 稳定个人事实 / 阶段成效。命中即走 Fast 快触发。
 KEY_ARCHIVE_KINDS = frozenset({"checkin", "profile_fact", "outcome"})
 
@@ -196,6 +215,7 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
         "contended": 0,
         "failed": 0,
         "quarantined": 0,
+        "skipped_backoff": 0,
     }
 
     async with SessionLocal() as session:
@@ -220,6 +240,17 @@ async def run_archivist_scan(now: datetime | None = None) -> dict:
                 if progress is None:
                     stats["contended"] += 1
                     continue
+                # 系统性/瞬时故障退避：冷却期内直接跳过，不建 agent_run、不调模型，
+                # 避免供应商抖动时同一批 case 被反复重扫刷爆失败账本。
+                if (
+                    progress.last_failure_kind in _BACKOFF_FAILURE_KINDS
+                    and (progress.consecutive_failures or 0) > 0
+                    and progress.last_failure_at is not None
+                ):
+                    since = (now - _aware(progress.last_failure_at)).total_seconds()
+                    if since < _system_backoff_seconds(progress.consecutive_failures):
+                        stats["skipped_backoff"] += 1
+                        continue
                 watermark = progress.last_archived_message_id or 0
                 should, reason = await _evaluate(
                     session,
