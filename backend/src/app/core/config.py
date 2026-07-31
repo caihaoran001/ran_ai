@@ -116,6 +116,21 @@ class Settings(BaseSettings):
         default=1.0,
         validation_alias="AI_PEAK_PRICE_MULTIPLIER",
     )
+    # DeepSeek 账户余额低于阈值时向指定群告警。仅 DeepSeek(ai_base_url 指向 deepseek)可查余额。
+    ai_balance_alert_enabled: bool = Field(
+        default=False,
+        validation_alias="AI_BALANCE_ALERT_ENABLED",
+    )
+    # 余额(元)低于此值即触发告警；同时用于后台看板"余额偏低"变红判定，单一真相源。
+    ai_balance_alert_threshold_yuan: float = Field(
+        default=10.0,
+        validation_alias="AI_BALANCE_ALERT_THRESHOLD_YUAN",
+    )
+    # 告警推送目标群/人的 channel chat_id（留空则不推送，只在看板显示）。
+    ai_balance_alert_group_id: str = Field(
+        default="",
+        validation_alias="AI_BALANCE_ALERT_GROUP_ID",
+    )
     document_output_dir: str = Field(
         default="generated_documents",
         validation_alias="DOCUMENT_OUTPUT_DIR",

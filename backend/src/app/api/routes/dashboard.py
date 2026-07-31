@@ -10,6 +10,7 @@ from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
@@ -22,6 +23,7 @@ from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, Docu
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.schemas.dashboard import (
+    AIBalanceSummary,
     AICostCaseItem,
     AICostSummary,
     CaseHealthItem,
@@ -63,9 +65,33 @@ from app.services.population_insight import (
     get_population_insight,
     refresh_population_insight,
 )
+from app.services.ai_service.balance import fetch_deepseek_balance
 from app.services.service_case_queries import active_service_case_condition, effective_start_at
 
 router = APIRouter()
+
+
+@router.get("/deepseek-balance", response_model=AIBalanceSummary)
+async def dashboard_deepseek_balance() -> AIBalanceSummary:
+    """DeepSeek 账户实时余额（独立于逐 token 估算成本）。
+
+    余额是外部实时调用，特意不塞进 /summary，避免拖慢整个看板；balance.py 内有
+    60s 缓存，看板频繁加载也不会频繁请求 DeepSeek。查不到时 available=False，前端兜底显示。
+    """
+    settings = get_settings()
+    threshold = float(settings.ai_balance_alert_threshold_yuan or 0)
+    snap = await fetch_deepseek_balance(settings)
+    if snap is None or not snap.available or snap.balance_yuan is None:
+        return AIBalanceSummary(available=False, alert_threshold_yuan=threshold)
+    return AIBalanceSummary(
+        available=True,
+        balance_yuan=snap.balance_yuan,
+        currency=snap.currency,
+        is_available=snap.is_available,
+        is_low=(snap.balance_yuan < threshold) or (not snap.is_available),
+        alert_threshold_yuan=threshold,
+        fetched_at=datetime.fromtimestamp(snap.fetched_at, tz=timezone.utc),
+    )
 
 
 def _today_bounds() -> tuple[datetime, datetime]:

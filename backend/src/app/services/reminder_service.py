@@ -141,6 +141,11 @@ class ReminderService:
                         # 避免延迟阶段完结、提醒、补发等时效性任务。
                         if self.settings.population_insight_enabled:
                             await self.check_population_insight_once()
+                        if (
+                            self.settings.ai_balance_alert_enabled
+                            and self.settings.ai_balance_alert_group_id
+                        ):
+                            await self.check_low_balance_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -160,6 +165,53 @@ class ReminderService:
         stats = await run_archivist_scan()
         if stats.get("ran"):
             logger.info("Archivist scan stats=%s", stats)
+
+    async def check_low_balance_once(self) -> None:
+        """查 DeepSeek 账户余额，跌破阈值/账户不可用时向指定群告警，每天最多一条(天闸)。
+
+        天闸用 AIBalanceAlert(alert_date 唯一) 先插入抢占：发送成功才 commit 占住当天名额，
+        发送失败则 rollback 释放，下一轮重试；跨自然日自动重置。查不到余额不误报。
+        """
+        from app.models.ai_balance_alert import AIBalanceAlert
+        from app.services.ai_service.balance import fetch_deepseek_balance
+
+        group_id = (self.settings.ai_balance_alert_group_id or "").strip()
+        if not group_id:
+            return
+        snap = await fetch_deepseek_balance(self.settings, force=True)
+        if snap is None or not snap.available or snap.balance_yuan is None:
+            return  # 外部查询失败/不适用：不误报
+        threshold = float(self.settings.ai_balance_alert_threshold_yuan or 0)
+        if snap.balance_yuan >= threshold and snap.is_available:
+            return  # 余额充足
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        alert_text = (
+            "⚠️ DeepSeek 账户余额偏低\n"
+            f"当前余额：¥{snap.balance_yuan:.2f}（阈值 ¥{threshold:.2f}）\n"
+            "请尽快充值，以免影响 AI 回复、风控与文档生成。"
+        )
+        async with SessionLocal() as session:
+            alert = AIBalanceAlert(alert_date=today, balance_yuan=snap.balance_yuan)
+            try:
+                async with session.begin_nested():
+                    session.add(alert)
+                    await session.flush()
+            except IntegrityError:
+                return  # 今天已发过
+            result = await _send_channel_text_with_retries(group_id, alert_text)
+            if result is not None and result.success:
+                await session.commit()
+                logger.info(
+                    "low-balance alert sent balance=%.2f threshold=%.2f",
+                    snap.balance_yuan,
+                    threshold,
+                )
+            else:
+                await session.rollback()  # 释放天闸，下一轮重试
+                logger.warning(
+                    "low-balance alert send failed, will retry next tick: %s",
+                    getattr(result, "error", None),
+                )
 
     async def check_population_insight_once(self, now: datetime | None = None) -> None:
         """每天只检查一次群体洞察刷新条件；普通画像变动不直接触发模型。"""

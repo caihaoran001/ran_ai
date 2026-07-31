@@ -11,6 +11,7 @@ from app.models.checkin_checklist_version import CheckinChecklistVersion
 from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.checkin_followup_preference import CheckinFollowupPreference
 from app.models.checkin_message_receipt import CheckinMessageReceipt
+from app.models.ai_balance_alert import AIBalanceAlert
 from app.models.ai_usage import AIUsageLog
 from app.models.app_setting import AppSetting
 from app.models.inbound_event import InboundEvent
@@ -46,6 +47,7 @@ __all__ = [
     "ArchivistProgress",
     "ArchivistQuarantine",
     "ArchivistShadowOutcome",
+    "AIBalanceAlert",
     "AIUsageLog",
     "AppSetting",
     "DocumentStatus",

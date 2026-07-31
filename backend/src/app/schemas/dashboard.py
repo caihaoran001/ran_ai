@@ -36,6 +36,18 @@ class AICostSummary(BaseModel):
     vision_cost_yuan: float = 0.0
 
 
+class AIBalanceSummary(BaseModel):
+    """DeepSeek 账户余额（外部实时查询）。available=False 表示查不到/不适用。"""
+
+    available: bool = False
+    balance_yuan: float | None = None
+    currency: str = "CNY"
+    is_available: bool = True
+    is_low: bool = False
+    alert_threshold_yuan: float = 0.0
+    fetched_at: datetime | None = None
+
+
 class AICostCaseItem(BaseModel):
     service_case_id: int
     case_no: str
