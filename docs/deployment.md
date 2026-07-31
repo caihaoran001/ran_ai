@@ -33,7 +33,15 @@
 
 ### 一次性场景：ingress 代码或 compose 服务名变化时
 
-日常部署**故意不重建 `ingress`**（它常驻、稳定，只用旧的已知good镜像）。但当 `ingress` 的代码（新增路由、鉴权）或它在 compose 里的服务名/环境发生变化时，必须做一次性重建：① 先 `configure_remote_files.py` 推新 compose → ② `local_prebuilt_deploy.py` 部署新代码并构建新镜像（`backend`/`ingress` 共用 `ran-ai-backend:local`）→ ③ 一次性 `docker compose -f docker-compose.prod.yml up -d --remove-orphans` 让 compose 重建 `ingress`（换名时顺带清掉旧孤儿容器）、并因 `SERVER_INGRESS_BASE_URL` / Caddyfile 变化重建 `frontend` 与 `caddy`。此步会有几秒公网抖动，入站企微消息由 `inbound_events` 落库+重放兜底，不丢。
+日常部署**故意不重建 `ingress`**（它常驻、稳定，只用旧的已知good镜像）。但当 `ingress` 的代码（新增路由、鉴权）或它在 compose 里的服务名/环境发生变化时，必须做一次性重建（顺序很重要，避免 `frontend` 指向尚不存在的 `ingress`）：
+
+1. `local_prebuilt_deploy.py` 先部署新代码、构建新镜像（`backend`/`ingress` 共用 `ran-ai-backend:local`），此时服务器 compose 仍是旧的、C 端仍由 `backend` 兜底服务，全程可用。
+2. `configure_remote_files.py` 推新 compose（只推 compose、不碰 `.env`）；容器还没重建，无副作用。
+3. 先单独把 `ingress` 起在新镜像上并验活：`docker compose -f docker-compose.prod.yml up -d ingress`，再 `docker exec ran_ai-ingress-1 python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8001/health').read())"`（顺带用真实 token 打一次 `/api/questionnaires/{token}` 确认新路由返回 200）。**必须等 `ingress` 起来并验活后**，才让 `frontend` 切过去。
+4. 一次性 `docker compose -f docker-compose.prod.yml up -d --remove-orphans` 重建 `frontend`（拿到 `SERVER_INGRESS_BASE_URL`→`ingress:8001`）、重建 `backend`（新 compose 定义），并清掉改名后的孤儿 `qiwe-ingress`。
+5. **`caddy` 必须显式 `docker restart ran_ai-caddy-1`**——它的 Caddyfile 是 bind-mount，部署写入的是**新 inode 的新文件**，而 `up -d` 不会因挂载文件内容变化而重建 caddy，`caddy reload` 也只会重读同一个旧 inode；不重启 caddy 会继续把回调解析到改名前的 `qiwe-ingress` upstream → 回调 502。重启后用 `docker exec ran_ai-caddy-1 grep ingress /etc/caddy/Caddyfile` 确认容器内已是 `ingress:8001`。
+
+此过程 `frontend`/`backend`/`caddy` 重建有几秒公网抖动，`ingress` 全程不重启、C 端公开入口不吃 502；入站企微消息由 `inbound_events` 落库+重放兜底，不丢。
 
 ## 2. `.env` 为什么不进 git，但部署还能用
 
