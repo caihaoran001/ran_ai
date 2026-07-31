@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const SERVER_API_BASE_URL = process.env.SERVER_API_BASE_URL ?? "http://localhost:8000/api";
+// 短链跳转是 C 端公开入口，走常驻 ingress，避开 backend 重启期的 502。
+// 未配 SERVER_INGRESS_BASE_URL(如本地 dev 无 ingress)时回退 backend。
+const SERVER_INGRESS_BASE_URL =
+  process.env.SERVER_INGRESS_BASE_URL ?? process.env.SERVER_API_BASE_URL ?? "http://localhost:8000/api";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -52,7 +55,7 @@ function fallbackPage(): NextResponse {
 
 // 解析短码：对短暂失败(后端部署/连接抖动)重试，避免偶发把用户弹去登录。
 async function resolveTarget(code: string): Promise<string | null> {
-  const url = `${SERVER_API_BASE_URL}/short-links/${encodeURIComponent(code)}`;
+  const url = `${SERVER_INGRESS_BASE_URL}/short-links/${encodeURIComponent(code)}`;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch(url, { cache: "no-store" });

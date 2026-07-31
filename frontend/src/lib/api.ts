@@ -3,13 +3,21 @@ export const API_BASE =
     ? (process.env.SERVER_API_BASE_URL ?? "http://localhost:8000/api")
     : "/api/backend";
 
+// C 端公开入口(问卷展示等)服务端直连常驻 ingress:8001，避开 backend 重启导致的 502。
+// 未配 SERVER_INGRESS_BASE_URL(如本地 dev 无 ingress)时回退 backend，行为不变。
+// 浏览器端仍走同源代理，不直连内部地址。
+export const INGRESS_BASE =
+  typeof window === "undefined"
+    ? (process.env.SERVER_INGRESS_BASE_URL ?? process.env.SERVER_API_BASE_URL ?? "http://localhost:8000/api")
+    : "/api/backend";
+
 export const FRONTEND_BASE =
   process.env.FRONTEND_PUBLIC_BASE_URL ??
   process.env.NEXT_PUBLIC_FRONTEND_PUBLIC_BASE_URL ??
   "http://localhost:3002";
 
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+export async function api<T>(path: string, init?: RequestInit, baseUrl: string = API_BASE): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",

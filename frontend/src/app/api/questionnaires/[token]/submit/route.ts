@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 
 const SERVER_API_BASE_URL = process.env.SERVER_API_BASE_URL ?? "http://localhost:8000/api";
+// POST(C 端首次提交)走常驻 ingress，避开 backend 重启期的 502；PATCH(运营重生成)仍走 backend。
+// 未配 SERVER_INGRESS_BASE_URL(如本地 dev 无 ingress)时回退 backend。
+const SERVER_INGRESS_BASE_URL =
+  process.env.SERVER_INGRESS_BASE_URL ?? SERVER_API_BASE_URL;
 
-// POST=首次提交问卷；PATCH=运营编辑已提交问卷并重新生成。两者转发逻辑一致，仅方法不同。
+// POST=首次提交问卷；PATCH=运营编辑已提交问卷并重新生成。两者转发逻辑一致，仅方法/目标进程不同。
 async function forward(
   request: Request,
   params: Promise<{ token: string }>,
@@ -17,7 +21,9 @@ async function forward(
   if (method === "PATCH") {
     headers["x-admin-api-key"] = process.env.BACKEND_ADMIN_API_KEY ?? "change-me-internal-api-key";
   }
-  const response = await fetch(`${SERVER_API_BASE_URL}/questionnaires/${token}/submit${suffix}`, {
+  // POST 走 ingress(只落库+置待生成信号)，PATCH 走 backend(带 admin key、就地重生成)
+  const baseUrl = method === "POST" ? SERVER_INGRESS_BASE_URL : SERVER_API_BASE_URL;
+  const response = await fetch(`${baseUrl}/questionnaires/${token}/submit${suffix}`, {
     method,
     headers,
     body,

@@ -1,5 +1,5 @@
 import { QuestionnaireForm } from "./questionnaire-form";
-import { api } from "@/lib/api";
+import { api, INGRESS_BASE } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
 
 type Questionnaire = {
@@ -38,7 +38,8 @@ export default async function QuestionnairePage({
   const suffix = template ? `?template=${encodeURIComponent(template)}` : "";
   let questionnaire: Questionnaire;
   try {
-    questionnaire = await api<Questionnaire>(`/questionnaires/${token}${suffix}`);
+    // 问卷展示是 C 端公开入口，走常驻 ingress，避开 backend 重启期的 502
+    questionnaire = await api<Questionnaire>(`/questionnaires/${token}${suffix}`, undefined, INGRESS_BASE);
   } catch (error) {
     const message = String(error);
     if (template && (message.includes("410") || message.includes("28天服务已结束"))) {

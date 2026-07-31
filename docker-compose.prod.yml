@@ -97,6 +97,8 @@ services:
     restart: unless-stopped
     environment:
       SERVER_API_BASE_URL: http://backend:8000/api
+      # C 端公开入口(问卷展示/提交/短链跳转)直连常驻 ingress:8001，避开 backend 重启导致的 502。
+      SERVER_INGRESS_BASE_URL: http://ingress:8001/api
       BACKEND_ADMIN_API_KEY: ${BACKEND_ADMIN_API_KEY:?BACKEND_ADMIN_API_KEY is required}
       FRONTEND_PUBLIC_BASE_URL: ${FRONTEND_PUBLIC_BASE_URL:?FRONTEND_PUBLIC_BASE_URL is required}
       ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
