@@ -936,29 +936,37 @@ def _day28_targets_for(height: str, weight: str) -> dict[str, str]:
     return build_intake_fact_summary(_band_fields(), {"h": height, "w": weight})["day28_targets"]
 
 
-def test_day28_targets_follow_the_band_table_and_the_cap():
-    """28天基础/挑战目标由代码查表 + day28_goal_cap_kg 封顶，模型只照抄。
+def test_day28_targets_derive_from_the_monthly_cap_not_the_band_table():
+    """28天目标按 day28_goal_cap_kg（一个月最多5%）推，不查 §7.2-7.4 的带位斤数表。
 
-    cap = min(体重×5%, 4.0, safe_room)，常常比带位默认区间更严，所以这里逐带核对
-    收窄后的结果，而不是核对表里的原始区间。
+    客户 2026-07-31 确认"一个月减5%、每个带是3个月的"，且 §7.2-7.4 的 28 天区间与
+    §6.4 的 5% 上限整段越界（C带挑战10斤需要100kg，而100kg早已是D带），无法调和。
     """
 
-    # 165cm/58kg：room 3.55kg → B带，cap 2.9kg = 5.8斤 → 上限取整 5 斤。
-    # 基础默认 3-5 斤正好压线通过；挑战默认 5-7 斤整体越界，不给更高区间。
-    b_band = _day28_targets_for("165", "58")
-    assert b_band["base"] == "28天减重3-5斤"
-    assert b_band["challenge"] == "不设置更高的减重挑战目标，先把基础目标做实"
-
-    # 165cm/62kg：room 7.55kg → C带，cap 3.1kg = 6.2斤 → 6 斤。
-    # 基础默认 5-8 斤被收窄成 5-6 斤。
+    # 165cm/62kg → C带，cap 3.1kg = 6.2斤 → 上限 6 斤。基础取 65% ≈ 3 斤。
     c_band = _day28_targets_for("165", "62")
-    assert c_band["base"] == "28天减重5-6斤"
+    assert c_band["base"] == "28天减重2-3斤"
+    assert c_band["challenge"] == "28天减重4-6斤"
 
-    # 170cm/95kg：room 37.2kg → D带，但 cap 撞上 4.0kg 硬顶 = 8 斤。
-    # D带默认基础 6-10 斤被收窄成 6-8 斤；默认挑战 8-12 斤＝4-6kg 恒超 4kg 硬顶。
+    # 170cm/95kg → D带，cap 撞 4.0kg 硬顶 = 8 斤。
     d_band = _day28_targets_for("170", "95")
-    assert d_band["base"] == "28天减重6-8斤"
-    assert d_band["challenge"] == "不设置更高的减重挑战目标，先把基础目标做实"
+    assert d_band["base"] == "28天减重4-5斤"
+    assert d_band["challenge"] == "28天减重6-8斤"
+
+    # 4kg 硬顶保留：120kg 的用户 5% 是 6kg，仍被压到 4kg，结果与 95kg 相同。
+    assert _day28_targets_for("175", "120") == d_band
+
+    # 带位不再决定28天斤数（A带除外）：同为 cap 3kg 上下的 B/C 带拿到同一档基础目标。
+    assert _day28_targets_for("165", "58")["base"] == _day28_targets_for("165", "60")["base"]
+
+    # 基础目标必须严格低于挑战目标，否则"挑战"没有意义——旧实现在这里退化过。
+    for height, weight in (("165", "57"), ("165", "62"), ("165", "70"), ("170", "85")):
+        targets = _day28_targets_for(height, weight)
+        base_max = max(int(n) for n in re.findall(r"(\d+)", targets["base"]) if n != "28")
+        challenge_min = min(
+            int(n) for n in re.findall(r"(\d+)", targets["challenge"]) if n != "28"
+        )
+        assert base_max < challenge_min, f"{height}/{weight}: {targets}"
 
 
 def test_day28_targets_never_exceed_the_cap():
@@ -1010,6 +1018,9 @@ def test_intake_prompt_delegates_day28_numbers_to_the_facts():
     assert "challenge_goal 的减重数字必须逐字使用 intake_facts.day28_targets.challenge" in prompt
     assert "intake_facts.day28_targets 里已经算好的28天目标区间" in prompt
     assert "严禁自己补一个斤数把它变成数字目标" in prompt
+    # 带位只决定12周量级，不决定28天斤数——否则模型会拿带名的5斤/10斤/20斤反推
+    assert "管理带决定的是12周路径的量级，不决定这28天的斤数" in prompt
+    assert "一个月最多减体重5%" in prompt
     # "不设置更高的挑战目标"不是对用户的负面评价，别让模型写成那样
     assert "不是他不配拿挑战目标" in prompt
     # 旧的默认区间表已移除

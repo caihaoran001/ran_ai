@@ -11,6 +11,12 @@ CUSTOM_ANSWER_LABEL = "其他（用户补充）"
 UNRESOLVED_BAND = "需补充身高体重后判断"
 
 BAND_A = "A带｜修复塑形"
+# 会给减重数字的三个带（A 带不给数字，哨兵值更不给）。
+MANAGEMENT_BANDS_WITH_NUMBERS = (
+    "B带｜轻盈启动",
+    "C带｜明确减脂",
+    "D带｜系统减重",
+)
 
 # 保护性下限的上调档位。客户 V2.1 §6.5 只说了"可将该下限上调"，没有给幅度，
 # 这套档位是我们定的可审计规则：以 BMI 20 自动复核线为起点，每命中一类风险抬 0.5 个
@@ -386,19 +392,33 @@ def _stage_targets(band: str, safe_room_kg: float | None) -> dict[str, str]:
     return targets
 
 
-# 28天基础/挑战目标的默认区间（斤），按管理带查表。与 _STAGE_RANGES 同源同风格：
-# 客户给的是带位默认强度，能不能落地由 day28_goal_cap_kg 说话。
+# 28天基础/挑战目标：从 day28_goal_cap_kg 推，不查带位斤数表。
 #
-# 为什么也收归代码：这两个区间必须同时满足"带位默认"和"不超过 day28_goal_cap_kg"，
-# 而 cap = min(体重×5%, 4.0, safe_room) 常常比默认区间更严——60kg 的 B 带用户
-# cap 只有 3kg（6斤），默认挑战目标 5-7 斤直接越界；D 带更极端，cap 恒 ≤4kg（8斤），
-# 而默认挑战 8-12 斤＝4-6kg，**永远**越界。让模型自己查表、换算斤/公斤再收窄，
-# 就是 _stage_targets 已经踩过的坑（真实验证里 D 带样例全部越界）。
-_DAY28_RANGES = {
-    "B带｜轻盈启动": {"base": (3, 5), "challenge": (5, 7)},
-    "C带｜明确减脂": {"base": (5, 8), "challenge": (8, 10)},
-    "D带｜系统减重": {"base": (6, 10), "challenge": (8, 12)},
-}
+# 【这里没有照搬客户 §7.2-7.4，理由】客户规范给了两套 28 天口径，它们对不上：
+#   - §6.4：28天自动目标上限 = min（基线体重5%，4kg，安全减重空间）
+#   - §7.2-7.4：B带基础3-5斤/挑战5-7斤、C带5-8/8-10、D带6-10/8-12
+# 不是边界擦碰，是整段越界。C 带按定义 safe_room 5-10kg，对应体重就在 60-70kg，
+# 一个月 5% 只有 6-7 斤，而挑战目标要 8-10 斤；要让 10 斤（5kg）落进 5%，用户得
+# 有 100kg，可 100kg 的人 safe_room 早就超 10kg、按 §7.5 属于 D 带了——所以 C 带
+# 那个 10 斤在数学上不可达，不是取值保守与否的问题。
+#
+# 选择以 5% 为准，依据三条：
+#   1. 客户 2026-07-31 明确重申"是一个月减 5%哦，每个带是 3 个月的"——带位那套
+#      斤数（带名 5/10/20 斤、12 周累计 7-10/10-16/16-20 斤）是 3 个月路径的量级，
+#      不该拿来当 28 天的数；12 周那三段仍照 §7.2-7.4 走，见 _stage_targets。
+#   2. §7.2-7.4 每条挑战目标自己都跟着"但不得突破28天自动上限"，客户已把优先级
+#      判给上限。
+#   3. 5% 是跟体重挂钩的相对口径，对任何基数都安全；带位斤数是绝对值，对小体重
+#      用户系统性过激。
+#
+# 4kg 硬顶保留：客户这次只强调 5%、没说取消它，且它只在 ≥80kg 时才绑定，
+# 4kg/月对任何人都是安全上限，没有理由自作主张放宽。
+#
+# 基础目标取上限的 65%、挑战目标顶到上限，这样两个目标才有区分度。曾经试过让
+# 两者都按带位区间被 cap 截断，结果是 cap 一旦低于基础目标上界，两个区间会被压到
+# 同一个天花板、挑战目标退化成基础目标的复读——那正是"挑战目标对绝大多数用户
+# 给不出数字"的由来。
+_DAY28_BASE_RATIO = 0.65
 
 _DAY28_TEXT_A_BAND = {
     "base": "不设置体重下降指标，重点放在体态、睡眠、精力、恢复和执行一致性",
@@ -408,21 +428,19 @@ _DAY28_TEXT_UNKNOWN = {
     "base": "待补齐身高体重后与班主任确认目标",
     "challenge": "待补齐身高体重后确定",
 }
-# cap 压得比基础目标上界还低时，给不出一个"更高"的挑战区间。硬凑一个与基础重合的
-# 区间只会让用户以为挑战目标就是基础目标，不如照 A 带的既有做法明确不设。
+# 上限小到连"基础一档 + 更高一档"都分不出来时，不硬凑一个与基础重合的区间。
 _DAY28_NO_CHALLENGE = "不设置更高的减重挑战目标，先把基础目标做实"
 
 
 def _day28_targets(band: str, goal_cap_kg: float | None) -> dict[str, str]:
-    """按管理带给出28天基础/挑战目标区间，并用 day28_goal_cap_kg 封顶。
+    """按 day28_goal_cap_kg 给出28天基础/挑战目标。
 
-    单位是斤（区间表用斤，cap 用公斤，这里换算一次）。cap 取整向下，宁可少给。
+    单位换算一次：cap 是公斤，用户可见文案用斤。cap 向下取整，宁可少给。
     """
 
     if band == BAND_A:
         return dict(_DAY28_TEXT_A_BAND)
-    ranges = _DAY28_RANGES.get(band)
-    if ranges is None or goal_cap_kg is None:
+    if band not in MANAGEMENT_BANDS_WITH_NUMBERS or goal_cap_kg is None:
         return dict(_DAY28_TEXT_UNKNOWN)
 
     cap_jin = int(goal_cap_kg * 2)
@@ -430,25 +448,20 @@ def _day28_targets(band: str, goal_cap_kg: float | None) -> dict[str, str]:
         # 空间归零但带位不是 A 带，理论上不该出现；真出现了也不能给数字。
         return dict(_DAY28_TEXT_A_BAND)
 
-    base_low, base_high = ranges["base"]
-    targets = {"base": _day28_range_text(base_low, base_high, cap_jin)}
-    challenge_low, challenge_high = ranges["challenge"]
-    if cap_jin <= base_high:
+    base_high = max(1, int(cap_jin * _DAY28_BASE_RATIO))
+    base_low = max(1, base_high - 1)
+    targets = {"base": _day28_jin_text(base_low, base_high)}
+    if base_high >= cap_jin:
         targets["challenge"] = _DAY28_NO_CHALLENGE
     else:
-        targets["challenge"] = _day28_range_text(challenge_low, challenge_high, cap_jin)
+        targets["challenge"] = _day28_jin_text(base_high + 1, cap_jin)
     return targets
 
 
-def _day28_range_text(low: int, high: int, cap_jin: int) -> str:
-    """把一个默认区间按 cap 收窄成用户可读的目标表述。"""
+def _day28_jin_text(low: int, high: int) -> str:
+    """区间退化成一个数时不写成「3-3斤」。"""
 
-    if high <= cap_jin:
-        return f"28天减重{low}-{high}斤"
-    if low < cap_jin:
-        # 取整后仍高于下界才给区间，否则会写出「减重7-7斤」这种退化区间。
-        return f"28天减重{low}-{cap_jin}斤"
-    return f"28天减重不超过{cap_jin}斤"
+    return f"28天减重{low}斤" if low >= high else f"28天减重{low}-{high}斤"
 
 
 def _safety_review_reasons(safety_factors: dict[str, Any] | None) -> list[str]:
