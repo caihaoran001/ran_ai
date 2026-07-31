@@ -66,7 +66,7 @@ PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache UV_CACHE_DIR=/tmp/ran-ai-uv-cache \
 ```bash
 cd backend
 PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache UV_CACHE_DIR=/tmp/ran-ai-uv-cache \
-  uv run python -c "...直接加载 tests/test_01_intake.py 并执行 11 个零参数契约测试..."
+  uv run python -c "import inspect, runpy; ns=runpy.run_path('tests/test_01_intake.py'); names=['test_manual_review_keeps_safe_base_but_moves_challenge_to_day7_review','test_manual_review_uses_day7_base_when_base_cannot_be_quantified','test_weight_units_stable_comfort_weight_and_waist_ratio_are_normalized','test_default_intake_questionnaire_includes_stable_comfort_weight_after_current_weight','test_generation_block_reasons_only_cover_critical_measurement_failures','test_day28_targets_derive_from_the_monthly_cap_not_the_band_table','test_day28_targets_never_exceed_the_cap','test_day28_targets_for_band_a_and_unknown_band_carry_no_numbers','test_intake_prompt_delegates_day28_numbers_to_the_facts','test_shared_analysis_is_the_single_source_for_cross_document_facts','test_a_band_user_visible_goal_contract_replaces_model_numbers']; [(lambda fn: (_ for _ in ()).throw(RuntimeError(name)) if inspect.signature(fn).parameters else fn())(ns[name]) for name in names]; print(f'{len(names)} focused contract checks passed')"
 ```
 
 结果：**通过，11/11**。覆盖：
