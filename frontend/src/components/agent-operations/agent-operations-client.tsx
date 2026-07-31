@@ -20,6 +20,7 @@ import {
   ChevronDown,
   ArrowRight,
   Send,
+  Wallet,
 } from "lucide-react";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { RunDetailDrawer, RunDetailData } from "./run-detail-drawer";
@@ -261,14 +262,26 @@ const OUTPUT_LABELS: Record<string, string> = {
   case_drafts: "优秀案例草稿",
 };
 
+export type DeepseekBalance = {
+  available: boolean;
+  balance_yuan: number | null;
+  currency: string;
+  is_available: boolean;
+  is_low: boolean;
+  alert_threshold_yuan: number;
+  fetched_at?: string | null;
+};
+
 export function AgentOperationsClient({
   data,
   initialTab,
   initialDays,
+  balance,
 }: {
   data: AgentOperationsData;
   initialTab: TabKey;
   initialDays: number;
+  balance?: DeepseekBalance | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -489,6 +502,7 @@ export function AgentOperationsClient({
       {initialTab === "costs" && (
         <CostsSection
           data={data}
+          balance={balance}
           onSelectScenario={(sc) => setSelectedScenario(sc)}
           onSelectCase={(cc) => setSelectedCaseCost(cc)}
         />
@@ -817,12 +831,67 @@ function ArchivistSection({
   );
 }
 
+function AccountBalancePanel({ balance }: { balance?: DeepseekBalance | null }) {
+  const available = balance?.available ?? false;
+  const value = balance?.balance_yuan ?? null;
+  const threshold = balance?.alert_threshold_yuan ?? 0;
+  const low =
+    (balance?.is_low ?? false) || (available && balance?.is_available === false);
+  const alert = !available || low;
+
+  return (
+    <section className="panel overflow-hidden">
+      <div className="grid gap-5 px-5 py-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div>
+          <div className="flex items-center gap-2">
+            <span
+              className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+                alert ? "bg-rose-50 text-rose-700" : "bg-cyan-50 text-cyan-700"
+              }`}
+            >
+              <Wallet className="h-5 w-5" />
+            </span>
+            <p className="text-sm font-semibold text-slate-600">DeepSeek 账户余额</p>
+            {available ? (
+              <span
+                className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
+                  alert
+                    ? "border-rose-200 bg-rose-50 text-rose-700"
+                    : "border-cyan-200 bg-cyan-50 text-cyan-700"
+                }`}
+              >
+                {low ? "偏低" : "正常"}
+              </span>
+            ) : null}
+          </div>
+          <div
+            className={`tabular mt-2 text-3xl font-black tracking-tight ${
+              alert ? "text-rose-700" : "text-slate-950"
+            }`}
+          >
+            {available && value !== null ? `¥${value.toFixed(2)}` : "余额暂不可用"}
+          </div>
+          <p className="mt-2 max-w-[72ch] text-sm leading-6 text-slate-600">
+            {!available
+              ? "暂时无法获取余额，请稍后再看或检查 API Key 配置。"
+              : low
+                ? `已低于告警阈值 ¥${threshold.toFixed(2)}，请尽快充值，以免影响 AI 回复与文档生成。`
+                : `余额低于告警阈值 ¥${threshold.toFixed(2)} 时，会自动向指定群推送提醒（每天最多一条）。`}
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function CostsSection({
   data,
+  balance,
   onSelectScenario,
   onSelectCase,
 }: {
   data: AgentOperationsData;
+  balance?: DeepseekBalance | null;
   onSelectScenario: (sc: ScenarioCost) => void;
   onSelectCase: (cc: CaseCost) => void;
 }) {
@@ -832,6 +901,7 @@ function CostsSection({
 
   return (
     <>
+      <AccountBalancePanel balance={balance} />
       <section className="panel overflow-hidden">
         <div className="grid gap-5 px-5 py-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
           <div>

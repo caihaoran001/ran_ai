@@ -19,7 +19,6 @@ import {
   ShieldAlert,
   TrendingDown,
   UserCheck,
-  Wallet,
 } from "lucide-react";
 
 type Summary = {
@@ -66,16 +65,6 @@ type AICostSummary = {
   estimated_cost_yuan: number;
   deepseek_cost_yuan: number;
   vision_cost_yuan: number;
-};
-
-type DeepseekBalance = {
-  available: boolean;
-  balance_yuan: number | null;
-  currency: string;
-  is_available: boolean;
-  is_low: boolean;
-  alert_threshold_yuan: number;
-  fetched_at?: string | null;
 };
 
 type OutcomeMetric = {
@@ -133,7 +122,6 @@ export default async function DashboardPage() {
   }));
   const renewalFollowupUsers = summary.renewal_followup_users ?? summary.repurchase_soon_users;
   const caseHealth = await api<CaseHealthItem[]>("/dashboard/case-health").catch(() => [] as CaseHealthItem[]);
-  const balance = await api<DeepseekBalance>("/dashboard/deepseek-balance").catch(() => null);
 
   return (
     <div className="page-stack">
@@ -198,7 +186,6 @@ export default async function DashboardPage() {
         <StatCard label="续购跟进窗口" value={renewalFollowupUsers} icon={ShoppingCart} color="green" href="/dashboard/renewal-followup" description="已服务 18-28 天，适合人工做续购沟通；不代表用户已表达购买意愿。" />
         <StatCard label="明确续购意向" value={summary.renewal_intent_users ?? 0} icon={HeartHandshake} color="green" href="/dashboard/renewal-intents" description="用户聊天中出现续费、复购、再买、继续购买等表达；点击查看触发原话。" />
         <AICostCard summary={summary.ai_cost_summary} />
-        <AccountBalanceCard balance={balance} />
       </DashboardMetricSection>
 
       <OutcomeSummaryPanel summary={summary.outcome_summary} />
@@ -547,71 +534,6 @@ function StatCard({
       </div>
       <p className="mt-1.5 text-xs leading-5 text-slate-500">{description}</p>
     </Link>
-  );
-}
-
-function AccountBalanceCard({ balance }: { balance?: DeepseekBalance | null }) {
-  const available = balance?.available ?? false;
-  const value = balance?.balance_yuan ?? null;
-  const threshold = balance?.alert_threshold_yuan ?? 0;
-  const low = (balance?.is_low ?? false) || (available && balance?.is_available === false);
-  const alert = !available || low;
-
-  return (
-    <div
-      className={`block rounded-xl border p-4 shadow-sm sm:p-5 ${
-        alert
-          ? "border-rose-200/80 bg-gradient-to-b from-rose-50/60 to-white"
-          : "border-cyan-200 bg-cyan-50/70"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div
-            className={`flex items-center gap-2 text-sm font-semibold ${
-              alert ? "text-rose-800" : "text-cyan-800"
-            }`}
-          >
-            <span
-              className={`flex h-10 w-10 items-center justify-center rounded-lg bg-white shadow-sm ${
-                alert ? "text-rose-700" : "text-cyan-700"
-              }`}
-            >
-              <Wallet className="h-5 w-5" />
-            </span>
-            账户余额
-          </div>
-          <div
-            className={`mt-4 text-2xl font-bold tracking-tight sm:text-3xl ${
-              alert ? "text-rose-700" : "text-slate-950"
-            }`}
-          >
-            {available && value !== null ? `¥${value.toFixed(2)}` : "余额暂不可用"}
-          </div>
-          <p className={`mt-1 text-xs ${alert ? "text-rose-700/80" : "text-cyan-700/80"}`}>
-            DeepSeek 账户实时余额
-          </p>
-        </div>
-        {available ? (
-          <span
-            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-              alert
-                ? "border-rose-200 bg-white/80 text-rose-700"
-                : "border-cyan-200 bg-white/80 text-cyan-700"
-            }`}
-          >
-            {low ? "偏低" : "正常"}
-          </span>
-        ) : null}
-      </div>
-      <p className={`mt-3 text-xs leading-5 ${alert ? "text-rose-700/80" : "text-cyan-700/80"}`}>
-        {!available
-          ? "暂时无法获取余额，请稍后再看或检查 API Key 配置。"
-          : low
-            ? `已低于告警阈值 ¥${threshold.toFixed(2)}，请尽快充值，以免影响 AI 回复与文档生成。`
-            : `告警阈值 ¥${threshold.toFixed(2)}，余额低于此值会自动推送提醒。`}
-      </p>
-    </div>
   );
 }
 

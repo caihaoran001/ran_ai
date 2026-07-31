@@ -131,6 +131,12 @@ class Settings(BaseSettings):
         default="",
         validation_alias="AI_BALANCE_ALERT_GROUP_ID",
     )
+    # 余额检查最小间隔（秒）。调度器主循环每 30s 跑一轮，但余额变化很慢，
+    # 无需每轮都查 DeepSeek；默认 1800s（30 分钟）查一次。
+    ai_balance_check_interval_seconds: float = Field(
+        default=1800.0,
+        validation_alias="AI_BALANCE_CHECK_INTERVAL_SECONDS",
+    )
     document_output_dir: str = Field(
         default="generated_documents",
         validation_alias="DOCUMENT_OUTPUT_DIR",

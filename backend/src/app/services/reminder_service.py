@@ -79,6 +79,7 @@ class ReminderService:
         self._last_room_name_full_refresh: datetime | None = None
         self._last_image_cache_cleanup: datetime | None = None
         self._last_population_insight_check_date: date | None = None
+        self._last_balance_check_at: float | None = None  # clock.monotonic()，余额检查间隔闸
         # 阶段报告生成时间配置缓存（5 分钟 TTL，避免白天每 30s 都查一次 DB）
         self._stage_report_schedule: tuple[int, int] | None = None
         self._stage_report_schedule_at: datetime | None = None
@@ -178,6 +179,16 @@ class ReminderService:
         group_id = (self.settings.ai_balance_alert_group_id or "").strip()
         if not group_id:
             return
+        # 余额变化慢，按配置间隔限流，不必每 30s 主循环都查 DeepSeek。
+        interval = float(self.settings.ai_balance_check_interval_seconds or 0)
+        now = clock.monotonic()
+        if (
+            interval > 0
+            and self._last_balance_check_at is not None
+            and now - self._last_balance_check_at < interval
+        ):
+            return
+        self._last_balance_check_at = now
         snap = await fetch_deepseek_balance(self.settings, force=True)
         if snap is None or not snap.available or snap.balance_yuan is None:
             return  # 外部查询失败/不适用：不误报
