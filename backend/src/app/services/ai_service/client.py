@@ -537,7 +537,6 @@ class AIService:
                 async with _get_limiter(self.settings.ai_max_concurrent_requests):
                     request_options: dict[str, Any] = {}
                     if scenario in _DOCUMENT_JSON_SCENARIOS:
-                        request_options["response_format"] = {"type": "json_object"}
                         if model.startswith("deepseek-v4-"):
                             request_options["extra_body"] = {"thinking": {"type": "enabled"}}
                             request_options["reasoning_effort"] = "high"

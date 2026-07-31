@@ -274,146 +274,64 @@ def _make_intake_mock_response(
 
 
 def test_intake_prompt_keeps_goal_rules_free_of_contradictions():
-    """三处曾经互相打架的目标规则，必须各有一条明确的优先级说明。
-
-    模型无法自己解决"两条规则都在、没有优先级"的冲突，只能猜；这里逐条锁住裁决口径。
-    """
-
+    """关键目标优先级必须保留，但接口细节和重复规则不能再塞回提示词。"""
     prompt = _intake_generation_system_prompt()
 
-    # 1. 人工复核不改带位，但挑战目标按 V2.2 收敛为 D7 复评。
+    assert len(prompt) < 4_000
+    assert "最终只输出一个完整有效的 JSON 对象" in prompt
+    assert "shared_analysis、profile、documents" in prompt
+    assert "reasoning_content" not in prompt
+    assert "content 中" not in prompt
+    assert sum(prompt.count(word) for word in ("禁止", "不得", "严禁", "不要")) < 30
+    assert prompt.count("示例") + prompt.count("例如") <= 3
+
+    assert "intake_facts > 问卷原文" in prompt
+    assert "shared_analysis 是唯一判断源" in prompt
+    assert "adult_stable_comfort_weight_kg" in prompt
     assert "【复核目标口径】" in prompt
     assert "挑战目标必须固定写「暂不设置挑战数字，D7复评」" in prompt
     assert "基础目标固定写「先完成7天基础执行，D7复评」" in prompt
-    assert "可安全量化的基础目标、管理带、12周路径和执行动作仍保留" in prompt
-    assert "复核不降级正文" not in prompt
-    assert "manual_review_required=true 只改变发送方式，不改变文件内容" not in prompt
-    # 目标体重过低 ≠ 没有可减重空间，两者的处置不同
-    assert "而用户目标体重过低但仍有可减重空间时，只是不接受用户那个目标体重" in prompt
-
-    # 2. A带的 cap 是 min(体重×5%, 4.0, safe_room)，safe_room<2.5kg 时仍可能是 2.4kg。
-    #    非零上限会被读成"可以写1-2斤"，必须显式声明A带禁令优先。
-    assert "【这条上限不是A带的许可】" in prompt
-    assert "那条禁令优先于本条上限" in prompt
-    assert "本条只约束 B/C/D 带" in prompt
-
-    # 3. 带位算不出时直接阻断，不许挑一个顶上——避免正式文档出现待确认带位与数字目标冲突。
-    assert "【带位算不出时阻断，不要挑一个顶上】" in prompt
-    assert "不得自己挑一个 A/B/C/D 顶上" in prompt
-    assert "ready_for_document_generation 置为 false 并停止生成正式交付文件" in prompt
-    # 旧句要求"给出最稳妥的带位"，是模型猜带位的源头
-    assert "不是不给带位，而是给出最稳妥的带位并降低置信度" not in prompt
-    assert "不得自己另选一个更稳妥的带位" in prompt
+    assert "医生要求不减重" in prompt
+    assert "不得展示任何减重数字或限制性减重饮食" in prompt
+    assert "【A带的无数字目标】" in prompt
+    assert "所有用户可见字段都不得出现减重斤数" in prompt
+    assert "不得自己挑一个 A/B/C/D 带顶上" in prompt
 
 
 def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     prompt = _intake_generation_system_prompt()
-    # 模型收到的是 system prompt + user prompt 里的字段结构，两段合起来才是完整指令。
-    # daily_checkin 的结构规则单一来源在字段结构里，系统提示词只补出题判断，不再逐条复述。
     instructions = prompt + json.dumps(combined_prompt_schema(), ensure_ascii=False)
 
-    # 五项打卡改为结构化数组：数量、序号、单一意图、题面污染、答题类型都要说清
+    # 字段类型与格式只在 schema 定义，system prompt 只保留因人出题的选择原则。
     assert "唯一、连续、严格递增；数组长度必须正好5项，禁止4项或6项" in instructions
     assert "禁止写「每日固定打卡」「5项打卡」「打卡清单」等栏目标题或说明文字" in instructions
     assert "序号由程序按 order 渲染" in instructions
-    assert (
-        "今天/今日/今早/今晚/昨天/昨日/昨晚/当天/本日」等相对时间词"
-    ) in instructions
+    assert "今天/今日/今早/今晚/昨天/昨日/昨晚/当天/本日」等相对时间词" in instructions
     assert "也禁止一道题同时问时间和饮食结构" in instructions
     assert "只能取 yes_no / score_1_5 / number / text" in instructions
     assert "只能取 product / diet / activity / sleep / state" in instructions
     assert "蔬菜总量是否至少2拳" in instructions
-    assert "今天是否至少吃到2拳蔬菜" not in instructions
-    assert "今日是否心慌" not in instructions
-    # 出题判断留在系统提示词
+
     assert "禁止所有用户都输出同一套固定五题" in prompt
     assert "恰好 1 项 category=activity" in prompt
     assert "至少2项设计成正向动作" in prompt
     assert "禁止把两个问题合并成一项来腾名额" in prompt
     assert "「情绪稳定度评分」与「饭后困评分」是两个独立候选问题" in prompt
     assert "若两项同时入选 daily_checkin，必须各占 1 项" in prompt
-    assert "情绪稳定度与饭后困综合评分必须固定" not in prompt
-    assert "情绪稳定度和饭后困综合评分（1-5）" not in prompt
-    assert "只描述用户提交问卷之前的近3个月" in prompt
 
-    # 管理带与人工复核彻底分开：内部标签不再是带位，也不得进入用户可见内容
     assert "weight_band 永远只能逐字复制系统算好的业务带位" in prompt
-    assert "以上四个带位是 weight_band 的全部合法取值，没有第五种" in prompt
     assert "严禁把「需人工复核」「人工复核」「待复核」「red风险」「高风险」「风险等级」等内部标签写进 weight_band" in prompt
-    assert "无法安全自动判带时 weight_band 写「需人工复核」" not in prompt
-    assert "需人工复核：安全闸门未通过或资料冲突导致无法自动给出安全管理带" not in prompt
-    # 安全减重空间是唯一分带主轴；执行困难和用户期待均不能改带
     assert "【证据职责分开】" in prompt
-    assert "只由 intake_facts.safe_reduction_room_kg 按精确边界确定" in prompt
-    assert "用户希望减多少斤、近3个月趋势和腰腹体感都不能在安全空间计算后改带" in prompt
-    assert "不能仅因为晚睡、外卖多、精力差或运动少就把用户升到更高管理带" in prompt
-    assert "模型不得凭BMI标签、腰腹体感、趋势或执行状态推翻系统已算好的 weight_loss_band" in prompt
-    assert "2.5kg ≤ safe_reduction_room_kg < 5kg" in prompt
-    assert "5kg ≤ safe_reduction_room_kg < 10kg" in prompt
-    assert "safe_reduction_room_kg ≥ 10kg" in prompt
-    assert "正常BMI也不能单独判A带" in prompt
-    # 安全条件只强制人工复核，不改带位；风险已通过上调保护性下限折算进可管理空间
-    assert "【安全条件不改带位，只强制复核】" in prompt
-    assert "仍按安全减重空间正常得到 A-D 带" in prompt
-    assert "不得为了凑带位把孕哺、疾病或用药用户包装成 A 带" in prompt
-    assert "也不得因为标记了复核就不给带位" in prompt
-    assert "带位随之下移是这一步的正常结果，不要再在带位上二次调整" in prompt
-    # 曾短暂改成"红风险直接判A带"，已回退，不能留在提示词里自相矛盾
-    assert "系统在计算带位时已直接判为 A带" not in prompt
-    assert "A带同时承载" not in prompt
-
-    # 12周阶段路径：区间查表和安全空间封顶都在代码里（见 _stage_targets 的单测），
-    # 提示词只剩"照抄"这一条。真实验证过：把查表交给模型要十几行约束才勉强围住，D带仍然越界。
-    assert "【12周阶段路径】" in prompt
-    assert "必须逐字使用 intake_facts.stage_targets 里对应的表述" in prompt
-    assert "两项阶段目标必须原句保留" in prompt
-    assert "不得在字段内追加新数字或把累计目标写成阶段新增量" in prompt
-    # 旧的整张区间表已从提示词移除，留着会和 stage_targets 形成两个数字来源
-    assert "B带：第5-8周累计5-8斤" not in prompt
-    assert "任何阶段的累计目标都不得超过 safe_reduction_room_kg" not in prompt
-
-    # 数字来源与趋势证据
-    assert "intake_facts.stage_targets 里已经算好的阶段累计表述" in prompt
-    assert "除这三类来源外，任何位置都不得自拟数字" in prompt
-    assert "严禁生成「腰围缩减1–3cm」「腰围少5cm」这类数字区间" in prompt
-    # 问卷选项文字自带填写示例，模型曾把占位符替换成自己挑的数字（腰围缩小5cm以上）
-    assert "括号里的 X 公斤、XX 厘米是问卷给用户看的填写格式示例，不是用户的答案" in prompt
-    assert "严禁把示例里的占位符替换成一个自己挑的数字" in prompt
-    assert "不只是 day28_goal" in prompt
-    # A带不是“小幅减重带”，不允许用 0-2斤 等象征性区间安慰式落点
-    assert "【A带的无数字目标】" in prompt
-    assert "即使用户在问卷里明确填写了想减多少斤或公斤" in prompt
-    assert "「0-2斤」「0–2斤」「1-2斤」「维持0-2斤波动」" in prompt
-    assert "覆盖所有用户可见字段" in prompt
-    assert "人工复核时按安全闸门统一写「暂不设置挑战数字，D7复评」" in prompt
-    assert "只能定性概括为「希望尽快看到体重和体态变化」等意图" in prompt
-    assert "严禁原样复述具体数字" in prompt
-    assert "A带的 core_conclusions.band_explanation 只能定性说明" in prompt
-    assert "goal_response.content、user_goal 和 judgement 都不得原样复述" in prompt
-    assert "不得把原数字改写成另一个更小的建议区间" in prompt
-    assert "body_trend_direct_evidence（1条，字符串）" in prompt
-    assert "body_trend_support_signals（1-2条，字符串数组）" in prompt
-    assert "严禁单独用它们证明「正在上升」「正在下降」「持续变沉」" in prompt
+    assert "week5_8、week9_12 必须逐字复制 intake_facts.stage_targets" in prompt
+    assert "adult_stable_comfort_weight_kg" in prompt
+    assert "当前 BMI、体重、腰围只是单点状态" in prompt
     assert "「每餐」不得与蔬菜份量同句出现" in prompt
 
-    # 诊断报告第6节只讲原因、第10节只讲动作，两节不得互相复述
-    assert "priority_items 回答「为什么是这三件」，week_actions 回答「这周具体怎么做」" in prompt
-    assert "priority_items 每项写成「问题 + 为什么它排在前面」" in prompt
-    assert "严禁出现份量（拳/掌心/克）、次数、时长、具体时间点这类可量化执行参数" in prompt
-    assert "week_actions 必须 4-5 条，每条带数字和时间或场景，且不解释原因" in prompt
-    assert "禁止与 priority_items 逐条一一对应地复述" in prompt
-    assert "至少 1 条来自产品节律 / 睡眠 / 情绪和环境设计" in prompt
-    assert "「优先解决的三件事」只讲原因、「本周直接执行」只讲动作，两节不得互相复述" in prompt
-    # 旧规则会主动要求两节对应，是重复的来源
-    assert "至少 2 条 week_actions 要能对应 priority_items 中的前两项" not in prompt
-    assert "本周执行严格3条" not in prompt
-
-    # 一页硬预算
+    assert "priority_items 严格3项" in prompt
+    assert "week_actions 写4-5条" in prompt
     assert "【一页硬预算】" in prompt
-    assert "目标摘要固定输出五项并与诊断报告逐字一致" in prompt
-    assert "current_mainline 必须逐字复制 shared_analysis.current_mainline" in prompt
-    assert "diet_rules 最多3条，每条 ≤34字" in prompt
-    assert "exercise_rules 最多2条，每条 ≤44字" in prompt
+    assert "diet_rules 最多3条，每条≤34字" in prompt
+    assert "exercise_rules 最多2条，每条≤44字" in prompt
 
     schema = combined_prompt_schema()
     energy_spec = schema[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
@@ -1086,23 +1004,12 @@ def test_intake_prompt_delegates_day28_numbers_to_the_facts():
     """提示词只剩照抄，不再自带带位默认区间——否则和 day28_targets 形成两个数字来源。"""
 
     prompt = _intake_generation_system_prompt()
-    assert "【28天目标】" in prompt
-    assert "base_goal 的减重数字必须逐字使用 intake_facts.day28_targets.base" in prompt
-    assert "challenge_goal 的减重数字必须逐字使用 intake_facts.day28_targets.challenge" in prompt
-    assert "intake_facts.day28_targets 里已经算好的28天目标区间" in prompt
+    assert "B/C/D 带的 base_goal、challenge_goal 必须逐字复制 intake_facts.day28_targets" in prompt
+    assert "week5_8、week9_12 必须逐字复制 intake_facts.stage_targets" in prompt
     assert "不能把个案描述拼进权威目标值" in prompt
-    # 带位只决定12周量级，不决定28天斤数——否则模型会拿带名的5斤/10斤/20斤反推
-    assert "管理带决定的是12周路径的量级，不决定这28天的斤数" in prompt
-    assert "auto_cap=min（基线体重×5%，4kg，安全减重空间）" in prompt
-    assert "基础目标固定为展示上限减2至减1斤" in prompt
-    assert "挑战目标固定写「向X斤推进」" in prompt
-    # 旧的默认区间表已移除
-    assert "默认28天基础目标3-5斤" not in prompt
-    assert "默认28天基础目标5-8斤" not in prompt
-    assert "默认28天基础目标6-10斤" not in prompt
-    assert "挑战目标5-7斤" not in prompt
-    # 带位边界本身仍要留着（分带主轴的说明）
-    assert "2.5kg ≤ safe_reduction_room_kg < 5kg" in prompt
+    assert "auto_cap=" not in prompt
+    assert "2.5kg ≤ safe_reduction_room_kg" not in prompt
+    assert "默认28天基础目标" not in prompt
 
 
 def test_stage_targets_for_band_a_and_unknown_band_carry_no_numbers():

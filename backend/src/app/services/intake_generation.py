@@ -557,7 +557,7 @@ async def _generate_intake_analysis_package(
                 f"上一次输出未通过完整性校验：{str(last_error)[:500]}。\n"
                 "请从头重新生成完整 JSON；必须同时包含 shared_analysis、profile、"
                 "energy_restart_prescription 和 day28_execution_standard，"
-                "并确保最终 JSON 全部写入 content。不要复述字段结构或问卷，"
+                "且最终只输出完整有效的 JSON。不要复述字段结构或问卷，"
                 "在字段齐全的前提下压缩每个文本字段，避免再次截断。"
             )
         try:

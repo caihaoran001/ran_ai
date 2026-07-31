@@ -52,7 +52,7 @@ def _service(response: object, **settings_overrides: object) -> tuple[AIService,
 
 
 @pytest.mark.asyncio
-async def test_document_generation_keeps_thinking_json_mode_and_50000_budget() -> None:
+async def test_document_generation_keeps_thinking_without_json_mode_and_50000_budget() -> None:
     service, completions = _service(_response(content='{"documents": {}}', reasoning="analysis"))
 
     result = await service.generate_text(
@@ -64,7 +64,7 @@ async def test_document_generation_keeps_thinking_json_mode_and_50000_budget() -
     assert result == '{"documents": {}}'
     request = completions.calls[0]
     assert request["max_tokens"] == 50000
-    assert request["response_format"] == {"type": "json_object"}
+    assert "response_format" not in request
     assert request["extra_body"] == {"thinking": {"type": "enabled"}}
     assert request["reasoning_effort"] == "high"
 
