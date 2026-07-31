@@ -6,7 +6,6 @@ import {
   X,
   Clock,
   Coins,
-  Cpu,
   Wrench,
   AlertTriangle,
   ExternalLink,
@@ -246,12 +245,12 @@ export function RunDetailDrawer({
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-extrabold tracking-tight truncate">
-                  Run #{run.id} · {isArchivist ? "档案官归档" : "回复 Agent"}
+                  {isArchivist ? "档案整理详情" : "群内回复详情"}
                 </h2>
                 <StatusBadge status={run.status} />
               </div>
               <p className="mt-0.5 text-xs text-slate-400">
-                开始于 {formatChinaShortDateTime(run.started_at)}
+                {formatChinaShortDateTime(run.started_at)}
               </p>
             </div>
           </div>
@@ -273,7 +272,7 @@ export function RunDetailDrawer({
                 : "border-transparent text-slate-600 hover:text-slate-900"
             }`}
           >
-            运行概览与用量
+            概览
           </button>
           {isArchivist && (
             <>
@@ -297,7 +296,7 @@ export function RunDetailDrawer({
                 }`}
               >
                 <FileCheck className="h-4 w-4" />
-                确定性变更 ({changeCount})
+                整理出的信息 ({changeCount})
               </button>
             </>
           )}
@@ -309,22 +308,19 @@ export function RunDetailDrawer({
             <>
               {/* Outcome Banner */}
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  执行终态
+                <div className="text-xs font-bold text-slate-400">
+                  这次的结果
                 </div>
-                <div className="mt-1 flex items-center justify-between">
+                <div className="mt-1">
                   <span className="text-base font-black text-slate-900">
-                    {OUTCOME_LABELS[run.outcome ?? "running"] ?? run.outcome ?? "进行中"}
-                  </span>
-                  <span className="text-xs font-mono bg-white border border-slate-200 px-2 py-0.5 rounded text-slate-600">
-                    {run.outcome || "running"}
+                    {OUTCOME_LABELS[run.outcome ?? "running"] ?? "进行中"}
                   </span>
                 </div>
                 {run.error_type && (
                   <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
                     <div className="flex items-center gap-1.5 font-bold">
                       <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
-                      错误代码：{run.error_type}
+                      出错了，建议排查
                     </div>
                   </div>
                 )}
@@ -336,17 +332,19 @@ export function RunDetailDrawer({
 
               {/* Service Case Info */}
               <div className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  关联对象
+                <div className="text-xs font-bold text-slate-400">
+                  服务对象
                 </div>
                 <div className="mt-2 flex items-center justify-between">
                   <div>
                     <div className="font-bold text-slate-900 text-base">
                       {run.user_name || "未知用户"}
                     </div>
-                    <div className="text-xs text-slate-500 font-mono">
-                      {run.case_no || "无服务单号"}
-                    </div>
+                    {run.case_no && (
+                      <div className="text-xs text-slate-500">
+                        {run.case_no}
+                      </div>
+                    )}
                   </div>
                   {run.service_case_id ? (
                     <Link
@@ -357,89 +355,48 @@ export function RunDetailDrawer({
                       查看服务单 <ExternalLink className="h-3.5 w-3.5" />
                     </Link>
                   ) : (
-                    <span className="text-xs text-slate-400">全局/系统无服务单任务</span>
+                    <span className="text-xs text-slate-400">系统任务，无关联用户</span>
                   )}
                 </div>
               </div>
 
               {/* Metric Breakdown Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <MetricBox
-                  icon={Cpu}
-                  label="模型请求"
-                  value={`${run.model_calls} 次`}
-                  color="cyan"
-                />
-                <MetricBox
-                  icon={Wrench}
-                  label="工具调用"
-                  value={`${run.tool_calls} 次`}
-                  color="indigo"
-                />
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <MetricBox
                   icon={Clock}
-                  label="响应耗时"
+                  label="耗时"
                   value={formatLatency(run.latency_ms)}
                   color="amber"
                 />
                 <MetricBox
+                  icon={Wrench}
+                  label="用了几次工具"
+                  value={`${run.tool_calls} 次`}
+                  color="indigo"
+                />
+                <MetricBox
                   icon={Coins}
-                  label="估算费用"
+                  label="花费"
                   value={`¥${run.estimated_cost_yuan.toFixed(4)}`}
                   color="emerald"
                 />
               </div>
 
-              {/* Token Details */}
-              <div className="rounded-xl border border-slate-200 bg-white p-4">
-                <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-1.5">
-                  <Coins className="h-4 w-4 text-cyan-700" /> Token 消耗结构
-                </h3>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between items-center py-1 border-b border-slate-100">
-                    <span className="text-slate-600">总 Token 数量</span>
-                    <span className="font-mono font-bold text-slate-900">
-                      {run.total_tokens.toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-b border-slate-100">
-                    <span className="text-slate-600">输入 (Prompt) Token</span>
-                    <span className="font-mono text-slate-700">
-                      {run.prompt_tokens.toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center py-1">
-                    <span className="text-slate-600">输出 (Completion) Token</span>
-                    <span className="font-mono text-slate-700">
-                      {run.completion_tokens.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
               {/* Time Details */}
               <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-xs text-slate-600 space-y-1.5">
                 <div className="flex justify-between">
-                  <span>Task Run ID:</span>
-                  <span className="font-mono font-bold text-slate-800">#{run.id}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Task Kind:</span>
-                  <span className="font-mono text-slate-800">{run.run_kind}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>开始时间:</span>
+                  <span>开始时间</span>
                   <span>{formatChinaShortDateTime(run.started_at)}</span>
                 </div>
                 {run.finished_at && (
                   <div className="flex justify-between">
-                    <span>结束时间:</span>
+                    <span>结束时间</span>
                     <span>{formatChinaShortDateTime(run.finished_at)}</span>
                   </div>
                 )}
                 {run.trigger_reason && (
                   <div className="flex justify-between border-t border-slate-200 pt-1.5 mt-1.5">
-                    <span>触发原因:</span>
+                    <span>为什么整理这一批</span>
                     <span className="max-w-[70%] text-right font-semibold text-slate-800">
                       {formatTriggerReason(run.trigger_reason)}
                     </span>
@@ -452,7 +409,7 @@ export function RunDetailDrawer({
           {activeTab === "messages" && (
             <div className="space-y-4">
               <p className="text-xs text-slate-500">
-                本批次实际送入模型进行理解与归档分析的输入消息序列：
+                这次整理读了下面这些聊天记录：
               </p>
               {hasInputMessagesList ? (
                 <div className="space-y-3">
@@ -487,13 +444,13 @@ export function RunDetailDrawer({
                 <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-6 text-center text-xs text-amber-900 space-y-1.5">
                   <div className="font-bold">
                     {run.input_count > 0
-                      ? `已处理 ${run.input_count} 条聊天输入`
-                      : "暂无聊天消息"}
+                      ? `这次读了 ${run.input_count} 条聊天`
+                      : "这次没有聊天可读"}
                   </div>
                   <p className="text-slate-600 leading-5">
                     {run.input_count > 0
-                      ? "该概览快照未拉取消息原文，请切换至【档案官】Tab 下的【逐批归档记录】中下钻查看完整上下文。"
-                      : "该批次在确定输入范围前已结束。"}
+                      ? "这里没保存聊天原文，可从「整理档案」里的每次整理记录点开查看完整内容。"
+                      : "这一批还没确定读哪些聊天就结束了。"}
                   </p>
                 </div>
               )}
@@ -503,7 +460,7 @@ export function RunDetailDrawer({
           {activeTab === "changes" && (
             <div className="space-y-4">
               <p className="text-xs text-slate-500">
-                经由确定性代码校验通过并持久化落库的变动及丢弃提议：
+                这次从聊天里整理出、并存进档案的信息：
               </p>
               {hasChangesList ? (
                 <div className="space-y-3">
@@ -515,13 +472,13 @@ export function RunDetailDrawer({
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center text-xs text-slate-600 space-y-1">
                   <div className="font-bold text-slate-800">
                     {run.output_count > 0
-                      ? `形成 ${run.output_count} 项确定性更新`
-                      : "本批次无确定性数据写入"}
+                      ? `整理出 ${run.output_count} 项新信息`
+                      : "这次没有整理出新信息"}
                   </div>
                   <p className="text-slate-500">
                     {run.output_count > 0
-                      ? "可前往【档案官】Tab 的【逐批归档记录】中下钻查看详细更新对比。"
-                      : "模型提议经检验无需新增写入（或属于历史只记数量批次）。"}
+                      ? "可从「整理档案」里的每次整理记录点开查看具体内容。"
+                      : "检查后发现没有值得新增的信息。"}
                   </p>
                 </div>
               )}
@@ -529,7 +486,7 @@ export function RunDetailDrawer({
               {notAppliedChanges.length > 0 && (
                 <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
                   <h4 className="mb-2 text-xs font-bold text-amber-900">
-                    检测到但未写入的冲突 ({notAppliedChanges.length} 项)
+                    发现但没有采纳（与已有信息冲突，{notAppliedChanges.length} 项）
                   </h4>
                   <div className="space-y-3">
                     {notAppliedChanges.map((change, idx) => (
@@ -545,7 +502,7 @@ export function RunDetailDrawer({
               {run.dropped_items && run.dropped_items.length > 0 && (
                 <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
                   <h4 className="text-xs font-bold text-amber-900 mb-2">
-                    未通过确定性校验的提议 ({run.dropped_items.length} 项)
+                    没有采纳的内容（{run.dropped_items.length} 项）
                   </h4>
                   <div className="space-y-1.5 text-xs text-amber-800">
                     {run.dropped_items.map((item, i) => (
@@ -614,23 +571,23 @@ function ReplyConversationEvidence({ run }: { run: RunDetailData }) {
         本轮对话
       </h3>
       <p className="mt-1 text-xs text-slate-500">
-        运行账本关联的触发消息与实际出站记录。
+        用户说了什么、AI 又回了什么。
       </p>
 
       <div className="mt-4 space-y-3">
         {run.input_message ? (
           <ConversationMessageCard
-            label="用户消息"
+            label="用户"
             message={run.input_message}
             tone="user"
           />
         ) : (
           <ConversationEmptyState
-            title="未找到触发消息"
+            title="没找到用户消息"
             description={
               run.input_count > 0
-                ? "运行账本记录了输入，但对应的消息原文无法读取。"
-                : "本轮运行没有关联用户输入。"
+                ? "记录里有这条消息，但原文暂时读不出来。"
+                : "这一轮没有用户消息。"
             }
             tone="warn"
           />
@@ -646,16 +603,14 @@ function ReplyConversationEvidence({ run }: { run: RunDetailData }) {
           <ConversationEmptyState
             title={
               run.output_count > 0
-                ? "未找到关联的出站消息"
-                : "本轮没有发送回复"
+                ? "没找到发出的回复"
+                : "这一轮没有回复用户"
             }
             description={
               run.output_count > 0
-                ? "运行账本记录了输出，但对应的出站消息无法读取。"
-                : `执行终态：${
-                    OUTCOME_LABELS[run.outcome ?? "running"] ??
-                    run.outcome ??
-                    "进行中"
+                ? "记录里有这条回复，但原文暂时读不出来。"
+                : `结果：${
+                    OUTCOME_LABELS[run.outcome ?? "running"] ?? "进行中"
                   }`
             }
             tone={run.output_count > 0 ? "warn" : "neutral"}
@@ -1026,5 +981,5 @@ function MetricBox({
 
 function formatLatency(value?: number | null) {
   if (value == null) return "—";
-  return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`;
+  return value >= 1000 ? `${(value / 1000).toFixed(1)} 秒` : `${value} 毫秒`;
 }

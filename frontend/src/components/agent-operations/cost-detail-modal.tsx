@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { X, Coins, ExternalLink, Cpu, PieChart, User, Calendar } from "lucide-react";
+import { X, Coins, ExternalLink, PieChart, User } from "lucide-react";
 import { formatChinaShortDateTime } from "@/lib/format";
 
 export type ScenarioCost = {
@@ -28,28 +28,28 @@ export type CaseCost = {
 
 const SCENARIO_META: Record<string, { label: string; description: string }> = {
   reply_agent: {
-    label: "群内回复 Agent",
-    description: "回复 Agent 阅读群聊记录、深度思考判断是否回复、检索知识库与使用工具的流程。",
+    label: "群内回复",
+    description: "AI 读群里的消息、判断要不要回、去查资料，然后给用户回复。",
   },
   agent_reminder: {
-    label: "定时提醒文案",
-    description: "到点后由 ReAct Agent 根据用户近期进度与打卡记录重新组织群提醒内容。",
+    label: "定时提醒",
+    description: "到点后，AI 根据用户最近的进度和打卡，组织一条群提醒发出去。",
   },
   archivist_extract: {
-    label: "档案官归档",
-    description: "读取一批新聊天并一次性抽取小结、阶段成效、稳定画像、FAQ 草稿与案例素材。",
+    label: "整理档案",
+    description: "AI 隔一段时间把群聊翻一遍，把打卡、成效、用户情况等整理进档案。",
   },
   qwen_vl_translate: {
-    label: "图片多模态理解",
-    description: "识别分析用户发送的餐食照片、体测报告或包装图，提取结构化文字。",
+    label: "看图识别",
+    description: "识别用户发的餐食照片、体测报告、产品包装等图片，读出里面的文字信息。",
   },
   intervention_risk: {
-    label: "风控与意图识别",
-    description: "分析实时入站消息是否存在医疗健康风险、退款/续购意图或转人工信号。",
+    label: "风险识别",
+    description: "判断用户的消息里有没有健康风险、退款意向，需不需要转给人工。",
   },
   intake_doc: {
-    label: "入营画像与交付文档",
-    description: "读取入营表单与建档数据，由 LLM 渲染定制化的初始交付报告。",
+    label: "入营建档与文档",
+    description: "根据入营表单和建档信息，生成这位用户专属的初始交付文档。",
   },
 };
 
@@ -79,8 +79,8 @@ export function ScenarioCostModal({
   if (!scenario) return null;
 
   const meta = SCENARIO_META[scenario.scenario] || {
-    label: scenario.scenario,
-    description: "业务模型调用任务",
+    label: "其它功能",
+    description: "AI 的一项功能。",
   };
   const share = totalCost ? (scenario.estimated_cost_yuan / totalCost) * 100 : 0;
   const avgCost = scenario.calls ? scenario.estimated_cost_yuan / scenario.calls : 0;
@@ -96,7 +96,6 @@ export function ScenarioCostModal({
             </span>
             <div>
               <h3 className="text-base font-extrabold">{meta.label}</h3>
-              <p className="text-xs text-slate-400 font-mono">{scenario.scenario}</p>
             </div>
           </div>
           <button
@@ -114,7 +113,7 @@ export function ScenarioCostModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl border border-cyan-100 bg-cyan-50/50 p-3.5">
-              <div className="text-xs font-semibold text-cyan-800">场景总支出</div>
+              <div className="text-xs font-semibold text-cyan-800">这项功能花了</div>
               <div className="mt-1 text-2xl font-black text-cyan-950">
                 ¥{scenario.estimated_cost_yuan.toFixed(4)}
               </div>
@@ -123,7 +122,7 @@ export function ScenarioCostModal({
               </div>
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3.5">
-              <div className="text-xs font-semibold text-slate-600">平均单次花费</div>
+              <div className="text-xs font-semibold text-slate-600">平均每次</div>
               <div className="mt-1 text-2xl font-black text-slate-900">
                 ¥{avgCost.toFixed(4)}
               </div>
@@ -133,31 +132,21 @@ export function ScenarioCostModal({
             </div>
           </div>
 
-          {/* Token usage table */}
+          {/* Share bar */}
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <h4 className="text-xs font-bold text-slate-900 mb-3 flex items-center gap-1.5">
-              <Cpu className="h-4 w-4 text-cyan-700" /> Token 消耗拆解
-            </h4>
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between py-1 border-b border-slate-100">
-                <span className="text-slate-600">输入 Tokens (Prompt)</span>
-                <span className="font-mono font-bold text-slate-900">
-                  {scenario.prompt_tokens.toLocaleString()}
-                </span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-slate-100">
-                <span className="text-slate-600">输出 Tokens (Completion)</span>
-                <span className="font-mono font-bold text-slate-900">
-                  {scenario.completion_tokens.toLocaleString()}
-                </span>
-              </div>
-              <div className="flex justify-between py-1 font-bold">
-                <span className="text-slate-800">总计 Tokens</span>
-                <span className="font-mono text-cyan-800">
-                  {scenario.total_tokens.toLocaleString()}
-                </span>
-              </div>
+            <div className="flex items-center justify-between text-xs font-bold mb-2">
+              <span className="text-slate-700">在总花费里的占比</span>
+              <span className="text-cyan-700">{share.toFixed(1)}%</span>
             </div>
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-cyan-600"
+                style={{ width: `${Math.max(2, share)}%` }}
+              />
+            </div>
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+              这段时间共调用了 {scenario.calls.toLocaleString()} 次。
+            </p>
           </div>
         </div>
 
@@ -228,7 +217,7 @@ export function CaseCostDrawer({
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
             <div className="flex justify-between items-center">
               <div>
-                <div className="text-xs text-slate-500 font-semibold">服务单累计 AI 费用</div>
+                <div className="text-xs text-slate-500 font-semibold">这位用户累计花费</div>
                 <div className="text-3xl font-black text-slate-900 mt-1">
                   ¥{caseCost.estimated_cost_yuan.toFixed(4)}
                 </div>
@@ -244,18 +233,15 @@ export function CaseCostDrawer({
 
             <div className="grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 text-xs">
               <div>
-                <span className="text-slate-500">请求次数: </span>
+                <span className="text-slate-500">调用次数：</span>
                 <span className="font-bold text-slate-800">{caseCost.calls} 次</span>
               </div>
-              <div>
-                <span className="text-slate-500">消耗 Tokens: </span>
-                <span className="font-bold text-slate-800">
-                  {caseCost.total_tokens.toLocaleString()}
-                </span>
-              </div>
               {caseCost.last_call_at && (
-                <div className="col-span-2 text-slate-500 mt-1">
-                  最近一次模型调用：{formatChinaShortDateTime(caseCost.last_call_at)}
+                <div>
+                  <span className="text-slate-500">最近一次：</span>
+                  <span className="font-bold text-slate-800">
+                    {formatChinaShortDateTime(caseCost.last_call_at)}
+                  </span>
                 </div>
               )}
             </div>
@@ -264,7 +250,7 @@ export function CaseCostDrawer({
           {/* Scenario breakdown list */}
           <div>
             <h4 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-1.5">
-              <PieChart className="h-4 w-4 text-cyan-700" /> 场景消耗分布明细
+              <PieChart className="h-4 w-4 text-cyan-700" /> 各项功能分别花了多少
             </h4>
             <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white overflow-hidden">
               {caseCost.scenarios.map((sc) => {
@@ -281,7 +267,7 @@ export function CaseCostDrawer({
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-[11px] text-slate-500">
-                      <span>{sc.calls} 次请求 · {sc.total_tokens.toLocaleString()} Tokens</span>
+                      <span>{sc.calls} 次</span>
                       <span>占比 {scenarioShare.toFixed(1)}%</span>
                     </div>
                     <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden mt-1">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
@@ -8,18 +8,18 @@ import {
   Archive,
   Bot,
   CheckCircle2,
-  CircleDollarSign,
   Clock3,
   Coins,
-  MessageSquareReply,
+  UserCheck,
+  PauseCircle,
   TriangleAlert,
   Wrench,
   Search,
   RefreshCw,
   ChevronRight,
-  MousePointerClick,
-  Info,
+  ChevronDown,
   ArrowRight,
+  Send,
 } from "lucide-react";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { RunDetailDrawer, RunDetailData } from "./run-detail-drawer";
@@ -82,57 +82,154 @@ export type AgentOperationsData = {
 
 const TABS = [
   { key: "overview", label: "总览", icon: Activity },
-  { key: "reply", label: "回复 Agent", icon: Bot },
-  { key: "archivist", label: "档案官", icon: Archive },
-  { key: "costs", label: "成本明细", icon: Coins },
+  { key: "reply", label: "群内回复", icon: Bot },
+  { key: "archivist", label: "整理档案", icon: Archive },
+  { key: "costs", label: "花费", icon: Coins },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
 
+// 每种处理结果对应一句人话（点开某一类时展开显示的明细）。
 const OUTCOME_LABELS: Record<string, string> = {
-  reply_sent: "已发送回复",
-  intentional_no_reply: "Agent 主动不回复",
-  human_handoff: "已转人工",
-  handoff_throttled: "转人工提醒处于节流期",
-  handoff_already_recorded: "转人工消息已存在",
-  staff_preempted: "班主任抢先回复",
-  stale_reply_suppressed: "被更新的用户消息覆盖",
-  newer_message_queued: "队列中已有更新消息",
-  ai_disabled: "全局 AI 回复关闭",
-  ai_disabled_before_send: "发送前全局开关关闭",
-  case_auto_reply_disabled: "当前服务单自动回复关闭",
-  case_disabled_before_send: "发送前服务单开关关闭",
-  inactive_case: "服务单已不在服务中",
-  no_active_case: "无有效服务单",
-  agent_generation_failed: "回复生成失败",
-  send_failed: "发送失败",
-  send_unknown: "发送结果未知",
-  send_policy_suppressed: "发送策略拦截",
-  reply_already_recorded: "回复已记录",
-  non_chat_message: "非聊天消息",
-  workflow_completed: "流程完成",
-  archived_with_output: "归档成功且有产出",
-  archived_no_output: "归档成功但无产出",
-  archivist_failed: "归档失败",
-  archivist_replay_failed: "人工重放失败",
-  reminder_sent: "提醒已发送",
-  reminder_generation_failed: "提醒生成失败",
-  reminder_empty: "提醒生成内容为空",
-  reminder_send_failed: "提醒发送失败",
-  running: "运行中",
+  reply_sent: "正常回复了用户",
+  reply_already_recorded: "回复已经发过",
+  intentional_no_reply: "判断无需插话",
+  human_handoff: "已通知班主任接手",
+  handoff_already_recorded: "已通知过班主任",
+  handoff_throttled: "刚提醒过，暂不重复打扰",
+  staff_preempted: "班主任先回复了",
+  stale_reply_suppressed: "用户又发了新消息，旧回复作废",
+  newer_message_queued: "已有更新的消息在排队",
+  ai_disabled: "全局自动回复被关闭",
+  ai_disabled_before_send: "发送前全局开关被关",
+  case_auto_reply_disabled: "该用户的自动回复被关闭",
+  case_disabled_before_send: "发送前该用户开关被关",
+  inactive_case: "服务已结束",
+  no_active_case: "没有进行中的服务",
+  non_chat_message: "不是聊天消息",
+  send_policy_suppressed: "被发送策略拦下",
+  agent_generation_failed: "回复没能生成",
+  send_failed: "回复没发出去",
+  send_unknown: "发送结果不明",
+  workflow_completed: "流程正常结束",
+  archived_with_output: "整理出了新信息",
+  archived_no_output: "检查后没有新信息",
+  archivist_failed: "整理失败",
+  archivist_replay_failed: "人工重跑失败",
+  reminder_sent: "提醒已发出",
+  reminder_generation_failed: "提醒没能生成",
+  reminder_empty: "提醒内容为空",
+  reminder_send_failed: "提醒没发出去",
+  running: "处理中",
 };
 
-const OUTPUT_LABELS: Record<string, string> = {
-  checkin_days: "打卡日期",
-  outcomes: "正向成效",
-  profile_facts: "稳定画像事实",
-  state_facts: "当前状态事实",
-  personal_guidance: "个人指导",
-  corrections: "纠正记录",
-  faq_drafts: "FAQ 草稿",
-  memory_updates: "用户小结 / 案例素材更新",
-  user_summary_updates: "用户历程小结",
-  case_material_updates: "优秀案例素材小结",
-  case_drafts: "优秀案例草稿",
+// 24 种细粒度结果 → 5 个运营看得懂的大类。未知 key 兜底进「没轮到 AI 出手」。
+type BucketTone = "ok" | "info" | "warn" | "neutral" | "risk";
+const OUTCOME_BUCKETS: Array<{
+  id: string;
+  label: string;
+  hint: string;
+  tone: BucketTone;
+  icon: typeof CheckCircle2;
+  keys: string[];
+}> = [
+  {
+    id: "replied",
+    label: "已回复用户",
+    hint: "AI 正常给出了答复",
+    tone: "ok",
+    icon: CheckCircle2,
+    keys: ["reply_sent", "reply_already_recorded", "workflow_completed"],
+  },
+  {
+    id: "no_reply",
+    label: "判断无需回复",
+    hint: "AI 认为不用插话，比如打招呼收尾、纯表情、班主任已在沟通",
+    tone: "info",
+    icon: Bot,
+    keys: ["intentional_no_reply"],
+  },
+  {
+    id: "handoff",
+    label: "转给了人工",
+    hint: "涉及风险或强烈情绪，已通知班主任 / 客服接手",
+    tone: "warn",
+    icon: UserCheck,
+    keys: ["human_handoff", "handoff_already_recorded", "handoff_throttled"],
+  },
+  {
+    id: "skipped",
+    label: "没轮到 AI 出手",
+    hint: "班主任先回了、消息被更新，或自动回复被关掉等",
+    tone: "neutral",
+    icon: PauseCircle,
+    keys: [
+      "staff_preempted",
+      "stale_reply_suppressed",
+      "newer_message_queued",
+      "ai_disabled",
+      "ai_disabled_before_send",
+      "case_auto_reply_disabled",
+      "case_disabled_before_send",
+      "inactive_case",
+      "no_active_case",
+      "non_chat_message",
+      "send_policy_suppressed",
+    ],
+  },
+  {
+    id: "failed",
+    label: "出问题了",
+    hint: "回复没能生成或没发出去，建议排查",
+    tone: "risk",
+    icon: TriangleAlert,
+    keys: ["agent_generation_failed", "send_failed", "send_unknown"],
+  },
+];
+
+const BUCKET_OF_KEY: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  for (const bucket of OUTCOME_BUCKETS) {
+    for (const key of bucket.keys) map[key] = bucket.id;
+  }
+  return map;
+})();
+
+type Bucket = {
+  id: string;
+  label: string;
+  hint: string;
+  tone: BucketTone;
+  icon: typeof CheckCircle2;
+  count: number;
+  reasons: OutcomeCount[];
+};
+
+function buildBuckets(outcomes: OutcomeCount[]): Bucket[] {
+  const byId: Record<string, Bucket> = {};
+  for (const def of OUTCOME_BUCKETS) {
+    byId[def.id] = { ...def, count: 0, reasons: [] };
+  }
+  for (const item of outcomes) {
+    const bucketId = BUCKET_OF_KEY[item.key] ?? "skipped";
+    const bucket = byId[bucketId];
+    bucket.count += item.count;
+    bucket.reasons.push(item);
+  }
+  for (const bucket of Object.values(byId)) {
+    bucket.reasons.sort((a, b) => b.count - a.count);
+  }
+  return OUTCOME_BUCKETS.map((def) => byId[def.id]);
+}
+
+const TONE_STYLES: Record<
+  BucketTone,
+  { icon: string; bar: string; text: string }
+> = {
+  ok: { icon: "bg-emerald-50 text-emerald-700", bar: "bg-emerald-500", text: "text-emerald-700" },
+  info: { icon: "bg-cyan-50 text-cyan-700", bar: "bg-cyan-500", text: "text-cyan-700" },
+  warn: { icon: "bg-amber-50 text-amber-700", bar: "bg-amber-500", text: "text-amber-700" },
+  neutral: { icon: "bg-slate-100 text-slate-600", bar: "bg-slate-400", text: "text-slate-600" },
+  risk: { icon: "bg-rose-50 text-rose-700", bar: "bg-rose-500", text: "text-rose-700" },
 };
 
 const TOOL_LABELS: Record<string, string> = {
@@ -147,7 +244,21 @@ const TOOL_LABELS: Record<string, string> = {
   create_group_reminder: "创建群提醒",
   list_group_reminders: "查看群提醒",
   cancel_group_reminder: "取消群提醒",
-  web_search_lifestyle: "生活方式联网检索",
+  web_search_lifestyle: "上网查资料",
+};
+
+const OUTPUT_LABELS: Record<string, string> = {
+  checkin_days: "打卡记录",
+  outcomes: "阶段成效",
+  profile_facts: "长期画像",
+  state_facts: "当前状态",
+  personal_guidance: "个人指导",
+  corrections: "班主任纠正",
+  faq_drafts: "问答草稿",
+  memory_updates: "小结更新",
+  user_summary_updates: "用户历程小结",
+  case_material_updates: "优秀案例素材",
+  case_drafts: "优秀案例草稿",
 };
 
 export function AgentOperationsClient({
@@ -249,6 +360,9 @@ export function AgentOperationsClient({
     if (!isPending) setPendingControl(null);
   }, [isPending]);
 
+  const rangeLabel =
+    initialDays === 1 ? "今天" : `近 ${initialDays} 天`;
+
   return (
     <div className="page-stack">
       {/* Page Header */}
@@ -260,19 +374,19 @@ export function AgentOperationsClient({
             </span>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className="page-heading">AI 运行监控与下钻分析</h1>
+                <h1 className="page-heading">AI 助教运行情况</h1>
                 {isPending && (
                   <RefreshCw className="h-4 w-4 animate-spin text-cyan-600" />
                 )}
               </div>
               <p className="page-subtitle">
-                实时监控回复 Agent、定时提醒与档案官的执行效果，点击任意数据项可直接下钻查看完整的 Token 结构、聊天上下文与 Log。
+                看看这段时间 AI 助教在群里干了多少活、有没有需要你处理的情况，以及花了多少钱。任意一项都能点开看得更细。
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0 self-start">
-            <span className="status-pill pill-neutral font-mono">
-              数据更新至 {formatChinaShortDateTime(data.generated_at)}
+            <span className="status-pill pill-neutral">
+              数据截至 {formatChinaShortDateTime(data.generated_at)}
             </span>
           </div>
         </div>
@@ -280,7 +394,7 @@ export function AgentOperationsClient({
         {/* Header Tabs & Controls */}
         <div className="mt-5 flex min-w-0 flex-col gap-3 border-t border-slate-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
           <nav
-            aria-label="AI 运行分类"
+            aria-label="查看分类"
             className="grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-slate-100/80 p-1 sm:inline-grid sm:grid-cols-4"
           >
             {TABS.map((item) => {
@@ -310,7 +424,12 @@ export function AgentOperationsClient({
           </nav>
 
           <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white p-1">
-            {[1, 7, 30, 90].map((value) => (
+            {[
+              { value: 1, label: "今天" },
+              { value: 7, label: "近 7 天" },
+              { value: 30, label: "近 30 天" },
+              { value: 90, label: "近 90 天" },
+            ].map(({ value, label }) => (
               <button
                 key={value}
                 onClick={() => handleDaysChange(value)}
@@ -325,7 +444,7 @@ export function AgentOperationsClient({
                 {pendingControl === `days:${value}` && (
                   <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                 )}
-                {pendingControl === `days:${value}` ? "加载中…" : `${value} 天`}
+                {pendingControl === `days:${value}` ? "加载中…" : label}
               </button>
             ))}
           </div>
@@ -336,6 +455,7 @@ export function AgentOperationsClient({
       {initialTab === "overview" && (
         <OverviewSection
           data={data}
+          rangeLabel={rangeLabel}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
           statusFilter={statusFilter}
@@ -343,8 +463,8 @@ export function AgentOperationsClient({
           agentFilter={agentFilter}
           setAgentFilter={setAgentFilter}
           onSelectRun={handleSelectRun}
-          onSelectOutcome={(out, total) =>
-            setSelectedOutcome({ key: out.key, count: out.count, total })
+          onSelectReason={(key, total) =>
+            setSelectedOutcome({ key, count: reasonCount(data.reply, key), total })
           }
         />
       )}
@@ -353,8 +473,8 @@ export function AgentOperationsClient({
         <ReplySection
           data={data}
           onSelectTool={(tool) => setSelectedTool(tool)}
-          onSelectOutcome={(out, total) =>
-            setSelectedOutcome({ key: out.key, count: out.count, total })
+          onSelectReason={(key, total) =>
+            setSelectedOutcome({ key, count: reasonCount(data.reply, key), total })
           }
         />
       )}
@@ -390,6 +510,7 @@ export function AgentOperationsClient({
 
 function OverviewSection({
   data,
+  rangeLabel,
   searchQuery,
   setSearchQuery,
   statusFilter,
@@ -397,9 +518,10 @@ function OverviewSection({
   agentFilter,
   setAgentFilter,
   onSelectRun,
-  onSelectOutcome,
+  onSelectReason,
 }: {
   data: AgentOperationsData;
+  rangeLabel: string;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   statusFilter: string;
@@ -407,21 +529,23 @@ function OverviewSection({
   agentFilter: string;
   setAgentFilter: (a: string) => void;
   onSelectRun: (run: RecentRun) => void;
-  onSelectOutcome: (out: OutcomeCount, total: number) => void;
+  onSelectReason: (key: string, total: number) => void;
 }) {
+  const buckets = useMemo(() => buildBuckets(data.reply.outcomes), [data.reply.outcomes]);
+  const replied = buckets.find((b) => b.id === "replied")?.count ?? 0;
+  const needsAttention =
+    (buckets.find((b) => b.id === "handoff")?.count ?? 0) +
+    (buckets.find((b) => b.id === "failed")?.count ?? 0);
+
   const filteredRuns = data.recent_runs.filter((run) => {
-    // Status filter
     if (statusFilter !== "all" && run.status !== statusFilter) return false;
-    // Agent filter
     if (agentFilter !== "all" && run.agent_type !== agentFilter) return false;
-    // Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchName = run.user_name?.toLowerCase().includes(q);
       const matchCase = run.case_no?.toLowerCase().includes(q);
       const matchId = run.id.toString().includes(q);
-      const matchOutcome = run.outcome?.toLowerCase().includes(q);
-      if (!matchName && !matchCase && !matchId && !matchOutcome) return false;
+      if (!matchName && !matchCase && !matchId) return false;
     }
     return true;
   });
@@ -431,70 +555,64 @@ function OverviewSection({
       <MetricStrip
         items={[
           {
-            label: "Agent 总运行数",
-            value: formatNumber(data.all_agents.runs),
-            detail: `${data.all_agents.running_runs} 次仍在运行`,
-            icon: Activity,
+            label: "处理的对话",
+            value: formatNumber(data.reply.runs),
+            detail: `${rangeLabel}群里由 AI 处理的用户消息`,
+            icon: Bot,
           },
           {
-            label: "模型请求次数",
-            value: formatNumber(data.all_agents.model_calls),
-            detail: `${formatNumber(data.all_agents.total_tokens)} Tokens`,
-            icon: MessageSquareReply,
+            label: "已回复用户",
+            value: formatNumber(replied),
+            detail: percentDetail(replied, data.reply.runs, "占全部对话"),
+            icon: CheckCircle2,
+            tone: "ok",
           },
           {
-            label: "Agent 消耗算力费",
-            value: formatCost(data.all_agents.estimated_cost_yuan),
-            detail: "回复、提醒与档案官汇总",
-            icon: CircleDollarSign,
-          },
-          {
-            label: "运行失败数",
-            value: formatNumber(data.all_agents.failed_runs),
-            detail: failureDescription(data.all_agents),
+            label: "需要你关注",
+            value: formatNumber(needsAttention),
+            detail:
+              needsAttention > 0
+                ? "转人工与出问题的合计，建议查看"
+                : "没有转人工或出错，一切正常",
             icon: TriangleAlert,
-            tone: data.all_agents.failed_runs ? "risk" : "ok",
+            tone: needsAttention > 0 ? "warn" : "ok",
+          },
+          {
+            label: "这段时间花费",
+            value: formatCost(data.costs.estimated_cost_yuan),
+            detail: "所有 AI 功能的算力费合计",
+            icon: Coins,
           },
         ]}
       />
 
-      <div className="grid gap-5 xl:grid-cols-2">
-        <OutcomePanel
-          title="回复 Agent 的最终去向"
-          description="点击任意终态类型可下钻查看详细处置策略与业务含义。"
-          outcomes={data.reply.outcomes}
-          total={data.reply.runs}
-          empty="所选时间内还没有回复 Agent 运行记录。"
-          onSelectOutcome={onSelectOutcome}
-        />
-        <OutputPanel archivist={data.archivist} />
-      </div>
+      <OutcomeBuckets
+        title="AI 是怎么处理这些对话的"
+        description="按处理方式分成几大类，点开任意一类可以看具体原因。"
+        buckets={buckets}
+        total={data.reply.runs}
+        onSelectReason={onSelectReason}
+      />
 
-      {/* Recent Runs Panel with Interactive Table */}
+      {/* Recent Runs Panel */}
       <section className="panel overflow-hidden">
         <div className="panel-header-clean flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="panel-title">最近 Agent 运行记录</h2>
-              <span className="text-xs bg-cyan-100 text-cyan-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                <MousePointerClick className="h-3 w-3" /> 点击行可下钻 Log
-              </span>
-            </div>
+            <h2 className="panel-title">最近的处理记录</h2>
             <p className="panel-subtitle">
-              快速追踪执行失败、长期运行中或高 Token 消耗的详细 Turn Trace。
+              最新的一批处理记录，点任意一行可以看这次的完整对话和结果。
             </p>
           </div>
 
-          {/* Controls: Search and Filters */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="搜索用户 / 服务单号 / ID..."
+                placeholder="搜用户名 / 服务单号"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-48 sm:w-64 rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 py-1.5 text-xs text-slate-800 focus:bg-white focus:border-cyan-500 focus:outline-none transition-all"
+                className="w-44 sm:w-56 rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 py-1.5 text-xs text-slate-800 focus:bg-white focus:border-cyan-500 focus:outline-none transition-all"
               />
             </div>
             <select
@@ -502,19 +620,19 @@ function OverviewSection({
               onChange={(e) => setStatusFilter(e.target.value)}
               className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none"
             >
-              <option value="all">所有状态</option>
+              <option value="all">全部状态</option>
               <option value="completed">已完成</option>
-              <option value="failed">失败</option>
-              <option value="running">运行中</option>
+              <option value="failed">出错</option>
+              <option value="running">处理中</option>
             </select>
             <select
               value={agentFilter}
               onChange={(e) => setAgentFilter(e.target.value)}
               className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none"
             >
-              <option value="all">所有 Agent</option>
-              <option value="reply">回复 Agent</option>
-              <option value="archivist">档案官</option>
+              <option value="all">全部类型</option>
+              <option value="reply">群内回复</option>
+              <option value="archivist">整理档案</option>
             </select>
           </div>
         </div>
@@ -524,13 +642,12 @@ function OverviewSection({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>时间 / 关联服务单</th>
-                  <th>Agent 类型</th>
-                  <th>终态</th>
-                  <th>模型 / 工具</th>
-                  <th>Tokens 消耗</th>
-                  <th>响应耗时</th>
-                  <th className="text-right">操作</th>
+                  <th>时间 / 对象</th>
+                  <th>类型</th>
+                  <th>结果</th>
+                  <th>耗时</th>
+                  <th>花费</th>
+                  <th className="w-10" aria-label="查看" />
                 </tr>
               </thead>
               <tbody>
@@ -544,44 +661,29 @@ function OverviewSection({
                       <div className="text-xs font-semibold text-slate-900">
                         {formatChinaShortDateTime(run.started_at)}
                       </div>
-                      <div className="mt-0.5 text-xs text-slate-500 flex items-center gap-1">
-                        <span className="font-bold text-slate-700">
-                          {run.user_name || run.case_no || `Run #${run.id}`}
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        {run.user_name || run.case_no || "系统任务"}
+                      </div>
+                    </td>
+                    <td>
+                      <AgentTypeBadge type={run.agent_type} />
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-1.5">
+                        <StatusDot status={run.status} />
+                        <span className="text-xs font-medium text-slate-700">
+                          {OUTCOME_LABELS[run.outcome ?? "running"] ?? "处理中"}
                         </span>
-                        {run.case_no && <span className="font-mono text-slate-400">({run.case_no})</span>}
                       </div>
                     </td>
-                    <td>
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-bold ${
-                          run.agent_type === "archivist"
-                            ? "bg-amber-50 text-amber-800 border border-amber-200"
-                            : "bg-cyan-50 text-cyan-800 border border-cyan-200"
-                        }`}
-                      >
-                        {run.agent_type === "archivist" ? "档案官" : "回复 Agent"}
-                      </span>
-                      <div className="mt-0.5 text-[11px] text-slate-400 font-mono">{run.run_kind}</div>
-                    </td>
-                    <td>
-                      <RunStatus run={run} />
-                      <div className="mt-1 text-xs text-slate-600 font-medium">
-                        {OUTCOME_LABELS[run.outcome ?? "running"] ?? run.outcome ?? "运行中"}
-                      </div>
-                    </td>
-                    <td className="tabular text-xs font-bold text-slate-800">
-                      {run.model_calls} 次 / {run.tool_calls} 次
-                    </td>
-                    <td className="tabular text-xs font-mono font-bold text-slate-900">
-                      {formatNumber(run.total_tokens)}
-                    </td>
-                    <td className="text-xs font-mono text-slate-700">
+                    <td className="text-xs text-slate-600">
                       {formatLatency(run.latency_ms)}
                     </td>
+                    <td className="tabular text-xs font-semibold text-slate-800">
+                      {formatCost(run.estimated_cost_yuan)}
+                    </td>
                     <td className="text-right">
-                      <button className="inline-flex items-center gap-1 rounded-lg bg-white border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-700 group-hover:border-cyan-400 group-hover:text-cyan-800 transition-colors shadow-xs">
-                        查看下钻 <ChevronRight className="h-3.5 w-3.5" />
-                      </button>
+                      <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-cyan-600 transition-colors" />
                     </td>
                   </tr>
                 ))}
@@ -589,8 +691,8 @@ function OverviewSection({
             </table>
           </div>
         ) : (
-          <div className="px-6 py-12 text-center text-xs text-slate-500">
-            没有符合筛选条件的 Agent 运行记录。
+          <div className="px-6 py-12 text-center text-sm text-slate-500">
+            没有符合条件的处理记录。
           </div>
         )}
       </section>
@@ -601,67 +703,77 @@ function OverviewSection({
 function ReplySection({
   data,
   onSelectTool,
-  onSelectOutcome,
+  onSelectReason,
 }: {
   data: AgentOperationsData;
   onSelectTool: (tool: ToolStat) => void;
-  onSelectOutcome: (out: OutcomeCount, total: number) => void;
+  onSelectReason: (key: string, total: number) => void;
 }) {
-  const sent = outcomeCount(data.reply, "reply_sent");
-  const noReply = outcomeCount(data.reply, "intentional_no_reply");
-  const handoff =
-    outcomeCount(data.reply, "human_handoff") +
-    outcomeCount(data.reply, "handoff_already_recorded");
+  const buckets = useMemo(() => buildBuckets(data.reply.outcomes), [data.reply.outcomes]);
+  const replied = buckets.find((b) => b.id === "replied")?.count ?? 0;
+  const noReply = buckets.find((b) => b.id === "no_reply")?.count ?? 0;
+  const handoff = buckets.find((b) => b.id === "handoff")?.count ?? 0;
 
   return (
     <>
       <MetricStrip
         items={[
           {
-            label: "对话 Turn 轮次",
+            label: "处理的对话",
             value: formatNumber(data.reply.runs),
-            detail: "聚合后的用户消息 Turn 计",
+            detail: "群里由 AI 处理的用户消息",
             icon: Bot,
           },
           {
-            label: "已发送回复",
-            value: formatNumber(sent),
-            detail: percentDetail(sent, data.reply.runs),
+            label: "已回复用户",
+            value: formatNumber(replied),
+            detail: percentDetail(replied, data.reply.runs, "占全部对话"),
             icon: CheckCircle2,
             tone: "ok",
           },
           {
-            label: "主动不回复",
+            label: "判断无需回复",
             value: formatNumber(noReply),
-            detail: percentDetail(noReply, data.reply.runs),
-            icon: MessageSquareReply,
+            detail: percentDetail(noReply, data.reply.runs, "占全部对话"),
+            icon: PauseCircle,
           },
           {
-            label: "触发转人工",
+            label: "转给人工",
             value: formatNumber(handoff),
-            detail: percentDetail(handoff, data.reply.runs),
-            icon: TriangleAlert,
+            detail: percentDetail(handoff, data.reply.runs, "占全部对话"),
+            icon: UserCheck,
             tone: handoff ? "warn" : "neutral",
           },
           {
-            label: "响应耗时 P95",
-            value: formatLatency(data.reply.latency_p95_ms),
-            detail: `P50 ${formatLatency(data.reply.latency_p50_ms)}`,
+            label: "回复速度",
+            value: formatLatency(data.reply.latency_p50_ms),
+            detail: `较慢时约 ${formatLatency(data.reply.latency_p95_ms)}`,
             icon: Clock3,
           },
         ]}
       />
 
-      <OutcomePanel
-        title="完整终态分布"
-        description="保留真实业务原因分布，点击任意卡片查看具体的处置建议与处置标准。"
-        outcomes={data.reply.outcomes}
+      {data.reminders.runs > 0 && (
+        <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200/80 bg-white px-5 py-3.5 text-sm text-slate-600" style={{ boxShadow: "var(--shadow-panel)" }}>
+          <Send className="h-4 w-4 shrink-0 text-cyan-600" />
+          <span>
+            另外，AI 还主动发出了{" "}
+            <span className="font-bold text-slate-900">
+              {formatNumber(reasonCount(data.reminders, "reminder_sent"))}
+            </span>{" "}
+            条定时提醒（打卡关怀、进度提醒等）。
+          </span>
+        </div>
+      )}
+
+      <OutcomeBuckets
+        title="AI 是怎么处理这些对话的"
+        description="按处理方式分成几大类，点开任意一类可以看具体原因。"
+        buckets={buckets}
         total={data.reply.runs}
-        empty="所选时间内还没有回复 Agent 运行记录。"
-        onSelectOutcome={onSelectOutcome}
+        onSelectReason={onSelectReason}
       />
 
-      {/* Interactive Tool Panel */}
       <ToolPanel tools={data.tools} onSelectTool={onSelectTool} />
     </>
   );
@@ -674,24 +786,23 @@ function ArchivistSection({
   data: AgentOperationsData;
   onSelectBatch: (batch: ArchivistBatch) => void;
 }) {
-  const useful = outcomeCount(data.archivist, "archived_with_output");
-  const noOutput = outcomeCount(data.archivist, "archived_no_output");
+  const useful = reasonCount(data.archivist, "archived_with_output");
+  const noOutput = reasonCount(data.archivist, "archived_no_output");
   return (
     <>
       <section className="panel overflow-hidden">
         <div className="flex flex-col gap-5 px-5 py-5 sm:px-6">
-          <div className="max-w-[75ch]">
-            <h2 className="panel-title">档案官抽取与归档统计</h2>
+          <div className="max-w-[72ch]">
+            <h2 className="panel-title">AI 定期整理群聊里的有用信息</h2>
             <p className="panel-subtitle">
-              按批次异步读取未归档聊天，并由确定性代码把结构化产出落库。
+              AI 会隔一段时间把群里的聊天翻一遍，自动把打卡、成效、用户情况等信息整理进档案，不用人工录入。
             </p>
           </div>
-          <div className="grid gap-x-6 gap-y-4 border-t border-slate-100 pt-4 sm:grid-cols-2 xl:grid-cols-5">
-            <PlainMetric label="归档批次" value={`${formatNumber(data.archivist.runs)} 批`} />
-            <PlainMetric label="实际输入" value={`${formatNumber(data.archivist.input_count)} 条聊天`} />
-            <PlainMetric label="形成更新" value={`${formatNumber(useful)} 批`} />
-            <PlainMetric label="检查后无更新" value={`${formatNumber(noOutput)} 批`} />
-            <PlainMetric label="本期模型费" value={formatCost(data.archivist.estimated_cost_yuan)} />
+          <div className="grid gap-x-6 gap-y-4 border-t border-slate-100 pt-4 sm:grid-cols-2 xl:grid-cols-4">
+            <PlainMetric label="整理次数" value={`${formatNumber(data.archivist.runs)} 次`} />
+            <PlainMetric label="读过的聊天" value={`${formatNumber(data.archivist.input_count)} 条`} />
+            <PlainMetric label="整理出新信息" value={`${formatNumber(useful)} 次`} detail={`另有 ${formatNumber(noOutput)} 次检查后没有新增`} />
+            <PlainMetric label="这段时间花费" value={formatCost(data.archivist.estimated_cost_yuan)} />
           </div>
         </div>
       </section>
@@ -699,7 +810,7 @@ function ArchivistSection({
       <ArchivistBatchLedger batches={data.archivist_batches} onSelectBatch={onSelectBatch} />
 
       <div className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
-        <OutputPanel archivist={data.archivist} expanded />
+        <OutputPanel archivist={data.archivist} />
         <DraftReviewPanel statuses={data.archivist.draft_statuses} />
       </div>
     </>
@@ -724,18 +835,18 @@ function CostsSection({
       <section className="panel overflow-hidden">
         <div className="grid gap-5 px-5 py-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
           <div>
-            <p className="text-sm font-semibold text-slate-600">所选时间内的模型费用估算</p>
+            <p className="text-sm font-semibold text-slate-600">这段时间 AI 一共花了</p>
             <div className="tabular mt-1 text-3xl font-black tracking-tight text-slate-950">
               {formatCost(data.costs.estimated_cost_yuan)}
             </div>
-            <p className="mt-2 max-w-[75ch] text-sm leading-6 text-slate-600">
-              只统计大模型请求，不含服务器、企微通道等费用。点击下方动作或用户可直接下钻结构与比例。
+            <p className="mt-2 max-w-[72ch] text-sm leading-6 text-slate-600">
+              这里只算 AI 大模型的费用，不含服务器、企微通道等其它开销。点下面的功能或用户可以看得更细。
             </p>
           </div>
           <div className="grid grid-cols-2 gap-x-8 gap-y-3 border-t border-slate-100 pt-4 sm:grid-cols-3 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-            <PlainMetric label="模型请求" value={`${formatNumber(data.costs.calls)} 次`} />
+            <PlainMetric label="调用次数" value={`${formatNumber(data.costs.calls)} 次`} />
             <PlainMetric label="平均每次" value={formatCost(averageCost)} />
-            <PlainMetric label="涉及服务单" value={`${formatNumber(data.costs.service_case_count)} 个`} />
+            <PlainMetric label="涉及用户" value={`${formatNumber(data.costs.service_case_count)} 人`} />
           </div>
         </div>
       </section>
@@ -761,9 +872,11 @@ function MetricStrip({
     tone?: "ok" | "warn" | "risk" | "neutral";
   }>;
 }) {
+  const cols =
+    items.length >= 5 ? "xl:grid-cols-5" : "xl:grid-cols-4";
   return (
     <section className="panel overflow-hidden" aria-label="关键指标">
-      <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-4">
+      <div className={`grid gap-px bg-slate-100 sm:grid-cols-2 ${cols}`}>
         {items.map((item) => {
           const Icon = item.icon;
           const tone = item.tone ?? "neutral";
@@ -781,7 +894,7 @@ function MetricStrip({
                 <Icon className="h-5 w-5" />
               </span>
               <div className="min-w-0">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                <div className="text-xs font-bold text-slate-500">
                   {item.label}
                 </div>
                 <div className="tabular mt-1 text-2xl font-black tracking-tight text-slate-950">
@@ -797,72 +910,106 @@ function MetricStrip({
   );
 }
 
-function OutcomePanel({
+function OutcomeBuckets({
   title,
   description,
-  outcomes,
+  buckets,
   total,
-  empty,
-  onSelectOutcome,
+  onSelectReason,
 }: {
   title: string;
   description: string;
-  outcomes: OutcomeCount[];
+  buckets: Bucket[];
   total: number;
-  empty: string;
-  onSelectOutcome: (out: OutcomeCount, total: number) => void;
+  onSelectReason: (key: string, total: number) => void;
 }) {
-  const max = Math.max(...outcomes.map((item) => item.count), 1);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const visible = buckets.filter((b) => b.count > 0);
+
   return (
     <section className="panel overflow-hidden">
       <div className="panel-header-clean">
         <h2 className="panel-title">{title}</h2>
         <p className="panel-subtitle">{description}</p>
       </div>
-      {outcomes.length ? (
+      {visible.length ? (
         <div className="divide-y divide-slate-100">
-          {outcomes.map((item) => (
-            <div
-              key={item.key}
-              onClick={() => onSelectOutcome(item, total)}
-              className="grid min-w-0 gap-2 px-5 py-3.5 sm:grid-cols-[minmax(0,14rem)_minmax(8rem,1fr)_5rem] sm:items-center sm:px-6 cursor-pointer hover:bg-cyan-50/50 transition-colors group"
-            >
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-slate-900 group-hover:text-cyan-900 flex items-center gap-1">
-                  {OUTCOME_LABELS[item.key] ?? item.key}
-                  <Info className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
-                <div className="mt-0.5 text-xs text-slate-400 font-mono">{item.key}</div>
+          {visible.map((bucket) => {
+            const Icon = bucket.icon;
+            const styles = TONE_STYLES[bucket.tone];
+            const pct = total ? Math.round((bucket.count / total) * 100) : 0;
+            const isOpen = expanded === bucket.id;
+            const canExpand = bucket.reasons.length > 1;
+            return (
+              <div key={bucket.id}>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(isOpen ? null : bucket.id)}
+                  className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-slate-50/70 sm:px-6"
+                >
+                  <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${styles.icon}`}>
+                    <Icon className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-slate-900">{bucket.label}</span>
+                      <ChevronDown
+                        className={`h-4 w-4 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                      />
+                    </div>
+                    <p className="mt-0.5 truncate text-xs text-slate-500">{bucket.hint}</p>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className={`h-full rounded-full ${styles.bar}`}
+                        style={{ width: `${Math.max(2, pct)}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="tabular text-lg font-black text-slate-900">{formatNumber(bucket.count)}</div>
+                    <div className="text-xs font-semibold text-slate-400">{total ? `${pct}%` : "—"}</div>
+                  </div>
+                </button>
+
+                {isOpen && (
+                  <div className="bg-slate-50/70 px-5 pb-4 sm:px-6">
+                    <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+                      {bucket.reasons.map((reason) => (
+                        <button
+                          key={reason.key}
+                          type="button"
+                          onClick={() => onSelectReason(reason.key, total)}
+                          className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left transition-colors hover:bg-cyan-50/60"
+                        >
+                          <span className="min-w-0 truncate text-xs text-slate-700">
+                            {OUTCOME_LABELS[reason.key] ?? reason.key}
+                          </span>
+                          <span className="flex shrink-0 items-center gap-1.5">
+                            <span className="tabular text-xs font-bold text-slate-900">{reason.count}</span>
+                            <ChevronRight className="h-3.5 w-3.5 text-slate-300" />
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    {canExpand && (
+                      <p className="mt-2 text-[11px] text-slate-400">点具体原因可以看这是什么情况、要不要处理。</p>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                <div
-                  className="h-full rounded-full bg-cyan-600 group-hover:bg-cyan-500 transition-all"
-                  style={{ width: `${Math.max(3, (item.count / max) * 100)}%` }}
-                />
-              </div>
-              <div className="tabular text-right text-sm font-black text-slate-900">
-                {item.count}
-                <span className="ml-1.5 text-xs font-medium text-slate-400">
-                  {total ? `${Math.round((item.count / total) * 100)}%` : "—"}
-                </span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
-        <div className="px-6 py-10 text-center text-sm text-slate-500">{empty}</div>
+        <div className="px-6 py-10 text-center text-sm text-slate-500">
+          这段时间还没有相关处理记录。
+        </div>
       )}
     </section>
   );
 }
 
-function OutputPanel({
-  archivist,
-  expanded = false,
-}: {
-  archivist: ArchivistSummary;
-  expanded?: boolean;
-}) {
+function OutputPanel({ archivist }: { archivist: ArchivistSummary }) {
   const entries = Object.entries(archivist.output_breakdown).sort(
     (a, b) => b[1] - a[1],
   );
@@ -870,14 +1017,14 @@ function OutputPanel({
   return (
     <section className="panel overflow-hidden">
       <div className="panel-header-clean">
-        <h2 className="panel-title">档案官确定性产出分布</h2>
+        <h2 className="panel-title">整理出了哪些信息</h2>
         <p className="panel-subtitle">
-          校验并持久化写入数据库的业务档案事实统计。
+          这段时间从群聊里整理并存进档案的各类信息条数。
         </p>
       </div>
       {entries.length ? (
         <div className="divide-y divide-slate-100">
-          {entries.slice(0, expanded ? entries.length : 6).map(([key, value]) => (
+          {entries.map(([key, value]) => (
             <div key={key} className="grid grid-cols-[minmax(0,1fr)_4rem] items-center gap-4 px-5 py-3.5 sm:px-6">
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-slate-800">
@@ -898,7 +1045,7 @@ function OutputPanel({
         </div>
       ) : (
         <div className="px-6 py-10 text-center text-sm text-slate-500">
-          所选时间内还没有已写入的档案产出。
+          这段时间还没有整理出新的档案信息。
         </div>
       )}
     </section>
@@ -910,8 +1057,8 @@ function DraftReviewPanel({ statuses }: { statuses: Record<string, number> }) {
   return (
     <section className="panel overflow-hidden">
       <div className="panel-header-clean">
-        <h2 className="panel-title">FAQ / 案例草稿后验结果</h2>
-        <p className="panel-subtitle">人工审核反馈是衡量提议质量的直接指标。</p>
+        <h2 className="panel-title">问答 / 案例草稿</h2>
+        <p className="panel-subtitle">AI 提议的新问答和案例，需要人工确认后才会正式启用。</p>
       </div>
       <div className="divide-y divide-slate-100">
         <InlineMetric label="草稿总数" value={total} />
@@ -921,7 +1068,7 @@ function DraftReviewPanel({ statuses }: { statuses: Record<string, number> }) {
       </div>
       <div className="border-t border-slate-100 px-5 py-4 sm:px-6">
         <Link href="/documents" className="admin-link text-xs flex items-center gap-1 font-bold">
-          前往审核控制台 <ArrowRight className="h-3.5 w-3.5" />
+          去审核 <ArrowRight className="h-3.5 w-3.5" />
         </Link>
       </div>
     </section>
@@ -937,19 +1084,14 @@ function ToolPanel({
 }) {
   return (
     <section className="panel overflow-hidden">
-      <div className="panel-header-clean flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <div>
-          <div className="flex items-center gap-2">
-            <Wrench className="h-4 w-4 text-cyan-700" />
-            <h2 className="panel-title">工具调用表现统计</h2>
-            <span className="text-xs bg-cyan-100 text-cyan-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-              <MousePointerClick className="h-3 w-3" /> 点击下钻工具详情
-            </span>
-          </div>
-          <p className="panel-subtitle">
-            监控工具成功率、平均响应耗时与异常错误分布。
-          </p>
+      <div className="panel-header-clean">
+        <div className="flex items-center gap-2">
+          <Wrench className="h-4 w-4 text-cyan-700" />
+          <h2 className="panel-title">AI 用到的小工具</h2>
         </div>
+        <p className="panel-subtitle">
+          回复时 AI 会调用这些工具去查进度、查打卡、查资料等。点任意一行看用得顺不顺。
+        </p>
       </div>
 
       {tools.length ? (
@@ -957,64 +1099,62 @@ function ToolPanel({
           <table className="data-table">
             <thead>
               <tr>
-                <th>工具名称</th>
-                <th>调用次数</th>
+                <th>工具</th>
+                <th>用了多少次</th>
                 <th>成功率</th>
-                <th>失败 / 拒绝</th>
                 <th>平均耗时</th>
-                <th>主要错误</th>
-                <th className="text-right">操作</th>
+                <th>出错情况</th>
+                <th className="w-10" aria-label="查看" />
               </tr>
             </thead>
             <tbody>
-              {tools.map((tool) => (
-                <tr
-                  key={tool.name}
-                  onClick={() => onSelectTool(tool)}
-                  className="cursor-pointer group hover:bg-cyan-50/60"
-                >
-                  <td>
-                    <div className="font-bold text-slate-900 group-hover:text-cyan-900">
-                      {TOOL_LABELS[tool.name] ?? tool.name}
-                    </div>
-                    <div className="mt-0.5 text-xs text-slate-400 font-mono">{tool.name}</div>
-                  </td>
-                  <td className="tabular font-bold text-slate-800">{tool.calls} 次</td>
-                  <td className="tabular">
-                    <span
-                      className={`font-bold ${
-                        (tool.success_rate ?? 0) >= 90
-                          ? "text-emerald-700"
-                          : (tool.success_rate ?? 0) >= 70
-                          ? "text-amber-700"
-                          : "text-rose-700"
-                      }`}
-                    >
-                      {tool.success_rate == null ? "—" : `${tool.success_rate}%`}
-                    </span>
-                  </td>
-                  <td className="tabular text-xs text-slate-700 font-mono">
-                    {tool.failed_calls} / {tool.rejected_calls}
-                  </td>
-                  <td className="text-xs font-mono">{formatLatency(tool.average_latency_ms)}</td>
-                  <td className="max-w-[16rem] text-xs text-rose-600">
-                    {tool.errors.length
-                      ? tool.errors.map((item) => `${item.key} × ${item.count}`).join(" · ")
-                      : "—"}
-                  </td>
-                  <td className="text-right">
-                    <button className="inline-flex items-center gap-1 rounded-lg bg-white border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-700 group-hover:border-cyan-400 group-hover:text-cyan-800 transition-colors shadow-xs">
-                      详情 <ChevronRight className="h-3.5 w-3.5" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {tools.map((tool) => {
+                const errorCount = tool.failed_calls + tool.rejected_calls;
+                return (
+                  <tr
+                    key={tool.name}
+                    onClick={() => onSelectTool(tool)}
+                    className="cursor-pointer group hover:bg-cyan-50/60"
+                  >
+                    <td>
+                      <div className="font-semibold text-slate-900 group-hover:text-cyan-900">
+                        {TOOL_LABELS[tool.name] ?? tool.name}
+                      </div>
+                    </td>
+                    <td className="tabular font-semibold text-slate-800">{tool.calls} 次</td>
+                    <td className="tabular">
+                      <span
+                        className={`font-bold ${
+                          (tool.success_rate ?? 0) >= 90
+                            ? "text-emerald-700"
+                            : (tool.success_rate ?? 0) >= 70
+                            ? "text-amber-700"
+                            : "text-rose-700"
+                        }`}
+                      >
+                        {tool.success_rate == null ? "—" : `${tool.success_rate}%`}
+                      </span>
+                    </td>
+                    <td className="text-xs text-slate-600">{formatLatency(tool.average_latency_ms)}</td>
+                    <td className="text-xs">
+                      {errorCount > 0 ? (
+                        <span className="text-rose-600 font-medium">{errorCount} 次没成功</span>
+                      ) : (
+                        <span className="text-slate-400">无</span>
+                      )}
+                    </td>
+                    <td className="text-right">
+                      <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-cyan-600 transition-colors" />
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       ) : (
         <div className="px-6 py-10 text-center text-sm text-slate-500">
-          所选时间内没有工具调用记录。
+          这段时间 AI 没有用到工具。
         </div>
       )}
     </section>
@@ -1033,8 +1173,8 @@ function ScenarioCosts({
   return (
     <section className="panel overflow-hidden">
       <div className="panel-header-clean">
-        <h2 className="panel-title">按业务场景的算力支出拆解</h2>
-        <p className="panel-subtitle">点击任意场景可查看具体 Prompt / Completion Token 结构。</p>
+        <h2 className="panel-title">各项功能分别花了多少</h2>
+        <p className="panel-subtitle">点任意一项可以看它的花费明细。</p>
       </div>
       {scenarios.length ? (
         <div className="divide-y divide-slate-100">
@@ -1048,13 +1188,13 @@ function ScenarioCosts({
                 className="px-5 py-4 sm:px-6 cursor-pointer hover:bg-cyan-50/50 transition-colors group"
               >
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_repeat(3,minmax(7rem,auto))] lg:items-center">
-                  <div className="max-w-[65ch]">
-                    <div className="font-bold text-slate-900 group-hover:text-cyan-900 flex items-center gap-1.5">
-                      {item.scenario}
-                      <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-cyan-700" />
+                  <div className="max-w-[60ch]">
+                    <div className="font-semibold text-slate-900 group-hover:text-cyan-900 flex items-center gap-1.5">
+                      {SCENARIO_LABELS[item.scenario] ?? item.scenario}
+                      <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-cyan-600" />
                     </div>
                   </div>
-                  <SmallDatum label="模型请求" value={`${formatNumber(item.calls)} 次`} />
+                  <SmallDatum label="调用次数" value={`${formatNumber(item.calls)} 次`} />
                   <SmallDatum label="合计花费" value={formatCost(item.estimated_cost_yuan)} />
                   <SmallDatum label="平均每次" value={formatCost(average)} />
                 </div>
@@ -1075,7 +1215,7 @@ function ScenarioCosts({
         </div>
       ) : (
         <div className="px-6 py-10 text-center text-sm text-slate-600">
-          所选时间内没有 AI 成本记录。
+          这段时间没有花费记录。
         </div>
       )}
     </section>
@@ -1092,8 +1232,8 @@ function CaseCosts({
   return (
     <section className="panel overflow-hidden">
       <div className="panel-header-clean">
-        <h2 className="panel-title">按服务单 / 用户的 AI 支出分布</h2>
-        <p className="panel-subtitle">点击任意服务单可下钻查看详细场景消耗对比。</p>
+        <h2 className="panel-title">各个用户分别花了多少</h2>
+        <p className="panel-subtitle">点任意一个用户可以看 TA 的花费明细。</p>
       </div>
       {cases.length ? (
         <div className="divide-y divide-slate-100">
@@ -1105,25 +1245,25 @@ function CaseCosts({
             >
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_repeat(3,minmax(7rem,auto))_1.5rem] sm:items-center">
                 <div>
-                  <div className="font-bold text-slate-950 group-hover:text-cyan-900">
+                  <div className="font-semibold text-slate-950 group-hover:text-cyan-900">
                     {item.user_name || "未命名用户"}
                   </div>
-                  <div className="mt-0.5 text-xs text-slate-500 font-mono">{item.case_no}</div>
+                  <div className="mt-0.5 text-xs text-slate-500">{item.case_no}</div>
                 </div>
-                <SmallDatum label="模型请求" value={`${formatNumber(item.calls)} 次`} />
+                <SmallDatum label="调用次数" value={`${formatNumber(item.calls)} 次`} />
                 <SmallDatum label="合计花费" value={formatCost(item.estimated_cost_yuan)} />
                 <SmallDatum
-                  label="最后发生"
+                  label="最近一次"
                   value={formatChinaShortDateTime(item.last_call_at)}
                 />
-                <ChevronRight className="h-5 w-5 text-slate-400 group-hover:text-cyan-700" />
+                <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-cyan-600" />
               </div>
             </div>
           ))}
         </div>
       ) : (
         <div className="px-6 py-10 text-center text-sm text-slate-600">
-          所选时间内没有关联服务单的成本记录。
+          这段时间没有关联到用户的花费记录。
         </div>
       )}
     </section>
@@ -1140,8 +1280,8 @@ function ArchivistBatchLedger({
   return (
     <section className="panel overflow-hidden">
       <div className="panel-header-clean">
-        <h2 className="panel-title">逐批归档记录</h2>
-        <p className="panel-subtitle">点击任意批次可查看完整的输入聊天原文与落库变动。</p>
+        <h2 className="panel-title">每次整理记录</h2>
+        <p className="panel-subtitle">点任意一次可以看这次读了哪些聊天、整理出了什么。</p>
       </div>
       {batches.length ? (
         <div className="divide-y divide-slate-100">
@@ -1151,53 +1291,71 @@ function ArchivistBatchLedger({
               onClick={() => onSelectBatch(batch)}
               className="px-5 py-4 sm:px-6 cursor-pointer hover:bg-cyan-50/50 transition-colors group flex items-center justify-between"
             >
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <RunStatus run={batch} />
-                  <span className="font-bold text-slate-900 group-hover:text-cyan-900">
-                    {batch.user_name || batch.case_no || "未知服务单"}
+                  <StatusDot status={batch.status} />
+                  <span className="font-semibold text-slate-900 group-hover:text-cyan-900 truncate">
+                    {batch.user_name || batch.case_no || "未知用户"}
                   </span>
-                  <span className="text-xs text-slate-400 font-mono">
+                  <span className="text-xs text-slate-400">
                     {formatChinaShortDateTime(batch.started_at)}
                   </span>
                 </div>
-                <div className="mt-1.5 text-xs text-slate-600">
-                  输入 {batch.input_messages?.length || batch.input_count || 0} 条消息 → 写入{" "}
-                  {batch.changes?.length || batch.output_count || 0} 项变更
+                <div className="mt-1 text-xs text-slate-600">
+                  读了 {batch.input_messages?.length || batch.input_count || 0} 条聊天 → 整理出{" "}
+                  {batch.changes?.length || batch.output_count || 0} 项信息
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-mono font-bold text-slate-800">
+              <div className="flex shrink-0 items-center gap-3">
+                <span className="text-xs font-semibold text-slate-800">
                   {formatCost(batch.estimated_cost_yuan)}
                 </span>
-                <ChevronRight className="h-5 w-5 text-slate-400 group-hover:text-cyan-700" />
+                <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-cyan-600" />
               </div>
             </div>
           ))}
         </div>
       ) : (
         <div className="px-6 py-10 text-center text-sm text-slate-600">
-          所选时间内暂无档案官批次。
+          这段时间还没有整理记录。
         </div>
       )}
     </section>
   );
 }
 
-function RunStatus({ run }: { run: RecentRun }) {
+const SCENARIO_LABELS: Record<string, string> = {
+  reply_agent: "群内回复",
+  agent_reminder: "定时提醒",
+  archivist_extract: "整理档案",
+  qwen_vl_translate: "看图识别",
+  intervention_risk: "风险识别",
+  intake_doc: "入营建档与文档",
+};
+
+function AgentTypeBadge({ type }: { type: string }) {
+  const isArchivist = type === "archivist";
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-semibold ${
+        isArchivist
+          ? "bg-amber-50 text-amber-800 border border-amber-200"
+          : "bg-cyan-50 text-cyan-800 border border-cyan-200"
+      }`}
+    >
+      {isArchivist ? "整理档案" : "群内回复"}
+    </span>
+  );
+}
+
+function StatusDot({ status }: { status: string }) {
   const tone =
-    run.status === "completed"
-      ? "pill-ok"
-      : run.status === "failed"
-      ? "pill-risk"
-      : "pill-warn";
-  const label =
-    run.status === "completed"
-      ? "已完成"
-      : run.status === "failed"
-      ? "失败"
-      : "运行中";
-  return <span className={`status-pill ${tone}`}>{label}</span>;
+    status === "completed"
+      ? "bg-emerald-500"
+      : status === "failed"
+      ? "bg-rose-500"
+      : "bg-amber-500";
+  return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${tone}`} aria-hidden="true" />;
 }
 
 function InlineMetric({ label, value }: { label: string; value: number | string }) {
@@ -1209,11 +1367,12 @@ function InlineMetric({ label, value }: { label: string; value: number | string 
   );
 }
 
-function PlainMetric({ label, value }: { label: string; value: string }) {
+function PlainMetric({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
     <div className="min-w-0">
       <div className="text-xs font-semibold text-slate-500">{label}</div>
       <div className="tabular mt-1 text-lg font-black text-slate-900">{value}</div>
+      {detail && <div className="mt-0.5 text-xs text-slate-400">{detail}</div>}
     </div>
   );
 }
@@ -1227,7 +1386,7 @@ function SmallDatum({ label, value }: { label: string; value: string }) {
   );
 }
 
-function outcomeCount(summary: RuntimeSummary, key: string) {
+function reasonCount(summary: RuntimeSummary, key: string) {
   return summary.outcomes.find((item) => item.key === key)?.count ?? 0;
 }
 
@@ -1242,15 +1401,9 @@ function formatCost(value: number) {
 
 function formatLatency(value?: number | null) {
   if (value == null) return "—";
-  return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`;
+  return value >= 1000 ? `${(value / 1000).toFixed(1)} 秒` : `${value} 毫秒`;
 }
 
-function failureDescription(summary: RuntimeSummary) {
-  if (!summary.runs) return "暂无运行记录";
-  if (!summary.failed_runs) return "所选时间内无失败";
-  return `${((summary.failed_runs / summary.runs) * 100).toFixed(1)}% 的运行失败`;
-}
-
-function percentDetail(value: number, total: number) {
-  return total ? `占全部轮次 ${((value / total) * 100).toFixed(1)}%` : "暂无样本";
+function percentDetail(value: number, total: number, prefix: string) {
+  return total ? `${prefix} ${((value / total) * 100).toFixed(1)}%` : "暂无数据";
 }

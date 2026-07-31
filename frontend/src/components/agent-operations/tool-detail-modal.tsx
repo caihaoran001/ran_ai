@@ -30,18 +30,30 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 const TOOL_DESCRIPTIONS: Record<string, string> = {
-  get_service_progress: "查看当前服务单的 28 天日程进度、已完成天数与剩余服务期。",
-  get_recent_checkins: "查询用户近期的体测、饮食、运动、睡眠与打卡打标记录。",
-  get_weight_trend: "获取用户入营至今的体重与腰围变化数据曲线。",
-  list_delivery_documents: "列出服务单关联的所有已生成 H5 / Word 交付文件。",
-  read_delivery_document: "读取指定交付文件的 Markdown 正文与结构化内容。",
-  list_group_files: "查询服务单社群共享文件夹中的文件列表。",
-  read_group_file: "解析并读取社群共享文件的正文与说明。",
-  search_knowledge_base: "从健康服务知识库、规则库中检索匹配的标准答复和执行建议。",
-  create_group_reminder: "在群内为用户设置定时关怀、打卡提醒或行动通知。",
-  list_group_reminders: "查看当前社群中已设置的所有未触发/生效中的定时提醒。",
-  cancel_group_reminder: "取消已创建但尚未发送的群定时提醒。",
-  web_search_lifestyle: "联网检索生活方式、食材营养或健康知识最新资料。",
+  get_service_progress: "看这位用户的服务进行到第几天、还剩多少天。",
+  get_recent_checkins: "看用户最近的体测、饮食、运动、睡眠等打卡记录。",
+  get_weight_trend: "看用户从入营到现在的体重、腰围变化。",
+  list_delivery_documents: "列出发给这位用户的所有交付文件。",
+  read_delivery_document: "读取某份交付文件的内容。",
+  list_group_files: "看群共享文件夹里有哪些文件。",
+  read_group_file: "读取某个群文件的内容。",
+  search_knowledge_base: "从知识库里找出对应的标准答复和建议。",
+  create_group_reminder: "给用户设置定时关怀、打卡提醒等。",
+  list_group_reminders: "看这个群已经设置了哪些定时提醒。",
+  cancel_group_reminder: "取消一个还没发出的定时提醒。",
+  web_search_lifestyle: "上网查生活方式、食材营养等最新资料。",
+};
+
+// 工具报错原因 → 一句人话，未知的一律归为「其它错误」。
+const ERROR_LABELS: Record<string, string> = {
+  timeout: "响应超时",
+  not_found: "没找到数据",
+  invalid_argument: "参数不对",
+  permission_denied: "没有权限",
+  rate_limited: "调用太频繁被限流",
+  network_error: "网络问题",
+  internal_error: "内部错误",
+  parse_error: "结果解析失败",
 };
 
 export function ToolDetailModal({
@@ -68,7 +80,7 @@ export function ToolDetailModal({
   if (!tool) return null;
 
   const label = TOOL_LABELS[tool.name] || tool.name;
-  const desc = TOOL_DESCRIPTIONS[tool.name] || "Agent 可调用的内置业务与数据工具。";
+  const desc = TOOL_DESCRIPTIONS[tool.name] || "AI 回复时会用到的一个小工具。";
   const successRate = tool.success_rate != null ? tool.success_rate : 0;
 
   return (
@@ -86,7 +98,6 @@ export function ToolDetailModal({
             </span>
             <div>
               <h3 className="text-base font-extrabold">{label}</h3>
-              <p className="text-xs text-slate-400 font-mono">{tool.name}</p>
             </div>
           </div>
           <button
@@ -106,8 +117,8 @@ export function ToolDetailModal({
           {/* Success rate bar */}
           <div>
             <div className="flex items-center justify-between text-xs font-bold mb-1.5">
-              <span className="text-slate-700">调用成功率</span>
-              <span className="text-cyan-700 font-mono">{successRate}%</span>
+              <span className="text-slate-700">成功率</span>
+              <span className="text-cyan-700">{successRate}%</span>
             </div>
             <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
               <div
@@ -125,21 +136,21 @@ export function ToolDetailModal({
 
           {/* Key Metrics Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <MetricBox label="调用总次" value={`${tool.calls}次`} icon={Wrench} color="slate" />
+            <MetricBox label="用了多少次" value={`${tool.calls}次`} icon={Wrench} color="slate" />
             <MetricBox
-              label="成功次数"
+              label="成功"
               value={`${tool.successful_calls}次`}
               icon={CheckCircle2}
               color="emerald"
             />
             <MetricBox
-              label="失败次数"
+              label="失败"
               value={`${tool.failed_calls}次`}
               icon={XCircle}
               color="rose"
             />
             <MetricBox
-              label="拒绝/熔断"
+              label="被拦下"
               value={`${tool.rejected_calls}次`}
               icon={AlertOctagon}
               color="amber"
@@ -149,9 +160,9 @@ export function ToolDetailModal({
           {/* Average Latency */}
           <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 text-xs">
             <span className="flex items-center gap-1.5 text-slate-600 font-medium">
-              <Clock className="h-4 w-4 text-slate-400" /> 平均单次耗时
+              <Clock className="h-4 w-4 text-slate-400" /> 平均每次耗时
             </span>
-            <span className="font-mono font-bold text-slate-900">
+            <span className="font-bold text-slate-900">
               {formatLatency(tool.average_latency_ms)}
             </span>
           </div>
@@ -160,12 +171,12 @@ export function ToolDetailModal({
           {tool.errors.length > 0 ? (
             <div className="rounded-xl border border-rose-100 bg-rose-50/50 p-4">
               <div className="flex items-center gap-1.5 text-xs font-bold text-rose-900 mb-2">
-                <ShieldAlert className="h-4 w-4 text-rose-600" /> 主要错误日志统计
+                <ShieldAlert className="h-4 w-4 text-rose-600" /> 出错的原因
               </div>
               <div className="space-y-1.5">
                 {tool.errors.map((err, i) => (
                   <div key={i} className="flex justify-between items-center text-xs">
-                    <span className="font-mono text-rose-700">{err.key}</span>
+                    <span className="text-rose-700">{ERROR_LABELS[err.key] ?? "其它错误"}</span>
                     <span className="font-bold bg-white px-2 py-0.5 rounded border border-rose-200 text-rose-900">
                       {err.count} 次
                     </span>
@@ -175,7 +186,7 @@ export function ToolDetailModal({
             </div>
           ) : (
             <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3.5 text-xs text-emerald-800 text-center font-medium">
-              ✓ 所选时间段内该工具无报错记录
+              ✓ 这段时间没有出错
             </div>
           )}
         </div>
@@ -223,5 +234,5 @@ function MetricBox({
 
 function formatLatency(value?: number | null) {
   if (value == null) return "—";
-  return value >= 1000 ? `${(value / 1000).toFixed(1)} 秒` : `${value} ms`;
+  return value >= 1000 ? `${(value / 1000).toFixed(1)} 秒` : `${value} 毫秒`;
 }

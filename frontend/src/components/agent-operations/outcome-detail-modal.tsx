@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { X, CheckCircle2, AlertTriangle, Info, Bot, UserCheck, ShieldAlert } from "lucide-react";
+import { X, CheckCircle2, AlertTriangle, Info, Bot, UserCheck, ShieldAlert, PauseCircle } from "lucide-react";
 
 export type OutcomeDetail = {
   key: string;
@@ -9,71 +9,152 @@ export type OutcomeDetail = {
   total: number;
 };
 
-const OUTCOME_META: Record<
-  string,
-  { label: string; tag: string; description: string; suggestion: string; icon: any; tone: "ok" | "warn" | "info" | "risk" }
-> = {
+type Meta = {
+  label: string;
+  description: string;
+  suggestion: string;
+  icon: typeof CheckCircle2;
+  tone: "ok" | "warn" | "info" | "risk";
+};
+
+const OUTCOME_META: Record<string, Meta> = {
   reply_sent: {
-    label: "已发送回复",
-    tag: "正常发送",
-    description: "Agent 顺利完成了思考、工具调用与风险检查，并在企微社群中公开发送了定制化回复。",
-    suggestion: "属于预期内的正向对话交互。",
+    label: "正常回复了用户",
+    description: "AI 读完群里的消息、判断需要回应，并在群里发出了一条针对性的回复。",
+    suggestion: "这是最常见的正常情况，不用特别处理。",
+    icon: CheckCircle2,
+    tone: "ok",
+  },
+  reply_already_recorded: {
+    label: "回复已经发过",
+    description: "这条回复此前已经发送过，系统避免了重复发送。",
+    suggestion: "属于正常的防重复机制，不用处理。",
     icon: CheckCircle2,
     tone: "ok",
   },
   intentional_no_reply: {
-    label: "Agent 主动不回复",
-    tag: "策略不回",
-    description: "消息已被 Agent 评估，判定为用户打招呼收尾、纯表情/单字回应、班主任已在现场沟通或无需助教插嘴的场景。",
-    suggestion: "避免助教频繁插话打扰用户体验，属于正常业务策略控制。",
+    label: "判断无需插话",
+    description: "AI 看过消息后，认为不需要回应，比如用户只是打招呼收尾、发了个表情，或者班主任已经在沟通了。",
+    suggestion: "这样可以避免 AI 频繁插话打扰用户，是正常的。",
     icon: Bot,
     tone: "info",
   },
   human_handoff: {
-    label: "已转人工审核",
-    tag: "触发风控",
-    description: "触发了高风险关键词、表达极度不满/退款意图、或超出医疗健康边界，系统已自动阻断并向服务团队发送转人工通知。",
-    suggestion: "请班主任或客服及时前往企微/后台查看并人工接管处理。",
+    label: "已通知班主任接手",
+    description: "这条消息可能涉及健康风险、强烈不满或退款意向，超出了 AI 能处理的范围，已经自动提醒班主任 / 客服来接手。",
+    suggestion: "请班主任或客服尽快到群里或后台查看并处理。",
     icon: ShieldAlert,
     tone: "risk",
   },
+  handoff_already_recorded: {
+    label: "已通知过班主任",
+    description: "针对这位用户此前已经发过转人工通知，这次不再重复通知。",
+    suggestion: "查看之前那条转人工提醒即可。",
+    icon: UserCheck,
+    tone: "warn",
+  },
   handoff_throttled: {
-    label: "转人工提醒处于节流期",
-    tag: "节流防骚扰",
-    description: "近期已针对该服务单触发过转人工通知，为防止对班主任手机频繁发打扰通知，当前消息拦截但不重复弹提醒。",
-    suggestion: "班主任应查看之前已收到的风控工单。",
+    label: "刚提醒过，暂不重复打扰",
+    description: "短时间内已经提醒过班主任一次，为了不频繁打扰，这次先不重复弹通知。",
+    suggestion: "查看之前那条转人工提醒即可。",
     icon: AlertTriangle,
     tone: "warn",
   },
   staff_preempted: {
-    label: "班主任抢先回复",
-    tag: "真人优先",
-    description: "在 AI 思考或等待发送的数秒窗口内，班主任在群里直接回复了用户，Agent 自动撤回本次生成。",
-    suggestion: "保证真人客服响应的绝对优先权，防止助教与班主任说话打架。",
+    label: "班主任先回复了",
+    description: "在 AI 准备回复的几秒里，班主任已经在群里回复了用户，AI 就自动取消了这次回复。",
+    suggestion: "保证真人回复优先，避免 AI 和班主任撞车，是正常的。",
     icon: UserCheck,
     tone: "info",
   },
   stale_reply_suppressed: {
-    label: "被更新的用户消息覆盖",
-    tag: "防旧消息过时",
-    description: "用户连续发送了多条消息，导致上一条思考中的回复已过期，系统丢弃旧回复并开启针对最新全量文本的响应。",
-    suggestion: "正常消息聚合防抖机制。",
+    label: "用户又发了新消息，旧回复作废",
+    description: "用户连续发了好几条消息，之前那条还在酝酿的回复就过时了，系统丢掉旧的，改成针对最新内容一起回复。",
+    suggestion: "这是正常的消息合并机制，不用处理。",
+    icon: Info,
+    tone: "info",
+  },
+  newer_message_queued: {
+    label: "已有更新的消息在排队",
+    description: "已经有一条更新的消息在等待处理，这条就不再单独回复了。",
+    suggestion: "正常机制，不用处理。",
     icon: Info,
     tone: "info",
   },
   ai_disabled: {
-    label: "全局 AI 回复关闭",
-    tag: "开关管控",
-    description: "系统管理员在控制台中关闭了全局自动回复开关，所有消息停留在风控记录阶段，不向用户发消息。",
-    suggestion: "如需恢复自动回复，请在后台系统设置中打开全局 AI 自动回复开关。",
-    icon: AlertTriangle,
+    label: "全局自动回复被关闭",
+    description: "后台的「全局自动回复」总开关被关掉了，所有消息都只记录、不回复。",
+    suggestion: "如果想恢复自动回复，去后台系统设置里打开总开关。",
+    icon: PauseCircle,
     tone: "warn",
   },
+  ai_disabled_before_send: {
+    label: "发送前全局开关被关",
+    description: "回复已经准备好，但就在发送前，全局自动回复开关被关掉了，于是没有发出去。",
+    suggestion: "确认是否需要打开全局自动回复开关。",
+    icon: PauseCircle,
+    tone: "warn",
+  },
+  case_auto_reply_disabled: {
+    label: "该用户的自动回复被关闭",
+    description: "这位用户单独被关掉了自动回复，所以 AI 不回复 TA 的消息。",
+    suggestion: "如需恢复，去这位用户的服务单里打开自动回复。",
+    icon: PauseCircle,
+    tone: "warn",
+  },
+  case_disabled_before_send: {
+    label: "发送前该用户开关被关",
+    description: "回复准备好后、发送前，这位用户的自动回复被关掉了，于是没有发出去。",
+    suggestion: "确认这位用户是否需要开启自动回复。",
+    icon: PauseCircle,
+    tone: "warn",
+  },
+  inactive_case: {
+    label: "服务已结束",
+    description: "这位用户的服务期已经结束，AI 不再自动回复。",
+    suggestion: "正常情况，不用处理。",
+    icon: PauseCircle,
+    tone: "info",
+  },
+  no_active_case: {
+    label: "没有进行中的服务",
+    description: "这条消息没有对应正在进行的服务，AI 不做处理。",
+    suggestion: "正常情况，不用处理。",
+    icon: PauseCircle,
+    tone: "info",
+  },
+  non_chat_message: {
+    label: "不是聊天消息",
+    description: "这条不是需要回复的聊天内容（比如系统通知类），AI 不做处理。",
+    suggestion: "正常情况，不用处理。",
+    icon: Info,
+    tone: "info",
+  },
+  send_policy_suppressed: {
+    label: "被发送策略拦下",
+    description: "回复生成了，但根据发送规则这次不适合发出去，于是被拦下了。",
+    suggestion: "一般是正常的策略控制，如频繁出现可留意。",
+    icon: PauseCircle,
+    tone: "info",
+  },
   agent_generation_failed: {
-    label: "回复生成失败",
-    tag: "模型异常",
-    description: "大模型 API 调用超时、格式解析失败或 ReAct 工具链执行出错导致无法产出合规回复。",
-    suggestion: "可在最近运行列表中查看具体的异常 traceback 代码并排查模型供应商连通性。",
+    label: "回复没能生成",
+    description: "AI 在思考回复时出错了，比如模型响应超时或出现异常，最终没能生成合格的回复。",
+    suggestion: "如果这类情况变多，建议排查 AI 服务是否正常。",
+    icon: AlertTriangle,
+    tone: "risk",
+  },
+  send_failed: {
+    label: "回复没发出去",
+    description: "回复已经生成，但发送到群里时失败了。",
+    suggestion: "如果频繁出现，建议排查企微通道是否正常。",
+    icon: AlertTriangle,
+    tone: "risk",
+  },
+  send_unknown: {
+    label: "发送结果不明",
+    description: "回复发出后没有收到明确的成功确认，无法确定用户是否收到。",
+    suggestion: "如果频繁出现，建议排查企微通道是否正常。",
     icon: AlertTriangle,
     tone: "risk",
   },
@@ -102,11 +183,10 @@ export function OutcomeDetailModal({
 
   if (!outcome) return null;
 
-  const meta = OUTCOME_META[outcome.key] || {
-    label: outcome.key,
-    tag: "业务终态",
-    description: `该轮次最终落地为 ${outcome.key} 终态。`,
-    suggestion: "如需深入排查请在【最近运行】筛选对应的状态分析日志。",
+  const meta: Meta = OUTCOME_META[outcome.key] || {
+    label: "其它情况",
+    description: "这是一种较少出现的处理结果。",
+    suggestion: "如需了解具体情况，可在最近的处理记录里点开查看。",
     icon: Info,
     tone: "info",
   };
@@ -136,7 +216,6 @@ export function OutcomeDetailModal({
             </span>
             <div>
               <h3 className="text-base font-extrabold">{meta.label}</h3>
-              <p className="text-xs text-slate-400 font-mono">{outcome.key}</p>
             </div>
           </div>
           <button
@@ -157,7 +236,7 @@ export function OutcomeDetailModal({
               </div>
             </div>
             <div className="text-right">
-              <div className="text-xs text-slate-500 font-semibold">占总轮次比例</div>
+              <div className="text-xs text-slate-500 font-semibold">占全部对话</div>
               <div className="text-2xl font-black text-cyan-800 mt-0.5">
                 {percent}%
               </div>
@@ -166,9 +245,7 @@ export function OutcomeDetailModal({
 
           {/* Meaning Description */}
           <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              终态说明
-            </h4>
+            <h4 className="text-xs font-bold text-slate-900">这是什么情况</h4>
             <p className="text-xs leading-5 text-slate-700 bg-slate-50/70 p-3 rounded-xl border border-slate-100">
               {meta.description}
             </p>
@@ -176,9 +253,7 @@ export function OutcomeDetailModal({
 
           {/* Operation Suggestion */}
           <div className="space-y-1.5">
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              运营处置建议
-            </h4>
+            <h4 className="text-xs font-bold text-slate-900">要不要处理</h4>
             <p className="text-xs leading-5 text-slate-700 bg-amber-50/60 p-3 rounded-xl border border-amber-100">
               {meta.suggestion}
             </p>
