@@ -901,7 +901,7 @@ async def test_first_group_message_creates_case_but_stays_silent_before_introduc
 
     monkeypatch.setattr("app.services.content_policy.get_qiwei_staff_senders", no_staff)
     monkeypatch.setattr(
-        "app.services.ranren_ai.engine.analyze_intervention", should_not_analyze
+        "app.services.ranren_ai.engine.analyze_message_insight", should_not_analyze
     )
 
     group_id = f"room-awaiting-intro-{secrets.token_hex(4)}"
@@ -960,7 +960,7 @@ async def test_first_staff_mention_only_introduces_then_opens_normal_reply(
         return {}
 
     monkeypatch.setattr("app.services.content_policy.get_qiwei_staff_senders", staff_rules)
-    monkeypatch.setattr("app.services.ranren_ai.engine.analyze_intervention", no_risk)
+    monkeypatch.setattr("app.services.ranren_ai.engine.analyze_message_insight", no_risk)
 
     sent_texts: list[str] = []
 
@@ -1175,10 +1175,10 @@ async def test_sent_introduction_reconciles_state_without_resending(
 @pytest.mark.asyncio
 async def test_qiwe_questionnaire_command_skips_intervention_llm(monkeypatch):
     async def _should_not_run(*args, **kwargs):
-        raise AssertionError("analyze_intervention should not run for questionnaire command")
+        raise AssertionError("analyze_message_insight should not run for questionnaire command")
 
     monkeypatch.setattr(
-        "app.services.ranren_ai.engine.analyze_intervention",
+        "app.services.ranren_ai.engine.analyze_message_insight",
         _should_not_run,
     )
 
@@ -1280,7 +1280,7 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
     monkeypatch.setattr("app.services.content_policy.get_qiwei_staff_senders", fake_get_qiwei_staff_senders)
     monkeypatch.setattr(RanrenAIEngine, "_latest_active_case", lambda self, session, chat_id: asyncio.sleep(0, result=fake_case))
     monkeypatch.setattr(RanrenAIEngine, "_recent_user_messages", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
-    monkeypatch.setattr(RanrenAIEngine, "_store_intervention_analysis", lambda *args, **kwargs: asyncio.sleep(0, result=None))
+    monkeypatch.setattr(RanrenAIEngine, "_store_message_insight", lambda *args, **kwargs: asyncio.sleep(0, result=None))
 
     # 回复编排平铺到主图后，主流程不再经过 _reply_with_ai；观测钩子放在
     # 主图 reply_prep 节点：记录 (text, trigger.sender_type) 后 _halt 短路（等价旧 fake 的 no-op）。
@@ -1335,11 +1335,11 @@ async def test_qiwe_staff_sender_ignoring(monkeypatch):
     )
     
     called_analyze = False
-    async def fake_analyze_intervention(*args, **kwargs):
+    async def fake_analyze_message_insight(*args, **kwargs):
         nonlocal called_analyze
         called_analyze = True
         return {}
-    monkeypatch.setattr("app.services.ranren_ai.engine.analyze_intervention", fake_analyze_intervention)
+    monkeypatch.setattr("app.services.ranren_ai.engine.analyze_message_insight", fake_analyze_message_insight)
 
     await engine.handle_message(message3)
 

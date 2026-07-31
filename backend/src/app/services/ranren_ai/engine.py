@@ -39,7 +39,7 @@ from app.services.ranren_ai.attachments import (
 )
 from app.services.content_policy import get_ai_reply_enabled
 from app.services.short_link import get_or_create_short_link
-from app.services.intervention_service import analyze_intervention, merge_case_insight
+from app.services.message_insight_service import analyze_message_insight, merge_case_insight
 from app.services.service_case_queries import select_active_service_cases
 
 logger = logging.getLogger("uvicorn.error")
@@ -307,7 +307,7 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         if result is None:
             logger.warning("Human handoff send returned None chat_id=%s service_case_id=%s", message.chat_id, service_case_id)
 
-    async def _store_intervention_analysis(
+    async def _store_message_insight(
         self,
         *,
         service_case_id: int,

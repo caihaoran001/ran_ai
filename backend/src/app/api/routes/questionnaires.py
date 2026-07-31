@@ -39,8 +39,8 @@ from app.services.document_service import generate_profile_and_documents
 from app.db.session import SessionLocal
 from app.services.channels import send_channel_text
 from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
-from app.services.intervention_service import (
-    analyze_intervention,
+from app.services.message_insight_service import (
+    analyze_message_insight,
     mark_intake_age_risk,
     merge_case_insight,
     questionnaire_content,
@@ -157,7 +157,7 @@ async def submit_questionnaire(
         _create_checkin_from_questionnaire(session, service_case, fields, payload.answers)
         # 打卡的风险洞察仍随提交即时分析。打卡 H5 已退役(只走聊天→档案官)，此分支为
         # 遗留入口且不路由到 ingress，保持原有实时行为不变。
-        analysis = await analyze_intervention(
+        analysis = await analyze_message_insight(
             source="questionnaire",
             content=questionnaire_content(fields, payload.answers),
             context={

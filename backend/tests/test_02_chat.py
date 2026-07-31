@@ -28,7 +28,7 @@ from app.services.ranren_ai.engine import (
     _requires_health_handoff,
 )
 from app.services.channels.base import ChannelMessage
-from app.services.intervention_service import (
+from app.services.message_insight_service import (
     mark_intake_age_risk,
     merge_case_insight,
     normalize_insight,
@@ -68,7 +68,7 @@ async def _setup_case_with_intake(db_session, cai_haoran_answers):
 
 
 async def _ingest_and_analyze(db_session, case_id, group_id, content, mock_ai):
-    insight = await mock_ai.extract_intervention_insight(
+    insight = await mock_ai.extract_message_insight(
         source="chat_message",
         content=content,
     )
@@ -319,7 +319,7 @@ async def test_intervention_prompt_keeps_diet_preferences_in_agent_context():
         return "{}"
 
     service.generate_text = fake_generate_text
-    await service.extract_intervention_insight(
+    await service.extract_message_insight(
         source="chat_message",
         content="中午吃了半碗杂粮米，五点就饿了",
         context={},
@@ -770,7 +770,7 @@ def test_mark_intake_age_risk_normal_age_untouched():
 
 
 def test_intervention_prompt_treats_stopped_period_alone_as_normal_context():
-    prompt_source = inspect.getsource(AIService.extract_intervention_insight)
+    prompt_source = inspect.getsource(AIService.extract_message_insight)
 
     assert "用户仅说月经推迟、没来月经或停经" in prompt_source
     assert "不得推断为怀孕" in prompt_source

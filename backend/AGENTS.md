@@ -27,7 +27,7 @@ backend/
 │   │   ├── docx_service.py  # python-docx 渲染落盘
 │   │   ├── embedding_service.py # Embedding 向量生成
 │   │   ├── intake_facts.py  # 入营事实 + 安全减重空间/A-D带确定性计算
-│   │   ├── intervention_service.py # 风控干预分析 (LLM 风险/意图识别)
+│   │   ├── message_insight_service.py # 入站消息多信号抽取 (LLM 一次性出风险/续购退款意图/情绪/画像/检索词)
 │   │   ├── knowledge_evolution.py  # 知识草稿审核、查重与发布
 │   │   ├── knowledge_faq_service.py # 结构化 FAQ 管理
 │   │   ├── outcome_engine.py # 成效抽取/评分工具 (由档案官 archivist 周期调用, 非消息路径实时跑)
@@ -139,7 +139,7 @@ Backend admin `/api/*` requires header `X-Admin-API-Key` (`BACKEND_ADMIN_API_KEY
 | 用户状态画像 | `src/app/services/user_state_profile.py` | outcome events → JSONB state 投影 (action_focus / need_analysis / body_feedback) |
 | Embedding 服务 | `src/app/services/embedding_service.py` | 知识 chunks 向量化 (OpenAI 兼容) |
 | 内容策略 | `src/app/services/content_policy.py` | 风控拦截 + AI 回复模式判断 (manual_review / auto_send) |
-| 风控干预 | `src/app/services/intervention_service.py` | LLM 风控识别 + service_case 风险/续购/退款合并 |
+| 消息多信号抽取 | `src/app/services/message_insight_service.py` | LLM 一次调用出风险/续购退款意图/情绪/画像 + service_case 合并 (入口 `analyze_message_insight`) |
 | 结构化 FAQ | `src/app/services/knowledge_faq_service.py` | FAQ 业务表 + 知识索引同步 |
 | 案例库 | `src/app/services/case_library.py` | 优秀案例库检索 |
 | 文档模板 | `src/app/services/document_templates.py` | 处方单/执行单/阶段报告模板 |

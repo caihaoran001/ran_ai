@@ -287,7 +287,7 @@ class AIService:
 
     def _model_for(self, scenario: str) -> str:
         """按场景选择模型：风控和文档生成可独立于默认聊天模型。"""
-        if scenario == "intervention_risk" and (self.settings.ai_risk_model or "").strip():
+        if scenario == "message_insight" and (self.settings.ai_risk_model or "").strip():
             return self.settings.ai_risk_model.strip()
         if scenario in {"intake_doc", "stage_report", "population_insight"} and (
             self.settings.ai_document_model or ""
@@ -470,7 +470,7 @@ class AIService:
             raise last_error
         raise RuntimeError("AI completion failed")
 
-    async def extract_intervention_insight(
+    async def extract_message_insight(
         self,
         *,
         source: str,
@@ -479,7 +479,7 @@ class AIService:
     ) -> dict[str, Any]:
         context = context or {}
         text = await self.generate_text(
-            scenario="intervention_risk",
+            scenario="message_insight",
             temperature=0.3,
             service_case_id=_int_or_none(context.get("service_case_id")),
             message_id=_int_or_none(context.get("message_id")),

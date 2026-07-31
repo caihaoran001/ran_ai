@@ -29,7 +29,7 @@ from app.services.agent.tools.followup_preference_tools import build_followup_pr
 from app.services.agent.tools.web_search_tools import _normalize_current_query_year, build_web_search_tools
 from app.services.channels.base import ChannelMessage
 from app.services.content_policy import set_ai_reply_enabled
-from app.services.intervention_service import normalize_insight
+from app.services.message_insight_service import normalize_insight
 from app.services.profile_memory_service import load_profile_memory_context
 from app.services.ranren_ai.engine import RanrenAIEngine
 from app.services.knowledge_index import KNOWLEDGE_HIT_PREFIX

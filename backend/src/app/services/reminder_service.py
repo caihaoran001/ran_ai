@@ -568,8 +568,8 @@ class ReminderService:
             _latest_submission,
             _send_intake_submit_reply,
         )
-        from app.services.intervention_service import (
-            analyze_intervention,
+        from app.services.message_insight_service import (
+            analyze_message_insight,
             merge_case_insight,
             questionnaire_content,
         )
@@ -599,7 +599,7 @@ class ReminderService:
                     submission = await _latest_submission(session, service_case.id, "intake")
                     if submission is not None:
                         fields = await get_active_questionnaire_fields(session, "intake")
-                        analysis = await analyze_intervention(
+                        analysis = await analyze_message_insight(
                             source="questionnaire",
                             content=questionnaire_content(fields, submission.answers_json or {}),
                             context={

@@ -13,7 +13,7 @@ from app.models.checkin import Checkin
 from app.models.service_case import ServiceCase
 from app.schemas.checkin import CheckinCreate, CheckinRead
 from app.services.checkin_service import normalize_checkin_json
-from app.services.intervention_service import analyze_intervention, merge_case_insight
+from app.services.message_insight_service import analyze_message_insight, merge_case_insight
 from app.services.service_case_queries import (
     active_service_case_condition,
     get_active_service_case,
@@ -81,7 +81,7 @@ async def create_case_checkin(
         raw_message_id=payload.raw_message_id,
         parsed_json=normalize_checkin_json(payload.parsed_json, payload.content),
     )
-    insight = await analyze_intervention(
+    insight = await analyze_message_insight(
         source="checkin",
         content=payload.content,
         context={"service_case_id": service_case.id, "parsed_json": checkin.parsed_json},

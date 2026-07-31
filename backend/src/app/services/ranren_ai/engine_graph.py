@@ -46,7 +46,7 @@ from app.services.agent_observability import (
     ensure_agent_run,
 )
 from app.services.channels.base import ChannelMessage
-# 通过 engine 模块引用 SessionLocal / analyze_intervention / generate_agent_reply /
+# 通过 engine 模块引用 SessionLocal / analyze_message_insight / generate_agent_reply /
 # get_ai_reply_enabled / AgentDataUnavailableError：测试把补丁打在 engine 模块上
 # （conftest 全局 + 个别用例 per-test），经此引用才能命中，行为与旧 handle_message 一致。
 from app.services.ranren_ai import engine as engine_mod
@@ -256,7 +256,7 @@ class EngineGraph:
             return END
         if should_q:
             return "questionnaire"
-        return "risk"
+        return "insight"
 
     def _route_after_reprocess_head(self, state: EngineState) -> str:
         if state.get("_halt"):
@@ -267,7 +267,7 @@ class EngineGraph:
             return "group_command_reply"
         return "attachments"
 
-    def _route_after_risk(self, state: EngineState) -> str:
+    def _route_after_insight(self, state: EngineState) -> str:
         if state.get("needs_handoff"):
             return "handoff"
         if not state.get("service_case_id"):
@@ -1072,8 +1072,8 @@ class EngineGraph:
 
     # ---------- 共享尾部 ----------
 
-    async def _risk(self, state: EngineState) -> dict[str, Any]:
-        """对应 462–515 / 620–638：风控/意图分析 + 转人工决策（两入口汇流）。"""
+    async def _insight(self, state: EngineState) -> dict[str, Any]:
+        """对应 462–515 / 620–638：消息多信号（风险/意图）分析 + 转人工决策（两入口汇流）。"""
         message: ChannelMessage = state["message"]
         service_case_id = state.get("service_case_id")
         inbound_id = state.get("inbound_id")
@@ -1134,7 +1134,7 @@ class EngineGraph:
             else:
                 analysis_input = image_analysis_content or message.text
                 image_prompt = analysis.get("image_prompt") if isinstance(analysis, dict) else None
-                analysis = await engine_mod.analyze_intervention(
+                analysis = await engine_mod.analyze_message_insight(
                     source="chat_message",
                     content=analysis_input,
                     context={
@@ -1147,7 +1147,7 @@ class EngineGraph:
                 )
                 if image_prompt:
                     analysis["image_prompt"] = image_prompt
-                case_risk_level = await self.engine._store_intervention_analysis(
+                case_risk_level = await self.engine._store_message_insight(
                     service_case_id=service_case_id,
                     inbound_id=inbound_id,
                     analysis=analysis,
@@ -1719,7 +1719,7 @@ def _compile_engine_graph(checkpointer: BaseCheckpointSaver | None):
         "staff_gate",
         "questionnaire",
         "reprocess_head",
-        "risk",
+        "insight",
         "handoff",
         "reply_prep",
         "reply_generate",
@@ -1762,7 +1762,7 @@ def _compile_engine_graph(checkpointer: BaseCheckpointSaver | None):
     builder.add_conditional_edges(
         "staff_gate",
         _engine_route_dispatch("_route_after_staff_gate"),
-        {"questionnaire": "questionnaire", "risk": "risk", END: "finalize"},
+        {"questionnaire": "questionnaire", "insight": "insight", END: "finalize"},
     )
     builder.add_edge("questionnaire", "finalize")
     builder.add_conditional_edges(
@@ -1776,8 +1776,8 @@ def _compile_engine_graph(checkpointer: BaseCheckpointSaver | None):
         },
     )
     builder.add_conditional_edges(
-        "risk",
-        _engine_route_dispatch("_route_after_risk"),
+        "insight",
+        _engine_route_dispatch("_route_after_insight"),
         {"handoff": "handoff", "reply_prep": "reply_prep", END: "finalize"},
     )
     builder.add_edge("handoff", "finalize")

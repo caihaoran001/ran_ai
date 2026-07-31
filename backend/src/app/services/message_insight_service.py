@@ -82,7 +82,7 @@ VALID_ARCHIVE_KINDS = frozenset({
 })
 
 
-async def analyze_intervention(
+async def analyze_message_insight(
     *,
     source: str,
     content: str,
@@ -90,7 +90,7 @@ async def analyze_intervention(
 ) -> dict[str, Any]:
     ai = AIService()
     try:
-        insight = await ai.extract_intervention_insight(
+        insight = await ai.extract_message_insight(
             source=source,
             content=content,
             context=context,

@@ -8,7 +8,7 @@ from app.services.health_taxonomy import (
     merge_health_profiles,
     normalize_health_profile,
 )
-from app.services.intervention_service import merge_case_insight, normalize_insight
+from app.services.message_insight_service import merge_case_insight, normalize_insight
 
 
 def _case() -> ServiceCase:

@@ -166,7 +166,7 @@ async def dashboard_summary(
     )
     # 今日转人工事件数：同一用户多次触发算多条；这不是服务单上的持续状态。
     # 口径与「今日用户消息/今日打卡」一致，每日自然滚动，无需人工清零机制。
-    # 判定信号：入站用户消息的 analysis_json.requires_human_intervention（由 analyze_intervention 写入，
+    # 判定信号：入站用户消息的 analysis_json.requires_human_intervention（由 analyze_message_insight 写入，
     # 正是 engine 触发 @班主任 handoff 的条件）。注：旧的「待审核 AI 回复(PENDING)」机制已废弃——
     # 现凡需介入一律直接 @班主任(status=SENT)，不再生成 PENDING 回复，故不能再用它统计。
     handoff_events_today = await session.scalar(

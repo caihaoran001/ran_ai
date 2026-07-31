@@ -16,7 +16,7 @@ from sqlalchemy import select
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import UserDocument
-from app.services.intervention_service import merge_case_insight
+from app.services.message_insight_service import merge_case_insight
 from app.services.reminder_service import ReminderService
 
 TZ = ZoneInfo("Asia/Shanghai")

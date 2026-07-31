@@ -198,7 +198,7 @@ class MockAIService:
 
     def _model_for(self, scenario: str) -> str:
         # 与真实 AIService 接口对齐：按场景返回模型名（mock 不区分，回退默认）
-        if scenario == "intervention_risk" and (getattr(self.settings, "ai_risk_model", "") or "").strip():
+        if scenario == "message_insight" and (getattr(self.settings, "ai_risk_model", "") or "").strip():
             return self.settings.ai_risk_model.strip()
         if scenario in {"intake_doc", "stage_report", "population_insight"} and (
             getattr(self.settings, "ai_document_model", "") or ""
@@ -286,7 +286,7 @@ class MockAIService:
             )
         return '{"summary":"mock","sections":[]}'
 
-    async def extract_intervention_insight(self, *, source, content, context=None):
+    async def extract_message_insight(self, *, source, content, context=None):
         text = (content or "").lower()
         if any(kw in text for kw in ("崩溃", "撑不住", "想死", "抑郁")):
             return _risk_insight("depression", "情绪危机", content[:80], source)
@@ -434,7 +434,7 @@ async def mock_ai():
     import app.services.knowledge_dedupe as dedupe_mod
     import app.services.knowledge_evolution as evolution_mod
     import app.services.ranren_ai.engine as engine_mod
-    import app.services.intervention_service as intervention_mod
+    import app.services.message_insight_service as message_insight_mod
     import app.services.population_insight as population_insight_mod
 
     orig_client = client_mod.AIService
@@ -442,7 +442,7 @@ async def mock_ai():
     orig_dedupe = dedupe_mod.AIService
     orig_evolution = evolution_mod.AIService
     orig_engine = engine_mod.AIService
-    orig_intervention = intervention_mod.AIService
+    orig_intervention = message_insight_mod.AIService
     orig_population_insight = population_insight_mod.AIService
 
     client_mod.AIService = lambda *a, **kw: mock
@@ -450,7 +450,7 @@ async def mock_ai():
     dedupe_mod.AIService = lambda *a, **kw: mock
     evolution_mod.AIService = lambda *a, **kw: mock
     engine_mod.AIService = lambda *a, **kw: mock
-    intervention_mod.AIService = lambda *a, **kw: mock
+    message_insight_mod.AIService = lambda *a, **kw: mock
     population_insight_mod.AIService = lambda *a, **kw: mock
 
     yield mock
@@ -460,7 +460,7 @@ async def mock_ai():
     dedupe_mod.AIService = orig_dedupe
     evolution_mod.AIService = orig_evolution
     engine_mod.AIService = orig_engine
-    intervention_mod.AIService = orig_intervention
+    message_insight_mod.AIService = orig_intervention
     population_insight_mod.AIService = orig_population_insight
 
 
