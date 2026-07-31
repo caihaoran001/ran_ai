@@ -4,13 +4,13 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
-import secrets
 
 import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.admin_auth import add_admin_auth_middleware
 from app.api.router import api_router
 from app.core.config import configure_logging, get_settings
 from app.services.channels import set_current_channel
@@ -177,14 +177,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.middleware("http")
-    async def admin_api_key_auth(request: Request, call_next):
-        if _requires_admin_auth(request):
-            expected = settings.backend_admin_api_key.strip()
-            provided = request.headers.get("x-admin-api-key", "").strip()
-            if not expected or not secrets.compare_digest(provided, expected):
-                return JSONResponse({"detail": "unauthorized"}, status_code=401)
-        return await call_next(request)
+    add_admin_auth_middleware(app, settings)
 
     app.include_router(api_router, prefix=settings.api_prefix)
 
@@ -208,43 +201,6 @@ def _cors_origins(settings) -> list[str]:
     if configured:
         return configured
     return [settings.frontend_public_base_url]
-
-
-def _requires_admin_auth(request: Request) -> bool:
-    path = request.url.path
-    if request.method == "OPTIONS":
-        return False
-    if path == "/health":
-        return False
-    if path == "/api/channels/qiwe/callback":
-        return False
-    if _is_public_questionnaire_path(path, request.method):
-        return False
-    # 短链接解析是公开入口(用户点 /s/{code} 跳转用)，免 admin key
-    if path.startswith("/api/short-links/") and request.method == "GET":
-        return False
-    if path.startswith("/api/"):
-        return True
-    if path in {"/docs", "/redoc", "/openapi.json"}:
-        return True
-    return False
-
-
-def _is_public_questionnaire_path(path: str, method: str) -> bool:
-    prefix = "/api/questionnaires/"
-    if not path.startswith(prefix):
-        return False
-    rest = path.removeprefix(prefix).strip("/")
-    if not rest:
-        return False
-    parts = rest.split("/")
-    if len(parts) == 1 and method == "GET":
-        return True
-    # POST=用户首次提交，走 token 鉴权、免 admin key；
-    # PATCH=运营编辑已提交问卷并重新生成，属管理操作，不在此豁免——需带 admin key 走鉴权
-    if len(parts) == 2 and parts[1] == "submit" and method == "POST":
-        return True
-    return False
 
 
 app = create_app()

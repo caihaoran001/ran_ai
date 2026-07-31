@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.main import _is_public_questionnaire_path
+from app.api.admin_auth import _is_public_questionnaire_path
 from app.services.ranren_ai.engine import _is_allowed_image_host
 from app.models.message import (
     Message,
