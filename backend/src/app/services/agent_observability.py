@@ -118,12 +118,20 @@ async def record_model_usage(
     if agent_run_id is None:
         return
     settings = settings or get_settings()
-    prompt_tokens, completion_tokens, total_tokens = _usage_counts(response)
+    prompt_tokens, completion_tokens, total_tokens, cache_hit_tokens = _usage_counts(
+        response
+    )
+    prompt_cache_miss_tokens = (
+        max(0, int(prompt_tokens) - int(cache_hit_tokens))
+        if prompt_tokens is not None and cache_hit_tokens is not None
+        else None
+    )
     estimated_cost = _estimated_cost_yuan(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         settings=settings,
         scenario=scenario,
+        prompt_cache_hit_tokens=cache_hit_tokens,
     )
     finish_reason = _finish_reason(response)
     response_model = _response_model(response) or model
@@ -143,6 +151,8 @@ async def record_model_usage(
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     total_tokens=total_tokens,
+                    prompt_cache_hit_tokens=cache_hit_tokens,
+                    prompt_cache_miss_tokens=prompt_cache_miss_tokens,
                     estimated_cost_yuan=estimated_cost,
                     elapsed_ms=max(0, int(elapsed_ms)),
                     attempts=1,
@@ -292,7 +302,14 @@ async def complete_agent_run(
         )
 
 
-def _usage_counts(response: Any) -> tuple[int | None, int | None, int | None]:
+def _usage_counts(
+    response: Any,
+) -> tuple[int | None, int | None, int | None, int | None]:
+    """返回 (输入 token, 输出 token, 总 token, 缓存命中输入 token)。
+
+    LangChain 把缓存命中放在 usage_metadata.input_token_details.cache_read；
+    原始 DeepSeek 响应则在 response_metadata.token_usage.prompt_cache_hit_tokens。
+    """
     usage = getattr(response, "usage_metadata", None)
     if isinstance(usage, dict):
         prompt = _optional_int(
@@ -304,7 +321,13 @@ def _usage_counts(response: Any) -> tuple[int | None, int | None, int | None]:
         total = _optional_int(usage.get("total_tokens"))
         if total is None and (prompt is not None or completion is not None):
             total = int(prompt or 0) + int(completion or 0)
-        return prompt, completion, total
+        details = usage.get("input_token_details")
+        cache_hit = (
+            _optional_int(details.get("cache_read"))
+            if isinstance(details, dict)
+            else None
+        )
+        return prompt, completion, total, cache_hit
     metadata = getattr(response, "response_metadata", None)
     token_usage = (
         metadata.get("token_usage")
@@ -321,7 +344,8 @@ def _usage_counts(response: Any) -> tuple[int | None, int | None, int | None]:
     total = _optional_int(token_usage.get("total_tokens"))
     if total is None and (prompt is not None or completion is not None):
         total = int(prompt or 0) + int(completion or 0)
-    return prompt, completion, total
+    cache_hit = _optional_int(token_usage.get("prompt_cache_hit_tokens"))
+    return prompt, completion, total, cache_hit
 
 
 def _finish_reason(response: Any) -> str | None:

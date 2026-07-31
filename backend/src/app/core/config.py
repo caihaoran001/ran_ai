@@ -104,6 +104,18 @@ class Settings(BaseSettings):
         default=6.0,
         validation_alias="AI_COMPLETION_COST_PER_1M_TOKENS",
     )
+    # DeepSeek 硬盘缓存命中的输入单价（元/百万 token），远低于未命中价(flash 0.02 / pro 0.025)。
+    # <=0 视为未配置：命中 token 回退按未命中价计，即保持历史行为不打折。
+    ai_prompt_cache_hit_cost_per_1m_tokens: float = Field(
+        default=0.0,
+        validation_alias="AI_PROMPT_CACHE_HIT_COST_PER_1M_TOKENS",
+    )
+    # DeepSeek 高峰时段(北京 9:00–12:00、14:00–18:00)价格倍率。官方"高峰 2×"尚未生效，
+    # 默认 1.0 = 不加价；官方正式启用后改成 2.0 即可，无需改代码。仅作用于 DeepSeek(非 Qwen)。
+    ai_peak_price_multiplier: float = Field(
+        default=1.0,
+        validation_alias="AI_PEAK_PRICE_MULTIPLIER",
+    )
     document_output_dir: str = Field(
         default="generated_documents",
         validation_alias="DOCUMENT_OUTPUT_DIR",

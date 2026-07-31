@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from html import escape
 import json
 import logging
@@ -8,6 +9,7 @@ import os
 import random
 import time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, RateLimitError
 
@@ -54,17 +56,27 @@ def _estimated_cost_yuan(
     completion_tokens: int | None,
     settings: Settings,
     scenario: str | None = None,
+    prompt_cache_hit_tokens: int | None = None,
+    now: datetime | None = None,
 ) -> float | None:
     if prompt_tokens is None and completion_tokens is None:
         return None
-    prompt_price, completion_price = _pricing_for_usage(
+    miss_price, hit_price, completion_price = _pricing_for_usage(
         prompt_tokens=prompt_tokens,
         settings=settings,
         scenario=scenario,
     )
-    prompt_cost = (prompt_tokens or 0) * prompt_price / 1_000_000
+    # 输入 token 拆成缓存命中/未命中两段分别计价。命中数缺失(None)时按未命中价算，
+    # 即完全保持历史行为，不擅自打折。
+    prompt_total = prompt_tokens or 0
+    hit = prompt_cache_hit_tokens or 0
+    hit = max(0, min(hit, prompt_total))
+    miss = prompt_total - hit
+    prompt_cost = (miss * miss_price + hit * hit_price) / 1_000_000
     completion_cost = (completion_tokens or 0) * completion_price / 1_000_000
-    return round(prompt_cost + completion_cost, 8)
+    subtotal = prompt_cost + completion_cost
+    subtotal *= _peak_multiplier(settings=settings, scenario=scenario, now=now)
+    return round(subtotal, 8)
 
 
 def _pricing_for_usage(
@@ -72,29 +84,53 @@ def _pricing_for_usage(
     prompt_tokens: int | None,
     settings: Settings,
     scenario: str | None,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
+    """返回 (未命中输入价, 缓存命中输入价, 输出价)，单位元/百万 token。"""
     if scenario == "qwen_vl_translate":
         # Qwen image translation pricing is tiered by the request input-token range.
         # Image OCR requests are usually far below 128K input tokens.
+        # Qwen 无缓存命中概念，命中价直接沿用未命中价。
         tokens = prompt_tokens or 0
         if tokens < 128_000:
-            return (
-                max(float(settings.qwen_prompt_cost_under_128k_per_1m_tokens or 0), 0.0),
-                max(float(settings.qwen_completion_cost_under_128k_per_1m_tokens or 0), 0.0),
-            )
-        if tokens < 256_000:
-            return (
-                max(float(settings.qwen_prompt_cost_128k_to_256k_per_1m_tokens or 0), 0.0),
-                max(float(settings.qwen_completion_cost_128k_to_256k_per_1m_tokens or 0), 0.0),
-            )
-        return (
-            max(float(settings.qwen_prompt_cost_over_256k_per_1m_tokens or 0), 0.0),
-            max(float(settings.qwen_completion_cost_over_256k_per_1m_tokens or 0), 0.0),
-        )
-    return (
-        max(float(settings.ai_prompt_cost_per_1m_tokens or 0), 0.0),
-        max(float(settings.ai_completion_cost_per_1m_tokens or 0), 0.0),
-    )
+            miss = max(float(settings.qwen_prompt_cost_under_128k_per_1m_tokens or 0), 0.0)
+            completion = max(float(settings.qwen_completion_cost_under_128k_per_1m_tokens or 0), 0.0)
+        elif tokens < 256_000:
+            miss = max(float(settings.qwen_prompt_cost_128k_to_256k_per_1m_tokens or 0), 0.0)
+            completion = max(float(settings.qwen_completion_cost_128k_to_256k_per_1m_tokens or 0), 0.0)
+        else:
+            miss = max(float(settings.qwen_prompt_cost_over_256k_per_1m_tokens or 0), 0.0)
+            completion = max(float(settings.qwen_completion_cost_over_256k_per_1m_tokens or 0), 0.0)
+        return (miss, miss, completion)
+    miss = max(float(settings.ai_prompt_cost_per_1m_tokens or 0), 0.0)
+    completion = max(float(settings.ai_completion_cost_per_1m_tokens or 0), 0.0)
+    hit_cfg = float(settings.ai_prompt_cache_hit_cost_per_1m_tokens or 0)
+    # 未配置(<=0)时回退按未命中价计，避免误把命中当免费而低估成本。
+    hit = hit_cfg if hit_cfg > 0 else miss
+    return (miss, hit, completion)
+
+
+def _peak_multiplier(
+    *,
+    settings: Settings,
+    scenario: str | None,
+    now: datetime | None = None,
+) -> float:
+    """DeepSeek 高峰时段(北京 9:00–12:00、14:00–18:00)价格倍率。
+
+    倍率配置为 1.0(默认)或非 DeepSeek 场景时恒返回 1.0，不做任何时间判断。
+    官方正式启用高峰加价后把 AI_PEAK_PRICE_MULTIPLIER 改成 2.0 即生效。
+    """
+    if scenario == "qwen_vl_translate":
+        return 1.0
+    factor = float(settings.ai_peak_price_multiplier or 1.0)
+    if factor == 1.0:
+        return 1.0
+    current = now or datetime.now(ZoneInfo("Asia/Shanghai"))
+    if current.tzinfo is not None:
+        current = current.astimezone(ZoneInfo("Asia/Shanghai"))
+    hour = current.hour
+    in_peak = (9 <= hour < 12) or (14 <= hour < 18)
+    return factor if in_peak else 1.0
 
 
 def _int_or_none(value: object) -> int | None:
@@ -397,11 +433,15 @@ class AIService:
         prompt_tokens = getattr(usage, "prompt_tokens", None)
         completion_tokens = getattr(usage, "completion_tokens", None)
         total_tokens = getattr(usage, "total_tokens", None)
+        # DeepSeek 在 usage 上返回硬盘缓存命中/未命中拆分(prompt_tokens = 命中 + 未命中)。
+        prompt_cache_hit_tokens = _int_or_none(getattr(usage, "prompt_cache_hit_tokens", None))
+        prompt_cache_miss_tokens = _int_or_none(getattr(usage, "prompt_cache_miss_tokens", None))
         estimated_cost = _estimated_cost_yuan(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             settings=self.settings,
             scenario=scenario,
+            prompt_cache_hit_tokens=prompt_cache_hit_tokens,
         )
         diagnostic_run_id = (os.getenv("RAN_AI_DIAGNOSTIC_RUN_ID") or "").strip() or None
         is_diagnostic = bool(diagnostic_run_id) or scenario.startswith("diagnostics_")
@@ -419,6 +459,8 @@ class AIService:
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         total_tokens=total_tokens,
+                        prompt_cache_hit_tokens=prompt_cache_hit_tokens,
+                        prompt_cache_miss_tokens=prompt_cache_miss_tokens,
                         estimated_cost_yuan=estimated_cost,
                         elapsed_ms=elapsed_ms,
                         attempts=attempts,

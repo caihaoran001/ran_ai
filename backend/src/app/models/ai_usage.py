@@ -31,6 +31,9 @@ class AIUsageLog(TimestampMixin, Base):
     prompt_tokens: Mapped[int | None] = mapped_column(Integer)
     completion_tokens: Mapped[int | None] = mapped_column(Integer)
     total_tokens: Mapped[int | None] = mapped_column(Integer)
+    # DeepSeek 硬盘缓存命中/未命中输入 token 拆分 (prompt_tokens = 命中 + 未命中)。
+    prompt_cache_hit_tokens: Mapped[int | None] = mapped_column(Integer)
+    prompt_cache_miss_tokens: Mapped[int | None] = mapped_column(Integer)
     estimated_cost_yuan: Mapped[float | None] = mapped_column(Float)
     elapsed_ms: Mapped[int | None] = mapped_column(Integer)
     attempts: Mapped[int | None] = mapped_column(Integer)
