@@ -310,7 +310,7 @@ export function AgentOperationsClient({
           </nav>
 
           <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white p-1">
-            {[7, 30, 90].map((value) => (
+            {[1, 7, 30, 90].map((value) => (
               <button
                 key={value}
                 onClick={() => handleDaysChange(value)}
