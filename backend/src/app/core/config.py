@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     ai_risk_model: str = Field(default="", validation_alias="AI_RISK_MODEL")
     ai_temperature: float = Field(default=0.3, validation_alias="AI_TEMPERATURE")
     ai_max_tokens: int = Field(default=8000, validation_alias="AI_MAX_TOKENS")
+    # 文档生成保留 DeepSeek V4 thinking：推理和最终 JSON 共享同一输出预算，
+    # 因此需要比聊天/小抽取更高的独立上限，不应把全局 AI_MAX_TOKENS 一起放大。
+    ai_document_max_tokens: int = Field(
+        default=50000,
+        validation_alias="AI_DOCUMENT_MAX_TOKENS",
+    )
 
     # 通义千问多模态模型设置
     qwen_base_url: str = Field(

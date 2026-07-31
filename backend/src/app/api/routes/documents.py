@@ -288,7 +288,7 @@ def _append_generation_error_note(service_case: ServiceCase, exc: Exception) -> 
     else:
         message = (
             f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
-            f"（AI_MAX_TOKENS={settings.ai_max_tokens}）"
+            f"（AI_DOCUMENT_MAX_TOKENS={settings.ai_document_max_tokens}）"
         )
     existing = service_case.notes or ""
     service_case.notes = (f"{existing}\n{message}" if existing else message)[-2000:]

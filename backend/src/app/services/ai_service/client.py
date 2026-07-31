@@ -39,6 +39,7 @@ _MEAL_UNSPECIFIC_MARKERS = (
     "一份餐食",
     "一顿餐",
 )
+_DOCUMENT_JSON_SCENARIOS = frozenset({"intake_doc", "stage_report", "population_insight"})
 
 
 def _get_limiter(max_concurrent: int) -> asyncio.Semaphore:
@@ -140,6 +141,11 @@ def _int_or_none(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _reasoning_tokens(usage: Any) -> int | None:
+    details = getattr(usage, "completion_tokens_details", None)
+    return _int_or_none(getattr(details, "reasoning_tokens", None))
 
 
 def _image_description_needs_fallback(description: str) -> bool:
@@ -331,6 +337,13 @@ class AIService:
             return self.settings.ai_document_model.strip()
         return self.settings.ai_model
 
+    def _max_tokens_for(self, scenario: str) -> int:
+        """文档 thinking 和最终 JSON 共享输出预算，用独立上限避免挤占聊天配额。"""
+
+        if scenario in _DOCUMENT_JSON_SCENARIOS:
+            return max(50000, int(self.settings.ai_document_max_tokens or 0))
+        return int(self.settings.ai_max_tokens)
+
     async def generate_text(
         self,
         *,
@@ -344,6 +357,7 @@ class AIService:
         if not self.settings.ai_api_key:
             raise RuntimeError("AI_API_KEY is required")
         model = self._model_for(scenario)
+        max_tokens = self._max_tokens_for(scenario)
         started_at = time.monotonic()
         finish = None
         usage = None
@@ -354,23 +368,38 @@ class AIService:
                 user_prompt=user_prompt,
                 temperature=temperature,
                 model=model,
+                scenario=scenario,
+                max_tokens=max_tokens,
             )
             finish = response.choices[0].finish_reason if response.choices else None
             usage = getattr(response, "usage", None)
             if finish == "length":
-                raise RuntimeError(
-                    f"AI output truncated at max_tokens={self.settings.ai_max_tokens}。"
-                    "请增大 AI_MAX_TOKENS 后重试。"
+                limit_name = (
+                    "AI_DOCUMENT_MAX_TOKENS"
+                    if scenario in _DOCUMENT_JSON_SCENARIOS
+                    else "AI_MAX_TOKENS"
                 )
-            content = response.choices[0].message.content if response.choices else ""
+                raise RuntimeError(
+                    f"AI output truncated at max_tokens={max_tokens}。"
+                    f"请增大 {limit_name} 后重试。"
+                )
+            message = response.choices[0].message if response.choices else None
+            content = message.content if message else ""
+            reasoning_content = getattr(message, "reasoning_content", None) if message else None
+            if not str(content or "").strip() and str(reasoning_content or "").strip():
+                raise RuntimeError(
+                    "AI completed reasoning but returned empty final content; "
+                    "reasoning_content is not used as a delivery document"
+                )
             logger.info(
-                "llm_call scenario=%s model=%s elapsed_ms=%.1f finish_reason=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s attempts=%s success=%s",
+                "llm_call scenario=%s model=%s elapsed_ms=%.1f finish_reason=%s prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s total_tokens=%s attempts=%s success=%s",
                 scenario,
                 model,
                 (time.monotonic() - started_at) * 1000,
                 finish,
                 getattr(usage, "prompt_tokens", None),
                 getattr(usage, "completion_tokens", None),
+                _reasoning_tokens(usage),
                 getattr(usage, "total_tokens", None),
                 attempts,
                 True,
@@ -390,13 +419,14 @@ class AIService:
             return (content or "").strip()
         except Exception as exc:
             logger.info(
-                "llm_call scenario=%s model=%s elapsed_ms=%.1f finish_reason=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s attempts=%s success=%s error_type=%s",
+                "llm_call scenario=%s model=%s elapsed_ms=%.1f finish_reason=%s prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s total_tokens=%s attempts=%s success=%s error_type=%s",
                 scenario,
                 model,
                 (time.monotonic() - started_at) * 1000,
                 finish,
                 getattr(usage, "prompt_tokens", None),
                 getattr(usage, "completion_tokens", None),
+                _reasoning_tokens(usage),
                 getattr(usage, "total_tokens", None),
                 attempts,
                 False,
@@ -482,6 +512,8 @@ class AIService:
         user_prompt: str,
         temperature: float | None,
         model: str,
+        scenario: str,
+        max_tokens: int,
     ):
         retryable_status_codes = {408, 409, 425, 429, 500, 502, 503, 504}
         max_attempts = 3
@@ -489,6 +521,12 @@ class AIService:
         for attempt in range(max_attempts):
             try:
                 async with _get_limiter(self.settings.ai_max_concurrent_requests):
+                    request_options: dict[str, Any] = {}
+                    if scenario in _DOCUMENT_JSON_SCENARIOS:
+                        request_options["response_format"] = {"type": "json_object"}
+                        if model.startswith("deepseek-v4-"):
+                            request_options["extra_body"] = {"thinking": {"type": "enabled"}}
+                            request_options["reasoning_effort"] = "low"
                     response = await self._client.chat.completions.create(
                         model=model,
                         messages=[
@@ -496,7 +534,8 @@ class AIService:
                             {"role": "user", "content": user_prompt},
                         ],
                         temperature=self.settings.ai_temperature if temperature is None else temperature,
-                        max_tokens=self.settings.ai_max_tokens,
+                        max_tokens=max_tokens,
+                        **request_options,
                     )
                 return response, attempt + 1
             except APIStatusError as exc:
