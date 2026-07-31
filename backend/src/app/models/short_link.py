@@ -10,7 +10,7 @@ from app.models.mixins import TimestampMixin
 class ShortLink(TimestampMixin, Base):
     """短链接：把冗长的 /q/{token}?template=xxx 映射成 6 位短码，用 /s/{code} 访问后重定向。
 
-    按 (service_case_id, template_key) 复用同一短码，避免每天发打卡都生成新码。
+    按 (service_case_id, template_key) 复用同一短码，避免同一入营问卷反复生成新码。
     """
 
     __tablename__ = "short_links"

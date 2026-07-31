@@ -1022,27 +1022,6 @@ class ReminderService:
                 await asyncio.gather(*tasks[i : i + batch_size], return_exceptions=True)
 
 
-async def mark_seen(service_case_id: int, event_date: date | None = None) -> None:
-    async with SessionLocal() as session:
-        if await _has_event(
-            session,
-            service_case_id,
-            rule_id="daily_checkin",
-            event_date=event_date or date.today(),
-            event_type=ReminderEventType.SEEN,
-        ):
-            return
-        session.add(
-            ReminderEvent(
-                service_case_id=service_case_id,
-                rule_id="daily_checkin",
-                event_date=event_date or date.today(),
-                event_type=ReminderEventType.SEEN,
-            )
-        )
-        await session.commit()
-
-
 async def _send_channel_text_with_retries(chat_id: str, content: str):
     last_result = None
     for attempt in range(1, CHANNEL_SEND_MAX_ATTEMPTS + 1):
@@ -1244,25 +1223,6 @@ async def _scheduler_advisory_lock():
                     )
                 )
                 yield acquired
-
-
-async def _has_event(
-    session,
-    service_case_id: int,
-    *,
-    rule_id: str,
-    event_date: date,
-    event_type: ReminderEventType,
-) -> bool:
-    value = await session.scalar(
-        select(ReminderEvent.id).where(
-            ReminderEvent.service_case_id == service_case_id,
-            ReminderEvent.rule_id == rule_id,
-            ReminderEvent.event_date == event_date,
-            ReminderEvent.event_type == event_type,
-        )
-    )
-    return value is not None
 
 
 async def _reserve_reminder_event(

@@ -31,7 +31,7 @@ async def get_or_create_short_link(
 ) -> str:
     """按 (service_case_id, template_key) 复用短码；不存在则生成。返回 code。
 
-    复用避免每天发打卡都生成新码导致表膨胀；target_path 变化时同步更新（token 基本不变，仅作保险）。
+    复用避免同一入营问卷反复生成新码导致表膨胀；target_path 变化时同步更新（token 基本不变，仅作保险）。
     """
     existing = await session.scalar(
         select(ShortLink).where(
