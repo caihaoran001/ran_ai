@@ -21,11 +21,11 @@ async def lifespan(_: FastAPI):
         await engine.dispose()
 
 
-def create_qiwe_ingress_app() -> FastAPI:
+def create_ingress_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings)
     app = FastAPI(
-        title=f"{settings.app_name} QiWe Ingress",
+        title=f"{settings.app_name} Ingress",
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
@@ -41,12 +41,12 @@ def create_qiwe_ingress_app() -> FastAPI:
     return app
 
 
-app = create_qiwe_ingress_app()
+app = create_ingress_app()
 
 
 def main() -> None:
     uvicorn.run(
-        "app.qiwe_ingress:app",
+        "app.ingress:app",
         host="0.0.0.0",
         port=8001,
         reload=False,

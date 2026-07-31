@@ -12,7 +12,7 @@ from app.models.mixins import TimestampMixin
 class InboundEvent(TimestampMixin, Base):
     """入站消息的持久化「收件箱」。
 
-    稳定 qiwe-ingress 在返回 2xx 前先写本表；可重启 backend 用状态租约持续消费，
+    稳定 ingress 在返回 2xx 前先写本表；可重启 backend 用状态租约持续消费，
     再进入约 8 秒聚合窗口。事件与业务 Message 在同一事务绑定，之后的中断交给
     Message/LangGraph 恢复，不会把 transport event 当成一条新消息重复回复。
 

@@ -27,7 +27,7 @@ dependencies = [
 [project.scripts]
 ran-ai-api = "app.main:main"
 ran-ai-scheduler = "app.workers.scheduler:main"
-ran-ai-qiwe-ingress = "app.qiwe_ingress:main"
+ran-ai-ingress = "app.ingress:main"
 ran-ai-checkpoint-setup = "app.services.agent.checkpoint:main"
 
 [build-system]

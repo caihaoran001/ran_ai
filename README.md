@@ -296,19 +296,19 @@ QIWEI_BATCH_WINDOW_SECONDS=8
 
 消息接入在生产运行时拆成两个后端容器：
 
-- `qiwe-ingress`：稳定常驻，只负责校验、解析 QiWe callback，并在返回 2xx 前写入 RDS `inbound_events`。
+- `ingress`：稳定常驻，只负责校验、解析 QiWe callback，并在返回 2xx 前写入 RDS `inbound_events`。
 - `backend`：可以随日常代码部署重启，持续消费 `inbound_events`，完成消息聚合和后续业务处理。
 
 业务处理内部继续按通道适配、消息聚合和通道无关引擎分层：
 
 ```text
-app/qiwe_ingress.py             QiWe callback 轻量持久化入口
+app/ingress.py                  入站边缘入口（QiWe 回调 + 公开问卷/短链）
 app/services/qiwe_service/      RDS inbox 消费与 QiWe 群消息聚合
 app/services/channels/          通用消息通道接口、当前通道注册表、QiWe adapter
 app/services/ranren_ai/         通道无关的业务处理引擎
 ```
 
-完整链路是：QiWe callback → `qiwe-ingress` 持久化到 `inbound_events` → `backend` 领取事件并转成 `ChannelMessage` → 同群同用户消息按约 8 秒窗口聚合 → `RanrenAIEngine` 处理。这样即使业务后端正在部署或重启，已经收到的 callback 也不会只停留在进程内存中。`RanrenAIEngine` 只依赖通用 `MessageChannel`，负责群服务单建立、员工引荐闸门、可选问卷指令、知识库检索、LLM 回复和消息落库。
+完整链路是：QiWe callback → `ingress` 持久化到 `inbound_events` → `backend` 领取事件并转成 `ChannelMessage` → 同群同用户消息按约 8 秒窗口聚合 → `RanrenAIEngine` 处理。这样即使业务后端正在部署或重启，已经收到的 callback 也不会只停留在进程内存中。`RanrenAIEngine` 只依赖通用 `MessageChannel`，负责群服务单建立、员工引荐闸门、可选问卷指令、知识库检索、LLM 回复和消息落库。
 
 ## 定时提醒
 

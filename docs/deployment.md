@@ -19,7 +19,7 @@
 
 | 你要做的 | 跑什么 | 会动什么 |
 |---|---|---|
-| **部署代码**（日常、高频） | `uv run --no-project --with paramiko python scratch/local_prebuilt_deploy.py` | 只更新代码（后端 `src`、前端 standalone）并重建/重启 `backend`、`frontend`；常驻 `qiwe-ingress` 和 Caddy 不动。切换前自动执行 LangGraph checkpoint 表初始化/升级。**不碰**服务器的 `.env` 和 `docker-compose.prod.yml`（打包已排除） |
+| **部署代码**（日常、高频） | `uv run --no-project --with paramiko python scratch/local_prebuilt_deploy.py` | 只更新代码（后端 `src`、前端 standalone）并重建/重启 `backend`、`frontend`；常驻 `ingress` 和 Caddy 不动。切换前自动执行 LangGraph checkpoint 表初始化/升级。**不碰**服务器的 `.env` 和 `docker-compose.prod.yml`（打包已排除） |
 | **改生产配置**（少见） | `uv run --with paramiko python scratch/configure_remote_files.py` | 用仓库当前 `docker-compose.prod.yml` 与脚本内 `.env` 模板**整体覆盖**服务器配置 |
 
 **为什么分开**：部署代码很频繁；如果每次部署都覆盖 `.env`，一旦有人在服务器上手改过配置（如换 QiWe `guid`），就会被模板覆盖回去、搞坏线上。所以**部署代码绝不动配置**；改配置是一个单独、显式的动作。
@@ -54,7 +54,7 @@
 生产 compose 包含：
 
 - `backend`：FastAPI 后端，启动时自动执行 Alembic migration。
-- `qiwe-ingress`：稳定常驻的轻量 QiWe 回调入口，只鉴权、解析并写入 RDS `inbound_events`；日常业务部署不重启它。
+- `ingress`：稳定常驻的轻量 QiWe 回调入口，只鉴权、解析并写入 RDS `inbound_events`；日常业务部署不重启它。
 - `frontend`：Next.js standalone 生产服务。
 - `caddy`：公网 HTTP/HTTPS 入口。
 
@@ -74,7 +74,7 @@ DATABASE_URL=postgresql+asyncpg://用户名:密码@RDS内网地址:5432/数据�
 
 Caddy 路由规则：
 
-- `/api/channels/qiwe/callback` 直连 `qiwe-ingress`，先落 RDS 再返回 2xx。
+- `/api/channels/qiwe/callback` 直连 `ingress`，先落 RDS 再返回 2xx。
 - 其他 `/api/channels/qiwe/*` 仍直连 `backend`。
 - `/health` 直连后端。
 - 其他请求全部进入前端。
@@ -193,7 +193,7 @@ X-QIWEI-CALLBACK-SECRET: 你的_QIWEI_CALLBACK_SECRET
 ```bash
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs --tail 100 backend
-docker compose -f docker-compose.prod.yml logs --tail 100 qiwe-ingress
+docker compose -f docker-compose.prod.yml logs --tail 100 ingress
 ```
 
 然后按测试规范执行自动化检查：

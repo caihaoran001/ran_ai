@@ -66,12 +66,12 @@ services:
       # 入站图片缓存(聊天记录原图)。持久化后容器重建不再丢图，60 天保留期才真正生效。
       - ./wecom_cache:/app/.wecom_cache
 
-  qiwe-ingress:
+  ingress:
     # Shares the backend image at initial rollout, but normal deployments never
     # recreate this container. It keeps running its old, known-good image while
     # the backend tag is rebuilt underneath it.
     image: ran-ai-backend:local
-    command: ["uv", "run", "ran-ai-qiwe-ingress"]
+    command: ["uv", "run", "ran-ai-ingress"]
     restart: unless-stopped
     environment:
       ENVIRONMENT: production
@@ -115,7 +115,7 @@ services:
     depends_on:
       - frontend
       - backend
-      - qiwe-ingress
+      - ingress
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

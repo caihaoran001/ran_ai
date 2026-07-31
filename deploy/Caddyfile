@@ -6,7 +6,7 @@
 	}
 
 	handle /api/channels/qiwe/callback {
-		reverse_proxy qiwe-ingress:8001
+		reverse_proxy ingress:8001
 	}
 
 	handle /api/channels/qiwe/* {

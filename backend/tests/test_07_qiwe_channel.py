@@ -800,7 +800,7 @@ async def test_qiwe_callback_persists_inbox_before_background_dispatch(
 
 
 @pytest.mark.asyncio
-async def test_dedicated_qiwe_ingress_only_persists_callback(
+async def test_dedicated_ingress_only_persists_callback(
     db_session,
     monkeypatch,
 ):
@@ -808,13 +808,13 @@ async def test_dedicated_qiwe_ingress_only_persists_callback(
     from sqlalchemy import select
 
     from app.models.inbound_event import InboundEvent
-    from app.qiwe_ingress import create_qiwe_ingress_app
+    from app.ingress import create_ingress_app
 
     monkeypatch.setattr(
         "app.api.routes.qiwe.get_settings",
         lambda: SimpleNamespace(qiwei_callback_secret="ingress-secret"),
     )
-    app = create_qiwe_ingress_app()
+    app = create_ingress_app()
     message_id = f"ingress-only-{secrets.token_hex(4)}"
     async with AsyncClient(
         transport=ASGITransport(app=app),
