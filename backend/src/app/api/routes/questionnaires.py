@@ -25,6 +25,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.services.checkin_checklists import get_effective_daily_checklist
 from app.services.intake_generation import (
+    DocumentGenerationBlocked,
     checkin_field_type_for,
     checkin_options_for,
     infer_checkin_answer_type as _infer_checkin_answer_type,
@@ -562,10 +563,13 @@ def _append_generation_error_note(service_case: ServiceCase, exc: Exception) -> 
         now=datetime.now(tz),
         tz=tz,
     )
-    message = (
-        f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
-        f"（AI_MAX_TOKENS={settings.ai_max_tokens}）"
-    )
+    if isinstance(exc, DocumentGenerationBlocked):
+        message = f"[{timestamp}] 资料待确认，暂未生成交付文件：{'；'.join(exc.reasons)}"
+    else:
+        message = (
+            f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
+            f"（AI_MAX_TOKENS={settings.ai_max_tokens}）"
+        )
     existing = service_case.notes or ""
     service_case.notes = (f"{existing}\n{message}" if existing else message)[-2000:]
 

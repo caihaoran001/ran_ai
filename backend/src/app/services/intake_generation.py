@@ -61,7 +61,25 @@ BAND_CALCULATION_FIELDS = (
     "safe_reduction_room_kg",
     "safety_review_required",
     "safety_review_reasons",
+    "28_day_auto_cap_kg",
+    "28_day_display_cap_jin",
+    "basic_target_jin_or_range",
+    "challenge_target_jin_or_review_text",
+    "target_generation_rule_applied",
 )
+
+MANUAL_REVIEW_CHALLENGE_TARGET = "暂不设置挑战数字，D7复评"
+MANUAL_REVIEW_BASE_TARGET = "先完成7天基础执行，D7复评"
+
+
+class DocumentGenerationBlocked(RuntimeError):
+    """关键资料不足或明显矛盾，正式交付文件不能可靠生成。"""
+
+    def __init__(self, reasons: list[str]):
+        self.reasons = tuple(reason for reason in reasons if reason)
+        self.ready_for_document_generation = False
+        self.document_generation_block_reasons = list(self.reasons)
+        super().__init__("；".join(self.reasons) or "关键资料尚未确认")
 
 # 内部运营标签：只允许留在 shared_analysis / profile_json 的内部字段和后台界面里。
 # 用户拿到的两份交付文件（管理带、正文、表格、打卡题面）中一个都不能出现。
@@ -120,7 +138,8 @@ def _apply_deterministic_band(
 
     # 问卷暴露的安全条件（红风险、孕哺、青少年等）不改带位——A-D 带始终由安全减重
     # 空间的数值边界决定，风险已经通过上调保护性下限折算进 safe_room。它们在这里
-    # 强制人工复核：文档照常按带位生成，但会被扣住不自动发送，由运营确认后再发。
+    # 强制人工复核：基础目标能安全量化时保留，挑战目标统一降为D7复评；文件会被扣住
+    # 不自动发送，由运营确认后再发。
     # 这比 _force_high_risk_manual_review 更早生效：风控可能还没把服务单判成高风险，
     # 问卷里已经写明了孕期或术后。
     if facts.get("safety_review_required"):
@@ -187,6 +206,150 @@ def _force_high_risk_manual_review(
     shared["manual_review_required"] = True
     shared["manual_review_reasons"] = reasons[:3]
     shared["safety_status"] = "manual_review"
+
+
+def _apply_canonical_target_contract(
+    shared: dict[str, object],
+    facts: dict[str, object],
+) -> None:
+    """把 V2.2 目标写成唯一权威值，后续两份文档只能逐字复制。"""
+
+    base_goal = str(facts.get("basic_target_jin_or_range") or "").strip()
+    challenge_goal = str(facts.get("challenge_target_jin_or_review_text") or "").strip()
+    band = str(facts.get("weight_loss_band") or "").strip()
+    can_quantify_base = band in MANAGEMENT_BANDS[1:] and bool(
+        _WEIGHT_NUMBER_PATTERN.search(base_goal)
+    )
+    if _boolean_value(shared.get("manual_review_required")):
+        challenge_goal = MANUAL_REVIEW_CHALLENGE_TARGET
+        if not can_quantify_base:
+            base_goal = MANUAL_REVIEW_BASE_TARGET
+
+    facts["basic_target_jin_or_range"] = base_goal
+    facts["challenge_target_jin_or_review_text"] = challenge_goal
+    if isinstance(facts.get("day28_targets"), dict):
+        facts["day28_targets"]["base"] = base_goal
+        facts["day28_targets"]["challenge"] = challenge_goal
+
+    for key in (
+        "28_day_auto_cap_kg",
+        "28_day_display_cap_jin",
+        "target_generation_rule_applied",
+    ):
+        shared[key] = facts.get(key)
+    shared["basic_target_jin_or_range"] = base_goal
+    shared["challenge_target_jin_or_review_text"] = challenge_goal
+    shared["base_goal"] = base_goal
+    shared["challenge_goal"] = challenge_goal
+    shared["day28_goal"] = f"基础目标：{base_goal}；挑战目标：{challenge_goal}"
+    stage_targets = facts.get("stage_targets") if isinstance(facts.get("stage_targets"), dict) else {}
+    shared["week5_8_target"] = str(stage_targets.get("week5_8") or "").strip()
+    shared["week9_12_target"] = str(stage_targets.get("week9_12") or "").strip()
+
+
+def _document_generation_block_reasons(facts: dict[str, object]) -> list[str]:
+    """只拦真正无法可靠计算的关键资料；普通复测建议不占用运营复核。"""
+
+    reasons: list[str] = []
+    if str(facts.get("height_cm") or "").strip() in {"", "未提供", "暂无数据"}:
+        reasons.append("缺少可识别的身高，无法计算管理带和28天目标")
+    if str(facts.get("weight_kg") or "").strip() in {"", "未提供", "暂无数据"}:
+        reasons.append("缺少可识别的当前体重，无法计算管理带和28天目标")
+    ratio_text = str(facts.get("waist_height_ratio") or "").strip()
+    try:
+        ratio = float(ratio_text)
+    except (TypeError, ValueError):
+        ratio = None
+    if ratio is not None and (ratio < 0.2 or ratio > 1.2):
+        reasons.append("腰围与身高存在明显单位或录入矛盾，请复测并确认后再生成")
+    if not reasons and str(facts.get("weight_loss_band") or "") == UNRESOLVED_BAND:
+        reasons.append("关键体征不足，暂时无法确定管理带")
+    return reasons[:3]
+
+
+def _append_waist_remeasurement_note(
+    payloads: dict[str, dict],
+    facts: dict[str, object],
+) -> None:
+    """非致命腰高比疑点只提醒用户复测，不自动改带，也不增加运营任务。"""
+
+    if facts.get("waist_height_conflict") is not True:
+        return
+    energy = payloads.get(DocumentType.ENERGY_RESTART_PRESCRIPTION.value)
+    if not isinstance(energy, dict):
+        return
+    raw = energy.get("missing_information")
+    items = list(raw) if isinstance(raw, list) else ([str(raw).strip()] if str(raw or "").strip() else [])
+    reason = str(facts.get("waist_height_conflict_reason") or "").strip()
+    note = reason or "建议按同一单位复测身高与腰围，确认腰高比数据"
+    if note not in items:
+        items.append(note)
+    energy["missing_information"] = items
+
+
+def _document_consistency_errors(
+    payloads: dict[str, dict],
+    shared: dict[str, object],
+    facts: dict[str, object],
+) -> list[str]:
+    """落库前一致性闸门：校验确定性目标确实覆盖了两份正式文件。"""
+
+    errors: list[str] = []
+    base = str(facts.get("basic_target_jin_or_range") or "").strip()
+    challenge = str(facts.get("challenge_target_jin_or_review_text") or "").strip()
+    band = str(facts.get("weight_loss_band") or "").strip()
+    if str(shared.get("base_goal") or "").strip() != base:
+        errors.append("共享分析的基础目标与系统计算不一致")
+    if str(shared.get("challenge_goal") or "").strip() != challenge:
+        errors.append("共享分析的挑战目标与系统计算不一致")
+    if _boolean_value(shared.get("manual_review_required")) and challenge != MANUAL_REVIEW_CHALLENGE_TARGET:
+        errors.append("人工复核用户的挑战目标未降级为D7复评")
+    if band == MANAGEMENT_BANDS[0] and (
+        _WEIGHT_NUMBER_PATTERN.search(base) or _WEIGHT_NUMBER_PATTERN.search(challenge)
+    ):
+        errors.append("A带目标中出现减重数字")
+
+    energy = payloads.get(DocumentType.ENERGY_RESTART_PRESCRIPTION.value, {})
+    execution = payloads.get(DocumentType.DAY28_EXECUTION_STANDARD.value, {})
+    goal_response = energy.get("goal_response") if isinstance(energy.get("goal_response"), dict) else {}
+    success_path = energy.get("success_path") if isinstance(energy.get("success_path"), dict) else {}
+    expected_day28 = str(shared.get("day28_goal") or "").strip()
+    expected_long_term = str(shared.get("long_term_goal") or "").strip()
+    if not expected_long_term:
+        errors.append("长期目标缺失")
+    checks = (
+        (goal_response.get("base_goal"), base, "诊断报告基础目标"),
+        (goal_response.get("challenge_goal"), challenge, "诊断报告挑战目标"),
+        (execution.get("base_goal"), base, "执行文件基础目标"),
+        (execution.get("challenge_goal"), challenge, "执行文件挑战目标"),
+        (success_path.get("day28_goal"), expected_day28, "诊断报告28天目标"),
+        (execution.get("day28_goal"), expected_day28, "执行文件28天目标"),
+        (success_path.get("total_goal"), expected_long_term, "诊断报告长期目标"),
+        (execution.get("path_goal"), expected_long_term, "执行文件长期目标"),
+        (success_path.get("week5_8"), shared.get("week5_8_target"), "诊断报告第5-8周目标"),
+        (success_path.get("week9_12"), shared.get("week9_12_target"), "诊断报告第9-12周目标"),
+    )
+    for actual, expected, label in checks:
+        if str(actual or "").strip() != expected:
+            errors.append(f"{label}不一致")
+    if band == MANAGEMENT_BANDS[0]:
+        a_band_target_text = _text_from_payload(
+            {
+                "shared_long_term_goal": shared.get("long_term_goal"),
+                "shared_day28_goal": shared.get("day28_goal"),
+                "shared_day28_task": shared.get("day28_task"),
+                "goal_response": goal_response,
+                "success_path": success_path,
+                "expected_changes": energy.get("expected_changes"),
+                "execution_day28_goal": execution.get("day28_goal"),
+                "execution_path_goal": execution.get("path_goal"),
+                "execution_base_goal": execution.get("base_goal"),
+                "execution_challenge_goal": execution.get("challenge_goal"),
+            }
+        )
+        if _WEIGHT_NUMBER_PATTERN.search(a_band_target_text):
+            errors.append("A带用户可见目标字段中出现减重数字")
+    return errors
 
 
 def _strip_internal_review_labels(payloads: dict[str, dict]) -> None:
@@ -256,6 +419,10 @@ SAFETY_FACTOR_SCHEMA = {
     "当前问卷未采集月经相关信息，仅当用户在健康情况自由填写里主动提到时才为 true，否则 false",
     "doctor_specified_lower_weight_kg": "数字或 null。用户明确写了医生交代的体重下限（公斤）时填该数字；"
     "没有明确数字时必须填 null，禁止自己推算",
+    "waist_height_conflict": "布尔值。仅当腰围与身高存在明显测量、录入或单位矛盾时为 true。"
+    "腰高比偏高本身是可能真实存在的腹型肥胖信号，不是数据冲突，必须填 false",
+    "waist_height_conflict_reason": "字符串或 null。仅在上一字段为 true 时，用一句话说明建议复测什么；"
+    "不要写医学诊断，也不要要求运营人工复核",
     "evidence_notes": ["以上每个 true 判断对应的问卷原文依据，1-4条；全部为 false 时输出空列表"],
 }
 
@@ -275,6 +442,9 @@ def _normalize_safety_factors(payload: object) -> dict[str, object]:
     }
     for key in ("muscle_insufficiency", "disease_or_medication_limit", "recovery_risk"):
         factors[key] = _boolean_value(data.get(key))
+    factors["waist_height_conflict"] = _boolean_value(data.get("waist_height_conflict"))
+    conflict_reason = str(data.get("waist_height_conflict_reason") or "").strip()
+    factors["waist_height_conflict_reason"] = conflict_reason if factors["waist_height_conflict"] else ""
     factors["doctor_specified_lower_weight_kg"] = _positive_number_or_none(
         data.get("doctor_specified_lower_weight_kg")
     )
@@ -296,6 +466,7 @@ async def _extract_safety_factors(
     ai: AIService,
     service_case: ServiceCase,
     readable_answers: str,
+    measurement_facts: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """先抽安全因子，再算带位——顺序不能反。
 
@@ -321,6 +492,8 @@ async def _extract_safety_factors(
             user_prompt=(
                 f"请严格按这个字段结构填值：\n"
                 f"{json.dumps(SAFETY_FACTOR_SCHEMA, ensure_ascii=False, indent=2)}\n\n"
+                f"系统已归一化的体征数据（仅辅助核查单位与组合，不据此做医学诊断）：\n"
+                f"{json.dumps(measurement_facts or {}, ensure_ascii=False, indent=2)}\n\n"
                 f"问卷结果：\n{readable_answers}"
             ),
         )
@@ -344,10 +517,19 @@ async def _generate_intake_analysis_package(
 ) -> dict[str, object]:
     fields = await get_active_questionnaire_fields(session, "intake")
     readable_answers = _readable_answers(fields, submission.answers_json)
+    preliminary_facts = build_intake_fact_summary(fields, submission.answers_json)
+    preliminary_block_reasons = _document_generation_block_reasons(preliminary_facts)
+    if preliminary_block_reasons:
+        # 关键体征已经不足时不再花两次模型调用生成一份注定不能落库的正式文件。
+        raise DocumentGenerationBlocked(preliminary_block_reasons)
     safety_factors = await _extract_safety_factors(
         ai=ai,
         service_case=service_case,
         readable_answers=readable_answers,
+        measurement_facts={
+            key: preliminary_facts.get(key)
+            for key in ("height_cm", "weight_kg", "bmi", "waist_cm", "waist_height_ratio")
+        },
     )
     intake_facts = build_intake_fact_summary(fields, submission.answers_json, safety_factors)
     text = await ai.generate_text(
@@ -372,6 +554,12 @@ async def _generate_intake_analysis_package(
     # 持续高风险与A-D带并存；服务单高风险无条件强制页面重点人工复核。
     _apply_deterministic_band(shared, intake_facts)
     _force_high_risk_manual_review(shared, service_case)
+    _apply_canonical_target_contract(shared, intake_facts)
+    block_reasons = _document_generation_block_reasons(intake_facts)
+    shared["ready_for_document_generation"] = not block_reasons
+    shared["document_generation_block_reasons"] = block_reasons
+    if block_reasons:
+        raise DocumentGenerationBlocked(block_reasons)
     document_payloads = _normalize_combined_document_payload(
         document_root,
         user_name,
@@ -380,6 +568,10 @@ async def _generate_intake_analysis_package(
     if not document_payloads:
         raise RuntimeError("intake analysis package generated empty document content")
     _apply_intake_facts_to_document_payloads(document_payloads, intake_facts)
+    _append_waist_remeasurement_note(document_payloads, intake_facts)
+    consistency_errors = _document_consistency_errors(document_payloads, shared, intake_facts)
+    if consistency_errors:
+        raise RuntimeError(f"交付文件目标一致性校验未通过：{'；'.join(consistency_errors)}")
     # 人工复核是内部运营状态，不是管理带：即使模型仍把内部标签写进正文，也要在落库前清出用户可见内容。
     _strip_internal_review_labels(document_payloads)
     # 五项打卡在这里收敛成严格 5 项结构化数组，之后画像、执行文档和 H5 问卷都读同一份结构。
@@ -400,9 +592,13 @@ def _intake_package_schema() -> dict[str, object]:
     return {
         "shared_analysis": {
             "safety_status": "内部字段，只能取 standard / cautious / manual_review",
-            "manual_review_required": "内部字段（布尔值）；孕哺、未成年人、明显疾病/用药/持续不适、非主动消瘦或资料冲突时为 true。"
+            "manual_review_required": "内部字段（布尔值）；孕哺、未成年人、明显疾病/用药/持续不适或非主动消瘦时为 true。"
+            "明显单位/录入矛盾走生成阻断，普通腰高比疑点只建议复测，二者都不因此置 true。"
             "它不是管理带，为 true 时 weight_band 仍要给正常业务带位",
             "manual_review_reasons": ["内部字段；需要人工复核的1-3条原因，只给运营看，禁止写进两份交付文件"],
+            "ready_for_document_generation": "布尔值；只有关键资料足以可靠生成正式文件时为 true。"
+            "manual_review_required=true 本身不影响此字段",
+            "document_generation_block_reasons": ["ready=false 时必须给出1-3条具体原因；true 时为空数组"],
             "baseline_weight_kg": "内部确定性字段；当前问卷最新可信体重",
             "baseline_weight_provisional": "内部确定性字段；未取得连续3天晨重均值时为 true",
             "absolute_low_weight_boundary_kg": "内部确定性字段；18.5 × 身高m²",
@@ -414,7 +610,7 @@ def _intake_package_schema() -> dict[str, object]:
             "band_confidence": "内部字段，high / medium / low；资料缺失或安全闸门触发时写 low",
             "provisional_band": "内部字段（布尔值）；带位为待人工确认的暂定结论时为 true。"
             "基线体重来自单次自报（baseline_weight_provisional=true）是所有入营用户的常态，不构成暂定理由；"
-            "只有关键数据缺失、数据互相冲突或安全闸门触发才置 true",
+            "只有会影响安全目标但仍允许生成的安全闸门触发才置 true；关键数据缺失/明显录入矛盾会直接阻断生成，普通复测建议不置 true",
             "band_basis": ["系统根据基线体重、保护性下限和安全减重空间生成的确定性分带依据，模型不得改写"],
             "body_trend": "仅依据入营问卷反映的近3个月趋势：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
             "body_trend_summary": "一句话解释近3个月趋势；不得写入营后的变化",
@@ -425,7 +621,12 @@ def _intake_package_schema() -> dict[str, object]:
             "core_problem": "核心问题，只基于问卷事实",
             "current_mainline": "当前唯一主线，只能取：保肌减脂 / 节律稳定 / 睡眠修复 / 饮食结构修复 / 系统化管理；主要依据睡眠、精力、饮食、食欲边界、晚间失控、运动和恢复状态选择",
             "base_goal": "基础目标；用户没有明确数字时不得编造斤数；A带禁止任何减重数字",
-            "challenge_goal": "条件性挑战目标；A带固定写不设置减重挑战目标",
+            "challenge_goal": "条件性挑战目标；逐字复制系统目标。manual_review_required=true 时必须写暂不设置挑战数字，D7复评",
+            "28_day_auto_cap_kg": "逐字复制 intake_facts.28_day_auto_cap_kg，模型不得重算",
+            "28_day_display_cap_jin": "逐字复制 intake_facts.28_day_display_cap_jin，模型不得重算",
+            "basic_target_jin_or_range": "逐字复制 intake_facts.basic_target_jin_or_range",
+            "challenge_target_jin_or_review_text": "逐字复制 intake_facts.challenge_target_jin_or_review_text",
+            "target_generation_rule_applied": "逐字复制 intake_facts.target_generation_rule_applied",
             "long_term_goal": "长期方向，必须包含非体重结果；A带禁止任何减重数字",
             "day28_goal": "28天目标；A带只写体重稳定或恢复、体态、力量、睡眠、精力和执行目标，不写减重数字",
             "day28_task": "这28天先解决什么",
@@ -492,6 +693,12 @@ def _normalize_profile_from_package(
             shared.get("manual_review_required")
         )
         profile["manual_review_reasons"] = _clean_list(shared.get("manual_review_reasons"))
+        profile["ready_for_document_generation"] = _boolean_value(
+            shared.get("ready_for_document_generation")
+        )
+        profile["document_generation_block_reasons"] = _clean_list(
+            shared.get("document_generation_block_reasons")
+        )
         profile["band_confidence"] = str(shared.get("band_confidence") or "").strip()
         profile["provisional_band"] = _boolean_value(shared.get("provisional_band"))
         for key in BAND_CALCULATION_FIELDS:
@@ -1121,12 +1328,18 @@ def _normalize_combined_document_payload(
     for target, key, source in (
         (core_conclusions, "management_band", visible_band),
         (shared_path, "weight_band", visible_band),
+        (execution_payload, "weight_band", visible_band),
         (goal_response, "base_goal", shared.get("base_goal")),
         (goal_response, "challenge_goal", shared.get("challenge_goal")),
+        (execution_payload, "base_goal", shared.get("base_goal")),
+        (execution_payload, "challenge_goal", shared.get("challenge_goal")),
         (shared_path, "day28_goal", shared.get("day28_goal")),
         (execution_payload, "day28_goal", shared.get("day28_goal")),
         (shared_path, "total_goal", shared.get("long_term_goal")),
+        (shared_path, "week5_8", shared.get("week5_8_target")),
+        (shared_path, "week9_12", shared.get("week9_12_target")),
         (execution_payload, "path_goal", shared.get("long_term_goal")),
+        (execution_payload, "long_term_goal", shared.get("long_term_goal")),
         (execution_payload, "body_trend", shared.get("body_trend")),
         (core_conclusions, "day28_task", shared.get("day28_task")),
         (overview, "current_focus", shared.get("current_mainline")),
@@ -1134,6 +1347,9 @@ def _normalize_combined_document_payload(
     ):
         _force_sync(target, key, source)
     _apply_a_band_user_visible_contract(shared, core_conclusions, goal_response)
+    # 模型的整段 content 可能保留旧数字。删除后由渲染层使用已被代码覆写的结构化
+    # 基础/挑战字段，既保留个案判断，也保证两份文档逐字一致。
+    goal_response.pop("content", None)
     # core_conclusions 可能在上面因为全空而没挂回 energy_payload，强制覆写后要重新挂。
     if core_conclusions:
         energy_payload["core_conclusions"] = core_conclusions

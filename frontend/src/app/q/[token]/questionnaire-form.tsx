@@ -28,9 +28,20 @@ type Band = { hardLow: number; softLow: number; softHigh: number; hardHigh: numb
 // 体征合理性分级阈值（标准档，已与业务确认）
 const BANDS: Record<"height" | "weight" | "age" | "bmi", Band> = {
   height: { hardLow: 120, softLow: 140, softHigh: 200, hardHigh: 220 },
-  weight: { hardLow: 35, softLow: 40, softHigh: 100, hardHigh: 120 },
+  // 客户已取消大体重上限：高体重本身不再劝退，也不因 BMI 偏高拦截提交。
+  weight: {
+    hardLow: 35,
+    softLow: 40,
+    softHigh: Number.POSITIVE_INFINITY,
+    hardHigh: Number.POSITIVE_INFINITY,
+  },
   age: { hardLow: 12, softLow: 16, softHigh: 70, hardHigh: 85 },
-  bmi: { hardLow: 12, softLow: 15, softHigh: 50, hardHigh: 60 },
+  bmi: {
+    hardLow: 12,
+    softLow: 15,
+    softHigh: Number.POSITIVE_INFINITY,
+    hardHigh: Number.POSITIVE_INFINITY,
+  },
 };
 
 function classifyBand(v: number, b: Band): "hard" | "soft" | null {
@@ -39,7 +50,7 @@ function classifyBand(v: number, b: Band): "hard" | "soft" | null {
   return null;
 }
 
-// 劝退类（超大/超小体重、超龄）：建议线下/医疗评估，不可强行提交
+// 劝退类（极低体重、超龄）：建议线下/医疗评估，不可强行提交
 const DISSUADE = (label: string, v: number, unit: string) =>
   `${label}为 ${v}${unit}，本服务更适合常规减脂人群；您的情况建议先线下或专业医疗评估，请联系您的专属顾问`;
 
@@ -48,19 +59,37 @@ function checkBodyMeasurements(
   fields: Questionnaire["fields"],
   vals: Record<string, string>,
 ): BodyIssue[] {
-  const find = (...parts: string[]): { key: string; num: number } | null => {
+  const find = (...parts: string[]): { key: string; num: number; raw: string } | null => {
     for (const f of fields) {
       const title = String(f.title ?? f.label ?? "");
       if (parts.every((p) => title.includes(p))) {
-        const m = String(vals[f.key] ?? "").match(/\d+(?:\.\d+)?/);
-        if (m) return { key: f.key, num: parseFloat(m[0]) };
+        const raw = String(vals[f.key] ?? "");
+        const m = raw.match(/\d+(?:\.\d+)?/);
+        if (m) return { key: f.key, num: parseFloat(m[0]), raw };
       }
     }
     return null;
   };
+  const weightKg = (value: { key: string; num: number; raw: string } | null) => {
+    if (!value) return null;
+    const text = value.raw.toLowerCase();
+    const isJin = text.includes("斤") && !["公斤", "千克", "kg", "㎏"].some((unit) => text.includes(unit));
+    return { ...value, num: isJin ? value.num / 2 : value.num };
+  };
+  const waistCm = (value: { key: string; num: number; raw: string } | null) => {
+    if (!value) return null;
+    const text = value.raw.toLowerCase();
+    if (text.includes("mm") || text.includes("毫米")) return { ...value, num: value.num / 10 };
+    if ((text.includes("m") && !text.includes("cm") && !text.includes("mm")) ||
+        (text.includes("米") && !text.includes("厘米") && !text.includes("毫米"))) {
+      return { ...value, num: value.num * 100 };
+    }
+    return value;
+  };
   const issues: BodyIssue[] = [];
   const h = find("身高");
-  const w = find("当前体重") ?? find("体重");
+  const w = weightKg(find("当前体重") ?? find("体重"));
+  const waist = waistCm(find("腰围"));
   const a = find("年龄");
 
   if (h) {
@@ -96,6 +125,18 @@ function checkBodyMeasurements(
           : `身高体重组合 BMI≈${bmi.toFixed(1)}，偏离常见范围，请确认填写无误`;
         issues.push({ key: h.key, level: lv, msg });
         issues.push({ key: w.key, level: lv, msg });
+      }
+    }
+  }
+  // 腰高比只拦截明显的录入/单位矛盾；常见的腰腹偏高属于真实健康信号，不当成冲突。
+  if (h && waist && h.num > 0) {
+    const hHard = issues.some((i) => i.key === h.key && i.level === "hard");
+    if (!hHard) {
+      const ratio = waist.num / h.num;
+      if (ratio < 0.2 || ratio > 1.2) {
+        const msg = `腰围与身高组合（腰高比≈${ratio.toFixed(2)}）明显矛盾，请复测并检查是否填错或单位有误`;
+        issues.push({ key: h.key, level: "hard", msg });
+        issues.push({ key: waist.key, level: "hard", msg });
       }
     }
   }

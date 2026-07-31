@@ -42,7 +42,7 @@ ENERGY_FIELD_SPEC = {
         "user_goal": "兼容字段：概括用户原始目标或期待变化；A带不得复述具体减重斤数、公斤数或目标体重",
         "judgement": "兼容字段：直接回应目标是否适合当前阶段；A带只做定性判断，不得复述具体减重数字",
         "base_goal": "兼容字段：基础目标；A带禁止任何减重数字",
-        "challenge_goal": "兼容字段：挑战目标；A带固定写不设置减重挑战目标",
+        "challenge_goal": "兼容字段：挑战目标；A带使用系统无数字目标；manual_review_required=true 时固定为暂不设置挑战数字，D7复评",
         "conditions": "兼容字段：冲刺条件或下调条件",
     },
     "judgement_points": [
@@ -95,6 +95,10 @@ ENERGY_FIELD_SPEC = {
 
 
 EXECUTION_FIELD_SPEC = {
+    "weight_band": "与 shared_analysis.weight_band 一致的管理带，由系统强制覆写",
+    "base_goal": "与 shared_analysis.base_goal 逐字一致的28天基础目标，由系统强制覆写",
+    "challenge_goal": "与 shared_analysis.challenge_goal 逐字一致的挑战目标或D7复评文案，由系统强制覆写",
+    "path_goal": "与 shared_analysis.long_term_goal 逐字一致的长期方向，由系统强制覆写",
     "current_mainline": "与 shared_analysis.current_mainline 一致的当前唯一主线，≤16字",
     "day28_goal": "这28天要完成的任务，≤48字，同时包含阶段任务和要观察的结果；没有明确数字目标时不得编造斤数或厘米数。",
     "current_phase_goal": "当前阶段目标，≤32字，用「先解决{核心问题}，不是{反面}」句式，聚焦排序而非平铺罗列，例如「先解决节律稳定，不是追求失控式掉秤」。",
@@ -595,14 +599,13 @@ def _missing_information_block(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
-    """目标摘要只留执行需要的两项。
-
-    管理带、身体趋势、基础/挑战/长期目标是分析性结论，写在《个人能量重启诊断报告》里；
-    在这份一页执行纸上重复展开会直接把版面顶到第二页。
-    """
+    """V2.2 要求执行文件也能独立核对管理带及三层目标，文案保持紧凑。"""
 
     lines = [
-        f"28天任务：{_compact_field(fields.get('day28_goal') or fields.get('base_goal'), max_len=48)}",
+        f"管理带：{_compact_field(fields.get('weight_band'), max_len=18)}",
+        f"基础目标：{_compact_field(fields.get('base_goal'), max_len=36)}",
+        f"挑战目标：{_compact_field(fields.get('challenge_goal'), max_len=28)}",
+        f"长期方向：{_compact_field(fields.get('path_goal') or fields.get('long_term_goal'), max_len=42)}",
         f"当前主线：{_compact_field(fields.get('current_mainline'), max_len=16)}",
     ]
     return _text_block(

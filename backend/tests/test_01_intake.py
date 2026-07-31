@@ -29,9 +29,13 @@ from app.services.document_templates import (
 )
 from app.services.intake_generation import (
     CHECKIN_CATEGORIES,
+    MANUAL_REVIEW_BASE_TARGET,
+    MANUAL_REVIEW_CHALLENGE_TARGET,
     UNRESOLVED_BAND_USER_TEXT,
     _apply_a_band_user_visible_contract,
+    _apply_canonical_target_contract,
     _apply_deterministic_band,
+    _document_generation_block_reasons,
     _extract_safety_factors,
     _force_high_risk_manual_review,
     _normalize_safety_factors,
@@ -277,15 +281,13 @@ def test_intake_prompt_keeps_goal_rules_free_of_contradictions():
 
     prompt = _intake_generation_system_prompt()
 
-    # 1. 人工复核只改发送方式，不降级正文。原先一边说"复核用户不给减重数字"、
-    #    一边说"文档照常按带位生成"，一个用药中的 D 带用户两条都命中。
-    assert "【复核不降级正文】" in prompt
-    assert "manual_review_required=true 只改变发送方式，不改变文件内容" in prompt
-    assert "不要因为标记了复核就把目标改成定性表达、砍掉挑战目标或不给减重数字" in prompt
-    assert "仅仅是 manual_review_required=true 或风险较高不构成理由" in prompt
-    # 旧的降级表述不能回来
-    assert "manual_review_required=true 的用户不设置挑战目标" not in prompt
-    assert "manual_review、资料不足或风险较高用户同样不设置减重挑战目标" not in prompt
+    # 1. 人工复核不改带位，但挑战目标按 V2.2 收敛为 D7 复评。
+    assert "【复核目标口径】" in prompt
+    assert "挑战目标必须固定写「暂不设置挑战数字，D7复评」" in prompt
+    assert "基础目标固定写「先完成7天基础执行，D7复评」" in prompt
+    assert "可安全量化的基础目标、管理带、12周路径和执行动作仍保留" in prompt
+    assert "复核不降级正文" not in prompt
+    assert "manual_review_required=true 只改变发送方式，不改变文件内容" not in prompt
     # 目标体重过低 ≠ 没有可减重空间，两者的处置不同
     assert "而用户目标体重过低但仍有可减重空间时，只是不接受用户那个目标体重" in prompt
 
@@ -295,14 +297,13 @@ def test_intake_prompt_keeps_goal_rules_free_of_contradictions():
     assert "那条禁令优先于本条上限" in prompt
     assert "本条只约束 B/C/D 带" in prompt
 
-    # 3. 带位算不出时照抄哨兵值，不许挑一个顶上——否则带位显示"待补齐"、正文写着C带斤数。
-    assert "【带位算不出时照抄，不要挑一个顶上】" in prompt
-    assert UNRESOLVED_BAND in prompt
-    assert "严禁自己挑一个 A/B/C/D 顶上" in prompt
-    assert "这种情况下全文不得出现任何减重斤数、公斤数或目标体重" in prompt
+    # 3. 带位算不出时直接阻断，不许挑一个顶上——避免正式文档出现待确认带位与数字目标冲突。
+    assert "【带位算不出时阻断，不要挑一个顶上】" in prompt
+    assert "不得自己挑一个 A/B/C/D 顶上" in prompt
+    assert "ready_for_document_generation 置为 false 并停止生成正式交付文件" in prompt
     # 旧句要求"给出最稳妥的带位"，是模型猜带位的源头
     assert "不是不给带位，而是给出最稳妥的带位并降低置信度" not in prompt
-    assert "不是自己另选一个更稳妥的带位" in prompt
+    assert "不得自己另选一个更稳妥的带位" in prompt
 
 
 def test_intake_prompt_requires_five_independent_daily_checkin_questions():
@@ -365,7 +366,8 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     # 提示词只剩"照抄"这一条。真实验证过：把查表交给模型要十几行约束才勉强围住，D带仍然越界。
     assert "【12周阶段路径】" in prompt
     assert "必须逐字使用 intake_facts.stage_targets 里对应的表述" in prompt
-    assert "不得改动、放大、换算或删除其中的数字" in prompt
+    assert "两项阶段目标必须原句保留" in prompt
+    assert "不得在字段内追加新数字或把累计目标写成阶段新增量" in prompt
     # 旧的整张区间表已从提示词移除，留着会和 stage_targets 形成两个数字来源
     assert "B带：第5-8周累计5-8斤" not in prompt
     assert "任何阶段的累计目标都不得超过 safe_reduction_room_kg" not in prompt
@@ -383,7 +385,7 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "即使用户在问卷里明确填写了想减多少斤或公斤" in prompt
     assert "「0-2斤」「0–2斤」「1-2斤」「维持0-2斤波动」" in prompt
     assert "覆盖所有用户可见字段" in prompt
-    assert "challenge_goal 固定写「不设置减重挑战目标」" in prompt
+    assert "人工复核时按安全闸门统一写「暂不设置挑战数字，D7复评」" in prompt
     assert "只能定性概括为「希望尽快看到体重和体态变化」等意图" in prompt
     assert "严禁原样复述具体数字" in prompt
     assert "A带的 core_conclusions.band_explanation 只能定性说明" in prompt
@@ -408,7 +410,7 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
 
     # 一页硬预算
     assert "【一页硬预算】" in prompt
-    assert "目标摘要只输出执行需要的两项" in prompt
+    assert "目标摘要固定输出五项并与诊断报告逐字一致" in prompt
     assert "current_mainline 必须逐字复制 shared_analysis.current_mainline" in prompt
     assert "diet_rules 最多3条，每条 ≤34字" in prompt
     assert "exercise_rules 最多2条，每条 ≤44字" in prompt
@@ -426,14 +428,14 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "A带不得复述具体减重斤数" in energy_spec["goal_response"]["user_goal"]
     assert "A带只做定性判断" in energy_spec["goal_response"]["judgement"]
     assert "A带禁止任何减重数字" in energy_spec["goal_response"]["base_goal"]
-    assert "A带固定写不设置减重挑战目标" in energy_spec["goal_response"]["challenge_goal"]
+    assert "manual_review_required=true 时固定为暂不设置挑战数字" in energy_spec["goal_response"]["challenge_goal"]
     assert "diet_rules" in execution_spec
     assert "exercise_rules" in execution_spec
-    # 分析性目标不再在执行建议书重复输出，避免顶到第二页
-    assert "base_goal" not in execution_spec
-    assert "challenge_goal" not in execution_spec
-    assert "long_term_goal" not in execution_spec
-    assert "weight_band" not in execution_spec
+    # V2.2 要求执行文件也能独立核对管理带、基础/挑战和长期方向。
+    assert "weight_band" in execution_spec
+    assert "base_goal" in execution_spec
+    assert "challenge_goal" in execution_spec
+    assert "path_goal" in execution_spec
 
     daily_checkin_spec = execution_spec["daily_checkin"]
     assert isinstance(daily_checkin_spec, list) and len(daily_checkin_spec) == 1
@@ -845,6 +847,77 @@ def test_service_case_high_risk_forces_manual_review_even_when_model_cancels_it(
     assert shared["manual_review_reasons"] == ["用户明确处于孕期"]
 
 
+def test_manual_review_keeps_safe_base_but_moves_challenge_to_day7_review():
+    facts = build_intake_fact_summary(_band_fields(), {"h": "165", "w": "70"})
+    shared: dict[str, object] = {"manual_review_required": True}
+
+    _apply_canonical_target_contract(shared, facts)
+
+    assert shared["base_goal"] == "28天减重5-6斤"
+    assert shared["challenge_goal"] == MANUAL_REVIEW_CHALLENGE_TARGET
+    assert facts["challenge_target_jin_or_review_text"] == MANUAL_REVIEW_CHALLENGE_TARGET
+
+
+def test_manual_review_uses_day7_base_when_base_cannot_be_quantified():
+    facts = build_intake_fact_summary(_band_fields(), {"h": "165", "w": "暂未测量"})
+    shared: dict[str, object] = {"manual_review_required": True}
+
+    _apply_canonical_target_contract(shared, facts)
+
+    assert shared["base_goal"] == MANUAL_REVIEW_BASE_TARGET
+    assert shared["challenge_goal"] == MANUAL_REVIEW_CHALLENGE_TARGET
+
+
+def test_weight_units_stable_comfort_weight_and_waist_ratio_are_normalized():
+    fields = [
+        {"key": "h", "title": "您的身高（cm/厘米）"},
+        {"key": "w", "title": "您当前体重（kg/公斤）"},
+        {"key": "waist", "title": "您当前腰围（cm）"},
+        {"key": "stable", "title": "成年后让您轻盈且稳定过1年以上的体重"},
+    ]
+
+    facts = build_intake_fact_summary(
+        fields,
+        {"h": "170", "w": "260斤", "waist": "0.85m", "stable": "150斤"},
+    )
+
+    assert facts["weight_kg"] == "130"
+    assert facts["adult_stable_comfort_weight_kg"] == "75"
+    assert facts["waist_cm"] == "85"
+    assert facts["waist_height_ratio"] == "0.500"
+    assert facts["28_day_auto_cap_kg"] == "4"
+    assert facts["28_day_display_cap_jin"] == 8
+
+
+def test_default_intake_questionnaire_includes_stable_comfort_weight_after_current_weight():
+    fields = default_questionnaire_template("intake")["fields"]
+    keys = [str(field.get("key") or "") for field in fields]
+    current_index = keys.index("SIMPLE1774104087629mn0frn0t")
+    stable_index = keys.index("SIMPLE_ADULT_STABLE_COMFORT_WEIGHT_KG")
+    stable = fields[stable_index]
+
+    assert stable_index == current_index + 1
+    assert stable["required"] is True
+    assert "稳定过1年以上" in stable["title"]
+    assert "没有" in stable["subtitle"] and "不确定" in stable["subtitle"]
+
+
+def test_generation_block_reasons_only_cover_critical_measurement_failures():
+    missing = build_intake_fact_summary(_band_fields(), {"h": "165", "w": "未测"})
+    assert _document_generation_block_reasons(missing) == [
+        "缺少可识别的当前体重，无法计算管理带和28天目标"
+    ]
+
+    fields = [*_band_fields(), {"key": "waist", "title": "您当前腰围（cm）"}]
+    conflict = build_intake_fact_summary(fields, {"h": "165", "w": "70", "waist": "8"})
+    assert _document_generation_block_reasons(conflict) == [
+        "腰围与身高存在明显单位或录入矛盾，请复测并确认后再生成"
+    ]
+
+    plausible = build_intake_fact_summary(fields, {"h": "165", "w": "110", "waist": "110"})
+    assert _document_generation_block_reasons(plausible) == []
+
+
 @pytest.mark.asyncio
 async def test_intake_facts_expose_safe_reduction_room(cai_haoran_answers):
     """175cm/65kg → 空间3.75kg，正常BMI仍按唯一数值主轴进入B带。"""
@@ -943,21 +1016,21 @@ def test_day28_targets_derive_from_the_monthly_cap_not_the_band_table():
     §6.4 的 5% 上限整段越界（C带挑战10斤需要100kg，而100kg早已是D带），无法调和。
     """
 
-    # 165cm/62kg → C带，cap 3.1kg = 6.2斤 → 上限 6 斤。基础取 65% ≈ 3 斤。
+    # 165cm/62kg → C带，cap 3.1kg = 6.2斤 → 展示上限 6 斤。
     c_band = _day28_targets_for("165", "62")
-    assert c_band["base"] == "28天减重2-3斤"
-    assert c_band["challenge"] == "28天减重4-6斤"
+    assert c_band["base"] == "28天减重4-5斤"
+    assert c_band["challenge"] == "向6斤推进"
 
     # 170cm/95kg → D带，cap 撞 4.0kg 硬顶 = 8 斤。
     d_band = _day28_targets_for("170", "95")
-    assert d_band["base"] == "28天减重4-5斤"
-    assert d_band["challenge"] == "28天减重6-8斤"
+    assert d_band["base"] == "28天减重6-7斤"
+    assert d_band["challenge"] == "向8斤推进"
 
     # 4kg 硬顶保留：120kg 的用户 5% 是 6kg，仍被压到 4kg，结果与 95kg 相同。
     assert _day28_targets_for("175", "120") == d_band
 
-    # 带位不再决定28天斤数（A带除外）：同为 cap 3kg 上下的 B/C 带拿到同一档基础目标。
-    assert _day28_targets_for("165", "58")["base"] == _day28_targets_for("165", "60")["base"]
+    # 带位不决定28天斤数（A带除外）：同一体重、同一展示上限的 B/C 带拿到同一目标。
+    assert _day28_targets_for("168", "60") == _day28_targets_for("165", "60")
 
     # 基础目标必须严格低于挑战目标，否则"挑战"没有意义——旧实现在这里退化过。
     for height, weight in (("165", "57"), ("165", "62"), ("165", "70"), ("170", "85")):
@@ -994,8 +1067,8 @@ def test_day28_targets_never_exceed_the_cap():
 
 def test_day28_targets_for_band_a_and_unknown_band_carry_no_numbers():
     a_band = _day28_targets_for("175", "63")  # room 1.75kg → A带
-    assert a_band["base"] == "不设置体重下降指标，重点放在体态、睡眠、精力、恢复和执行一致性"
-    assert a_band["challenge"] == "不设置减重挑战目标"
+    assert a_band["base"] == "不设置必须下降的体重硬指标，优先改善体态、睡眠、精力、恢复和执行一致性"
+    assert a_band["challenge"] == "不设置体重挑战目标，优先修复塑形"
     assert not re.search(r"\d+\s*斤", a_band["base"] + a_band["challenge"])
 
     # 空间归零的 A 带（cap=0）同样一个数字都不给
@@ -1017,12 +1090,12 @@ def test_intake_prompt_delegates_day28_numbers_to_the_facts():
     assert "base_goal 的减重数字必须逐字使用 intake_facts.day28_targets.base" in prompt
     assert "challenge_goal 的减重数字必须逐字使用 intake_facts.day28_targets.challenge" in prompt
     assert "intake_facts.day28_targets 里已经算好的28天目标区间" in prompt
-    assert "严禁自己补一个斤数把它变成数字目标" in prompt
+    assert "不能把个案描述拼进权威目标值" in prompt
     # 带位只决定12周量级，不决定28天斤数——否则模型会拿带名的5斤/10斤/20斤反推
     assert "管理带决定的是12周路径的量级，不决定这28天的斤数" in prompt
-    assert "一个月最多减体重5%" in prompt
-    # "不设置更高的挑战目标"不是对用户的负面评价，别让模型写成那样
-    assert "不是他不配拿挑战目标" in prompt
+    assert "auto_cap=min（基线体重×5%，4kg，安全减重空间）" in prompt
+    assert "基础目标固定为展示上限减2至减1斤" in prompt
+    assert "挑战目标固定写「向X斤推进」" in prompt
     # 旧的默认区间表已移除
     assert "默认28天基础目标3-5斤" not in prompt
     assert "默认28天基础目标5-8斤" not in prompt
@@ -1693,7 +1766,7 @@ def test_daily_checkin_logs_every_substitution(caplog):
 
 
 def test_execution_document_keeps_single_page_content_budget():
-    """一页执行纸的内容预算：目标摘要2行、产品排班1行、饮食≤3条、运动≤2条。"""
+    """一页执行纸的内容预算：目标摘要5行、产品排班1行、饮食≤3条、运动≤2条。"""
 
     content_json = build_document_content_json(
         document_type=DocumentType.DAY28_EXECUTION_STANDARD,
@@ -1705,9 +1778,9 @@ def test_execution_document_keeps_single_page_content_budget():
             "current_mainline": "保肌减脂与节律稳定并重，同时兼顾睡眠修复",
             "day28_goal": "先把晚间收口和午餐结构稳住，观察腰腹围度、下午精力和睡眠连续性的变化趋势，并记录每周体感",
             "body_trend": "缓慢变沉",
-            "base_goal": "基础目标不该出现在执行建议书",
-            "challenge_goal": "挑战目标不该出现在执行建议书",
-            "long_term_goal": "长期目标不该出现在执行建议书",
+            "base_goal": "28天减重4-5斤",
+            "challenge_goal": "向6斤推进",
+            "path_goal": "12周形成稳定节律，围度稳步收紧",
             "product_schedule": {
                 "morning_c": "早C半份随早餐7:30，观察三天无心慌后再上满份",
                 "noon_b": "午B半份13:30前完成，保证睡前8小时以外",
@@ -1735,16 +1808,18 @@ def test_execution_document_keeps_single_page_content_budget():
     blocks = {block["key"]: block for block in content_json["blocks"]}
 
     goal_lines = blocks["goal_summary"]["content"].splitlines()
-    assert len(goal_lines) == 2
-    assert goal_lines[0].startswith("28天任务：")
-    assert goal_lines[1].startswith("当前主线：")
-    # 分析性目标与身体趋势只写在诊断报告，不在这份文件重复
+    assert len(goal_lines) == 5
+    assert goal_lines[0].startswith("管理带：")
+    assert goal_lines[1].startswith("基础目标：")
+    assert goal_lines[2].startswith("挑战目标：")
+    assert goal_lines[3].startswith("长期方向：")
+    assert goal_lines[4].startswith("当前主线：")
     summary_text = blocks["goal_summary"]["content"]
-    assert "基础目标" not in summary_text
-    assert "挑战目标" not in summary_text
-    assert "长期目标" not in summary_text
+    assert "28天减重4-5斤" in summary_text
+    assert "向6斤推进" in summary_text
+    assert "12周形成稳定节律" in summary_text
     assert "近3个月身体趋势" not in summary_text
-    assert "管理带" not in summary_text
+    assert "C带｜明确减脂" in summary_text
 
     # 产品排班压成一行，且不重复写「早C 早C」这种前缀
     product_content = blocks["product_schedule"]["content"]
@@ -1836,6 +1911,7 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
             for label in ("需人工复核", "人工复核", "待复核", "red风险", "风险等级"):
                 assert label not in rendered, f"{document.title} 的 blocks 泄漏了 {label}"
                 assert label not in document.content_md, f"{document.title} 的正文泄漏了 {label}"
+            assert MANUAL_REVIEW_CHALLENGE_TARGET in document.content_md
             # 整句剔除，不留「本方案。」这类残句
             assert "本方案。" not in document.content_md
 
@@ -2071,9 +2147,8 @@ def test_a_band_user_visible_goal_contract_replaces_model_numbers():
         shared_analysis=shared,
     )
     energy = normalized[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
-    visible_text = (
-        energy["core_conclusions"]["band_explanation"]
-        + energy["goal_response"]["content"]
+    visible_text = energy["core_conclusions"]["band_explanation"] + json.dumps(
+        energy["goal_response"], ensure_ascii=False
     )
 
     assert "10斤" not in visible_text

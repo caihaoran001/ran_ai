@@ -125,7 +125,17 @@
       "type": "SIMPLE",
       "title": "您当前体重（kg/公斤）",
       "label": "您当前体重（kg/公斤）",
-      "subtitle": "",
+      "subtitle": "可填写 kg/公斤或斤，系统会自动换算",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE_ADULT_STABLE_COMFORT_WEIGHT_KG",
+      "key": "SIMPLE_ADULT_STABLE_COMFORT_WEIGHT_KG",
+      "type": "SIMPLE",
+      "title": "回想您成年后，有没有过一个体重：让您觉得身体比较轻盈，精力较为旺盛，正常吃饭生活，并且这个体重数字稳定过1年以上的时间？如果有，当时是多少kg？",
+      "label": "回想您成年后，有没有过一个体重：让您觉得身体比较轻盈，精力较为旺盛，正常吃饭生活，并且这个体重数字稳定过1年以上的时间？如果有，当时是多少kg？",
+      "subtitle": "如没有或不确定，可填写“没有”或“不确定”",
       "required": true,
       "options": []
     },

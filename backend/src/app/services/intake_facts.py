@@ -113,8 +113,9 @@ def build_intake_fact_summary(
     city = value_for("所在的城市") or value_for("城市")
     height_raw = value_for("身高")
     weight_raw = value_for("当前体重") or value_for("体重")
-    waist = value_for("腰围")
+    waist_raw = value_for("腰围")
     bodyfat = value_for("体脂率")
+    stable_comfort_weight_raw = value_for("成年后", "稳定")
     health_note = value_for("健康情况") or value_for("病史")
     main_needs = value_for("最想先解决")
     day28_expectation = value_for("28 天后") or value_for("28天后")
@@ -123,12 +124,24 @@ def build_intake_fact_summary(
     diet_pattern = value_for("长期饮食模式")
 
     height = _normalize_height_cm(_first_number(height_raw))
-    weight = _first_number(weight_raw)
+    weight = _parse_weight_kg(weight_raw)
+    waist = _normalize_waist_cm(waist_raw)
+    stable_comfort_weight = _parse_weight_kg(stable_comfort_weight_raw)
     bmi = _calculate_bmi(height, weight)
+    waist_height_ratio = waist / height if waist and height else None
     safe_reduction = _safe_reduction_facts(height, weight, safety_factors)
     safety_review = _safety_review_required(safety_factors)
     weight_loss_band = _management_band_from_safe_room(
         safe_reduction["safe_reduction_room_kg"]
+    )
+
+    day28_targets = _day28_targets(
+        weight_loss_band, safe_reduction["day28_goal_cap_kg"]
+    )
+    display_cap_jin = (
+        int(safe_reduction["day28_goal_cap_kg"] * 2)
+        if safe_reduction["day28_goal_cap_kg"] is not None
+        else None
     )
 
     return {
@@ -172,9 +185,7 @@ def build_intake_fact_summary(
             weight_loss_band, safe_reduction["safe_reduction_room_kg"]
         ),
         # 28天基础/挑战目标同理：查表 + 按 day28_goal_cap_kg 封顶，模型只照抄数字。
-        "day28_targets": _day28_targets(
-            weight_loss_band, safe_reduction["day28_goal_cap_kg"]
-        ),
+        "day28_targets": day28_targets,
         "safe_reduction_room_kg": _format_safe_measurement(
             safe_reduction["safe_reduction_room_kg"]
         ),
@@ -186,8 +197,35 @@ def build_intake_fact_summary(
         "day28_goal_cap_kg": _format_safe_measurement(
             safe_reduction["day28_goal_cap_kg"]
         ),
-        "waist": waist or "未提供",
+        # V2.2 目标统一字段：两份文档只允许从这些确定性值取数，模型无权另算。
+        "28_day_auto_cap_kg": _format_safe_measurement(
+            safe_reduction["day28_goal_cap_kg"]
+        ),
+        "28_day_display_cap_jin": display_cap_jin if display_cap_jin is not None else "暂无数据",
+        "basic_target_jin_or_range": day28_targets["base"],
+        "challenge_target_jin_or_review_text": day28_targets["challenge"],
+        "target_generation_rule_applied": (
+            "A带不设减重数字"
+            if weight_loss_band == BAND_A
+            else "min(基线体重×5%, 4kg, 安全减重空间)；基础目标=展示上限减2至减1斤；挑战目标=向展示上限推进"
+        ),
+        "waist": _format_number(waist) if waist else "未提供",
+        "waist_cm": _format_number(waist) if waist else "未提供",
+        "waist_height_ratio": f"{waist_height_ratio:.3f}" if waist_height_ratio else "暂无数据",
+        "waist_height_conflict": bool(
+            isinstance(safety_factors, dict)
+            and safety_factors.get("waist_height_conflict") is True
+        ),
+        "waist_height_conflict_reason": (
+            str(safety_factors.get("waist_height_conflict_reason") or "").strip()
+            if isinstance(safety_factors, dict)
+            else ""
+        ),
         "bodyfat": bodyfat or "未提供",
+        "adult_stable_comfort_weight_raw": stable_comfort_weight_raw or "未提供",
+        "adult_stable_comfort_weight_kg": (
+            _format_number(stable_comfort_weight) if stable_comfort_weight else "未提供"
+        ),
         "health_note": health_note or "未提供",
         "main_needs": main_needs or "未提供",
         "day28_expectation": day28_expectation or "未提供",
@@ -227,6 +265,37 @@ def _first_number(value: str) -> float | None:
     if not match:
         return None
     return float(match.group())
+
+
+def _parse_weight_kg(value: str) -> float | None:
+    """把问卷里的 kg/公斤/斤统一成公斤。
+
+    输入框题面虽然标了 kg，但用户经常直接写「200斤」。旧逻辑只取首个数字，
+    会把它当成 200kg，进而把 BMI、管理带和目标全部放大一倍。
+    """
+
+    number = _first_number(value)
+    if number is None or number <= 0:
+        return None
+    text = str(value or "").strip().lower()
+    is_jin = "斤" in text and not any(unit in text for unit in ("公斤", "千克", "kg", "㎏"))
+    return number / 2 if is_jin else number
+
+
+def _normalize_waist_cm(value: str) -> float | None:
+    """腰围统一成厘米，只修正明确写出的单位，不猜用户未写明的数值。"""
+
+    number = _first_number(value)
+    if number is None or number <= 0:
+        return None
+    text = str(value or "").strip().lower()
+    if "mm" in text or "毫米" in text:
+        return number / 10
+    if ("m" in text and "cm" not in text and "mm" not in text) or (
+        "米" in text and "厘米" not in text and "毫米" not in text
+    ):
+        return number * 100
+    return number
 
 
 def _normalize_height_cm(value: float | None) -> float | None:
@@ -414,24 +483,14 @@ def _stage_targets(band: str, safe_room_kg: float | None) -> dict[str, str]:
 # 4kg 硬顶保留：客户这次只强调 5%、没说取消它，且它只在 ≥80kg 时才绑定，
 # 4kg/月对任何人都是安全上限，没有理由自作主张放宽。
 #
-# 基础目标取上限的 65%、挑战目标顶到上限，这样两个目标才有区分度。曾经试过让
-# 两者都按带位区间被 cap 截断，结果是 cap 一旦低于基础目标上界，两个区间会被压到
-# 同一个天花板、挑战目标退化成基础目标的复读——那正是"挑战目标对绝大多数用户
-# 给不出数字"的由来。
-_DAY28_BASE_RATIO = 0.65
-
 _DAY28_TEXT_A_BAND = {
-    "base": "不设置体重下降指标，重点放在体态、睡眠、精力、恢复和执行一致性",
-    "challenge": "不设置减重挑战目标",
+    "base": "不设置必须下降的体重硬指标，优先改善体态、睡眠、精力、恢复和执行一致性",
+    "challenge": "不设置体重挑战目标，优先修复塑形",
 }
 _DAY28_TEXT_UNKNOWN = {
     "base": "待补齐身高体重后与班主任确认目标",
     "challenge": "待补齐身高体重后确定",
 }
-# 上限小到连"基础一档 + 更高一档"都分不出来时，不硬凑一个与基础重合的区间。
-_DAY28_NO_CHALLENGE = "不设置更高的减重挑战目标，先把基础目标做实"
-
-
 def _day28_targets(band: str, goal_cap_kg: float | None) -> dict[str, str]:
     """按 day28_goal_cap_kg 给出28天基础/挑战目标。
 
@@ -448,14 +507,14 @@ def _day28_targets(band: str, goal_cap_kg: float | None) -> dict[str, str]:
         # 空间归零但带位不是 A 带，理论上不该出现；真出现了也不能给数字。
         return dict(_DAY28_TEXT_A_BAND)
 
-    base_high = max(1, int(cap_jin * _DAY28_BASE_RATIO))
-    base_low = max(1, base_high - 1)
-    targets = {"base": _day28_jin_text(base_low, base_high)}
-    if base_high >= cap_jin:
-        targets["challenge"] = _DAY28_NO_CHALLENGE
-    else:
-        targets["challenge"] = _day28_jin_text(base_high + 1, cap_jin)
-    return targets
+    # 客户 V2.2 统一口径：展示上限向下取整；基础目标固定比上限低 2-1 斤，
+    # 挑战目标只写「向上限推进」，不再另造一个可能与基础目标重叠的区间。
+    base_low = max(1, cap_jin - 2)
+    base_high = max(base_low, cap_jin - 1)
+    return {
+        "base": _day28_jin_text(base_low, base_high),
+        "challenge": f"向{cap_jin}斤推进",
+    }
 
 
 def _day28_jin_text(low: int, high: int) -> str:
@@ -477,8 +536,8 @@ def _safety_review_required(safety_factors: dict[str, Any] | None) -> bool:
     """问卷是否暴露了必须人工复核的安全条件。
 
     注意它**不改带位**：A-D 带始终按安全减重空间的数值边界判定。红色风险、孕哺、
-    青少年等条件通过强制人工复核起作用——文档内容照常按带位生成，但会被扣住不
-    自动发送，由运营确认后再发。
+    青少年等条件通过强制人工复核起作用——管理带照常生成，挑战目标降为D7复评，
+    文件会被扣住不自动发送，由运营确认后再发。
     """
 
     if not isinstance(safety_factors, dict):

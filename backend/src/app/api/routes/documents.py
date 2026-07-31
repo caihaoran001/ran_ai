@@ -24,6 +24,7 @@ from app.services.document_service import (
     send_case_documents,
     send_one_document,
 )
+from app.services.intake_generation import DocumentGenerationBlocked
 from app.services.service_case_queries import get_active_service_case, get_service_case
 from app.services.service_case_activation import set_pre_service_status_or_activate
 
@@ -282,9 +283,12 @@ def _append_generation_error_note(service_case: ServiceCase, exc: Exception) -> 
         now=datetime.now(tz),
         tz=tz,
     )
-    message = (
-        f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
-        f"（AI_MAX_TOKENS={settings.ai_max_tokens}）"
-    )
+    if isinstance(exc, DocumentGenerationBlocked):
+        message = f"[{timestamp}] 资料待确认，暂未生成交付文件：{'；'.join(exc.reasons)}"
+    else:
+        message = (
+            f"[{timestamp}] 自动生成画像/交付文件失败：{type(exc).__name__}: {exc}"
+            f"（AI_MAX_TOKENS={settings.ai_max_tokens}）"
+        )
     existing = service_case.notes or ""
     service_case.notes = (f"{existing}\n{message}" if existing else message)[-2000:]

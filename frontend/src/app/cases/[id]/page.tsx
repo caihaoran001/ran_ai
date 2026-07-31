@@ -157,14 +157,27 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
       )}
 
       {generationError && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">
+        <div
+          className={`rounded-xl border px-5 py-4 text-sm ${
+            generationError.kind === "blocked"
+              ? "border-amber-200 bg-amber-50 text-amber-800"
+              : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}
+        >
           <p className="flex items-center gap-2 font-semibold">
             <AlertTriangle className="h-4 w-4" />
-            文件自动生成失败
+            {generationError.kind === "blocked" ? "资料待确认，暂未生成交付文件" : "文件自动生成失败"}
           </p>
-          <p className="mt-1 break-words">{generationError}</p>
+          <p className="mt-1 break-words">{generationError.message}</p>
+          {generationError.kind === "blocked" && (
+            <p className="mt-1 text-amber-900">请先让用户复测并修正对应问卷数据，确认后再重新生成。</p>
+          )}
           {!serviceCase.deleted_at && (
-            <RetryGenerateDocuments caseId={serviceCase.id} autoSend={serviceCase.auto_send_documents} />
+            <RetryGenerateDocuments
+              caseId={serviceCase.id}
+              autoSend={serviceCase.auto_send_documents}
+              blocked={generationError.kind === "blocked"}
+            />
           )}
         </div>
       )}
@@ -542,14 +555,32 @@ function formatGenerationDuration(durationMs?: number | null) {
   return `${minutes}分${seconds.toFixed(1)}秒`;
 }
 
-function extractGenerationError(notes?: string | null) {
-  if (!notes || !notes.includes("自动生成画像/交付文件失败")) return null;
+function extractGenerationError(
+  notes?: string | null,
+): { kind: "blocked" | "failed"; message: string } | null {
+  if (
+    !notes
+    || (
+      !notes.includes("自动生成画像/交付文件失败")
+      && !notes.includes("资料待确认，暂未生成交付文件")
+    )
+  ) return null;
   const lines = notes
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
-  const matched = [...lines].reverse().find((line) => line.includes("自动生成画像/交付文件失败"));
-  return matched?.replace(/^\[[^\]]+\]\s*/, "") ?? null;
+  const matched = [...lines].reverse().find(
+    (line) => line.includes("自动生成画像/交付文件失败") || line.includes("资料待确认，暂未生成交付文件"),
+  );
+  if (!matched) return null;
+  const rawMessage = matched.replace(/^\[[^\]]+\]\s*/, "");
+  const kind = rawMessage.includes("资料待确认，暂未生成交付文件") ? "blocked" : "failed";
+  return {
+    kind,
+    message: kind === "blocked"
+      ? rawMessage.replace(/^资料待确认，暂未生成交付文件[：:]?\s*/, "")
+      : rawMessage,
+  };
 }
 
 function formatIntentFlags(flags?: Array<Record<string, string | boolean>> | null) {
