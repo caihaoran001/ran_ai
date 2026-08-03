@@ -486,7 +486,7 @@ async def test_questionnaire_submit_creates_profile_and_documents(
         "11. 您可能先看到的变化",
         "12. 特别提醒",
         "13. 需要补充的信息",
-        "14. 说明",
+        "14. 出现这些情况请立刻停下",
     ]
     # 本周直接执行放宽到最多5条，第4条不再被截断——参考设计要求3-5条覆盖三件事之外的维度
     assert "22:30手机熄屏，23:00前关灯" in diagnosis.content_md
