@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -69,9 +70,43 @@ BAND_CALCULATION_FIELDS = (
     "target_generation_rule_applied",
 )
 
-MANUAL_REVIEW_CHALLENGE_TARGET = "暂不设置挑战数字，D7复评"
-MANUAL_REVIEW_BASE_TARGET = "先完成7天基础执行，D7复评"
 INTAKE_DOCUMENT_MAX_ATTEMPTS = 3
+
+# 交付文件模型只需要这些用户交付事实；运营复核状态、医学自由文本和内部计算依据
+# 均不得进入该模型上下文。模型拿到的是最终带位和目标，不需要知道这些结果为何被风控关注。
+_DOCUMENT_MODEL_FACT_KEYS = (
+    "gender",
+    "age",
+    "height_cm",
+    "weight_kg",
+    "bmi",
+    "weight_loss_band",
+    "stage_targets",
+    "day28_targets",
+    "28_day_auto_cap_kg",
+    "28_day_display_cap_jin",
+    "basic_target_jin_or_range",
+    "challenge_target_jin_or_review_text",
+    "target_generation_rule_applied",
+    "waist",
+    "waist_cm",
+    "bodyfat",
+    "adult_stable_comfort_weight_raw",
+    "adult_stable_comfort_weight_kg",
+    "main_needs",
+    "day28_expectation",
+    "adherence_worry",
+    "pressure_reaction",
+    "diet_pattern",
+)
+# 文档模型不负责这些内部状态；即使它在越界输出中带回，也不能污染运营画像。
+_MODEL_OWNED_INTERNAL_FIELDS = (
+    "manual_review_required",
+    "manual_review_reasons",
+    "safety_status",
+    "band_confidence",
+    "provisional_band",
+)
 
 # 运动次数不是新的业务判断：它由同一轮模型写入 shared_analysis.activity_plan，
 # 这里仅将该结构化结果确定性回填到三处历史自由文本，避免 2 次 / 3 次 / 4 次并存。
@@ -238,8 +273,7 @@ def _apply_deterministic_band(
     # provisional_band 是给运营挑人的信号：这个带位还需要人工确认一眼。
     # 它曾经跟着 baseline_weight_provisional 一起置真，但入营问卷只让用户填一次体重，
     # 永远拿不到客户规范要求的连续3天晨重均值，于是全员常亮、筛不出人。
-    # 测量方式由 baseline_weight_provisional 如实记录，带位是否暂定只看下面这两类：
-    # 关键数据缺失（此处）或模型判定的资料冲突/安全闸门（由模型按 schema 填）。
+    # 测量方式由 baseline_weight_provisional 如实记录，带位是否暂定只看关键数据是否缺失。
     if band not in MANAGEMENT_BANDS:
         reasons = _clean_list(shared.get("manual_review_reasons"))
         reason = "缺少可信身高或体重，暂不能计算A-D管理带"
@@ -250,10 +284,9 @@ def _apply_deterministic_band(
         shared["safety_status"] = "manual_review"
         shared["provisional_band"] = True
 
-    # 问卷暴露的安全条件（红风险、孕哺、青少年等）不改带位——A-D 带始终由安全减重
-    # 空间的数值边界决定，风险已经通过上调保护性下限折算进 safe_room。它们在这里
-    # 强制人工复核：基础目标能安全量化时保留，挑战目标统一降为D7复评；文件会被扣住
-    # 不自动发送，由运营确认后再发。
+    # 问卷暴露的安全条件（红风险、孕哺、青少年等）不改带位或目标——A-D 带和
+    # 基础/挑战目标始终由安全减重空间的数值边界决定。它们在这里仅强制人工复核：
+    # 文件会被扣住不自动发送，由运营确认后再发。
     # 这比 _force_high_risk_manual_review 更早生效：风控可能还没把服务单判成高风险，
     # 问卷里已经写明了孕期或术后。
     if facts.get("safety_review_required"):
@@ -326,18 +359,13 @@ def _apply_canonical_target_contract(
     shared: dict[str, object],
     facts: dict[str, object],
 ) -> None:
-    """把 V2.2 目标写成唯一权威值，后续两份文档只能逐字复制。"""
+    """把系统计算目标写成唯一权威值，后续两份文档只能逐字复制。
+
+    运营是否重点关注只影响后台审核与自动发送，不能反过来改写用户的基础或挑战目标。
+    """
 
     base_goal = str(facts.get("basic_target_jin_or_range") or "").strip()
     challenge_goal = str(facts.get("challenge_target_jin_or_review_text") or "").strip()
-    band = str(facts.get("weight_loss_band") or "").strip()
-    can_quantify_base = band in MANAGEMENT_BANDS[1:] and bool(
-        _WEIGHT_NUMBER_PATTERN.search(base_goal)
-    )
-    if _boolean_value(shared.get("manual_review_required")):
-        challenge_goal = MANUAL_REVIEW_CHALLENGE_TARGET
-        if not can_quantify_base:
-            base_goal = MANUAL_REVIEW_BASE_TARGET
 
     facts["basic_target_jin_or_range"] = base_goal
     facts["challenge_target_jin_or_review_text"] = challenge_goal
@@ -416,8 +444,6 @@ def _document_consistency_errors(
         errors.append("共享分析的基础目标与系统计算不一致")
     if str(shared.get("challenge_goal") or "").strip() != challenge:
         errors.append("共享分析的挑战目标与系统计算不一致")
-    if _boolean_value(shared.get("manual_review_required")) and challenge != MANUAL_REVIEW_CHALLENGE_TARGET:
-        errors.append("人工复核用户的挑战目标未降级为D7复评")
     if band == MANAGEMENT_BANDS[0] and (
         _WEIGHT_NUMBER_PATTERN.search(base) or _WEIGHT_NUMBER_PATTERN.search(challenge)
     ):
@@ -604,7 +630,7 @@ async def _extract_safety_factors(
                 "你是健康服务的安全审阅员。只根据问卷中明确出现的事实做结构化判断，"
                 "不推测、不补编、不做医学诊断。只输出一个 JSON 对象，不要解释或 Markdown。"
                 "判断不确定时一律输出 false 或 null——漏判会由人工复核兜底，"
-                "误判会直接改变用户拿到的目标，代价更大。"
+                "误判会错误增加运营复核工作，代价更大。"
             ),
             user_prompt=(
                 f"请严格按这个字段结构填值：\n"
@@ -653,12 +679,15 @@ async def _generate_intake_analysis_package(
     if block_reasons:
         raise DocumentGenerationBlocked(block_reasons)
 
+    document_facts = _document_model_intake_facts(intake_facts)
+    document_answers = _document_model_readable_answers(fields, submission.answers_json)
+
     base_user_prompt = (
         f"当前用户：{user_name}\n"
         f"服务单：{service_case.case_no}\n\n"
         f"请严格按这个 package 顶层字段结构填值：\n{json.dumps(_intake_package_schema(), ensure_ascii=False, indent=2)}\n\n"
-        f"intake_facts（共同事实摘要，优先级最高）：\n{json.dumps(intake_facts, ensure_ascii=False, indent=2)}\n\n"
-        f"问卷结果：\n{readable_answers}"
+        f"intake_facts（共同事实摘要，优先级最高）：\n{json.dumps(document_facts, ensure_ascii=False, indent=2)}\n\n"
+        f"问卷结果：\n{document_answers}"
     )
     last_error: RetryableAIContentError | RetryableIntakePackageError | None = None
     for attempt in range(1, INTAKE_DOCUMENT_MAX_ATTEMPTS + 1):
@@ -714,8 +743,11 @@ def _normalize_intake_analysis_package(
         payload = payload["intake_analysis_package"]
     shared = payload.get("shared_analysis") if isinstance(payload.get("shared_analysis"), dict) else {}
     document_root = payload.get("documents") if isinstance(payload.get("documents"), dict) else payload
+    # 运营复核是风控链的确定性结果，不接受文档模型的猜测或输出。
+    for key in _MODEL_OWNED_INTERNAL_FIELDS:
+        shared.pop(key, None)
     # 四带结论由安全减重空间确定性计算，LLM只负责解释和选择当前主线。
-    # 持续高风险与A-D带并存；服务单高风险无条件强制页面重点人工复核。
+    # 持续高风险与A-D带并存；服务单高风险无条件点亮运营页面的重点关注。
     _apply_deterministic_band(shared, intake_facts)
     _force_high_risk_manual_review(shared, service_case)
     _apply_canonical_target_contract(shared, intake_facts)
@@ -759,27 +791,9 @@ def _normalize_intake_analysis_package(
 def _intake_package_schema() -> dict[str, object]:
     return {
         "shared_analysis": {
-            "safety_status": "内部字段，只能取 standard / cautious / manual_review",
-            "manual_review_required": "内部字段（布尔值）；孕哺、未成年人、明显疾病/用药/持续不适或非主动消瘦时为 true。"
-            "明显单位/录入矛盾走生成阻断，普通腰高比疑点只建议复测，二者都不因此置 true。"
-            "它不是管理带，为 true 时 weight_band 仍要给正常业务带位",
-            "manual_review_reasons": ["内部字段；需要人工复核的1-3条原因，只给运营看，禁止写进两份交付文件"],
-            "ready_for_document_generation": "布尔值；只有关键资料足以可靠生成正式文件时为 true。"
-            "manual_review_required=true 本身不影响此字段",
-            "document_generation_block_reasons": ["ready=false 时必须给出1-3条具体原因；true 时为空数组"],
-            "baseline_weight_kg": "内部确定性字段；当前问卷最新可信体重",
-            "baseline_weight_provisional": "内部确定性字段；未取得连续3天晨重均值时为 true",
-            "absolute_low_weight_boundary_kg": "内部确定性字段；18.5 × 身高m²",
-            "automatic_review_weight_kg": "内部确定性字段；20 × 身高m²",
-            "protected_lower_weight_kg": "内部确定性字段；当前自动方案采用的保护性下限",
-            "safe_reduction_room_kg": "内部确定性字段；基线体重减保护性下限，是四带唯一数值主轴",
             "weight_band": "系统已经按安全减重空间算好的最终业务管理带，只能逐字复制：A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重。"
-            "模型不得改带，也禁止写「需人工复核」等内部标签",
-            "band_confidence": "内部字段，high / medium / low；资料缺失或安全闸门触发时写 low",
-            "provisional_band": "内部字段（布尔值）；带位为待人工确认的暂定结论时为 true。"
-            "基线体重来自单次自报（baseline_weight_provisional=true）是所有入营用户的常态，不构成暂定理由；"
-            "只有会影响安全目标但仍允许生成的安全闸门触发才置 true；关键数据缺失/明显录入矛盾会直接阻断生成，普通复测建议不置 true",
-            "band_basis": ["系统根据基线体重、保护性下限和安全减重空间生成的确定性分带依据，模型不得改写"],
+            "模型不得改带；不输出任何风险、人工复核或内部运营状态",
+            "band_basis": ["系统给出的管理带解释依据，模型不得改写"],
             "body_trend": "仅依据入营问卷反映的近3个月趋势：正在改善 / 基本稳定 / 缓慢变沉 / 明显恶化 / 信息不足",
             "body_trend_summary": "一句话解释近3个月趋势；不得写入营后的变化",
             "body_trend_direct_evidence": "1条能证明变化方向的直接趋势事实，优先来自问卷「最近3个月体重变化」。"
@@ -789,7 +803,7 @@ def _intake_package_schema() -> dict[str, object]:
             "core_problem": "核心问题，只基于问卷事实",
             "current_mainline": "当前唯一主线，只能取：保肌减脂 / 节律稳定 / 睡眠修复 / 饮食结构修复 / 系统化管理；主要依据睡眠、精力、饮食、食欲边界、晚间失控、运动和恢复状态选择",
             "base_goal": "基础目标；用户没有明确数字时不得编造斤数；A带禁止任何减重数字",
-            "challenge_goal": "条件性挑战目标；逐字复制系统目标。manual_review_required=true 时必须写暂不设置挑战数字，D7复评",
+            "challenge_goal": "条件性挑战目标；逐字复制系统目标",
             "28_day_auto_cap_kg": "逐字复制 intake_facts.28_day_auto_cap_kg，模型不得重算",
             "28_day_display_cap_jin": "逐字复制 intake_facts.28_day_display_cap_jin，模型不得重算",
             "basic_target_jin_or_range": "逐字复制 intake_facts.basic_target_jin_or_range",
@@ -818,7 +832,6 @@ def _intake_package_schema() -> dict[str, object]:
             "state": "当前状态评估",
             "main_problem": "核心主要问题",
             "day28_goal": "28天目标",
-            "risks": "只写问卷明确出现的健康/心理/医疗风险；无明确风险写暂无明确风险",
             "need_analysis": {
                 "surface_needs": ["用户表面表达的需求，例如减重、睡好、精神好"],
                 "deep_needs": ["表层需求背后的真实服务需求，只基于问卷事实推断"],
@@ -846,6 +859,8 @@ def _normalize_profile_from_package(
         profile.setdefault("main_problem", shared.get("core_problem"))
         profile.setdefault("day28_goal", shared.get("day28_goal"))
     profile = sanitize_profile_json(dict(profile), intake_facts)
+    # 风险与复核属于运营风控链，不能由交付文件模型生成或在画像自由文本中混写。
+    profile.pop("risks", None)
     if shared:
         profile["safety_status"] = str(shared.get("safety_status") or "standard")
         profile["management_band"] = str(
@@ -874,7 +889,6 @@ def _normalize_profile_from_package(
         profile["provisional_band"] = _boolean_value(shared.get("provisional_band"))
         for key in BAND_CALCULATION_FIELDS:
             profile[key] = shared.get(key)
-    profile.setdefault("risks", "暂无明确风险")
     profile["need_analysis"] = _normalize_need_analysis(profile.get("need_analysis"), intake_facts, shared)
     profile.setdefault("notes", "建议围绕问卷中明确的执行卡点进行轻量陪跑，避免一次性增加太多动作。")
     tags = payload.get("profile", {}).get("tags") if isinstance(payload.get("profile"), dict) else None
@@ -896,7 +910,6 @@ def _profile_from_document_payloads(document_payloads: dict[str, dict]) -> dict[
         "state": _text_from_payload(energy.get("current_state")),
         "main_problem": _text_from_payload(energy.get("priority_direction")) or summary,
         "day28_goal": _text_from_payload(success_path.get("day28_goal") or execution.get("day28_goal")),
-        "risks": "暂无明确风险",
         "notes": _text_from_payload(energy.get("special_reminder")) or "建议围绕问卷中的核心执行卡点进行陪跑。",
     }
 
@@ -1738,3 +1751,37 @@ def _readable_answers(fields: list[dict], answers: dict) -> str:
             display = str(value).replace("||", "、")
         lines.append(f"- {title}: {display or '未提供'}")
     return "\n".join(lines)
+
+
+def _document_model_intake_facts(intake_facts: dict[str, object]) -> dict[str, object]:
+    """投影出交付模型可见的事实，运营复核与医疗原文只留在风控链。
+
+    这不是重新判断用户信息：带位和目标仍使用安全引擎已经算出的最终值；只是
+    不让负责写交付文档的模型看到“为什么运营要重点关注”的内部细节。
+    """
+
+    return {
+        key: intake_facts[key]
+        for key in _DOCUMENT_MODEL_FACT_KEYS
+        if key in intake_facts
+    }
+
+
+def _document_model_readable_answers(
+    fields: list[dict[str, Any]],
+    answers: dict[str, Any],
+) -> str:
+    """移除运营专用健康自由文本后，才将问卷交给交付文件模型。
+
+    活跃问卷早于 ``operator_only`` 元数据，因此兼容旧模板时沿用入营事实提取的
+    「健康情况 / 病史」题干语义识别。新模板可直接标 ``operator_only=true``。
+    """
+
+    visible_answers = dict(answers)
+    for field in fields:
+        key = str(field.get("key") or field.get("id") or "")
+        title = str(field.get("title") or field.get("label") or "")
+        is_legacy_health_field = "健康情况" in title or "病史" in title
+        if field.get("operator_only") is True or is_legacy_health_field:
+            visible_answers.pop(key, None)
+    return _readable_answers(fields, visible_answers)

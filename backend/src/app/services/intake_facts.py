@@ -540,9 +540,8 @@ def _safety_review_reasons(safety_factors: dict[str, Any] | None) -> list[str]:
 def _safety_review_required(safety_factors: dict[str, Any] | None) -> bool:
     """问卷是否暴露了必须人工复核的安全条件。
 
-    注意它**不改带位**：A-D 带始终按安全减重空间的数值边界判定。红色风险、孕哺、
-    青少年等条件通过强制人工复核起作用——管理带照常生成，挑战目标降为D7复评，
-    文件会被扣住不自动发送，由运营确认后再发。
+    注意它**不改带位或目标**：A-D 带和基础/挑战目标始终按安全减重空间的数值边界判定。
+    红色风险、孕哺、青少年等条件只点亮人工复核，文件会被扣住不自动发送，由运营确认后再发。
     """
 
     if not isinstance(safety_factors, dict):

@@ -32,12 +32,12 @@ from app.services.document_templates import (
 )
 from app.services.intake_generation import (
     CHECKIN_CATEGORIES,
-    MANUAL_REVIEW_BASE_TARGET,
-    MANUAL_REVIEW_CHALLENGE_TARGET,
     UNRESOLVED_BAND_USER_TEXT,
     _apply_a_band_user_visible_contract,
     _apply_canonical_target_contract,
     _apply_deterministic_band,
+    _document_model_intake_facts,
+    _document_model_readable_answers,
     _document_generation_block_reasons,
     _extract_safety_factors,
     _force_high_risk_manual_review,
@@ -60,6 +60,7 @@ from app.services.questionnaire_template import default_questionnaire_template
 
 
 INTAKE_SYSTEM_PROMPT_PREFIX = "你是加速燃「高燃人生28天训练营」的首席能量教练"
+SAFETY_SYSTEM_PROMPT_PREFIX = "你是健康服务的安全审阅员。"
 
 
 def _make_intake_mock_response(
@@ -280,6 +281,25 @@ def _make_intake_mock_response(
     })
 
 
+def _manual_review_safety_response() -> str:
+    """模拟风控链确认“长期处方药待运营核对”，不让文档模型参与判定。"""
+
+    return json.dumps(
+        {
+            "safety_review_required": True,
+            "safety_review_reasons": ["问卷填写当前长期用药"],
+            "muscle_insufficiency": False,
+            "disease_or_medication_limit": False,
+            "recovery_risk": False,
+            "doctor_specified_lower_weight_kg": None,
+            "waist_height_conflict": False,
+            "waist_height_conflict_reason": None,
+            "evidence_notes": ["健康情况填写：当前长期服用处方降压药"],
+        },
+        ensure_ascii=False,
+    )
+
+
 def test_intake_prompt_keeps_goal_rules_free_of_contradictions():
     """关键目标优先级必须保留，但接口细节和重复规则不能再塞回提示词。"""
     prompt = _intake_generation_system_prompt()
@@ -296,14 +316,12 @@ def test_intake_prompt_keeps_goal_rules_free_of_contradictions():
     assert "shared_analysis 是唯一判断源" in prompt
     assert "运动频次只能使用 shared_analysis.activity_plan" in prompt
     assert "adult_stable_comfort_weight_kg" in prompt
-    assert "【复核目标口径】" in prompt
-    assert "挑战目标必须固定写「暂不设置挑战数字，D7复评」" in prompt
-    assert "基础目标固定写「先完成7天基础执行，D7复评」" in prompt
-    assert "医生要求不减重" in prompt
-    assert "不得展示任何减重数字或限制性减重饮食" in prompt
+    assert "你不会获得风险等级、人工复核状态、复核原因或医疗自由文本" in prompt
+    assert "D7复评" not in prompt
+    assert "manual_review_required" not in prompt
     assert "【A带的无数字目标】" in prompt
     assert "所有用户可见字段都不得出现减重斤数" in prompt
-    assert "不得自己挑一个 A/B/C/D 带顶上" in prompt
+    assert "不得用 BMI、用户期待或生活方式事实改带" in prompt
     assert CONCISENESS_RULE in prompt
     assert "两者冲突时一律先保信息完整" in prompt
 
@@ -330,7 +348,7 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "若两项同时入选 daily_checkin，必须各占 1 项" in prompt
 
     assert "weight_band 永远只能逐字复制系统算好的业务带位" in prompt
-    assert "严禁把「需人工复核」「人工复核」「待复核」「red风险」「高风险」「风险等级」等内部标签写进 weight_band" in prompt
+    assert "不得用 BMI、用户期待或生活方式事实改带" in prompt
     assert "【证据职责分开】" in prompt
     assert "week5_8、week9_12 必须逐字复制 intake_facts.stage_targets" in prompt
     assert "adult_stable_comfort_weight_kg" in prompt
@@ -356,7 +374,7 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "A带不得复述具体减重斤数" in energy_spec["goal_response"]["user_goal"]
     assert "A带只做定性判断" in energy_spec["goal_response"]["judgement"]
     assert "A带禁止任何减重数字" in energy_spec["goal_response"]["base_goal"]
-    assert "manual_review_required=true 时固定为暂不设置挑战数字" in energy_spec["goal_response"]["challenge_goal"]
+    assert "D7复评" not in energy_spec["goal_response"]["challenge_goal"]
     assert "diet_rules" in execution_spec
     assert "exercise_rules" in execution_spec
     assert "activity_plan.sessions_per_week" in energy_spec["week_actions"][0]
@@ -804,25 +822,59 @@ def test_service_case_high_risk_forces_manual_review_even_when_model_cancels_it(
     assert shared["manual_review_reasons"] == ["用户明确处于孕期"]
 
 
-def test_manual_review_keeps_safe_base_but_moves_challenge_to_day7_review():
+def test_manual_review_keeps_calculated_challenge_target():
     facts = build_intake_fact_summary(_band_fields(), {"h": "165", "w": "70"})
     shared: dict[str, object] = {"manual_review_required": True}
 
     _apply_canonical_target_contract(shared, facts)
 
     assert shared["base_goal"] == "28天减重5-6斤"
-    assert shared["challenge_goal"] == MANUAL_REVIEW_CHALLENGE_TARGET
-    assert facts["challenge_target_jin_or_review_text"] == MANUAL_REVIEW_CHALLENGE_TARGET
+    assert shared["challenge_goal"] == "向7斤推进"
+    assert facts["challenge_target_jin_or_review_text"] == "向7斤推进"
 
 
-def test_manual_review_uses_day7_base_when_base_cannot_be_quantified():
+def test_manual_review_does_not_replace_unresolved_target_contract():
     facts = build_intake_fact_summary(_band_fields(), {"h": "165", "w": "暂未测量"})
     shared: dict[str, object] = {"manual_review_required": True}
 
     _apply_canonical_target_contract(shared, facts)
 
-    assert shared["base_goal"] == MANUAL_REVIEW_BASE_TARGET
-    assert shared["challenge_goal"] == MANUAL_REVIEW_CHALLENGE_TARGET
+    assert shared["base_goal"] == facts["basic_target_jin_or_range"]
+    assert shared["challenge_goal"] == facts["challenge_target_jin_or_review_text"]
+
+
+def test_document_model_input_excludes_review_state_and_operator_health_text():
+    fields = [
+        {"key": "need", "title": "您最想先解决什么问题"},
+        {
+            "key": "health",
+            "title": "过敏 / 正在用药 / 既往病史补充",
+            "operator_only": True,
+        },
+    ]
+    facts = {
+        "weight_loss_band": "B带｜轻盈启动",
+        "basic_target_jin_or_range": "28天减重5-6斤",
+        "challenge_target_jin_or_review_text": "向7斤推进",
+        "health_note": "正在服用降压药",
+        "safety_review_required": True,
+        "safety_review_reasons": ["问卷填写当前长期用药"],
+        "protected_lower_weight_kg": "58",
+    }
+
+    document_facts = _document_model_intake_facts(facts)
+    document_answers = _document_model_readable_answers(
+        fields,
+        {"need": "晚间收口", "health": "正在服用降压药"},
+    )
+
+    assert document_facts == {
+        "weight_loss_band": "B带｜轻盈启动",
+        "basic_target_jin_or_range": "28天减重5-6斤",
+        "challenge_target_jin_or_review_text": "向7斤推进",
+    }
+    assert "晚间收口" in document_answers
+    assert "降压药" not in document_answers
 
 
 def test_weight_units_stable_comfort_weight_and_waist_ratio_are_normalized():
@@ -1882,8 +1934,12 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
     """用药样本：内部复核标记生效，但管理带仍是业务带位、用户正文不含内部标签、自动发送被阻止。"""
 
     mock_ai._responses = {
+        SAFETY_SYSTEM_PROMPT_PREFIX: _manual_review_safety_response(),
+        # 故意让文档模型越界输出复核字段，验证它既看不到，也无权决定运营状态。
         INTAKE_SYSTEM_PROMPT_PREFIX: _make_intake_mock_response(manual_review=True),
     }
+    answers = dict(cai_haoran_answers)
+    answers["SIMPLE1774108071693mn0i515a"] = "当前长期服用处方降压药"
     # 全局策略开成 auto_send：需人工复核的入营文件仍然不得自动发送
     await admin_client.post("/settings/content-delivery-policy", json={"mode": "auto_send"})
     try:
@@ -1899,7 +1955,7 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
 
         submit_resp = await admin_client.post(
             f"/questionnaires/{token}/submit?template=intake",
-            json={"answers": cai_haoran_answers},
+            json={"answers": answers},
         )
         assert submit_resp.status_code == 201, submit_resp.text
         await wait_background()
@@ -1908,7 +1964,7 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
             select(UserProfile).where(UserProfile.service_case_id == case_id)
         )
         assert profile is not None
-        # 模型即使把复核标签写成带位，最终仍使用安全减重空间算出的B带
+        # 文档模型即使越界把复核标签写成带位，最终仍使用安全减重空间算出的B带。
         assert profile.profile_json["management_band"] == "B带｜轻盈启动"
         assert "复核" not in profile.profile_json["management_band"]
         # 内部字段仍然保留，供后台和人工复核使用
@@ -1916,10 +1972,10 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
         assert profile.profile_json["safety_status"] == "manual_review"
         assert profile.profile_json["manual_review_reasons"] == [
             "问卷填写当前长期用药",
-            "关键指标需医生确认后才能加码",
+            "健康高风险",
         ]
-        assert profile.profile_json["provisional_band"] is True
-        assert profile.profile_json["band_confidence"] == "low"
+        assert profile.profile_json["provisional_band"] is False
+        assert profile.profile_json["band_confidence"] == ""
 
         documents = list(await db_session.scalars(
             select(UserDocument).where(UserDocument.service_case_id == case_id)
@@ -1934,14 +1990,15 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
             assert internal_review["manual_review_required"] is True
             assert internal_review["reasons"] == [
                 "问卷填写当前长期用药",
-                "关键指标需医生确认后才能加码",
+                "健康高风险",
             ]
             # 用户可见正文（blocks / content_md）一个内部标签都不能有
             rendered = json.dumps(document.content_json["blocks"], ensure_ascii=False)
             for label in ("需人工复核", "人工复核", "待复核", "red风险", "风险等级"):
                 assert label not in rendered, f"{document.title} 的 blocks 泄漏了 {label}"
                 assert label not in document.content_md, f"{document.title} 的正文泄漏了 {label}"
-            assert MANUAL_REVIEW_CHALLENGE_TARGET in document.content_md
+            assert "向6斤推进" in document.content_md
+            assert "D7复评" not in document.content_md
             # 整句剔除，不留「本方案。」这类残句
             assert "本方案。" not in document.content_md
 
@@ -1959,10 +2016,27 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
         assert all(
             document["manual_review_reasons"] == [
                 "问卷填写当前长期用药",
-                "关键指标需医生确认后才能加码",
+                "健康高风险",
             ]
             for document in pending
         )
+        safety_calls = [
+            call for call in mock_ai.calls if call.get("scenario") == "intake_safety_factors"
+        ]
+        document_calls = [
+            call for call in mock_ai.calls if call.get("scenario") == "intake_doc"
+        ]
+        assert len(safety_calls) == 1
+        assert len(document_calls) == 1
+        assert "当前长期服用处方降压药" in str(safety_calls[0]["user_prompt"])
+        document_prompt = str(document_calls[0]["user_prompt"])
+        for internal_text in (
+            "当前长期服用处方降压药",
+            "safety_review_required",
+            "manual_review_required",
+            "问卷填写当前长期用药",
+        ):
+            assert internal_text not in document_prompt
     finally:
         await admin_client.post("/settings/content-delivery-policy", json={"mode": "manual_review"})
 
@@ -2039,8 +2113,11 @@ async def test_manual_review_document_can_still_be_sent_by_operator(
     """人工检查/修改后点「确认发送」仍然可用——阻断的是自动发送，不是人工发送。"""
 
     mock_ai._responses = {
+        SAFETY_SYSTEM_PROMPT_PREFIX: _manual_review_safety_response(),
         INTAKE_SYSTEM_PROMPT_PREFIX: _make_intake_mock_response(manual_review=True),
     }
+    answers = dict(cai_haoran_answers)
+    answers["SIMPLE1774108071693mn0i515a"] = "当前长期服用处方降压药"
     group_id = f"test-manual-review-send-{secrets.token_hex(6)}"
     resp = await create_case({
         "group_id": group_id,
@@ -2053,7 +2130,7 @@ async def test_manual_review_document_can_still_be_sent_by_operator(
 
     submit_resp = await admin_client.post(
         f"/questionnaires/{token}/submit?template=intake",
-        json={"answers": cai_haoran_answers},
+        json={"answers": answers},
     )
     assert submit_resp.status_code == 201, submit_resp.text
     await wait_background()
