@@ -8,8 +8,8 @@ from app.models.user_document import DocumentType
 
 logger = logging.getLogger(__name__)
 
-# 产品排班每段的软上限，与提示词里的 ≤44 字对齐。这里只告警、不截断：
-# 用量、冲泡水量和饮用时点是用户照着执行的依据，宁可版面挤一点也不能砍。
+# 产品排班每段的软上限，与提示词里的 ≤44 字对齐。全库的字数上限都是软约束：
+# 超出只由 _length_checked 记一条告警，绝不截断（原因见该函数）。
 PRODUCT_SLOT_SOFT_LIMIT = 44
 
 
@@ -349,12 +349,12 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
         _text_block(
             "current_phase_goal",
             "2. 当前阶段目标",
-            _compact_field(fields.get("current_phase_goal"), max_len=32),
+            _length_checked(fields.get("current_phase_goal"), max_len=32),
         ),
         _text_block(
             "principle",
             "3. 执行总原则",
-            _compact_field(fields.get("principle"), max_len=28)
+            _length_checked(fields.get("principle"), max_len=28)
             or "先守底盘，再抓结果；先连续完成，再逐步加码。",
         ),
         _execution_product_block(fields),
@@ -440,26 +440,32 @@ def _list_block(
     if limit is not None:
         cleaned = cleaned[:limit]
     if max_item_len is not None:
-        cleaned = [_compact_field(item, max_len=max_item_len) for item in cleaned]
+        cleaned = [_length_checked(item, max_len=max_item_len) for item in cleaned]
     return {"key": key, "title": title, "kind": "list", "items": cleaned}
 
 
-def _compact_field(value: Any, *, max_len: int) -> str:
-    """按内容预算裁到限长，优先在句读边界断开，不硬切半个词。
+def _length_checked(value: Any, *, max_len: int) -> str:
+    """只检查内容预算并告警，不截断。
 
-    这是版面兜底，不是主约束：提示词已经给了同一套字数上限，这里只保证真实模型
-    偶尔写长时仍然落在一页内。
+    这里原来会裁到 max_len 再回退到最近的标点，代价是超一个字就丢掉最后一整个
+    分句，而且断口通顺、看不出被砍过：晚A 写了 36 字、上限 34 字，
+    "最晚睡前1小时完成"被整句砍掉，页面上只剩"晚餐后饮用"。运动规则同理，
+    要求写"类型+频率+时长+强度+禁忌时间窗口"五样，一超就可能丢掉禁忌时间窗口。
+
+    这类丢失全是用户照着执行的依据和安全边界，比版面超一点严重得多。字数一律由
+    提示词的同套上限约束（软约束），这里只留一条可观测的告警，内容照原样输出。
+    仍然压掉字段内换行，避免单个字段的换行破坏目标摘要那种"一行一项"的版面。
     """
 
     text_val = _clean_text(value).replace("\n", " ")
-    if not text_val or len(text_val) <= max_len:
-        return text_val
-    head = text_val[:max_len]
-    for separator in ("；", "。", "，", "、", " "):
-        cut = head.rfind(separator)
-        if cut >= max_len // 2:
-            return head[:cut].rstrip("；。，、 ")
-    return head.rstrip("；。，、 ")
+    if text_val and len(text_val) > max_len:
+        logger.warning(
+            "document field exceeds soft length budget length=%s limit=%s text=%s",
+            len(text_val),
+            max_len,
+            text_val,
+        )
+    return text_val
 
 
 def _non_negotiable_block(fields: dict[str, Any]) -> dict[str, Any]:
@@ -632,11 +638,11 @@ def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
     """V2.2 要求执行文件也能独立核对管理带及三层目标，文案保持紧凑。"""
 
     lines = [
-        f"管理带：{_compact_field(fields.get('weight_band'), max_len=18)}",
-        f"基础目标：{_compact_field(fields.get('base_goal'), max_len=36)}",
-        f"挑战目标：{_compact_field(fields.get('challenge_goal'), max_len=28)}",
-        f"长期方向：{_compact_field(fields.get('path_goal') or fields.get('long_term_goal'), max_len=42)}",
-        f"当前主线：{_compact_field(fields.get('current_mainline'), max_len=16)}",
+        f"管理带：{_length_checked(fields.get('weight_band'), max_len=18)}",
+        f"基础目标：{_length_checked(fields.get('base_goal'), max_len=36)}",
+        f"挑战目标：{_length_checked(fields.get('challenge_goal'), max_len=28)}",
+        f"长期方向：{_length_checked(fields.get('path_goal') or fields.get('long_term_goal'), max_len=42)}",
+        f"当前主线：{_length_checked(fields.get('current_mainline'), max_len=16)}",
     ]
     return _text_block(
         "goal_summary",
@@ -670,26 +676,12 @@ def _execution_product_block(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _product_slot_text(label: str, value: Any) -> str:
-    """渲染「早C 1标准份（3刻度）…」这类一段排班；模型自带前缀时不重复写标签。
-
-    刻意不做字数截断。截断会回退到最近的标点，超一个字就丢掉最后一整个分句：
-    晚A 写了 36 字、上限 34 字，结果"最晚睡前1小时完成"被整句砍掉，页面上只剩
-    "晚餐后饮用"且看不出被砍过。饮用时点是用户照着执行的依据，不能静默丢失，
-    字数改由提示词的 ≤44 字约束，模型偶尔写长只告警、照原样输出。
-    """
+    """渲染「早C 1标准份（3刻度）…」这类一段排班；模型自带前缀时不重复写标签。"""
 
     text_val = _clean_prefix(_clean_text(value), label)
     if not text_val:
         return ""
-    if len(text_val) > PRODUCT_SLOT_SOFT_LIMIT:
-        logger.warning(
-            "product schedule slot exceeds soft limit label=%s length=%s limit=%s text=%s",
-            label,
-            len(text_val),
-            PRODUCT_SLOT_SOFT_LIMIT,
-            text_val,
-        )
-    return f"{label} {text_val}"
+    return f"{label} {_length_checked(text_val, max_len=PRODUCT_SLOT_SOFT_LIMIT)}"
 
 
 def _first_week_signals_block(fields: dict[str, Any]) -> dict[str, Any]:

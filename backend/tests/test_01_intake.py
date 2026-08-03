@@ -1767,8 +1767,12 @@ def test_daily_checkin_logs_every_substitution(caplog):
     assert any("fallback_used=" in message for message in messages)
 
 
-def test_execution_document_keeps_single_page_content_budget():
-    """一页执行纸的内容预算：目标摘要5行、产品排班1行、饮食≤3条、运动≤2条。"""
+def test_execution_document_keeps_single_page_content_budget(caplog):
+    """一页执行纸的内容预算：目标摘要5行、产品排班3行、饮食≤3条、运动≤2条。
+
+    条数上限（3条/2条）仍是硬约束；单条字数只是软约束——超长只告警不截断，
+    因为截断会回退到最近标点、丢掉最后一整个分句（运动规则丢的可能是禁忌时间窗口）。
+    """
 
     content_json = build_document_content_json(
         document_type=DocumentType.DAY28_EXECUTION_STANDARD,
@@ -1833,10 +1837,20 @@ def test_execution_document_keeps_single_page_content_budget():
     assert product_lines[1].endswith("保证睡前8小时以外")
     assert product_lines[2] == "晚A 随晚餐后或睡前1-2小时"
 
+    # 条数上限是硬约束
     assert len(blocks["diet_rules"]["items"]) == 3
     assert len(blocks["exercise_rules"]["items"]) == 2
-    assert all(len(item) <= 34 for item in blocks["diet_rules"]["items"])
-    assert all(len(item) <= 44 for item in blocks["exercise_rules"]["items"])
+    # 单条字数是软约束：超长内容原样保留，不得被截断丢句
+    assert blocks["diet_rules"]["items"][0] == "规则一" * 20
+    assert blocks["exercise_rules"]["items"][0] == "运动一" * 20
+    # 但必须留下可观测的告警，方便运营/开发发现模型写超预算
+    over_budget_warnings = [
+        record.message
+        for record in caplog.records
+        if "exceeds soft length budget" in record.message
+    ]
+    assert any("length=60 limit=34" in message for message in over_budget_warnings)
+    assert any("length=60 limit=44" in message for message in over_budget_warnings)
 
     # 结构化打卡定义随文档一起保存，H5 问卷才能拿到同一份 answer_type/options
     checkin_block = blocks["daily_checkin"]
