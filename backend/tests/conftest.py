@@ -115,7 +115,7 @@ async def wait_background():
             for func, args, kwargs in tasks_to_run:
                 await func(*args, **kwargs)
         # 入营生成已从提交路径的 background task 解耦到 backend 的 reminder loop：
-        # 提交只置 intake_pending_generation_at 信号，真正的风险分析/画像/文档/欢迎语
+        # 提交只置 intake_pending_generation_at 信号，真正的入营安全提取/画像/文档/欢迎语
         # 由 loop 消费。测试里补跑消费函数，等价于生产中 loop 扫到信号后生成。
         from app.services.reminder_service import ReminderService
 
@@ -200,7 +200,9 @@ class MockAIService:
 
     def _model_for(self, scenario: str) -> str:
         # 与真实 AIService 接口对齐：按场景返回模型名（mock 不区分，回退默认）
-        if scenario == "message_insight" and (getattr(self.settings, "ai_risk_model", "") or "").strip():
+        if scenario in {"message_insight", "intake_safety_factors"} and (
+            getattr(self.settings, "ai_risk_model", "") or ""
+        ).strip():
             return self.settings.ai_risk_model.strip()
         if scenario in {"intake_doc", "stage_report", "population_insight"} and (
             getattr(self.settings, "ai_document_model", "") or ""

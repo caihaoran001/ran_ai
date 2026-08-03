@@ -619,7 +619,7 @@ class ReminderService:
 
         提交入口(问卷 POST，可能跑在常驻 ingress 上)只落库并置
         intake_pending_generation_at，把重活解耦到这里，由 backend 进程内的本循环
-        按 风险分析→画像/文档→欢迎语 的顺序生成。单实例 advisory lock 保证不并发重入。
+        按 入营安全提取→画像/文档→欢迎语 的顺序生成。单实例 advisory lock 保证不并发重入。
 
         与运营 PATCH 重生成互不干扰：PATCH 走自带的 backend 后台任务、不置此信号，
         故不会被本循环重复消费或误发欢迎语。
@@ -628,16 +628,8 @@ class ReminderService:
             return
         from app.api.routes.questionnaires import (
             _append_generation_error_note,
-            _latest_submission,
             _send_intake_submit_reply,
         )
-        from app.services.message_insight_service import (
-            analyze_message_insight,
-            merge_case_insight,
-            questionnaire_content,
-        )
-        from app.services.questionnaire_template import get_active_questionnaire_fields
-
         async with SessionLocal() as session:
             pending = list(
                 await session.scalars(
@@ -659,20 +651,6 @@ class ReminderService:
                 service_case.intake_pending_generation_at = None
                 await session.commit()
                 try:
-                    submission = await _latest_submission(session, service_case.id, "intake")
-                    if submission is not None:
-                        fields = await get_active_questionnaire_fields(session, "intake")
-                        analysis = await analyze_message_insight(
-                            source="questionnaire",
-                            content=questionnaire_content(fields, submission.answers_json or {}),
-                            context={
-                                "service_case_id": service_case.id,
-                                "case_no": service_case.case_no,
-                                "template_key": "intake",
-                            },
-                        )
-                        merge_case_insight(service_case, analysis)
-                        await session.commit()
                     await generate_profile_and_documents(
                         session,
                         service_case,

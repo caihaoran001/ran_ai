@@ -72,6 +72,20 @@ BAND_CALCULATION_FIELDS = (
 
 INTAKE_DOCUMENT_MAX_ATTEMPTS = 3
 
+# 入营问卷只沉淀会长期影响服务安全边界的明确健康风险。投诉、短期不适、
+# 退款等属于群聊当下处理语义，绝不能从问卷安全提取里混进来。
+PERSISTENT_INTAKE_RISK_CODES = frozenset({
+    "pregnancy",
+    "lactation",
+    "chronic_disease",
+    "long_term_medication",
+    "hormone_medication",
+    "liver_kidney",
+    "stone",
+    "severe_test_abnormality",
+    "depression",
+})
+
 # 交付文件模型只需要这些用户交付事实；运营复核状态、医学自由文本和内部计算依据
 # 均不得进入该模型上下文。模型拿到的是最终带位和目标，不需要知道这些结果为何被风控关注。
 _DOCUMENT_MODEL_FACT_KEYS = (
@@ -601,6 +615,16 @@ SAFETY_FACTOR_SCHEMA = {
     "腰高比偏高本身是可能真实存在的腹型肥胖信号，不是数据冲突，必须填 false",
     "waist_height_conflict_reason": "字符串或 null。仅在上一字段为 true 时，用一句话说明建议复测什么；"
     "不要写医学诊断，也不要要求运营人工复核",
+    "persistent_risk_flags": [
+        {
+            "code": "仅可为 pregnancy / lactation / chronic_disease / long_term_medication / "
+            "hormone_medication / liver_kidney / stone / severe_test_abnormality / depression。"
+            "只有问卷明确披露、会长期影响服务安全边界的事实才可输出；"
+            "不确定、仅有短期不适、普通饮食限制、一般情绪压力一律不输出",
+            "reason": "一句话说明为何属于持续健康风险",
+            "evidence": "问卷原文中的直接证据，不得改写或补充",
+        }
+    ],
     "evidence_notes": ["以上每个 true 判断对应的问卷原文依据，1-4条；全部为 false 时输出空列表"],
 }
 
@@ -620,6 +644,9 @@ def _normalize_safety_factors(payload: object) -> dict[str, object]:
     }
     for key in ("muscle_insufficiency", "disease_or_medication_limit", "recovery_risk"):
         factors[key] = _boolean_value(data.get(key))
+    factors["persistent_risk_flags"] = _normalize_persistent_risk_flags(
+        data.get("persistent_risk_flags")
+    )
     factors["waist_height_conflict"] = _boolean_value(data.get("waist_height_conflict"))
     conflict_reason = str(data.get("waist_height_conflict_reason") or "").strip()
     factors["waist_height_conflict_reason"] = conflict_reason if factors["waist_height_conflict"] else ""
@@ -627,6 +654,73 @@ def _normalize_safety_factors(payload: object) -> dict[str, object]:
         data.get("doctor_specified_lower_weight_kg")
     )
     return factors
+
+
+def _normalize_persistent_risk_flags(value: object) -> list[dict[str, str]]:
+    """收敛问卷中的持续风险，避免把群聊风控的瞬时语义带入入营。"""
+
+    if not isinstance(value, list):
+        return []
+    flags: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        evidence = str(item.get("evidence") or "").strip()
+        # 没有可回查的原文证据就不能给用户留下持续高风险标记。
+        if code not in PERSISTENT_INTAKE_RISK_CODES or not reason or not evidence:
+            continue
+        signature = (code, evidence)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        flags.append(
+            {
+                "code": code,
+                "level": "high",
+                "reason": reason[:200],
+                "evidence": evidence[:300],
+                "source": "questionnaire",
+            }
+        )
+    return flags[:4]
+
+
+def _apply_persistent_intake_risk_flags(
+    service_case: ServiceCase,
+    safety_factors: dict[str, object],
+) -> None:
+    """把同一轮安全提取出的长期风险写入服务单。
+
+    该标记供文档自动发送保护和后续群聊安全边界复用；只累加有证据的新事实，
+    绝不因为一次重新生成而清掉已有风险或制造重复记录。
+    """
+
+    incoming = safety_factors.get("persistent_risk_flags")
+    if not isinstance(incoming, list):
+        return
+    existing = service_case.risk_flags if isinstance(service_case.risk_flags, list) else []
+    merged = [item for item in existing if isinstance(item, dict)]
+    signatures = {
+        (str(item.get("code") or ""), str(item.get("evidence") or ""))
+        for item in merged
+    }
+    added = False
+    for flag in incoming:
+        if not isinstance(flag, dict):
+            continue
+        signature = (str(flag.get("code") or ""), str(flag.get("evidence") or ""))
+        if not all(signature) or signature in signatures:
+            continue
+        signatures.add(signature)
+        merged.append(flag)
+        added = True
+    if added:
+        service_case.risk_flags = merged
+    if incoming:
+        service_case.risk_level = "high"
 
 
 def _positive_number_or_none(value: object) -> float | None:
@@ -696,10 +790,6 @@ async def _generate_intake_analysis_package(
     fields = await get_active_questionnaire_fields(session, "intake")
     readable_answers = _readable_answers(fields, submission.answers_json)
     preliminary_facts = build_intake_fact_summary(fields, submission.answers_json)
-    preliminary_block_reasons = _document_generation_block_reasons(preliminary_facts)
-    if preliminary_block_reasons:
-        # 关键体征已经不足时不再花两次模型调用生成一份注定不能落库的正式文件。
-        raise DocumentGenerationBlocked(preliminary_block_reasons)
     safety_factors = await _extract_safety_factors(
         ai=ai,
         service_case=service_case,
@@ -709,6 +799,12 @@ async def _generate_intake_analysis_package(
             for key in ("height_cm", "weight_kg", "bmi", "waist_cm", "waist_height_ratio")
         },
     )
+    _apply_persistent_intake_risk_flags(service_case, safety_factors)
+    preliminary_block_reasons = _document_generation_block_reasons(preliminary_facts)
+    if preliminary_block_reasons:
+        # 即使关键体征不足而不能生成文件，问卷中的明确持续风险也已被同一次安全提取保留；
+        # 这里只跳过后续正式文档生成，避免继续消耗一次大模型调用。
+        raise DocumentGenerationBlocked(preliminary_block_reasons)
     intake_facts = build_intake_fact_summary(fields, submission.answers_json, safety_factors)
     block_reasons = _document_generation_block_reasons(intake_facts)
     if block_reasons:

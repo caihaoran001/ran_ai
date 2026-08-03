@@ -36,6 +36,7 @@ from app.services.intake_generation import (
     _apply_a_band_user_visible_contract,
     _apply_canonical_target_contract,
     _apply_deterministic_band,
+    _apply_persistent_intake_risk_flags,
     _document_model_intake_facts,
     _document_model_readable_answers,
     _document_generation_block_reasons,
@@ -295,6 +296,13 @@ def _manual_review_safety_response() -> str:
             "doctor_specified_lower_weight_kg": None,
             "waist_height_conflict": False,
             "waist_height_conflict_reason": None,
+            "persistent_risk_flags": [
+                {
+                    "code": "long_term_medication",
+                    "reason": "问卷填写当前长期用药",
+                    "evidence": "当前长期服用处方降压药",
+                }
+            ],
             "evidence_notes": ["健康情况填写：当前长期服用处方降压药"],
         },
         ensure_ascii=False,
@@ -1298,6 +1306,57 @@ def test_safety_review_forces_manual_review_marker():
     assert "可管理空间" in shared["band_basis"][0]
 
 
+def test_safety_extraction_persists_only_evidence_backed_continuing_risks():
+    factors = _normalize_safety_factors(
+        {
+            "persistent_risk_flags": [
+                {
+                    "code": "chronic_disease",
+                    "reason": "明确填写甲减",
+                    "evidence": "既往病史：甲减",
+                },
+                {
+                    "code": "long_term_medication",
+                    "reason": "明确填写长期服用处方药",
+                    "evidence": "正在用药：左甲状腺素",
+                },
+                {
+                    "code": "other_risk",
+                    "reason": "普通饮食限制不能成为持续高风险",
+                    "evidence": "不吃辣",
+                },
+                {
+                    "code": "pregnancy",
+                    "reason": "没有证据不能持久标记",
+                    "evidence": "",
+                },
+            ]
+        }
+    )
+    case = ServiceCase(case_no="TEST-INTAKE-RISK", group_id="g", questionnaire_token="t")
+
+    _apply_persistent_intake_risk_flags(case, factors)
+    _apply_persistent_intake_risk_flags(case, factors)
+
+    assert case.risk_level == "high"
+    assert case.risk_flags == [
+        {
+            "code": "chronic_disease",
+            "level": "high",
+            "reason": "明确填写甲减",
+            "evidence": "既往病史：甲减",
+            "source": "questionnaire",
+        },
+        {
+            "code": "long_term_medication",
+            "level": "high",
+            "reason": "明确填写长期服用处方药",
+            "evidence": "正在用药：左甲状腺素",
+            "source": "questionnaire",
+        },
+    ]
+
+
 def _a_band_goal_response(goal_type: object, **extra: object) -> dict[str, object]:
     payload: dict[str, object] = {"user_goal": "希望睡眠更好、白天更有精神"}
     if goal_type is not None:
@@ -1406,6 +1465,13 @@ async def test_extract_safety_factors_parses_model_output():
                 "disease_or_medication_limit": True,
                 "recovery_risk": False,
                 "doctor_specified_lower_weight_kg": "58",
+                "persistent_risk_flags": [
+                    {
+                        "code": "lactation",
+                        "reason": "明确填写当前处于哺乳期",
+                        "evidence": "当前处于哺乳期",
+                    }
+                ],
                 "evidence_notes": ["健康情况填写：哺乳期，医生建议不低于58kg"],
             },
             ensure_ascii=False,
@@ -1421,6 +1487,15 @@ async def test_extract_safety_factors_parses_model_output():
     assert factors["safety_review_reasons"] == ["问卷填写当前处于哺乳期"]
     assert factors["disease_or_medication_limit"] is True
     assert factors["doctor_specified_lower_weight_kg"] == 58.0
+    assert factors["persistent_risk_flags"] == [
+        {
+            "code": "lactation",
+            "level": "high",
+            "reason": "明确填写当前处于哺乳期",
+            "evidence": "当前处于哺乳期",
+            "source": "questionnaire",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -2041,10 +2116,7 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
         # 内部字段仍然保留，供后台和人工复核使用
         assert profile.profile_json["manual_review_required"] is True
         assert profile.profile_json["safety_status"] == "manual_review"
-        assert profile.profile_json["manual_review_reasons"] == [
-            "问卷填写当前长期用药",
-            "健康高风险",
-        ]
+        assert profile.profile_json["manual_review_reasons"] == ["问卷填写当前长期用药"]
         assert profile.profile_json["provisional_band"] is False
         assert profile.profile_json["band_confidence"] == ""
 
@@ -2059,10 +2131,7 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
             # 内部标记在 content_json 顶层元数据里，后台能读到
             internal_review = document.content_json["internal_review"]
             assert internal_review["manual_review_required"] is True
-            assert internal_review["reasons"] == [
-                "问卷填写当前长期用药",
-                "健康高风险",
-            ]
+            assert internal_review["reasons"] == ["问卷填写当前长期用药"]
             # 用户可见正文（blocks / content_md）一个内部标签都不能有
             rendered = json.dumps(document.content_json["blocks"], ensure_ascii=False)
             for label in ("需人工复核", "人工复核", "待复核", "red风险", "风险等级"):
@@ -2085,10 +2154,7 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
         assert len(pending) == 2
         assert all(document["manual_review_required"] is True for document in pending)
         assert all(
-            document["manual_review_reasons"] == [
-                "问卷填写当前长期用药",
-                "健康高风险",
-            ]
+            document["manual_review_reasons"] == ["问卷填写当前长期用药"]
             for document in pending
         )
         safety_calls = [
@@ -2120,14 +2186,34 @@ async def test_questionnaire_high_risk_forces_document_review_marker(
     mock_ai,
     cai_haoran_answers,
     wait_background,
+    monkeypatch,
 ):
     """孕期仍正常计算A-D；即使文档模型返回 manual_review=false，服务单高风险也必须点亮复核标记。
 
-    这条同时覆盖了两条复核来源的分工：mock 的安全审阅员没识别出孕期
-    （safety_review_required 为 false），标记仍由风控判定的 high 风险点亮。
+    安全提取的持续风险明细负责点亮服务单 high 风险；它不需要再走群聊风控。
     """
 
+    async def unexpected_chat_insight(**_kwargs):
+        raise AssertionError("intake generation must not call the chat risk/intent classifier")
+
+    monkeypatch.setattr(
+        "app.services.message_insight_service.analyze_message_insight",
+        unexpected_chat_insight,
+    )
     mock_ai._responses = {
+        SAFETY_SYSTEM_PROMPT_PREFIX: json.dumps(
+            {
+                "safety_review_required": False,
+                "persistent_risk_flags": [
+                    {
+                        "code": "pregnancy",
+                        "reason": "问卷明确填写当前怀孕",
+                        "evidence": "当前明确怀孕",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
         INTAKE_SYSTEM_PROMPT_PREFIX: _make_intake_mock_response(manual_review=False),
     }
     answers = dict(cai_haoran_answers)
@@ -2157,7 +2243,7 @@ async def test_questionnaire_high_risk_forces_document_review_marker(
     assert profile is not None
     # 安全条件不改带位：孕期用户照常按可管理空间拿 B 带。
     assert profile.profile_json["management_band"] == "B带｜轻盈启动"
-    # 问卷抽取这一路没识别出来，复核标记由服务单风险等级点亮。
+    # 安全提取本身只输出持续风险，复核标记由服务单风险等级点亮。
     assert profile.profile_json["safety_review_required"] is False
     assert profile.profile_json["manual_review_required"] is True
     assert profile.profile_json["safety_status"] == "manual_review"

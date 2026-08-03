@@ -333,7 +333,9 @@ class AIService:
 
     def _model_for(self, scenario: str) -> str:
         """按场景选择模型：风控和文档生成可独立于默认聊天模型。"""
-        if scenario == "message_insight" and (self.settings.ai_risk_model or "").strip():
+        if scenario in {"message_insight", "intake_safety_factors"} and (
+            self.settings.ai_risk_model or ""
+        ).strip():
             return self.settings.ai_risk_model.strip()
         if scenario in {"intake_doc", "stage_report", "population_insight"} and (
             self.settings.ai_document_model or ""
