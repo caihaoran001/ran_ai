@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from typing import Any
 
 from app.models.user_document import DocumentType
+
+logger = logging.getLogger(__name__)
+
+# 产品排班每段的软上限，与提示词里的 ≤44 字对齐。这里只告警、不截断：
+# 用量、冲泡水量和饮用时点是用户照着执行的依据，宁可版面挤一点也不能砍。
+PRODUCT_SLOT_SOFT_LIMIT = 44
 
 
 ENERGY_FIELD_SPEC = {
@@ -639,7 +646,13 @@ def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _execution_product_block(fields: dict[str, Any]) -> dict[str, Any]:
-    """产品排班压成一行：三段式内容短，占三行纯属浪费一页执行纸的版面。"""
+    """产品排班一段一行。
+
+    早先压成一行（三段用竖线拼接），前提是每段限 22 字、整行约 66 字刚好。放宽到
+    用量+水量+时点写全之后整行涨到约 120 字，docx 会自动折行，折点不可控，
+    可能把"最晚睡前1小时完成"甩到孤立一行。改成三行后字数一样，换行位置由我们定，
+    反而更省版面也更好读。
+    """
 
     value = _dict(fields.get("product_schedule"))
     parts = [
@@ -647,22 +660,36 @@ def _execution_product_block(fields: dict[str, Any]) -> dict[str, Any]:
         _product_slot_text("午B", value.get("noon_b")),
         _product_slot_text("晚A", value.get("night_a")),
     ]
+    # 不加「• 」项目符号：_clean_text 会 lstrip 掉行首的 -•*，加了等于没加
+    # （诊断报告那段的 "• " 前缀就是这么一直无效的）。分行靠换行本身。
     return _text_block(
         "product_schedule",
         "4. 产品排班",
-        " ｜ ".join(part for part in parts if part),
+        "\n".join(part for part in parts if part),
     )
 
 
 def _product_slot_text(label: str, value: Any) -> str:
-    """渲染「早C 半份随早餐」这类一段排班；模型自带前缀时不重复写标签。"""
+    """渲染「早C 1标准份（3刻度）…」这类一段排班；模型自带前缀时不重复写标签。
+
+    刻意不做字数截断。截断会回退到最近的标点，超一个字就丢掉最后一整个分句：
+    晚A 写了 36 字、上限 34 字，结果"最晚睡前1小时完成"被整句砍掉，页面上只剩
+    "晚餐后饮用"且看不出被砍过。饮用时点是用户照着执行的依据，不能静默丢失，
+    字数改由提示词的 ≤44 字约束，模型偶尔写长只告警、照原样输出。
+    """
 
     text_val = _clean_prefix(_clean_text(value), label)
     if not text_val:
         return ""
-    # 截断按整句砍，超一个字就会丢掉最后一句——晚A 的"最晚睡前1小时完成"就这么消失过。
-    # 这里必须比写作要求的上限留出余量，宁可版面长一点，也不能静默丢掉饮用时点。
-    return f"{label} {_compact_field(text_val, max_len=48)}"
+    if len(text_val) > PRODUCT_SLOT_SOFT_LIMIT:
+        logger.warning(
+            "product schedule slot exceeds soft limit label=%s length=%s limit=%s text=%s",
+            label,
+            len(text_val),
+            PRODUCT_SLOT_SOFT_LIMIT,
+            text_val,
+        )
+    return f"{label} {text_val}"
 
 
 def _first_week_signals_block(fields: dict[str, Any]) -> dict[str, Any]:

@@ -1823,11 +1823,15 @@ def test_execution_document_keeps_single_page_content_budget():
     assert "近3个月身体趋势" not in summary_text
     assert "C带｜明确减脂" in summary_text
 
-    # 产品排班压成一行，且不重复写「早C 早C」这种前缀
-    product_content = blocks["product_schedule"]["content"]
-    assert len(product_content.splitlines()) == 1
-    assert "早C 早C" not in product_content
-    assert product_content.count("｜") == 2
+    # 产品排班一段一行（三段），且不重复写「早C 早C」这种前缀。
+    # 不再压成一行：写全用量+水量+时点后整行约120字，docx 折点不可控。
+    product_lines = blocks["product_schedule"]["content"].splitlines()
+    assert len(product_lines) == 3
+    assert [line[:2] for line in product_lines] == ["早C", "午B", "晚A"]
+    assert "早C 早C" not in blocks["product_schedule"]["content"]
+    # 时点不得被静默截断：三段各自的原文必须完整出现
+    assert product_lines[1].endswith("保证睡前8小时以外")
+    assert product_lines[2] == "晚A 随晚餐后或睡前1-2小时"
 
     assert len(blocks["diet_rules"]["items"]) == 3
     assert len(blocks["exercise_rules"]["items"]) == 2
