@@ -10,6 +10,7 @@ import pytest
 
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.document_service import _generate_stage_payload
+from app.services.document_prompts import CONCISENESS_RULE
 from tests.conftest import seed_checkins, seed_chat_messages
 
 
@@ -296,6 +297,38 @@ async def test_stage_report_includes_current_archivist_state():
     assert "档案官当前状态" in prompt
     assert "连续完成晚A" in prompt
     assert "不应进入阶段报告上下文" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_stage_report_prompt_keeps_shared_conciseness_rule():
+    ai = _SequenceAI(
+        [
+            json.dumps(
+                {
+                    "stage_summary": "已完成3天打卡，晚间收口仍需微调。",
+                    "risk_reminder": "暂无明显不适，继续观察。",
+                    "adjustment_advice": "晚餐后不加餐，连续完成3天。",
+                    "followup_advice": "继续记录晚餐和睡眠，把节奏做稳。",
+                },
+                ensure_ascii=False,
+            )
+        ]
+    )
+
+    await _generate_stage_payload(
+        ai=ai,
+        service_case=SimpleNamespace(id=1, case_no="TEST-STAGE-CONCISE"),
+        user_name="测试用户",
+        stage="day3",
+        title="3天阶段报告",
+        latest_profile=None,
+        checkins=[_fake_checkin()],
+        messages=[],
+    )
+
+    prompt = ai.requests[0]["system_prompt"]
+    assert CONCISENESS_RULE in prompt
+    assert "两者冲突时一律先保信息完整" in prompt
 
 
 @pytest.mark.asyncio

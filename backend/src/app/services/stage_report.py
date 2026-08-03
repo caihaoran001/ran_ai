@@ -15,7 +15,7 @@ from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.ai_service import AIService, parse_json_object
 from app.services.document_templates import stage_report_prompt_schema
-from app.services.document_prompts import _stage_report_method_prompt
+from app.services.document_prompts import CONCISENESS_RULE, _stage_report_method_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,9 @@ async def _generate_stage_payload(
         "- risk_reminder：检查用户打卡和聊天中是否出现过体感不适（胸闷、心悸、严重失眠、过敏等），如有则写出具体提醒并建议就医；如无明显风险，写一句通用安全提示即可。\n"
         "- adjustment_advice：基于用户当前最薄弱的1-2个维度（如晚餐收口、睡眠时间、饮水量），给出具体、量化、可执行的微调建议。禁止写'适当控制饮食'等模糊表达。\n"
         "- followup_advice：只写当前28天服务内的后续执行重点，帮助用户把现阶段动作做稳。严禁出现复购、续购、续费、续营、购买、囤货、补货、下一期、报名、优惠、活动等商业转化表达。\n\n"
+
+        + CONCISENESS_RULE
+        + "\n\n"
 
         "【安全红线】\n"
         "必须使用生活方式管理表达，严禁医疗诊断、治疗建议、用药建议或疗效承诺。阶段报告严禁引导复购或购买。"

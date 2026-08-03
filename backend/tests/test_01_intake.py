@@ -23,6 +23,7 @@ from app.services.document_service import (
     _intake_generation_system_prompt,
 )
 from app.services.document_delivery import _document_filename
+from app.services.document_prompts import CONCISENESS_RULE
 from app.services.document_templates import (
     _adjust_stop_conditions_text,
     _daily_checkin_text,
@@ -298,6 +299,8 @@ def test_intake_prompt_keeps_goal_rules_free_of_contradictions():
     assert "【A带的无数字目标】" in prompt
     assert "所有用户可见字段都不得出现减重斤数" in prompt
     assert "不得自己挑一个 A/B/C/D 带顶上" in prompt
+    assert CONCISENESS_RULE in prompt
+    assert "两者冲突时一律先保信息完整" in prompt
 
 
 def test_intake_prompt_requires_five_independent_daily_checkin_questions():
