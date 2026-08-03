@@ -15,6 +15,7 @@ from app.services.ai_service import AIService, RetryableAIContentError, parse_js
 from app.services.document_templates import combined_prompt_schema
 from app.services.intake_facts import (
     UNRESOLVED_BAND,
+    _weight_kg_to_jin,
     build_intake_fact_summary,
     sanitize_profile_json,
 )
@@ -1530,9 +1531,10 @@ def _apply_intake_facts_to_single_payload(
         overview = payload.get("overview")
         if isinstance(overview, dict):
             overview["bmi"] = bmi or str(overview.get("bmi") or "暂无数据")
+            # 用户可见展示统一用「斤」（内部计算与结构化字段仍用 kg）。
             overview["height_weight"] = _join_fact_values(
                 _with_unit(facts.get("height_cm"), "cm"),
-                _with_unit(facts.get("weight_kg"), "kg"),
+                _weight_kg_to_jin(facts.get("weight_kg")),
             ) or overview.get("height_weight")
             overview["waist_bodyfat"] = _join_fact_values(
                 _blank_if_missing(facts.get("waist")),

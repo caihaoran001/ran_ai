@@ -1469,7 +1469,8 @@ def test_document_payload_bmi_is_overwritten_by_intake_facts():
     energy = payloads[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
     execution = payloads[DocumentType.DAY28_EXECUTION_STANDARD.value]
     assert energy["overview"]["bmi"] == "21.2"
-    assert energy["overview"]["height_weight"] == "175cm / 65kg"
+    # 用户可见体重统一展示为「斤」（65kg × 2 = 130斤）；内部计算与结构化字段仍用 kg。
+    assert energy["overview"]["height_weight"] == "175cm / 130斤"
     assert "BMI 21.2" in energy["judgement_points"][0]
     assert "BMI 21.2" in energy["current_state"]
     assert energy["success_path"]["weight_band"] == "维持优化带（A带）"

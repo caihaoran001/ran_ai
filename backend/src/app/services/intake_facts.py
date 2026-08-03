@@ -241,10 +241,15 @@ def sanitize_profile_json(profile: dict[str, Any], facts: dict[str, Any] | None)
     overview = profile.setdefault("overview", {})
     if isinstance(overview, dict):
         overview["gender_age"] = _join_non_empty([facts.get("gender"), facts.get("age")], " / ")
+        # 用户可见展示统一用「斤」；同时把结构化 kg 值单独存一份，供 _extract_initial_weight
+        # 等读取端稳定取数，不再依赖从展示串里按「kg」关键字解析（换单位会静默切断那条链路）。
         overview["height_weight"] = _join_non_empty(
-            [_with_unit(facts.get("height_cm"), "cm"), _with_unit(facts.get("weight_kg"), "kg")],
+            [_with_unit(facts.get("height_cm"), "cm"), _weight_kg_to_jin(facts.get("weight_kg"))],
             " / ",
         )
+        weight_kg_value = facts.get("weight_kg")
+        if weight_kg_value and str(weight_kg_value) not in {"未提供", "暂无数据"}:
+            overview["weight_kg"] = weight_kg_value
         overview["bmi"] = str(facts.get("bmi") or "暂无数据")
         overview["waist"] = str(facts.get("waist") or "未提供")
         overview["weight_loss_band"] = str(facts.get("weight_loss_band") or "需后续补充")
@@ -629,6 +634,23 @@ def _with_unit(value: Any, unit: str) -> str:
         return ""
     text = str(value)
     return text if text.endswith(unit) else f"{text}{unit}"
+
+
+def _weight_kg_to_jin(value: Any) -> str:
+    """把 kg 体重录入值换算成用户展示的「斤」（1kg=2斤）。
+
+    只做展示换算：内部计算与结构化字段仍用 kg，这里只影响文档/画像里给用户看的那一行。
+    解析失败时回退成原 kg 展示，绝不吞掉数据或返回空造成体重丢失。
+    """
+
+    if not value or str(value) in {"未提供", "暂无数据"}:
+        return ""
+    try:
+        jin = float(str(value)) * 2
+    except (TypeError, ValueError):
+        return _with_unit(value, "kg")
+    text = f"{int(jin)}" if jin == int(jin) else f"{jin:.1f}"
+    return f"{text}斤"
 
 
 def _recipient_name(preferred_name: str, legal_name: str, gender: str) -> str:
