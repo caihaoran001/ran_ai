@@ -684,7 +684,6 @@ def _intake_package_schema() -> dict[str, object]:
             "long_term_goal": "长期方向，必须包含非体重结果；A带禁止任何减重数字",
             "day28_goal": "28天目标；A带只写体重稳定或恢复、体态、力量、睡眠、精力和执行目标，不写减重数字",
             "day28_task": "这28天先解决什么",
-            "long_term_defense": "长期如何避免回到原来的上升或失控轨迹",
             "execution_principle": "执行总原则",
             "evidence_notes": ["关键判断对应的问卷证据，3-5条"],
         },
@@ -1333,7 +1332,6 @@ def _normalize_combined_document_payload(
     _sync_if_missing(core_conclusions, "trend_direct_evidence", shared_direct)
     _sync_if_missing(core_conclusions, "trend_support_signals", shared_supports)
     _sync_if_missing(core_conclusions, "day28_task", shared.get("day28_task"))
-    _sync_if_missing(core_conclusions, "long_term_defense", shared.get("long_term_defense"))
     if core_conclusions:
         energy_payload["core_conclusions"] = core_conclusions
 

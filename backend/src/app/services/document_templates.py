@@ -32,7 +32,6 @@ ENERGY_FIELD_SPEC = {
         "当前BMI/体重/腰围属于单点状态，不能写在这里",
         "trend_support_signals": ["1-2条当前状态支持信号，例如腰腹体感、睡眠、精力、食欲边界、活动量"],
         "day28_task": "这28天先解决什么，用一句话说清",
-        "long_term_defense": "长期如何避免回到原来的上升或失控轨迹，用一句话说清",
     },
     "goal_response": {
         "goal_type": "specific 或 general。specific=用户写了明确数字/明确结果；general=用户只勾选了期待变化或泛化诉求",
@@ -514,16 +513,22 @@ def _core_conclusions_block(fields: dict[str, Any]) -> dict[str, Any]:
         if isinstance(legacy, list) and legacy:
             direct_evidence = _clean_text(legacy[0])
             support_text = "；".join(_clean_text(item) for item in legacy[1:3] if _text(item))
+    # 干练版：趋势解释并进趋势行、直接依据与支持信号合并成一条「趋势依据」、
+    # 不再单列长期防线（长期方向见「成功路径」板块），整段从最多9行压到6行。
+    trend_explanation = _text(value.get("trend_explanation"))
+    trend_line = f"近3个月身体趋势：{body_trend}"
+    if trend_explanation:
+        trend_line = f"{trend_line}——{trend_explanation}"
+    trend_basis = direct_evidence
+    if support_text:
+        trend_basis = f"{trend_basis}；{support_text}" if trend_basis else support_text
     lines = [
         _text(fields.get("one_sentence")),
         f"管理带：{management_band}" if management_band else "",
         f"管理带解释：{_text(value.get('band_explanation'))}" if _text(value.get("band_explanation")) else "",
-        f"近3个月身体趋势：{body_trend}",
-        f"趋势解释：{_text(value.get('trend_explanation'))}" if _text(value.get("trend_explanation")) else "",
-        f"近3个月趋势依据：{direct_evidence}" if direct_evidence else "",
-        f"当前状态支持信号：{support_text}" if support_text else "",
+        trend_line,
+        f"趋势依据：{trend_basis}" if trend_basis else "",
         f"这28天先做什么：{_text(value.get('day28_task'))}" if _text(value.get("day28_task")) else "",
-        f"长期防线：{_text(value.get('long_term_defense'))}" if _text(value.get("long_term_defense")) else "",
     ]
     return _text_block(
         "core_conclusions",
