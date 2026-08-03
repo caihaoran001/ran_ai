@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import secrets
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -15,6 +16,7 @@ from app.models.outcome import OutcomeEvent, OutcomeStageState
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
+from app.models.user_document_original import UserDocumentOriginal
 from app.models.user_profile import UserProfile
 from app.services.document_service import (
     _apply_intake_facts_to_document_payloads,
@@ -518,6 +520,33 @@ async def test_questionnaire_submit_creates_profile_and_documents(
     assert updated_case.status in (ServiceCaseStatus.REVIEWING, ServiceCaseStatus.IN_SERVICE)
     assert updated_case.questionnaire_to_llm_output_ms is not None
     assert 0 <= updated_case.questionnaire_to_llm_output_ms < 60_000
+
+    originals = list(
+        await db_session.scalars(
+            select(UserDocumentOriginal).where(
+                UserDocumentOriginal.document_id.in_([document.id for document in docs])
+            )
+        )
+    )
+    assert len(originals) == len(docs)
+    originals_by_document_id = {original.document_id: original for original in originals}
+    original_execution = originals_by_document_id[execution.id]
+    assert original_execution.title == execution.title
+    assert original_execution.content_md == execution.content_md
+    assert original_execution.content_json == execution.content_json
+
+    edited_content_json = deepcopy(execution.content_json)
+    edited_content_json["blocks"][0]["content"] = "运营审核后的当前稿"
+    edit_resp = await admin_client.patch(
+        f"/documents/{execution.id}",
+        json={"content_json": edited_content_json},
+    )
+    assert edit_resp.status_code == 200, edit_resp.text
+    await db_session.refresh(execution)
+    await db_session.refresh(original_execution)
+    assert "运营审核后的当前稿" in execution.content_md
+    assert original_execution.content_md != execution.content_md
+    assert original_execution.content_json != execution.content_json
 
 
 @pytest.mark.asyncio

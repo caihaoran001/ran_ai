@@ -29,6 +29,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.short_link import ShortLink
 from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
+from app.models.user_document_original import UserDocumentOriginal
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 
@@ -70,6 +71,7 @@ __all__ = [
     "ShortLink",
     "User",
     "UserDocument",
+    "UserDocumentOriginal",
     "UserProfile",
     "UserStateProfile",
 ]

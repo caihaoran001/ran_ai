@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 
+from copy import deepcopy
+
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -18,6 +20,7 @@ from app.models.checkin import Checkin
 from app.models.message import Message
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
+from app.models.user_document_original import UserDocumentOriginal
 from app.models.user_profile import UserProfile
 from app.models.user_state_profile import UserStateProfile
 from app.core.config import get_settings
@@ -173,6 +176,19 @@ async def generate_profile_and_documents(
         )
         session.add(document)
         documents.append(document)
+    # 首稿在生成文件的同一事务中冻结。运营后续编辑只覆盖 UserDocument 当前稿，
+    # 不会再影响此快照；不要等到首次编辑时再抄，避免任何非前端更新先覆盖首稿。
+    await session.flush()
+    for document in documents:
+        session.add(
+            UserDocumentOriginal(
+                document_id=document.id,
+                title=document.title,
+                content_md=document.content_md,
+                content_json=deepcopy(document.content_json),
+                generated_by_model=document.generated_by_model,
+            )
+        )
     service_case.content_generated_at = llm_output_at
     # 页面展示的是最近一次内容生成耗时。每次生成都从本次任务开始计时，
     # 不能在重新生成时继续拿首次问卷提交时间计算，否则旧服务单会得到数十天的伪耗时并溢出 int32。
