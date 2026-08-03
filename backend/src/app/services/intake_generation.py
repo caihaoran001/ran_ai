@@ -73,6 +73,30 @@ MANUAL_REVIEW_CHALLENGE_TARGET = "暂不设置挑战数字，D7复评"
 MANUAL_REVIEW_BASE_TARGET = "先完成7天基础执行，D7复评"
 INTAKE_DOCUMENT_MAX_ATTEMPTS = 3
 
+# 运动次数不是新的业务判断：它由同一轮模型写入 shared_analysis.activity_plan，
+# 这里仅将该结构化结果确定性回填到三处历史自由文本，避免 2 次 / 3 次 / 4 次并存。
+_WEEKLY_FREQUENCY_PATTERN = re.compile(r"每周\s*(?:[1-7]|一|二|三|四|五|六|七|两)\s*次")
+_ACTIVITY_TEXT_MARKERS = (
+    "分钟",
+    "小时",
+    "运动",
+    "快走",
+    "散步",
+    "步行",
+    "跑步",
+    "慢跑",
+    "游泳",
+    "骑行",
+    "力量",
+    "抗阻",
+    "训练",
+    "健身",
+    "瑜伽",
+    "拉伸",
+    "爬楼",
+    "跳绳",
+)
+
 
 class DocumentGenerationBlocked(RuntimeError):
     """关键资料不足或明显矛盾，正式交付文件不能可靠生成。"""
@@ -86,6 +110,90 @@ class DocumentGenerationBlocked(RuntimeError):
 
 class RetryableIntakePackageError(RuntimeError):
     """模型正文存在结构或一致性问题，可在不改业务事实的前提下重新生成。"""
+
+
+def _normalize_shared_activity_frequency(shared: dict[str, object]) -> int | None:
+    """Normalize the one activity-frequency source for an intake package.
+
+    A paused plan deliberately has no numerical frequency. Otherwise the current
+    28-day service uses the agreed fixed cadence of three sessions every week.
+    This is a value normalization, not another model decision or call.
+    """
+
+    raw_plan = shared.get("activity_plan")
+    plan = raw_plan if isinstance(raw_plan, dict) else {}
+    status = str(plan.get("status") or "planned").strip().lower()
+    if status == "paused":
+        shared["activity_plan"] = {"status": "paused", "sessions_per_week": None}
+        return None
+
+    shared["activity_plan"] = {"status": "planned", "sessions_per_week": 3}
+    return 3
+
+
+def _sync_activity_frequency_in_text(value: object, sessions_per_week: int) -> object:
+    """Replace only an existing weekly *activity* frequency, preserving its details.
+
+    The text still comes from the model, including activity type, duration,
+    intensity, time boundary and alternative. The structured shared value owns
+    just the count, so a weekly weigh-in or review cadence is never rewritten.
+    """
+
+    if isinstance(value, str):
+        def replace_if_activity(match: re.Match[str]) -> str:
+            # 只看这次「每周X次」附近的语境。整句里后半段即使另有“计划内活动”，
+            # 也不能把前面的「每周1次复测」错改成运动频次。
+            nearby = value[max(0, match.start() - 8) : min(len(value), match.end() + 18)]
+            if any(marker in nearby for marker in _ACTIVITY_TEXT_MARKERS):
+                return f"每周{sessions_per_week}次"
+            return match.group(0)
+
+        return _WEEKLY_FREQUENCY_PATTERN.sub(replace_if_activity, value)
+    if isinstance(value, list):
+        return [_sync_activity_frequency_in_text(item, sessions_per_week) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _sync_activity_frequency_in_text(item, sessions_per_week)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _apply_shared_activity_frequency_to_documents(
+    document_payloads: dict[str, dict],
+    sessions_per_week: int | None,
+) -> None:
+    """Apply one shared activity count to the two user-visible document payloads."""
+
+    if sessions_per_week is None:
+        return
+    for document_type in (
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value,
+        DocumentType.DAY28_EXECUTION_STANDARD.value,
+    ):
+        payload = document_payloads.get(document_type)
+        if isinstance(payload, dict):
+            # 频次也可能被模型写进摘要、特别提醒或四周验收标准；只处理有运动语境的
+            # 文本，保证用户全文都只看到同一个次数。
+            document_payloads[document_type] = _sync_activity_frequency_in_text(
+                payload, sessions_per_week
+            )
+
+
+def _apply_shared_activity_frequency_to_profile(
+    profile: dict[str, object],
+    sessions_per_week: int | None,
+) -> None:
+    """Store and surface the same activity count in the operations-only profile."""
+
+    status = "paused" if sessions_per_week is None else "planned"
+    profile["activity_plan"] = {"status": status, "sessions_per_week": sessions_per_week}
+    if sessions_per_week is None:
+        return
+    # 后台画像的摘要、状态、建议与 next_actions 都可能出现活动频次，不能只修一栏。
+    for key, value in tuple(profile.items()):
+        if key != "activity_plan":
+            profile[key] = _sync_activity_frequency_in_text(value, sessions_per_week)
 
 # 内部运营标签：只允许留在 shared_analysis / profile_json 的内部字段和后台界面里。
 # 用户拿到的两份交付文件（管理带、正文、表格、打卡题面）中一个都不能出现。
@@ -611,6 +719,7 @@ def _normalize_intake_analysis_package(
     _apply_deterministic_band(shared, intake_facts)
     _force_high_risk_manual_review(shared, service_case)
     _apply_canonical_target_contract(shared, intake_facts)
+    activity_frequency = _normalize_shared_activity_frequency(shared)
     shared["ready_for_document_generation"] = True
     shared["document_generation_block_reasons"] = []
     document_payloads = _normalize_combined_document_payload(
@@ -624,6 +733,7 @@ def _normalize_intake_analysis_package(
         )
     _apply_intake_facts_to_document_payloads(document_payloads, intake_facts)
     _append_waist_remeasurement_note(document_payloads, intake_facts)
+    _apply_shared_activity_frequency_to_documents(document_payloads, activity_frequency)
     consistency_errors = _document_consistency_errors(document_payloads, shared, intake_facts)
     if consistency_errors:
         raise RetryableIntakePackageError(
@@ -634,6 +744,7 @@ def _normalize_intake_analysis_package(
     # 五项打卡在这里收敛成严格 5 项结构化数组，之后画像、执行文档和 H5 问卷都读同一份结构。
     _normalize_daily_checkin_in_payloads(document_payloads, intake_facts)
     profile_json = _normalize_profile_from_package(payload, document_payloads, intake_facts)
+    _apply_shared_activity_frequency_to_profile(profile_json, activity_frequency)
     summary = str(profile_json.get("summary") or _profile_summary_from_documents(document_payloads) or "")[:2000]
     if not summary:
         raise RetryableIntakePackageError("intake analysis package generated empty profile content")
@@ -688,6 +799,10 @@ def _intake_package_schema() -> dict[str, object]:
             "day28_goal": "28天目标；A带只写体重稳定或恢复、体态、力量、睡眠、精力和执行目标，不写减重数字",
             "day28_task": "这28天先解决什么",
             "execution_principle": "执行总原则",
+            "activity_plan": {
+                "status": "planned / paused；只有问卷明确需要暂停活动时才为 paused",
+                "sessions_per_week": "planned 时固定为3；28天内不分首周/后续周。profile和两份文件必须逐字使用这个次数",
+            },
             "evidence_notes": ["关键判断对应的问卷证据，3-5条"],
         },
         "profile": {
@@ -709,7 +824,7 @@ def _intake_package_schema() -> dict[str, object]:
                 "deep_needs": ["表层需求背后的真实服务需求，只基于问卷事实推断"],
                 "priority_need": "当前最优先满足的一个需求",
                 "system_outputs": ["系统应交付的方案、动作、产品调优、陪跑或复盘方向"],
-                "next_actions": ["接下来最该推进的1-3个动作"],
+                "next_actions": ["接下来最该推进的1-3个动作；涉及运动时频次只能使用 shared_analysis.activity_plan.sessions_per_week"],
                 "evidence_notes": ["对应的问卷证据，2-4条"],
             },
             "notes": "AI陪跑建议，供运营参考",

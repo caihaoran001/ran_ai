@@ -89,6 +89,7 @@ ENERGY_FIELD_SPEC = {
     "week_actions": [
         "本周直接执行，4-5条。每条必须带数字和时间或场景，不解释原因（原因写在 priority_items）。"
         "至少包含1条运动建议，且运动建议必须写出类型+频率+时长+禁忌时间窗口。"
+        "运动频次只能逐字使用 shared_analysis.activity_plan.sessions_per_week，不得另定次数或分首周/后续周。"
         "必须覆盖 priority_items 三件事之外的维度（产品节律 / 睡眠 / 情绪与环境设计中至少一项）"
     ],
     # 这三段原本的说明只有"早C""午B""晚A"三个字，等于没给要求：模型既不知道标准用量
@@ -130,12 +131,12 @@ EXECUTION_FIELD_SPEC = {
         "night_a": "晚A：同上，用量+水量+时点写全，最晚时间统一写「最晚睡前1小时完成」不换算钟点，≤44字；需要暂停时明确写",
     },
     "diet_rules": ["对应用户真实生活场景的饮食规则，最多3条，每条≤34字"],
-    "exercise_rules": ["运动频率、单次时长、强度、动作和替代方案，最多2条，每条≤44字"],
+    "exercise_rules": ["运动频率只能使用 shared_analysis.activity_plan.sessions_per_week；再写单次时长、强度、动作和替代方案，最多2条，每条≤44字"],
     "weekly_plan": [
         {"week": "第1周", "core_task": "稳住底盘", "acceptance_standard": "1个短句，例如：按个案产品排班完成；晚餐主食≤1拳；完成计划内活动。"},
         {"week": "第2周", "core_task": "提高一致性", "acceptance_standard": "1个短句，例如：连续5天不漏早餐；晚餐后走15–20分钟；应酬日不加宵夜。"},
-        {"week": "第3周", "core_task": "抓结果指标", "acceptance_standard": "1个短句，例如：每周2次轻力量；记录腰围和体重。"},
-        {"week": "第4周", "core_task": "稳定复现", "acceptance_standard": "1个短句，例如：把睡前收口、计划内活动和2次轻力量做满。"},
+        {"week": "第3周", "core_task": "抓结果指标", "acceptance_standard": "1个短句，例如：完成共同活动计划；记录腰围和体重。"},
+        {"week": "第4周", "core_task": "稳定复现", "acceptance_standard": "1个短句，例如：把睡前收口和计划内活动做满。"},
     ],
     "daily_checkin": [
         {

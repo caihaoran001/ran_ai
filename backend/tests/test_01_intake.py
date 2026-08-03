@@ -41,6 +41,9 @@ from app.services.intake_generation import (
     _document_generation_block_reasons,
     _extract_safety_factors,
     _force_high_risk_manual_review,
+    _apply_shared_activity_frequency_to_documents,
+    _apply_shared_activity_frequency_to_profile,
+    _normalize_shared_activity_frequency,
     _normalize_safety_factors,
     _resolve_management_band,
     _scrub_internal_text,
@@ -112,6 +115,7 @@ def _make_intake_mock_response(
                 "day28_task": "先把入睡时间和晚间收口稳定下来",
                 "long_term_defense": "用规律睡眠、饮食结构和力量训练守住健康体重与精力",
                 "execution_principle": "先稳节律再抓减脂，守住晚间收口和睡眠时间",
+                "activity_plan": {"status": "planned", "sessions_per_week": 3},
                 "evidence_notes": [
                     "入睡时间23:30-00:30 → 晚睡会拉高夜间皮质醇和食欲",
                     "BMI 21.2 → 当前已在健康体重范围",
@@ -290,6 +294,7 @@ def test_intake_prompt_keeps_goal_rules_free_of_contradictions():
 
     assert "intake_facts > 问卷原文" in prompt
     assert "shared_analysis 是唯一判断源" in prompt
+    assert "运动频次只能使用 shared_analysis.activity_plan" in prompt
     assert "adult_stable_comfort_weight_kg" in prompt
     assert "【复核目标口径】" in prompt
     assert "挑战目标必须固定写「暂不设置挑战数字，D7复评」" in prompt
@@ -354,6 +359,8 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "manual_review_required=true 时固定为暂不设置挑战数字" in energy_spec["goal_response"]["challenge_goal"]
     assert "diet_rules" in execution_spec
     assert "exercise_rules" in execution_spec
+    assert "activity_plan.sessions_per_week" in energy_spec["week_actions"][0]
+    assert "activity_plan.sessions_per_week" in execution_spec["exercise_rules"][0]
     # V2.2 要求执行文件也能独立核对管理带、基础/挑战和长期方向。
     assert "weight_band" in execution_spec
     assert "base_goal" in execution_spec
@@ -2121,6 +2128,53 @@ def test_shared_analysis_is_the_single_source_for_cross_document_facts():
     assert energy["core_conclusions"]["day28_task"] == shared["day28_task"]
     assert energy["overview"]["current_focus"] == shared["current_mainline"]
     assert execution["current_mainline"] == shared["current_mainline"]
+
+
+def test_shared_activity_frequency_syncs_full_profile_and_documents():
+    """三处原始自由文本即使各写不同次数，也只能展示共同计划的次数。"""
+
+    # 即使模型自己填了 2 次，产品规则的共同计划仍固定为每周 3 次。
+    shared = {"activity_plan": {"status": "planned", "sessions_per_week": "2次"}}
+    documents = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "week_actions": [
+                "每周2次30分钟快走，避开睡前3小时",
+                "每周1次晨重和腰围复测",
+            ],
+            "special_reminder": "运动从每周4次改为更容易坚持的频次。",
+        },
+        DocumentType.DAY28_EXECUTION_STANDARD.value: {
+            "exercise_rules": ["每周4次30分钟快走，中低强度，以能说话为准"],
+            "weekly_plan": [
+                {"week": "第3周", "acceptance_standard": "每周5次轻力量，每次20分钟"},
+            ],
+            "weekly_standard": "每周1次复测腰围，完成计划内活动。",
+        },
+    }
+    profile = {
+        "summary": "目前每周2次30分钟快走，执行不稳定。",
+        "state": "计划每周4次步行，每次20分钟。",
+        "need_analysis": {"next_actions": ["每周5次轻力量，每次20分钟"]},
+    }
+
+    sessions = _normalize_shared_activity_frequency(shared)
+    _apply_shared_activity_frequency_to_documents(documents, sessions)
+    _apply_shared_activity_frequency_to_profile(profile, sessions)
+
+    energy = documents[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]
+    execution = documents[DocumentType.DAY28_EXECUTION_STANDARD.value]
+    assert shared["activity_plan"] == {"status": "planned", "sessions_per_week": 3}
+    assert profile["activity_plan"] == {"status": "planned", "sessions_per_week": 3}
+    assert profile["summary"] == "目前每周3次30分钟快走，执行不稳定。"
+    assert profile["state"] == "计划每周3次步行，每次20分钟。"
+    assert profile["need_analysis"]["next_actions"] == ["每周3次轻力量，每次20分钟"]
+    assert energy["week_actions"][0] == "每周3次30分钟快走，避开睡前3小时"
+    # 非运动的复测频次必须保留，不能被统一规则误改。
+    assert energy["week_actions"][1] == "每周1次晨重和腰围复测"
+    assert energy["special_reminder"] == "运动从每周3次改为更容易坚持的频次。"
+    assert execution["exercise_rules"] == ["每周3次30分钟快走，中低强度，以能说话为准"]
+    assert execution["weekly_plan"][0]["acceptance_standard"] == "每周3次轻力量，每次20分钟"
+    assert execution["weekly_standard"] == "每周1次复测腰围，完成计划内活动。"
 
 
 def test_a_band_user_visible_goal_contract_replaces_model_numbers():
