@@ -20,7 +20,7 @@ ENERGY_FIELD_SPEC = {
         "gender_age": "性别 / 年龄",
         "height_weight": "身高 / 体重",
         "bmi": "BMI 与阶段",
-        "waist_bodyfat": "腰围 / 体脂率",
+        "waist_bodyfat": "腰围 / 体脂率；缺一个必须明确写「腰围未提供」或「体脂率未提供」，不得只留孤立数字",
         "recent_change": "最近3个月变化",
         "schedule": "作息状态",
         "exercise": "运动基础",
@@ -61,7 +61,7 @@ ENERGY_FIELD_SPEC = {
     # 模型会把禁令本身抄进正文，用户读到的就是一句「这不代表激素诊断」。
     "insulin_resistance": "只写食欲边界、饭后困、腰腹堆积这类生活方式信号，≤40字。",
     "leptin_sensitivity": "只写饱腹感、晚间失控、食欲边界这类生活方式信号，≤40字。",
-    "hormone_stage": "只写年龄、睡眠、压力对恢复能力的影响，≤40字。",
+    "hormone_stage": "只写年龄、睡眠、压力对恢复能力的影响，≤40字；不得仅凭年龄推测围绝经、更年期、绝经等特殊生理阶段。",
     "priority_direction": "当前最该先抓的方向",
     "priority_items": [
         "真正需要优先解决的三件事，严格3项，按优先级排列。"

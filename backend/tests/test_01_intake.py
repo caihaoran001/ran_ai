@@ -39,6 +39,7 @@ from app.services.intake_generation import (
     _document_model_intake_facts,
     _document_model_readable_answers,
     _document_generation_block_reasons,
+    _document_consistency_errors,
     _extract_safety_factors,
     _force_high_risk_manual_review,
     _apply_shared_activity_frequency_to_documents,
@@ -189,7 +190,7 @@ def _make_intake_mock_response(
                         "intro": "12周成功路径，先稳定再微调",
                         "weight_band": weight_band,
                         "total_goal": "12周维持体重、优化腰围体态、重建稳定睡眠节律",
-                        "day28_goal": "保持健康体重，睡眠时间提前至23:00前",
+                        "day28_goal": "保持健康体重，睡眠时间提前至23:30前",
                         "week5_8": "0-3斤微幅调整，腰围开始收紧",
                         "week9_12": "维持稳定，腰围体态进一步优化",
                     },
@@ -213,7 +214,7 @@ def _make_intake_mock_response(
                         "每天晚餐后不再吃水果坚果零食甜饮，只喝白水或常温柠檬水",
                         "午餐主食控制在1拳内，先吃蔬菜和蛋白质再吃主食",
                         "每周3次30分钟快走，避开睡前3小时",
-                        "22:30手机熄屏，23:00前关灯",
+                        "22:30手机熄屏，23:30前关灯",
                     ],
                     "product_schedule": {
                         "morning_c": "早C随早餐",
@@ -234,7 +235,7 @@ def _make_intake_mock_response(
                     "recipient": "蔡浩然",
                     "weight_band": weight_band,
                     "path_goal": "12周维持体重、优化腰围体态、重建稳定睡眠节律",
-                    "day28_goal": "保持健康体重，睡眠时间提前至23:00前，减少咖啡因依赖",
+                    "day28_goal": "保持健康体重，睡眠时间提前至23:30前，减少咖啡因依赖",
                     "current_phase_goal": "第1-4周以稳定节律和建立晚间收口为核心",
                     "principle": "先稳节律再抓减脂，第1-2周只抓睡眠和晚餐收口两个动作",
                     "product_schedule": {
@@ -253,7 +254,7 @@ def _make_intake_mock_response(
                     ],
                     "weekly_plan": [
                         {"week": "第1周", "core_task": "稳住底盘",
-                         "acceptance_standard": "晚餐后不再吃任何东西；22:30熄屏23:00前关灯"},
+                         "acceptance_standard": "晚餐后不再吃任何东西；22:30熄屏23:30前关灯"},
                         {"week": "第2周", "core_task": "提高一致性",
                          "acceptance_standard": "继续维持晚间收口；午B从半份起"},
                         {"week": "第3周", "core_task": "抓结果指标",
@@ -322,6 +323,8 @@ def test_intake_prompt_keeps_goal_rules_free_of_contradictions():
     assert "【A带的无数字目标】" in prompt
     assert "所有用户可见字段都不得出现减重斤数" in prompt
     assert "不得用 BMI、用户期待或生活方式事实改带" in prompt
+    assert "年龄不能单独推出围绝经、更年期、绝经等阶段" in prompt
+    assert "必须逐字使用同一个量和时间" in prompt
     assert CONCISENESS_RULE in prompt
     assert "两者冲突时一律先保信息完整" in prompt
 
@@ -374,6 +377,7 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "A带不得复述具体减重斤数" in energy_spec["goal_response"]["user_goal"]
     assert "A带只做定性判断" in energy_spec["goal_response"]["judgement"]
     assert "A带禁止任何减重数字" in energy_spec["goal_response"]["base_goal"]
+    assert "不得仅凭年龄推测围绝经、更年期、绝经等特殊生理阶段" in energy_spec["hormone_stage"]
     assert "D7复评" not in energy_spec["goal_response"]["challenge_goal"]
     assert "diet_rules" in execution_spec
     assert "exercise_rules" in execution_spec
@@ -399,6 +403,73 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "个案产品排班是否按方案完成" in fallback
     assert "饭后困评分（1分很困、5分不困）" in fallback
     assert "情绪稳定度和饭后困综合评分" not in fallback
+
+
+def test_delivery_overview_keeps_missing_waist_and_labels_bodyfat():
+    payloads = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "overview": {"waist_bodyfat": "30"},
+        }
+    }
+
+    _apply_intake_facts_to_document_payloads(
+        payloads,
+        {
+            "weight_loss_band": "B带｜轻盈启动",
+            "height_cm": "165",
+            "weight_kg": "66",
+            "bmi": "24.2",
+            "waist": "未提供",
+            "bodyfat": "30",
+        },
+    )
+
+    overview = payloads[DocumentType.ENERGY_RESTART_PRESCRIPTION.value]["overview"]
+    assert overview["waist_bodyfat"] == "腰围未提供 / 体脂率30%"
+
+
+def test_delivery_instruction_contract_rejects_unfounded_stage_per_meal_vegetables_and_bedtime_conflict():
+    shared = {
+        "weight_band": "B带｜轻盈启动",
+        "base_goal": "基础目标",
+        "challenge_goal": "挑战目标",
+        "day28_goal": "28天任务",
+        "long_term_goal": "长期方向",
+        "week5_8_target": "第5-8周方向",
+        "week9_12_target": "第9-12周方向",
+    }
+    payloads = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "goal_response": {"base_goal": "基础目标", "challenge_goal": "挑战目标"},
+            "success_path": {
+                "weight_band": "B带｜轻盈启动",
+                "day28_goal": "28天任务",
+                "total_goal": "长期方向",
+                "week5_8": "第5-8周方向",
+                "week9_12": "第9-12周方向",
+            },
+            "week_actions": ["50岁处于围绝经期，23:00前上床"],
+        },
+        DocumentType.DAY28_EXECUTION_STANDARD.value: {
+            "base_goal": "基础目标",
+            "challenge_goal": "挑战目标",
+            "day28_goal": "28天任务",
+            "path_goal": "长期方向",
+            "diet_rules": ["每餐保证1拳蔬菜"],
+            "daily_checkin": [{"title": "23:30前上床"}],
+        },
+    }
+    facts = {
+        "basic_target_jin_or_range": "基础目标",
+        "challenge_target_jin_or_review_text": "挑战目标",
+        "weight_loss_band": "B带｜轻盈启动",
+    }
+
+    errors = _document_consistency_errors(payloads, shared, facts)
+
+    assert "交付文件出现无来源的特殊生理阶段判断" in errors
+    assert "交付文件将蔬菜份量写成每餐口径" in errors
+    assert "交付文件的上床时间不一致" in errors
 
 
 @pytest.mark.asyncio
@@ -517,7 +588,7 @@ async def test_questionnaire_submit_creates_profile_and_documents(
         "14. 出现这些情况请立刻停下",
     ]
     # 本周直接执行放宽到最多5条，第4条不再被截断——参考设计要求3-5条覆盖三件事之外的维度
-    assert "22:30手机熄屏，23:00前关灯" in diagnosis.content_md
+    assert "22:30手机熄屏，23:30前关灯" in diagnosis.content_md
     assert execution.title == "28天高燃人生执行建议书"
     assert execution.content_json["title"].endswith("｜28天高燃人生执行建议书")
     execution_block_keys = [block["key"] for block in execution.content_json["blocks"]]
