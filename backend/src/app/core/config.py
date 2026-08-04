@@ -96,7 +96,11 @@ class Settings(BaseSettings):
     )
     agent_max_llm_calls: int = Field(default=5, validation_alias="AGENT_MAX_LLM_CALLS")
     agent_max_tool_calls: int = Field(default=8, validation_alias="AGENT_MAX_TOOL_CALLS")
-    agent_timeout_seconds: float = Field(default=40.0, validation_alias="AGENT_TIMEOUT_SECONDS")
+    agent_timeout_seconds: float = Field(default=90.0, validation_alias="AGENT_TIMEOUT_SECONDS")
+    agent_tool_timeout_seconds: float = Field(
+        default=15.0,
+        validation_alias="AGENT_TOOL_TIMEOUT_SECONDS",
+    )
     web_search_enabled: bool = Field(default=False, validation_alias="WEB_SEARCH_ENABLED")
     web_search_provider: str = Field(default="tavily", validation_alias="WEB_SEARCH_PROVIDER")
     tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")

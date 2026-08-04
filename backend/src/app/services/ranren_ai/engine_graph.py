@@ -1300,6 +1300,7 @@ class EngineGraph:
         settings = get_settings()
         user_query = _current_query_body(analysis, message.text)
         knowledge_query = _knowledge_query_from_analysis(analysis)
+        generation_started_at = time.monotonic()
         try:
             agent_kwargs: dict[str, Any] = {
                 "service_case_id": service_case_id,
@@ -1369,6 +1370,14 @@ class EngineGraph:
                 await self.engine._record_agent_reply_failure(
                     trigger_id=trigger_id,
                     error=exc,
+                    elapsed_ms=int(
+                        (time.monotonic() - generation_started_at) * 1000
+                    ),
+                    timeout_seconds=(
+                        float(settings.agent_timeout_seconds)
+                        if type(exc).__name__ == "TimeoutError"
+                        else None
+                    ),
                 )
             except Exception:
                 logger.exception(
@@ -1609,6 +1618,7 @@ class EngineGraph:
         reason = state.get("_completion_reason") or (
             "no_reply" if state.get("_halt") else "workflow_completed"
         )
+        failure_metadata: dict[str, Any] = {}
         async with engine_mod.SessionLocal() as session:
             # 少量纯单元测试使用只实现 add/flush 的轻量 session；真实
             # SQLAlchemy AsyncSession 始终具备 get()。
@@ -1617,11 +1627,15 @@ class EngineGraph:
             inbound = await session.get(Message, inbound_id)
             if inbound is None or inbound.direction != MessageDirection.INBOUND:
                 return {}
-            inbound.analysis_json = _with_reply_processing_status(
+            updated_analysis = _with_reply_processing_status(
                 inbound.analysis_json,
                 status=status,
                 reason=reason,
             )
+            persisted_failure = updated_analysis.get("agent_reply_failure")
+            if isinstance(persisted_failure, dict):
+                failure_metadata = dict(persisted_failure)
+            inbound.analysis_json = updated_analysis
             await session.commit()
         agent_run_id = state.get("agent_run_id")
         if agent_run_id is not None:
@@ -1639,6 +1653,9 @@ class EngineGraph:
                 "send_failed",
                 "send_unknown",
             }
+            run_metadata = _reply_run_metadata(agent_metadata)
+            if failure_metadata:
+                run_metadata["failure"] = failure_metadata
             await complete_agent_run(
                 agent_run_id=agent_run_id,
                 status=(
@@ -1662,11 +1679,11 @@ class EngineGraph:
                     }
                 ),
                 error_type=(
-                    "AgentGenerationError"
+                    str(failure_metadata.get("error_type") or "AgentGenerationError")
                     if reason == "agent_generation_failed"
                     else None
                 ),
-                metadata=_reply_run_metadata(agent_metadata),
+                metadata=run_metadata,
             )
         logger.info(
             "RanrenAI reply workflow finalized trigger_id=%s status=%s reason=%s",

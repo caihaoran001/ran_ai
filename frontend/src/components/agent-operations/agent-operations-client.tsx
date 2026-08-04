@@ -519,7 +519,15 @@ export function AgentOperationsClient({
         onClose={() => setSelectedScenario(null)}
       />
       <CaseCostDrawer caseCost={selectedCaseCost} onClose={() => setSelectedCaseCost(null)} />
-      <OutcomeDetailModal outcome={selectedOutcome} onClose={() => setSelectedOutcome(null)} />
+      <OutcomeDetailModal
+        outcome={selectedOutcome}
+        days={initialDays}
+        onSelectRun={(run) => {
+          setSelectedOutcome(null);
+          handleSelectRun(run);
+        }}
+        onClose={() => setSelectedOutcome(null)}
+      />
     </div>
   );
 }

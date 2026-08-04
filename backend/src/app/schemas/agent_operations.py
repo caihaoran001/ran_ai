@@ -124,10 +124,28 @@ class AgentKnowledgeDecision(BaseModel):
     skipped_product_terms: list[str] = []
 
 
+class AgentFailureDetail(BaseModel):
+    stage: str
+    error_type: str | None = None
+    summary: str
+    retryable: bool = False
+    timeout_seconds: float | None = None
+    elapsed_ms: int | None = None
+    failed_at: datetime | None = None
+
+
 class AgentRunDetail(RecentAgentRun):
     input_message: AgentConversationMessage | None = None
     output_message: AgentConversationMessage | None = None
     knowledge: AgentKnowledgeDecision | None = None
+    failure: AgentFailureDetail | None = None
+
+
+class AgentRunPage(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[AgentRunDetail] = Field(default_factory=list)
 
 
 class ArchivistInputMessage(BaseModel):

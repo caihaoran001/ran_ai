@@ -23,11 +23,13 @@ from app.models.message import (
 from app.models.service_case import ServiceCase
 from app.models.user import User
 from app.schemas.agent_operations import (
+    AgentFailureDetail,
     AgentOperationsOverview,
     AgentConversationMessage,
     AgentKnowledgeDecision,
     AgentOutcomeCount,
     AgentRunDetail,
+    AgentRunPage,
     AgentRuntimeSummary,
     AgentToolStat,
     AICostCaseStat,
@@ -41,6 +43,45 @@ from app.schemas.agent_operations import (
 )
 
 router = APIRouter()
+
+
+@router.get("/runs", response_model=AgentRunPage)
+async def list_agent_runs(
+    days: int = Query(default=30, ge=1, le=90),
+    outcome: str = Query(min_length=1, max_length=64),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> AgentRunPage:
+    """按当前滚动时间范围下钻某一种群内回复结果，不受首页最近 40 条限制。"""
+    period_start = datetime.now(timezone.utc) - timedelta(days=days)
+    filters = (
+        AgentRun.created_at >= period_start,
+        AgentRun.is_diagnostic.is_(False),
+        AgentRun.agent_type == "reply",
+        AgentRun.run_kind == "interactive",
+        AgentRun.outcome == outcome,
+    )
+    total = int(
+        await session.scalar(select(func.count(AgentRun.id)).where(*filters)) or 0
+    )
+    rows = (
+        await session.execute(
+            select(AgentRun, ServiceCase.case_no, User.name)
+            .outerjoin(ServiceCase, AgentRun.service_case_id == ServiceCase.id)
+            .outerjoin(User, ServiceCase.user_id == User.id)
+            .where(*filters)
+            .order_by(AgentRun.started_at.desc(), AgentRun.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).all()
+    return AgentRunPage(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=await _run_details(session, rows),
+    )
 
 
 @router.get("/runs/{run_id}", response_model=AgentRunDetail)
@@ -63,33 +104,62 @@ async def get_agent_run_detail(
         raise HTTPException(status_code=404, detail="Agent run not found")
 
     run, case_no, user_name = row
-    input_message: Message | None = None
-    output_message: Message | None = None
-    if run.agent_type == "reply" and run.trigger_message_id is not None:
-        input_message = await session.scalar(
-            select(Message).where(
-                Message.id == run.trigger_message_id,
-                Message.direction == MessageDirection.INBOUND,
-            )
-        )
-        output_message = await session.scalar(
-            select(Message)
-            .where(
-                Message.trigger_id == run.trigger_message_id,
-                Message.direction == MessageDirection.OUTBOUND,
-                Message.sender_type == MessageSenderType.BOT,
-                Message.purpose == MessagePurpose.CHAT,
-            )
-            .order_by(Message.id.desc())
-            .limit(1)
-        )
+    details = await _run_details(session, [(run, case_no, user_name)])
+    return details[0]
 
-    return AgentRunDetail(
-        **_recent_run_payload(run, case_no=case_no, user_name=user_name),
-        input_message=_conversation_message(input_message),
-        output_message=_conversation_message(output_message),
-        knowledge=_knowledge_decision(run),
-    )
+
+async def _run_details(
+    session: AsyncSession,
+    rows: list[tuple[AgentRun, str | None, str | None]],
+) -> list[AgentRunDetail]:
+    trigger_ids = [
+        int(run.trigger_message_id)
+        for run, _case_no, _user_name in rows
+        if run.agent_type == "reply" and run.trigger_message_id is not None
+    ]
+    inbound_by_id: dict[int, Message] = {}
+    outbound_by_trigger: dict[int, Message] = {}
+    if trigger_ids:
+        inbound_rows = list(
+            await session.scalars(
+                select(Message).where(
+                    Message.id.in_(trigger_ids),
+                    Message.direction == MessageDirection.INBOUND,
+                )
+            )
+        )
+        inbound_by_id = {message.id: message for message in inbound_rows}
+        outbound_rows = list(
+            await session.scalars(
+                select(Message)
+                .where(
+                    Message.trigger_id.in_(trigger_ids),
+                    Message.direction == MessageDirection.OUTBOUND,
+                    Message.sender_type == MessageSenderType.BOT,
+                    Message.purpose == MessagePurpose.CHAT,
+                )
+                .order_by(Message.trigger_id, Message.id.desc())
+            )
+        )
+        for message in outbound_rows:
+            if message.trigger_id is not None:
+                outbound_by_trigger.setdefault(int(message.trigger_id), message)
+
+    details: list[AgentRunDetail] = []
+    for run, case_no, user_name in rows:
+        trigger_id = int(run.trigger_message_id) if run.trigger_message_id else None
+        input_message = inbound_by_id.get(trigger_id) if trigger_id else None
+        output_message = outbound_by_trigger.get(trigger_id) if trigger_id else None
+        details.append(
+            AgentRunDetail(
+                **_recent_run_payload(run, case_no=case_no, user_name=user_name),
+                input_message=_conversation_message(input_message),
+                output_message=_conversation_message(output_message),
+                knowledge=_knowledge_decision(run),
+                failure=_failure_detail(run, input_message, output_message),
+            )
+        )
+    return details
 
 
 def _knowledge_decision(run: AgentRun) -> AgentKnowledgeDecision | None:
@@ -112,6 +182,80 @@ def _knowledge_decision(run: AgentRun) -> AgentKnowledgeDecision | None:
             if isinstance(term, str)
         ],
     )
+
+
+def _failure_detail(
+    run: AgentRun,
+    input_message: Message | None,
+    output_message: Message | None,
+) -> AgentFailureDetail | None:
+    if run.outcome not in {"agent_generation_failed", "send_failed", "send_unknown"}:
+        return None
+
+    run_metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+    failure = run_metadata.get("failure")
+    failure = dict(failure) if isinstance(failure, dict) else {}
+    input_analysis = (
+        input_message.analysis_json
+        if input_message is not None and isinstance(input_message.analysis_json, dict)
+        else {}
+    )
+    message_failure = input_analysis.get("agent_reply_failure")
+    if isinstance(message_failure, dict):
+        failure = {**message_failure, **failure}
+    processing = input_analysis.get("_reply_processing")
+    processing = processing if isinstance(processing, dict) else {}
+
+    stage = str(
+        failure.get("stage")
+        or ("delivery" if run.outcome in {"send_failed", "send_unknown"} else "generation")
+    )
+    error_type = str(failure.get("error_type") or run.error_type or "").strip() or None
+    timeout_seconds = _optional_float(failure.get("timeout_seconds"))
+    elapsed_ms = _optional_int(failure.get("elapsed_ms"))
+    return AgentFailureDetail(
+        stage=stage,
+        error_type=error_type,
+        summary=_failure_summary(
+            outcome=run.outcome or "",
+            error_type=error_type,
+            timeout_seconds=timeout_seconds,
+            outbound_error=output_message.error if output_message is not None else None,
+        ),
+        retryable=bool(failure.get("retryable"))
+        or processing.get("status") == "retryable_failure",
+        timeout_seconds=timeout_seconds,
+        elapsed_ms=elapsed_ms,
+        failed_at=_optional_datetime(failure.get("failed_at")),
+    )
+
+
+def _failure_summary(
+    *,
+    outcome: str,
+    error_type: str | None,
+    timeout_seconds: float | None,
+    outbound_error: str | None,
+) -> str:
+    if outcome == "send_unknown":
+        return "回复已提交发送，但企微没有返回明确结果"
+    if outcome == "send_failed":
+        normalized = (outbound_error or "").lower()
+        if "1011" in normalized or "spam" in normalized or "风控" in normalized:
+            return "回复被企业微信风控拦截，未送达用户"
+        return "回复已经生成，但发送到群里失败"
+    if error_type in {"TimeoutError", "APITimeoutError"}:
+        if timeout_seconds is not None:
+            seconds = int(timeout_seconds) if timeout_seconds.is_integer() else timeout_seconds
+            return f"回复生成超过 {seconds} 秒，系统停止了本次生成"
+        return "回复生成超时，系统停止了本次生成"
+    if error_type == "RateLimitError":
+        return "AI 服务繁忙或触发限流，未能生成回复"
+    if error_type == "APIConnectionError":
+        return "连接 AI 服务失败，未能生成回复"
+    if error_type in {"APIStatusError", "InternalServerError"}:
+        return "AI 服务返回异常，未能生成回复"
+    return "回复生成过程中出现异常，未能生成可发送的回复"
 
 
 @router.get("", response_model=AgentOperationsOverview)
@@ -784,6 +928,25 @@ def _optional_int(value: Any) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 def _recent_run_payload(

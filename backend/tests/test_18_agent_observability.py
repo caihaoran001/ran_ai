@@ -19,6 +19,7 @@ from app.models.message import (
 )
 from app.services.agent_observability import (
     COMPLETED,
+    FAILED,
     complete_agent_run,
     ensure_agent_run,
     record_model_usage,
@@ -221,6 +222,84 @@ async def test_agent_ledger_tracks_model_tools_and_api(
     assert detail["output_message"]["content"] == "没有心慌就很好。继续半份观察满3天。"
     assert detail["output_message"]["role"] == "AI 助教"
     assert detail["output_message"]["status"] == "sent"
+
+    failed_inbound = Message(
+        service_case_id=service_case_id,
+        group_id=group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="这条为什么没有回复？",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={
+            "agent_reply_failure": {
+                "stage": "generation",
+                "error_type": "TimeoutError",
+                "timeout_seconds": 90.0,
+                "elapsed_ms": 90123,
+                "retryable": True,
+                "failed_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "_reply_processing": {
+                "status": "retryable_failure",
+                "reason": "agent_generation_failed",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        },
+    )
+    db_session.add(failed_inbound)
+    await db_session.flush()
+    await db_session.commit()
+    failed_run_id = await ensure_agent_run(
+        run_key=f"reply:failed:{secrets.token_hex(8)}",
+        agent_type="reply",
+        run_kind="interactive",
+        service_case_id=service_case_id,
+        trigger_message_id=failed_inbound.id,
+        input_count=1,
+    )
+    await complete_agent_run(
+        agent_run_id=failed_run_id,
+        status=FAILED,
+        outcome="agent_generation_failed",
+        latency_ms=90123,
+        error_type="TimeoutError",
+    )
+
+    outcome_response = await admin_client.get(
+        "/agent-operations/runs",
+        params={
+            "days": 30,
+            "outcome": "agent_generation_failed",
+            "limit": 20,
+            "offset": 0,
+        },
+    )
+    assert outcome_response.status_code == 200, outcome_response.text
+    outcome_page = outcome_response.json()
+    assert outcome_page["total"] >= 1
+    failed_detail = next(
+        item for item in outcome_page["items"] if item["id"] == failed_run_id
+    )
+    assert failed_detail["case_no"]
+    assert failed_detail["input_message"]["content"] == "这条为什么没有回复？"
+    assert failed_detail["output_message"] is None
+    assert failed_detail["failure"] == {
+        "stage": "generation",
+        "error_type": "TimeoutError",
+        "summary": "回复生成超过 90 秒，系统停止了本次生成",
+        "retryable": True,
+        "timeout_seconds": 90.0,
+        "elapsed_ms": 90123,
+        "failed_at": failed_detail["failure"]["failed_at"],
+    }
+    empty_outcome_response = await admin_client.get(
+        "/agent-operations/runs",
+        params={"days": 30, "outcome": "test_missing_outcome"},
+    )
+    assert empty_outcome_response.status_code == 200
+    assert empty_outcome_response.json()["items"] == []
     batch = next(
         item
         for item in payload["archivist_batches"]

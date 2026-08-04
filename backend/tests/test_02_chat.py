@@ -564,6 +564,7 @@ async def test_agent_error_is_recorded_on_inbound_without_outbound(
     db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch
 ):
     # AI 生成失败：仍不发送、不落出站，但要在触发的入站消息上持久化可审计标记。
+    from app.models.agent_run import AgentRun
     import app.services.ranren_ai.engine as engine_mod
 
     case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
@@ -614,7 +615,23 @@ async def test_agent_error_is_recorded_on_inbound_without_outbound(
     assert failure["stage"] == "generation"
     assert failure["error_type"] == "RuntimeError"
     assert failure["trigger_message_id"] == inbound.id
+    assert failure["retryable"] is True
+    assert failure["elapsed_ms"] >= 0
+    assert "timeout_seconds" not in failure
     assert datetime.fromisoformat(failure["failed_at"]).tzinfo is not None
+    assert inbound.analysis_json["_reply_processing"]["status"] == "retryable_failure"
+
+    run = await db_session.scalar(
+        select(AgentRun)
+        .where(AgentRun.trigger_message_id == inbound.id)
+        .order_by(AgentRun.id.desc())
+        .limit(1)
+    )
+    assert run is not None
+    assert run.outcome == "agent_generation_failed"
+    assert run.error_type == "RuntimeError"
+    assert run.metadata_json["failure"]["error_type"] == "RuntimeError"
+    assert run.metadata_json["failure"]["elapsed_ms"] >= 0
 
 
 @pytest.mark.asyncio

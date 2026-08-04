@@ -345,11 +345,13 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         *,
         trigger_id: int | None,
         error: Exception,
+        elapsed_ms: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> None:
         """把 Agent 生成失败持久化到触发该轮回复的入站消息。
 
-        只保存异常类型，不保存异常正文，避免将供应商响应或敏感信息
-        带入业务数据。该标记仅用于观测，不改变回复或重试语义。
+        只保存异常类型、阶段、耗时和超时阈值，不保存异常正文，避免将
+        供应商响应或敏感信息带入业务数据。该标记仅用于观测和既有恢复机制。
         """
         if trigger_id is None:
             return
@@ -366,12 +368,18 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 if isinstance(inbound.analysis_json, dict)
                 else {}
             )
-            analysis["agent_reply_failure"] = {
+            failure = {
                 "stage": "generation",
                 "error_type": type(error).__name__,
                 "failed_at": datetime.now(timezone.utc).isoformat(),
                 "trigger_message_id": trigger_id,
+                "retryable": True,
             }
+            if elapsed_ms is not None:
+                failure["elapsed_ms"] = max(0, int(elapsed_ms))
+            if timeout_seconds is not None:
+                failure["timeout_seconds"] = max(0.0, float(timeout_seconds))
+            analysis["agent_reply_failure"] = failure
             inbound.analysis_json = analysis
             await session.commit()
 

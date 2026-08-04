@@ -60,6 +60,16 @@ type AgentKnowledgeDecision = {
   skipped_product_terms?: string[];
 };
 
+export type AgentFailureDetail = {
+  stage: string;
+  error_type?: string | null;
+  summary: string;
+  retryable: boolean;
+  timeout_seconds?: number | null;
+  elapsed_ms?: number | null;
+  failed_at?: string | null;
+};
+
 export type RunDetailData = {
   id: number;
   agent_type: string;
@@ -84,6 +94,7 @@ export type RunDetailData = {
   input_message?: AgentConversationMessage | null;
   output_message?: AgentConversationMessage | null;
   knowledge?: AgentKnowledgeDecision | null;
+  failure?: AgentFailureDetail | null;
   detail_loading?: boolean;
   detail_error?: string | null;
   // Archivist extra fields
@@ -316,12 +327,17 @@ export function RunDetailDrawer({
                     {OUTCOME_LABELS[run.outcome ?? "running"] ?? "进行中"}
                   </span>
                 </div>
-                {run.error_type && (
+                {(run.failure || run.error_type) && (
                   <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
                     <div className="flex items-center gap-1.5 font-bold">
                       <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
-                      出错了，建议排查
+                      {run.failure?.summary || "运行过程出现异常，本轮未完成"}
                     </div>
+                    {run.failure?.elapsed_ms != null && (
+                      <div className="mt-1.5 pl-5 text-rose-700">
+                        失败前已运行 {formatLatency(run.failure.elapsed_ms)}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -90,6 +90,33 @@ async def test_scheduled_agent_mode_excludes_create_group_reminder():
     assert "set_checkin_checklist" not in graph.tools_by_name
 
 
+def test_agent_and_tool_timeouts_are_configured_independently():
+    settings = get_settings().model_copy(deep=True)
+    settings.agent_timeout_seconds = 90
+    settings.agent_tool_timeout_seconds = 15
+
+    graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=123),
+        settings=settings,
+        skill_registry=SkillRegistry(),
+        chat_model=DummyModel(),
+        include_reminder_tools=False,
+    )
+
+    assert settings.agent_timeout_seconds == 90
+    assert graph._tool_timeout_seconds == 15
+
+    settings.agent_timeout_seconds = 10
+    shorter_agent_graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=123),
+        settings=settings,
+        skill_registry=SkillRegistry(),
+        chat_model=DummyModel(),
+        include_reminder_tools=False,
+    )
+    assert shorter_agent_graph._tool_timeout_seconds == 15
+
+
 @pytest.mark.asyncio
 async def test_create_group_reminder_tool_creates_pending_task(db_session):
     service_case = await _case(db_session)

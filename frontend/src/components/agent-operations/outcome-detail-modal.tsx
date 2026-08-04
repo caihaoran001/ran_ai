@@ -1,7 +1,22 @@
 "use client";
 
-import { useEffect } from "react";
-import { X, CheckCircle2, AlertTriangle, Info, Bot, UserCheck, ShieldAlert, PauseCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  X,
+  CheckCircle2,
+  AlertTriangle,
+  Info,
+  Bot,
+  UserCheck,
+  ShieldAlert,
+  PauseCircle,
+  ChevronRight,
+  Loader2,
+  MessageSquare,
+} from "lucide-react";
+import { formatChinaShortDateTime } from "@/lib/format";
+import { api } from "@/lib/api";
+import type { RunDetailData } from "./run-detail-drawer";
 
 export type OutcomeDetail = {
   key: string;
@@ -162,11 +177,20 @@ const OUTCOME_META: Record<string, Meta> = {
 
 export function OutcomeDetailModal({
   outcome,
+  days,
+  onSelectRun,
   onClose,
 }: {
   outcome: OutcomeDetail | null;
+  days: number;
+  onSelectRun: (run: RunDetailData) => void;
   onClose: () => void;
 }) {
+  const [runs, setRuns] = useState<RunDetailData[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -180,6 +204,47 @@ export function OutcomeDetailModal({
       document.body.style.overflow = "";
     };
   }, [outcome, onClose]);
+
+  useEffect(() => {
+    if (!outcome) {
+      setRuns([]);
+      setTotal(0);
+      setLoadError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoading(true);
+    setLoadError(null);
+    const params = new URLSearchParams({
+      days: String(days),
+      outcome: outcome.key,
+      limit: "50",
+      offset: "0",
+    });
+    void api<{
+      total: number;
+      items: RunDetailData[];
+    }>(`/agent-operations/runs?${params.toString()}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then((page) => {
+        setRuns(page.items);
+        setTotal(page.total);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setRuns([]);
+        setTotal(0);
+        setLoadError(error instanceof Error ? error.message : "未知网络错误");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [days, outcome]);
 
   if (!outcome) return null;
 
@@ -198,7 +263,7 @@ export function OutcomeDetailModal({
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in-up">
       <div className="fixed inset-0" onClick={onClose} aria-hidden="true" />
 
-      <div className="relative z-10 w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden border border-slate-200">
+      <div className="relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-100 bg-slate-900 px-6 py-4 text-white">
           <div className="flex items-center gap-3">
             <span
@@ -226,7 +291,7 @@ export function OutcomeDetailModal({
           </button>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="flex-1 overflow-y-auto p-6 space-y-5">
           {/* Stats Bar */}
           <div className="flex items-center justify-between rounded-xl bg-slate-50 border border-slate-100 p-4">
             <div>
@@ -258,6 +323,80 @@ export function OutcomeDetailModal({
               {meta.suggestion}
             </p>
           </div>
+
+          <section className="space-y-2">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-extrabold text-slate-900">具体是哪些对话</h4>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {days === 1 ? "近24h" : `近${days}天`}内的全部记录，按发生时间倒序。
+                </p>
+              </div>
+              {!loading && total > 0 && (
+                <span className="shrink-0 text-xs font-semibold text-slate-500">
+                  共 {total} 条
+                </span>
+              )}
+            </div>
+
+            {loading ? (
+              <div className="flex min-h-32 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-600">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin text-cyan-700" />
+                正在读取对话明细…
+              </div>
+            ) : loadError ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                对话明细加载失败：{loadError}
+              </div>
+            ) : runs.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+                <MessageSquare className="mx-auto h-5 w-5 text-slate-400" />
+                <p className="mt-2 text-sm font-semibold text-slate-700">当前时间范围内没有找到对话记录</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {runs.map((run) => (
+                  <button
+                    key={run.id}
+                    type="button"
+                    onClick={() => onSelectRun(run)}
+                    className="group w-full rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-cyan-300 hover:bg-cyan-50/40 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="text-sm font-extrabold text-slate-900">
+                            {run.user_name || "未知用户"}
+                          </span>
+                          <span className="text-xs font-medium text-slate-500">
+                            {run.case_no || "未关联服务单"}
+                          </span>
+                          <span className="ml-auto text-xs text-slate-400">
+                            {formatChinaShortDateTime(run.started_at)}
+                          </span>
+                        </div>
+                        <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-800">
+                          {run.input_message?.content || "没有读到这条消息的原文"}
+                        </p>
+                        {run.failure && (
+                          <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-rose-50 px-2.5 py-2 text-xs font-semibold leading-5 text-rose-800">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-600" />
+                            <span>{run.failure.summary}</span>
+                          </div>
+                        )}
+                      </div>
+                      <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-cyan-700" />
+                    </div>
+                  </button>
+                ))}
+                {total > runs.length && (
+                  <p className="pt-1 text-center text-xs text-slate-500">
+                    当前展示最近 {runs.length} 条，共 {total} 条。
+                  </p>
+                )}
+              </div>
+            )}
+          </section>
         </div>
 
         <div className="border-t border-slate-100 bg-slate-50 px-6 py-3.5 text-right">

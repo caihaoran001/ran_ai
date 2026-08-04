@@ -108,9 +108,11 @@ class RanrenAgentGraph:
         self.tools_by_name = {tool.name: tool for tool in self.tools}
         base_model = chat_model or create_agent_chat_model(self.settings)
         self.model = base_model.bind_tools(self.tools) if hasattr(base_model, "bind_tools") else base_model
-        # 单工具超时留在整轮全局超时之内：给足查询/外部请求时间，又不至于一个慢工具占满整轮预算。
-        global_timeout = max(1.0, float(self.settings.agent_timeout_seconds or 40.0))
-        self._tool_timeout_seconds = max(5.0, min(global_timeout - 5.0, global_timeout))
+        # 工具预算与 Agent 整体预算独立：调大整轮等待时间不能把一个慢工具也放大到几十秒。
+        self._tool_timeout_seconds = max(
+            1.0,
+            float(self.settings.agent_tool_timeout_seconds or 15.0),
+        )
         self.graph = _get_agent_compiled_graph(checkpointer)
 
     async def _resolve_bot_nickname(self) -> str:
@@ -208,7 +210,7 @@ class RanrenAgentGraph:
             )
             result = await asyncio.wait_for(
                 invocation,
-                timeout=max(1.0, float(self.settings.agent_timeout_seconds or 40.0)),
+                timeout=max(1.0, float(self.settings.agent_timeout_seconds or 90.0)),
             )
         except Exception:
             logger.exception("LangGraph agent run failed service_case_id=%s", self.context.service_case_id)
