@@ -194,9 +194,10 @@ async def test_agent_ledger_tracks_model_tools_and_api(
     assert usage is not None
     assert usage.total_tokens == 150
 
-    api_response = await admin_client.get("/agent-operations?days=30")
+    api_response = await admin_client.get("/agent-operations")
     assert api_response.status_code == 200, api_response.text
     payload = api_response.json()
+    assert payload["days"] == 1
     assert payload["reply"]["runs"] >= 1
     assert any(
         item["key"] == "reply_sent" and item["count"] >= 1
@@ -270,7 +271,6 @@ async def test_agent_ledger_tracks_model_tools_and_api(
     outcome_response = await admin_client.get(
         "/agent-operations/runs",
         params={
-            "days": 30,
             "outcome": "agent_generation_failed",
             "limit": 20,
             "offset": 0,

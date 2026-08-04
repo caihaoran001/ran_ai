@@ -47,7 +47,7 @@ router = APIRouter()
 
 @router.get("/runs", response_model=AgentRunPage)
 async def list_agent_runs(
-    days: int = Query(default=30, ge=1, le=90),
+    days: int = Query(default=1, ge=1, le=90),
     outcome: str = Query(min_length=1, max_length=64),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -260,7 +260,7 @@ def _failure_summary(
 
 @router.get("", response_model=AgentOperationsOverview)
 async def get_agent_operations(
-    days: int = Query(default=30, ge=1, le=90),
+    days: int = Query(default=1, ge=1, le=90),
     session: AsyncSession = Depends(get_session),
 ) -> AgentOperationsOverview:
     """当前实现的 Agent 运行、工具、效果和成本，不与历史版本做对照。"""
