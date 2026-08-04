@@ -197,7 +197,6 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                             parsed,
                             labels_by_id=labels_by_id,
                         ),
-                        "parsed": parsed,
                     }
                 )
             return {

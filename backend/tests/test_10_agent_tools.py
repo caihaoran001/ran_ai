@@ -451,6 +451,7 @@ async def test_recent_checkins_separate_general_and_personalized_items(db_sessio
     result = await tools["get_recent_checkins"].ainvoke({"days": 7})
 
     item = result["items"][0]
+    assert "parsed" not in item
     assert item["general"] == {"weight": "65", "sleep": "7小时"}
     assert item["personalized"] == [
         {
