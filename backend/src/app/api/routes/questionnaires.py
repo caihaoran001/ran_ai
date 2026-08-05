@@ -132,11 +132,7 @@ async def submit_questionnaire(
         answers_json=payload.answers,
     )
     if template == "intake":
-        pending_status = (
-            ServiceCaseStatus.GENERATING
-            if get_settings().ai_api_key
-            else ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
-        )
+        pending_status = ServiceCaseStatus.GENERATING
         service_case.status = pending_status
         await _sync_user_from_answers(session, service_case, fields, payload.answers)
         set_pre_service_status_or_activate(
@@ -150,10 +146,12 @@ async def submit_questionnaire(
         mark_intake_age_risk(service_case, fields, payload.answers)
         # 入营重活(风险分析→画像/文档→欢迎语)全部解耦：提交只置"待生成"信号，
         # 由 backend 的 reminder loop 周期消费。这样这个公开提交入口在常驻 ingress 上
-        # 也只做 DB 写、绝不在请求路径跑 LLM 或发消息。无 ai_api_key 时不置信号，
-        # 维持原来"没配 key 就不生成"的行为。
-        if get_settings().ai_api_key:
-            service_case.intake_pending_generation_at = datetime.now(timezone)
+        # 也只做 DB 写、绝不在请求路径跑 LLM 或发消息。
+        # 信号无条件置：本进程有没有 ai_api_key 不能作为判断依据——生产的公开问卷提交
+        # 落在常驻 ingress，而 ingress 从不调模型、也就没配 key，按本进程判断会永远不
+        # 留待办，消费端(backend)永远等不到活(曾导致 8/2-8/4 提交的服务单全部没有交付
+        # 文档)。要不要真生成由消费端按自己的 key 决定。
+        service_case.intake_pending_generation_at = datetime.now(timezone)
     elif template != "intake":
         _create_checkin_from_questionnaire(session, service_case, fields, payload.answers)
         # 打卡的风险洞察仍随提交即时分析。打卡 H5 已退役(只走聊天→档案官)，此分支为

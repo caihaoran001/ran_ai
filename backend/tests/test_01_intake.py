@@ -2490,3 +2490,114 @@ def test_force_sync_keeps_document_text_when_shared_analysis_is_empty():
 
     assert normalized[DocumentType.DAY28_EXECUTION_STANDARD.value]["day28_goal"] == "先稳定三餐节律"
     assert normalized[DocumentType.DAY28_EXECUTION_STANDARD.value]["path_goal"] == "12周维持"
+
+
+@pytest.mark.asyncio
+async def test_submit_leaves_pending_signal_without_local_ai_key(
+    admin_client,
+    create_case,
+    db_session,
+    mock_ai,
+    cai_haoran_answers,
+):
+    """提交进程没有 AI key(生产的常驻 ingress 就是这样)也必须留下"待生成"信号。
+
+    否则消费端(backend)永远等不到活，服务单会停在"已交问卷、没有交付文件"。
+    """
+    mock_ai._responses = {
+        INTAKE_SYSTEM_PROMPT_PREFIX: _make_intake_mock_response(),
+    }
+    group_id = f"test-group-nokey-{secrets.token_hex(6)}"
+    resp = await create_case({"group_id": group_id, "user": {"name": "无密钥进程"}})
+    assert resp.status_code == 201, resp.text
+    token = resp.json()["questionnaire_token"]
+    case_id = resp.json()["id"]
+
+    from app.core.config import get_settings as real_get_settings
+
+    keyless = real_get_settings().model_copy(update={"ai_api_key": ""})
+    with patch(
+        "app.api.routes.questionnaires.get_settings",
+        return_value=keyless,
+    ):
+        submit_resp = await admin_client.post(
+            f"/questionnaires/{token}/submit?template=intake",
+            json={"answers": cai_haoran_answers},
+        )
+    assert submit_resp.status_code == 201, submit_resp.text
+
+    service_case = await db_session.get(ServiceCase, case_id)
+    await db_session.refresh(service_case)
+    assert service_case.intake_pending_generation_at is not None
+
+
+@pytest.mark.asyncio
+async def test_missing_intake_documents_recovered_after_service_started(
+    admin_client,
+    create_case,
+    db_session,
+    mock_ai,
+    cai_haoran_answers,
+):
+    """服务已经开始、待生成信号已丢的单子，也要被补跑出交付文件。
+
+    计划开始日到期后调度器会把"生成中"激活成"服务中"，只按状态兜底就再也捞不到，
+    生产上 8/2-8/4 的服务单正是这样一直没有交付文件。
+    """
+    from app.services.reminder_service import ReminderService
+
+    mock_ai._responses = {
+        INTAKE_SYSTEM_PROMPT_PREFIX: _make_intake_mock_response(),
+    }
+    group_id = f"test-group-recover-{secrets.token_hex(6)}"
+    resp = await create_case({"group_id": group_id, "user": {"name": "缺文件用户"}})
+    assert resp.status_code == 201, resp.text
+    token = resp.json()["questionnaire_token"]
+    case_id = resp.json()["id"]
+
+    submit_resp = await admin_client.post(
+        f"/questionnaires/{token}/submit?template=intake",
+        json={"answers": cai_haoran_answers},
+    )
+    assert submit_resp.status_code == 201, submit_resp.text
+
+    # 复刻生产形态：信号没落下/已被清，状态被到期激活推成"服务中"，问卷交了很久。
+    service_case = await db_session.get(ServiceCase, case_id)
+    service_case.intake_pending_generation_at = None
+    service_case.status = ServiceCaseStatus.IN_SERVICE
+    submission = await db_session.scalar(
+        select(QuestionnaireSubmission).where(
+            QuestionnaireSubmission.service_case_id == case_id,
+            QuestionnaireSubmission.template_key == "intake",
+        )
+    )
+    submission.created_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    await db_session.commit()
+
+    await ReminderService().check_stuck_document_generation_once()
+
+    documents = list(
+        await db_session.scalars(
+            select(UserDocument).where(UserDocument.service_case_id == case_id)
+        )
+    )
+    assert {doc.document_type for doc in documents} == {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION,
+        DocumentType.DAY28_EXECUTION_STANDARD,
+    }
+    profile = await db_session.scalar(
+        select(UserProfile).where(UserProfile.service_case_id == case_id)
+    )
+    assert profile is not None
+    # 补跑不能让已经在服务中的单子状态倒退回待审核。
+    await db_session.refresh(service_case)
+    assert service_case.status == ServiceCaseStatus.IN_SERVICE
+
+    # 再跑一轮不应重复生成(已有文件即退出候选)。
+    await ReminderService().check_stuck_document_generation_once()
+    again = list(
+        await db_session.scalars(
+            select(UserDocument).where(UserDocument.service_case_id == case_id)
+        )
+    )
+    assert len(again) == len(documents)

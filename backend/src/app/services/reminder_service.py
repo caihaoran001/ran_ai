@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.config import Settings, get_settings
 from app.db.session import SessionLocal
 from app.models.agent_reminder_task import AgentReminderTask, AgentReminderTaskStatus
+from app.models.ai_usage import AIUsageLog
 from app.models.message import (
     Message,
     MessageDirection,
@@ -25,6 +26,7 @@ from app.models.message import (
 from app.models.checkin import Checkin
 from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.outcome import OutcomeSnapshot, OutcomeStageState
+from app.models.questionnaire import QuestionnaireSubmission
 from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentType, UserDocument
@@ -36,6 +38,7 @@ from app.services.agent_observability import (
     ensure_agent_run,
 )
 from app.services.channels import get_current_channel, send_channel_text
+from app.services.document_common import DOCUMENT_DEFINITIONS
 from app.services.document_service import (
     generate_profile_and_documents,
     generate_stage_report,
@@ -57,11 +60,15 @@ from app.services.service_case_activation import (
     PRE_SERVICE_STATUSES,
     activate_service_case_if_due,
     align_active_service_start_with_plan,
+    set_pre_service_status_or_activate,
 )
 
 
 logger = logging.getLogger(__name__)
 SCHEDULER_ADVISORY_LOCK_KEY = 2026051901
+# 入营画像/交付文件生成会写下的模型调用场景：用于判断某个服务单是否已尝试过生成，
+# 给缺文件的自动补跑限次(尝试过就不再自动重试)。
+INTAKE_GENERATION_SCENARIOS = ("intake_doc", "intake_safety_factors")
 CHANNEL_SEND_MAX_ATTEMPTS = 3
 CHANNEL_SEND_RETRY_DELAY_SECONDS = 1.0
 _CHECKIN_FOLLOWUP_WINDOWS = {
@@ -623,8 +630,12 @@ class ReminderService:
 
         与运营 PATCH 重生成互不干扰：PATCH 走自带的 backend 后台任务、不置此信号，
         故不会被本循环重复消费或误发欢迎语。
+
+        "没配 key 就不生成"的语义由本消费端承担(提交端无条件置信号)：本进程没有 key 时
+        清掉信号并把状态回落"已提交问卷"，避免服务单永远停在"生成中"。
         """
         if not self.settings.ai_api_key:
+            await self._release_pending_intake_generation()
             return
         from app.api.routes.questionnaires import (
             _append_generation_error_note,
@@ -677,8 +688,81 @@ class ReminderService:
                         service_case_id,
                     )
 
+    async def _release_pending_intake_generation(self) -> None:
+        """本进程没有 AI key 时释放"待生成"信号，别把服务单永久锁在"生成中"。"""
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        async with SessionLocal() as session:
+            cases = list(
+                await session.scalars(
+                    select_active_service_cases(
+                        ServiceCase.intake_pending_generation_at.isnot(None)
+                    )
+                )
+            )
+            if not cases:
+                return
+            for service_case in cases:
+                service_case.intake_pending_generation_at = None
+                set_pre_service_status_or_activate(
+                    service_case,
+                    ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED,
+                    now=datetime.now(tz),
+                    tz=tz,
+                )
+            await session.commit()
+
+    async def _cases_missing_intake_documents(
+        self,
+        session,
+        threshold: datetime,
+    ) -> list[ServiceCase]:
+        """已交入营问卷、却没有任何入营交付文件、且从未尝试过生成的活跃服务单。
+
+        只按状态(GENERATING)兜底是不够的：计划开始日一到，调度器会把 pre-service 状态
+        (含 GENERATING)激活成 IN_SERVICE，缺文件的单子就永久跑出兜底筛选范围。所以这里
+        按结果(缺文件)捞，而不是按状态。
+
+        用"该单有没有过入营生成的模型调用记录"限次：只要尝试过一次(无论成功或失败)就不
+        再自动补跑，避免"资料待确认"之类的确定性失败每轮重复调用模型烧钱；这类单交给运营
+        在后台重新触发。
+        """
+        submitted_intake = (
+            select(QuestionnaireSubmission.id)
+            .where(
+                QuestionnaireSubmission.service_case_id == ServiceCase.id,
+                QuestionnaireSubmission.template_key == "intake",
+                QuestionnaireSubmission.created_at < threshold,
+            )
+            .exists()
+        )
+        intake_document_exists = (
+            select(UserDocument.id)
+            .where(
+                UserDocument.service_case_id == ServiceCase.id,
+                UserDocument.document_type.in_(tuple(DOCUMENT_DEFINITIONS)),
+            )
+            .exists()
+        )
+        generation_attempted = (
+            select(AIUsageLog.id)
+            .where(
+                AIUsageLog.service_case_id == ServiceCase.id,
+                AIUsageLog.scenario.in_(INTAKE_GENERATION_SCENARIOS),
+            )
+            .exists()
+        )
+        return list(
+            await session.scalars(
+                select_active_service_cases(
+                    submitted_intake,
+                    ~intake_document_exists,
+                    ~generation_attempted,
+                )
+            )
+        )
+
     async def check_stuck_document_generation_once(self) -> None:
-        """补跑卡在 generating 的文档生成（多为部署/重启时后台任务被中断）。"""
+        """补跑没有入营交付文件的服务单（后台任务被中断，或"待生成"信号根本没落下）。"""
         if not self.settings.ai_api_key:
             return
         threshold = datetime.now(timezone.utc) - timedelta(minutes=10)
@@ -690,6 +774,14 @@ class ReminderService:
                         ServiceCase.updated_at < threshold,
                     )
                 )
+            )
+            known_ids = {service_case.id for service_case in cases}
+            cases.extend(
+                service_case
+                for service_case in await self._cases_missing_intake_documents(
+                    session, threshold
+                )
+                if service_case.id not in known_ids
             )
             for service_case in cases:
                 logger.warning(
