@@ -2650,3 +2650,17 @@ async def test_submit_receipt_is_sent_before_generation(
     failed_case = await db_session.get(ServiceCase, case_id)
     await db_session.refresh(failed_case)
     assert failed_case.status == ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
+
+
+def test_overview_measurements_only_get_units_when_numeric():
+    """量测栏只给真数值拼单位：用户把整句填进体脂率时不能印出"体脂率不知道%"。"""
+    from app.services.intake_generation import _format_waist_bodyfat
+
+    assert _format_waist_bodyfat("87", "后续告知") == "腰围87cm / 体脂率未提供"
+    assert _format_waist_bodyfat("未提供", "暂时没测量在出差") == "腰围未提供 / 体脂率未提供"
+    assert _format_waist_bodyfat("未提供", "不知道") == "腰围未提供 / 体脂率未提供"
+    # 正常数值、区间与已带单位的写法保持原样
+    assert _format_waist_bodyfat("83", "28-29") == "腰围83cm / 体脂率28-29%"
+    assert _format_waist_bodyfat("87cm", "28%") == "腰围87cm / 体脂率28%"
+    # 夹着说明的数值保留信息，只是不再拼单位
+    assert _format_waist_bodyfat("未提供", "30 左右，去年测的") == "腰围未提供 / 体脂率30 左右，去年测的"

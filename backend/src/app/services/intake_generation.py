@@ -1682,6 +1682,11 @@ def _normalize_combined_document_payload(
 # 用户可见字段里的减重数字。业务判断仍以模型的 goal_type 为准，这个只做最后一道
 # 格式兜底：A带的整个话术契约存在的理由就是提示词封不住数字，所以放行前再查一次。
 _WEIGHT_NUMBER_PATTERN = re.compile(r"\d+(?:\.\d+)?\s*(?:斤|公斤|千克|[kK][gG])")
+# 概览表里"腰围/体脂率"这类量测值：纯数字或数字区间才算填了数值，才配拼上单位。
+_MEASUREMENT_VALUE_PATTERN = re.compile(
+    r"^\d+(?:\.\d+)?(?:\s*[-–~〜至]\s*\d+(?:\.\d+)?)?$"
+)
+_ANY_DIGIT_PATTERN = re.compile(r"\d")
 
 
 def _has_specific_weight_goal(goal_response: dict[str, object]) -> bool:
@@ -1842,6 +1847,10 @@ def _format_waist_bodyfat(waist: object, bodyfat: object) -> str:
     to leave a bare ``30`` beside the combined label, which made a supplied
     body-fat value look like a waist value. A missing measurement is part of
     the visible fact and must stay visible.
+
+    单位只跟在真正的数值后面。用户经常把整句话填进数值栏（"不知道"、"后续告知"、
+    "暂时没测量在出差"），固定短语清单挡不住这种自由文本，早先无条件拼单位会在报告
+    首屏印出"体脂率暂时没测量在出差%"。
     """
 
     missing_values = {"", "未提供", "暂无数据", "暂未测量", "待补充", "待测量"}
@@ -1850,7 +1859,13 @@ def _format_waist_bodyfat(waist: object, bodyfat: object) -> str:
         text = str(value or "").strip()
         if text in missing_values:
             return f"{label}未提供"
-        return f"{label}{text if text.endswith(unit) else f'{text}{unit}'}"
+        measurement = text[: -len(unit)].strip() if text.endswith(unit) else text
+        if _MEASUREMENT_VALUE_PATTERN.match(measurement):
+            return f"{label}{measurement}{unit}"
+        if _ANY_DIGIT_PATTERN.search(text):
+            # 有数值但夹着说明（"30 左右，去年测的"）：原样保留信息，只是不再拼单位。
+            return f"{label}{text}"
+        return f"{label}未提供"
 
     return " / ".join(
         (
