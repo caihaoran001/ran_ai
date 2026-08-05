@@ -327,3 +327,89 @@ async def test_agent_ledger_tracks_model_tools_and_api(
         if item["service_case_id"] == service_case_id
     )
     assert case_cost["scenarios"][0]["scenario"] == "reply_agent"
+
+
+@pytest.mark.asyncio
+async def test_stale_running_runs_are_swept_to_interrupted(
+    admin_client,
+    create_case,
+    db_session,
+):
+    """进程被杀后停在"运行中"的行必须被收尾成"进程中断"终态。
+
+    台账不参与业务判断，续跑是新的一次尝试、新记一行，没有任何在线路径会回头收尾旧行；
+    缺了这个扫描，"运行中"会变成永久假状态，真卡死时被历史噪音掩盖。
+    """
+    from datetime import timedelta
+
+    from app.services.agent_observability import (
+        INTERRUPTED,
+        INTERRUPTED_OUTCOME,
+        INTERRUPTED_STALE_AFTER_SECONDS,
+        RUNNING,
+        sweep_interrupted_agent_runs,
+    )
+
+    group_id = f"agent-sweep-{secrets.token_hex(6)}"
+    response = await create_case(
+        {"group_id": group_id, "user": {"name": "中断收尾测试"}}
+    )
+    assert response.status_code == 201, response.text
+    service_case_id = response.json()["id"]
+
+    now = datetime.now(timezone.utc)
+    stale_id = await ensure_agent_run(
+        run_key=f"sweep-stale-{secrets.token_hex(8)}",
+        agent_type="archivist",
+        run_kind="scheduled_scan",
+        service_case_id=service_case_id,
+    )
+    fresh_id = await ensure_agent_run(
+        run_key=f"sweep-fresh-{secrets.token_hex(8)}",
+        agent_type="reply",
+        run_kind="interactive",
+        service_case_id=service_case_id,
+    )
+    assert stale_id is not None and fresh_id is not None
+
+    # 复刻生产形态：一条早已被杀、一条刚开跑。花费按真实入账过一笔，扫描不得改动它。
+    stale = await db_session.get(AgentRun, stale_id)
+    stale.started_at = now - timedelta(seconds=INTERRUPTED_STALE_AFTER_SECONDS + 60)
+    stale.created_at = stale.started_at
+    stale.model_calls = 1
+    stale.estimated_cost_yuan = 0.022239
+    await db_session.commit()
+
+    swept = await sweep_interrupted_agent_runs()
+    assert swept >= 1
+
+    await db_session.refresh(stale)
+    assert stale.status == INTERRUPTED
+    assert stale.outcome == INTERRUPTED_OUTCOME
+    assert stale.error_type == "ProcessInterrupted"
+    # 已入账的花费/调用数是准确值，不回填、不清零。
+    assert stale.model_calls == 1
+    assert stale.estimated_cost_yuan == pytest.approx(0.022239)
+    # 真实结束时刻不可知，不得编造耗时。
+    assert stale.finished_at is None
+    assert stale.latency_ms is None
+
+    fresh = await db_session.get(AgentRun, fresh_id)
+    await db_session.refresh(fresh)
+    assert fresh.status == RUNNING, "刚开跑的运行不能被误判成中断"
+
+    # 已终态的行不被扫描碰到。
+    await complete_agent_run(
+        agent_run_id=fresh_id,
+        status=COMPLETED,
+        outcome="reply_sent",
+        latency_ms=1234,
+    )
+    await db_session.refresh(fresh)
+    fresh.started_at = now - timedelta(seconds=INTERRUPTED_STALE_AFTER_SECONDS + 60)
+    await db_session.commit()
+    await sweep_interrupted_agent_runs()
+    await db_session.refresh(fresh)
+    assert fresh.status == COMPLETED
+    assert fresh.outcome == "reply_sent"
+    assert fresh.latency_ms == 1234

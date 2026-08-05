@@ -120,6 +120,7 @@ const OUTCOME_LABELS: Record<string, string> = {
   reminder_generation_failed: "提醒没能生成",
   reminder_empty: "提醒内容为空",
   reminder_send_failed: "提醒没发出去",
+  process_interrupted: "被部署/重启打断",
   running: "处理中",
 };
 
@@ -160,10 +161,11 @@ const OUTCOME_BUCKETS: Array<{
   {
     id: "skipped",
     label: "没轮到 AI 出手",
-    hint: "班主任先回了、消息被更新，或自动回复被关掉等",
+    hint: "班主任先回了、消息被更新、自动回复被关掉，或这次运行被部署打断（活已由后续运行补上）",
     tone: "neutral",
     icon: PauseCircle,
     keys: [
+      "process_interrupted",
       "staff_preempted",
       "stale_reply_suppressed",
       "newer_message_queued",
@@ -1434,6 +1436,8 @@ function StatusDot({ status }: { status: string }) {
       ? "bg-emerald-500"
       : status === "failed"
       ? "bg-rose-500"
+      : status === "interrupted"
+      ? "bg-slate-400"
       : "bg-amber-500";
   return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${tone}`} aria-hidden="true" />;
 }

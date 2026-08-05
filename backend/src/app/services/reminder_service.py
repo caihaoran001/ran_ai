@@ -36,6 +36,7 @@ from app.services.agent_observability import (
     FAILED as AGENT_RUN_FAILED,
     complete_agent_run,
     ensure_agent_run,
+    sweep_interrupted_agent_runs,
 )
 from app.services.channels import get_current_channel, send_channel_text
 from app.services.document_common import DOCUMENT_DEFINITIONS
@@ -141,6 +142,7 @@ class ReminderService:
                         await self.check_unsent_channel_messages_once()
                         await self.check_room_names_once()
                         await self.check_image_cache_cleanup_once()
+                        await sweep_interrupted_agent_runs()
                         if self.settings.archivist_enabled:
                             await self.check_archivist_once()
                         if self.settings.checkin_followup_enabled:

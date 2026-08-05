@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import Settings, get_settings
@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 RUNNING = "running"
 COMPLETED = "completed"
 FAILED = "failed"
+INTERRUPTED = "interrupted"
+INTERRUPTED_OUTCOME = "process_interrupted"
+# 超过这个时长还停在 running 的运行行，判定为进程被杀（部署/重启）后无人收尾。
+# 取 30min 是因为最长的单次运行（入营文档生成、档案官大批量）也远低于它。
+INTERRUPTED_STALE_AFTER_SECONDS = 30 * 60
+_INTERRUPTED_SWEEP_LIMIT = 200
 _WRITE_TIMEOUT_SECONDS = 2.0
 
 # 产品名探针。**只用于事后统计**：当意图识别判定本轮不需要检索知识库时，记录用户消息里出现的产品名，
@@ -300,6 +306,53 @@ async def complete_agent_run(
             agent_run_id,
             outcome,
         )
+
+
+async def sweep_interrupted_agent_runs(
+    *,
+    stale_after_seconds: float = INTERRUPTED_STALE_AFTER_SECONDS,
+) -> int:
+    """把进程被杀后永远停在"运行中"的运行行收尾成"进程中断"终态。
+
+    没有任何在线路径会回头收尾这些行：续跑是**新的一次尝试**（run_key 带每次尝试的随机
+    标识 → 新行），收尾代码只认自己开跑时拿到的行号，也拿不到前一次的行号——业务恢复只
+    依据领域事实（归档水位线 / 收件箱认领状态 / 消息上的回复标记），刻意不反查本台账。
+    于是"运行中"这个只在运行那几十秒内成立的临时状态会变成永久假状态，真有运行卡死时被
+    历史噪音掩盖，成功率分母也一直挂着永不收尾的行。
+
+    只改状态：花费/调用数随每次模型调用即时入账，已经是准确值，不需要回填；真实结束时刻
+    不可知，故不写 finished_at/latency_ms，绝不编造耗时。与其它观测写入一致，失败只告警。
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(0.0, stale_after_seconds))
+    try:
+        async with asyncio.timeout(_WRITE_TIMEOUT_SECONDS), SessionLocal() as session:
+            runs = list(
+                await session.scalars(
+                    select(AgentRun)
+                    .where(
+                        AgentRun.status == RUNNING,
+                        func.coalesce(AgentRun.started_at, AgentRun.created_at) < cutoff,
+                    )
+                    .order_by(AgentRun.id)
+                    .limit(_INTERRUPTED_SWEEP_LIMIT)
+                )
+            )
+            if not runs:
+                return 0
+            for run in runs:
+                run.status = INTERRUPTED
+                run.outcome = INTERRUPTED_OUTCOME
+                run.error_type = run.error_type or "ProcessInterrupted"
+            await session.commit()
+            logger.warning(
+                "Marked interrupted AgentRuns count=%d ids=%s",
+                len(runs),
+                [run.id for run in runs],
+            )
+            return len(runs)
+    except Exception:
+        logger.exception("Failed to sweep interrupted AgentRuns")
+        return 0
 
 
 def _usage_counts(
