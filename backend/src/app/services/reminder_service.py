@@ -626,7 +626,7 @@ class ReminderService:
 
         提交入口(问卷 POST，可能跑在常驻 ingress 上)只落库并置
         intake_pending_generation_at，把重活解耦到这里，由 backend 进程内的本循环
-        按 入营安全提取→画像/文档→欢迎语 的顺序生成。单实例 advisory lock 保证不并发重入。
+        按 提交回执→入营安全提取→画像/文档 的顺序处理。单实例 advisory lock 保证不并发重入。
 
         与运营 PATCH 重生成互不干扰：PATCH 走自带的 backend 后台任务、不置此信号，
         故不会被本循环重复消费或误发欢迎语。
@@ -651,7 +651,6 @@ class ReminderService:
             )
         for pending_case in pending:
             service_case_id = pending_case.id
-            reply_ready = False
             async with SessionLocal() as session:
                 service_case = await get_active_service_case(session, service_case_id)
                 if service_case is None or service_case.intake_pending_generation_at is None:
@@ -661,13 +660,23 @@ class ReminderService:
                 # 仍 GENERATING)由 check_stuck_document_generation_once 兜底补跑。
                 service_case.intake_pending_generation_at = None
                 await session.commit()
+                # 回执必须先发、再生成：这句话本身就是"已收到、正在生成、请稍等"，等文档
+                # 生成完(单次可长达数分钟)才发，用户提交后会长时间收不到任何反馈，且生成
+                # 失败时永远收不到回执。清信号之后再发，避免进程在此崩溃后重复发。
+                # 独立事务、失败只告警，不阻断后面的生成。
+                try:
+                    await _send_intake_submit_reply(service_case_id)
+                except Exception:
+                    logger.exception(
+                        "Intake submit reply failed service_case_id=%s",
+                        service_case_id,
+                    )
                 try:
                     await generate_profile_and_documents(
                         session,
                         service_case,
                         auto_send=self.settings.auto_send_documents,
                     )
-                    reply_ready = True
                 except Exception as exc:
                     logger.exception(
                         "Pending intake generation failed service_case_id=%s",
@@ -678,15 +687,6 @@ class ReminderService:
                     if failed_case is not None:
                         _append_generation_error_note(failed_case, exc)
                         await session.commit()
-            if reply_ready:
-                # 欢迎语独立事务、失败不回滚已生成文档(与旧的 background task 语义一致)。
-                try:
-                    await _send_intake_submit_reply(service_case_id)
-                except Exception:
-                    logger.exception(
-                        "Intake submit reply failed service_case_id=%s",
-                        service_case_id,
-                    )
 
     async def _release_pending_intake_generation(self) -> None:
         """本进程没有 AI key 时释放"待生成"信号，别把服务单永久锁在"生成中"。"""

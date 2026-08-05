@@ -2601,3 +2601,52 @@ async def test_missing_intake_documents_recovered_after_service_started(
         )
     )
     assert len(again) == len(documents)
+
+
+@pytest.mark.asyncio
+async def test_submit_receipt_is_sent_before_generation(
+    admin_client,
+    create_case,
+    db_session,
+    mock_ai,
+    cai_haoran_answers,
+    wait_background,
+):
+    """提交回执必须先发、不等文档生成：连生成失败的单子也要收到回执。
+
+    回执正文就是"已收到、正在生成、请稍等"，等文档生成完(单次可达数分钟)才发，用户
+    提交后会长时间零反馈；挂在生成成功之后更会让失败的单子永远收不到回执。
+    """
+    from app.models.message import Message, MessageDirection
+
+    mock_ai._responses = {
+        INTAKE_SYSTEM_PROMPT_PREFIX: "",  # 空 JSON → 生成失败
+    }
+    group_id = f"test-group-receipt-{secrets.token_hex(6)}"
+    resp = await create_case({"group_id": group_id, "user": {"name": "回执用户"}})
+    assert resp.status_code == 201, resp.text
+    token = resp.json()["questionnaire_token"]
+    case_id = resp.json()["id"]
+
+    submit_resp = await admin_client.post(
+        f"/questionnaires/{token}/submit?template=intake",
+        json={"answers": cai_haoran_answers},
+    )
+    assert submit_resp.status_code == 201, submit_resp.text
+    await wait_background()
+
+    receipts = list(
+        await db_session.scalars(
+            select(Message).where(
+                Message.service_case_id == case_id,
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.content.like("问卷已收到%"),
+            )
+        )
+    )
+    assert len(receipts) == 1, "生成失败的单子也必须已经收到提交回执"
+
+    # 生成确实失败了(状态回退)，回执与它无关。
+    failed_case = await db_session.get(ServiceCase, case_id)
+    await db_session.refresh(failed_case)
+    assert failed_case.status == ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
