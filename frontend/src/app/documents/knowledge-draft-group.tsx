@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { api } from "@/lib/api";
 import type {
   KnowledgeDraft,
   KnowledgeIndexStats,
@@ -17,22 +18,49 @@ import {
   Sparkles,
   Inbox,
   Library,
+  LoaderCircle,
 } from "lucide-react";
+
+/** 已入库案例每页条数：单条约 2.5KB，30 条≈75KB，够看一屏又不拖慢首屏。 */
+const CASE_PAGE_SIZE = 30;
 
 export function FAQEvolutionCenter({
   pendingDrafts,
   indexStats,
-  faqs,
 }: {
   pendingDrafts: KnowledgeDraft[];
   indexStats: KnowledgeIndexStats;
-  faqs: KnowledgeFAQ[];
 }) {
   const qaPending = pendingDrafts.filter((d) => d.draft_type === "qa");
-  const activeFaqCount = faqs.filter((faq) => faq.status === "active").length;
   const [activeTab, setActiveTab] = useState<"review" | "library">(
     qaPending.length > 0 ? "review" : "library",
   );
+  // FAQ 全量约 170KB，过去随首屏 SSR 下发；现改为打开"FAQ 库"页签时才取。
+  const [faqs, setFaqs] = useState<KnowledgeFAQ[] | null>(null);
+  const [faqsLoading, setFaqsLoading] = useState(false);
+  const [faqsError, setFaqsError] = useState<string | null>(null);
+
+  const loadFaqs = useCallback(async () => {
+    setFaqsLoading(true);
+    setFaqsError(null);
+    try {
+      // 编辑器要按检索中/已停用/已归档三态本地切换，所以这里取全量而不分页。
+      setFaqs(await api<KnowledgeFAQ[]>("/knowledge-faqs?status=all"));
+    } catch (err) {
+      console.error("load knowledge faqs failed", err);
+      setFaqsError(err instanceof Error ? err.message : "加载失败");
+    } finally {
+      setFaqsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "library") return;
+    if (faqs !== null || faqsLoading || faqsError) return;
+    loadFaqs();
+  }, [activeTab, faqs, faqsLoading, faqsError, loadFaqs]);
+
+  const activeFaqCount = faqs?.filter((faq) => faq.status === "active").length ?? null;
 
   function draftSource(draft: KnowledgeDraft) {
     return draft.content_json?.source === "archivist_staff_correction"
@@ -86,7 +114,9 @@ export function FAQEvolutionCenter({
           >
             <Library className="h-4 w-4" />
             <span>FAQ 库</span>
-            <span className="tabular-nums text-slate-500">{activeFaqCount}</span>
+            <span className="tabular-nums text-slate-500">
+              {activeFaqCount ?? "—"}
+            </span>
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-600">
@@ -160,6 +190,8 @@ export function FAQEvolutionCenter({
                     <KnowledgeDraftActions
                       draftId={draft.id}
                       draftType="qa"
+                      // 批准后新 FAQ 要出现在已加载的 FAQ 库里；没加载过则不必白跑一次请求。
+                      onMutated={faqs ? loadFaqs : undefined}
                       initialTitle={draft.title}
                       initialQuestion={draft.question}
                       initialAnswer={draft.answer}
@@ -183,7 +215,13 @@ export function FAQEvolutionCenter({
             role="tabpanel"
             className="mx-auto w-full max-w-5xl animate-fadeIn"
           >
-            <KnowledgeFAQEditor faqs={faqs} />
+            {faqs ? (
+              <KnowledgeFAQEditor faqs={faqs} onChanged={loadFaqs} />
+            ) : faqsError ? (
+              <LazyLoadError message={`FAQ 库加载失败：${faqsError}`} onRetry={loadFaqs} />
+            ) : (
+              <LazyLoadPlaceholder label="正在加载 FAQ 库…" />
+            )}
           </div>
         )}
       </div>
@@ -193,16 +231,48 @@ export function FAQEvolutionCenter({
 
 export function ExcellentCaseEvolutionCenter({
   pendingDrafts,
-  approvedDrafts,
 }: {
   pendingDrafts: KnowledgeDraft[];
-  approvedDrafts: KnowledgeDraft[];
 }) {
   const casePending = pendingDrafts.filter((d) => d.draft_type === "case");
-  const caseApproved = approvedDrafts.filter((d) => d.draft_type === "case");
   const [activeTab, setActiveTab] = useState<"review" | "library">(
     casePending.length > 0 ? "review" : "library",
   );
+  // 已入库案例过去随首屏一次性下发（226 条 ≈568KB）；现改为打开"案例库"页签后分页取。
+  const [caseApproved, setCaseApproved] = useState<KnowledgeDraft[] | null>(null);
+  const [approvedTotal, setApprovedTotal] = useState<number | null>(null);
+  const [casesLoading, setCasesLoading] = useState(false);
+  const [casesError, setCasesError] = useState<string | null>(null);
+
+  const loadCases = useCallback(async (reset: boolean) => {
+    setCasesLoading(true);
+    setCasesError(null);
+    try {
+      const offset = reset ? 0 : (caseApproved?.length ?? 0);
+      const [page, count] = await Promise.all([
+        api<KnowledgeDraft[]>(
+          `/knowledge-drafts?status=approved&draft_type=case&limit=${CASE_PAGE_SIZE}&offset=${offset}`,
+        ),
+        api<{ total: number }>("/knowledge-drafts/count?status=approved&draft_type=case"),
+      ]);
+      setApprovedTotal(count.total);
+      setCaseApproved((current) => (reset || current === null ? page : [...current, ...page]));
+    } catch (err) {
+      console.error("load approved case drafts failed", err);
+      setCasesError(err instanceof Error ? err.message : "加载失败");
+    } finally {
+      setCasesLoading(false);
+    }
+  }, [caseApproved]);
+
+  useEffect(() => {
+    if (activeTab !== "library") return;
+    if (caseApproved !== null || casesLoading || casesError) return;
+    loadCases(true);
+  }, [activeTab, caseApproved, casesLoading, casesError, loadCases]);
+
+  const loadedCount = caseApproved?.length ?? 0;
+  const hasMore = approvedTotal !== null && loadedCount < approvedTotal;
 
   return (
     <section className="animate-fadeIn overflow-hidden rounded-xl border border-cyan-200 bg-white shadow-sm">
@@ -250,7 +320,7 @@ export function ExcellentCaseEvolutionCenter({
           >
             <Library className="h-4 w-4" />
             <span>案例库</span>
-            <span className="tabular-nums text-slate-500">{caseApproved.length}</span>
+            <span className="tabular-nums text-slate-500">{approvedTotal ?? "—"}</span>
           </button>
         </div>
         <div className="max-w-xl text-xs font-medium leading-relaxed text-cyan-900">
@@ -315,6 +385,7 @@ export function ExcellentCaseEvolutionCenter({
                     <KnowledgeDraftActions
                       draftId={draft.id}
                       draftType="case"
+                      onMutated={caseApproved ? () => loadCases(true) : undefined}
                       initialTitle={draft.title}
                       initialQuestion={draft.question}
                       initialAnswer={draft.answer}
@@ -346,24 +417,103 @@ export function ExcellentCaseEvolutionCenter({
                 </p>
               </div>
               <span className="rounded-md border border-purple-100 bg-purple-50 px-2 py-1 text-xs font-semibold text-purple-700">
-                {caseApproved.length} 个案例
+                {approvedTotal === null
+                  ? "正在统计…"
+                  : hasMore
+                    ? `已显示 ${loadedCount} / ${approvedTotal} 个案例`
+                    : `${approvedTotal} 个案例`}
               </span>
             </div>
 
-            <div className="max-h-[620px] space-y-4 overflow-y-auto pr-1">
-              {caseApproved.map((draft) => (
-                <ExcellentCaseCard key={draft.id} draft={draft} />
-              ))}
-              {caseApproved.length === 0 && (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/20 py-12 text-center text-sm text-slate-400">
-                  暂无已入库优秀案例。
-                </div>
-              )}
-            </div>
+            {caseApproved === null ? (
+              casesError ? (
+                <LazyLoadError
+                  message={`案例库加载失败：${casesError}`}
+                  onRetry={() => loadCases(true)}
+                />
+              ) : (
+                <LazyLoadPlaceholder label="正在加载已入库案例…" />
+              )
+            ) : (
+              <div className="max-h-[620px] space-y-4 overflow-y-auto pr-1">
+                {caseApproved.map((draft) => (
+                  <ExcellentCaseCard key={draft.id} draft={draft} />
+                ))}
+                {caseApproved.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/20 py-12 text-center text-sm text-slate-400">
+                    暂无已入库优秀案例。
+                  </div>
+                )}
+
+                {casesError && (
+                  <p
+                    role="alert"
+                    className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700"
+                  >
+                    加载更多失败：{casesError}
+                  </p>
+                )}
+
+                {hasMore && (
+                  <button
+                    type="button"
+                    onClick={() => loadCases(false)}
+                    disabled={casesLoading}
+                    aria-busy={casesLoading || undefined}
+                    className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 text-xs font-bold text-cyan-800 transition-all hover:border-cyan-300 hover:bg-cyan-50 active:scale-[0.99] disabled:opacity-50"
+                  >
+                    {casesLoading && (
+                      <LoaderCircle
+                        className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    )}
+                    {casesLoading
+                      ? "正在加载…"
+                      : `加载更多（还有 ${approvedTotal! - loadedCount} 条）`}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
     </section>
+  );
+}
+
+function LazyLoadPlaceholder({ label }: { label: string }) {
+  return (
+    <div
+      className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50/40 py-16 text-center"
+      aria-busy="true"
+    >
+      <LoaderCircle
+        className="h-6 w-6 animate-spin text-cyan-700 motion-reduce:animate-none"
+        aria-hidden="true"
+      />
+      <p className="text-sm font-semibold text-slate-600" role="status" aria-live="polite">
+        {label}
+      </p>
+    </div>
+  );
+}
+
+function LazyLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="flex flex-col items-center gap-3 rounded-xl border border-rose-200 bg-rose-50/60 py-12 text-center"
+    >
+      <p className="px-4 text-sm font-semibold text-rose-800">{message}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="inline-flex min-h-9 items-center rounded-lg border border-rose-300 bg-white px-3.5 text-xs font-bold text-rose-800 transition-colors hover:bg-rose-100"
+      >
+        重试
+      </button>
+    </div>
   );
 }
 

@@ -31,6 +31,7 @@ export function KnowledgeDraftActions({
   initialAnswer,
   initialCategory,
   initialTags,
+  onMutated,
 }: {
   draftId: number;
   draftType?: string;
@@ -39,6 +40,8 @@ export function KnowledgeDraftActions({
   initialAnswer: string;
   initialCategory?: string | null;
   initialTags?: string[] | null;
+  /** 库内容改为按需加载后，整页 refresh 不再能刷新它，批准/驳回后需显式重取。 */
+  onMutated?: () => void;
 }) {
   const router = useRouter();
   const [title, setTitle] = useState(initialTitle);
@@ -105,6 +108,7 @@ export function KnowledgeDraftActions({
           : "已完成查重并入库",
       );
       router.refresh();
+      onMutated?.();
     } catch {
       setMessage("网络请求失败，草稿仍保留在待审核列表");
     } finally {
@@ -129,6 +133,7 @@ export function KnowledgeDraftActions({
         return;
       }
       router.refresh();
+      onMutated?.();
     } catch {
       setMessage("网络请求失败，请稍后重试");
     } finally {
@@ -509,7 +514,14 @@ export function KnowledgeIndexSyncButton() {
   return null;
 }
 
-export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
+export function KnowledgeFAQEditor({
+  faqs,
+  onChanged,
+}: {
+  faqs: KnowledgeFAQ[];
+  /** FAQ 列表改为按需加载后由父组件持有，写操作后必须回调重取，整页 refresh 已刷不到它。 */
+  onChanged?: () => void;
+}) {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"active" | "disabled" | "archived">("active");
@@ -548,6 +560,7 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
       setDraft({ title: "", question: "", answer: "", category: "", tags: "" });
       setCreating(false);
       router.refresh();
+      onChanged?.();
     } catch (err) {
       setCreateError(err instanceof Error ? `FAQ 发布失败：${err.message}` : "FAQ 发布失败，请稍后再试。");
     } finally {
@@ -689,7 +702,13 @@ export function KnowledgeFAQEditor({ faqs }: { faqs: KnowledgeFAQ[] }) {
 
       <div className="max-h-[520px] space-y-3.5 overflow-y-auto pr-1">
         {visibleFaqs.map((faq) => (
-          <KnowledgeFAQRow key={faq.id} faq={faq} busy={busyId === faq.id} setBusy={setBusyId} />
+          <KnowledgeFAQRow
+            key={faq.id}
+            faq={faq}
+            busy={busyId === faq.id}
+            setBusy={setBusyId}
+            onChanged={onChanged}
+          />
         ))}
         {visibleFaqs.length === 0 && (
           <div className="rounded-xl border border-dashed border-slate-200 py-12 text-center text-sm text-slate-400 bg-slate-50/20">
@@ -709,10 +728,12 @@ function KnowledgeFAQRow({
   faq,
   busy,
   setBusy,
+  onChanged,
 }: {
   faq: KnowledgeFAQ;
   busy: boolean;
   setBusy: (value: number | null) => void;
+  onChanged?: () => void;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -746,6 +767,7 @@ function KnowledgeFAQRow({
       if (!response.ok) throw new Error((await response.text()) || "保存失败");
       setEditing(false);
       router.refresh();
+      onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? `保存失败：${err.message}` : "保存失败，请稍后再试。");
     } finally {
@@ -762,6 +784,7 @@ function KnowledgeFAQRow({
       const response = await fetch(`${API_BASE}/knowledge-faqs/${faq.id}/${action}`, { method: "POST" });
       if (!response.ok) throw new Error((await response.text()) || "操作失败");
       router.refresh();
+      onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? `操作失败：${err.message}` : "操作失败，请稍后再试。");
     } finally {

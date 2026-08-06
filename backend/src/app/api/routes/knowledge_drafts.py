@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -45,14 +45,39 @@ async def sync_knowledge_index(
     return KnowledgeIndexSyncResult(**result.__dict__)
 
 
+@router.get("/knowledge-drafts/count")
+async def count_knowledge_drafts(
+    status: str = "pending",
+    draft_type: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, int]:
+    """只回条数，供前端在不拉全量正文的情况下显示"案例库 N 条"。"""
+    query = select(func.count()).select_from(KnowledgeDraft)
+    if status != "all":
+        query = query.where(KnowledgeDraft.status == status)
+    if draft_type:
+        query = query.where(KnowledgeDraft.draft_type == draft_type)
+    return {"total": await session.scalar(query) or 0}
+
+
 @router.get("/knowledge-drafts", response_model=list[KnowledgeDraftRead])
 async def list_knowledge_drafts(
     status: str = "pending",
+    draft_type: str | None = None,
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> list[KnowledgeDraft]:
+    """草稿正文含聊天证据，单条约 2.5KB；已入库案例已有数百条，故支持按类型分页取。"""
     query = select(KnowledgeDraft).order_by(KnowledgeDraft.created_at.desc())
     if status != "all":
         query = query.where(KnowledgeDraft.status == status)
+    if draft_type:
+        query = query.where(KnowledgeDraft.draft_type == draft_type)
+    if limit is not None:
+        query = query.offset(offset).limit(limit)
+    elif offset:
+        query = query.offset(offset)
     result = await session.scalars(query)
     return list(result)
 

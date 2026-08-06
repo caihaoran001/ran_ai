@@ -4,7 +4,6 @@ import {
   ServiceCase,
   KnowledgeDraft,
   KnowledgeIndexStats,
-  KnowledgeFAQ,
   DashboardCasePendingDocuments,
 } from "@/lib/api";
 import { AutoSendToggle } from "./auto-send-toggle";
@@ -16,14 +15,14 @@ import { RefundReviewActions } from "./refund-review-actions";
 import { CheckCircle2, RefreshCcw } from "lucide-react";
 
 export default async function DocumentsListPage() {
+  // 首屏只取"审核要用"的轻量数据。知识库两块（FAQ 231 条 ≈170KB、已通过案例 226 条 ≈568KB）
+  // 曾在这里同步取并 SSR 进首屏，把控制台顶成 1.68MB / 4 秒；现改为组件内按需加载。
   const [
     policy,
     aiReplyEnabled,
     refundPendingCases,
     pendingDocumentGroups,
     pendingKnowledgeDrafts,
-    approvedKnowledgeDrafts,
-    knowledgeFaqs,
     knowledgeIndexStats,
   ] = await Promise.all([
     api<{ mode: string }>("/settings/content-delivery-policy").catch(() => ({ mode: "manual_review" })),
@@ -33,8 +32,6 @@ export default async function DocumentsListPage() {
     api<ServiceCase[]>("/service-cases?filter=refund_pending").catch(() => []),
     api<DashboardCasePendingDocuments[]>("/dashboard/pending-documents").catch(() => []),
     api<KnowledgeDraft[]>("/knowledge-drafts?status=pending").catch(() => []),
-    api<KnowledgeDraft[]>("/knowledge-drafts?status=approved").catch(() => []),
-    api<KnowledgeFAQ[]>("/knowledge-faqs?status=all").catch(() => []),
     api<KnowledgeIndexStats>("/knowledge-base/index/stats").catch(() => ({
       total_chunks: 0,
       embedded_chunks: 0,
@@ -91,18 +88,14 @@ export default async function DocumentsListPage() {
       {/* 2. 退款审核 */}
       <RefundReviewGroup cases={refundPendingCases} />
 
-      {/* 3. 参考问答库 (FAQ) 进化工作台 */}
+      {/* 3. 参考问答库 (FAQ) 进化工作台（FAQ 库内容按需加载） */}
       <FAQEvolutionCenter
         pendingDrafts={pendingKnowledgeDrafts}
         indexStats={knowledgeIndexStats}
-        faqs={knowledgeFaqs}
       />
 
-      {/* 4. 优秀标杆案例库进化工作台 */}
-      <ExcellentCaseEvolutionCenter
-        pendingDrafts={pendingKnowledgeDrafts}
-        approvedDrafts={approvedKnowledgeDrafts}
-      />
+      {/* 4. 优秀标杆案例库进化工作台（已入库案例按需分页加载） */}
+      <ExcellentCaseEvolutionCenter pendingDrafts={pendingKnowledgeDrafts} />
     </div>
   );
 }
