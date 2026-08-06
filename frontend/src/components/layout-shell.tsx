@@ -38,6 +38,14 @@ const extraRouteLabels: Record<string, string> = {
   "/checkins": "打卡记录",
 };
 
+// 二级详情页的名字。没有这层，面包屑会把"文件详情"标成"审核控制台"，
+// 既说不清当前在哪，也没有可点回上一层的入口。
+const detailRouteLabels: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /^\/documents\/[^/]+$/, label: "交付文件审核" },
+  { pattern: /^\/cases\/[^/]+$/, label: "服务单详情" },
+  { pattern: /^\/users\/[^/]+$/, label: "用户详情" },
+];
+
 function isActivePath(pathname: string | null, href: string) {
   // href 可能带 query(如 /users?active=1)，高亮只按路径部分匹配。
   const base = href.split("?")[0];
@@ -78,6 +86,37 @@ function Brand({
           </span>
         </span>
       )}
+    </Link>
+  );
+}
+
+function BreadcrumbLink({
+  href,
+  label,
+  pending,
+  disabled,
+  onNavigate,
+}: {
+  href: string;
+  label: string;
+  pending: boolean;
+  disabled: boolean;
+  onNavigate: (event: MouseEvent<HTMLAnchorElement>, href: string) => void;
+}) {
+  return (
+    <Link
+      href={href}
+      onClick={(event) => onNavigate(event, href)}
+      aria-busy={pending || undefined}
+      aria-disabled={disabled || undefined}
+      className={`inline-flex shrink-0 items-center gap-1 rounded font-medium text-slate-500 transition-colors hover:text-cyan-800 hover:underline ${
+        disabled && !pending ? "opacity-55" : ""
+      }`}
+    >
+      {pending && (
+        <LoaderCircle className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+      )}
+      <span>{label}</span>
     </Link>
   );
 }
@@ -147,10 +186,16 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const currentLabel =
-    flatNav.find((item) => isActivePath(pathname, item.href))?.label ??
-    Object.entries(extraRouteLabels).find(([href]) => isActivePath(pathname, href))?.[1] ??
+  const sectionMatch =
+    flatNav.find((item) => isActivePath(pathname, item.href)) ??
+    Object.entries(extraRouteLabels)
+      .map(([href, label]) => ({ href, label }))
+      .find((item) => isActivePath(pathname, item.href)) ??
     null;
+  const sectionLabel = sectionMatch?.label ?? null;
+  const detailLabel = pathname
+    ? detailRouteLabels.find((item) => item.pattern.test(pathname))?.label ?? null
+    : null;
 
   return (
     <div className="admin-shell">
@@ -294,14 +339,40 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
         >
           <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-8 py-3">
             <nav aria-label="面包屑" className="flex min-w-0 items-center gap-2 text-sm">
-              {currentLabel ? (
+              {sectionLabel ? (
                 <>
-                  <span className="font-medium text-slate-400">工作台</span>
+                  <BreadcrumbLink
+                    href="/dashboard"
+                    label="工作台"
+                    pending={pendingHref === "/dashboard"}
+                    disabled={Boolean(pendingHref)}
+                    onNavigate={navigate}
+                  />
                   <span className="text-slate-300">/</span>
-                  <span className="truncate font-bold text-slate-900">{currentLabel}</span>
+                  {detailLabel && sectionMatch ? (
+                    <>
+                      <BreadcrumbLink
+                        href={sectionMatch.href}
+                        label={sectionLabel}
+                        pending={pendingHref === sectionMatch.href}
+                        disabled={Boolean(pendingHref)}
+                        onNavigate={navigate}
+                      />
+                      <span className="text-slate-300">/</span>
+                      <span aria-current="page" className="truncate font-bold text-slate-900">
+                        {detailLabel}
+                      </span>
+                    </>
+                  ) : (
+                    <span aria-current="page" className="truncate font-bold text-slate-900">
+                      {sectionLabel}
+                    </span>
+                  )}
                 </>
               ) : (
-                <span className="truncate font-bold text-slate-900">工作台</span>
+                <span aria-current="page" className="truncate font-bold text-slate-900">
+                  工作台
+                </span>
               )}
             </nav>
             <div className="flex shrink-0 items-center gap-3">

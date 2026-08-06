@@ -2,6 +2,8 @@ export default function DocumentDetailLoading() {
   return (
     <div className="space-y-6" aria-busy="true" aria-label="正在打开交付文件">
       <div>
+        {/* 骨架屏也留出返回位，加载完成时标题不会跳动 */}
+        <div className="mb-3 h-8 w-32 animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none" />
         <h1 className="text-2xl font-semibold">交付文件审核</h1>
         <p className="mt-1 text-sm text-slate-500" role="status" aria-live="polite">
           正在打开文件，请稍候…
