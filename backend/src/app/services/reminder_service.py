@@ -501,6 +501,12 @@ class ReminderService:
                     # 「退下」期间不主动发提醒；阈值内保持 PENDING 跳过本轮，用户「回来」后仍可准点补发；
                     # 若退下持续到过点太久，则下一轮由上面的「过点即弃」丢弃并顺延。
                     continue
+                # 续排与本次发送结果解耦：只要这条任务被正常取用（服务单在、没过点、没退下），
+                # 就先把下一次排上。生成失败/模型欠费/渠道掉线/空回复都不再终结整条循环——
+                # 线上曾因此被一次瞬时故障永久杀死 9 条日循环提醒，且全程无告警无人察觉。
+                # 放在这里而不是逐个失败分支补，是为了让将来新增的失败分支自动不断链。
+                # 每条序列任一时刻仍只有 1 条 PENDING，用户取消这条即终止整个序列。
+                await _schedule_next_recurrence(session, task, now, tz)
                 task.status = AgentReminderTaskStatus.SENDING
                 task.error = None
                 await session.flush()
@@ -598,9 +604,6 @@ class ReminderService:
                     task.status = AgentReminderTaskStatus.SENT
                     task.sent_message_id = message.id
                     task.sent_at = message.sent_at
-                    # 循环提醒：本次成功发出后排下一条待发任务。
-                    # 每条循环序列任一时刻只有 1 条 PENDING，用户取消这条即终止整个序列。
-                    await _schedule_next_recurrence(session, task, now, tz)
                     await complete_agent_run(
                         agent_run_id=agent_run_id,
                         status=AGENT_RUN_COMPLETED,
@@ -1273,7 +1276,11 @@ def _next_recurrence_at(
 
 
 async def _schedule_next_recurrence(session, task, now: datetime, tz: ZoneInfo) -> None:
-    """循环提醒成功发出或过点跳过后，新建一条 PENDING 续排。"""
+    """循环提醒被取用（或过点丢弃）时，新建一条 PENDING 续排。
+
+    刻意不看本次发送结果：链条的存续只取决于「这条提醒还该不该继续」，不取决于
+    「这一次有没有发出去」。单次故障只丢当天那一条，不杀整条序列。
+    """
     if task.recurrence not in {"daily", "weekly"}:
         return
     next_at = _next_recurrence_at(task.remind_at, task.recurrence, now, tz)
