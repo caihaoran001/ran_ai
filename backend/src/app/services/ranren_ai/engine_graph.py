@@ -66,6 +66,7 @@ from app.services.ranren_ai.engine import (
     _reply_is_no_reply,
     _requires_health_handoff,
     _sanitize_ai_reply,
+    _segments_from_meta,
 )
 from app.services.service_case_queries import select_active_service_cases
 
@@ -520,17 +521,21 @@ class EngineGraph:
                 "sender_type": sender_type.value,
                 "timestamp": int(message.timestamp.timestamp()),
             }
-            quoted_pairs = [
-                (quoted_id, quoted_text)
-                for _, quoted_list in message.segments
-                for quoted_id, quoted_text in quoted_list
-                if quoted_id and (quoted_text or "").strip()
+            # 分段结构（每句正文 + 它自己的引用）必须原样落库：重启后补跑这条消息时
+            # 要靠它还原"哪句回复了哪条"，摊平存会丢掉这层对应关系。
+            quoted_segments = [
+                {
+                    "text": segment_text,
+                    "quoted": [
+                        {"message_id": quoted_id, "content": (quoted_text or "")[:500]}
+                        for quoted_id, quoted_text in quoted_list
+                        if quoted_id
+                    ],
+                }
+                for segment_text, quoted_list in message.segments
             ]
-            if quoted_pairs:
-                meta["quoted"] = [
-                    {"message_id": quoted_id, "content": quoted_text[:500]}
-                    for quoted_id, quoted_text in quoted_pairs
-                ]
+            if any(segment["quoted"] for segment in quoted_segments):
+                meta["segments"] = quoted_segments
             if explicit_bot_query_text:
                 meta["explicit_bot_query_text"] = explicit_bot_query_text
             analysis = _with_reply_processing_status(
@@ -1050,6 +1055,8 @@ class EngineGraph:
             message_type=message_type,
             raw_payload=raw_payload,
             timestamp=created_at,
+            # 重启补跑时把引用一起带回来，否则恢复的这轮又只剩一句"收到"。
+            segments=_segments_from_meta(meta),
         )
 
         async with engine_mod.SessionLocal() as session:

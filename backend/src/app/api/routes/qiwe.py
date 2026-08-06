@@ -265,18 +265,21 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
 
 
 def _quoted_message_from_msg_data(msg_data: Any) -> tuple[str, str] | None:
-    """企微「引用某条消息回复」时 msgData.reply 携带被引用消息原文与 ID。
+    """企微「引用某条消息回复」时 msgData.reply 携带被引用消息 ID，多数还带原文。
 
-    reply 形如 {"content": "...", "msgId": "...", "moreDetail": [...], "msgType": 0}；
-    仅返回文本类引用（content 非空），否则返回 None。
+    reply 形如 {"content": "...", "msgId": "...", "moreDetail": [...], "msgType": 0}。
+    近 90 天生产样本里约四分之一的 reply **只有 msgId 没有 content**（引用图片、
+    引用机器人自己发的回复等），其中八成能按 msgId 回查到我们自己存的原文，所以这里
+    保留只有 ID 的引用（content 返回空串），交给下游反查补全，不在入口丢弃。
+    msgId 缺失才无从还原，返回 None。
     """
     reply = msg_data.get("reply") if isinstance(msg_data, dict) else None
     if not isinstance(reply, dict) or not reply:
         return None
-    content = str(reply.get("content") or "").strip()
-    if not content:
+    quoted_id = _as_str(reply.get("msgId")).strip()
+    if not quoted_id:
         return None
-    return _as_str(reply.get("msgId")), content
+    return quoted_id, str(reply.get("content") or "").strip()
 
 
 def _as_str(value: Any) -> str:

@@ -23,6 +23,7 @@ from app.services.ranren_ai.engine import (
     _current_query_body,
     _image_description_is_available,
     _build_current_query,
+    _segments_from_meta,
 )
 from app.models.message import (
     Message,
@@ -2690,6 +2691,31 @@ def test_qiwe_callback_ignores_empty_reply():
     assert message.segments == [("好的", [])]
 
 
+def test_qiwe_callback_keeps_quoted_without_content():
+    """企微只给 msgId 不给正文时（引用图片/引用助教回复）仍要留下引用，交给下游反查补全。"""
+    message = _channel_message_from_qiwe(
+        {
+            "cmd": 15000,
+            "msgType": 2,
+            "userId": "bot-user",
+            "fromRoomId": 10926518308089720,
+            "senderId": 7881300658070689,
+            "senderName": "用户A",
+            "timestamp": 1779951380,
+            "msgUniqueIdentifier": "unique-3",
+            "msgData": {
+                "content": "馒头自家做的，放了粗粮",
+                "reply": {"msgId": "CAQQ0OvQ0wYY57HBz4GAgAMgpN6gLQ==", "msgType": 0},
+            },
+        }
+    )
+
+    assert message is not None
+    assert message.segments == [
+        ("馒头自家做的，放了粗粮", [("CAQQ0OvQ0wYY57HBz4GAgAMgpN6gLQ==", "")])
+    ]
+
+
 def test_qiwe_merge_messages_keeps_all_quoted():
     merged = _merge_messages(
         [
@@ -2759,7 +2785,7 @@ def test_qiwe_merge_messages_keeps_quoted_per_segment():
 @pytest.mark.asyncio
 async def test_build_current_query_renders_quoted_with_sender_label(db_session):
     quoted = Message(
-        group_id="quoted-room",
+        group_id="room-1",
         direction=MessageDirection.OUTBOUND,
         sender_type=MessageSenderType.BOT,
         message_type="text",
@@ -2795,7 +2821,7 @@ async def test_build_current_query_renders_quoted_with_sender_label(db_session):
 @pytest.mark.asyncio
 async def test_build_current_query_uses_staff_nickname(db_session):
     quoted = Message(
-        group_id="quoted-room",
+        group_id="room-1",
         direction=MessageDirection.INBOUND,
         sender_type=MessageSenderType.STAFF,
         message_type="text",
@@ -2848,6 +2874,119 @@ async def test_build_current_query_unknown_sender_when_missing():
 
 
 @pytest.mark.asyncio
+async def test_build_current_query_recovers_quoted_content_from_db(db_session):
+    """企微没给引用正文时，用消息编号取回我们自己存的那条原文（生产里约四分之一走这条路）。"""
+    quoted = Message(
+        group_id="room-1",
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.BOT,
+        message_type="markdown",
+        content="68.2和昨天一样，稳住了。天热早上没胃口正常，不用硬塞。",
+        wecom_message_id="CAQQ0OvQ0wYY57HBz4GAgAMgpN6gLQ==",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.SENT,
+    )
+    db_session.add(quoted)
+    await db_session.flush()
+
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="馒头自家做的，放了粗粮",
+        message_id="m1",
+        user_id="u1",
+        segments=[
+            ("馒头自家做的，放了粗粮", [("CAQQ0OvQ0wYY57HBz4GAgAMgpN6gLQ==", "")])
+        ],
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    assert await _build_current_query(
+        {"_qiwe_meta": {"sender_type": "user"}}, message
+    ) == (
+        "用户：馒头自家做的，放了粗粮\n"
+        "（引用 助教：68.2和昨天一样，稳住了。天热早上没胃口正常，不用硬塞。）"
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_current_query_does_not_borrow_other_group_content(db_session):
+    """反查只在本群内进行：即便渠道消息编号撞车，也不能把别的群的正文喂进这一轮。"""
+    other_group = Message(
+        group_id="room-other",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="text",
+        content="别的群的员工发言",
+        wecom_message_id="cross-group-1",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(other_group)
+    await db_session.flush()
+
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="这个怎么说",
+        message_id="m1",
+        user_id="u1",
+        segments=[("这个怎么说", [("cross-group-1", "")])],
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    assert await _build_current_query(
+        {"_qiwe_meta": {"sender_type": "user"}}, message
+    ) == "用户：这个怎么说\n（引用 未知发送者：内容无法还原）"
+
+
+@pytest.mark.asyncio
+async def test_build_current_query_marks_unrecoverable_quote():
+    """既没给正文、库里也查不到时，明确告诉模型有引用但内容还原不了，别静默丢掉。"""
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="这个怎么办",
+        message_id="m1",
+        user_id="u1",
+        segments=[("这个怎么办", [("gone-forever", "")])],
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    assert await _build_current_query(
+        {"_qiwe_meta": {"sender_type": "user"}}, message
+    ) == "用户：这个怎么办\n（引用 未知发送者：内容无法还原）"
+
+
+@pytest.mark.asyncio
+async def test_build_current_query_flattens_and_truncates_long_quote():
+    """引用原文压成单行并截断补省略号：多行会撑破一行一条引用的结构，半句话会被当成说完了。"""
+    long_quote = "第一天\n早 早C和生酮粉" + "，配鸡蛋两个和小番茄一百克" * 30
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="这个能照着吃吗",
+        message_id="m1",
+        user_id="u1",
+        segments=[("这个能照着吃吗", [("not-in-db", long_quote)])],
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    rendered = await _build_current_query(
+        {"_qiwe_meta": {"sender_type": "user"}}, message
+    )
+    quote_line = rendered.split("\n")[1]
+    assert rendered.count("\n") == 1
+    assert quote_line.startswith("（引用 未知发送者：第一天 早 早C和生酮粉")
+    assert quote_line.endswith("…）")
+    assert len(quote_line) < 240
+
+
+@pytest.mark.asyncio
 async def test_build_current_query_without_quoted_renders_plain_lines():
     message = ChannelMessage(
         channel="qiwe",
@@ -2868,7 +3007,7 @@ async def test_build_current_query_without_quoted_renders_plain_lines():
 @pytest.mark.asyncio
 async def test_build_current_query_resolves_each_quoted(db_session):
     staff_msg = Message(
-        group_id="quoted-room",
+        group_id="room-1",
         direction=MessageDirection.INBOUND,
         sender_type=MessageSenderType.STAFF,
         message_type="text",
@@ -2881,7 +3020,7 @@ async def test_build_current_query_resolves_each_quoted(db_session):
         },
     )
     bot_msg = Message(
-        group_id="quoted-room",
+        group_id="room-1",
         direction=MessageDirection.OUTBOUND,
         sender_type=MessageSenderType.BOT,
         message_type="text",
@@ -2913,6 +3052,82 @@ async def test_build_current_query_resolves_each_quoted(db_session):
         "用户：先回员工\n（引用 上海 Lucy：员工的原话）\n"
         "用户：再问助教\n（引用 助教：助教的打卡追问）"
     )
+
+
+@pytest.mark.asyncio
+async def test_inbound_message_persists_segments_for_restart_recovery(
+    db_session, monkeypatch
+):
+    """落库的分段结构必须能被恢复流程原样读回，否则重启补跑时引用就丢了。"""
+    from sqlalchemy import select
+
+    from app.services.ranren_ai.engine_graph import EngineGraph
+
+    async def no_risk(*args, **kwargs):
+        return {}
+
+    async def halt(self, state):
+        return {"_halt": True}
+
+    monkeypatch.setattr("app.services.ranren_ai.engine.analyze_message_insight", no_risk)
+    monkeypatch.setattr(EngineGraph, "_reply_prep", halt)
+
+    group_id = f"room-quote-{secrets.token_hex(4)}"
+    segments = [
+        ("我现在吃的还不够吗？？", [("q-staff-1", "三餐蛋白质吃够 吃足")]),
+        ("这个也一样吗", [("q-bot-1", "")]),
+    ]
+
+    await RanrenAIEngine(FakeChannel()).handle_message(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="我现在吃的还不够吗？？\n这个也一样吗",
+            message_id="quote-inbound-1",
+            user_id="user-1",
+            user_name="用户A",
+            segments=segments,
+            timestamp=datetime.now(timezone.utc),
+        )
+    )
+
+    stored = await db_session.scalar(
+        select(Message).where(
+            Message.group_id == group_id,
+            Message.wecom_message_id == "quote-inbound-1",
+        )
+    )
+    assert stored is not None
+    assert _segments_from_meta(stored.analysis_json["_qiwe_meta"]) == segments
+
+
+def test_segments_from_meta_restores_quoted_per_segment():
+    """重启补跑消息时按落库的分段结构还原，"哪句回复了哪条"不能错位。"""
+    meta = {
+        "segments": [
+            {"text": "先回员工", "quoted": [{"message_id": "q-1", "content": "员工的原话"}]},
+            {"text": "再问助教", "quoted": [{"message_id": "q-2", "content": ""}]},
+            {"text": "顺口一句", "quoted": []},
+        ]
+    }
+
+    assert _segments_from_meta(meta) == [
+        ("先回员工", [("q-1", "员工的原话")]),
+        ("再问助教", [("q-2", "")]),
+        ("顺口一句", []),
+    ]
+
+
+def test_segments_from_meta_tolerates_missing_or_broken_meta():
+    """老消息没有这个结构、或结构被写坏时退回无分段，不能让恢复流程炸掉。"""
+    assert _segments_from_meta(None) == []
+    assert _segments_from_meta({}) == []
+    assert _segments_from_meta({"segments": "坏数据"}) == []
+    assert _segments_from_meta({"segments": [{"text": "只有正文"}]}) == [("只有正文", [])]
+    assert _segments_from_meta(
+        {"segments": [{"text": "缺编号", "quoted": [{"content": "无 id 丢弃"}]}]}
+    ) == [("缺编号", [])]
 
 
 @pytest.mark.asyncio

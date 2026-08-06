@@ -1150,14 +1150,27 @@ def _staff_speaker(analysis: dict | None) -> str:
     return name or "工作人员"
 
 
-async def _quoted_sender_labels(quoted_ids: set[str]) -> dict[str, str]:
-    """按被引用消息 ID 批量反查发送者标签；查不到的消息不返回（渲染时兜底"未知发送者"）。"""
-    if not quoted_ids:
+async def _quoted_message_refs(
+    quoted_ids: set[str], *, chat_id: str
+) -> dict[str, tuple[str, str]]:
+    """按被引用消息 ID 批量反查(发送者标签, 我们自己存的正文)。
+
+    正文用于补全企微只给 ID、不给 content 的引用（引用图片、引用助教自己发的回复等，
+    生产样本里占引用总量约四分之一，其中八成能在这里查到）。图片消息存的正文本身就是
+    视觉描述，可直接给模型。查不到的 ID 不返回，渲染时兜底"未知发送者/内容无法还原"。
+
+    只在本会话内反查：用户只可能引用本群消息，限定后即使渠道消息 ID 撞车，也不会把
+    别的群的正文喂进这一轮。
+    """
+    if not quoted_ids or not chat_id:
         return {}
-    quoted_by_id: dict[str, str] = {}
+    quoted_by_id: dict[str, tuple[str, str]] = {}
     async with SessionLocal() as session:
         rows = await session.execute(
-            select(Message).where(Message.wecom_message_id.in_(quoted_ids))
+            select(Message).where(
+                Message.group_id == chat_id,
+                Message.wecom_message_id.in_(quoted_ids),
+            )
         )
         for quoted_msg in rows.scalars().all():
             if quoted_msg.sender_type == MessageSenderType.BOT:
@@ -1168,22 +1181,61 @@ async def _quoted_sender_labels(quoted_ids: set[str]) -> dict[str, str]:
                 sender_label = "系统"
             else:
                 sender_label = "用户"
-            quoted_by_id[quoted_msg.wecom_message_id] = sender_label
+            quoted_by_id[quoted_msg.wecom_message_id] = (
+                sender_label,
+                (quoted_msg.content or "").strip(),
+            )
     return quoted_by_id
+
+
+def _quoted_excerpt(text: str, limit: int = 200) -> str:
+    """引用原文压成单行并限长：多行原文会撑破"一行一条引用"的结构，模型分不清边界；
+    截断处补省略号，避免模型把半句话当成对方说完了。"""
+    body = " ".join((text or "").split())
+    if len(body) <= limit:
+        return body
+    return body[:limit] + "…"
+
+
+def _segments_from_meta(meta: dict | None) -> list[tuple[str, list[tuple[str, str]]]]:
+    """从落库的 _qiwe_meta 还原聚合分段与引用，供重启后补跑消息时重放。
+
+    没有这一步，恢复的消息会丢掉引用，AI 又退回只看见一句"收到"。
+    """
+    raw = meta.get("segments") if isinstance(meta, dict) else None
+    if not isinstance(raw, list):
+        return []
+    segments: list[tuple[str, list[tuple[str, str]]]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        quoted: list[tuple[str, str]] = []
+        for entry in item.get("quoted") or []:
+            if not isinstance(entry, dict):
+                continue
+            quoted_id = str(entry.get("message_id") or "").strip()
+            if quoted_id:
+                quoted.append((quoted_id, str(entry.get("content") or "")))
+        segments.append((str(item.get("text") or ""), quoted))
+    return segments
 
 
 async def _build_current_query(analysis: dict | None, message: ChannelMessage) -> str:
     """渲染本轮提问：聚合前的每条消息单独成行，引用行（发送者：原文）跟随对应消息。
 
     有 segments（qiwe 入站）时按段渲染，模型能精确看到"这句回复了谁"；无 segments
-    （其他通道/测试消息）时退化为单段渲染。引用发送者一次性批量反查，查不到用
-    "未知发送者"兜底，不阻塞回复。
+    （其他通道/测试消息）时退化为单段渲染。引用发送者与原文一次性批量反查，查不到用
+    "未知发送者"/"内容无法还原"兜底，不阻塞回复。
     """
     segments = message.segments
     if not segments:
         return _current_query_body(analysis, message.text)
     quoted_ids = {qid for _, quoted_list in segments for qid, _ in quoted_list if qid}
-    sender_labels = await _quoted_sender_labels(quoted_ids) if quoted_ids else {}
+    quoted_refs = (
+        await _quoted_message_refs(quoted_ids, chat_id=message.chat_id)
+        if quoted_ids
+        else {}
+    )
     speaker = _current_query_speaker(analysis)
     image_prompt = analysis.get("image_prompt") if isinstance(analysis, dict) else None
     lines: list[str] = []
@@ -1193,10 +1245,16 @@ async def _build_current_query(analysis: dict | None, message: ChannelMessage) -
             body = "（发了一张图片）"
         lines.append(f"{speaker}：{_prompt_data(body)}")
         for quoted_id, quoted_text in quoted_list:
-            if not quoted_id or not (quoted_text or "").strip():
+            if not quoted_id:
                 continue
-            label = sender_labels.get(quoted_id, "未知发送者")
-            lines.append(f"（引用 {label}：{_prompt_data(quoted_text.strip()[:200])}）")
+            label, stored_text = quoted_refs.get(quoted_id, ("未知发送者", ""))
+            # 企微没给原文时用我们自己存的那条（引用图片/引用助教回复常走这条路）。
+            excerpt = _quoted_excerpt(quoted_text or "") or _quoted_excerpt(stored_text)
+            lines.append(
+                f"（引用 {label}：{_prompt_data(excerpt)}）"
+                if excerpt
+                else f"（引用 {label}：内容无法还原）"
+            )
     if isinstance(image_prompt, dict):
         image_content = str(image_prompt.get("content") or "").strip() or _IMAGE_PARSE_FAILED_PROMPT
         lines.append(f"图片内容：{_prompt_data(image_content)}")
