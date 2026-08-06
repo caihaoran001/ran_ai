@@ -777,3 +777,224 @@ async def test_reminder_service_sends_closed_case_task(db_session, monkeypatch, 
     )
     assert len(messages) == 1
     assert messages[0].status == MessageStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_reminder_service_keeps_recurrence_after_generation_failure(db_session, monkeypatch):
+    """模型生成失败（如账户欠费）不能杀死整条日循环——线上曾因此静默断掉 4 条链。"""
+    service_case = await _case(db_session)
+    task = AgentReminderTask(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        remind_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        content="喝水",
+        recurrence="daily",
+        status=AgentReminderTaskStatus.PENDING,
+    )
+    db_session.add(task)
+    await db_session.flush()
+
+    async def failing_generate(**kwargs):
+        raise RuntimeError("Insufficient Balance")
+
+    monkeypatch.setattr(
+        "app.services.reminder_service.generate_scheduled_reminder_reply",
+        failing_generate,
+    )
+
+    await ReminderService(get_settings()).check_agent_reminder_tasks_once(now=datetime.now(timezone.utc))
+
+    # 本次记失败留痕，但链条必须续上
+    assert task.status == AgentReminderTaskStatus.FAILED
+    assert "Insufficient Balance" in (task.error or "")
+    pending = list(
+        await db_session.scalars(
+            select(AgentReminderTask).where(
+                AgentReminderTask.service_case_id == service_case.id,
+                AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+            )
+        )
+    )
+    assert len(pending) == 1
+    assert pending[0].id != task.id
+    assert pending[0].content == "喝水"
+    assert pending[0].recurrence == "daily"
+    assert pending[0].remind_at > datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_reminder_service_keeps_recurrence_after_send_failure(db_session, monkeypatch):
+    """渠道发送失败（设备掉线）同样不能杀死整条日循环。"""
+    from app.services.channels.registry import set_current_channel
+    from app.services.channels.base import ChannelSendResult
+
+    class OfflineChannel:
+        name = "qiwe"
+
+        async def send_text(self, chat_id, content, **kwargs):
+            return ChannelSendResult(
+                success=False, error="guid错误: 客户端实例不存在/不在线", retryable=False
+            )
+
+    set_current_channel(OfflineChannel())
+    try:
+        service_case = await _case(db_session)
+        task = AgentReminderTask(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            remind_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+            content="吃饭",
+            recurrence="daily",
+            status=AgentReminderTaskStatus.PENDING,
+        )
+        db_session.add(task)
+        await db_session.flush()
+
+        async def fake_generate(**kwargs):
+            return AgentReplyResult(reply="到点吃饭啦。", tool_trace=[])
+
+        monkeypatch.setattr(
+            "app.services.reminder_service.generate_scheduled_reminder_reply",
+            fake_generate,
+        )
+
+        await ReminderService(get_settings()).check_agent_reminder_tasks_once(
+            now=datetime.now(timezone.utc)
+        )
+
+        assert task.status == AgentReminderTaskStatus.FAILED
+        assert "不在线" in (task.error or "")
+        message = await db_session.get(Message, task.sent_message_id)
+        assert message is not None and message.status == MessageStatus.FAILED
+        pending = list(
+            await db_session.scalars(
+                select(AgentReminderTask).where(
+                    AgentReminderTask.service_case_id == service_case.id,
+                    AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+                )
+            )
+        )
+        assert len(pending) == 1
+        assert pending[0].content == "吃饭"
+        assert pending[0].remind_at > datetime.now(timezone.utc)
+    finally:
+        set_current_channel(None)
+
+
+@pytest.mark.asyncio
+async def test_reminder_service_one_shot_failure_does_not_reschedule(db_session, monkeypatch):
+    """单次提醒失败就是失败，不能被解耦续排逻辑变成每天重发。"""
+    service_case = await _case(db_session)
+    task = AgentReminderTask(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        remind_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        content="称体重",
+        recurrence="none",
+        status=AgentReminderTaskStatus.PENDING,
+    )
+    db_session.add(task)
+    await db_session.flush()
+
+    async def failing_generate(**kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "app.services.reminder_service.generate_scheduled_reminder_reply",
+        failing_generate,
+    )
+
+    await ReminderService(get_settings()).check_agent_reminder_tasks_once(now=datetime.now(timezone.utc))
+
+    assert task.status == AgentReminderTaskStatus.FAILED
+    pending = list(
+        await db_session.scalars(
+            select(AgentReminderTask).where(
+                AgentReminderTask.service_case_id == service_case.id,
+                AgentReminderTask.status == AgentReminderTaskStatus.PENDING,
+            )
+        )
+    )
+    assert pending == []
+
+
+@pytest.mark.asyncio
+async def test_list_group_reminders_reports_interrupted_recurring(db_session):
+    """群内问起提醒时要看得见断掉的循环，否则会答成"没设过"。"""
+    service_case = await _case(db_session)
+    db_session.add(
+        AgentReminderTask(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            remind_at=datetime.now(timezone.utc) - timedelta(days=2),
+            content="吃饭",
+            recurrence="daily",
+            status=AgentReminderTaskStatus.FAILED,
+            error="guid错误: 客户端实例不存在/不在线",
+        )
+    )
+    db_session.add(
+        AgentReminderTask(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            remind_at=datetime.now(timezone.utc) + timedelta(hours=3),
+            content="点外卖",
+            recurrence="daily",
+            status=AgentReminderTaskStatus.PENDING,
+        )
+    )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+
+    result = await tools["list_group_reminders"].ainvoke({})
+
+    assert result["count"] == 1
+    assert result["pending"][0]["content"] == "点外卖"
+    assert [item["content"] for item in result["interrupted"]] == ["吃饭"]
+    assert "设置过" in result["interrupted_note"]
+
+
+@pytest.mark.asyncio
+async def test_list_group_reminders_omits_recovered_chain(db_session):
+    """同内容已有待发说明链已恢复，不再报为中断。"""
+    service_case = await _case(db_session)
+    db_session.add(
+        AgentReminderTask(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            remind_at=datetime.now(timezone.utc) - timedelta(days=2),
+            content="吃饭",
+            recurrence="daily",
+            status=AgentReminderTaskStatus.FAILED,
+            error="guid错误: 客户端实例不存在/不在线",
+        )
+    )
+    db_session.add(
+        AgentReminderTask(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            remind_at=datetime.now(timezone.utc) + timedelta(hours=3),
+            content="吃饭",
+            recurrence="daily",
+            status=AgentReminderTaskStatus.PENDING,
+        )
+    )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=get_settings(),
+        )
+    }
+
+    result = await tools["list_group_reminders"].ainvoke({})
+
+    assert result["count"] == 1
+    assert "interrupted" not in result

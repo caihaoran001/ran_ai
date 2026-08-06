@@ -19,6 +19,8 @@ from app.services.service_case_queries import select_active_service_cases
 _MAX_REMINDER_INSTRUCTION_CHARS = 240
 _MAX_REMINDER_DAYS_AHEAD = 30
 _ALLOWED_RECURRENCE = {"none", "daily", "weekly"}
+_INTERRUPTED_LOOKBACK_DAYS = 60
+_MAX_INTERRUPTED_REPORTED = 5
 
 
 class CreateReminderArgs(BaseModel):
@@ -148,16 +150,47 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
                     .order_by(AgentReminderTask.remind_at)
                 )
             )
-        pending = [
-            {
-                "task_id": task.id,
-                "remind_at": task.remind_at.astimezone(tz).isoformat(),
-                "content": task.content,
-                "recurrence": task.recurrence,
-            }
-            for task in tasks
-        ]
-        return {"ok": True, "pending": pending, "count": len(pending)}
+            # 只看待发会漏掉「设过、但因故障断掉」的循环提醒，导致用户问起时答成"没设过"。
+            # 这里把失败终止且没有接续的日/周循环一并交给 Agent，让它据实说明。
+            interrupted_rows = list(
+                await session.scalars(
+                    select(AgentReminderTask)
+                    .where(
+                        AgentReminderTask.service_case_id == context.service_case_id,
+                        AgentReminderTask.status == AgentReminderTaskStatus.FAILED,
+                        AgentReminderTask.recurrence.in_(("daily", "weekly")),
+                        AgentReminderTask.remind_at
+                        >= datetime.now(timezone.utc) - timedelta(days=_INTERRUPTED_LOOKBACK_DAYS),
+                    )
+                    .order_by(AgentReminderTask.remind_at.desc())
+                )
+            )
+        pending = _pending_view(tasks, tz)
+        pending_contents = {task.content for task in tasks}
+        interrupted: list[dict[str, Any]] = []
+        seen_contents: set[str] = set()
+        for row in interrupted_rows:
+            # 同一条链失败多次只报最近一次；已有同内容待发的说明链已恢复，不再算中断。
+            if row.content in pending_contents or row.content in seen_contents:
+                continue
+            seen_contents.add(row.content)
+            interrupted.append(
+                {
+                    "last_attempt_at": row.remind_at.astimezone(tz).isoformat(),
+                    "content": row.content,
+                    "recurrence": row.recurrence,
+                }
+            )
+            if len(interrupted) >= _MAX_INTERRUPTED_REPORTED:
+                break
+        result: dict[str, Any] = {"ok": True, "pending": pending, "count": len(pending)}
+        if interrupted:
+            result["interrupted"] = interrupted
+            result["interrupted_note"] = (
+                "这些循环提醒当初确实设置过，但在所列时间因发送/生成故障中断，之后没有再发。"
+                "别说成没设置过；如果用户还要，用 create_group_reminder 重新建一条。"
+            )
+        return result
 
     async def cancel_group_reminder(task_id: int | None = None, cancel_all: bool = False) -> dict[str, Any]:
         tz = ZoneInfo(settings.reminder_timezone)
@@ -233,7 +266,10 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
             description=(
                 "List all pending (not-yet-sent) reminders for the current group, with their id, local time, "
                 "content and recurrence. Call this before cancel_group_reminder when the user's reference is "
-                "ambiguous, so you can map it to a task_id."
+                "ambiguous, so you can map it to a task_id. The result may also carry an 'interrupted' list: "
+                "recurring reminders that were really set up but stopped after a send/generation failure. When "
+                "the user asks why a reminder disappeared or claims one was set, check that list before saying "
+                "it was never configured."
             ),
         ),
         StructuredTool.from_function(
