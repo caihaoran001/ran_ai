@@ -8,6 +8,7 @@ import {
   UserStateProfile,
 } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
+import { BackIconLink } from "@/components/back-icon-link";
 import { HealthProfilePanel } from "@/components/health-profile-panel";
 import { UserRecordDetails } from "./user-record-details";
 
@@ -25,16 +26,19 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
     <div className="page-stack">
       <div className="page-header">
         <div className="page-header-row">
-          <div className="min-w-0">
-            <h1 className="page-heading">{user.name}</h1>
-            <p className="text-break page-subtitle">
-              {user.phone ?? "未留手机号"} · {user.wecom_user_id ?? "未绑定聊天用户 ID"}
-            </p>
-            {user.deleted_at && (
-              <p className="mt-2 inline-flex rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-bold text-rose-700">
-                已删除：{formatDateTime(user.deleted_at)}
+          <div className="flex min-w-0 items-start gap-3">
+            <BackIconLink href="/users" label="返回用户管理" />
+            <div className="min-w-0">
+              <h1 className="page-heading">{user.name}</h1>
+              <p className="text-break page-subtitle">
+                {user.phone ?? "未留手机号"} · {user.wecom_user_id ?? "未绑定聊天用户 ID"}
               </p>
-            )}
+              {user.deleted_at && (
+                <p className="mt-2 inline-flex rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-bold text-rose-700">
+                  已删除：{formatDateTime(user.deleted_at)}
+                </p>
+              )}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {customerType && <CustomerTypeBadge type={customerType} />}

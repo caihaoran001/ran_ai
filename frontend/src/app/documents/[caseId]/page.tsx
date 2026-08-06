@@ -1,5 +1,5 @@
 import { api, UserDocument } from "@/lib/api";
-import { BackToConsoleButton } from "./back-to-console";
+import { BackIconLink } from "@/components/back-icon-link";
 import { DocumentEditor } from "./document-editor";
 
 export default async function DocumentsPage({ 
@@ -14,7 +14,7 @@ export default async function DocumentsPage({
   return (
     <div className="space-y-6">
       <div className="flex items-start gap-3">
-        <BackToConsoleButton />
+        <BackIconLink href="/documents" label="返回审核控制台" />
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold">交付文件审核</h1>
           <p className="mt-1 text-sm text-slate-500">查看内容、编辑修改、下载 docx 或确认发送到群。</p>

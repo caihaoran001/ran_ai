@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -31,17 +31,8 @@ from app.services.service_case_queries import (
 router = APIRouter()
 
 
-@router.get("", response_model=list[ServiceCaseRead])
-async def list_service_cases(
-    filter: str | None = None,
-    q: str | None = None,
-    session: AsyncSession = Depends(get_session),
-) -> list[ServiceCase]:
-    statement = (
-        select_active_service_cases()
-        .options(selectinload(ServiceCase.user))
-        .order_by(ServiceCase.created_at.desc())
-    )
+def _search_service_cases(statement, filter: str | None, q: str | None):
+    """列表与计数共用同一套筛选条件，避免"总数和列表对不上"。"""
     statement = _apply_service_case_filter(statement, filter)
     if q and q.strip():
         # 按 用户名 / 手机号 / 群名 模糊搜索。outerjoin 保留未绑定用户但有群名的服务单。
@@ -52,9 +43,46 @@ async def list_service_cases(
                 User.phone.ilike(like),
                 ServiceCase.group_name.ilike(like),
             )
+        )
+    return statement
+
+
+@router.get("", response_model=list[ServiceCaseRead])
+async def list_service_cases(
+    filter: str | None = None,
+    q: str | None = None,
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> list[ServiceCase]:
+    """支持分页：用户管理一次全量渲染近三百条时首屏要 5 秒，后台默认只取第一页。"""
+    statement = (
+        select_active_service_cases()
+        .options(selectinload(ServiceCase.user))
+        .order_by(ServiceCase.created_at.desc())
     )
+    statement = _search_service_cases(statement, filter, q)
+    if limit is not None:
+        statement = statement.offset(offset).limit(limit)
+    elif offset:
+        statement = statement.offset(offset)
     cases = list(await session.scalars(statement))
     return cases
+
+
+@router.get("/count")
+async def count_service_cases(
+    filter: str | None = None,
+    q: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, int]:
+    """只回条数，供前端显示"共 N 条"而不必拉全量列表。"""
+    statement = _search_service_cases(
+        select(func.count()).select_from(ServiceCase).where(active_service_case_condition()),
+        filter,
+        q,
+    )
+    return {"total": await session.scalar(statement) or 0}
 
 
 @router.get("/{service_case_id}", response_model=ServiceCaseRead)

@@ -107,3 +107,28 @@ async def test_list_filters_refund_pending_and_refunded(admin_client, create_cas
     assert case_id not in pending_ids
     refunded_ids = [c["id"] for c in (await admin_client.get("/service-cases", params={"filter": "refunded"})).json()]
     assert case_id in refunded_ids
+
+
+@pytest.mark.asyncio
+async def test_service_case_list_paging_and_count_share_filters(admin_client, db_session):
+    """用户管理首屏只取一页：近三百条全量渲染时首屏 1.96MB/4.8s，分页与计数必须口径一致。"""
+    cases = [await _make_case(db_session) for _ in range(3)]
+    marked = cases[0]
+    marked.risk_level = "high"
+    await db_session.flush()
+
+    total = await admin_client.get("/service-cases/count")
+    first_page = await admin_client.get("/service-cases", params={"limit": 2, "offset": 0})
+    second_page = await admin_client.get("/service-cases", params={"limit": 2, "offset": 2})
+    risk_total = await admin_client.get("/service-cases/count", params={"filter": "risk"})
+    risk_page = await admin_client.get("/service-cases", params={"filter": "risk", "limit": 30})
+
+    assert total.status_code == 200
+    assert total.json()["total"] >= 3
+    assert len(first_page.json()) == 2
+    assert len(second_page.json()) >= 1
+    # 分页不重复发同一条
+    assert not {item["id"] for item in first_page.json()} & {item["id"] for item in second_page.json()}
+    # 计数与列表必须走同一套筛选条件
+    assert risk_total.json()["total"] == len(risk_page.json())
+    assert marked.id in {item["id"] for item in risk_page.json()}

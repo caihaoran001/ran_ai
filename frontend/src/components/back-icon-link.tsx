@@ -4,17 +4,19 @@ import Link, { useLinkStatus } from "next/link";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 
 /**
- * 详情页返回键。与大标题同行，视觉上次于标题但有实体感（白底+边框+阴影），
- * 免得像一段可有可无的灰字。挂起状态就地转圈，避免运营重复点。
+ * 详情页返回上一层的图标键。与大标题同行，白底+边框+阴影，视觉次于标题但有实体感。
+ * 挂起时就地转圈，避免运营重复点。
+ *
+ * `scroll={false}`：不让路由把列表页滚到顶部——列表页自己按进入前记录的位置还原，
+ * 否则运营每次返回都被丢回页首、还得重新往下滚。
  */
-export function BackToConsoleButton() {
+export function BackIconLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
-      href="/documents"
-      // 不让路由自己把控制台滚到顶部：位置由列表组件按进入前记录的两层滚动还原。
+      href={href}
       scroll={false}
-      aria-label="返回审核控制台"
-      title="返回审核控制台"
+      aria-label={label}
+      title={label}
       className="group mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-xs transition-all hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-800 active:scale-95"
     >
       <BackIcon />
@@ -30,6 +32,9 @@ function BackIcon() {
       aria-hidden="true"
     />
   ) : (
-    <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" aria-hidden="true" />
+    <ArrowLeft
+      className="h-4 w-4 transition-transform group-hover:-translate-x-0.5"
+      aria-hidden="true"
+    />
   );
 }
