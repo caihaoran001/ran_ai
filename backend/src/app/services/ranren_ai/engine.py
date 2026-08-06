@@ -1150,23 +1150,10 @@ def _staff_speaker(analysis: dict | None) -> str:
     return name or "工作人员"
 
 
-async def _resolve_quoted_context(analysis: dict | None) -> str | None:
-    """按被引用消息 ID 反查发送者，生成「（发送者）：原文」引用上下文多行。
-
-    每条引用分别反查一次；查不到发送者时用"未知发送者"兜底，不阻塞回复。
-    仅在回复生成路径调用一次，返回的文本由调用方拼上【引用消息】标题。
-    """
-    meta = analysis.get("_qiwe_meta") if isinstance(analysis, dict) else None
-    quoted_list = meta.get("quoted") if isinstance(meta, dict) else None
-    if not isinstance(quoted_list, list) or not quoted_list:
-        return None
-    quoted_ids = {
-        str(q.get("message_id") or "").strip()
-        for q in quoted_list
-        if isinstance(q, dict)
-    } - {""}
+async def _quoted_sender_labels(quoted_ids: set[str]) -> dict[str, str]:
+    """按被引用消息 ID 批量反查发送者标签；查不到的消息不返回（渲染时兜底"未知发送者"）。"""
     if not quoted_ids:
-        return None
+        return {}
     quoted_by_id: dict[str, str] = {}
     async with SessionLocal() as session:
         rows = await session.execute(
@@ -1182,17 +1169,38 @@ async def _resolve_quoted_context(analysis: dict | None) -> str | None:
             else:
                 sender_label = "用户"
             quoted_by_id[quoted_msg.wecom_message_id] = sender_label
+    return quoted_by_id
+
+
+async def _build_current_query(analysis: dict | None, message: ChannelMessage) -> str:
+    """渲染本轮提问：聚合前的每条消息单独成行，引用行（发送者：原文）跟随对应消息。
+
+    有 segments（qiwe 入站）时按段渲染，模型能精确看到"这句回复了谁"；无 segments
+    （其他通道/测试消息）时退化为单段渲染。引用发送者一次性批量反查，查不到用
+    "未知发送者"兜底，不阻塞回复。
+    """
+    segments = message.segments
+    if not segments:
+        return _current_query_body(analysis, message.text)
+    quoted_ids = {qid for _, quoted_list in segments for qid, _ in quoted_list if qid}
+    sender_labels = await _quoted_sender_labels(quoted_ids) if quoted_ids else {}
+    speaker = _current_query_speaker(analysis)
+    image_prompt = analysis.get("image_prompt") if isinstance(analysis, dict) else None
     lines: list[str] = []
-    for q in quoted_list:
-        if not isinstance(q, dict):
-            continue
-        message_id = str(q.get("message_id") or "").strip()
-        content = str(q.get("content") or "").strip()
-        if not message_id or not content:
-            continue
-        sender_label = quoted_by_id.get(message_id, "未知发送者")
-        lines.append(f"{sender_label}：{content[:200]}")
-    return "\n".join(lines) if lines else None
+    for text, quoted_list in segments:
+        body = (text or "").strip()
+        if not body and isinstance(image_prompt, dict):
+            body = "（发了一张图片）"
+        lines.append(f"{speaker}：{_prompt_data(body)}")
+        for quoted_id, quoted_text in quoted_list:
+            if not quoted_id or not (quoted_text or "").strip():
+                continue
+            label = sender_labels.get(quoted_id, "未知发送者")
+            lines.append(f"（引用 {label}：{_prompt_data(quoted_text.strip()[:200])}）")
+    if isinstance(image_prompt, dict):
+        image_content = str(image_prompt.get("content") or "").strip() or _IMAGE_PARSE_FAILED_PROMPT
+        lines.append(f"图片内容：{_prompt_data(image_content)}")
+    return "\n".join(lines)
 
 
 def _current_query_body(analysis: dict | None, message_text: str) -> str:

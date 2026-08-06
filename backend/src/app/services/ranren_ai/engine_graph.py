@@ -53,7 +53,6 @@ from app.services.ranren_ai import engine as engine_mod
 from app.services.ranren_ai.engine import (
     _bot_user_id_from_message,
     _build_agent_info_gap,
-    _current_query_body,
     _current_query_speaker,
     _explicit_bot_query_text,
     _group_bot_control_command,
@@ -521,10 +520,16 @@ class EngineGraph:
                 "sender_type": sender_type.value,
                 "timestamp": int(message.timestamp.timestamp()),
             }
-            if message.quoted_messages:
+            quoted_pairs = [
+                (quoted_id, quoted_text)
+                for _, quoted_list in message.segments
+                for quoted_id, quoted_text in quoted_list
+                if quoted_id and (quoted_text or "").strip()
+            ]
+            if quoted_pairs:
                 meta["quoted"] = [
                     {"message_id": quoted_id, "content": quoted_text[:500]}
-                    for quoted_id, quoted_text in message.quoted_messages
+                    for quoted_id, quoted_text in quoted_pairs
                 ]
             if explicit_bot_query_text:
                 meta["explicit_bot_query_text"] = explicit_bot_query_text
@@ -1303,10 +1308,7 @@ class EngineGraph:
         analysis = state.get("analysis")
         recent_user_messages = state.get("recent_user_messages") or []
         settings = get_settings()
-        user_query = _current_query_body(analysis, message.text)
-        quoted_ctx = await engine_mod._resolve_quoted_context(analysis)
-        if quoted_ctx:
-            user_query = f"【引用消息】\n{quoted_ctx}\n\n{user_query}"
+        user_query = await engine_mod._build_current_query(analysis, message)
         knowledge_query = _knowledge_query_from_analysis(analysis)
         generation_started_at = time.monotonic()
         try:

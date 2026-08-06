@@ -260,7 +260,7 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
         message_type=message_type,
         raw_payload=item,
         timestamp=_timestamp(item.get("timestamp")),
-        quoted_messages=[quoted] if quoted else [],
+        segments=[(content, [quoted] if quoted else [])],
     )
 
 
