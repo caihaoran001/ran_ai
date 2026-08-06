@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent } from "react";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { api, UserDocument, DashboardCasePendingDocuments, API_BASE } from "@/lib/api";
 import { useSSE } from "@/hooks/use-sse";
 import {
@@ -537,18 +537,36 @@ function DocumentCard({
             </button>
           )}
 
-          <div
-            className={`inline-flex min-h-8 items-center justify-center gap-1 rounded-lg px-3 text-xs font-bold transition-all ${
-              isPending
-                ? "bg-cyan-700 text-white shadow-xs group-hover:bg-cyan-600"
-                : "border border-slate-200 bg-slate-50 text-slate-700 group-hover:border-cyan-300 group-hover:bg-cyan-50 group-hover:text-cyan-800"
-            }`}
-          >
-            <span>{isPending ? "编辑并审核" : "继续并审核"}</span>
-            <ArrowRight className="h-3.5 w-3.5" />
-          </div>
+          <ReviewCallToAction isPending={isPending} />
         </div>
       </div>
     </Link>
+  );
+}
+
+/**
+ * 卡片主操作。必须渲染在 Link 内部：useLinkStatus 取的是所属 Link 的导航挂起状态，
+ * 让运营按下的那一刻就看到"正在打开…"，而不是盯着毫无变化的旧页面反复点击。
+ */
+function ReviewCallToAction({ isPending }: { isPending: boolean }) {
+  const { pending } = useLinkStatus();
+  const label = pending ? "正在打开…" : isPending ? "编辑并审核" : "继续并审核";
+
+  return (
+    <div
+      aria-live="polite"
+      className={`inline-flex min-h-8 items-center justify-center gap-1 rounded-lg px-3 text-xs font-bold transition-all ${
+        isPending
+          ? "bg-cyan-700 text-white shadow-xs group-hover:bg-cyan-600"
+          : "border border-slate-200 bg-slate-50 text-slate-700 group-hover:border-cyan-300 group-hover:bg-cyan-50 group-hover:text-cyan-800"
+      } ${pending ? "opacity-90" : ""}`}
+    >
+      <span>{label}</span>
+      {pending ? (
+        <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+      ) : (
+        <ArrowRight className="h-3.5 w-3.5" />
+      )}
+    </div>
   );
 }
