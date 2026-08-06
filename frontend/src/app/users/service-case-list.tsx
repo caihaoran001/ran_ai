@@ -37,12 +37,14 @@ export function ServiceCaseList({
     try {
       sessionStorage.setItem(
         USERS_SCROLL_KEY,
-        JSON.stringify({ page: window.scrollY, at: Date.now() }),
+        // loaded 一起记：翻过几页才走的，返回时得先把这些条目补回来，
+        // 否则页面变短、滚动位置被浏览器截断，人还是落不到原来那张卡片上。
+        JSON.stringify({ page: window.scrollY, loaded: cases.length, at: Date.now() }),
       );
     } catch {
       // 隐私模式禁用 sessionStorage 时放弃记录，不影响跳转
     }
-  }, []);
+  }, [cases.length]);
 
   // 从用户详情返回时回到刚才那张卡片；从侧边栏正常进入不还原（进入即消耗掉标记）。
   useEffect(() => {
@@ -56,18 +58,51 @@ export function ServiceCaseList({
     }
     restored.current = true;
     if (!raw) return;
-    let saved: { page?: number; at?: number };
+    let saved: { page?: number; loaded?: number; at?: number };
     try {
       saved = JSON.parse(raw);
     } catch {
       return;
     }
     if (!saved.page || !saved.at || Date.now() - saved.at > 10 * 60 * 1000) return;
+
     // 双帧：等路由自己的滚动处理跑完再定位，否则会被重置回顶部。
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => window.scrollTo({ top: saved.page!, behavior: "auto" }));
-    });
-  }, [cases.length]);
+    const scrollBack = () =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => window.scrollTo({ top: saved.page!, behavior: "auto" })),
+      );
+
+    const missing = Math.min((saved.loaded ?? 0) - cases.length, 500);
+    if (missing <= 0) {
+      scrollBack();
+      return;
+    }
+
+    // 之前翻过页：先把那些条目补回来，页面恢复原来的长度后再定位。
+    let cancelled = false;
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (filter) params.set("filter", filter);
+    if (query) params.set("q", query);
+    params.set("limit", String(missing));
+    params.set("offset", String(cases.length));
+    api<ServiceCase[]>(`/service-cases?${params.toString()}`)
+      .then((page) => {
+        if (cancelled) return;
+        setCases((current) => [...current, ...page]);
+        scrollBack();
+      })
+      .catch((err) => {
+        console.error("restore loaded pages failed", err);
+        if (!cancelled) scrollBack();
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cases.length, filter, query]);
 
   const loadMore = useCallback(async () => {
     setLoading(true);
