@@ -37,6 +37,9 @@ type ReviewDocument = {
   manual_review_reasons?: string[];
 };
 
+/** 返回审核控制台时用来还原滚动位置（页面 + 卡片区两层）。 */
+const REVIEW_SCROLL_KEY = "review-console-scroll";
+
 export function DocumentSearchList({
   initialPendingGroups,
 }: {
@@ -55,6 +58,55 @@ export function DocumentSearchList({
   const [refreshing, setRefreshing] = useState(false);
   const { pendingDocuments: pendingDocumentCount } = useSSE();
   const lastPendingDocuments = useRef<number | null>(null);
+  const pendingListRef = useRef<HTMLDivElement | null>(null);
+  const scrollRestored = useRef(false);
+
+  /**
+   * 点卡片进详情前记下位置：这一页有两层滚动（页面本身 + 待审卡片区自己的滚动条），
+   * 只还原页面滚动仍会把运营丢回卡片区顶部，所以两层都要记。
+   */
+  const rememberScrollPosition = useCallback(() => {
+    try {
+      sessionStorage.setItem(
+        REVIEW_SCROLL_KEY,
+        JSON.stringify({
+          page: window.scrollY,
+          list: pendingListRef.current?.scrollTop ?? 0,
+          at: Date.now(),
+        }),
+      );
+    } catch {
+      // 隐私模式等禁用 sessionStorage 时放弃记录，不影响跳转本身
+    }
+  }, []);
+
+  // 返回本页时还原到刚才那张卡片；从侧边栏正常进入时不还原（进入即消耗掉标记）。
+  useEffect(() => {
+    if (scrollRestored.current || pendingDocuments.length === 0) return;
+    let raw: string | null = null;
+    try {
+      raw = sessionStorage.getItem(REVIEW_SCROLL_KEY);
+      if (raw) sessionStorage.removeItem(REVIEW_SCROLL_KEY);
+    } catch {
+      return;
+    }
+    scrollRestored.current = true;
+    if (!raw) return;
+    let saved: { page?: number; list?: number; at?: number };
+    try {
+      saved = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    // 隔太久（比如第二天翻到这个标签页）就不要莫名其妙地跳到半页中间。
+    if (!saved.at || Date.now() - saved.at > 10 * 60 * 1000) return;
+    requestAnimationFrame(() => {
+      if (pendingListRef.current && saved.list) {
+        pendingListRef.current.scrollTop = saved.list;
+      }
+      if (saved.page) window.scrollTo({ top: saved.page, behavior: "auto" });
+    });
+  }, [pendingDocuments.length]);
 
   const fetchPendingDocuments = useCallback(async () => {
     try {
@@ -324,6 +376,7 @@ export function DocumentSearchList({
               <div className="flex flex-1 flex-col bg-slate-50/50 p-4 sm:p-5">
                 {pendingDocs.length > 0 ? (
                   <div
+                    ref={pendingListRef}
                     className={
                       statusFilter === "all"
                         ? "max-h-[600px] space-y-3.5 overflow-y-auto pr-1"
@@ -331,7 +384,13 @@ export function DocumentSearchList({
                     }
                   >
                     {pendingDocs.map((doc) => (
-                      <DocumentCard key={doc.id} doc={doc} statusConfig={statusConfig} onDiscard={fetchPendingDocuments} />
+                      <DocumentCard
+                        key={doc.id}
+                        doc={doc}
+                        statusConfig={statusConfig}
+                        onDiscard={fetchPendingDocuments}
+                        onOpen={rememberScrollPosition}
+                      />
                     ))}
                   </div>
                 ) : (
@@ -370,7 +429,12 @@ export function DocumentSearchList({
                     }
                   >
                     {reviewedDocs.map((doc) => (
-                      <DocumentCard key={doc.id} doc={doc} statusConfig={statusConfig} />
+                      <DocumentCard
+                        key={doc.id}
+                        doc={doc}
+                        statusConfig={statusConfig}
+                        onOpen={rememberScrollPosition}
+                      />
                     ))}
                   </div>
                 ) : loadingHistory ? (
@@ -417,10 +481,13 @@ function DocumentCard({
   doc,
   statusConfig,
   onDiscard,
+  onOpen,
 }: {
   doc: ReviewDocument;
   statusConfig: Record<string, { label: string; className: string }>;
   onDiscard?: () => void | Promise<void>;
+  /** 进详情前记下当前滚动位置，返回时才能回到这张卡片而不是页面顶部。 */
+  onOpen?: () => void;
 }) {
   const [discarding, setDiscarding] = useState(false);
   const [discardError, setDiscardError] = useState<string | null>(null);
@@ -455,6 +522,7 @@ function DocumentCard({
   return (
     <Link
       href={`/documents/${doc.id}`}
+      onClick={onOpen}
       className="group relative flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-cyan-400/80 hover:shadow-md"
     >
       <div className="space-y-3">
