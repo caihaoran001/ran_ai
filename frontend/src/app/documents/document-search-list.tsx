@@ -37,10 +37,17 @@ type ReviewDocument = {
   manual_review_reasons?: string[];
 };
 
-export function DocumentSearchList() {
-  const [pendingDocuments, setPendingDocuments] = useState<ReviewDocument[]>([]);
+export function DocumentSearchList({
+  initialPendingGroups,
+}: {
+  /** 服务端已为顶部计数取过同一份数据，直接传进来：省一次请求，返回本页时也不再空转骨架。 */
+  initialPendingGroups?: DashboardCasePendingDocuments[];
+}) {
+  const [pendingDocuments, setPendingDocuments] = useState<ReviewDocument[]>(() =>
+    initialPendingGroups ? flattenPendingDocuments(initialPendingGroups) : [],
+  );
   const [historyDocuments, setHistoryDocuments] = useState<ReviewDocument[]>([]);
-  const [loadingPending, setLoadingPending] = useState(true);
+  const [loadingPending, setLoadingPending] = useState(!initialPendingGroups);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");

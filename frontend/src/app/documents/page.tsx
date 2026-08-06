@@ -82,8 +82,8 @@ export default async function DocumentsListPage() {
         />
       </div>
 
-      {/* 1. 交付文件控制台 */}
-      <DocumentSearchList />
+      {/* 1. 交付文件控制台（首屏用服务端已取的同一份数据直出，避免再空转一次骨架） */}
+      <DocumentSearchList initialPendingGroups={pendingDocumentGroups} />
 
       {/* 2. 退款审核 */}
       <RefundReviewGroup cases={refundPendingCases} />
