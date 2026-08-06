@@ -22,8 +22,15 @@ from app.services.ranren_ai.engine import (
     RanrenAIEngine,
     _current_query_body,
     _image_description_is_available,
+    _resolve_quoted_context,
 )
-from app.models.message import Message
+from app.models.message import (
+    Message,
+    MessageDirection,
+    MessagePurpose,
+    MessageSenderType,
+    MessageStatus,
+)
 
 
 class FakeResponse:
@@ -2630,3 +2637,247 @@ async def test_startup_replay_processes_qiwe_spam_block_event(db_session):
     assert sent.status == MessageStatus.FAILED
     assert sent.sent_at is None
     assert event.status == InboundEvent.STATUS_PROCESSED
+
+
+def test_qiwe_callback_text_event_with_quoted_message():
+    message = _channel_message_from_qiwe(
+        {
+            "cmd": 15000,
+            "msgType": 2,
+            "userId": "bot-user",
+            "fromRoomId": 10926518308089720,
+            "senderId": 7881300658070689,
+            "senderName": "用户A",
+            "timestamp": 1779951380,
+            "msgUniqueIdentifier": "unique-1",
+            "msgData": {
+                "content": "宝宝 来了",
+                "reply": {
+                    "atList": [],
+                    "content": "便秘，是否可加胶囊",
+                    "moreDetail": [{"subtype": 0, "text": "便秘，是否可加胶囊"}],
+                    "msgId": "401941708499077971",
+                    "msgType": 0,
+                    "reply": {},
+                },
+            },
+        }
+    )
+
+    assert message is not None
+    assert message.text == "宝宝 来了"
+    assert message.quoted_messages == [
+        ("401941708499077971", "便秘，是否可加胶囊")
+    ]
+
+
+def test_qiwe_callback_ignores_empty_reply():
+    message = _channel_message_from_qiwe(
+        {
+            "cmd": 15000,
+            "msgType": 2,
+            "userId": "bot-user",
+            "fromRoomId": 10926518308089720,
+            "senderId": 7881300658070689,
+            "senderName": "用户A",
+            "timestamp": 1779951380,
+            "msgUniqueIdentifier": "unique-2",
+            "msgData": {"content": "好的", "reply": {}},
+        }
+    )
+
+    assert message is not None
+    assert message.quoted_messages == []
+
+
+def test_qiwe_merge_messages_keeps_all_quoted():
+    merged = _merge_messages(
+        [
+            ChannelMessage(
+                channel="qiwe",
+                chat_id="room-1",
+                chat_type="group",
+                text="先回员工",
+                message_id="m1",
+                user_id="u1",
+                quoted_messages=[("q-1", "员工的原话")],
+                timestamp=datetime.now(timezone.utc),
+            ),
+            ChannelMessage(
+                channel="qiwe",
+                chat_id="room-1",
+                chat_type="group",
+                text="再问助教",
+                message_id="m2",
+                user_id="u1",
+                quoted_messages=[("q-2", "助教的打卡追问")],
+                timestamp=datetime.now(timezone.utc),
+            ),
+        ]
+    )
+
+    assert merged.text == "先回员工\n再问助教"
+    assert merged.quoted_messages == [("q-1", "员工的原话"), ("q-2", "助教的打卡追问")]
+
+
+def test_qiwe_merge_messages_dedupes_same_quoted():
+    merged = _merge_messages(
+        [
+            ChannelMessage(
+                channel="qiwe",
+                chat_id="room-1",
+                chat_type="group",
+                text="第一句",
+                message_id="m1",
+                user_id="u1",
+                quoted_messages=[("q-2", "被引用内容")],
+                timestamp=datetime.now(timezone.utc),
+            ),
+            ChannelMessage(
+                channel="qiwe",
+                chat_id="room-1",
+                chat_type="group",
+                text="宝宝 来了",
+                message_id="m2",
+                user_id="u1",
+                quoted_messages=[("q-2", "被引用内容")],
+                timestamp=datetime.now(timezone.utc),
+            ),
+        ]
+    )
+
+    assert merged.text == "第一句\n宝宝 来了"
+    assert merged.quoted_messages == [("q-2", "被引用内容")]
+
+
+@pytest.mark.asyncio
+async def test_resolve_quoted_context_returns_sender_label(db_session):
+    quoted = Message(
+        group_id="quoted-room",
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.BOT,
+        message_type="text",
+        content="早上好，补一下昨天的打卡",
+        wecom_message_id="CAQQlq/K0wYY57HBz4GAgAMgsMCZ/Ak=",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.SENT,
+    )
+    db_session.add(quoted)
+    await db_session.flush()
+
+    analysis = {
+        "_qiwe_meta": {
+            "sender_type": "user",
+            "quoted": [
+                {
+                    "message_id": "CAQQlq/K0wYY57HBz4GAgAMgsMCZ/Ak=",
+                    "content": "早上好，补一下昨天的打卡",
+                }
+            ],
+        }
+    }
+
+    assert await _resolve_quoted_context(analysis) == "助教：早上好，补一下昨天的打卡"
+
+
+@pytest.mark.asyncio
+async def test_resolve_quoted_context_uses_staff_nickname(db_session):
+    quoted = Message(
+        group_id="quoted-room",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="text",
+        content="意思是退了货款 还倒赔50",
+        wecom_message_id="staff-quoted-1",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={
+            "_qiwe_meta": {
+                "sender_type": "staff",
+                "sender_name": "上海 Lucy",
+            }
+        },
+    )
+    db_session.add(quoted)
+    await db_session.flush()
+
+    analysis = {
+        "_qiwe_meta": {
+            "sender_type": "user",
+            "quoted": [
+                {
+                    "message_id": "staff-quoted-1",
+                    "content": "意思是退了货款 还倒赔50",
+                }
+            ],
+        }
+    }
+
+    assert await _resolve_quoted_context(analysis) == "上海 Lucy：意思是退了货款 还倒赔50"
+
+
+@pytest.mark.asyncio
+async def test_resolve_quoted_context_unknown_sender_when_missing(db_session):
+    analysis = {
+        "_qiwe_meta": {
+            "sender_type": "user",
+            "quoted": [
+                {
+                    "message_id": "not-in-db",
+                    "content": "某条查不到的消息",
+                }
+            ],
+        }
+    }
+
+    assert await _resolve_quoted_context(analysis) == "未知发送者：某条查不到的消息"
+
+
+@pytest.mark.asyncio
+async def test_resolve_quoted_context_none_without_quoted():
+    analysis = {"_qiwe_meta": {"sender_type": "user"}}
+
+    assert await _resolve_quoted_context(analysis) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_quoted_context_resolves_each_quoted(db_session):
+    staff_msg = Message(
+        group_id="quoted-room",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="text",
+        content="员工的原话",
+        wecom_message_id="q-1",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        analysis_json={
+            "_qiwe_meta": {"sender_type": "staff", "sender_name": "上海 Lucy"}
+        },
+    )
+    bot_msg = Message(
+        group_id="quoted-room",
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.BOT,
+        message_type="text",
+        content="助教的打卡追问",
+        wecom_message_id="q-2",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.SENT,
+    )
+    db_session.add_all([staff_msg, bot_msg])
+    await db_session.flush()
+
+    analysis = {
+        "_qiwe_meta": {
+            "sender_type": "user",
+            "quoted": [
+                {"message_id": "q-1", "content": "员工的原话"},
+                {"message_id": "q-2", "content": "助教的打卡追问"},
+            ],
+        }
+    }
+
+    assert await _resolve_quoted_context(analysis) == (
+        "上海 Lucy：员工的原话\n助教：助教的打卡追问"
+    )

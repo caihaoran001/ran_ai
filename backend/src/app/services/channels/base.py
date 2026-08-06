@@ -17,6 +17,9 @@ class ChannelMessage:
     message_type: str = "text"
     raw_payload: Any = None
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # 群内「引用某条消息回复」时被引用消息的信息（msgData.reply），元素为
+    # (被引用消息 ID, 被引用原文)；聚合窗口合并后可能携带多条不同引用。
+    quoted_messages: list[tuple[str, str]] = field(default_factory=list)
     # Durable transport events that were merged into this business turn.
     # The engine links them to the persisted inbound Message in the same DB
     # transaction, closing the inbox -> LangGraph crash window.

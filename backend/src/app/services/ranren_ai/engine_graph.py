@@ -521,6 +521,11 @@ class EngineGraph:
                 "sender_type": sender_type.value,
                 "timestamp": int(message.timestamp.timestamp()),
             }
+            if message.quoted_messages:
+                meta["quoted"] = [
+                    {"message_id": quoted_id, "content": quoted_text[:500]}
+                    for quoted_id, quoted_text in message.quoted_messages
+                ]
             if explicit_bot_query_text:
                 meta["explicit_bot_query_text"] = explicit_bot_query_text
             analysis = _with_reply_processing_status(
@@ -1299,6 +1304,9 @@ class EngineGraph:
         recent_user_messages = state.get("recent_user_messages") or []
         settings = get_settings()
         user_query = _current_query_body(analysis, message.text)
+        quoted_ctx = await engine_mod._resolve_quoted_context(analysis)
+        if quoted_ctx:
+            user_query = f"【引用消息】\n{quoted_ctx}\n\n{user_query}"
         knowledge_query = _knowledge_query_from_analysis(analysis)
         generation_started_at = time.monotonic()
         try:

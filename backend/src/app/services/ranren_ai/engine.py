@@ -1150,6 +1150,51 @@ def _staff_speaker(analysis: dict | None) -> str:
     return name or "工作人员"
 
 
+async def _resolve_quoted_context(analysis: dict | None) -> str | None:
+    """按被引用消息 ID 反查发送者，生成「（发送者）：原文」引用上下文多行。
+
+    每条引用分别反查一次；查不到发送者时用"未知发送者"兜底，不阻塞回复。
+    仅在回复生成路径调用一次，返回的文本由调用方拼上【引用消息】标题。
+    """
+    meta = analysis.get("_qiwe_meta") if isinstance(analysis, dict) else None
+    quoted_list = meta.get("quoted") if isinstance(meta, dict) else None
+    if not isinstance(quoted_list, list) or not quoted_list:
+        return None
+    quoted_ids = {
+        str(q.get("message_id") or "").strip()
+        for q in quoted_list
+        if isinstance(q, dict)
+    } - {""}
+    if not quoted_ids:
+        return None
+    quoted_by_id: dict[str, str] = {}
+    async with SessionLocal() as session:
+        rows = await session.execute(
+            select(Message).where(Message.wecom_message_id.in_(quoted_ids))
+        )
+        for quoted_msg in rows.scalars().all():
+            if quoted_msg.sender_type == MessageSenderType.BOT:
+                sender_label = "助教"
+            elif quoted_msg.sender_type == MessageSenderType.STAFF:
+                sender_label = _staff_speaker(quoted_msg.analysis_json) or "工作人员"
+            elif quoted_msg.sender_type == MessageSenderType.SYSTEM:
+                sender_label = "系统"
+            else:
+                sender_label = "用户"
+            quoted_by_id[quoted_msg.wecom_message_id] = sender_label
+    lines: list[str] = []
+    for q in quoted_list:
+        if not isinstance(q, dict):
+            continue
+        message_id = str(q.get("message_id") or "").strip()
+        content = str(q.get("content") or "").strip()
+        if not message_id or not content:
+            continue
+        sender_label = quoted_by_id.get(message_id, "未知发送者")
+        lines.append(f"{sender_label}：{content[:200]}")
+    return "\n".join(lines) if lines else None
+
+
 def _current_query_body(analysis: dict | None, message_text: str) -> str:
     speaker = _current_query_speaker(analysis)
     image_prompt = analysis.get("image_prompt") if isinstance(analysis, dict) else None

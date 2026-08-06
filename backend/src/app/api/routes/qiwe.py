@@ -218,6 +218,7 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
     is_text = msg_type in (0, 2)
     msg_data = item.get("msgData") or {}
     content = str(msg_data.get("content") or "").strip()
+    quoted = _quoted_message_from_msg_data(msg_data)
     if is_text:
         if not content:
             return None
@@ -259,7 +260,23 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
         message_type=message_type,
         raw_payload=item,
         timestamp=_timestamp(item.get("timestamp")),
+        quoted_messages=[quoted] if quoted else [],
     )
+
+
+def _quoted_message_from_msg_data(msg_data: Any) -> tuple[str, str] | None:
+    """企微「引用某条消息回复」时 msgData.reply 携带被引用消息原文与 ID。
+
+    reply 形如 {"content": "...", "msgId": "...", "moreDetail": [...], "msgType": 0}；
+    仅返回文本类引用（content 非空），否则返回 None。
+    """
+    reply = msg_data.get("reply") if isinstance(msg_data, dict) else None
+    if not isinstance(reply, dict) or not reply:
+        return None
+    content = str(reply.get("content") or "").strip()
+    if not content:
+        return None
+    return _as_str(reply.get("msgId")), content
 
 
 def _as_str(value: Any) -> str:

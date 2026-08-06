@@ -382,6 +382,13 @@ def _merge_messages(messages: list[ChannelMessage]) -> ChannelMessage:
     last = messages[-1]
     text = "\n".join(item.text.strip() for item in messages if item.text.strip())
     timestamp: datetime = last.timestamp
+    quoted_messages: list[tuple[str, str]] = []
+    seen_ids: set[str] = set()
+    for item in messages:
+        for quoted_id, quoted_text in item.quoted_messages:
+            if quoted_id and quoted_text and quoted_id not in seen_ids:
+                seen_ids.add(quoted_id)
+                quoted_messages.append((quoted_id, quoted_text))
     return ChannelMessage(
         channel=last.channel,
         chat_id=last.chat_id,
@@ -393,6 +400,7 @@ def _merge_messages(messages: list[ChannelMessage]) -> ChannelMessage:
         message_type="text",
         raw_payload=[item.raw_payload for item in messages],
         timestamp=timestamp,
+        quoted_messages=quoted_messages,
         inbound_event_ids=[
             event_id
             for item in messages
