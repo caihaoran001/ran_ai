@@ -402,4 +402,5 @@ def _merge_messages(messages: list[ChannelMessage]) -> ChannelMessage:
             for item in messages
             for event_id in item.inbound_event_ids
         ],
+        voice_transcript=any(item.voice_transcript for item in messages),
     )

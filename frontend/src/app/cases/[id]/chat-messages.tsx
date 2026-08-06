@@ -167,6 +167,14 @@ export function ChatMessages({
                 {msg.purpose === "document_delivery" && (
                   <span className="rounded bg-blue-100 px-1 text-blue-700">文件</span>
                 )}
+                {msg.direction === "inbound" &&
+                  msg.analysis_json &&
+                  typeof msg.analysis_json === "object" &&
+                  (msg.analysis_json as any)._qiwe_meta?.voice_transcript && (
+                    <span className="rounded bg-indigo-100 px-1 text-indigo-700">
+                      语音
+                    </span>
+                  )}
               </div>
               {msg.message_type === "image" ? (
                 <div className="mt-2 space-y-2">

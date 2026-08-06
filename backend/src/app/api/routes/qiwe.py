@@ -19,6 +19,10 @@ from app.services.qiwe_service.inbox import (
     process_qiwe_spam_block_event,
     qiwe_spam_block_notice,
 )
+from app.services.qiwe_service.voice import (
+    VOICE_TRANSCRIPT_FIELD,
+    transcribe_and_dispatch,
+)
 
 if TYPE_CHECKING:
     from app.services.qiwe_service.aggregator import QiWeMessageAggregator
@@ -88,7 +92,15 @@ async def qiwe_callback(request: Request, background_tasks: BackgroundTasks) -> 
                     detail="failed to persist qiwe inbound event",
                 )
             accepted += 1
-            if dispatch_inline and _bypass_aggregator(message):
+            if dispatch_inline and message.message_type == "voice":
+                # 转写要等网关（实测约 1.3s），放后台跑，回调仍立即返回 2xx。
+                background_tasks.add_task(
+                    transcribe_and_dispatch,
+                    aggregator,
+                    message,
+                    inbound_event_id=event_id,
+                )
+            elif dispatch_inline and _bypass_aggregator(message):
                 bypassed += 1
                 logger.info(
                     "QiWe callback command bypass chat_id=%s user_id=%s message_id=%s text=%s",
@@ -219,6 +231,7 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
     msg_data = item.get("msgData") or {}
     content = str(msg_data.get("content") or "").strip()
     quoted = _quoted_message_from_msg_data(msg_data)
+    voice_transcript = False
     if is_text:
         if not content:
             return None
@@ -231,8 +244,16 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
             message_type = "file"
             content = content or "[文件]"
         elif msg_type == 16:
-            message_type = "voice"
-            content = content or "[语音]"
+            # 已转写的语音按普通文本消息对待：能进 8 秒聚合窗口、能触发回复、能进画像。
+            # 转写文本由 voice.py 回写进 payload，故重启重放不会再调一次转写接口。
+            transcript = str(msg_data.get(VOICE_TRANSCRIPT_FIELD) or "").strip()
+            if transcript:
+                message_type = "text"
+                content = transcript
+                voice_transcript = True
+            else:
+                message_type = "voice"
+                content = content or "[语音]"
         else:
             message_type = "non_text"
             content = content or "[表情/图片等非文本消息]"
@@ -261,6 +282,7 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
         raw_payload=item,
         timestamp=_timestamp(item.get("timestamp")),
         segments=[(content, [quoted] if quoted else [])],
+        voice_transcript=voice_transcript,
     )
 
 

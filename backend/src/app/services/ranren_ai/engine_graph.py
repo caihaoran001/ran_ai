@@ -521,6 +521,9 @@ class EngineGraph:
                 "sender_type": sender_type.value,
                 "timestamp": int(message.timestamp.timestamp()),
             }
+            if message.voice_transcript:
+                # 正文是语音转来的：后台聊天记录据此标注来源，回复方据此对数字保持警惕。
+                meta["voice_transcript"] = True
             # 分段结构（每句正文 + 它自己的引用）必须原样落库：重启后补跑这条消息时
             # 要靠它还原"哪句回复了哪条"，摊平存会丢掉这层对应关系。
             quoted_segments = [
@@ -1057,6 +1060,8 @@ class EngineGraph:
             timestamp=created_at,
             # 重启补跑时把引用一起带回来，否则恢复的这轮又只剩一句"收到"。
             segments=_segments_from_meta(meta),
+            # 语音转写标记同样要还原：模型上下文据此对数字保持警惕，与实时路径一致。
+            voice_transcript=bool(meta.get("voice_transcript")),
         )
 
         async with engine_mod.SessionLocal() as session:

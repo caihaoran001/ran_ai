@@ -334,6 +334,103 @@ class QiWeChannel:
         }
         return await self._post_json("/api/qw/doApi", payload, rate_limit=True)
 
+    async def transcribe_voice(
+        self,
+        msg_server_id: Any,
+        *,
+        guid: str | None = None,
+        timeout_seconds: float = 8.0,
+        poll_interval_seconds: float = 0.5,
+    ) -> str | None:
+        """把一条入站语音转成文字（企微客户端自带能力，网关代转，不计费）。
+
+        两步：voiceToTextApply 拿 voiceId → voiceToTextQuery 轮询到 isEnd。
+        生产实测 3 秒语音总耗时约 1.3 秒，稳定落在聚合窗口内。
+
+        guid 必须传**收到这条语音的那台设备**（回调 payload 自带），不能用全局
+        self.guid：账号换过号后两者会不一致，用错设备转写必然失败。缺省才回落自身。
+
+        任何失败（未就绪/网关报错/超时/异常）一律返回 None，由调用方退回“只留痕
+        不回复”的原行为——绝不因为转不出文字就中断整条入站链路。
+        """
+        if not self.token:
+            return None
+        device_guid = (guid or self.guid or "").strip()
+        if not device_guid or msg_server_id in (None, ""):
+            return None
+
+        try:
+            msg_server_id = int(msg_server_id)
+        except (TypeError, ValueError):
+            logger.warning("QiWe voice transcribe: bad msgServerId=%r", msg_server_id)
+            return None
+
+        apply_res = await self._post_json(
+            "/api/qw/doApi",
+            {
+                "method": "/msg/voiceToTextApply",
+                "params": {"guid": device_guid, "msgServerId": msg_server_id},
+            },
+            rate_limit=False,
+        )
+        if not apply_res.success or not isinstance(apply_res.raw_response, dict):
+            logger.warning(
+                "QiWe voice transcribe apply failed msg_server_id=%s error=%s",
+                msg_server_id,
+                apply_res.error,
+            )
+            return None
+        voice_id = str(
+            (apply_res.raw_response.get("data") or {}).get("voiceId") or ""
+        ).strip()
+        if not voice_id:
+            logger.warning(
+                "QiWe voice transcribe apply returned no voiceId msg_server_id=%s",
+                msg_server_id,
+            )
+            return None
+
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+        while True:
+            query_res = await self._post_json(
+                "/api/qw/doApi",
+                {
+                    "method": "/msg/voiceToTextQuery",
+                    "params": {
+                        "guid": device_guid,
+                        "msgServerId": msg_server_id,
+                        "voiceId": voice_id,
+                    },
+                },
+                rate_limit=False,
+            )
+            if query_res.success and isinstance(query_res.raw_response, dict):
+                data = query_res.raw_response.get("data") or {}
+                text = str(data.get("text") or "").strip()
+                if data.get("isEnd"):
+                    if text:
+                        return text
+                    logger.info(
+                        "QiWe voice transcribe finished empty msg_server_id=%s",
+                        msg_server_id,
+                    )
+                    return None
+            elif not query_res.success:
+                logger.warning(
+                    "QiWe voice transcribe query failed msg_server_id=%s error=%s",
+                    msg_server_id,
+                    query_res.error,
+                )
+                return None
+            if time.monotonic() + poll_interval_seconds >= deadline:
+                logger.warning(
+                    "QiWe voice transcribe timed out msg_server_id=%s timeout_seconds=%.1f",
+                    msg_server_id,
+                    timeout_seconds,
+                )
+                return None
+            await asyncio.sleep(poll_interval_seconds)
+
     @property
     def _ready(self) -> bool:
         return bool(self.token and self.guid)

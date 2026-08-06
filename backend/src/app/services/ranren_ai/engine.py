@@ -1230,6 +1230,14 @@ def _segments_from_meta(meta: dict | None) -> list[tuple[str, list[tuple[str, st
     return segments
 
 
+# 模型上下文里对语音转写内容的标注：识别可能听错、尤其数字。内部标、对外不说——
+# 回复方对数字保持警惕、必要时自然追问，但回复正文不得出现「语音识别/转写」字样。
+_VOICE_TRANSCRIPT_NOTE = (
+    "（本条由用户语音转写而来，识别可能有误、尤其数字；"
+    "若与事实对不上可自然追问确认，但回复正文不要出现语音识别/转写之类字眼。）"
+)
+
+
 async def _build_current_query(analysis: dict | None, message: ChannelMessage) -> str:
     """渲染本轮提问：聚合前的每条消息单独成行，引用行（发送者：原文）跟随对应消息。
 
@@ -1239,7 +1247,9 @@ async def _build_current_query(analysis: dict | None, message: ChannelMessage) -
     """
     segments = message.segments
     if not segments:
-        return _current_query_body(analysis, message.text)
+        return _current_query_body(
+            analysis, message.text, voice_transcript=message.voice_transcript
+        )
     quoted_ids = {qid for _, quoted_list in segments for qid, _ in quoted_list if qid}
     quoted_refs = (
         await _quoted_message_refs(quoted_ids, chat_id=message.chat_id)
@@ -1268,10 +1278,17 @@ async def _build_current_query(analysis: dict | None, message: ChannelMessage) -
     if isinstance(image_prompt, dict):
         image_content = str(image_prompt.get("content") or "").strip() or _IMAGE_PARSE_FAILED_PROMPT
         lines.append(f"图片内容：{_prompt_data(image_content)}")
+    if message.voice_transcript:
+        lines.append(_VOICE_TRANSCRIPT_NOTE)
     return "\n".join(lines)
 
 
-def _current_query_body(analysis: dict | None, message_text: str) -> str:
+def _current_query_body(
+    analysis: dict | None,
+    message_text: str,
+    *,
+    voice_transcript: bool = False,
+) -> str:
     speaker = _current_query_speaker(analysis)
     image_prompt = analysis.get("image_prompt") if isinstance(analysis, dict) else None
     user_text = (message_text or "").strip()
@@ -1281,6 +1298,8 @@ def _current_query_body(analysis: dict | None, message_text: str) -> str:
     if isinstance(image_prompt, dict):
         image_content = str(image_prompt.get("content") or "").strip() or _IMAGE_PARSE_FAILED_PROMPT
         lines.append(f"图片内容：{_prompt_data(image_content)}")
+    if voice_transcript:
+        lines.append(_VOICE_TRANSCRIPT_NOTE)
     return "\n".join(lines)
 
 

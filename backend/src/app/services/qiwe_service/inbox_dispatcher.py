@@ -15,6 +15,7 @@ from app.services.qiwe_service.inbox import (
     process_qiwe_spam_block_event,
     qiwe_spam_block_notice,
 )
+from app.services.qiwe_service.voice import transcribe_and_dispatch
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -202,19 +203,14 @@ class QiWeInboxDispatcher:
                 await self._dispatch_spam_block(event)
                 return
 
-            from app.api.routes.qiwe import _bypass_aggregator
-
             message = channel_message_from_inbound_event(event)
-            if _bypass_aggregator(message):
-                await self.aggregator.dispatch_now(
-                    message,
-                    inbound_event_id=event.id,
-                )
-            else:
-                await self.aggregator.enqueue(
-                    message,
-                    inbound_event_id=event.id,
-                )
+            # 语音先转文字再判定路由：转成功后它就是一条普通文本消息，应当进聚合窗口
+            # 参与正常回合，而不是按非文本消息绕过窗口只留痕。
+            await transcribe_and_dispatch(
+                self.aggregator,
+                message,
+                inbound_event_id=event.id,
+            )
         except Exception:
             logger.exception(
                 "QiWe inbox dispatch failed event_id=%s event_type=%s",

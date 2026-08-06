@@ -3184,3 +3184,257 @@ async def test_build_current_query_quoted_only_attached_to_its_segment():
     assert await _build_current_query(
         {"_qiwe_meta": {"sender_type": "user"}}, message
     ) == "用户：我昨天睡得不好\n用户：这个能喝吗\n（引用 未知发送者：晚上别喝咖啡）"
+
+
+# ---------- 语音转文字 ----------
+
+VOICE_TS = 1779951380
+
+
+def _voice_payload(**overrides) -> dict:
+    payload: dict = {
+        "cmd": 15000,
+        "msgType": 16,
+        "userId": "bot-user",
+        "fromRoomId": 10926518308089720,
+        "senderId": 7881300658070689,
+        "senderName": "用户A",
+        "timestamp": VOICE_TS,
+        "msgUniqueIdentifier": "unique-voice-1",
+        # 回调自带、实际收到这条语音的那台设备，不能用全局 QIWE_GUID。
+        "guid": "device-guid-callback",
+        "msgServerId": 90123,
+        "msgData": {"content": "[语音]", "voiceTime": 3},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_qiwe_voice_with_transcript_is_parsed_as_text():
+    """已转写的语音 = 普通文本消息：进聚合窗口、标记来自语音、能触发回复。"""
+    message = _channel_message_from_qiwe(
+        _voice_payload(
+            msgData={"content": "[语音]", "voiceToText": "哈喽哈喽，摩西摩西。"}
+        )
+    )
+    assert message is not None
+    assert message.message_type == "text"
+    assert message.text == "哈喽哈喽，摩西摩西。"
+    assert message.voice_transcript is True
+    assert _bypass_aggregator(message) is False
+
+
+def test_qiwe_voice_without_transcript_stays_voice():
+    """未转写的语音维持原样：只留痕、绕过聚合、不回复。"""
+    message = _channel_message_from_qiwe(_voice_payload())
+    assert message is not None
+    assert message.message_type == "voice"
+    assert message.text == "[语音]"
+    assert message.voice_transcript is False
+    assert _bypass_aggregator(message) is True
+
+
+@pytest.mark.asyncio
+async def test_qiwe_transcribe_voice_applies_then_queries():
+    """转写 = voiceToTextApply 拿 voiceId → voiceToTextQuery 轮询到 isEnd；guid 用回调值。"""
+    client = FakeClient(
+        [
+            {"code": 0, "msg": "成功", "data": {"voiceId": "vid-1"}},
+            {"code": 0, "msg": "成功", "data": {"text": "哈喽哈喽", "isEnd": 1}},
+        ]
+    )
+    channel = QiWeChannel(_settings(), http_client=client)
+
+    text = await channel.transcribe_voice(90123, guid="device-guid-callback")
+
+    assert text == "哈喽哈喽"
+    assert [c[1]["json"]["method"] for c in client.calls] == [
+        "/msg/voiceToTextApply",
+        "/msg/voiceToTextQuery",
+    ]
+    apply_params = client.calls[0][1]["json"]["params"]
+    assert apply_params["guid"] == "device-guid-callback"
+    assert apply_params["msgServerId"] == 90123
+    query_params = client.calls[1][1]["json"]["params"]
+    assert query_params["voiceId"] == "vid-1"
+    assert query_params["guid"] == "device-guid-callback"
+    assert query_params["msgServerId"] == 90123
+
+
+@pytest.mark.asyncio
+async def test_qiwe_transcribe_voice_apply_failure_returns_none():
+    client = FakeClient([{"code": 1001, "msg": "参数错误", "data": {}}])
+    channel = QiWeChannel(_settings(), http_client=client)
+
+    assert await channel.transcribe_voice(90123, guid="g") is None
+
+
+@pytest.mark.asyncio
+async def test_qiwe_transcribe_voice_query_failure_returns_none():
+    client = FakeClient(
+        [
+            {"code": 0, "msg": "成功", "data": {"voiceId": "vid-1"}},
+            {"code": 2001, "msg": "转写失败", "data": {}},
+        ]
+    )
+    channel = QiWeChannel(_settings(), http_client=client)
+
+    assert await channel.transcribe_voice(90123, guid="g") is None
+
+
+@pytest.mark.asyncio
+async def test_qiwe_transcribe_voice_timeout_returns_none():
+    """轮询上限（防御性，防止网关一直不结束）到点返回 None，不挂死。"""
+    client = FakeClient(
+        [
+            {"code": 0, "msg": "成功", "data": {"voiceId": "vid-1"}},
+            {"code": 0, "msg": "成功", "data": {"text": "", "isEnd": 0}},
+        ]
+    )
+    channel = QiWeChannel(_settings(), http_client=client)
+
+    text = await channel.transcribe_voice(
+        90123, guid="g", timeout_seconds=0.0, poll_interval_seconds=1.0
+    )
+    assert text is None
+
+
+class RecordingTranscribeChannel:
+    """记录 transcribe_voice 收到的参数，便于断言"用回调 guid、调用次数"。"""
+
+    def __init__(self, result: str | None):
+        self.result = result
+        self.calls: list[tuple] = []
+
+    async def transcribe_voice(self, msg_server_id, *, guid=None, **_kwargs):
+        self.calls.append((msg_server_id, guid))
+        return self.result
+
+
+@pytest.mark.asyncio
+async def test_voice_transcribe_success_uses_callback_guid(monkeypatch):
+    """编排成功：用回调自带 guid（收到语音的设备）转写，返回文本消息。"""
+    channel = RecordingTranscribeChannel(result="哈喽哈喽，摩西摩西。")
+    monkeypatch.setattr("app.services.channels.get_current_channel", lambda: channel)
+    message = _channel_message_from_qiwe(_voice_payload())
+    assert message is not None
+    message.inbound_event_ids = [41]
+
+    from app.services.qiwe_service.voice import transcribe_inbound_voice
+
+    parsed = await transcribe_inbound_voice(message)
+
+    assert parsed is not None
+    assert parsed.message_type == "text"
+    assert parsed.text == "哈喽哈喽，摩西摩西。"
+    assert parsed.voice_transcript is True
+    assert channel.calls == [(90123, "device-guid-callback")]
+
+
+@pytest.mark.asyncio
+async def test_voice_transcribe_failure_keeps_voice_message(monkeypatch):
+    """网关转写失败 → 原样退回语音消息，不抛错、不中断链路。"""
+    channel = RecordingTranscribeChannel(result=None)
+    monkeypatch.setattr("app.services.channels.get_current_channel", lambda: channel)
+    message = _channel_message_from_qiwe(_voice_payload())
+    assert message is not None
+    message.inbound_event_ids = [42]
+
+    from app.services.qiwe_service.voice import transcribe_inbound_voice
+
+    parsed = await transcribe_inbound_voice(message)
+
+    assert parsed is message
+    assert parsed.message_type == "voice"
+    assert _bypass_aggregator(parsed) is True
+
+
+@pytest.mark.asyncio
+async def test_voice_transcribe_already_done_is_idempotent(monkeypatch):
+    """payload 已有转写文本（重启重放）→ 不再调网关，直接按文本处理。"""
+    channel = RecordingTranscribeChannel(result="不应再调用")
+    monkeypatch.setattr("app.services.channels.get_current_channel", lambda: channel)
+    message = _channel_message_from_qiwe(
+        _voice_payload(msgData={"content": "[语音]", "voiceToText": "已有文本"})
+    )
+    assert message is not None
+    message.inbound_event_ids = [43]
+
+    from app.services.qiwe_service.voice import transcribe_inbound_voice
+
+    parsed = await transcribe_inbound_voice(message)
+
+    assert parsed is message
+    assert parsed.message_type == "text"
+    assert parsed.text == "已有文本"
+    assert channel.calls == []
+
+
+def test_qiwe_aggregator_merge_keeps_voice_transcript_flag():
+    """同轮聚合里含语音转写 → 合并结果仍标记来自语音，供落库与模型上下文使用。"""
+    voice_msg = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="语音转写来的",
+        message_id="m2",
+        user_id="u1",
+        message_type="text",
+        raw_payload={},
+        segments=[("语音转写来的", [])],
+        voice_transcript=True,
+        timestamp=datetime.now(timezone.utc),
+    )
+    plain_msg = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="普通文字",
+        message_id="m1",
+        user_id="u1",
+        segments=[("普通文字", [])],
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    merged = _merge_messages([plain_msg, voice_msg])
+
+    assert merged.voice_transcript is True
+    assert merged.text == "普通文字\n语音转写来的"
+
+
+@pytest.mark.asyncio
+async def test_current_query_marks_voice_transcript():
+    """模型上下文标注该句来自语音转写；普通消息不标注。"""
+    voice_msg = _channel_message_from_qiwe(
+        _voice_payload(msgData={"content": "[语音]", "voiceToText": "我今早体重62.5"})
+    )
+    assert voice_msg is not None
+    query = await _build_current_query({}, voice_msg)
+    assert "语音转写" in query
+    assert "62.5" in query
+
+    plain_msg = _channel_message_from_qiwe(
+        {
+            "cmd": 15000,
+            "msgType": 2,
+            "userId": "bot-user",
+            "fromRoomId": 10926518308089720,
+            "senderId": 7881300658070689,
+            "timestamp": VOICE_TS,
+            "msgUniqueIdentifier": "unique-text-1",
+            "msgData": {"content": "我今早体重62.5"},
+        }
+    )
+    assert plain_msg is not None
+    plain_query = await _build_current_query({}, plain_msg)
+    assert "语音转写" not in plain_query
+    assert "62.5" in plain_query
+
+
+def test_current_query_body_marks_voice_transcript():
+    """单段渲染（无 segments 的通道/测试消息）同样标注语音来源。"""
+    body = _current_query_body({}, "我今早体重62.5", voice_transcript=True)
+    assert "语音转写" in body
+    assert "62.5" in body
+    plain = _current_query_body({}, "我今早体重62.5")
+    assert "语音转写" not in plain

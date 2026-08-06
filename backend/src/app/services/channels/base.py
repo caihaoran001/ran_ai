@@ -24,6 +24,9 @@ class ChannelMessage:
     # The engine links them to the persisted inbound Message in the same DB
     # transaction, closing the inbox -> LangGraph crash window.
     inbound_event_ids: list[int] = field(default_factory=list)
+    # 本轮正文里含有由语音转写来的内容。转写文本按用户原话处理，但语音识别对数字最
+    # 容易出错，故一路带到落库与模型上下文，让回复方在数字对不上时主动确认。
+    voice_transcript: bool = False
 
 
 @dataclass(slots=True)
