@@ -990,6 +990,15 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                     Message.purpose.in_([MessagePurpose.CHAT, MessagePurpose.DOCUMENT_DELIVERY]),
                     Message.status == MessageStatus.SENT,
                 ),
+                # 打卡追问/定时提醒（系统发、同一个企微号）此前被排除在上下文外：
+                # 早上问"早餐吃了吗"，用户回"紫薯，鸡蛋"，模型这一轮看不到问题只看到答案，
+                # 接不住也无法把答案归到对应的追问上。
+                and_(
+                    Message.direction == MessageDirection.OUTBOUND,
+                    Message.sender_type == MessageSenderType.SYSTEM,
+                    Message.purpose == MessagePurpose.REMINDER,
+                    Message.status == MessageStatus.SENT,
+                ),
             ),
         ]
         if exclude_message_id is not None:
@@ -1087,7 +1096,9 @@ def _sanitize_ai_reply(reply: str, settings: Settings) -> str:
 
 
 def _format_chat_history_line(message: Message) -> str:
-    if message.sender_type == MessageSenderType.BOT:
+    # 系统发的打卡追问/定时提醒也是从助教这个企微号发出去的，用户眼里就是助教在说话；
+    # 模型侧统一叫"助教"，库里保留 SYSTEM 以便档案官配对追问、后台区分自动发送。
+    if message.sender_type in (MessageSenderType.BOT, MessageSenderType.SYSTEM):
         speaker = "助教"
     elif message.sender_type == MessageSenderType.STAFF:
         speaker = _staff_speaker(message.analysis_json)
@@ -1173,12 +1184,11 @@ async def _quoted_message_refs(
             )
         )
         for quoted_msg in rows.scalars().all():
-            if quoted_msg.sender_type == MessageSenderType.BOT:
+            # 打卡追问/定时提醒记为 SYSTEM，但用户看到的就是助教发的，模型侧同样叫"助教"。
+            if quoted_msg.sender_type in (MessageSenderType.BOT, MessageSenderType.SYSTEM):
                 sender_label = "助教"
             elif quoted_msg.sender_type == MessageSenderType.STAFF:
                 sender_label = _staff_speaker(quoted_msg.analysis_json) or "工作人员"
-            elif quoted_msg.sender_type == MessageSenderType.SYSTEM:
-                sender_label = "系统"
             else:
                 sender_label = "用户"
             quoted_by_id[quoted_msg.wecom_message_id] = (

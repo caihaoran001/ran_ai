@@ -2819,6 +2819,41 @@ async def test_build_current_query_renders_quoted_with_sender_label(db_session):
 
 
 @pytest.mark.asyncio
+async def test_build_current_query_labels_system_reminder_as_assistant(db_session):
+    """用户引用的是系统发的打卡追问时，必须署名"助教"——那本就是助教这个号发出去的。
+
+    标成"系统"会被模型当成"其他人"，用户认真报了餐反而收不到回应。
+    """
+    quoted = Message(
+        group_id="room-1",
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content="@某某 早餐吃了吗？记得把吃了什么报一下。",
+        wecom_message_id="system-followup-1",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.SENT,
+    )
+    db_session.add(quoted)
+    await db_session.flush()
+
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="紫薯，鸡蛋",
+        message_id="m1",
+        user_id="u1",
+        segments=[("紫薯，鸡蛋", [("system-followup-1", "")])],
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    assert await _build_current_query(
+        {"_qiwe_meta": {"sender_type": "user"}}, message
+    ) == "用户：紫薯，鸡蛋\n（引用 助教：@某某 早餐吃了吗？记得把吃了什么报一下。）"
+
+
+@pytest.mark.asyncio
 async def test_build_current_query_uses_staff_nickname(db_session):
     quoted = Message(
         group_id="room-1",

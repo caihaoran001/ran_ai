@@ -732,6 +732,77 @@ async def test_recent_chat_history_includes_document_delivery(db_session, mock_m
 
 
 @pytest.mark.asyncio
+async def test_recent_chat_history_includes_system_checkin_followup(
+    db_session, mock_message_channel, cai_haoran_answers
+):
+    """打卡追问/定时提醒也要进最近对话，且署名"助教"。
+
+    这些消息记为 SYSTEM，但同样从助教那个企微号发出，用户眼里就是助教在问。
+    此前被排除在上下文外：早上问"早餐吃了吗"、用户回"紫薯，鸡蛋"，模型只看到答案
+    看不到问题，接不住也无法把答案归到对应追问上。
+    """
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    db_session.add(
+        Message(
+            service_case_id=case_id,
+            group_id=group_id,
+            direction=MessageDirection.OUTBOUND,
+            sender_type=MessageSenderType.SYSTEM,
+            message_type="markdown",
+            content="早餐吃了吗？记得把吃了什么报一下。",
+            purpose=MessagePurpose.REMINDER,
+            status=MessageStatus.SENT,
+        )
+    )
+    db_session.add(
+        Message(
+            service_case_id=case_id,
+            group_id=group_id,
+            direction=MessageDirection.INBOUND,
+            sender_type=MessageSenderType.USER,
+            message_type="text",
+            content="紫薯，鸡蛋",
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.RECEIVED,
+        )
+    )
+    await db_session.flush()
+
+    engine = RanrenAIEngine(mock_message_channel)
+    lines = await engine._recent_user_messages(db_session, case_id)
+
+    assert any("助教: 早餐吃了吗？记得把吃了什么报一下。" in line for line in lines)
+    assert not any("系统:" in line for line in lines)
+    assert any("用户: 紫薯，鸡蛋" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_recent_chat_history_excludes_unsent_system_reminder(
+    db_session, mock_message_channel, cai_haoran_answers
+):
+    """还没发出去的提醒不能进上下文，否则模型会当成已经问过用户。"""
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    db_session.add(
+        Message(
+            service_case_id=case_id,
+            group_id=group_id,
+            direction=MessageDirection.OUTBOUND,
+            sender_type=MessageSenderType.SYSTEM,
+            message_type="markdown",
+            content="还没发出去的提醒",
+            purpose=MessagePurpose.REMINDER,
+            status=MessageStatus.PENDING,
+        )
+    )
+    await db_session.flush()
+
+    engine = RanrenAIEngine(mock_message_channel)
+    lines = await engine._recent_user_messages(db_session, case_id)
+
+    assert not any("还没发出去的提醒" in line for line in lines)
+
+
+@pytest.mark.asyncio
 async def test_recent_chat_history_keeps_latest_twenty_with_length_guard(
     db_session, mock_message_channel, cai_haoran_answers
 ):
