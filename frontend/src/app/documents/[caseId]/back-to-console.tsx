@@ -11,6 +11,8 @@ export function BackToConsoleButton() {
   return (
     <Link
       href="/documents"
+      // 不让路由自己把控制台滚到顶部：位置由列表组件按进入前记录的两层滚动还原。
+      scroll={false}
       aria-label="返回审核控制台"
       title="返回审核控制台"
       className="group mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-xs transition-all hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-800 active:scale-95"

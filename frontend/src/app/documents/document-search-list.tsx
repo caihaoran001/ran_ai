@@ -100,11 +100,14 @@ export function DocumentSearchList({
     }
     // 隔太久（比如第二天翻到这个标签页）就不要莫名其妙地跳到半页中间。
     if (!saved.at || Date.now() - saved.at > 10 * 60 * 1000) return;
+    // 双帧：等路由自己的滚动处理跑完再定位，否则会被重置回顶部。
     requestAnimationFrame(() => {
-      if (pendingListRef.current && saved.list) {
-        pendingListRef.current.scrollTop = saved.list;
-      }
-      if (saved.page) window.scrollTo({ top: saved.page, behavior: "auto" });
+      requestAnimationFrame(() => {
+        if (pendingListRef.current && saved.list) {
+          pendingListRef.current.scrollTop = saved.list;
+        }
+        if (saved.page) window.scrollTo({ top: saved.page, behavior: "auto" });
+      });
     });
   }, [pendingDocuments.length]);
 
