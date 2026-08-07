@@ -25,6 +25,7 @@ from app.services.service_case_queries import (
     active_service_case_condition,
     get_active_service_case,
     get_service_case as get_service_case_any,
+    last_user_inbound_subquery,
     select_active_service_cases,
 )
 
@@ -286,12 +287,8 @@ def _apply_service_case_filter(statement, metric: str | None):
     if metric == "refunded":
         return statement.where(ServiceCase.status == ServiceCaseStatus.REFUNDED)
     if metric in {"unfollowed", "lost"}:
-        last_message_subq = (
-            select(Message.service_case_id, func.max(Message.created_at).label("last_at"))
-            .where(Message.direction == MessageDirection.INBOUND)
-            .group_by(Message.service_case_id)
-            .subquery()
-        )
+        # 只看「用户本人」的发言：班主任在群里跟进不代表用户还活着。
+        last_message_subq = last_user_inbound_subquery()
         last_activity_at = func.coalesce(last_message_subq.c.last_at, ServiceCase.created_at)
         statement = statement.outerjoin(last_message_subq, last_message_subq.c.service_case_id == ServiceCase.id)
         if metric == "unfollowed":

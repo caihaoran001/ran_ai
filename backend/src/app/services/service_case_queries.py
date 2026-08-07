@@ -4,10 +4,11 @@ from datetime import date as _date, datetime, time as _time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 
 SERVICE_CASE_WINDOW_DAYS = 28
@@ -93,6 +94,27 @@ def service_phase_end_at(service_case: ServiceCase, tz: ZoneInfo) -> datetime | 
     if phase_end is None:
         return None
     return datetime.combine(phase_end, _time.max, tzinfo=tz)
+
+
+def last_user_inbound_subquery():
+    """每个服务单最近一次「用户本人」发言的时间。
+
+    只统计 sender_type=USER：群里班主任(staff)的发言同样以 INBOUND 落库，
+    若不加这个过滤，班主任跟进一句就会把已经沉默多日的用户从
+    未跟进/流失名单里带走，导致越跟进流失数越少。
+
+    调用方通常用 `func.coalesce(subq.c.last_at, ServiceCase.created_at)`
+    兜底「从建单起就没说过话」的服务单。
+    """
+    return (
+        select(Message.service_case_id, func.max(Message.created_at).label("last_at"))
+        .where(
+            Message.direction == MessageDirection.INBOUND,
+            Message.sender_type == MessageSenderType.USER,
+        )
+        .group_by(Message.service_case_id)
+        .subquery()
+    )
 
 
 def active_service_case_condition():

@@ -66,7 +66,11 @@ from app.services.population_insight import (
     refresh_population_insight,
 )
 from app.services.ai_service.balance import fetch_deepseek_balance
-from app.services.service_case_queries import active_service_case_condition, effective_start_at
+from app.services.service_case_queries import (
+    active_service_case_condition,
+    effective_start_at,
+    last_user_inbound_subquery,
+)
 
 router = APIRouter()
 
@@ -208,12 +212,8 @@ async def dashboard_summary(
         )
     )
     now = datetime.now(timezone.utc)
-    last_message_subq = (
-        select(Message.service_case_id, func.max(Message.created_at).label("last_at"))
-        .where(Message.direction == MessageDirection.INBOUND)
-        .group_by(Message.service_case_id)
-        .subquery()
-    )
+    # 未跟进/流失只看「用户本人」的发言：班主任在群里说话不算用户还活着。
+    last_message_subq = last_user_inbound_subquery()
     last_activity_at = func.coalesce(last_message_subq.c.last_at, ServiceCase.created_at)
     unfollowed_users = await session.scalar(
         select(func.count(ServiceCase.id))
@@ -1135,14 +1135,9 @@ async def _idle_cases(
     min_days: int,
     max_days: int | None,
 ) -> list[DashboardCaseInsightItem]:
-    """服务中、且最近入站消息距今 [min_days, max_days) 天的服务单（含闲置天数）。"""
+    """服务中、且用户本人最近发言距今 [min_days, max_days) 天的服务单（含闲置天数）。"""
     now = datetime.now(timezone.utc)
-    last_message_subq = (
-        select(Message.service_case_id, func.max(Message.created_at).label("last_at"))
-        .where(Message.direction == MessageDirection.INBOUND)
-        .group_by(Message.service_case_id)
-        .subquery()
-    )
+    last_message_subq = last_user_inbound_subquery()
     last_activity_at = func.coalesce(last_message_subq.c.last_at, ServiceCase.created_at)
     conditions = [
         active_service_case_condition(),
