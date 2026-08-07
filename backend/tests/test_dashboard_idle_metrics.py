@@ -18,6 +18,11 @@ from app.models.message import (
     MessageSenderType,
     MessageStatus,
 )
+from app.models.reminder import (
+    CHURN_RECALL_RULE_ID,
+    ReminderEvent,
+    ReminderEventType,
+)
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 
@@ -63,6 +68,21 @@ async def _idle_case(
         db_session.add(_inbound(case, MessageSenderType.STAFF, now - timedelta(days=staff_days_ago)))
     await db_session.flush()
     return case
+
+
+async def _recall_event(db_session, case: ServiceCase, *, days_ago: float) -> None:
+    """伪造一条系统召回台账。"""
+    stamp = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    db_session.add(
+        ReminderEvent(
+            service_case_id=case.id,
+            rule_id=CHURN_RECALL_RULE_ID,
+            event_date=stamp.date(),
+            event_type=ReminderEventType.REMINDED,
+            created_at=stamp,
+        )
+    )
+    await db_session.flush()
 
 
 @pytest.mark.asyncio
@@ -129,3 +149,31 @@ async def test_active_24h_filter_counts_only_user_messages(db_session, admin_cli
 
     assert talking.id in case_ids
     assert staff_only.id not in case_ids
+
+
+@pytest.mark.asyncio
+async def test_lost_list_shows_recalls_of_this_silence_only(
+    db_session, admin_client, mock_ai
+):
+    """名单上的「已召回 N 次」必须与调度器同一口径：只数最后一次用户发言之后的召回。
+
+    口径一旦两边漂移，运营看到的次数就和真实发出去的不符，而且不会报错——
+    所以这里把「本轮算数」和「用户回话后归零」两种情况都钉住。
+    """
+    recalled = await _idle_case(db_session, name="本轮已召回过", user_days_ago=10)
+    await _recall_event(db_session, recalled, days_ago=8)
+
+    replied_since = await _idle_case(db_session, name="召回后回过话又沉默", user_days_ago=9)
+    await _recall_event(db_session, replied_since, days_ago=15)  # 早于最后发言，不算本轮
+
+    never = await _idle_case(db_session, name="还没被召回过", user_days_ago=10)
+
+    response = await admin_client.get("/dashboard/lost-cases")
+    assert response.status_code == 200
+    by_case = {item["case"]["service_case_id"]: item for item in response.json()}
+
+    assert by_case[recalled.id]["recall_count"] == 1
+    assert by_case[recalled.id]["last_recall_at"] is not None
+    assert by_case[replied_since.id]["recall_count"] == 0
+    assert by_case[replied_since.id]["last_recall_at"] is None
+    assert by_case[never.id]["recall_count"] == 0
