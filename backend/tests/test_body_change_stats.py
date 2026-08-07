@@ -208,6 +208,90 @@ async def test_impossible_delta_is_excluded_not_averaged_in(db_session):
 
 
 @pytest.mark.asyncio
+async def test_short_window_allows_normal_water_weight_swing(db_session):
+    """3 天掉 2 公斤是常见的水分变化，不能当成录入错误剔掉。
+
+    只按"每天最多 0.5 公斤"算的话，3 天窗口上限是 1.5 公斤，生产实测会误剔 8 个人，
+    而且剔掉的都是变化大的人——等于系统性低估短期效果。
+    """
+
+    swing = await _case_with_checkins(
+        db_session,
+        intake_weight="80",
+        checkins={1: {"weight": "80"}, 3: {"weight": "78"}},
+    )
+    absurd = await _case_with_checkins(
+        db_session,
+        intake_weight="80",
+        checkins={1: {"weight": "80"}, 3: {"weight": "76"}},
+    )
+
+    assert (await _changes_for(db_session, swing.id))[3].weight.delta == -2.0
+    absurd_windows = await _changes_for(db_session, absurd.id)
+    assert absurd_windows[3].weight.status == EXCLUDE_IMPLAUSIBLE
+
+
+@pytest.mark.asyncio
+async def test_single_mistyped_reading_does_not_become_the_endpoint(db_session):
+    """线上 case 92：13 天从 91.65 稳定降到 88.25，最后一条突然写「98.4kg」。
+
+    起点终点各自都像正常数字、差值也在 28 天上限内，所以窗口级检查抓不到；
+    但一周涨 8.3 公斤不可能发生。这一条把 28 天均值从 -0.86 拉到 -0.37，
+    正是客户质疑"数字不对"的那类。
+    """
+
+    case = await _case_with_checkins(
+        db_session,
+        intake_weight="90",
+        checkins={
+            1: {"weight": "91.65"},
+            10: {"weight": "89.25"},
+            21: {"weight": "90.1公斤"},
+            28: {"weight": "98.4kg"},
+        },
+    )
+    windows = await _changes_for(db_session, case.id)
+
+    assert windows[28].weight.delta is None
+    assert windows[28].weight.status == EXCLUDE_IMPLAUSIBLE
+    # 真实的持续下降不受影响：每一步都在合理速度内
+    assert windows[14].weight.delta is None or windows[14].weight.status == EXCLUDE_NO_ENDPOINT
+
+
+@pytest.mark.asyncio
+async def test_a_real_gradual_change_is_not_mistaken_for_a_typo(db_session):
+    """跳变检查只看与前一条的速度，所以真实的持续减重不会被误伤。"""
+
+    case = await _case_with_checkins(
+        db_session,
+        intake_weight="90",
+        checkins={day: {"weight": str(round(90 - day * 0.15, 2))} for day in range(1, 29)},
+    )
+    windows = await _changes_for(db_session, case.id)
+
+    assert windows[28].weight.delta == pytest.approx(-4.2, abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_unit_written_by_mistake_yields_to_the_baseline(db_session):
+    """线上 case 105：基线 100 公斤的人写「103.7斤（排便后）」。
+
+    按斤算是 51.85 公斤，显然不是他。数字本身才是公斤，"斤"是随口写的。
+    """
+
+    case = await _case_with_checkins(
+        db_session,
+        intake_weight="100",
+        checkins={1: {"weight": "100"}, 7: {"weight": "103.7斤（排便后）"}},
+    )
+    windows = await _changes_for(db_session, case.id)
+
+    # 这一条被读成 103.7 公斤本人，而不是 51.85 公斤的另一个人，也不是整条丢掉。
+    # （这个值最终是否进样本由窗口净变化上限另行决定，不是单位规则的事。）
+    assert windows[7].weight.endpoint == 103.7
+
+
+@pytest.mark.asyncio
 async def test_case_not_yet_at_the_window_is_not_counted(db_session):
     """第 10 天的用户不出现在 14/28 天窗口里——"还没到时间"不等于"没效果"。"""
 

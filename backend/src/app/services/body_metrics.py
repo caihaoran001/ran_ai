@@ -127,16 +127,26 @@ def parse_weight_kg(raw: object, *, baseline_kg: float | None = None) -> BodyVal
     if number <= 0:
         return BodyValue(None, REASON_OUT_OF_RANGE)
 
-    if has_explicit_jin(text):
-        return _finish_weight(number / 2, unit_verified=True, corrected_from="jin")
-    if has_explicit_kg(text):
-        return _finish_weight(number, unit_verified=True)
+    explicit_jin = has_explicit_jin(text)
+    if explicit_jin or has_explicit_kg(text):
+        primary = number / 2 if explicit_jin else number
+        # 写出来的单位也会和本人起始体重打架。线上真实例子：基线 100 公斤的人写
+        # 「103.7斤（排便后）」，按斤算成 51.85 公斤。他显然是随口写了个"斤"，
+        # 数字本身才是公斤。所以先看另一种解释是否说得通，说得通就按那个走。
+        if baseline_kg and baseline_kg > 0 and not _matches_baseline(primary, baseline_kg):
+            alternative = number if explicit_jin else number / 2
+            if _matches_baseline(alternative, baseline_kg):
+                return _finish_weight(alternative, unit_verified=True, corrected_from="unit_typo")
+            return BodyValue(None, REASON_UNIT_AMBIGUOUS)
+        return _finish_weight(
+            primary, unit_verified=True, corrected_from="jin" if explicit_jin else None
+        )
 
     if baseline_kg and baseline_kg > 0:
         ratio = number / baseline_kg
         # 两个区间刻意不重叠：28 天内体重变化撑死十几公斤，所以"同量级"最多到 1.25 倍，
         # "斤"最少也是 1.5 倍。落在中间地带说明这个数解释不通，剔除比猜安全。
-        if 0.75 <= ratio <= 1.25:
+        if _matches_baseline(number, baseline_kg):
             return _finish_weight(number, unit_verified=True)
         if 1.5 <= ratio <= 2.5:
             return _finish_weight(number / 2, unit_verified=True, corrected_from="jin")
@@ -189,6 +199,12 @@ def parse_waist_cm(raw: object, *, baseline_cm: float | None = None) -> BodyValu
     if chi_candidate is not None:
         return _finish_waist(chi_candidate, unit_verified=False, corrected_from="chi")
     return BodyValue(None, REASON_OUT_OF_RANGE)
+
+
+def _matches_baseline(value: float, baseline: float) -> bool:
+    """这个公斤数和本人起始体重是否同量级（28 天内变化撑死十几公斤）。"""
+
+    return 0.75 <= value / baseline <= 1.25
 
 
 def _chi_like_to_cm(number: float) -> float | None:

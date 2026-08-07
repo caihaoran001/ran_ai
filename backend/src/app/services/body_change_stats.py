@@ -48,11 +48,24 @@ _ENDPOINT_TOLERANCE = 2
 _FALLBACK_BASELINE_MAX_DAY = 3
 
 # 变化幅度上限：超过就不是真实变化，而是没被前面拦住的录入问题。
-# 每天 0.5kg / 0.4cm 已经远高于健康减重速度，再加一个绝对上限兜住长窗口。
+# 每天 0.5kg / 0.4cm 远高于健康减重速度，长窗口再加绝对上限。
+# 但短窗口不能只按天数算：3 天掉 2 公斤多是常见的水分变化，腰围本身也有 1-2 厘米的
+# 测量误差，只按 0.5kg/天 会把这些真实记录当成脏数据剔掉（生产实测会误剔 8 人，
+# 且剔掉的都是变化大的人，等于系统性低估短期效果）。所以给一个基础容差。
 _MAX_WEIGHT_DELTA_PER_DAY = 0.5
+_MIN_WEIGHT_DELTA_ALLOWANCE_KG = 2.5
 _MAX_WEIGHT_DELTA_KG = 12.0
 _MAX_WAIST_DELTA_PER_DAY = 0.4
+_MIN_WAIST_DELTA_ALLOWANCE_CM = 3.0
 _MAX_WAIST_DELTA_CM = 15.0
+
+
+def _max_weight_delta(window: int) -> float:
+    return min(max(_MAX_WEIGHT_DELTA_PER_DAY * window, _MIN_WEIGHT_DELTA_ALLOWANCE_KG), _MAX_WEIGHT_DELTA_KG)
+
+
+def _max_waist_delta(window: int) -> float:
+    return min(max(_MAX_WAIST_DELTA_PER_DAY * window, _MIN_WAIST_DELTA_ALLOWANCE_CM), _MAX_WAIST_DELTA_CM)
 
 # 未纳入原因（case 级）
 EXCLUDE_NO_BASELINE = "no_baseline"  # 既没问卷起始值，前三天也没有效打卡
@@ -233,13 +246,17 @@ async def compute_case_window_changes(
                         [(day, value) for day, value, _ in parsed],
                         window=window,
                         questionnaire_baseline=baseline_weight,
-                        max_delta=min(_MAX_WEIGHT_DELTA_PER_DAY * window, _MAX_WEIGHT_DELTA_KG),
+                        max_delta=_max_weight_delta(window),
+                        max_daily_rate=_MAX_WEIGHT_DELTA_PER_DAY,
+                        jump_allowance=_MIN_WEIGHT_DELTA_ALLOWANCE_KG,
                     ),
                     waist=_metric_outcome(
                         [(day, value) for day, _, value in parsed],
                         window=window,
                         questionnaire_baseline=baseline_waist,
-                        max_delta=min(_MAX_WAIST_DELTA_PER_DAY * window, _MAX_WAIST_DELTA_CM),
+                        max_delta=_max_waist_delta(window),
+                        max_daily_rate=_MAX_WAIST_DELTA_PER_DAY,
+                        jump_allowance=_MIN_WAIST_DELTA_ALLOWANCE_CM,
                     ),
                 )
             )
@@ -253,8 +270,13 @@ def _metric_outcome(
     window: int,
     questionnaire_baseline: float | None,
     max_delta: float,
+    max_daily_rate: float,
+    jump_allowance: float,
 ) -> MetricOutcome:
-    usable = [(day, value) for day, value in series if value is not None and value.ok]
+    raw_usable = [(day, value) for day, value in series if value is not None and value.ok]
+    usable = _drop_implausible_jumps(
+        raw_usable, max_daily_rate=max_daily_rate, allowance=jump_allowance
+    )
 
     baseline = questionnaire_baseline
     baseline_source = "questionnaire" if baseline else None
@@ -277,7 +299,14 @@ def _metric_outcome(
     upper = window + _ENDPOINT_TOLERANCE
     candidates = [(day, value) for day, value in usable if lower <= day <= upper]
     if not candidates:
-        return MetricOutcome(None, EXCLUDE_NO_ENDPOINT, baseline=baseline, baseline_source=baseline_source)
+        # 区分"窗口末真的没量"和"量了但那条记录不可信"，否则页面上会把后者说成前者。
+        had_raw_candidate = any(lower <= day <= upper for day, _ in raw_usable)
+        return MetricOutcome(
+            None,
+            EXCLUDE_IMPLAUSIBLE if had_raw_candidate else EXCLUDE_NO_ENDPOINT,
+            baseline=baseline,
+            baseline_source=baseline_source,
+        )
     # 最接近窗口末的那次记录；同样接近时取更晚的一次。
     day, endpoint_value = min(candidates, key=lambda item: (abs(item[0] - window), -item[0]))
     endpoint = endpoint_value.value
@@ -298,6 +327,38 @@ def _metric_outcome(
         baseline_source=baseline_source,
         unit_verified=unit_verified and endpoint_value.unit_verified,
     )
+
+
+def _drop_implausible_jumps(
+    usable: list[tuple[int, BodyValue]],
+    *,
+    max_daily_rate: float,
+    allowance: float,
+) -> list[tuple[int, BodyValue]]:
+    """剔除相对上一条有效记录出现生理上不可能跳变的那一条。
+
+    起点终点各自像正常数字、差值也在窗口上限内的情况下，单条记录仍可能是打错的。
+    线上真实例子：某用户 13 天从 91.65 稳定降到 88.25，最后一条突然写「98.4kg」——
+    一周涨 8.3 公斤不可能发生，但因为写了单位就被信任，这一条把 28 天均值从
+    -0.86 拉到 -0.37，正好是客户质疑"数字不对"的那种情况。
+
+    容差是"日内波动 + 这段时间可能的真实变化"之和，不是二者取大：两次称重之间除了
+    真实变化，还各自带着水分、进食、排便造成的波动（用户自己就会写「103.7（排便后）」）。
+    取大会把隔 6 天差 3.7 公斤这种正常情况也拦掉。
+
+    只看与前一条的间隔，不做整体离群检测：真实的持续变化每一步都在合理速度内，
+    不会被误伤。
+    """
+
+    cleaned: list[tuple[int, BodyValue]] = []
+    for day, value in usable:
+        if cleaned:
+            prev_day, prev_value = cleaned[-1]
+            span = max(day - prev_day, 1)
+            if abs(value.value - prev_value.value) > allowance + max_daily_rate * span:
+                continue
+        cleaned.append((day, value))
+    return cleaned
 
 
 def summarize_deltas(values: Iterable[float]) -> dict[str, Any]:
