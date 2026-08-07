@@ -16,6 +16,13 @@ from typing import Any, Literal
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from app.services.user_state_profile import OUTCOME_FIELD_DOMAIN_MAP
+
+# 成效维度枚举。与入库闸门 outcome_engine.KNOWN_OUTCOME_FIELDS 同源，模型看得到全集。
+# 不列出来的后果是模型自造名字（真实验证里出过 body_shape_change，正确名是
+# waist_or_body_change），入库时按未知维度静默丢弃，统计凭空少一条。
+OUTCOME_FIELD_KEYS: tuple[str, ...] = tuple(sorted(OUTCOME_FIELD_DOMAIN_MAP))
+
 # 工具名（extract_agent 按名分流到 collector 的各个桶）。
 REPORT_CHECKIN = "report_checkin"
 REPORT_OUTCOME = "report_outcome"
@@ -90,7 +97,9 @@ class ReportOutcomeArgs(BaseModel):
     助教的用户背景）。同一句"睡得更差了"两边都该报，不要因为报了一边就省掉另一边。
     """
 
-    field_key: str = Field(description="成效字段 key（如 weight_change/sleep_change/energy_change 等）")
+    field_key: Literal[OUTCOME_FIELD_KEYS] = Field(  # type: ignore[valid-type]
+        description="成效维度，必须从枚举里选一个，不要自造名字；对不上任何维度就别调这个工具"
+    )
     event_type: str = Field(
         description=(
             "必须从以下值中选择：improved（有改善）/ completed（已达成/已完成）/ "
