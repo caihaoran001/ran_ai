@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import Settings, get_settings
@@ -30,7 +30,10 @@ from app.models.questionnaire import QuestionnaireSubmission
 from app.models.reminder import ReminderEvent, ReminderEventType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentType, UserDocument
-from app.services.agent import generate_scheduled_reminder_reply
+from app.services.agent import (
+    generate_churn_recall_reply,
+    generate_scheduled_reminder_reply,
+)
 from app.services.agent_observability import (
     COMPLETED as AGENT_RUN_COMPLETED,
     FAILED as AGENT_RUN_FAILED,
@@ -52,6 +55,7 @@ from app.services.service_case_queries import (
     checkin_day,
     effective_service_day,
     get_active_service_case,
+    last_user_inbound_subquery,
     select_active_service_cases,
     service_continuation_active,
     service_phase_end_at,
@@ -77,6 +81,8 @@ _CHECKIN_FOLLOWUP_WINDOWS = {
     "contradiction": (time(16, 0), time(17, 0)),
     "milestone": (time(19, 30), time(20, 30)),
 }
+# 流失召回的台账规则名：次数与间隔全部从这条规则的历史事件推导，不另设状态字段。
+CHURN_RECALL_RULE_ID = "churn_recall"
 
 
 class ReminderService:
@@ -147,6 +153,8 @@ class ReminderService:
                             await self.check_archivist_once()
                         if self.settings.checkin_followup_enabled:
                             await self.check_checkin_followup_v2_once()
+                        if self.settings.churn_recall_enabled:
+                            await self.check_churn_recall_once()
                         # 群体洞察可能有一次较长的 LLM 调用，放到循环末尾，
                         # 避免延迟阶段完结、提醒、补发等时效性任务。
                         if self.settings.population_insight_enabled:
@@ -625,6 +633,238 @@ class ReminderService:
                         error_type="ChannelSendFailed",
                     )
             await session.commit()
+
+    async def check_churn_recall_once(self, now: datetime | None = None) -> None:
+        """流失召回：服务中但用户本人长期沉默的服务单，主动在群里 @ 他发一条召回消息。
+
+        沉默口径与看板「流失用户」完全一致——只算用户本人的发言，班主任在群里跟进
+        不解除沉默，否则越跟进越召不回。同一轮沉默最多发 `churn_recall_max_per_silence`
+        条，用户一旦回话，计数自然归零（台账只数最后一次发言之后发生的召回）。
+        """
+        if not self.settings.churn_recall_enabled:
+            return
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        now = now or datetime.now(tz)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=tz)
+        window_start = _parse_time(self.settings.churn_recall_window_start)
+        window_end = _parse_time(self.settings.churn_recall_window_end)
+        if not (window_start <= now.time() < window_end):
+            return
+        now_utc = now.astimezone(timezone.utc)
+        today = now.date()
+        silent_gap = timedelta(days=self.settings.churn_recall_silent_days)
+
+        async with SessionLocal() as session:
+            last_user_subq = last_user_inbound_subquery()
+            # 从没说过话的人以建单时间起算，否则新建的空服务单永远不满足沉默条件。
+            last_user_at = func.coalesce(
+                last_user_subq.c.last_at, ServiceCase.created_at
+            )
+            candidates = list(
+                (
+                    await session.execute(
+                        select(ServiceCase, last_user_at.label("last_user_at"))
+                        .outerjoin(
+                            last_user_subq,
+                            last_user_subq.c.service_case_id == ServiceCase.id,
+                        )
+                        .where(
+                            active_service_case_condition(),
+                            ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                            # 群里说过「退下」的服务单不主动发消息。
+                            ServiceCase.ai_auto_reply_enabled.is_(True),
+                            last_user_at < now_utc - silent_gap,
+                        )
+                        .order_by(ServiceCase.id)
+                    )
+                ).all()
+            )
+            for service_case, silent_since in candidates:
+                try:
+                    await self._recall_one_case(
+                        session,
+                        service_case=service_case,
+                        silent_since=_as_utc(silent_since),
+                        now=now,
+                        now_utc=now_utc,
+                        today=today,
+                        window=(window_start, window_end),
+                        silent_gap=silent_gap,
+                    )
+                except Exception:
+                    # 一个服务单出问题不能连累后面的人；本轮跳过，下一轮条件仍满足会重来。
+                    await session.rollback()
+                    logger.exception(
+                        "Churn recall failed service_case_id=%s", service_case.id
+                    )
+
+    async def _recall_one_case(
+        self,
+        session,
+        *,
+        service_case: ServiceCase,
+        silent_since: datetime,
+        now: datetime,
+        now_utc: datetime,
+        today: date,
+        window: tuple[time, time],
+        silent_gap: timedelta,
+    ) -> None:
+        window_start, window_end = window
+        target = _deterministic_followup_time(
+            service_case.id, today, CHURN_RECALL_RULE_ID, window_start, window_end
+        )
+        if now.time() < target:
+            return
+
+        # 本轮沉默内已发过几条：台账里晚于「最后一次用户发言」的召回才算数。
+        # 用户一回话，这个基线就前移，历史召回自动失效，无需清零任务或额外字段。
+        history = list(
+            await session.scalars(
+                select(ReminderEvent)
+                .where(
+                    ReminderEvent.service_case_id == service_case.id,
+                    ReminderEvent.rule_id == CHURN_RECALL_RULE_ID,
+                )
+                .order_by(ReminderEvent.created_at.desc())
+            )
+        )
+        this_silence = [
+            event for event in history if _as_utc(event.created_at) > silent_since
+        ]
+        if len(this_silence) >= self.settings.churn_recall_max_per_silence:
+            return
+        if this_silence and now_utc - _as_utc(this_silence[0].created_at) < silent_gap:
+            return
+
+        silent_days = max(1, (now_utc - silent_since).days)
+        # @ 目标取这个人最后一条发言：正好就是要召回的本人。从没说过话的服务单拿不到，
+        # 走纯文本发送（_send_reminder_with_at 内部已兜底）。
+        last_user_message_id = await session.scalar(
+            select(Message.id)
+            .where(
+                Message.service_case_id == service_case.id,
+                Message.direction == MessageDirection.INBOUND,
+                Message.sender_type == MessageSenderType.USER,
+            )
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        recent_messages = await _recent_chat_lines(session, service_case.id)
+        run_started_at = clock.monotonic()
+        agent_run_id = await ensure_agent_run(
+            run_key=f"churn_recall:{service_case.id}:{today.isoformat()}",
+            agent_type="reply",
+            run_kind=CHURN_RECALL_RULE_ID,
+            service_case_id=service_case.id,
+            trigger_message_id=last_user_message_id,
+            trigger_reason="churn_recall",
+            input_count=1,
+            metadata={"silent_days": silent_days, "sent_in_silence": len(this_silence)},
+        )
+        try:
+            current_channel = get_current_channel()
+            agent_result = await generate_churn_recall_reply(
+                service_case_id=service_case.id,
+                trigger_id=last_user_message_id,
+                silent_days=silent_days,
+                recent_messages=recent_messages,
+                channel=getattr(current_channel, "name", None),
+                settings=self.settings,
+                agent_run_id=agent_run_id,
+            )
+            outbound_content = agent_result.reply.strip()
+        except Exception as exc:
+            logger.exception(
+                "Churn recall generation failed service_case_id=%s", service_case.id
+            )
+            await complete_agent_run(
+                agent_run_id=agent_run_id,
+                status=AGENT_RUN_FAILED,
+                outcome="churn_recall_generation_failed",
+                latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+                error_type=type(exc).__name__,
+            )
+            return
+        if not outbound_content:
+            await complete_agent_run(
+                agent_run_id=agent_run_id,
+                status=AGENT_RUN_FAILED,
+                outcome="churn_recall_empty",
+                latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+                error_type="EmptyReply",
+            )
+            return
+
+        # 消息账本仍然 record-first（发送前落 PENDING），这是外部发送的传输边界要求。
+        message = Message(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            direction=MessageDirection.OUTBOUND,
+            sender_type=MessageSenderType.SYSTEM,
+            message_type="markdown",
+            content=outbound_content,
+            purpose=MessagePurpose.REMINDER,
+            status=MessageStatus.PENDING,
+            trigger_id=last_user_message_id,
+            analysis_json={
+                "churn_recall": {
+                    "silent_days": silent_days,
+                    "sent_in_silence": len(this_silence) + 1,
+                },
+                "agent": {"enabled": True, "tool_trace": agent_result.tool_trace},
+            },
+        )
+        session.add(message)
+        await session.flush()
+
+        at_target = await _resolve_reminder_at_target(session, last_user_message_id)
+        result, sent_content = await _send_reminder_with_at(
+            service_case.group_id, outbound_content, at_target
+        )
+        message.content = sent_content
+        if not (result and result.success):
+            # 关键：发送失败不写台账。打卡追问的反向教训——它在发送前就占位，通道故障
+            # 两天就把用户永久静音。这里失败只留一条失败消息，次日条件仍满足会自然重试。
+            message.status = MessageStatus.FAILED
+            message.error = result.error if result else "channel send failed"
+            await session.commit()
+            await complete_agent_run(
+                agent_run_id=agent_run_id,
+                status=AGENT_RUN_FAILED,
+                outcome="churn_recall_send_failed",
+                latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+                error_type="ChannelSendFailed",
+            )
+            return
+
+        message.status = MessageStatus.SENT
+        message.wecom_message_id = result.message_id
+        message.sent_at = datetime.now(timezone.utc)
+        # 发送成功才记台账；唯一约束(服务单+规则+日期+类型)保证同一天不可能记第二条。
+        await _reserve_reminder_event(
+            session,
+            service_case.id,
+            rule_id=CHURN_RECALL_RULE_ID,
+            event_date=today,
+            event_type=ReminderEventType.REMINDED,
+        )
+        # 每个服务单单独提交，把「已发出但台账没落」的崩溃窗口压到最小。
+        await session.commit()
+        await complete_agent_run(
+            agent_run_id=agent_run_id,
+            status=AGENT_RUN_COMPLETED,
+            outcome="churn_recall_sent",
+            latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+            output_count=1,
+        )
+        logger.info(
+            "Churn recall sent service_case_id=%s silent_days=%s sent_in_silence=%s",
+            service_case.id,
+            silent_days,
+            len(this_silence) + 1,
+        )
 
     async def check_pending_intake_generation_once(self) -> None:
         """消费入营问卷提交留下的"待生成"信号。
@@ -1388,6 +1628,11 @@ async def _reserve_reminder_event(
     except IntegrityError:
         return None
     return event
+
+
+def _as_utc(value: datetime) -> datetime:
+    """把可能 naive 的时间戳按 UTC 归一，供跨库(SQLite 测试库返回 naive)的时间比较使用。"""
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def _parse_time(value: str) -> time:

@@ -235,6 +235,26 @@ class Settings(BaseSettings):
         default="20:30", validation_alias="CHECKIN_FOLLOWUP_WINDOW_END"
     )
 
+    # 流失召回：服务中但用户本人已长期沉默的服务单，自动在群里 @ 他发一条召回消息。
+    # 沉默口径与看板「流失用户」一致——只算用户本人发言，班主任在群里跟进不解除沉默。
+    # 会发送真实群消息且每条都调模型，默认 False=不召回；设 CHURN_RECALL_ENABLED=true 开启。
+    churn_recall_enabled: bool = Field(default=False, validation_alias="CHURN_RECALL_ENABLED")
+    # 沉默满这么多天才召回；同一轮沉默里两条召回也按这个间隔隔开（第 7 天、第 14 天各一条）。
+    churn_recall_silent_days: int = Field(
+        default=7, ge=1, validation_alias="CHURN_RECALL_SILENT_DAYS"
+    )
+    # 同一轮沉默最多发几条。用户一旦回话，计数自然归零（只数最后一次发言之后的召回）。
+    churn_recall_max_per_silence: int = Field(
+        default=2, ge=1, validation_alias="CHURN_RECALL_MAX_PER_SILENCE"
+    )
+    # 发送窗口[start,end)：按 (case_id,日期) 在窗内确定性散列出一个时刻，避免整点齐发被风控。
+    churn_recall_window_start: str = Field(
+        default="10:00", validation_alias="CHURN_RECALL_WINDOW_START"
+    )
+    churn_recall_window_end: str = Field(
+        default="11:00", validation_alias="CHURN_RECALL_WINDOW_END"
+    )
+
     auto_send_documents: bool = Field(
         default=False,
         validation_alias="AUTO_SEND_DOCUMENTS",

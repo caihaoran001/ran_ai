@@ -78,6 +78,13 @@ class _AgentGraphExecutionContext:
 
 _AGENT_GRAPH_CACHE: list[tuple[BaseCheckpointSaver | None, Any]] = []
 
+# 模型用量账本里的场景标签：区分同一个 ReAct Agent 被哪种任务驱动，便于按用途看成本。
+# 未登记的运行类型一律记为普通回复。
+_USAGE_SCENARIOS = {
+    "scheduled_reminder": "agent_reminder",
+    "churn_recall": "churn_recall",
+}
+
 
 class RanrenAgentGraph:
     """One run's dependencies backed by a process-shared compiled topology."""
@@ -277,11 +284,7 @@ class RanrenAgentGraph:
                 "llm_call_count": llm_count,
             }
         started_at = time.monotonic()
-        scenario = (
-            "agent_reminder"
-            if self.context.run_kind == "scheduled_reminder"
-            else "reply_agent"
-        )
+        scenario = _USAGE_SCENARIOS.get(self.context.run_kind, "reply_agent")
         try:
             response = await self.model.ainvoke(state.get("messages") or [])
         except Exception as exc:
@@ -643,6 +646,64 @@ async def generate_scheduled_reminder_reply(
         settings=settings,
         include_reminder_tools=False,
     ).run(user_query=user_query, recent_messages=recent_messages, query_speaker="系统定时任务")
+
+
+# 召回消息的「重新启动」动作候选。三件都是刻意压到最低门槛的单个动作，
+# 由模型结合这个人卡在哪一环挑一件，不是清单也不是三选一让用户选。
+# 措辞是业务侧定的原话（含「收口」这类内部术语），不要改写。
+_CHURN_RECALL_RESTART_ACTIONS = (
+    "只拍一张餐照",
+    "只做一次收口",
+    "只报一下昨晚几点睡觉",
+)
+
+
+async def generate_churn_recall_reply(
+    *,
+    service_case_id: int,
+    trigger_id: int | None,
+    silent_days: int,
+    recent_messages: list[str],
+    channel: str | None = None,
+    settings: Settings | None = None,
+    agent_run_id: int | None = None,
+) -> AgentReplyResult:
+    """长期沉默用户的召回文案：一条消息里「一个极小的重启动作 + 约燃总聊一次」。
+
+    silent_days 只用来让模型判断疏远程度，**不能写进文案**——把天数摆到用户面前
+    等于当众点名他掉队了，只会让本就不想开口的人更不想开口。
+    """
+    settings = settings or get_settings()
+    actions = "、".join(_CHURN_RECALL_RESTART_ACTIONS)
+    user_query = (
+        "这是一条主动召回消息：这位用户已经很久没有在群里说话了，现在要发一条消息把他拉回来。"
+        "直接生成最终要发到群里的文案，不要追问确认，不要创建提醒。\n"
+        "文案固定包含两部分，合成一条消息、自然衔接，总共三四句话：\n"
+        f"（1）重新启动：从这三件里挑【一件】最贴合他情况的——{actions}。"
+        "只提一件，保留“只……”的说法，让他觉得几乎不花力气就能重新开始；"
+        "结合他之前卡在哪一环来挑（比如一直没拍过餐、总是晚上加餐、作息乱），"
+        "不要三件都列，也不要写成任务清单。\n"
+        "（2）个案交流：问他要不要安排一次和燃总的电话或视频，做一次个案交流。"
+        "只问意愿，不要提任何具体时间或时间选项——具体怎么约由班主任后续安排。\n"
+        "硬性要求：\n"
+        "- 结合他自己的情况写，不要写谁都适用的通用问候\n"
+        "- 不要提他多久没说话、没打卡、掉队了这类计数或评价，不要质问原因，不要施压\n"
+        "- 不要给任何健康建议、饮食方案、用量或症状判断，这条消息只负责把人叫回来\n"
+        "- 不要在文案里写“@某人/@昵称”，系统会自动用企微原生 @ 提醒到他本人\n"
+        "- 语气像相熟的人隔了阵子来问一句，不要像客服话术或群发广告\n"
+        f"（供你判断疏远程度的内部信息，禁止写进文案：他已 {silent_days} 天没有发言。）"
+    )
+    return await RanrenAgentGraph(
+        context=AgentRunContext(
+            service_case_id=service_case_id,
+            trigger_id=trigger_id,
+            agent_run_id=agent_run_id,
+            run_kind="churn_recall",
+            channel=channel,
+        ),
+        settings=settings,
+        include_reminder_tools=False,
+    ).run(user_query=user_query, recent_messages=recent_messages, query_speaker="系统召回任务")
 
 
 def _agent_context_plan(analysis: dict[str, Any] | None) -> dict[str, Any] | None:
