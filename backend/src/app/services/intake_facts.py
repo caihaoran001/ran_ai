@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.services.body_metrics import has_explicit_jin, parse_waist_cm
 
 CUSTOM_ANSWER_LABEL = "其他（用户补充）"
 
@@ -282,25 +283,27 @@ def _parse_weight_kg(value: str) -> float | None:
     number = _first_number(value)
     if number is None or number <= 0:
         return None
-    text = str(value or "").strip().lower()
-    is_jin = "斤" in text and not any(unit in text for unit in ("公斤", "千克", "kg", "㎏"))
-    return number / 2 if is_jin else number
+    return number / 2 if has_explicit_jin(str(value or "")) else number
 
 
 def _normalize_waist_cm(value: str) -> float | None:
-    """腰围统一成厘米，只修正明确写出的单位，不猜用户未写明的数值。"""
+    """腰围统一成厘米。单位规则统一由 ``body_metrics`` 定义，问卷与打卡共用一套。
 
-    number = _first_number(value)
-    if number is None or number <= 0:
-        return None
-    text = str(value or "").strip().lower()
-    if "mm" in text or "毫米" in text:
-        return number / 10
-    if ("m" in text and "cm" not in text and "mm" not in text) or (
-        "米" in text and "厘米" not in text and "毫米" not in text
-    ):
-        return number * 100
-    return number
+    相比历史实现多认了市尺（「2尺4」「24.5」按 33.3cm/尺 换算），问卷腰围会进腰高比
+    和交付文件，填 24.5 当成 24.5 厘米会让腰高比变成 0.15。
+
+    但换算不出可信值时**不能**当成"没填"：问卷侧的安全网是下游腰高比矛盾检查
+    （见 ``intake_generation._document_generation_block_reasons``），它靠一个离谱的
+    比值提醒运营复测。清成空值会让这条提示消失、脏数据反而绕过人工复核。
+    所以这里保留原始数字，把判断交还给那道检查。打卡统计侧相反——它直接丢弃，
+    因为统计不需要复核，只需要不被污染。
+    """
+
+    parsed = parse_waist_cm(value)
+    if parsed.value is not None:
+        return parsed.value
+    number = _first_number(str(value or ""))
+    return number if number and number > 0 else None
 
 
 def _normalize_height_cm(value: float | None) -> float | None:
