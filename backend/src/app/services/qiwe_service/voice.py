@@ -101,6 +101,13 @@ async def transcribe_and_dispatch(
     """
     from app.api.routes.qiwe import _bypass_aggregator
 
+    # 回调路由解析出的消息还没挂上收件箱事件号（dispatcher 那条路径才带），先补上
+    # 再转写，否则本地这条路径的转写结果无处可存，重启重放又得再转一次。
+    if inbound_event_id is not None:
+        message.inbound_event_ids = list(
+            dict.fromkeys([*message.inbound_event_ids, inbound_event_id])
+        )
+
     message = await transcribe_inbound_voice(message)
     if _bypass_aggregator(message):
         await aggregator.dispatch_now(message, inbound_event_id=inbound_event_id)

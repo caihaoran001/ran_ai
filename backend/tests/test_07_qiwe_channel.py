@@ -3370,6 +3370,74 @@ async def test_voice_transcribe_already_done_is_idempotent(monkeypatch):
     assert channel.calls == []
 
 
+@pytest.mark.asyncio
+async def test_voice_transcript_persisted_and_routed_to_window(
+    db_session,
+    monkeypatch,
+):
+    """转写结果必须落回收件箱事件，且转写后按文本消息进聚合窗口。
+
+    回调路由解析出的消息本身不带事件号，只有 dispatch 时才作为参数传入；不把它挂回
+    消息上，转写结果就无处可存，重启重放会再转一次（旧实现在这条路径上正是如此）。
+    """
+    from sqlalchemy import select
+    from app.models.inbound_event import InboundEvent
+    from app.services.qiwe_service.voice import (
+        VOICE_TRANSCRIPT_FIELD,
+        transcribe_and_dispatch,
+    )
+
+    channel = RecordingTranscribeChannel(result="我今早体重62.5")
+    monkeypatch.setattr("app.services.channels.get_current_channel", lambda: channel)
+
+    message_id = f"voice-persist-{secrets.token_hex(4)}"
+    message = _channel_message_from_qiwe(_voice_payload(msgUniqueIdentifier=message_id))
+    assert message is not None
+    assert message.message_type == "voice"
+    assert message.inbound_event_ids == []
+
+    event = InboundEvent(
+        event_type=InboundEvent.EVENT_MESSAGE,
+        channel="qiwe",
+        chat_id=message.chat_id,
+        user_id=message.user_id,
+        message_id=message_id,
+        text=message.text,
+        message_type="voice",
+        raw_payload=message.raw_payload,
+        status=InboundEvent.STATUS_PROCESSING,
+    )
+    db_session.add(event)
+    await db_session.flush()
+    event_id = event.id
+
+    routed: list[tuple[str, ChannelMessage]] = []
+
+    class _Aggregator:
+        async def enqueue(self, msg, *, inbound_event_id=None):
+            routed.append(("enqueue", msg))
+
+        async def dispatch_now(self, msg, *, inbound_event_id=None):
+            routed.append(("dispatch_now", msg))
+
+    await transcribe_and_dispatch(_Aggregator(), message, inbound_event_id=event_id)
+
+    # 转成文本 → 进 8 秒聚合窗口，而不是按非文本消息绕过窗口只留痕
+    assert [kind for kind, _ in routed] == ["enqueue"]
+    assert routed[0][1].message_type == "text"
+    assert routed[0][1].text == "我今早体重62.5"
+    assert routed[0][1].voice_transcript is True
+
+    stored = await db_session.scalar(
+        select(InboundEvent).where(InboundEvent.id == event_id)
+    )
+    await db_session.refresh(stored)
+    assert stored.message_type == "text"
+    assert stored.text == "我今早体重62.5"
+    assert stored.raw_payload["msgData"][VOICE_TRANSCRIPT_FIELD] == "我今早体重62.5"
+    assert channel.calls == [(90123, "device-guid-callback")]
+
+
 def test_qiwe_aggregator_merge_keeps_voice_transcript_flag():
     """同轮聚合里含语音转写 → 合并结果仍标记来自语音，供落库与模型上下文使用。"""
     voice_msg = ChannelMessage(
@@ -3403,15 +3471,19 @@ def test_qiwe_aggregator_merge_keeps_voice_transcript_flag():
 
 
 @pytest.mark.asyncio
-async def test_current_query_marks_voice_transcript():
-    """模型上下文标注该句来自语音转写；普通消息不标注。"""
+async def test_current_query_keeps_voice_transcript_indistinguishable():
+    """语音转写的正文与打字消息在模型上下文里完全一致，不带任何来源标注。
+
+    异常数字该由「和这个人的历史对不对得上」来拦（打字同样会打错），按来源设岗只防得住
+    语音一种入口，还会让模型对识别正常的数字反复追问。来源只落库供人排查。
+    """
     voice_msg = _channel_message_from_qiwe(
         _voice_payload(msgData={"content": "[语音]", "voiceToText": "我今早体重62.5"})
     )
     assert voice_msg is not None
     query = await _build_current_query({}, voice_msg)
-    assert "语音转写" in query
-    assert "62.5" in query
+    assert query == "用户：我今早体重62.5"
+    assert "语音" not in query
 
     plain_msg = _channel_message_from_qiwe(
         {
@@ -3427,14 +3499,11 @@ async def test_current_query_marks_voice_transcript():
     )
     assert plain_msg is not None
     plain_query = await _build_current_query({}, plain_msg)
-    assert "语音转写" not in plain_query
-    assert "62.5" in plain_query
+    # 打字发的同一句话渲染结果逐字相同：模型无从分辨这轮是说的还是打的。
+    assert plain_query == query
 
 
-def test_current_query_body_marks_voice_transcript():
-    """单段渲染（无 segments 的通道/测试消息）同样标注语音来源。"""
-    body = _current_query_body({}, "我今早体重62.5", voice_transcript=True)
-    assert "语音转写" in body
-    assert "62.5" in body
-    plain = _current_query_body({}, "我今早体重62.5")
-    assert "语音转写" not in plain
+def test_current_query_body_has_no_voice_marker():
+    """单段渲染（无 segments 的通道/测试消息）同样不带语音来源标注。"""
+    body = _current_query_body({}, "我今早体重62.5")
+    assert body == "用户：我今早体重62.5"
