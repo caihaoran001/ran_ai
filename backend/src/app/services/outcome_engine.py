@@ -15,6 +15,8 @@ from app.models.message import Message
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot, OutcomeStageState
 from app.models.service_case import ServiceCase
 from app.core.config import get_settings
+from app.services.body_change_stats import load_intake_baselines
+from app.services.body_metrics import parse_waist_cm, parse_weight_kg
 from app.services.service_case_queries import effective_service_day, effective_start_at
 from app.services.user_state_profile import (
     OUTCOME_FIELD_DOMAIN_MAP,
@@ -374,7 +376,17 @@ async def generate_outcome_snapshot(
         )
     )
     state = await get_or_create_stage_state(session, service_case.id, spec)
-    metrics = _snapshot_metrics(service_case, spec, checkins, state)
+    # 打卡里的体重/腰围是自由文本，判断裸数字是公斤还是斤要拿本人入营问卷值当锚。
+    baselines = await load_intake_baselines(session, [service_case.id])
+    baseline_weight, baseline_waist = baselines.get(service_case.id, (None, None))
+    metrics = _snapshot_metrics(
+        service_case,
+        spec,
+        checkins,
+        state,
+        baseline_weight=baseline_weight,
+        baseline_waist=baseline_waist,
+    )
     evidence = {
         "outcome_events": [
             {
@@ -574,11 +586,27 @@ def _snapshot_metrics(
     spec: OutcomeMilestoneSpec,
     checkins: list[Checkin],
     state: OutcomeStageState,
+    *,
+    baseline_weight: float | None = None,
+    baseline_waist: float | None = None,
 ) -> dict[str, Any]:
+    """阶段快照的客观指标。
+
+    体重/腰围一律走 ``body_metrics`` 解析：只取第一个数字会把「140.2斤 → 70.7kg」
+    算成掉了 70 公斤，把腰围填的「0」当成真实围度。解析不出可信值的记录直接不参与，
+    快照宁可少一个数，也不能给出离谱的变化。
+    """
+
     relevant_checkins = [item for item in checkins if _checkin_day(service_case, item) <= spec.day]
-    weights = [_number_from_value((item.parsed_json or {}).get("weight")) for item in relevant_checkins]
+    weights = [
+        parse_weight_kg((item.parsed_json or {}).get("weight"), baseline_kg=baseline_weight).value
+        for item in relevant_checkins
+    ]
     weights = [item for item in weights if item is not None]
-    waists = [_number_from_value((item.parsed_json or {}).get("waist")) for item in relevant_checkins]
+    waists = [
+        parse_waist_cm((item.parsed_json or {}).get("waist"), baseline_cm=baseline_waist).value
+        for item in relevant_checkins
+    ]
     waists = [item for item in waists if item is not None]
     return {
         "milestone": spec.milestone,

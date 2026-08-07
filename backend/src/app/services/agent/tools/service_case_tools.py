@@ -16,6 +16,7 @@ from app.models.service_case import ServiceCase
 from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.agent.state import AgentRunContext
+from app.services.body_metrics import parse_weight_kg
 from app.services.checkin_presentation import (
     load_personalized_checkin_labels,
     personalized_checkin_answers,
@@ -214,9 +215,14 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             initial_weight = await _initial_weight_from_profile(session, context.service_case_id)
         points: list[dict[str, Any]] = []
         for row in rows:
-            weight = _extract_float((row.parsed_json or {}).get("weight"))
-            if weight is not None:
-                points.append({"date": row.checkin_date.isoformat(), "weight": weight})
+            # 走统一解析：用户会填「140.2斤」「68·3」「0」，直接 float() 要么解析失败
+            # 丢掉这天、要么把 0 当成真实体重，AI 就会跟用户说错变化幅度。
+            # 入营初始体重同时充当判断裸数字是公斤还是斤的锚。
+            parsed = parse_weight_kg(
+                (row.parsed_json or {}).get("weight"), baseline_kg=initial_weight
+            )
+            if parsed.ok:
+                points.append({"date": row.checkin_date.isoformat(), "weight": parsed.value})
         if len(points) < 2:
             note = "体重数据不足，不能判断趋势。"
             if initial_weight is not None and not points:
