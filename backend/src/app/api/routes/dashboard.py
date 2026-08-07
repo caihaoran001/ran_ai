@@ -59,6 +59,8 @@ from app.services.intake_facts import (
     weight_loss_band_from_profile,
 )
 from app.services.health_taxonomy import health_profile_dimension_labels
+# 成效表只收正向事件；这里复用同一份定义，避免看板口径与写入口径漂移。
+from app.services.outcome_engine import VALID_EVENT_TYPES as POSITIVE_OUTCOME_EVENT_TYPES
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.population_scope import select_population_service_cases
 from app.services.population_insight import (
@@ -1753,6 +1755,12 @@ async def _build_outcome_summary(
         },
     )
     referral_cases = await _outcome_event_case_count(session, {"referral_signal"})
+    sleep_improved_cases = await _outcome_event_case_count(
+        session,
+        {"sleep_change"},
+        event_types=POSITIVE_OUTCOME_EVENT_TYPES,
+    )
+    sleep_reported_cases, sleep_improved_with_checkin = await _sleep_checkin_coverage(session)
     day28_weight_avg, day28_weight_count, day28_waist_avg, day28_waist_count = await _day28_change_averages(
         session,
         now=now,
@@ -1842,7 +1850,36 @@ async def _build_outcome_summary(
                 sample_count=day28_waist_count,
                 description="来自第28天阶段快照的腰围变化均值；样本不足时不展示结论。",
             ),
+            _rate_metric(
+                key="sleep_improvement_rate",
+                label="睡眠质量提升率",
+                numerator=sleep_improved_cases,
+                denominator=active_cases,
+                description=_sleep_improvement_description(
+                    improved_cases=sleep_improved_cases,
+                    reported_cases=sleep_reported_cases,
+                    improved_with_checkin=sleep_improved_with_checkin,
+                ),
+            ),
         ],
+    )
+
+
+def _sleep_improvement_description(
+    *,
+    improved_cases: int,
+    reported_cases: int,
+    improved_with_checkin: int,
+) -> str:
+    base = (
+        "聊天或打卡中出现睡眠变好证据（入睡变快、夜醒减少、睡眠评分提高等）的用户占全部有效服务单的比例。"
+    )
+    if reported_cases <= 0:
+        return base
+    rate = round(improved_with_checkin * 100 / reported_cases, 1)
+    return (
+        f"{base}另一个角度：打卡里记录过睡眠的 {reported_cases} 人中有 "
+        f"{improved_with_checkin} 人变好（{rate}%）。"
     )
 
 
@@ -1935,16 +1972,59 @@ async def _checkin_completion_case_count(
     return count or 0
 
 
-async def _outcome_event_case_count(session: AsyncSession, field_keys: set[str]) -> int:
+async def _outcome_event_case_count(
+    session: AsyncSession,
+    field_keys: set[str],
+    *,
+    event_types: set[str] | None = None,
+) -> int:
+    conditions = [
+        active_service_case_condition(),
+        OutcomeEvent.field_key.in_(sorted(field_keys)),
+    ]
+    if event_types:
+        conditions.append(OutcomeEvent.event_type.in_(sorted(event_types)))
     count = await session.scalar(
         select(func.count(distinct(OutcomeEvent.service_case_id)))
         .join(ServiceCase, OutcomeEvent.service_case_id == ServiceCase.id)
-        .where(
-            active_service_case_condition(),
-            OutcomeEvent.field_key.in_(sorted(field_keys)),
-        )
+        .where(*conditions)
     )
     return count or 0
+
+
+async def _sleep_checkin_coverage(session: AsyncSession) -> tuple[int, int]:
+    """打卡里真正记录过睡眠的人数，以及其中睡眠被判定变好的人数。
+
+    成效表只收正向事件，负向/无变化改由状态画像承接，所以"聊到过睡眠的人"无法从成效表
+    稳定统计（越往后越会只剩变好的人，比例虚高）。打卡里的睡眠字段与判定口径无关，是可长期
+    对比的分母。
+    """
+
+    sleep_value = Checkin.parsed_json["sleep"].as_string()
+    reported_cases = (
+        select(distinct(Checkin.service_case_id).label("service_case_id"))
+        .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
+        .where(
+            active_service_case_condition(),
+            Checkin.deleted_at.is_(None),
+            sleep_value.is_not(None),
+            func.btrim(sleep_value) != "",
+        )
+        .subquery()
+    )
+    reported_count = await session.scalar(select(func.count()).select_from(reported_cases))
+
+    improved_count = await session.scalar(
+        select(func.count(distinct(OutcomeEvent.service_case_id)))
+        .join(ServiceCase, OutcomeEvent.service_case_id == ServiceCase.id)
+        .join(reported_cases, reported_cases.c.service_case_id == OutcomeEvent.service_case_id)
+        .where(
+            active_service_case_condition(),
+            OutcomeEvent.field_key == "sleep_change",
+            OutcomeEvent.event_type.in_(sorted(POSITIVE_OUTCOME_EVENT_TYPES)),
+        )
+    )
+    return reported_count or 0, improved_count or 0
 
 
 async def _day28_change_averages(

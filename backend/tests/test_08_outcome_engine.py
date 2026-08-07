@@ -778,3 +778,58 @@ async def test_dashboard_summary_includes_global_outcome_metrics(db_session, adm
     )
     assert metrics["avg_day28_weight_change"]["value"] == expected_weight_avg
     assert metrics["avg_day28_weight_change"]["denominator"] == baseline_weight_count + 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_sleep_improvement_rate_counts_positive_only(
+    db_session, admin_client, mock_ai
+):
+    baseline = await admin_client.get("/dashboard/summary")
+    baseline_metric = next(
+        item
+        for item in baseline.json()["outcome_summary"]["metrics"]
+        if item["key"] == "sleep_improvement_rate"
+    )
+    baseline_numerator = baseline_metric["numerator"]
+
+    improved_case = await _setup_outcome_case(db_session, days=14)
+    worse_case = await _setup_outcome_case(db_session, days=14)
+    for case, event_type in ((improved_case, "improved"), (worse_case, "worsened")):
+        db_session.add(
+            OutcomeEvent(
+                service_case_id=case.id,
+                milestone="day7",
+                field_key="sleep_change",
+                event_type=event_type,
+                value_text="睡眠变化",
+                evidence_text="用户原话",
+                confidence=0.9,
+                source="chat",
+                occurred_at=datetime.now(timezone.utc),
+            )
+        )
+        db_session.add(
+            Checkin(
+                service_case_id=case.id,
+                group_id=case.group_id,
+                checkin_date=datetime.now(timezone.utc).date(),
+                content="打卡",
+                parsed_json={"sleep": "睡了7小时", "weight": "65"},
+            )
+        )
+    await db_session.flush()
+
+    response = await admin_client.get("/dashboard/summary")
+    assert response.status_code == 200
+    metrics = {
+        item["key"]: item for item in response.json()["outcome_summary"]["metrics"]
+    }
+    metric = metrics["sleep_improvement_rate"]
+
+    # 只有 improved 计入分子，worsened 不算；分母是全部有效服务单
+    assert metric["numerator"] == baseline_numerator + 1
+    assert metric["label"] == "睡眠质量提升率"
+    assert metric["unit"] == "%"
+    assert metric["denominator"] == metrics["profile_completion_rate"]["denominator"]
+    # 副口径落在说明文字里：打卡记录过睡眠的人中有多少变好
+    assert "打卡里记录过睡眠的" in metric["description"]
