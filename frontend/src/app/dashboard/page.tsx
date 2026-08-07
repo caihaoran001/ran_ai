@@ -455,24 +455,53 @@ function OutcomeMetricCard({ metric }: { metric: OutcomeMetric }) {
   );
 }
 
+// 体重/腰围两个指标点进去能看分窗口、分人群和样本口径。
+const OUTCOME_METRIC_LINKS: Record<string, string> = {
+  day28_weight_change_median: "/dashboard/body-change",
+  day28_waist_change_median: "/dashboard/body-change",
+};
+
 function OutcomeSignalRow({ metric }: { metric: OutcomeMetric }) {
-  return (
-    <div className="rounded-xl border border-slate-200 px-4 py-3">
+  const href = OUTCOME_METRIC_LINKS[metric.key];
+  const body = (
+    <>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium text-slate-700">{metric.label}</span>
+        <span className="text-sm font-medium text-slate-700">
+          {metric.label}
+          {href && <ArrowUpRight className="ml-1 inline h-3.5 w-3.5 text-cyan-600" />}
+        </span>
         <span className="text-sm font-bold text-slate-950">
           {formatOutcomeValue(metric)}
           {metric.status !== "no_sample" ? metric.unit : ""}
         </span>
       </div>
       <p className="mt-2 text-xs leading-5 text-slate-500">{metric.description}</p>
-    </div>
+    </>
   );
+  if (href) {
+    return (
+      <Link
+        href={href}
+        prefetch={false}
+        className="block rounded-xl border border-slate-200 px-4 py-3 transition hover:border-cyan-300 hover:bg-cyan-50/40"
+      >
+        {body}
+      </Link>
+    );
+  }
+  return <div className="rounded-xl border border-slate-200 px-4 py-3">{body}</div>;
 }
 
 function formatOutcomeValue(metric: OutcomeMetric) {
   if (metric.status === "no_sample" || metric.value === null || metric.value === undefined) {
     return "暂无样本";
+  }
+  // 体征变化是有方向的：负数代表瘦了/小了，原来只显示裸数字会被读反
+  // （线上那个「9.1cm」其实是变大方向，却被当成缩减 9 厘米）。
+  if (metric.unit === "kg" || metric.unit === "cm") {
+    if (metric.value === 0) return "持平";
+    const magnitude = Math.abs(metric.value).toFixed(1).replace(/\.0$/, "");
+    return `${metric.value < 0 ? "减少" : "增加"} ${magnitude}`;
   }
   if (Number.isInteger(metric.value)) {
     return String(metric.value);
