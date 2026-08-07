@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.db.session import get_session
 from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
-from app.models.message import Message, MessageDirection
+from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.schemas.service_case import (
@@ -314,11 +314,13 @@ def _apply_service_case_filter(statement, metric: str | None):
         return statement.join(message_subq, message_subq.c.service_case_id == ServiceCase.id)
 
     if metric == "active_24h":
-        # 活跃用户：近 24 小时内有「用户发言」(inbound) 的服务单（不含机器人/班主任发出的 outbound）。
+        # 活跃用户：近 24 小时内「用户本人」发过言的服务单。
+        # 只按 INBOUND 不够：班主任在群里说话同样是 INBOUND，会把没吭声的群也算成活跃。
         active_subq = (
             select(Message.service_case_id)
             .where(
                 Message.direction == MessageDirection.INBOUND,
+                Message.sender_type == MessageSenderType.USER,
                 Message.created_at >= now - timedelta(hours=24),
             )
             .distinct()

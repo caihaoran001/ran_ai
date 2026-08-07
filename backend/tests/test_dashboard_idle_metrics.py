@@ -113,3 +113,19 @@ async def test_user_list_lost_filter_matches_dashboard(db_session, admin_client,
     assert staff_followed.id in case_ids
     # 顺带确认 filter 真的生效了（否则全量返回会让上一条断言假通过）。
     assert talking.id not in case_ids
+
+
+@pytest.mark.asyncio
+async def test_active_24h_filter_counts_only_user_messages(db_session, admin_client, mock_ai):
+    """活跃用户视图同理：班主任刚在群里说过话，不代表用户今天在聊。"""
+    talking = await _idle_case(db_session, name="今天在聊的用户", user_days_ago=0.2)
+    staff_only = await _idle_case(
+        db_session, name="只有班主任说话的群", user_days_ago=9, staff_days_ago=0.2
+    )
+
+    response = await admin_client.get("/service-cases", params={"filter": "active_24h"})
+    assert response.status_code == 200
+    case_ids = {item["id"] for item in response.json()}
+
+    assert talking.id in case_ids
+    assert staff_only.id not in case_ids
