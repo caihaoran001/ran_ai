@@ -175,6 +175,59 @@ class DashboardCasePendingDocuments(BaseModel):
     documents: list[DashboardPendingDocument] = Field(default_factory=list)
 
 
+class BodyChangeStat(BaseModel):
+    """一组体重/腰围变化的统计口径。负数=减少。
+
+    中位数是对外主口径：样本只有几十人时，个别极端个案会把均值整体带偏。
+    """
+
+    sample_count: int = 0
+    median: float | None = None
+    mean: float | None = None
+    best: float | None = None  # 减得最多的那个人
+    worst: float | None = None  # 增得最多的那个人
+
+
+class BodyChangeSegmentBucket(BaseModel):
+    bucket: str
+    stat: BodyChangeStat
+    conclusive: bool = True  # 样本太少时只报人数、不给结论
+
+
+class BodyChangeSegment(BaseModel):
+    key: str
+    label: str
+    description: str = ""
+    buckets: list[BodyChangeSegmentBucket] = Field(default_factory=list)
+
+
+class BodyChangeMetricWindow(BaseModel):
+    """某个窗口（3/7/14/28 天）里一个指标的完整交代。"""
+
+    stat: BodyChangeStat
+    eligible_cases: int = 0  # 服务天数已走到该窗口的人数（分母）
+    coverage_rate: float | None = None  # 有效样本 / 分母
+    unverified_unit_count: int = 0  # 无问卷基线可核对单位的样本数
+    excluded: dict[str, int] = Field(default_factory=dict)  # 未纳入原因 → 人数
+    segments: list[BodyChangeSegment] = Field(default_factory=list)
+
+
+class BodyChangeWindow(BaseModel):
+    window_day: int
+    weight: BodyChangeMetricWindow
+    waist: BodyChangeMetricWindow
+
+
+class BodyChangeSummary(BaseModel):
+    """体重/腰围变化的分窗口口径，供看板详情页完整展示样本与剔除原因。"""
+
+    min_checkin_rate: float = 0.0
+    windows: list[BodyChangeWindow] = Field(default_factory=list)
+    weight_record_reasons: dict[str, int] = Field(default_factory=dict)
+    waist_record_reasons: dict[str, int] = Field(default_factory=dict)
+    generated_at: datetime | None = None
+
+
 class PopulationDistributionBucket(BaseModel):
     label: str
     count: int

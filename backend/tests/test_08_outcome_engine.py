@@ -689,9 +689,7 @@ async def test_dashboard_summary_includes_global_outcome_metrics(db_session, adm
         item["key"]: item
         for item in baseline_response.json()["outcome_summary"]["metrics"]
     }
-    baseline_weight = baseline_metrics["avg_day28_weight_change"]
-    baseline_weight_count = baseline_weight["denominator"]
-    baseline_weight_value = baseline_weight["value"] or 0
+    baseline_weight_count = baseline_metrics["day28_weight_change_median"]["denominator"]
 
     case = await _setup_outcome_case(db_session, days=28)
     db_session.add(
@@ -722,7 +720,9 @@ async def test_dashboard_summary_includes_global_outcome_metrics(db_session, adm
             ),
         ]
     )
-    for offset in range(20):
+    # 打卡覆盖到第 28 天：体重/腰围变化按"入营起点 → 第28天前后"计算，
+    # 只打到第 20 天的人在 28 天窗口里没有终点值，不该被算进这个数。
+    for offset in range(28):
         db_session.add(
             Checkin(
                 service_case_id=case.id,
@@ -778,13 +778,12 @@ async def test_dashboard_summary_includes_global_outcome_metrics(db_session, adm
     assert metrics["day28_checkin_completion_rate"]["numerator"] >= 1
     assert metrics["body_feedback_rate"]["numerator"] >= 1
     assert metrics["core_document_generation_rate"]["label"] == "核心交付生成率"
-    expected_weight_avg = round(
-        ((baseline_weight_value * baseline_weight_count) - 1.2)
-        / (baseline_weight_count + 1),
-        2,
-    )
-    assert metrics["avg_day28_weight_change"]["value"] == expected_weight_avg
-    assert metrics["avg_day28_weight_change"]["denominator"] == baseline_weight_count + 1
+    # 体重变化改成从打卡记录现算（不再读阶段快照里那个已被单位混填污染的值），
+    # 这个用户两头都有数据所以进样本；但样本量没到对外门槛，只报人数、不给结论。
+    weight_metric = metrics["day28_weight_change_median"]
+    assert weight_metric["denominator"] == baseline_weight_count + 1
+    assert weight_metric["value"] is None
+    assert weight_metric["status"] == "no_sample"
 
 
 @pytest.mark.asyncio

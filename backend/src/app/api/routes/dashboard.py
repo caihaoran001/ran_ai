@@ -27,6 +27,12 @@ from app.schemas.dashboard import (
     AIBalanceSummary,
     AICostCaseItem,
     AICostSummary,
+    BodyChangeMetricWindow,
+    BodyChangeSegment,
+    BodyChangeSegmentBucket,
+    BodyChangeStat,
+    BodyChangeSummary,
+    BodyChangeWindow,
     CaseHealthItem,
     DashboardCaseCheckins,
     DashboardCaseInsightItem,
@@ -49,6 +55,13 @@ from app.schemas.dashboard import (
     PopulationGeoProvince,
     PopulationInsightResponse,
     PopulationPortrait,
+)
+from app.services.body_change_stats import (
+    EXCLUDE_BELOW_RATE,
+    WINDOW_DAYS,
+    CaseWindowChange,
+    compute_case_window_changes,
+    summarize_deltas,
 )
 from app.services.china_regions import match_city
 from app.schemas.service_case import ServiceCaseRead
@@ -1764,10 +1777,7 @@ async def _build_outcome_summary(
         event_types=POSITIVE_OUTCOME_EVENT_TYPES,
     )
     sleep_reported_cases, sleep_improved_with_checkin = await _sleep_checkin_coverage(session)
-    day28_weight_avg, day28_weight_count, day28_waist_avg, day28_waist_count = await _day28_change_averages(
-        session,
-        now=now,
-    )
+    day28_weight, day28_waist = await _day28_body_change(session, now=now)
 
     return OutcomeDashboardSummary(
         active_cases=active_cases,
@@ -1840,21 +1850,36 @@ async def _build_outcome_summary(
                 denominator=active_cases,
                 description="聊天中出现推荐朋友、同事或家人参与的真实线索占比。",
             ),
+            # 两个体征变化刻意用中位数而不是均值：样本只有几十人，个别极端个案
+            # （或没被清洗规则拦住的录入问题）会把均值整体带偏。均值、分层和剔除原因
+            # 都在 /dashboard/body-change 详情页展示。
             _value_metric(
-                key="avg_day28_weight_change",
-                label="28天平均体重变化",
-                value=day28_weight_avg,
+                key="day28_weight_change_median",
+                label="28天体重变化（中位数）",
+                value=day28_weight.stat.median,
                 unit="kg",
-                sample_count=day28_weight_count,
-                description="来自第28天阶段快照的体重变化均值；样本不足时不展示结论。",
+                sample_count=day28_weight.stat.sample_count,
+                min_sample=_BODY_CHANGE_MIN_PUBLIC_SAMPLE,
+                description=(
+                    "负数=瘦了。起点取入营问卷填的体重，终点取第28天前后的打卡体重，"
+                    f"服务已满28天的{day28_weight.eligible_cases}人里有"
+                    f"{day28_weight.stat.sample_count}人两头都有可用数据。"
+                    "点开可看 3/7/14/28 天分窗口、分年龄段与减重带的结果和样本口径。"
+                ),
             ),
             _value_metric(
-                key="avg_day28_waist_change",
-                label="28天平均腰围变化",
-                value=day28_waist_avg,
+                key="day28_waist_change_median",
+                label="28天腰围变化（中位数）",
+                value=day28_waist.stat.median,
                 unit="cm",
-                sample_count=day28_waist_count,
-                description="来自第28天阶段快照的腰围变化均值；样本不足时不展示结论。",
+                sample_count=day28_waist.stat.sample_count,
+                min_sample=_BODY_CHANGE_MIN_PUBLIC_SAMPLE,
+                description=(
+                    "负数=小了。腰围每 7 天才量一次、很多人不量，"
+                    f"服务已满28天的{day28_waist.eligible_cases}人里只有"
+                    f"{day28_waist.stat.sample_count}人两头都有可用数据，"
+                    f"不足{_BODY_CHANGE_MIN_PUBLIC_SAMPLE}人时只报人数、不给结论。"
+                ),
             ),
             # 两个"改善"口径放在经营信号末尾、由粗到细相邻展示：
             # 体感改善率（睡眠/排便/精神能量合并）→ 睡眠质量提升率（单看睡眠）。
@@ -2046,33 +2071,144 @@ async def _sleep_checkin_coverage(session: AsyncSession) -> tuple[int, int]:
     return reported_count or 0, improved_count or 0
 
 
-async def _day28_change_averages(
+# 体重/腰围分层看哪几个维度：客户明确提了年龄段、减重基数带和客户类型。
+_BODY_CHANGE_SEGMENT_KEYS = ("age", "weight_loss_band", "customer_type")
+# 一个分桶少于这个人数就只报人数、不给结论——三个人的中位数没有解读价值。
+_BODY_CHANGE_MIN_SEGMENT_SAMPLE = 3
+# 主看板大卡对外展示的最低样本量。这两个数字要拿去做项目介绍，不到这个人数只报人数。
+_BODY_CHANGE_MIN_PUBLIC_SAMPLE = 10
+
+
+async def _day28_body_change(
     session: AsyncSession,
     *,
     now: datetime,
-) -> tuple[float | None, int, float | None, int]:
-    eligible_before = _service_day_eligible_before(now, 28)
-    snapshots = list(
-        await session.scalars(
-            select(OutcomeSnapshot)
-            .join(ServiceCase, OutcomeSnapshot.service_case_id == ServiceCase.id)
-            .where(
-                active_service_case_condition(),
-                ServiceCase.started_at.is_not(None),
-                ServiceCase.started_at < eligible_before,
-                OutcomeSnapshot.milestone == "day28",
-            )
-        )
-    )
-    weight_changes = [_float_metric((item.metrics_json or {}).get("weight_change")) for item in snapshots]
-    waist_changes = [_float_metric((item.metrics_json or {}).get("waist_change")) for item in snapshots]
-    weight_values = [item for item in weight_changes if item is not None]
-    waist_values = [item for item in waist_changes if item is not None]
+) -> tuple[BodyChangeMetricWindow, BodyChangeMetricWindow]:
+    """主看板两张大卡的数据源，与详情页同一套计算，避免两处口径漂移。"""
+
+    changes, _ = await compute_case_window_changes(session, now=now)
+    rows = [item for item in changes if item.window_day == 28]
     return (
-        round(mean(weight_values), 2) if weight_values else None,
-        len(weight_values),
-        round(mean(waist_values), 2) if waist_values else None,
-        len(waist_values),
+        _body_change_metric(rows, metric="weight", min_rate=0.0, case_labels={}, with_segments=False),
+        _body_change_metric(rows, metric="waist", min_rate=0.0, case_labels={}, with_segments=False),
+    )
+
+
+@router.get("/body-change", response_model=BodyChangeSummary)
+async def dashboard_body_change(
+    min_checkin_rate: float = 0.0,
+    session: AsyncSession = Depends(get_session),
+) -> BodyChangeSummary:
+    """体重/腰围变化的完整口径：3/7/14/28 天四个窗口 + 人群分层 + 样本交代。
+
+    为什么要分窗口：前 7 天几乎所有人都能坚持，第二周开始分化，只看 28 天一个总数会把
+    认真执行的人和早就放弃的人混成一个平均值。
+
+    ``min_checkin_rate`` 是打卡率门槛（0.6 即客户说的 60%）。分母始终是"服务天数已经
+    走到该窗口的人"，被门槛筛掉的人计入未纳入原因，方便看出门槛滤掉了多少。
+    """
+
+    rate = min(max(float(min_checkin_rate), 0.0), 1.0)
+    now = datetime.now(timezone.utc)
+    changes, quality = await compute_case_window_changes(session, now=now)
+    _, case_labels = await _compute_case_portrait_labels(session)
+    return BodyChangeSummary(
+        min_checkin_rate=rate,
+        windows=[
+            BodyChangeWindow(
+                window_day=window,
+                weight=_body_change_metric(
+                    [item for item in changes if item.window_day == window],
+                    metric="weight",
+                    min_rate=rate,
+                    case_labels=case_labels,
+                ),
+                waist=_body_change_metric(
+                    [item for item in changes if item.window_day == window],
+                    metric="waist",
+                    min_rate=rate,
+                    case_labels=case_labels,
+                ),
+            )
+            for window in WINDOW_DAYS
+        ],
+        weight_record_reasons=quality.weight_reasons,
+        waist_record_reasons=quality.waist_reasons,
+        generated_at=now,
+    )
+
+
+def _body_change_metric(
+    rows: list[CaseWindowChange],
+    *,
+    metric: str,
+    min_rate: float,
+    case_labels: dict[int, dict[str, str | list[str]]],
+    with_segments: bool = True,
+) -> BodyChangeMetricWindow:
+    eligible = len(rows)
+    excluded: dict[str, int] = {}
+    included: list[tuple[int, float]] = []
+    unverified = 0
+    for row in rows:
+        outcome = row.weight if metric == "weight" else row.waist
+        if min_rate > 0 and row.checkin_rate < min_rate:
+            excluded[EXCLUDE_BELOW_RATE] = excluded.get(EXCLUDE_BELOW_RATE, 0) + 1
+            continue
+        if outcome.delta is None:
+            excluded[outcome.status] = excluded.get(outcome.status, 0) + 1
+            continue
+        included.append((row.service_case_id, outcome.delta))
+        if not outcome.unit_verified:
+            unverified += 1
+    return BodyChangeMetricWindow(
+        stat=BodyChangeStat(**summarize_deltas(delta for _, delta in included)),
+        eligible_cases=eligible,
+        coverage_rate=round(len(included) / eligible, 4) if eligible else None,
+        unverified_unit_count=unverified,
+        excluded=excluded,
+        segments=[
+            _body_change_segment(key, included, case_labels)
+            for key in _BODY_CHANGE_SEGMENT_KEYS
+        ]
+        if with_segments
+        else [],
+    )
+
+
+def _body_change_segment(
+    key: str,
+    included: list[tuple[int, float]],
+    case_labels: dict[int, dict[str, str | list[str]]],
+) -> BodyChangeSegment:
+    """按人群分桶给出各自的变化，复用群体画像那套分桶标签，保证两个页面口径一致。"""
+
+    dim = _DIMENSION_BY_KEY[key]
+    grouped: dict[str, list[float]] = {}
+    for case_id, delta in included:
+        label = case_labels.get(case_id, {}).get(key)
+        bucket = label if isinstance(label, str) and label else UNKNOWN_LABEL
+        grouped.setdefault(bucket, []).append(delta)
+    if dim["numeric"]:
+        names = [name for name in dim["labels"] if name in grouped]
+    else:
+        names = sorted(grouped, key=lambda name: (-len(grouped[name]), name))
+    if UNKNOWN_LABEL in grouped and UNKNOWN_LABEL not in names:
+        names.append(UNKNOWN_LABEL)
+    elif UNKNOWN_LABEL in names:
+        names = [name for name in names if name != UNKNOWN_LABEL] + [UNKNOWN_LABEL]
+    return BodyChangeSegment(
+        key=key,
+        label=dim["label"],
+        description=dim["description"],
+        buckets=[
+            BodyChangeSegmentBucket(
+                stat=BodyChangeStat(**summarize_deltas(grouped[name])),
+                bucket=name,
+                conclusive=len(grouped[name]) >= _BODY_CHANGE_MIN_SEGMENT_SAMPLE,
+            )
+            for name in names
+        ],
     )
 
 
@@ -2114,7 +2250,16 @@ def _value_metric(
     unit: str,
     sample_count: int,
     description: str,
+    min_sample: int = 0,
 ) -> DashboardMetric:
+    """绝对数值型指标。``min_sample`` 以下只显示"样本不足"，不给数字。
+
+    客户明确要求样本不足时不硬下结论：线上腰围能算出变化的只有二十几人，
+    再拆窗口后个别窗口只剩几个人，那种数字放在对外看板上比不给更糟。
+    """
+
+    if value is not None and sample_count < min_sample:
+        value = None
     return DashboardMetric(
         key=key,
         label=label,
