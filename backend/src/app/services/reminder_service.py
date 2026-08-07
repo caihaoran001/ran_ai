@@ -27,7 +27,11 @@ from app.models.checkin import Checkin
 from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.outcome import OutcomeSnapshot, OutcomeStageState
 from app.models.questionnaire import QuestionnaireSubmission
-from app.models.reminder import ReminderEvent, ReminderEventType
+from app.models.reminder import (
+    CHURN_RECALL_RULE_ID,
+    ReminderEvent,
+    ReminderEventType,
+)
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentType, UserDocument
 from app.services.agent import (
@@ -81,8 +85,6 @@ _CHECKIN_FOLLOWUP_WINDOWS = {
     "contradiction": (time(16, 0), time(17, 0)),
     "milestone": (time(19, 30), time(20, 30)),
 }
-# 流失召回的台账规则名：次数与间隔全部从这条规则的历史事件推导，不另设状态字段。
-CHURN_RECALL_RULE_ID = "churn_recall"
 
 
 class ReminderService:

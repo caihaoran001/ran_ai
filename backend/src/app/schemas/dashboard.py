@@ -137,6 +137,9 @@ class DashboardCaseInsightItem(BaseModel):
     risk_level: str | None = None
     idle_days: int | None = None
     last_inbound_at: datetime | None = None
+    # 本轮沉默里系统已自动召回的次数与最近一次时间（0 = 还没召回过或功能未开启）。
+    recall_count: int = 0
+    last_recall_at: datetime | None = None
     service_day: int | None = None
     started_at: datetime | None = None
     reasons: list[DashboardRiskReason] = Field(default_factory=list)

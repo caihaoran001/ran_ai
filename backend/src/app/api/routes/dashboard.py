@@ -16,6 +16,7 @@ from app.models.ai_usage import AIUsageLog
 from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot
+from app.models.reminder import CHURN_RECALL_RULE_ID, ReminderEvent
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.questionnaire import QuestionnaireSubmission
@@ -1155,21 +1156,55 @@ async def _idle_cases(
             .order_by(last_activity_at.asc(), ServiceCase.id.desc())
         )
     ).all()
+    # 系统这一轮沉默里已经自动召回过几次：让运营一眼看出机器已经动过手，别再重复跟一遍。
+    recalls_by_case = await _churn_recalls_by_case(
+        session, [service_case.id for service_case, _, _ in rows]
+    )
     items: list[DashboardCaseInsightItem] = []
     for service_case, user, last_at in rows:
         basis = last_at or service_case.created_at
         if basis is not None and basis.tzinfo is None:
             basis = basis.replace(tzinfo=timezone.utc)
         idle_days = (now - basis).days if basis is not None else None
+        # 只数「最后一次用户发言之后」的召回，与调度器的计数口径保持一致。
+        recalls = [
+            stamp
+            for stamp in recalls_by_case.get(service_case.id, [])
+            if basis is None or stamp > basis
+        ]
         items.append(
             DashboardCaseInsightItem(
                 case=_case_ref(service_case, user),
                 risk_level=service_case.risk_level,
                 idle_days=idle_days,
                 last_inbound_at=last_at,
+                recall_count=len(recalls),
+                last_recall_at=max(recalls) if recalls else None,
             )
         )
     return items
+
+
+async def _churn_recalls_by_case(
+    session: AsyncSession, case_ids: list[int]
+) -> dict[int, list[datetime]]:
+    """一次取回这批服务单的全部召回时间戳，避免逐行查库。"""
+    if not case_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(ReminderEvent.service_case_id, ReminderEvent.created_at).where(
+                ReminderEvent.service_case_id.in_(case_ids),
+                ReminderEvent.rule_id == CHURN_RECALL_RULE_ID,
+            )
+        )
+    ).all()
+    grouped: dict[int, list[datetime]] = {}
+    for case_id, created_at in rows:
+        if created_at is not None and created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        grouped.setdefault(case_id, []).append(created_at)
+    return grouped
 
 
 @router.get("/unfollowed-cases", response_model=list[DashboardCaseInsightItem])

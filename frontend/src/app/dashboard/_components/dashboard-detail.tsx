@@ -44,6 +44,8 @@ export type DashboardCaseInsightItem = {
   risk_level?: string | null;
   idle_days?: number | null;
   last_inbound_at?: string | null;
+  recall_count?: number;
+  last_recall_at?: string | null;
   service_day?: number | null;
   started_at?: string | null;
   reasons: DashboardRiskReason[];
@@ -174,8 +176,16 @@ export function CaseInsightList({
                   已闲置 {item.idle_days} 天
                 </span>
               )}
+              {(item.recall_count ?? 0) > 0 && (
+                <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-violet-700">
+                  已召回 {item.recall_count} 次
+                </span>
+              )}
               {item.last_inbound_at && (
                 <span className="text-slate-400">最近入站 {formatChinaShortDateTime(item.last_inbound_at)}</span>
+              )}
+              {item.last_recall_at && (
+                <span className="text-slate-400">最近召回 {formatChinaShortDateTime(item.last_recall_at)}</span>
               )}
               {typeof item.service_day === "number" && (
                 <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-700">

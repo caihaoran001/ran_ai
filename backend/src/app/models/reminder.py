@@ -19,6 +19,11 @@ class ReminderEventType(str, enum.Enum):
     REMINDED = "reminded"
 
 
+# 流失召回的台账规则名。召回的次数与间隔全部从这条规则的历史事件推导，不另设状态字段，
+# 所以规则名本身是数据契约的一部分——写入方(调度器)和读取方(看板)必须用同一个常量。
+CHURN_RECALL_RULE_ID = "churn_recall"
+
+
 class ReminderEvent(TimestampMixin, Base):
     __tablename__ = "reminder_events"
     __table_args__ = (
