@@ -25,9 +25,13 @@ from app.services.user_state_profile import (
 
 logger = logging.getLogger(__name__)
 
-# 成效表只记"变好"；负向/无变化/未完成/不适由同轮档案官投影到 service_state。
-# 事件类型收窄为档案官优秀案例判断使用的两个正向类型。
-VALID_EVENT_TYPES = frozenset({"improved", "completed"})
+# 账本记全方向，下游只吃正向：两件事必须分开。2026-07-14 的 00c30c8 为了不让负面结论
+# 污染 AI 用户小抄和优秀案例库，把成效表一起砍成只收正向，副作用是负向只剩"当前服务状态"
+# 里的自由文本（无维度标签、每类只留最新一条），看板再也数不出"多少人反馈睡眠变差"。
+# 现在恢复成：成效表收全方向，投影用户状态背景/优秀案例判断处各自过滤 POSITIVE_EVENT_TYPES。
+POSITIVE_EVENT_TYPES = frozenset({"improved", "completed"})
+NEGATIVE_EVENT_TYPES = frozenset({"worsened", "unchanged", "not_completed"})
+VALID_EVENT_TYPES = POSITIVE_EVENT_TYPES | NEGATIVE_EVENT_TYPES
 
 # 已知成效维度：不再按当前里程碑限制，修复"跨里程碑正向被静默丢弃"的问题
 # （如第3天用户提前反馈睡眠变好=day7 的 sleep_change 曾被丢）。与 OUTCOME_FIELD_DOMAIN_MAP
@@ -433,8 +437,9 @@ def service_day(service_case: ServiceCase) -> int:
 
 
 def _normalize_events(value: Any, known_fields: frozenset[str]) -> list[dict[str, Any]]:
-    """校验并过滤成效事件。兜底闸门：只保留已知维度 + 正向事件类型（improved/completed）；
-    负向/无变化/未完成/不适一律丢弃，不进成效表。"""
+    """校验并过滤成效事件。兜底闸门：只保留已知维度 + 已知方向（正向或负向）；
+    维度不认识、方向说不清、缺原话证据或置信度不够的一律丢弃。方向本身不构成拦截理由——
+    "睡得更差了"和"睡得更好了"一样要进账本，下游按 POSITIVE_EVENT_TYPES 各自过滤。"""
     if not isinstance(value, list):
         return []
     events: list[dict[str, Any]] = []
@@ -639,7 +644,7 @@ def _subjective_signals(all_events: list[OutcomeEvent]) -> dict[str, dict[str, A
     """
     days_by_field: dict[str, set[str]] = {}
     for event in all_events:
-        if event.field_key not in SUBJECTIVE_FIELDS or event.event_type not in VALID_EVENT_TYPES:
+        if event.field_key not in SUBJECTIVE_FIELDS or event.event_type not in POSITIVE_EVENT_TYPES:
             continue
         occurred = event.occurred_at or event.created_at
         if occurred is None:

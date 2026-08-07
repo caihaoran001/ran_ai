@@ -81,14 +81,21 @@ class ReportCheckinArgs(BaseModel):
 
 
 class ReportOutcomeArgs(BaseModel):
-    """上报一条正向成效进展（用户变好了/达成了）。每条事件调用一次。
+    """上报一条成效维度的变化。每条事件调用一次。
 
-    只上报正向进展；变差/无变化/未完成/不适等改用 report_state_fact。
+    正向和负向都要报，方向由 event_type 表达——账本要能统计"多少人反馈变差"。
+    优秀案例库只会取正向，负向不会被当成案例素材。
+    与 report_state_fact 不是二选一，两者服务不同用途：这里是**带维度的变化账本**
+    （用于统计"多少人睡眠变好/变差"），report_state_fact 是**当前怎么了**（喂给
+    助教的用户背景）。同一句"睡得更差了"两边都该报，不要因为报了一边就省掉另一边。
     """
 
     field_key: str = Field(description="成效字段 key（如 weight_change/sleep_change/energy_change 等）")
     event_type: str = Field(
-        description="必须从以下值中选择：improved（有改善）/ completed（已达成/已完成）"
+        description=(
+            "必须从以下值中选择：improved（有改善）/ completed（已达成/已完成）/ "
+            "worsened（变差了）/ unchanged（试了但没变化）/ not_completed（没做到/没达成）"
+        )
     )
     value: str = Field(description="提取出的简短事实")
     evidence_text: str = Field(description="用户原话证据")

@@ -88,8 +88,10 @@ _PERSONAL_BELIEF_MARKERS = ("掉秤", "能瘦", "会瘦", "有效", "神器", "�
 _BELIEF_CONTEXT_MARKERS = ("吃", "喝", "空腹", "体重", "瘦", "秤")
 _HYDRATION_MARKERS = ("喝水", "饮水")
 
-# outcome 域只投影正向进展；负向信号由独立 service_state 域承接。与 outcome_engine 的
-# VALID_EVENT_TYPES 语义一致（此处独立定义，避免与 outcome_engine 形成循环导入）。
+# 成效表本身收全方向（好坏都要能统计），但**投影进 AI 用户背景小抄的只能是正向**——
+# 这是本文件这道过滤的全部意义，不是可有可无的兜底，删掉会让助教天天看见"这人睡得差、
+# 便秘、没瘦"。负向的当前状态由独立 service_state 域承接。与 outcome_engine 的
+# POSITIVE_EVENT_TYPES 语义一致（此处独立定义，避免与 outcome_engine 形成循环导入）。
 _POSITIVE_OUTCOME_EVENT_TYPES = frozenset({"improved", "completed"})
 
 
@@ -267,7 +269,7 @@ async def apply_outcome_events_to_user_state(
 
     for event in created_events:
         event_type = str(event.get("event_type") or "")
-        # 防御性兜底：即使有旁路写入，也只把正向进展投影进状态背景。
+        # 成效表收全方向，这里只放正向进入 AI 看的状态背景；负向留在账本里供统计。
         if event_type not in _POSITIVE_OUTCOME_EVENT_TYPES:
             continue
         field_key = str(event.get("field_key") or "")

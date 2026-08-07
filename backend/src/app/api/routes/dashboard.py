@@ -59,8 +59,8 @@ from app.services.intake_facts import (
     weight_loss_band_from_profile,
 )
 from app.services.health_taxonomy import health_profile_dimension_labels
-# 成效表只收正向事件；这里复用同一份定义，避免看板口径与写入口径漂移。
-from app.services.outcome_engine import VALID_EVENT_TYPES as POSITIVE_OUTCOME_EVENT_TYPES
+# 成效表收全方向；"改善率"类指标只能取正向，复用写入侧的同一份定义避免口径漂移。
+from app.services.outcome_engine import POSITIVE_EVENT_TYPES as POSITIVE_OUTCOME_EVENT_TYPES
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.population_scope import select_population_service_cases
 from app.services.population_insight import (
@@ -1745,14 +1745,17 @@ async def _build_outcome_summary(
             "challenge_goal_result",
         },
     )
-    body_feedback_cases = await _outcome_event_case_count(
+    body_feedback_fields = {
+        "energy_change",
+        "sleep_change",
+        "bowel_change",
+        "positive_body_signal",
+    }
+    body_feedback_cases = await _outcome_event_case_count(session, body_feedback_fields)
+    body_improved_cases = await _outcome_event_case_count(
         session,
-        {
-            "energy_change",
-            "sleep_change",
-            "bowel_change",
-            "positive_body_signal",
-        },
+        body_feedback_fields,
+        event_types=POSITIVE_OUTCOME_EVENT_TYPES,
     )
     referral_cases = await _outcome_event_case_count(session, {"referral_signal"})
     sleep_improved_cases = await _outcome_event_case_count(
@@ -1811,7 +1814,10 @@ async def _build_outcome_summary(
                 label="睡眠/排便/能量反馈率",
                 numerator=body_feedback_cases,
                 denominator=active_cases,
-                description="已收集到睡眠、排便、精神能量等体感反馈证据的用户占比。",
+                description=(
+                    "愿意向我们讲身体感受的用户占比：睡眠、排便、精神能量等维度留下过反馈证据"
+                    "就算，说变好、变差、没变化都算。反映沟通深度，不反映服务效果。"
+                ),
             ),
             _rate_metric(
                 key="renewal_intent_rate",
@@ -1849,6 +1855,19 @@ async def _build_outcome_summary(
                 unit="cm",
                 sample_count=day28_waist_count,
                 description="来自第28天阶段快照的腰围变化均值；样本不足时不展示结论。",
+            ),
+            # 两个"改善"口径放在经营信号末尾、由粗到细相邻展示：
+            # 体感改善率（睡眠/排便/精神能量合并）→ 睡眠质量提升率（单看睡眠）。
+            # 对应的"体感反馈率"是上方主指标大卡，收全方向，两者差额即反馈了但没变好的人。
+            _rate_metric(
+                key="body_improvement_rate",
+                label="体感改善率",
+                numerator=body_improved_cases,
+                denominator=active_cases,
+                description=(
+                    "睡眠、排便、精神能量等维度出现过改善证据的用户占比。上方"
+                    "「睡眠/排便/能量反馈率」收的是全方向反馈，两者差额即反馈了但没变好的人。"
+                ),
             ),
             _rate_metric(
                 key="sleep_improvement_rate",

@@ -177,3 +177,49 @@ async def test_new_outcome_and_case_are_written_by_same_call(db_session):
     assert "起点是执行容易中断" in (
         (draft.content_json or {}).get("case_material_summary") or ""
     )
+
+
+@pytest.mark.asyncio
+async def test_negative_only_outcome_does_not_trigger_case_draft(db_session):
+    """成效表收全方向后的回归闸门：一批纯负向成效（睡得更差）虽然写进了账本，
+    也不能触发优秀案例草稿——否则用户吐槽一通反而被当成优秀案例素材。"""
+    case, messages, progress = await _setup(db_session)
+    model = _CaseModel(
+        [
+            {
+                "name": "report_outcome",
+                "args": {
+                    "field_key": "sleep_change",
+                    "event_type": "worsened",
+                    "value": "睡眠比之前更差，夜醒3次",
+                    "evidence_text": "这几天睡得更差了，一晚上醒三次",
+                    "confidence": 0.95,
+                },
+                "id": "outcome-neg-1",
+            },
+            _case_candidate([item.id for item in messages]),
+        ]
+    )
+
+    result = await run_archivist(
+        db_session,
+        service_case=case,
+        progress=progress,
+        chat_model=model,
+    )
+    await db_session.flush()
+
+    # 负向照样进账本（这是本次改动的目的），但方向为正的条数是 0
+    assert result.outcome_written == 1
+    assert result.positive_outcome_written == 0
+    assert result.case_written == 0
+    drafts = list(
+        await db_session.scalars(
+            select(KnowledgeDraft).where(KnowledgeDraft.draft_type == "case")
+        )
+    )
+    assert [
+        draft
+        for draft in drafts
+        if (draft.content_json or {}).get("service_case_id") == case.id
+    ] == []

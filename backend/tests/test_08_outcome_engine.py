@@ -106,8 +106,9 @@ async def test_archived_outcome_records_positive_event(db_session):
 
 
 @pytest.mark.asyncio
-async def test_negative_events_are_not_recorded(db_session):
-    """成效只记正向：worsened/unchanged/not_completed/discomfort 一律不入表。"""
+async def test_negative_events_are_recorded_with_direction(db_session):
+    """账本收全方向：worsened/unchanged/not_completed 要入表并保留方向，才能统计
+    "多少人反馈变差"。方向说不清的（discomfort 不是成效方向）仍然丢弃。"""
     case = await _setup_outcome_case(db_session, days=7)
     message = await _add_message(db_session, case, "睡得更差了，午B喝完还有点心慌")
 
@@ -119,16 +120,22 @@ async def test_negative_events_are_not_recorded(db_session):
             _event("sleep_change", "worsened", value="睡眠变差"),
             _event("energy_change", "unchanged", value="精神没变化"),
             _event("started_execution", "not_completed", value="还没开始"),
-            _event("energy_change", "discomfort", value="心慌"),
+            _event("bowel_change", "discomfort", value="心慌"),
         ],
         profile_signals=[],
     )
 
-    assert result["created_events"] == []
+    assert len(result["created_events"]) == 3
     events = list(
         await db_session.scalars(select(OutcomeEvent).where(OutcomeEvent.service_case_id == case.id))
     )
-    assert events == []
+    assert {(e.field_key, e.event_type) for e in events} == {
+        ("sleep_change", "worsened"),
+        ("energy_change", "unchanged"),
+        ("started_execution", "not_completed"),
+    }
+    # discomfort 不是成效方向，仍然不入表（它该走 report_state_fact）
+    assert "bowel_change" not in {e.field_key for e in events}
 
 
 @pytest.mark.asyncio
@@ -785,12 +792,12 @@ async def test_dashboard_sleep_improvement_rate_counts_positive_only(
     db_session, admin_client, mock_ai
 ):
     baseline = await admin_client.get("/dashboard/summary")
-    baseline_metric = next(
-        item
-        for item in baseline.json()["outcome_summary"]["metrics"]
-        if item["key"] == "sleep_improvement_rate"
-    )
-    baseline_numerator = baseline_metric["numerator"]
+    baseline_metrics = {
+        item["key"]: item for item in baseline.json()["outcome_summary"]["metrics"]
+    }
+    baseline_numerator = baseline_metrics["sleep_improvement_rate"]["numerator"]
+    baseline_feedback = baseline_metrics["body_feedback_rate"]["numerator"]
+    baseline_improved = baseline_metrics["body_improvement_rate"]["numerator"]
 
     improved_case = await _setup_outcome_case(db_session, days=14)
     worse_case = await _setup_outcome_case(db_session, days=14)
@@ -833,3 +840,7 @@ async def test_dashboard_sleep_improvement_rate_counts_positive_only(
     assert metric["denominator"] == metrics["profile_completion_rate"]["denominator"]
     # 副口径落在说明文字里：打卡记录过睡眠的人中有多少变好
     assert "打卡里记录过睡眠的" in metric["description"]
+
+    # 反馈率收全方向（两人都算），改善率只收正向（只算变好那人）——差额就是反馈了但没变好的人
+    assert metrics["body_feedback_rate"]["numerator"] == baseline_feedback + 2
+    assert metrics["body_improvement_rate"]["numerator"] == baseline_improved + 1

@@ -41,7 +41,7 @@ from app.services.knowledge_evolution import (
     create_draft_candidate,
     create_qa_drafts_from_archivist,
 )
-from app.services.outcome_engine import apply_archived_outcome
+from app.services.outcome_engine import POSITIVE_EVENT_TYPES, apply_archived_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,8 @@ class ArchivistRunResult:
     contradictions: list[dict] = field(default_factory=list)
     # 成效/稳定画像/当前状态直写结果（模型抽出并落库的条数）
     outcome_written: int = 0
+    # 其中方向为正的条数。优秀案例只能由正向成效触发，用户吐槽一通不该生成案例草稿。
+    positive_outcome_written: int = 0
     profile_written: int = 0
     state_written: int = 0
     personal_corrections_written: int = 0
@@ -744,6 +746,11 @@ class ArchivistPipeline:
                 )
                 created_events = result.get("created_events") or []
                 self.result.outcome_written = len(created_events)
+                self.result.positive_outcome_written = sum(
+                    1
+                    for item in created_events
+                    if str(item.get("event_type") or "") in POSITIVE_EVENT_TYPES
+                )
                 self.result.profile_written = len(result.get("profile_signals") or [])
                 self.result.state_written = len(result.get("state_signals") or [])
                 self.result.change_details.extend(
@@ -863,7 +870,9 @@ class ArchivistPipeline:
                 )
 
         case_candidates = state.get("case_candidates") or []
-        if self.result.outcome_written and case_candidates:
+        # 必须是"本批写入了正向成效"：成效表现在收全方向，只看 outcome_written
+        # 会让一批纯负向（睡得更差、体重涨了）也触发优秀案例草稿。
+        if self.result.positive_outcome_written and case_candidates:
             candidate = case_candidates[0]
             archive_context = state.get("archive_context") or {}
             allowed_message_ids = set(state.get("delta_user_message_ids") or [])
