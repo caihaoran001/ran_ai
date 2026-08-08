@@ -624,11 +624,13 @@ def test_agent_prompt_does_not_repeat_staff_speaker_prefix():
 
 
 def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain():
-    assert len(AGENT_SYSTEM_PROMPT) < 4_076
+    assert len(AGENT_SYSTEM_PROMPT) < 4_300
     assert "紧邻明确行动/指令 > 本轮图片描述 > 更早偏好" in AGENT_SYSTEM_PROMPT
     assert "紧跟行动发图通常是在继续上报" in AGENT_SYSTEM_PROMPT
     assert "不因旧偏好重问“是什么/还是……”" in AGENT_SYSTEM_PROMPT
     assert "“刚刚冲的”等仍未区分候选的回答不能当作确认" in AGENT_SYSTEM_PROMPT
+    assert "饮食以低碳为日常底盘" in AGENT_SYSTEM_PROMPT
+    assert "低碳不是断碳" in AGENT_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio
