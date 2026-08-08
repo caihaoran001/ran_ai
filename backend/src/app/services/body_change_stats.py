@@ -84,6 +84,8 @@ class MetricOutcome:
     baseline: float | None = None
     endpoint: float | None = None
     baseline_source: str | None = None  # questionnaire / checkin
+    baseline_day: int | None = None  # questionnaire=第0天；打卡回退=实际服务天数
+    endpoint_day: int | None = None
     unit_verified: bool = False
 
 
@@ -280,6 +282,7 @@ def _metric_outcome(
 
     baseline = questionnaire_baseline
     baseline_source = "questionnaire" if baseline else None
+    baseline_day = 0 if baseline else None
     unit_verified = True if baseline else False
     if baseline is None:
         early = [
@@ -291,21 +294,30 @@ def _metric_outcome(
             day, value = min(early, key=lambda item: item[0])
             baseline = value.value
             baseline_source = "checkin"
+            baseline_day = day
             unit_verified = value.unit_verified
     if baseline is None:
         return MetricOutcome(None, EXCLUDE_NO_BASELINE)
 
     lower = max(window - _ENDPOINT_TOLERANCE, 2)
     upper = window + _ENDPOINT_TOLERANCE
-    candidates = [(day, value) for day, value in usable if lower <= day <= upper]
+    candidates = [
+        (day, value)
+        for day, value in usable
+        if lower <= day <= upper and (baseline_day is None or day > baseline_day)
+    ]
     if not candidates:
         # 区分"窗口末真的没量"和"量了但那条记录不可信"，否则页面上会把后者说成前者。
-        had_raw_candidate = any(lower <= day <= upper for day, _ in raw_usable)
+        had_raw_candidate = any(
+            lower <= day <= upper and (baseline_day is None or day > baseline_day)
+            for day, _ in raw_usable
+        )
         return MetricOutcome(
             None,
             EXCLUDE_IMPLAUSIBLE if had_raw_candidate else EXCLUDE_NO_ENDPOINT,
             baseline=baseline,
             baseline_source=baseline_source,
+            baseline_day=baseline_day,
         )
     # 最接近窗口末的那次记录；同样接近时取更晚的一次。
     day, endpoint_value = min(candidates, key=lambda item: (abs(item[0] - window), -item[0]))
@@ -318,6 +330,8 @@ def _metric_outcome(
             baseline=baseline,
             endpoint=endpoint,
             baseline_source=baseline_source,
+            baseline_day=baseline_day,
+            endpoint_day=day,
         )
     return MetricOutcome(
         delta,
@@ -325,6 +339,8 @@ def _metric_outcome(
         baseline=baseline,
         endpoint=endpoint,
         baseline_source=baseline_source,
+        baseline_day=baseline_day,
+        endpoint_day=day,
         unit_verified=unit_verified and endpoint_value.unit_verified,
     )
 

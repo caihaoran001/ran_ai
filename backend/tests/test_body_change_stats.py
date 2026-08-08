@@ -136,6 +136,24 @@ async def test_late_first_weighing_does_not_shrink_the_window(db_session):
 
 
 @pytest.mark.asyncio
+async def test_fallback_baseline_cannot_also_be_the_endpoint(db_session):
+    """只有一条第3天体重时，它只能当回退起点，不能再和自己相减造出“持平”样本。"""
+
+    case = await _case_with_checkins(
+        db_session,
+        service_days=3,
+        checkins={3: {"weight": "70"}},
+    )
+    windows = await _changes_for(db_session, case.id)
+
+    assert windows[3].weight.baseline == 70
+    assert windows[3].weight.baseline_day == 3
+    assert windows[3].weight.endpoint is None
+    assert windows[3].weight.delta is None
+    assert windows[3].weight.status == EXCLUDE_NO_ENDPOINT
+
+
+@pytest.mark.asyncio
 async def test_jin_entries_are_rescued_by_the_questionnaire_baseline(db_session):
     """线上 case 29 全程填斤（151.6/150.8）。符号对、幅度错一倍，只有基线能识别。"""
 
@@ -340,7 +358,7 @@ async def test_endpoint_uses_reading_closest_to_the_window_end(db_session):
 async def test_endpoint_reports_samples_and_exclusion_reasons(db_session, admin_client):
     """详情页要能如实说明样本量和剔除原因，不让样本悄悄变小。"""
 
-    await _case_with_checkins(
+    included_case = await _case_with_checkins(
         db_session,
         intake_weight="70",
         intake_waist="90",
@@ -363,10 +381,30 @@ async def test_endpoint_reports_samples_and_exclusion_reasons(db_session, admin_
     assert day28["weight"]["excluded"].get(EXCLUDE_NO_ENDPOINT, 0) >= 1
     # 分层维度按客户要求给年龄段、减重带、客户类型
     assert [item["key"] for item in day28["weight"]["segments"]] == [
+        "checkin_rate_band",
         "age",
         "weight_loss_band",
         "customer_type",
     ]
+    execution = day28["weight"]["segments"][0]
+    assert execution["label"] == "打卡执行度"
+    assert {item["bucket"] for item in execution["buckets"]} <= {
+        "低于60%",
+        "60%–79%",
+        "80%及以上",
+    }
+    sample = next(
+        item
+        for item in day28["weight"]["samples"]
+        if item["case"]["service_case_id"] == included_case.id
+    )
+    assert sample["baseline"] == 70
+    assert sample["baseline_source"] == "questionnaire"
+    assert sample["endpoint"] == 68
+    assert sample["endpoint_day"] == 28
+    assert sample["delta"] == -2
+    assert sample["status"] == "ok"
+    assert sample["case"]["user_name"] == "体征统计用户"
 
 
 @pytest.mark.asyncio

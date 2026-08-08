@@ -243,6 +243,20 @@ class BodyChangeSegment(BaseModel):
     buckets: list[BodyChangeSegmentBucket] = Field(default_factory=list)
 
 
+class BodyChangeSample(BaseModel):
+    case: DashboardCaseRef
+    checkin_days: int
+    checkin_rate: float
+    baseline: float | None = None
+    baseline_day: int | None = None
+    baseline_source: Literal["questionnaire", "checkin"] | None = None
+    endpoint: float | None = None
+    endpoint_day: int | None = None
+    delta: float | None = None
+    status: str
+    unit_verified: bool = False
+
+
 class BodyChangeMetricWindow(BaseModel):
     """某个窗口（3/7/14/28 天）里一个指标的完整交代。"""
 
@@ -252,6 +266,7 @@ class BodyChangeMetricWindow(BaseModel):
     unverified_unit_count: int = 0  # 无问卷基线可核对单位的样本数
     excluded: dict[str, int] = Field(default_factory=dict)  # 未纳入原因 → 人数
     segments: list[BodyChangeSegment] = Field(default_factory=list)
+    samples: list[BodyChangeSample] = Field(default_factory=list)
 
 
 class BodyChangeWindow(BaseModel):

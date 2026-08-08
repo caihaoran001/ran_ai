@@ -28,6 +28,7 @@ from app.schemas.dashboard import (
     AICostCaseItem,
     AICostSummary,
     BodyChangeMetricWindow,
+    BodyChangeSample,
     BodyChangeSegment,
     BodyChangeSegmentBucket,
     BodyChangeStat,
@@ -2085,8 +2086,14 @@ async def _sleep_checkin_coverage(session: AsyncSession) -> tuple[int, int]:
     return reported_count or 0, improved_count or 0
 
 
-# 体重/腰围分层看哪几个维度：客户明确提了年龄段、减重基数带和客户类型。
-_BODY_CHANGE_SEGMENT_KEYS = ("age", "weight_loss_band", "customer_type")
+# 执行度必须用互斥区间，不能再把“全部”与“≥60%”两个重叠人群当成效果分层。
+_BODY_CHANGE_SEGMENT_KEYS = (
+    "checkin_rate_band",
+    "age",
+    "weight_loss_band",
+    "customer_type",
+)
+_CHECKIN_RATE_BANDS = ("低于60%", "60%–79%", "80%及以上")
 # 一个分桶少于这个人数就只报人数、不给结论——三个人的中位数没有解读价值。
 _BODY_CHANGE_MIN_SEGMENT_SAMPLE = 3
 # 主看板大卡对外展示的最低样本量。这两个数字要拿去做项目介绍，不到这个人数只报人数。
@@ -2103,8 +2110,22 @@ async def _day28_body_change(
     changes, _ = await compute_case_window_changes(session, now=now)
     rows = [item for item in changes if item.window_day == 28]
     return (
-        _body_change_metric(rows, metric="weight", min_rate=0.0, case_labels={}, with_segments=False),
-        _body_change_metric(rows, metric="waist", min_rate=0.0, case_labels={}, with_segments=False),
+        _body_change_metric(
+            rows,
+            metric="weight",
+            min_rate=0.0,
+            case_labels={},
+            with_segments=False,
+            with_samples=False,
+        ),
+        _body_change_metric(
+            rows,
+            metric="waist",
+            min_rate=0.0,
+            case_labels={},
+            with_segments=False,
+            with_samples=False,
+        ),
     )
 
 
@@ -2126,6 +2147,17 @@ async def dashboard_body_change(
     now = datetime.now(timezone.utc)
     changes, quality = await compute_case_window_changes(session, now=now)
     _, case_labels = await _compute_case_portrait_labels(session)
+    changed_case_ids = sorted({item.service_case_id for item in changes})
+    case_refs = {
+        service_case.id: _case_ref(service_case, user)
+        for service_case, user in (
+            await session.execute(
+                select(ServiceCase, User)
+                .outerjoin(User, ServiceCase.user_id == User.id)
+                .where(ServiceCase.id.in_(changed_case_ids))
+            )
+        ).all()
+    }
     return BodyChangeSummary(
         min_checkin_rate=rate,
         windows=[
@@ -2136,12 +2168,14 @@ async def dashboard_body_change(
                     metric="weight",
                     min_rate=rate,
                     case_labels=case_labels,
+                    case_refs=case_refs,
                 ),
                 waist=_body_change_metric(
                     [item for item in changes if item.window_day == window],
                     metric="waist",
                     min_rate=rate,
                     case_labels=case_labels,
+                    case_refs=case_refs,
                 ),
             )
             for window in WINDOW_DAYS
@@ -2158,25 +2192,46 @@ def _body_change_metric(
     metric: str,
     min_rate: float,
     case_labels: dict[int, dict[str, str | list[str]]],
+    case_refs: dict[int, DashboardCaseRef] | None = None,
     with_segments: bool = True,
+    with_samples: bool = True,
 ) -> BodyChangeMetricWindow:
     eligible = len(rows)
     excluded: dict[str, int] = {}
-    included: list[tuple[int, float]] = []
+    included: list[tuple[int, float, float]] = []
+    samples: list[BodyChangeSample] = []
     unverified = 0
     for row in rows:
         outcome = row.weight if metric == "weight" else row.waist
+        status = outcome.status
         if min_rate > 0 and row.checkin_rate < min_rate:
-            excluded[EXCLUDE_BELOW_RATE] = excluded.get(EXCLUDE_BELOW_RATE, 0) + 1
-            continue
-        if outcome.delta is None:
-            excluded[outcome.status] = excluded.get(outcome.status, 0) + 1
-            continue
-        included.append((row.service_case_id, outcome.delta))
-        if not outcome.unit_verified:
-            unverified += 1
+            status = EXCLUDE_BELOW_RATE
+        if status != "ok":
+            excluded[status] = excluded.get(status, 0) + 1
+        else:
+            assert outcome.delta is not None
+            included.append((row.service_case_id, outcome.delta, row.checkin_rate))
+            if not outcome.unit_verified:
+                unverified += 1
+        case_ref = (case_refs or {}).get(row.service_case_id)
+        if with_samples and case_ref is not None:
+            samples.append(
+                BodyChangeSample(
+                    case=case_ref,
+                    checkin_days=row.checkin_days,
+                    checkin_rate=row.checkin_rate,
+                    baseline=outcome.baseline,
+                    baseline_day=outcome.baseline_day,
+                    baseline_source=outcome.baseline_source,
+                    endpoint=outcome.endpoint,
+                    endpoint_day=outcome.endpoint_day,
+                    delta=outcome.delta,
+                    status=status,
+                    unit_verified=outcome.unit_verified,
+                )
+            )
     return BodyChangeMetricWindow(
-        stat=BodyChangeStat(**summarize_deltas(delta for _, delta in included)),
+        stat=BodyChangeStat(**summarize_deltas(delta for _, delta, _ in included)),
         eligible_cases=eligible,
         coverage_rate=round(len(included) / eligible, 4) if eligible else None,
         unverified_unit_count=unverified,
@@ -2187,21 +2242,47 @@ def _body_change_metric(
         ]
         if with_segments
         else [],
+        samples=sorted(
+            samples,
+            key=lambda item: (
+                item.status != "ok",
+                item.delta if item.delta is not None else float("inf"),
+                item.case.case_no,
+            ),
+        ),
     )
 
 
 def _body_change_segment(
     key: str,
-    included: list[tuple[int, float]],
+    included: list[tuple[int, float, float]],
     case_labels: dict[int, dict[str, str | list[str]]],
 ) -> BodyChangeSegment:
     """按人群分桶给出各自的变化，复用群体画像那套分桶标签，保证两个页面口径一致。"""
 
-    dim = _DIMENSION_BY_KEY[key]
+    dim = (
+        {
+            "label": "打卡执行度",
+            "description": "按当前窗口内有打卡的天数占比互斥分组，三组人数不会重复。",
+            "numeric": True,
+            "labels": _CHECKIN_RATE_BANDS,
+        }
+        if key == "checkin_rate_band"
+        else _DIMENSION_BY_KEY[key]
+    )
     grouped: dict[str, list[float]] = {}
-    for case_id, delta in included:
-        label = case_labels.get(case_id, {}).get(key)
-        bucket = label if isinstance(label, str) and label else UNKNOWN_LABEL
+    for case_id, delta, checkin_rate in included:
+        if key == "checkin_rate_band":
+            bucket = (
+                _CHECKIN_RATE_BANDS[0]
+                if checkin_rate < 0.6
+                else _CHECKIN_RATE_BANDS[1]
+                if checkin_rate < 0.8
+                else _CHECKIN_RATE_BANDS[2]
+            )
+        else:
+            label = case_labels.get(case_id, {}).get(key)
+            bucket = label if isinstance(label, str) and label else UNKNOWN_LABEL
         grouped.setdefault(bucket, []).append(delta)
     if dim["numeric"]:
         names = [name for name in dim["labels"] if name in grouped]
