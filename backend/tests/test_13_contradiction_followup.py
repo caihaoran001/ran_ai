@@ -5,7 +5,7 @@
   仅闲聊 worthy 且未到 24h → 不触发。
 - compose_scheduled_followups 组织候选：五项清单(次日回顾昨天) / 矛盾核对 / 次晨空腹打卡提醒；
   各类各占时间窗与天闸、每天最多 3 条；三类均使用固定模板，不调用 LLM。
-- 里程碑档：服务第 6/13/20/27 天检测出 milestone；need_waist/need_weight 按腰围/体重记录决定。
+- 里程碑档：服务第 2/6/13/20/27 天检测出 milestone；need_waist/need_weight 按有效腰围/体重记录决定。
 - 矛盾核对：表单值≠聊天值→记矛盾→自然语言核对→标 asked(去重)+字段降级→用户新值覆盖表单。
 """
 
@@ -197,6 +197,18 @@ async def test_milestone_eve_detected_on_day6(db_session):
 
 
 @pytest.mark.asyncio
+async def test_day3_milestone_is_collected_from_the_first_window(db_session):
+    case = await _case(db_session, started_days_ago=1)  # 今天第2天 → 明天第3天
+    now = datetime.now(_TZ)
+
+    detect = await detect_followup(db_session, service_case=case, now=now, tz=_TZ)
+
+    assert detect["milestone"] is not None
+    assert detect["milestone"]["milestone_day"] == 3
+    assert detect["milestone"]["need_waist"] is True
+
+
+@pytest.mark.asyncio
 async def test_non_milestone_day_has_no_milestone(db_session):
     case = await _case(db_session, started_days_ago=3)  # 第4天，非里程碑前夕
     now = datetime.now(_TZ)
@@ -221,6 +233,35 @@ async def test_milestone_need_waist_false_when_recent_waist_exists(db_session):
     now = datetime.now(_TZ)
     detect = await detect_followup(db_session, service_case=case, now=now, tz=_TZ)
     assert detect["milestone"]["need_waist"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_waist", ["0", "本日未测"])
+async def test_invalid_recent_waist_does_not_suppress_milestone_collection(
+    db_session, invalid_waist
+):
+    case = await _case(db_session, started_days_ago=5)
+    today = date.today()
+    db_session.add(
+        Checkin(
+            service_case_id=case.id,
+            group_id=case.group_id,
+            user_id=case.user_id,
+            checkin_date=today,
+            content="腰围未形成有效测量",
+            parsed_json={"waist": invalid_waist},
+        )
+    )
+    await db_session.flush()
+
+    detect = await detect_followup(
+        db_session,
+        service_case=case,
+        now=datetime.now(_TZ),
+        tz=_TZ,
+    )
+
+    assert detect["milestone"]["need_waist"] is True
 
 
 # ---------------------------------------------------------------------------

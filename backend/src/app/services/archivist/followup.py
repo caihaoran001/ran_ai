@@ -9,7 +9,7 @@ H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部
 
 - 五项清单（daily_checklist）：早上回顾**昨天**当前生效清单里尚未回答的项；系统清单第1项跟踪早C/午B/晚A，工作人员自定义清单不强加该语义。
 - 矛盾核对（contradiction）：表单值≠聊天值时下午发一句自然核对。
-- 次晨空腹打卡提醒（milestone）：day7/14/21/28 前一晚提醒用户次日早起如厕后、空腹测量并打卡。
+- 次晨空腹打卡提醒（milestone）：day3/7/14/21/28 前一晚提醒用户次日早起如厕后、空腹测量并打卡。
 
 判定读 checkins 现状 + service_day。体重不再单独一类主动追问，改由里程碑前夜提醒在次晨采集。
 （历史上另有一条"活跃触发"链路在 agent 回复后即时补发，已下线；本模块只组织内容、不裁量发送时机。）
@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.checkin import Checkin
 from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.service_case import ServiceCase
+from app.services.body_metrics import parse_waist_cm, parse_weight_kg
 from app.services.checkin_checklists import (
     TRACKING_PRODUCT_SCHEDULE,
     get_effective_daily_checklist,
@@ -42,7 +43,7 @@ _WAIST_LOOKBACK_DAYS = 7  # 腰围一周测一次，避免天天问。
 
 # 里程碑前一晚：服务第 N 天 → 即将到来的里程碑天。晚间只发提醒，
 # 实际测量/打卡必须等到次日早起如厕后的空腹状态。service_day 用 effective_service_day（计划开始当天=第1天）。
-_MILESTONE_EVE = {6: 7, 13: 14, 20: 21, 27: 28}
+_MILESTONE_EVE = {2: 3, 6: 7, 13: 14, 20: 21, 27: 28}
 
 # 矛盾追问用的字段中文标签（含 product_schedule 子键）。
 _FIELD_LABELS = {
@@ -107,7 +108,12 @@ async def _has_field_recently(
             )
         )
     ).all()
-    return any(_slot_filled((c.parsed_json or {}).get(field_key)) for c in recent)
+    parsers = {"weight": parse_weight_kg, "waist": parse_waist_cm}
+    try:
+        parser = parsers[field_key]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported body field: {field_key}") from exc
+    return any(parser((c.parsed_json or {}).get(field_key)).ok for c in recent)
 
 
 async def detect_followup(
@@ -147,7 +153,7 @@ async def detect_followup(
         days=_WEIGHT_LOOKBACK_DAYS,
     )
 
-    # 里程碑前夕：服务第 6/13/20/27 天 → 晚间提醒用户次晨空腹打卡。
+    # 里程碑前夕：服务第 2/6/13/20/27 天 → 晚间提醒用户次晨空腹打卡。
     milestone = None
     service_day = effective_service_day(service_case, now, tz)
     milestone_day = _MILESTONE_EVE.get(service_day)
