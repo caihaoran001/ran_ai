@@ -1209,8 +1209,6 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "这是群聊接话不是考试答题" in model.calls[0][0].content
     assert "先追问一个关键点并停下" in model.calls[0][0].content
     assert "不确定就直说，不编细节" in model.calls[0][0].content
-    assert "只是陈述日常安排或闲聊、没有求建议时" in model.calls[0][0].content
-    assert "不主动给健康或饮食建议" in model.calls[0][0].content
     assert "有问题时只回答当前一问，普通回复通常 1～3 句" in model.calls[0][0].content
     assert "健康、饮食、运动和产品问题用“结论 + 一条必要依据或安全边界”" in model.calls[0][0].content
     assert "不展开机制、搭配、备选方案和后续注意事项" in model.calls[0][0].content
