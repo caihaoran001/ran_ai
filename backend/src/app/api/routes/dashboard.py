@@ -48,6 +48,7 @@ from app.schemas.dashboard import (
     EmotionalAlertCaseItem,
     EmotionalAlertMessage,
     OutcomeDashboardSummary,
+    OutcomeTrendSummary,
     PopulationDistribution,
     PopulationDistributionBucket,
     PopulationGeography,
@@ -74,6 +75,7 @@ from app.services.intake_facts import (
 from app.services.health_taxonomy import health_profile_dimension_labels
 # 成效表收全方向；"改善率"类指标只能取正向，复用写入侧的同一份定义避免口径漂移。
 from app.services.outcome_engine import POSITIVE_EVENT_TYPES as POSITIVE_OUTCOME_EVENT_TYPES
+from app.services.outcome_trends import build_outcome_trend_summary
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.population_scope import select_population_service_cases
 from app.services.population_insight import (
@@ -111,6 +113,18 @@ async def dashboard_deepseek_balance() -> AIBalanceSummary:
         is_low=(snap.balance_yuan < threshold) or (not snap.is_available),
         alert_threshold_yuan=threshold,
         fetched_at=datetime.fromtimestamp(snap.fetched_at, tz=timezone.utc),
+    )
+
+
+@router.get("/outcome-trends", response_model=OutcomeTrendSummary)
+async def dashboard_outcome_trends(
+    months: int = 6,
+    session: AsyncSession = Depends(get_session),
+) -> OutcomeTrendSummary:
+    """按服务开始月份返回同成熟阶段趋势，避免新老批次分母不可比。"""
+
+    return OutcomeTrendSummary(
+        **await build_outcome_trend_summary(session, months=months)
     )
 
 

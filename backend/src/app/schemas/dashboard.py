@@ -26,6 +26,48 @@ class OutcomeDashboardSummary(BaseModel):
     metrics: list[DashboardMetric] = Field(default_factory=list)
 
 
+class OutcomeTrendPoint(BaseModel):
+    month: str
+    label: str
+    value: float | None = None
+    numerator: int = 0
+    denominator: int = 0
+    status: Literal["ok", "small_sample", "no_sample"] = "no_sample"
+
+
+class OutcomeTrendMetric(BaseModel):
+    key: str
+    label: str
+    unit: str = "%"
+    stage_day: Literal[7, 28]
+    direction: Literal["higher_is_better", "lower_is_better"]
+    description: str
+    points: list[OutcomeTrendPoint] = Field(default_factory=list)
+
+
+class OutcomeTrendGroup(BaseModel):
+    key: Literal["efficiency", "participation", "outcome", "commercial"]
+    label: str
+    description: str
+    metrics: list[OutcomeTrendMetric] = Field(default_factory=list)
+
+
+class OutcomeTrendCohort(BaseModel):
+    month: str
+    label: str
+    started_cases: int = 0
+    eligible_day7_cases: int = 0
+    eligible_day28_cases: int = 0
+
+
+class OutcomeTrendSummary(BaseModel):
+    months: int
+    cohorts: list[OutcomeTrendCohort] = Field(default_factory=list)
+    groups: list[OutcomeTrendGroup] = Field(default_factory=list)
+    history_notes: list[str] = Field(default_factory=list)
+    generated_at: datetime
+
+
 class AICostSummary(BaseModel):
     total_calls: int = 0
     total_tokens: int = 0
