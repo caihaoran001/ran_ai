@@ -310,7 +310,7 @@ def test_intervention_normalizes_knowledge_query():
 
 
 @pytest.mark.asyncio
-async def test_intervention_prompt_keeps_diet_preferences_in_agent_context():
+async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_context():
     service = AIService.__new__(AIService)
     captured: dict = {}
 
@@ -326,17 +326,17 @@ async def test_intervention_prompt_keeps_diet_preferences_in_agent_context():
     )
 
     prompt = captured["system_prompt"]
-    assert "饮食建议和身体反馈至少选择 preferences" in prompt
-    assert "需要作息、饮食模式或运动习惯时再选 habits/current_state/warnings" in prompt
-    assert "复盘服务历程、评价整体进展、延续此前做法" in prompt
-    assert "简单产品规则、实时数据查询和无关兴趣闲聊不要选择 case_summary" in prompt
-    assert '"knowledge_query": "专供参考问答检索的独立查询；不需要检索时为 null"' in prompt
-    assert "仅当当前消息包含需要健康服务通用知识、产品规则" in prompt
-    assert "实时数据查询、系统操作、纯数据上报、确认收尾和普通闲聊" in prompt
-    assert "只改写其中的知识问题，不得返回 null" in prompt
-    assert '不需要检索时输出 "knowledge_query": null（JSON null，不是字符串“null”）' in prompt
-    assert "消解“这个/那个/这样”等指代" in prompt
-    assert "不得回答问题、不得加入对话中没有的事实" in prompt
+    assert len(prompt) < 4500
+    assert "紧邻问题决定省略的指标和对象" in prompt
+    assert "不得补造单位" in prompt
+    assert "今天早上空腹142" in prompt
+    assert "不是空腹血糖" in prompt
+    assert "空腹血糖142mg/dL" in prompt
+    assert "语义仍有歧义时保持无风险" in prompt
+    assert "纯上报、确认和闲聊输出 JSON null" in prompt
+    assert "不得回答、不得新增事实、不得把工作人员的话改成用户事实" in prompt
+    assert "产品规则优先 current_state/habits/warnings" in prompt
+    assert "复盘历程才用 case_summary" in prompt
 
 
 def test_high_risk_health_consultation_handoff():
@@ -860,8 +860,7 @@ def test_mark_intake_age_risk_normal_age_untouched():
 def test_intervention_prompt_treats_stopped_period_alone_as_normal_context():
     prompt_source = inspect.getsource(AIService.extract_message_insight)
 
-    assert "用户仅说月经推迟、没来月经或停经" in prompt_source
-    assert "不得推断为怀孕" in prompt_source
+    assert "月经推迟不等于怀孕" in prompt_source
 
 
 def test_effective_service_day_by_plan_date():
