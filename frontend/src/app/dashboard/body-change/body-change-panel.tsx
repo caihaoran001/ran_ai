@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import type { DashboardCaseRef } from "../_components/dashboard-detail";
 
 export type BodyChangeStat = {
   sample_count: number;
@@ -31,6 +33,21 @@ export type BodyChangeMetricWindow = {
   unverified_unit_count: number;
   excluded: Record<string, number>;
   segments: BodyChangeSegment[];
+  samples: BodyChangeSample[];
+};
+
+export type BodyChangeSample = {
+  case: DashboardCaseRef;
+  checkin_days: number;
+  checkin_rate: number;
+  baseline?: number | null;
+  baseline_day?: number | null;
+  baseline_source?: "questionnaire" | "checkin" | null;
+  endpoint?: number | null;
+  endpoint_day?: number | null;
+  delta?: number | null;
+  status: string;
+  unit_verified: boolean;
 };
 
 export type BodyChangeWindow = {
@@ -55,6 +72,13 @@ const EXCLUDE_LABELS: Record<string, string> = {
   below_checkin_rate: "没达到打卡率门槛",
 };
 
+const SAMPLE_STATUS_LABELS: Record<string, string> = {
+  no_baseline: "缺起点",
+  no_endpoint: "缺终点",
+  implausible_delta: "录入异常",
+  below_checkin_rate: "未达门槛",
+};
+
 const RECORD_REASON_LABELS: Record<string, string> = {
   ok: "可用",
   no_number: "写的是「未测/没称」这类，没有数字",
@@ -75,6 +99,7 @@ const WINDOW_LABELS: Record<number, string> = {
 export function BodyChangePanel() {
   const [windowDay, setWindowDay] = useState(28);
   const [strict, setStrict] = useState(false);
+  const [sampleMetric, setSampleMetric] = useState<"weight" | "waist">("weight");
   const [data, setData] = useState<BodyChangeSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -147,6 +172,12 @@ export function BodyChangePanel() {
 
       {current && (
         <>
+          <WindowComparison
+            windows={data?.windows ?? []}
+            selectedDay={windowDay}
+            onSelect={setWindowDay}
+          />
+
           <div className="grid gap-4 lg:grid-cols-2">
             <MetricCard title="体重变化" unit="kg" metric={current.weight} windowDay={windowDay} />
             <MetricCard title="腰围变化" unit="cm" metric={current.waist} windowDay={windowDay} />
@@ -154,6 +185,14 @@ export function BodyChangePanel() {
 
           <SegmentTables title="体重" unit="kg" metric={current.weight} />
           <SegmentTables title="腰围" unit="cm" metric={current.waist} />
+
+          <SampleAudit
+            metricType={sampleMetric}
+            onMetricChange={setSampleMetric}
+            metric={sampleMetric === "weight" ? current.weight : current.waist}
+            unit={sampleMetric === "weight" ? "kg" : "cm"}
+            windowDay={windowDay}
+          />
 
           <section className="panel">
             <div className="panel-header">
@@ -169,6 +208,69 @@ export function BodyChangePanel() {
           </section>
         </>
       )}
+    </div>
+  );
+}
+
+function WindowComparison({
+  windows,
+  selectedDay,
+  onSelect,
+}: {
+  windows: BodyChangeWindow[];
+  selectedDay: number;
+  onSelect: (day: number) => void;
+}) {
+  return (
+    <section className="panel overflow-hidden">
+      <div className="panel-header">
+        <h2 className="panel-title">四个阶段直接对比</h2>
+        <p className="panel-subtitle">不用逐个切换就能看清变化从第3天到第28天如何发展；点击任一阶段可继续查看分层和样本。</p>
+      </div>
+      <div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-4">
+        {windows.map((window) => (
+          <button
+            key={window.window_day}
+            type="button"
+            onClick={() => onSelect(window.window_day)}
+            aria-pressed={selectedDay === window.window_day}
+            className={`min-h-36 rounded-xl border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600 focus-visible:ring-offset-2 ${
+              selectedDay === window.window_day
+                ? "border-cyan-300 bg-cyan-50/70"
+                : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-bold text-slate-950">第 {window.window_day} 天</span>
+              <span className="text-xs font-medium text-slate-500">点开明细</span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <ComparisonValue title="体重" unit="kg" metric={window.weight} />
+              <ComparisonValue title="腰围" unit="cm" metric={window.waist} />
+            </div>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ComparisonValue({
+  title,
+  unit,
+  metric,
+}: {
+  title: string;
+  unit: string;
+  metric: BodyChangeMetricWindow;
+}) {
+  return (
+    <div>
+      <div className="text-xs font-medium text-slate-500">{title}</div>
+      <div className="mt-1"><ChangeValue value={metric.stat.median} unit={unit} inline /></div>
+      <div className="tabular mt-1 text-[11px] text-slate-400">
+        n={metric.stat.sample_count}/{metric.eligible_cases}
+      </div>
     </div>
   );
 }
@@ -265,9 +367,9 @@ function SegmentTables({
     <section className="panel overflow-hidden">
       <div className="panel-header">
         <h2 className="panel-title">{title}变化 · 分人群</h2>
-        <p className="panel-subtitle">不同执行力、年龄和基数的人效果本来就不一样，分开看才判断得准。</p>
+        <p className="panel-subtitle">执行度按互斥区间分组，再结合年龄、减重基数和客户类型判断，组间人数不会重复。</p>
       </div>
-      <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-3">
+      <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-2 2xl:grid-cols-4">
         {metric.segments.map((segment) => (
           <div key={segment.key} className="rounded-xl border border-slate-200">
             <div className="border-b border-slate-100 px-4 py-3">
@@ -307,6 +409,122 @@ function SegmentTables({
       </div>
     </section>
   );
+}
+
+function SampleAudit({
+  metricType,
+  onMetricChange,
+  metric,
+  unit,
+  windowDay,
+}: {
+  metricType: "weight" | "waist";
+  onMetricChange: (metric: "weight" | "waist") => void;
+  metric: BodyChangeMetricWindow;
+  unit: string;
+  windowDay: number;
+}) {
+  const included = metric.samples.filter((sample) => sample.status === "ok").length;
+  return (
+    <section className="panel overflow-hidden">
+      <div className="panel-header gap-3">
+        <div className="toolbar-row">
+          <div>
+            <h2 className="panel-title">第 {windowDay} 天 · 样本审计</h2>
+            <p className="panel-subtitle">每个人的起点、终点、变化和未纳入原因都能追到具体服务单。</p>
+          </div>
+          <div className="segmented-control grid-cols-2" role="group" aria-label="样本指标">
+            {(["weight", "waist"] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => onMetricChange(item)}
+                aria-pressed={metricType === item}
+                className={`min-h-9 rounded-lg px-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600 focus-visible:ring-offset-2 ${
+                  metricType === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                {item === "weight" ? "体重" : "腰围"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="text-xs text-slate-500">本窗口共 {metric.samples.length} 人：纳入 {included} 人，未纳入 {metric.samples.length - included} 人。</div>
+      </div>
+
+      {metric.samples.length === 0 ? (
+        <div className="p-4 sm:p-5"><div className="empty-state">这个窗口暂无可审计样本</div></div>
+      ) : (
+        <>
+          <div className="mobile-card-list p-4">
+            {metric.samples.map((sample) => (
+              <article key={sample.case.service_case_id} className="mobile-record-card">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Link href={`/cases/${sample.case.service_case_id}`} prefetch={false} className="font-bold text-cyan-800 hover:underline">
+                      {sample.case.user_name || sample.case.case_no}
+                    </Link>
+                    <div className="text-break mt-1 text-xs text-slate-500">{sample.case.group_name || sample.case.group_id}</div>
+                  </div>
+                  <SampleStatus status={sample.status} />
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <SampleField label="打卡执行">{sample.checkin_days}/{windowDay} 天（{Math.round(sample.checkin_rate * 100)}%）</SampleField>
+                  <SampleField label="变化"><ChangeValue value={sample.delta} unit={unit} inline /></SampleField>
+                  <SampleField label="起点">{formatSampleReading(sample.baseline, sample.baseline_day, sample.baseline_source, unit)}</SampleField>
+                  <SampleField label="终点">{formatSampleReading(sample.endpoint, sample.endpoint_day, null, unit)}</SampleField>
+                </dl>
+              </article>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="data-table min-w-[980px]">
+              <thead>
+                <tr><th>用户 / 服务单</th><th>是否纳入</th><th>打卡执行</th><th>起点</th><th>终点</th><th className="text-right">变化</th></tr>
+              </thead>
+              <tbody>
+                {metric.samples.map((sample) => (
+                  <tr key={sample.case.service_case_id}>
+                    <td>
+                      <Link href={`/cases/${sample.case.service_case_id}`} prefetch={false} className="font-semibold text-cyan-800 hover:underline">
+                        {sample.case.user_name || sample.case.case_no}
+                      </Link>
+                      <div className="text-break mt-1 max-w-64 text-xs text-slate-400">{sample.case.group_name || sample.case.group_id}</div>
+                    </td>
+                    <td><SampleStatus status={sample.status} /></td>
+                    <td className="tabular">{sample.checkin_days}/{windowDay} 天 · {Math.round(sample.checkin_rate * 100)}%</td>
+                    <td>{formatSampleReading(sample.baseline, sample.baseline_day, sample.baseline_source, unit)}</td>
+                    <td>{formatSampleReading(sample.endpoint, sample.endpoint_day, null, unit)}</td>
+                    <td className="text-right"><ChangeValue value={sample.delta} unit={unit} inline /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function SampleStatus({ status }: { status: string }) {
+  if (status === "ok") return <span className="status-pill pill-ok">已纳入</span>;
+  return <span className="status-pill pill-warn">{SAMPLE_STATUS_LABELS[status] ?? status}</span>;
+}
+
+function SampleField({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div><dt className="text-xs font-medium text-slate-500">{label}</dt><dd className="mt-1 text-slate-700">{children}</dd></div>;
+}
+
+function formatSampleReading(
+  value: number | null | undefined,
+  day: number | null | undefined,
+  source: "questionnaire" | "checkin" | null | undefined,
+  unit: string,
+) {
+  if (value == null) return "暂无";
+  const origin = source === "questionnaire" ? "入营问卷" : day != null ? `第${day}天` : "记录日未知";
+  return `${value} ${unit} · ${origin}`;
 }
 
 function RecordReasons({ title, reasons }: { title: string; reasons: Record<string, number> }) {

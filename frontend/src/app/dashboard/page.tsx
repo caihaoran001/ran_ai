@@ -403,10 +403,19 @@ function OutcomeSummaryPanel({ summary }: { summary?: OutcomeSummary }) {
               汇总真实执行数据、成效证据和体感反馈；样本不足时不硬下结论。
             </p>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs text-slate-500">
-            <span className="rounded-full bg-slate-100 px-3 py-1">有效服务单 {summary?.active_cases ?? 0}</span>
-            <span className="rounded-full bg-slate-100 px-3 py-1">7日样本 {summary?.eligible_day7_cases ?? 0}</span>
-            <span className="rounded-full bg-slate-100 px-3 py-1">28日样本 {summary?.eligible_day28_cases ?? 0}</span>
+          <div className="flex flex-col items-start gap-2 md:items-end">
+            <Link
+              href="/dashboard/outcome-trends"
+              prefetch={false}
+              className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-cyan-200 bg-cyan-50 px-3 text-sm font-semibold text-cyan-800 transition-colors hover:border-cyan-300 hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600 focus-visible:ring-offset-2"
+            >
+              查看月度趋势 <ArrowUpRight className="h-4 w-4" />
+            </Link>
+            <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+              <span className="rounded-full bg-slate-100 px-3 py-1">有效服务单 {summary?.active_cases ?? 0}</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1">7日样本 {summary?.eligible_day7_cases ?? 0}</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1">28日样本 {summary?.eligible_day28_cases ?? 0}</span>
+            </div>
           </div>
         </div>
       </div>
