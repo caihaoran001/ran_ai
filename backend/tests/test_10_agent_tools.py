@@ -1200,7 +1200,7 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "让我想想" in model.calls[0][0].content
     assert "根据搜索结果" in model.calls[0][0].content
     assert "不要说“根据你的画像/资料/系统记录”" in model.calls[0][0].content
-    assert "以群昵称标注的是群内工作人员发言" in model.calls[0][0].content
+    assert "群昵称行是工作人员发言" in model.calls[0][0].content
     assert "不当作用户自述" in model.calls[0][0].content
     assert "只用与当前问题直接相关的部分" in model.calls[0][0].content
     assert "只参考长期偏好" in model.calls[0][0].content
@@ -1218,7 +1218,7 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert "不能用“可能/通常/大概率”绕过追问" in model.calls[0][0].content
     assert "回复优先级：准确完整 > 专业克制 > 简洁自然" not in model.calls[0][0].content
     assert "不为简短省略关键信息" not in model.calls[0][0].content
-    assert "不准确就直接更正，不替旧说法补场景或找理由" in model.calls[0][0].content
+    assert "用户质疑旧回复时先复核，错了直接更正，不补理由" in model.calls[0][0].content
     assert "这句说反了。应该是动作稳定、恢复正常且仍有余力时再逐步加量" in model.calls[0][0].content
     assert "行，你先问问，看谁有空一起" in model.calls[0][0].content
     assert "这顿除了杂粮米，还吃了什么菜和蛋白质" in model.calls[0][0].content
