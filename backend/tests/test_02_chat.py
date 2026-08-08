@@ -560,6 +560,126 @@ async def test_normal_reply_still_sends_without_marker(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("superseding_sender", "expected_reason"),
+    [
+        (MessageSenderType.STAFF, "staff_preempted"),
+        (MessageSenderType.USER, "stale_reply_suppressed"),
+    ],
+)
+async def test_reply_yields_before_agent_generation_when_conversation_has_moved_on(
+    db_session,
+    mock_message_channel,
+    cai_haoran_answers,
+    monkeypatch,
+    superseding_sender,
+    expected_reason,
+):
+    import app.services.ranren_ai.engine as engine_mod
+
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    trigger = Message(
+        service_case_id=case_id,
+        group_id=group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="这顿怎么调整？",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(trigger)
+    await db_session.flush()
+    db_session.add(
+        Message(
+            service_case_id=case_id,
+            group_id=group_id,
+            direction=MessageDirection.INBOUND,
+            sender_type=superseding_sender,
+            message_type="text",
+            content="后续消息",
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.RECEIVED,
+        )
+    )
+    await db_session.flush()
+    agent_called = False
+
+    async def _unexpected_agent(**kwargs):
+        nonlocal agent_called
+        agent_called = True
+        raise AssertionError("上下文已推进时不应再启动回复模型")
+
+    monkeypatch.setattr(engine_mod, "generate_agent_reply", _unexpected_agent)
+
+    await RanrenAIEngine(mock_message_channel)._reply_with_ai(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="这顿怎么调整？",
+            message_id="preempt-before-agent",
+        ),
+        service_case_id=case_id,
+        analysis={},
+        trigger_id=trigger.id,
+    )
+
+    assert agent_called is False
+    await db_session.refresh(trigger)
+    assert trigger.analysis_json["_reply_processing"]["reason"] == expected_reason
+
+
+@pytest.mark.asyncio
+async def test_reply_yields_before_agent_generation_when_raw_message_is_queued(
+    db_session, mock_message_channel, cai_haoran_answers, monkeypatch
+):
+    import app.services.ranren_ai.engine as engine_mod
+
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    trigger = Message(
+        service_case_id=case_id,
+        group_id=group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="等我补一句",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(trigger)
+    await db_session.flush()
+
+    async def _has_pending(_message):
+        return True
+
+    async def _unexpected_agent(**kwargs):
+        raise AssertionError("原始消息队列已有更新时不应再启动回复模型")
+
+    monkeypatch.setattr(engine_mod, "generate_agent_reply", _unexpected_agent)
+    engine = RanrenAIEngine(
+        mock_message_channel,
+        has_pending_newer_message=_has_pending,
+    )
+
+    await engine._reply_with_ai(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="等我补一句",
+            message_id="queued-before-agent",
+        ),
+        service_case_id=case_id,
+        analysis={},
+        trigger_id=trigger.id,
+    )
+
+    await db_session.refresh(trigger)
+    assert trigger.analysis_json["_reply_processing"]["reason"] == "newer_message_queued"
+
+
+@pytest.mark.asyncio
 async def test_agent_error_is_recorded_on_inbound_without_outbound(
     db_session, mock_message_channel, mock_ai, cai_haoran_answers, monkeypatch
 ):

@@ -1307,6 +1307,64 @@ class EngineGraph:
                 "_completion_reason": "no_active_case",
             }
 
+        if await self.engine._staff_replied_after(
+            service_case_id=service_case_id,
+            trigger_id=trigger_id,
+        ):
+            logger.info(
+                "RanrenAI skip Agent generation because staff already replied chat_id=%s trigger_id=%s service_case_id=%s",
+                message.chat_id,
+                trigger_id,
+                service_case_id,
+            )
+            await self.engine._retire_pending_outbound(
+                trigger_id=trigger_id,
+                reason="recovered reply suppressed because staff already replied",
+            )
+            return {
+                "_halt": True,
+                "agent_run_id": agent_run_id,
+                "_completion_reason": "staff_preempted",
+            }
+        if await self.engine._has_newer_inbound_message(
+            service_case_id=service_case_id,
+            trigger_id=trigger_id,
+        ):
+            logger.info(
+                "RanrenAI skip stale Agent generation chat_id=%s trigger_id=%s service_case_id=%s",
+                message.chat_id,
+                trigger_id,
+                service_case_id,
+            )
+            await self.engine._retire_pending_outbound(
+                trigger_id=trigger_id,
+                reason="recovered reply suppressed because a newer user message exists",
+            )
+            return {
+                "_halt": True,
+                "agent_run_id": agent_run_id,
+                "_completion_reason": "stale_reply_suppressed",
+            }
+        if (
+            self.engine.has_pending_newer_message
+            and await self.engine.has_pending_newer_message(message)
+        ):
+            logger.info(
+                "RanrenAI skip Agent generation because newer raw messages are queued chat_id=%s trigger_id=%s service_case_id=%s",
+                message.chat_id,
+                trigger_id,
+                service_case_id,
+            )
+            await self.engine._retire_pending_outbound(
+                trigger_id=trigger_id,
+                reason="recovered reply suppressed because a newer raw message is queued",
+            )
+            return {
+                "_halt": True,
+                "agent_run_id": agent_run_id,
+                "_completion_reason": "newer_message_queued",
+            }
+
         return {
             "recent_user_messages": recent_user_messages,
             "agent_run_id": agent_run_id,
