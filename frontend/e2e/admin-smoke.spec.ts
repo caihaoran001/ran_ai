@@ -34,4 +34,26 @@ test.describe("admin console smoke", () => {
     await expect(page.getByText("intake")).toBeVisible();
     await expect(page.getByText("outcome_engine")).toBeVisible();
   });
+
+  test("RAG evaluation exposes the fixed corpus and per-case evidence", async ({ page }) => {
+    await page.goto("/rag-evaluations");
+
+    const corpus = page.getByRole("region", { name: "固定题库构成" });
+    await expect(corpus).toContainText("FAQ 改写");
+    await expect(corpus).toContainText("真实聊天");
+    await expect(corpus).toContainText("应该检索");
+    await expect(corpus).toContainText("应该跳过");
+    await expect(page.getByText("本批次共 50 条", { exact: false })).toBeVisible();
+
+    await page.getByRole("button", { name: "未通过 1" }).click();
+    const failedCase = page.getByRole("button", { name: /瓶盖一盖就可以了吗/ });
+    if ((await failedCase.getAttribute("aria-expanded")) !== "true") {
+      await failedCase.click();
+    }
+    await expect(failedCase).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("heading", { name: "预期结果" })).toBeVisible();
+    await expect(page.getByText("回答依据的权威事实")).toBeVisible();
+    await expect(page.getByText("模拟回复", { exact: true })).toBeVisible();
+    await expect(page.getByText("最终回复反转了瓶盖与大刻度的比较方向")).toBeVisible();
+  });
 });

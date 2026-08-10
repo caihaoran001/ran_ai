@@ -79,19 +79,22 @@ type FailureReason = {
 type EvaluationCase = {
   case_id: string;
   title: string;
+  origin: {
+    kind: "faq_rewrite" | "real_chat" | "unknown";
+    reference_id: string;
+  };
   tags: string[];
   status: "passed" | "failed" | "skipped" | "error";
   history: Array<{ role: "user" | "staff" | "assistant"; content: string }>;
   user_query: string;
   expected: {
     retrieval_decision: "retrieve" | "skip";
+    response_mode?: "answer" | "acknowledge" | "clarify" | "use_runtime_data" | "support" | null;
     rewrite: {
       must_include: string[];
       must_preserve_meanings: string[];
-      forbidden_inferences: string[];
     };
     required_facts: string[];
-    forbidden_claims: string[];
   };
   actual: {
     retrieval_decision?: "retrieve" | "skip" | null;
@@ -142,12 +145,26 @@ const RUN_MODE_LABELS: Record<RagEvaluationSummary["run_mode"], string> = {
   real: "真实评测",
   unknown: "旧报告未标记",
 };
+const ORIGIN_LABELS: Record<EvaluationCase["origin"]["kind"], string> = {
+  faq_rewrite: "FAQ 改写",
+  real_chat: "真实聊天",
+  unknown: "旧用例",
+};
+const RESPONSE_MODE_LABELS: Record<NonNullable<EvaluationCase["expected"]["response_mode"]>, string> = {
+  answer: "回答问题",
+  acknowledge: "确认收到",
+  clarify: "追问澄清",
+  use_runtime_data: "使用实时能力",
+  support: "接住情绪",
+};
 
 type CaseFilter =
   | "all"
   | "passed"
   | "failed"
   | "critical"
+  | "faq_rewrite"
+  | "real_chat"
   | FailureReason["stage"];
 
 function percent(value?: number | null) {
@@ -226,22 +243,18 @@ function CaseStatus({ status }: { status: EvaluationCase["status"] }) {
 function FactList({
   title,
   items,
-  tone = "neutral",
 }: {
   title: string;
   items: string[];
-  tone?: "neutral" | "danger";
 }) {
   if (!items.length) return null;
   return (
     <div>
-      <p className={`text-xs font-bold ${tone === "danger" ? "text-rose-700" : "text-slate-600"}`}>
-        {title}
-      </p>
+      <p className="text-xs font-bold text-slate-600">{title}</p>
       <ul className="mt-1.5 space-y-1.5">
         {items.map((fact, index) => (
           <li key={`${fact}-${index}`} className="flex gap-2 text-sm leading-6 text-slate-700">
-            <span className={`mt-2 h-1.5 w-1.5 shrink-0 rounded-full ${tone === "danger" ? "bg-rose-500" : "bg-cyan-600"}`} />
+            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-600" />
             <span>{fact}</span>
           </li>
         ))}
@@ -273,30 +286,43 @@ function EvidenceDetail({
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white md:grid md:grid-cols-2 md:divide-x md:divide-slate-200">
         <section className="min-w-0 border-b border-slate-200 p-4 sm:p-5 md:border-b-0" aria-label="预期结果">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-extrabold text-slate-950">预期结果</h3>
-            <span className="status-pill pill-info">
-              {DECISION_LABELS[item.expected.retrieval_decision]}
-            </span>
+            <div>
+              <h3 className="text-sm font-extrabold text-slate-950">预期结果</h3>
+              <p className="mt-1 text-[11px] font-semibold text-slate-400">
+                {ORIGIN_LABELS[item.origin.kind]} · {item.origin.reference_id}
+              </p>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <span className={`status-pill ${item.origin.kind === "real_chat" ? "pill-neutral" : "pill-info"}`}>
+                {ORIGIN_LABELS[item.origin.kind]}
+              </span>
+              <span className="status-pill pill-info">
+                {DECISION_LABELS[item.expected.retrieval_decision]}
+              </span>
+            </div>
           </div>
           <div className="space-y-4">
             <div className="border-b border-slate-100 pb-4">
-              <p className="mb-3 text-xs font-extrabold text-slate-800">问题改写预期</p>
+              <p className="mb-3 text-xs font-extrabold text-slate-800">问题处理预期</p>
               <div className="space-y-3">
-                <FactList title="必须包含" items={item.expected.rewrite.must_include} />
-                <FactList title="必须保持原意" items={item.expected.rewrite.must_preserve_meanings} />
-                <FactList title="不得自行推断" items={item.expected.rewrite.forbidden_inferences} tone="danger" />
+                <FactList title="检索问题应包含" items={item.expected.rewrite.must_include} />
+                <FactList title="需要保持的原意" items={item.expected.rewrite.must_preserve_meanings} />
               </div>
             </div>
-            <p className="text-xs font-extrabold text-slate-800">最终回复预期</p>
-            <FactList title="回答必须依据" items={item.expected.required_facts} />
-            <FactList title="回答不得出现" items={item.expected.forbidden_claims} tone="danger" />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-extrabold text-slate-800">最终回复预期</p>
+              {item.expected.response_mode && (
+                <span className="status-pill pill-neutral">
+                  {RESPONSE_MODE_LABELS[item.expected.response_mode]}
+                </span>
+              )}
+            </div>
+            <FactList title="回答依据的权威事实" items={item.expected.required_facts} />
             {!item.expected.rewrite.must_include.length &&
               !item.expected.rewrite.must_preserve_meanings.length &&
-              !item.expected.rewrite.forbidden_inferences.length &&
-              !item.expected.required_facts.length &&
-              !item.expected.forbidden_claims.length && (
+              !item.expected.required_facts.length && (
               <p className="text-sm leading-6 text-slate-500">
-                本条只验证系统是否正确跳过知识检索，不预设知识型答案。
+                本条只验证系统是否正确跳过知识检索，并按预期方式接话。
               </p>
             )}
           </div>
@@ -471,10 +497,22 @@ export function RagEvaluationsClient({
         item.failure_reasons.some((reason) => reason.severity === "critical"),
       );
     }
+    if (filter === "faq_rewrite" || filter === "real_chat") {
+      return cases.filter((item) => item.origin.kind === filter);
+    }
     return cases.filter((item) =>
       item.failure_reasons.some((reason) => reason.stage === filter),
     );
   }, [detail, filter]);
+  const originCounts = useMemo(() => {
+    const cases = detail?.cases ?? [];
+    return {
+      faq: cases.filter((item) => item.origin.kind === "faq_rewrite").length,
+      chat: cases.filter((item) => item.origin.kind === "real_chat").length,
+      retrieve: cases.filter((item) => item.expected.retrieval_decision === "retrieve").length,
+      skip: cases.filter((item) => item.expected.retrieval_decision === "skip").length,
+    };
+  }, [detail]);
   const isMockRun = summary?.run_mode === "mock";
   const isLegacyRun = summary?.run_mode === "unknown";
   const resultLabel = isMockRun ? "模拟结果" : "实际结果";
@@ -584,6 +622,25 @@ export function RagEvaluationsClient({
         </div>
       )}
 
+      {detail?.cases.length ? (
+        <section className="grid overflow-hidden rounded-2xl border border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-4" aria-label="固定题库构成">
+          {[
+            ["FAQ 改写", originCounts.faq, "依据权威答案改成真实问法"],
+            ["真实聊天", originCounts.chat, "一次性筛选并完成脱敏"],
+            ["应该检索", originCounts.retrieve, "进入改写、召回和回复评测"],
+            ["应该跳过", originCounts.skip, "检查误检与接话方式"],
+          ].map(([label, value, hint], index) => (
+            <div key={label} className={`px-5 py-4 ${index ? "border-t border-slate-100 sm:border-l sm:border-t-0" : ""}`}>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-xs font-extrabold text-slate-600">{label}</span>
+                <span className="text-2xl font-black tabular-nums text-slate-950">{value}</span>
+              </div>
+              <p className="mt-1 text-[11px] leading-5 text-slate-400">{hint}</p>
+            </div>
+          ))}
+        </section>
+      ) : null}
+
       {summary && summary.critical_fact_errors > 0 && (
         <section className="overflow-hidden rounded-2xl border border-rose-300 bg-rose-950 text-white shadow-sm">
           <div className="flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
@@ -662,6 +719,8 @@ export function RagEvaluationsClient({
                     ["failed", `未通过 ${summary.counts.failed + summary.counts.errors}`],
                     ["passed", `通过 ${summary.counts.passed}`],
                     ["critical", `关键事实 ${summary.critical_fact_errors}`],
+                    ["faq_rewrite", `FAQ 改写 ${originCounts.faq}`],
+                    ["real_chat", `真实聊天 ${originCounts.chat}`],
                     ["decision", "检索决策异常"],
                     ["rewrite", "问题改写异常"],
                     ["retrieval", "知识召回异常"],
@@ -705,6 +764,10 @@ export function RagEvaluationsClient({
                           </span>
                           <span className="mt-1 block text-xs leading-5 text-slate-500">{item.title}</span>
                           <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-semibold text-slate-500">
+                            <span className={item.origin.kind === "real_chat" ? "text-violet-700" : "text-cyan-700"}>
+                              {ORIGIN_LABELS[item.origin.kind]}
+                            </span>
+                            <span className="text-slate-300">·</span>
                             <span>预期：{DECISION_LABELS[item.expected.retrieval_decision]}</span>
                             <ArrowDown className="h-3 w-3 -rotate-90 text-slate-300" />
                             <span className={actualDecision === item.expected.retrieval_decision ? "text-emerald-700" : "text-rose-700"}>
