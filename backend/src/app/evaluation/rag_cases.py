@@ -21,7 +21,9 @@ REQUIRED_RISK_TAGS = frozenset(
         "skip_retrieval",
     }
 )
-MINIMUM_CASE_COUNT = 16
+FIXED_CASE_COUNT = 50
+FIXED_ORIGIN_COUNTS = {"faq_rewrite": 25, "real_chat": 25}
+FIXED_DECISION_COUNTS = {"retrieve": 35, "skip": 15}
 
 
 class StrictModel(BaseModel):
@@ -41,11 +43,15 @@ class RagAuthoritativeFact(StrictModel):
     source_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
+class RagCaseOrigin(StrictModel):
+    kind: Literal["faq_rewrite", "real_chat"]
+    reference_id: str = Field(pattern=r"^[a-z0-9][a-z0-9:_-]*$")
+
+
 class RagRewriteExpectation(StrictModel):
     decision: Literal["retrieve", "skip"]
     must_include: list[str] = Field(default_factory=list)
     must_preserve_meanings: list[str] = Field(default_factory=list)
-    forbidden_inferences: list[str] = Field(default_factory=list)
 
 
 class RagRetrievalExpectation(StrictModel):
@@ -62,12 +68,12 @@ class RagAnswerExpectation(StrictModel):
         "support",
     ]
     required_fact_ids: list[str] = Field(default_factory=list)
-    forbidden_claims: list[str] = Field(default_factory=list)
 
 
 class RagEvalCase(StrictModel):
     case_id: str = Field(pattern=r"^rag-[a-z0-9-]+$")
     title: str = Field(min_length=1, max_length=120)
+    origin: RagCaseOrigin
     tags: list[str] = Field(min_length=1)
     history: list[RagHistoryMessage] = Field(default_factory=list, max_length=10)
     user_query: str = Field(min_length=1, max_length=500)
@@ -113,7 +119,7 @@ class RagEvalSuite(StrictModel):
     suite_id: str = Field(pattern=r"^rag-[a-z0-9-]+-v\d+$")
     version: int = Field(ge=1)
     description: str = Field(min_length=1)
-    cases: list[RagEvalCase] = Field(min_length=MINIMUM_CASE_COUNT)
+    cases: list[RagEvalCase] = Field(min_length=FIXED_CASE_COUNT)
 
     @model_validator(mode="after")
     def validate_suite(self) -> "RagEvalSuite":
@@ -127,6 +133,25 @@ class RagEvalSuite(StrictModel):
         decisions = {case.rewrite.decision for case in self.cases}
         if decisions != {"retrieve", "skip"}:
             raise ValueError("suite must contain both retrieve and skip cases")
+        origin_counts = Counter(case.origin.kind for case in self.cases)
+        if dict(origin_counts) != FIXED_ORIGIN_COUNTS:
+            raise ValueError(
+                "suite must contain exactly 25 faq_rewrite and 25 real_chat cases"
+            )
+        decision_counts = Counter(case.rewrite.decision for case in self.cases)
+        if dict(decision_counts) != FIXED_DECISION_COUNTS:
+            raise ValueError("suite must contain exactly 35 retrieve and 15 skip cases")
+        origin_refs = [
+            (case.origin.kind, case.origin.reference_id) for case in self.cases
+        ]
+        if len(origin_refs) != len(set(origin_refs)):
+            raise ValueError("suite contains duplicate origin references")
+        if any(
+            case.origin.kind == "faq_rewrite"
+            and case.rewrite.decision != "retrieve"
+            for case in self.cases
+        ):
+            raise ValueError("faq_rewrite cases must retrieve knowledge")
         return self
 
 
@@ -148,6 +173,9 @@ def summarize_rag_eval_suite(suite: RagEvalSuite) -> dict[str, object]:
         "version": suite.version,
         "case_count": len(suite.cases),
         "decision_counts": dict(sorted(decision_counts.items())),
+        "origin_counts": dict(
+            sorted(Counter(case.origin.kind for case in suite.cases).items())
+        ),
         "required_risk_tags": sorted(REQUIRED_RISK_TAGS),
         "covered_tags": covered_tags,
     }

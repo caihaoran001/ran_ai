@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,12 @@ class RagasScores:
     faithfulness: float
     answer_relevancy: float
     raw_context_recall: float
+
+
+@dataclass(frozen=True)
+class FactConsistencyResult:
+    consistent: bool
+    reason: str
 
 
 class RagasScorer:
@@ -53,11 +60,55 @@ class RagasScorer:
             llm=llm,
             embeddings=embeddings,
         )
+        self._judge_client = judge_client
+        self._judge_model = settings.ai_model
 
     @staticmethod
     def _value(result: Any) -> float:
         value = getattr(result, "value", result)
         return max(0.0, min(1.0, float(value)))
+
+    async def check_fact_consistency(
+        self,
+        *,
+        response: str,
+        reference: str,
+    ) -> FactConsistencyResult:
+        """Detect direct relation contradictions without enumerating bad phrases."""
+
+        completion = await self._judge_client.chat.completions.create(
+            model=self._judge_model,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是离线评测判官。只判断回复是否直接反转或冲突于权威事实中的"
+                        "数字、单位、大小比较、等量关系、时间或否定关系。遗漏事实、措辞不同、"
+                        "额外但不冲突的建议，都不算冲突。输出JSON："
+                        '{"consistent":true或false,"reason":"一句具体原因"}。'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"权威事实：\n{reference[:12000]}\n\n"
+                        f"待检查回复：\n{response[:12000]}"
+                    ),
+                },
+            ],
+        )
+        content = completion.choices[0].message.content or ""
+        payload = json.loads(content)
+        consistent = payload.get("consistent")
+        reason = payload.get("reason")
+        if not isinstance(consistent, bool) or not isinstance(reason, str):
+            raise ValueError("关键事实一致性判官返回格式无效")
+        return FactConsistencyResult(
+            consistent=consistent,
+            reason=reason.strip()[:1000] or "判官未提供原因",
+        )
 
     async def score(
         self,

@@ -77,16 +77,48 @@ def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():
     case = next(
         item
         for item in load_rag_eval_suite().cases
-        if item.case_id == "rag-cap-ellipsis"
+        if item.case_id == "rag-chat-cap-ambiguity"
     )
 
     result = _mock_cases([case])[0]
 
-    assert result.expected.rewrite.must_include == ["瓶盖", "一大刻度", "用量"]
-    assert "产品冲泡后需要盖上瓶盖" in result.expected.rewrite.forbidden_inferences
-    assert result.actual.knowledge_query == "瓶盖 一大刻度 用量"
+    assert result.origin.kind == "real_chat"
+    assert result.expected.response_mode == "answer"
+    assert result.expected.rewrite.must_include == ["瓶盖用量", "一大刻度", "晚A"]
+    assert result.actual.knowledge_query == "瓶盖用量 一大刻度 晚A"
     assert [hit.content for hit in result.actual.rewritten_query_hits] == [
-        "一瓶盖约等于1.5个小刻度。",
-        "一大刻度等于3个小刻度，因此约等于两瓶盖。",
+        "一瓶盖约等于1.5个小刻度，一大刻度等于3个小刻度，按一大刻度执行时约需两瓶盖，一瓶盖不够；量取以瓶体刻度为准。",
     ]
     assert result.actual.raw_query_hits == result.actual.rewritten_query_hits
+
+
+class _FactJudgeCompletions:
+    async def create(self, **kwargs):
+        assert kwargs["temperature"] == 0
+        assert "数字、单位、大小比较" in kwargs["messages"][0]["content"]
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='{"consistent": false, "reason": "把一瓶盖和一大刻度的大小关系说反了"}'
+                    )
+                )
+            ]
+        )
+
+
+@pytest.mark.asyncio
+async def test_fact_consistency_judge_detects_relation_contradiction():
+    scorer = RagasScorer.__new__(RagasScorer)
+    scorer._judge_model = "judge-model"
+    scorer._judge_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_FactJudgeCompletions())
+    )
+
+    result = await scorer.check_fact_consistency(
+        reference="一瓶盖约1.5小刻度，一大刻度等于3小刻度。",
+        response="一瓶盖比一大刻度更多。",
+    )
+
+    assert result.consistent is False
+    assert "大小关系说反" in result.reason

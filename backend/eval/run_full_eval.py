@@ -13,6 +13,7 @@ from app.evaluation.rag_cases import RagEvalCase, load_rag_eval_suite
 from app.schemas.rag_evaluation import (
     RagCaseActual,
     RagCaseExpected,
+    RagCaseOrigin,
     RagCaseScores,
     RagEvaluationCaseResult,
     RagEvaluationCounts,
@@ -30,7 +31,6 @@ from app.services.agent.state import AgentRunContext
 from app.services.knowledge_index import retrieve_indexed_knowledge_result
 
 if __package__:
-    from .gen_dataset import EvaluationDataset, build_dataset, load_dataset, write_dataset
     from .intent_eval import (
         IntentResult,
         evaluate_intent,
@@ -41,7 +41,6 @@ if __package__:
     from .read_only import install_read_only_guards
     from .reporting import aggregate_summary, atomic_write_json, utc_now, write_report
 else:
-    from gen_dataset import EvaluationDataset, build_dataset, load_dataset, write_dataset
     from intent_eval import (
         IntentResult,
         evaluate_intent,
@@ -59,6 +58,7 @@ THRESHOLDS = {
     "faithfulness": 0.85,
     "answer_relevancy": 0.80,
 }
+CRITICAL_RELATION_TAGS = frozenset({"number", "unit", "comparison", "negation"})
 
 
 def _empty_metrics() -> RagEvaluationMetrics:
@@ -157,19 +157,19 @@ def _base_case(case: RagEvalCase, *, status: str) -> RagEvaluationCaseResult:
     return RagEvaluationCaseResult(
         case_id=case.case_id,
         title=case.title,
+        origin=RagCaseOrigin(**case.origin.model_dump()),
         tags=case.tags,
         status=status,
         history=[RagHistoryMessage(**item.model_dump()) for item in case.history],
         user_query=case.user_query,
         expected=RagCaseExpected(
             retrieval_decision=case.rewrite.decision,
+            response_mode=case.answer.response_mode,
             rewrite=RagRewriteExpected(
                 must_include=case.rewrite.must_include,
                 must_preserve_meanings=case.rewrite.must_preserve_meanings,
-                forbidden_inferences=case.rewrite.forbidden_inferences,
             ),
             required_facts=[facts[fact_id] for fact_id in case.answer.required_fact_ids],
-            forbidden_claims=case.answer.forbidden_claims,
         ),
         actual=RagCaseActual(
             retrieval_decision=None,
@@ -233,13 +233,22 @@ async def _evaluate_real_case(
 
         response = await _agent_reply(case, intent, settings)
         result.actual.response = response
-        for claim in case.answer.forbidden_claims:
-            if response and claim in response:
+        reference = _reference(case)
+        if (
+            response
+            and reference
+            and CRITICAL_RELATION_TAGS.intersection(case.tags)
+        ):
+            consistency = await scorer.check_fact_consistency(
+                response=response,
+                reference=reference,
+            )
+            if not consistency.consistent:
                 reasons.append(
                     RagFailureReason(
                         stage="answer",
-                        code="critical_forbidden_claim",
-                        message=f"最终回复出现禁止事实：{claim}",
+                        code="critical_fact_contradiction",
+                        message=f"关键事实关系与权威事实冲突：{consistency.reason}",
                         severity="critical",
                     )
                 )
@@ -251,7 +260,7 @@ async def _evaluate_real_case(
             scores = await scorer.score(
                 user_input=case.user_query,
                 response=response,
-                reference=_reference(case),
+                reference=reference,
                 retrieved_contexts=[hit.content for hit in rewritten_hits],
                 raw_contexts=[hit.content for hit in raw_hits],
             )
@@ -351,14 +360,21 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
         output.append(result)
 
     if output:
-        failure = output[0]
+        failure = next(
+            (
+                item
+                for item in output
+                if item.case_id == "rag-chat-cap-ambiguity"
+            ),
+            output[0],
+        )
         failure.status = "failed"
         failure.actual.response = "一大刻度不够一瓶盖。"
         failure.scores.faithfulness = 0.42
         failure.failure_reasons = [
             RagFailureReason(
                 stage="answer",
-                code="critical_forbidden_claim",
+                code="critical_fact_contradiction",
                 message="最终回复反转了瓶盖与大刻度的比较方向",
                 severity="critical",
             ),
@@ -371,15 +387,6 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
     return output
 
 
-async def _load_real_dataset(path: Path, *, refresh: bool) -> EvaluationDataset:
-    if path.is_file() and not refresh:
-        return load_dataset(path)
-    async with SessionLocal() as session:
-        dataset = await build_dataset(session)
-    write_dataset(path, dataset)
-    return dataset
-
-
 async def async_main(args: argparse.Namespace) -> int:
     reports_root = args.reports_root.resolve()
     run_id = args.run_id or datetime.now(timezone.utc).strftime("eval-%Y%m%dT%H%M%SZ")
@@ -387,21 +394,13 @@ async def async_main(args: argparse.Namespace) -> int:
     if run_dir.exists():
         raise RuntimeError(f"run directory already exists: {run_dir}")
 
-    if args.mock:
-        suite = load_rag_eval_suite()
-        dataset_id = suite.suite_id
-        dataset_version = suite.version
-        cases = suite.cases
-    else:
+    suite = load_rag_eval_suite(args.dataset)
+    dataset_id = suite.suite_id
+    dataset_version = suite.version
+    cases = suite.cases
+    if not args.mock:
         install_read_only_guards(engine)
         install_in_memory_usage_collector()
-        dataset = await _load_real_dataset(
-            args.dataset,
-            refresh=args.refresh_dataset,
-        )
-        dataset_id = dataset.dataset_id
-        dataset_version = dataset.dataset_version
-        cases = dataset.cases
 
     base = _base_summary(
         run_id=run_id,
@@ -468,11 +467,10 @@ def parse_args() -> argparse.Namespace:
         default=Path(
             os.getenv(
                 "RAG_EVALUATION_DATASET_PATH",
-                "/app/diagnostics/rag-evaluations/datasets/dataset.v1.json",
+                "/app/tests/fixtures/rag_eval_cases.v1.json",
             )
         ),
     )
-    parser.add_argument("--refresh-dataset", action="store_true")
     return parser.parse_args()
 
 

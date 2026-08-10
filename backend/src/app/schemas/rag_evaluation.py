@@ -78,14 +78,28 @@ class RagFailureReason(StrictModel):
 class RagRewriteExpected(StrictModel):
     must_include: list[str] = Field(default_factory=list)
     must_preserve_meanings: list[str] = Field(default_factory=list)
-    forbidden_inferences: list[str] = Field(default_factory=list)
+    # Read-only compatibility for reports written before the fixed positive-fact schema.
+    forbidden_inferences: list[str] = Field(default_factory=list, exclude=True)
+
+
+class RagCaseOrigin(StrictModel):
+    kind: Literal["faq_rewrite", "real_chat", "unknown"] = "unknown"
+    reference_id: str = Field(default="legacy-report", min_length=1, max_length=160)
 
 
 class RagCaseExpected(StrictModel):
     retrieval_decision: Literal["retrieve", "skip"]
+    response_mode: Literal[
+        "answer",
+        "acknowledge",
+        "clarify",
+        "use_runtime_data",
+        "support",
+    ] | None = None
     rewrite: RagRewriteExpected = Field(default_factory=RagRewriteExpected)
     required_facts: list[str] = Field(default_factory=list)
-    forbidden_claims: list[str] = Field(default_factory=list)
+    # Accepted only so historical report files remain readable; never emitted.
+    forbidden_claims: list[str] = Field(default_factory=list, exclude=True)
 
 
 class RagCaseActual(StrictModel):
@@ -107,6 +121,7 @@ class RagCaseScores(StrictModel):
 class RagEvaluationCaseResult(StrictModel):
     case_id: str = Field(min_length=1, max_length=160)
     title: str = Field(min_length=1, max_length=200)
+    origin: RagCaseOrigin = Field(default_factory=RagCaseOrigin)
     tags: list[str] = Field(default_factory=list)
     status: Literal["passed", "failed", "skipped", "error"]
     history: list[RagHistoryMessage] = Field(default_factory=list)

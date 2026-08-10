@@ -20,7 +20,7 @@ def _summary(run_id: str, *, status: str = "completed", minute: int = 0) -> dict
         "updated_at": timestamp,
         "finished_at": timestamp if status == "completed" else None,
         "git_sha": "1234567",
-        "dataset_id": "rag-chat-core-v1",
+        "dataset_id": "rag-fixed-50-v1",
         "dataset_version": 1,
         "model": "mock-model",
         "embedding_model": "mock-embedding",
@@ -60,21 +60,24 @@ def _report(run_id: str) -> dict:
         "summary": _summary(run_id),
         "cases": [
             {
-                "case_id": "rag-cap-ellipsis",
+                "case_id": "rag-chat-cap-ambiguity",
                 "title": "瓶盖用量保持比较方向",
+                "origin": {
+                    "kind": "real_chat",
+                    "reference_id": "chat:34848648efde",
+                },
                 "tags": ["comparison"],
                 "status": "passed",
                 "history": [],
                 "user_query": "一瓶盖够一大刻度吗？",
                 "expected": {
                     "retrieval_decision": "retrieve",
+                    "response_mode": "answer",
                     "rewrite": {
                         "must_include": ["瓶盖", "一大刻度", "用量"],
                         "must_preserve_meanings": ["比较瓶盖和一大刻度的用量"],
-                        "forbidden_inferences": ["用户在问怎么盖瓶盖"],
                     },
                     "required_facts": ["一瓶盖约1.5小刻度"],
-                    "forbidden_claims": ["一瓶盖够一大刻度"],
                 },
                 "actual": {
                     "retrieval_decision": "retrieve",
@@ -130,6 +133,11 @@ async def test_rag_evaluation_api_lists_status_and_returns_report(
         "一大刻度",
         "用量",
     ]
+    assert detail.json()["cases"][0]["origin"] == {
+        "kind": "real_chat",
+        "reference_id": "chat:34848648efde",
+    }
+    assert detail.json()["cases"][0]["expected"]["response_mode"] == "answer"
     assert detail.json()["cases"][0]["actual"]["response"].startswith("一瓶盖")
 
 
@@ -159,15 +167,24 @@ async def test_legacy_report_without_run_mode_remains_readable(admin_client, tmp
     app.dependency_overrides[get_report_store] = lambda: store
     legacy = _report("eval-legacy")
     legacy["summary"].pop("run_mode")
-    legacy["cases"][0]["expected"].pop("rewrite")
+    legacy["cases"][0].pop("origin")
+    legacy["cases"][0]["expected"].pop("response_mode")
+    legacy["cases"][0]["expected"]["rewrite"]["forbidden_inferences"] = [
+        "用户在问怎么盖瓶盖"
+    ]
+    legacy["cases"][0]["expected"]["forbidden_claims"] = [
+        "一瓶盖够一大刻度"
+    ]
     _write_json(tmp_path / "eval-legacy" / "report.json", legacy)
 
     response = await admin_client.get("/rag-evaluations/eval-legacy")
 
     assert response.status_code == 200
     assert response.json()["summary"]["run_mode"] == "unknown"
-    assert response.json()["cases"][0]["expected"]["rewrite"] == {
-        "must_include": [],
-        "must_preserve_meanings": [],
-        "forbidden_inferences": [],
+    assert response.json()["cases"][0]["origin"] == {
+        "kind": "unknown",
+        "reference_id": "legacy-report",
     }
+    assert response.json()["cases"][0]["expected"]["response_mode"] is None
+    assert "forbidden_inferences" not in response.json()["cases"][0]["expected"]["rewrite"]
+    assert "forbidden_claims" not in response.json()["cases"][0]["expected"]
