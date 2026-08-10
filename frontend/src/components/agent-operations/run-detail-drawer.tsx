@@ -60,6 +60,15 @@ type AgentKnowledgeDecision = {
   skipped_product_terms?: string[];
 };
 
+type ArchivistDroppedItem = {
+  bucket?: string;
+  item_id?: string;
+  item_ids?: string[];
+  target_date?: string;
+  reason?: string;
+  invalid_fields?: string[];
+};
+
 export type AgentFailureDetail = {
   stage: string;
   error_type?: string | null;
@@ -103,11 +112,7 @@ export type RunDetailData = {
   input_messages?: ArchivistInputMessage[];
   changes?: ArchivistBatchChange[];
   changes_detail_available?: boolean;
-  dropped_items?: Array<{
-    bucket?: string;
-    item_id?: string;
-    reason?: string;
-  }>;
+  dropped_items?: ArchivistDroppedItem[];
 };
 
 const OUTCOME_LABELS: Record<string, string> = {
@@ -192,6 +197,56 @@ const TRIGGER_LABELS: Record<string, string> = {
   C_count: "未归档消息累计达到批量阈值",
   manual_replay: "人工重新处理隔离消息",
 };
+
+function describeDroppedItem(item: ArchivistDroppedItem): {
+  title: string;
+  detail: string;
+} {
+  const datePrefix = item.target_date ? `${item.target_date} ` : "";
+  const itemCount = item.item_ids?.length ?? (item.item_id ? 1 : 0);
+  const itemSuffix = itemCount > 0 ? `，涉及 ${itemCount} 项回答` : "";
+
+  if (item.bucket === "checkin" && item.reason === "bad_args") {
+    return {
+      title: `${datePrefix}打卡内容未保存`,
+      detail: `系统参数格式校验失败${itemSuffix}，本项没有写入打卡记录。`,
+    };
+  }
+  if (item.reason === "checkin_date_not_in_batch") {
+    return {
+      title: `${datePrefix}打卡日期未匹配`,
+      detail: "上报日期不在这批聊天覆盖的日期内，因此没有写入。",
+    };
+  }
+  if (item.reason === "checklist_not_in_whitelist") {
+    return {
+      title: `${datePrefix}清单回答未保存`,
+      detail: "回答的项目不在当时有效的每日清单中。",
+    };
+  }
+  if (item.reason === "followup_not_in_whitelist") {
+    return {
+      title: `${datePrefix}追问回答未保存`,
+      detail: "回答没有匹配到已发送的追问项目。",
+    };
+  }
+  if (item.reason === "followup_empty_answer" || item.reason === "checklist_empty_answer") {
+    return {
+      title: `${datePrefix}空回答未保存`,
+      detail: "没有识别到明确回答，因此未写入打卡记录。",
+    };
+  }
+  if (item.reason === "duplicate_memory_report" || item.reason === "duplicate_case_candidate") {
+    return {
+      title: "重复内容未采用",
+      detail: "同一批整理已经保留了一份对应内容。",
+    };
+  }
+  return {
+    title: "内容未写入档案",
+    detail: "系统校验未通过，可结合本次输入消息进一步核对。",
+  };
+}
 
 export function RunDetailDrawer({
   run,
@@ -517,18 +572,23 @@ export function RunDetailDrawer({
 
               {run.dropped_items && run.dropped_items.length > 0 && (
                 <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
-                  <h4 className="text-xs font-bold text-amber-900 mb-2">
-                    没有采纳的内容（{run.dropped_items.length} 项）
+                  <h4 className="flex items-center gap-1.5 text-xs font-bold text-amber-950">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700" />
+                    未写入档案（{run.dropped_items.length} 项）
                   </h4>
-                  <div className="space-y-1.5 text-xs text-amber-800">
-                    {run.dropped_items.map((item, i) => (
-                      <div key={i} className="flex items-start gap-1.5">
-                        <span className="font-mono text-amber-600">•</span>
-                        <span>
-                          [{item.bucket || "常规"}]: {item.reason || "校验不通过"}
-                        </span>
-                      </div>
-                    ))}
+                  <p className="mt-1 text-xs leading-5 text-amber-900">
+                    以下内容经过识别，但没有保存到业务档案。
+                  </p>
+                  <div className="mt-3 divide-y divide-amber-200/80 border-y border-amber-200/80">
+                    {run.dropped_items.map((item, i) => {
+                      const copy = describeDroppedItem(item);
+                      return (
+                        <div key={i} className="py-2.5 text-xs">
+                          <div className="font-bold text-amber-950">{copy.title}</div>
+                          <div className="mt-0.5 leading-5 text-amber-900">{copy.detail}</div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

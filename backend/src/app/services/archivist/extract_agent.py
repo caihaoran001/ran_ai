@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import ValidationError
 
 from app.core.config import Settings, get_settings
 from app.services.agent_observability import record_model_usage
@@ -126,6 +127,44 @@ def _collect_checkin(args: dict[str, Any]) -> dict[str, Any]:
             if cleaned:
                 fields[key] = cleaned
     return fields
+
+
+def _bad_args_trace(
+    *,
+    kind: str,
+    raw_args: object,
+    error: ValidationError | None = None,
+) -> dict[str, Any]:
+    """Keep enough non-sensitive context for operators without exposing raw payloads."""
+    item: dict[str, Any] = {"bucket": kind, "reason": "bad_args"}
+    if not isinstance(raw_args, dict):
+        item["invalid_fields"] = ["args"]
+        return item
+
+    target_date = str(raw_args.get("target_date") or "").strip()
+    if target_date:
+        item["target_date"] = target_date
+    item_ids = [
+        str(answer.get("item_id") or "").strip()
+        for answer_key in ("followup_answers", "checklist_answers")
+        for answer in (
+            raw_args.get(answer_key)
+            if isinstance(raw_args.get(answer_key), list)
+            else []
+        )
+        if isinstance(answer, dict) and str(answer.get("item_id") or "").strip()
+    ]
+    if item_ids:
+        item["item_ids"] = list(dict.fromkeys(item_ids))
+    if error is not None:
+        item["invalid_fields"] = sorted(
+            {
+                ".".join(str(part) for part in detail.get("loc") or [])
+                for detail in error.errors(include_url=False, include_input=False)
+                if detail.get("loc")
+            }
+        )
+    return item
 
 
 async def run_extract_agent(
@@ -258,15 +297,27 @@ async def run_extract_agent(
             dropped.append({"bucket": str(name), "reason": "unknown_tool"})
             continue
         args_model, kind = spec
-        try:
-            validated = args_model(**raw_args).model_dump()
-        except Exception:
+        if not isinstance(raw_args, dict):
             logger.warning(
-                "Archivist extract-agent bad args tool=%s service_case_id=%s",
+                "Archivist extract-agent non-object args tool=%s service_case_id=%s",
                 name,
                 service_case_id,
             )
-            dropped.append({"bucket": kind, "reason": "bad_args"})
+            dropped.append(_bad_args_trace(kind=kind, raw_args=raw_args))
+            continue
+        try:
+            validated = args_model(**raw_args).model_dump()
+        except ValidationError as exc:
+            logger.warning(
+                "Archivist extract-agent bad args tool=%s service_case_id=%s fields=%s",
+                name,
+                service_case_id,
+                [
+                    detail.get("loc")
+                    for detail in exc.errors(include_url=False, include_input=False)
+                ],
+            )
+            dropped.append(_bad_args_trace(kind=kind, raw_args=raw_args, error=exc))
             continue
         if kind == "checkin":
             target_date = str(validated.get("target_date") or "")

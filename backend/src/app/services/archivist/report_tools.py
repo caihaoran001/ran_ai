@@ -44,6 +44,40 @@ KIND_MEMORY = "memory"
 KIND_CASE = "case"
 
 
+class ReportFollowupAnswerArgs(BaseModel):
+    """用户对一条已发送追问的直接回答。"""
+
+    item_id: str = Field(min_length=1, description="追问上下文中的原始项目 ID")
+    cycle_date: str = Field(
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="追问所属周期日期（YYYY-MM-DD）",
+    )
+    target_date: str = Field(
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="回答应写入的打卡日期（YYYY-MM-DD）",
+    )
+    answer: str = Field(min_length=1, description="用户的直接回答")
+    evidence_message_id: int = Field(
+        gt=0,
+        description="作为证据的用户消息数字 ID",
+    )
+
+
+class ReportChecklistAnswerArgs(BaseModel):
+    """用户在普通聊天中对当前每日清单项目的明确回答。"""
+
+    item_id: str = Field(min_length=1, description="每日清单上下文中的原始项目 ID")
+    target_date: str = Field(
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="回答应写入的打卡日期（YYYY-MM-DD）",
+    )
+    answer: str = Field(min_length=1, description="用户的明确回答")
+    evidence_message_id: int = Field(
+        gt=0,
+        description="作为证据的用户消息数字 ID",
+    )
+
+
 class ReportCheckinArgs(BaseModel):
     """上报当天可结构化的打卡字段；只填用户明确说了的，没提到的留空。"""
 
@@ -70,14 +104,14 @@ class ReportCheckinArgs(BaseModel):
     sensation: str | None = Field(default=None, description="身体感受")
     discomfort: str | None = Field(default=None, description="不适")
     tomorrow_focus: str | None = Field(default=None, description="明日重点")
-    followup_answers: list[dict[str, str]] | None = Field(
+    followup_answers: list[ReportFollowupAnswerArgs] | None = Field(
         default=None,
         description=(
             "仅当追问上下文明确列出了待答 item_id 时填写。每项包含 item_id、cycle_date(YYYY-MM-DD)、"
             "target_date(YYYY-MM-DD)、answer、evidence_message_id；只能记录用户对该追问的直接回答。"
         ),
     )
-    checklist_answers: list[dict[str, str]] | None = Field(
+    checklist_answers: list[ReportChecklistAnswerArgs] | None = Field(
         default=None,
         description=(
             "根据上下文给出的当前每日五项，把用户在普通聊天中明确回答的个性化项上报。"

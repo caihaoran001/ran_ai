@@ -35,6 +35,11 @@ from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_state_profile import UserStateProfile
 from app.services.archivist.graph import run_archivist
+from app.services.archivist.checkin_recovery import (
+    RECOVERY_MARKER,
+    recover_numeric_evidence_id_checkins,
+)
+from app.services.archivist.report_tools import ReportCheckinArgs
 from app.services.profile_memory_service import load_profile_memory_context
 
 
@@ -55,6 +60,46 @@ class FakeToolCallingModel:
         if not self.responses:
             return AIMessage(content="")
         return self.responses.pop(0)
+
+
+def test_report_checkin_uses_integer_evidence_message_ids():
+    payload = ReportCheckinArgs(
+        target_date="2026-08-10",
+        followup_answers=[
+            {
+                "item_id": "milestone_morning_checkin",
+                "cycle_date": "2026-08-09",
+                "target_date": "2026-08-10",
+                "answer": "太晚了，已经先吃饭",
+                "evidence_message_id": 43438,
+            }
+        ],
+        checklist_answers=[
+            {
+                "item_id": "document:914:3",
+                "target_date": "2026-08-09",
+                "answer": "已完成",
+                "evidence_message_id": 43428,
+            }
+        ],
+    ).model_dump()
+
+    assert payload["followup_answers"][0]["evidence_message_id"] == 43438
+    assert payload["checklist_answers"][0]["evidence_message_id"] == 43428
+    schema = ReportCheckinArgs.model_json_schema()
+    definitions = schema["$defs"]
+    assert (
+        definitions["ReportFollowupAnswerArgs"]["properties"]["evidence_message_id"][
+            "type"
+        ]
+        == "integer"
+    )
+    assert (
+        definitions["ReportChecklistAnswerArgs"]["properties"][
+            "evidence_message_id"
+        ]["type"]
+        == "integer"
+    )
 
 
 @pytest.mark.asyncio
@@ -108,7 +153,9 @@ async def test_archivist_maps_normal_chat_to_delivered_checklist_item(db_session
                                 "item_id": item_id,
                                 "target_date": target_date,
                                 "answer": "蔬菜吃够两拳",
-                                "evidence_message_id": str(normal_chat.id),
+                                # 真实模型按消息 ID 的自然类型输出整数；曾因 schema 把整个
+                                # answer dict 错标成全字符串而导致本次 report_checkin 被丢弃。
+                                "evidence_message_id": normal_chat.id,
                             }
                         ]
                     },
@@ -132,6 +179,113 @@ async def test_archivist_maps_normal_chat_to_delivered_checklist_item(db_session
     assert checkin.parsed_json["custom_checkin"][item_id]["question"] == "今天是否至少吃到2拳蔬菜"
     assert checkin.parsed_json["custom_checkin"][item_id]["source"] == "chat"
     assert "<daily_checklist_context>" in fake.calls[0][1].content
+
+
+@pytest.mark.asyncio
+async def test_numeric_evidence_id_recovery_is_preview_first_and_fill_only(db_session):
+    case, _msgs, progress = await _setup_case_with_messages(db_session)
+    document = UserDocument(
+        service_case_id=case.id,
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28天执行标准与打卡要求",
+        content_md="test",
+        content_json={
+            "blocks": [
+                {
+                    "key": "daily_checkin",
+                    "items": [
+                        "早C/午B/晚A是否全部完成",
+                        "今天是否至少吃到2拳蔬菜",
+                        "今天是否完成计划内骑车",
+                        "睡眠是否按计划收口",
+                        "情绪稳定度评分",
+                    ],
+                }
+            ]
+        },
+        status=DocumentStatus.SENT,
+        sent_at=datetime.now(timezone.utc),
+    )
+    db_session.add(document)
+    evidence = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="已完成",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(evidence)
+    await db_session.flush()
+    target_date = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    item_id = f"document:{document.id}:3"
+    existing = Checkin(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        user_id=case.user_id,
+        checkin_date=target_date,
+        content="较新的现有记录",
+        parsed_json={
+            "diet": "较新的餐食记录",
+            "_meta": {"sources": {"diet": "chat"}, "contradictions": []},
+        },
+    )
+    trace = ArchivistExtractTrace(
+        service_case_id=case.id,
+        target_date=target_date,
+        watermark_to=evidence.id,
+        emitted_json=[
+            {
+                "name": "report_checkin",
+                "args": {
+                    "target_date": target_date.isoformat(),
+                    "diet": "不应覆盖的旧餐食记录",
+                    "checklist_answers": [
+                        {
+                            "item_id": item_id,
+                            "target_date": target_date.isoformat(),
+                            "answer": "已完成",
+                            "evidence_message_id": evidence.id,
+                        }
+                    ],
+                },
+            }
+        ],
+        kept_json={},
+        dropped_json=[{"bucket": "checkin", "reason": "bad_args"}],
+    )
+    db_session.add_all([existing, trace])
+    await db_session.flush()
+
+    preview = await recover_numeric_evidence_id_checkins(
+        db_session,
+        apply=False,
+        trace_ids={trace.id},
+    )
+    assert preview["stats"]["answers_to_write"] == 1
+    assert "custom_checkin" not in existing.parsed_json
+
+    applied = await recover_numeric_evidence_id_checkins(
+        db_session,
+        apply=True,
+        trace_ids={trace.id},
+    )
+    await db_session.flush()
+    assert applied["stats"]["answers_written"] == 1
+    assert existing.parsed_json["diet"] == "较新的餐食记录"
+    assert existing.parsed_json["custom_checkin"][item_id]["answer"] == "已完成"
+    assert existing.parsed_json["custom_checkin"][item_id]["evidence_message_id"] == evidence.id
+    assert trace.kept_json[RECOVERY_MARKER]["status"] == "applied"
+
+    repeated = await recover_numeric_evidence_id_checkins(
+        db_session,
+        apply=True,
+        trace_ids={trace.id},
+    )
+    assert repeated["stats"]["already_repaired_traces"] == 1
+    assert repeated["stats"].get("answers_written", 0) == 0
 
 
 def test_business_day_starts_at_three_am():
@@ -880,13 +1034,13 @@ async def test_archivist_extract_trace_records_kept_and_dropped(db_session):
                                 "item_id": kept_id,
                                 "target_date": target_date,
                                 "answer": "蔬菜吃够两拳",
-                                "evidence_message_id": str(normal_chat.id),
+                                "evidence_message_id": normal_chat.id,
                             },
                             {
                                 "item_id": dropped_id,
                                 "target_date": target_date,
                                 "answer": "越界题目",
-                                "evidence_message_id": str(normal_chat.id),
+                                "evidence_message_id": normal_chat.id,
                             },
                         ]
                     },
