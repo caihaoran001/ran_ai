@@ -37,6 +37,7 @@ class RagEvaluationMetrics(StrictModel):
 class RagEvaluationSummary(StrictModel):
     schema_version: Literal[1] = 1
     run_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
+    run_mode: Literal["mock", "real", "unknown"] = "unknown"
     status: Literal["queued", "running", "completed", "failed", "interrupted"]
     started_at: datetime
     updated_at: datetime
@@ -74,8 +75,15 @@ class RagFailureReason(StrictModel):
     severity: Literal["info", "warning", "critical"] = "warning"
 
 
+class RagRewriteExpected(StrictModel):
+    must_include: list[str] = Field(default_factory=list)
+    must_preserve_meanings: list[str] = Field(default_factory=list)
+    forbidden_inferences: list[str] = Field(default_factory=list)
+
+
 class RagCaseExpected(StrictModel):
     retrieval_decision: Literal["retrieve", "skip"]
+    rewrite: RagRewriteExpected = Field(default_factory=RagRewriteExpected)
     required_facts: list[str] = Field(default_factory=list)
     forbidden_claims: list[str] = Field(default_factory=list)
 
@@ -117,4 +125,3 @@ class RagEvaluationRunDetail(StrictModel):
 
 class RagEvaluationRunList(StrictModel):
     items: list[RagEvaluationSummary]
-

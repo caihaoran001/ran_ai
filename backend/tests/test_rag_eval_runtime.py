@@ -4,8 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.evaluation.rag_cases import load_rag_eval_suite
 from eval.intent_eval import resolve_intent
 from eval.ragas_eval import RagasScorer
+from eval.run_full_eval import _mock_cases
 
 
 def test_intent_resolution_preserves_runtime_three_state_contract():
@@ -69,3 +71,22 @@ async def test_empty_retrieval_is_scored_as_zero_instead_of_skipped():
     assert scores.context_precision == 0.0
     assert scores.faithfulness == 0.0
     assert scores.answer_relevancy == 0.75
+
+
+def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():
+    case = next(
+        item
+        for item in load_rag_eval_suite().cases
+        if item.case_id == "rag-cap-ellipsis"
+    )
+
+    result = _mock_cases([case])[0]
+
+    assert result.expected.rewrite.must_include == ["瓶盖", "一大刻度", "用量"]
+    assert "产品冲泡后需要盖上瓶盖" in result.expected.rewrite.forbidden_inferences
+    assert result.actual.knowledge_query == "瓶盖 一大刻度 用量"
+    assert [hit.content for hit in result.actual.rewritten_query_hits] == [
+        "一瓶盖约等于1.5个小刻度。",
+        "一大刻度等于3个小刻度，因此约等于两瓶盖。",
+    ]
+    assert result.actual.raw_query_hits == result.actual.rewritten_query_hits

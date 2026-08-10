@@ -29,6 +29,7 @@ type MetricValue = {
 export type RagEvaluationSummary = {
   schema_version: 1;
   run_id: string;
+  run_mode: "mock" | "real" | "unknown";
   status: "queued" | "running" | "completed" | "failed" | "interrupted";
   started_at: string;
   updated_at: string;
@@ -84,6 +85,11 @@ type EvaluationCase = {
   user_query: string;
   expected: {
     retrieval_decision: "retrieve" | "skip";
+    rewrite: {
+      must_include: string[];
+      must_preserve_meanings: string[];
+      forbidden_inferences: string[];
+    };
     required_facts: string[];
     forbidden_claims: string[];
   };
@@ -131,6 +137,11 @@ const STAGE_LABELS: Record<FailureReason["stage"], string> = {
 
 const ROLE_LABELS = { user: "用户", staff: "工作人员", assistant: "AI助教" };
 const DECISION_LABELS = { retrieve: "需要检索", skip: "跳过检索" } as const;
+const RUN_MODE_LABELS: Record<RagEvaluationSummary["run_mode"], string> = {
+  mock: "模拟评测",
+  real: "真实评测",
+  unknown: "旧报告未标记",
+};
 
 type CaseFilter =
   | "all"
@@ -239,10 +250,17 @@ function FactList({
   );
 }
 
-function EvidenceDetail({ item }: { item: EvaluationCase }) {
+function EvidenceDetail({
+  item,
+  runMode,
+}: {
+  item: EvaluationCase;
+  runMode: RagEvaluationSummary["run_mode"];
+}) {
   const hits = item.actual.rewritten_query_hits;
   const actualDecision = item.actual.retrieval_decision;
   const decisionMatched = actualDecision === item.expected.retrieval_decision;
+  const resultLabel = runMode === "mock" ? "模拟结果" : "实际结果";
   const scoreItems = [
     ["事实召回", item.scores.context_recall],
     ["召回精确", item.scores.context_precision],
@@ -261,9 +279,22 @@ function EvidenceDetail({ item }: { item: EvaluationCase }) {
             </span>
           </div>
           <div className="space-y-4">
+            <div className="border-b border-slate-100 pb-4">
+              <p className="mb-3 text-xs font-extrabold text-slate-800">问题改写预期</p>
+              <div className="space-y-3">
+                <FactList title="必须包含" items={item.expected.rewrite.must_include} />
+                <FactList title="必须保持原意" items={item.expected.rewrite.must_preserve_meanings} />
+                <FactList title="不得自行推断" items={item.expected.rewrite.forbidden_inferences} tone="danger" />
+              </div>
+            </div>
+            <p className="text-xs font-extrabold text-slate-800">最终回复预期</p>
             <FactList title="回答必须依据" items={item.expected.required_facts} />
             <FactList title="回答不得出现" items={item.expected.forbidden_claims} tone="danger" />
-            {!item.expected.required_facts.length && !item.expected.forbidden_claims.length && (
+            {!item.expected.rewrite.must_include.length &&
+              !item.expected.rewrite.must_preserve_meanings.length &&
+              !item.expected.rewrite.forbidden_inferences.length &&
+              !item.expected.required_facts.length &&
+              !item.expected.forbidden_claims.length && (
               <p className="text-sm leading-6 text-slate-500">
                 本条只验证系统是否正确跳过知识检索，不预设知识型答案。
               </p>
@@ -271,22 +302,22 @@ function EvidenceDetail({ item }: { item: EvaluationCase }) {
           </div>
         </section>
 
-        <section className="min-w-0 p-4 sm:p-5" aria-label="实际结果">
+        <section className="min-w-0 p-4 sm:p-5" aria-label={resultLabel}>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <h3 className="text-sm font-extrabold text-slate-950">实际结果</h3>
+            <h3 className="text-sm font-extrabold text-slate-950">{resultLabel}</h3>
             <span className={`status-pill ${decisionMatched ? "pill-ok" : "pill-risk"}`}>
               {actualDecision ? DECISION_LABELS[actualDecision] : "未产出检索决策"}
             </span>
           </div>
           <dl className="space-y-4">
             <div>
-              <dt className="text-xs font-bold text-slate-500">实际改写问题</dt>
+              <dt className="text-xs font-bold text-slate-500">{runMode === "mock" ? "模拟改写问题" : "实际改写问题"}</dt>
               <dd className="mt-1 break-words text-sm font-semibold leading-6 text-slate-800">
                 {item.actual.knowledge_query || "未生成知识查询"}
               </dd>
             </div>
             <div>
-              <dt className="text-xs font-bold text-slate-500">实际回复</dt>
+              <dt className="text-xs font-bold text-slate-500">{runMode === "mock" ? "模拟回复" : "实际回复"}</dt>
               <dd className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-800">
                 {item.actual.response || "本条未生成回复"}
               </dd>
@@ -316,8 +347,14 @@ function EvidenceDetail({ item }: { item: EvaluationCase }) {
         </section>
 
         <section className="min-w-0 border-t border-slate-200 pt-4">
-          <div className="mb-3 flex items-center gap-2 text-xs font-bold text-slate-600">
-            <Database className="h-4 w-4 text-slate-500" /> 实际召回内容
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-600">
+            <span className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-slate-500" />
+              {runMode === "mock" ? "模拟召回内容" : "实际召回内容"}
+            </span>
+            <span className="font-semibold text-slate-500">
+              原问题 {item.actual.raw_query_hits.length} 条 · 改写后 {hits.length} 条
+            </span>
           </div>
           <div className="space-y-2">
             {hits.length ? hits.slice(0, 3).map((hit) => (
@@ -329,7 +366,7 @@ function EvidenceDetail({ item }: { item: EvaluationCase }) {
               </details>
             )) : (
               <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-500">
-                没有召回内容
+                {actualDecision === "skip" ? "本条跳过知识检索" : "没有召回内容"}
               </p>
             )}
           </div>
@@ -361,7 +398,7 @@ function EvidenceDetail({ item }: { item: EvaluationCase }) {
               </div>
             ) : (
               <p className="mt-2 text-sm font-semibold text-emerald-700">
-                实际结果符合本条预期，未发现失败原因。
+                {resultLabel}符合本条预期，未发现失败原因。
               </p>
             )}
           </div>
@@ -438,7 +475,9 @@ export function RagEvaluationsClient({
       item.failure_reasons.some((reason) => reason.stage === filter),
     );
   }, [detail, filter]);
-  const isMockRun = summary?.model.toLowerCase().includes("mock") ?? false;
+  const isMockRun = summary?.run_mode === "mock";
+  const isLegacyRun = summary?.run_mode === "unknown";
+  const resultLabel = isMockRun ? "模拟结果" : "实际结果";
 
   if (!initialRuns.length) {
     return (
@@ -478,6 +517,11 @@ export function RagEvaluationsClient({
                   {STATUS_LABELS[summary.status]}
                 </span>
               )}
+              {summary && (
+                <span className={`status-pill ${summary.run_mode === "real" ? "pill-info" : summary.run_mode === "mock" ? "pill-warn" : "pill-neutral"}`}>
+                  {RUN_MODE_LABELS[summary.run_mode]}
+                </span>
+              )}
             </div>
             <h1 className="page-heading">RAG 评测</h1>
             <p className="page-subtitle">
@@ -506,6 +550,7 @@ export function RagEvaluationsClient({
         {summary && (
           <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 border-t border-slate-100 pt-4 text-xs text-slate-500">
             <span>数据集 {summary.dataset_id} v{summary.dataset_version}</span>
+            <span>运行类型 {RUN_MODE_LABELS[summary.run_mode]}</span>
             <span>模型 {summary.model}</span>
             <span>RAGAS {summary.ragas_version}</span>
             <span>代码 {summary.git_sha.slice(0, 10)}</span>
@@ -523,6 +568,12 @@ export function RagEvaluationsClient({
               实际改写、召回、回复和得分由评测脚本模拟，仅用于检查链路与页面，不能代表真实模型质量。
             </p>
           </div>
+        </div>
+      )}
+
+      {isLegacyRun && (
+        <div className="rounded-xl border border-slate-300 bg-slate-100 px-4 py-3 text-sm text-slate-700">
+          这份旧报告没有记录运行类型，页面不会根据模型名称猜测它是模拟还是真实评测。
         </div>
       )}
 
@@ -580,7 +631,7 @@ export function RagEvaluationsClient({
               <div className="panel-header-clean">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-5 w-5 text-cyan-700" />
-                  <h2 className="panel-title">RAGAS 四项</h2>
+                  <h2 className="panel-title">RAGAS 四项{isMockRun ? "（模拟）" : ""}</h2>
                 </div>
                 <p className="panel-subtitle">四项都保留，各自回答不同问题，不合并成一个总分。</p>
               </div>
@@ -602,7 +653,7 @@ export function RagEvaluationsClient({
                     <h2 className="panel-title">评测用例</h2>
                   </div>
                   <p className="panel-subtitle">
-                    本批次共 {summary.counts.total} 条；展开任意一条，对照测试问题、预期结果、实际结果和最终判定。
+                    本批次共 {summary.counts.total} 条；展开任意一条，对照测试问题、预期结果、{resultLabel}和最终判定。
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -611,11 +662,11 @@ export function RagEvaluationsClient({
                     ["failed", `未通过 ${summary.counts.failed + summary.counts.errors}`],
                     ["passed", `通过 ${summary.counts.passed}`],
                     ["critical", `关键事实 ${summary.critical_fact_errors}`],
-                    ["decision", "是否检索"],
-                    ["rewrite", "问题改写"],
-                    ["retrieval", "知识召回"],
-                    ["answer", "最终回复"],
-                    ["ragas", "RAGAS"],
+                    ["decision", "检索决策异常"],
+                    ["rewrite", "问题改写异常"],
+                    ["retrieval", "知识召回异常"],
+                    ["answer", "最终回复异常"],
+                    ["ragas", "RAGAS 未达标"],
                   ] as const).map(([key, label]) => (
                     <button
                       key={key}
@@ -657,7 +708,7 @@ export function RagEvaluationsClient({
                             <span>预期：{DECISION_LABELS[item.expected.retrieval_decision]}</span>
                             <ArrowDown className="h-3 w-3 -rotate-90 text-slate-300" />
                             <span className={actualDecision === item.expected.retrieval_decision ? "text-emerald-700" : "text-rose-700"}>
-                              实际：{actualDecision ? DECISION_LABELS[actualDecision] : "无结果"}
+                              {isMockRun ? "模拟" : "实际"}：{actualDecision ? DECISION_LABELS[actualDecision] : "无结果"}
                             </span>
                           </span>
                         </span>
@@ -666,7 +717,7 @@ export function RagEvaluationsClient({
                         </span>
                         <ChevronRight className={`h-5 w-5 shrink-0 text-slate-400 transition ${expanded ? "rotate-90" : ""}`} />
                       </button>
-                      {expanded && <EvidenceDetail item={item} />}
+                      {expanded && <EvidenceDetail item={item} runMode={summary.run_mode} />}
                     </article>
                   );
                 })}

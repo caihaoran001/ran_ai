@@ -23,21 +23,34 @@ from app.schemas.rag_evaluation import (
     RagHistoryMessage,
     RagKnowledgeHit,
     RagMetricValue,
+    RagRewriteExpected,
 )
 from app.services.agent.graph import RanrenAgentGraph
 from app.services.agent.state import AgentRunContext
 from app.services.knowledge_index import retrieve_indexed_knowledge_result
 
-from gen_dataset import EvaluationDataset, build_dataset, load_dataset, write_dataset
-from intent_eval import (
-    IntentResult,
-    evaluate_intent,
-    format_history,
-    install_in_memory_usage_collector,
-)
-from ragas_eval import RagasScorer
-from read_only import install_read_only_guards
-from reporting import aggregate_summary, atomic_write_json, utc_now, write_report
+if __package__:
+    from .gen_dataset import EvaluationDataset, build_dataset, load_dataset, write_dataset
+    from .intent_eval import (
+        IntentResult,
+        evaluate_intent,
+        format_history,
+        install_in_memory_usage_collector,
+    )
+    from .ragas_eval import RagasScorer
+    from .read_only import install_read_only_guards
+    from .reporting import aggregate_summary, atomic_write_json, utc_now, write_report
+else:
+    from gen_dataset import EvaluationDataset, build_dataset, load_dataset, write_dataset
+    from intent_eval import (
+        IntentResult,
+        evaluate_intent,
+        format_history,
+        install_in_memory_usage_collector,
+    )
+    from ragas_eval import RagasScorer
+    from read_only import install_read_only_guards
+    from reporting import aggregate_summary, atomic_write_json, utc_now, write_report
 
 
 THRESHOLDS = {
@@ -71,6 +84,7 @@ def _base_summary(
     now = utc_now()
     return RagEvaluationSummary(
         run_id=run_id,
+        run_mode="mock" if mock else "real",
         status="running",
         started_at=now,
         updated_at=now,
@@ -149,6 +163,11 @@ def _base_case(case: RagEvalCase, *, status: str) -> RagEvaluationCaseResult:
         user_query=case.user_query,
         expected=RagCaseExpected(
             retrieval_decision=case.rewrite.decision,
+            rewrite=RagRewriteExpected(
+                must_include=case.rewrite.must_include,
+                must_preserve_meanings=case.rewrite.must_preserve_meanings,
+                forbidden_inferences=case.rewrite.forbidden_inferences,
+            ),
             required_facts=[facts[fact_id] for fact_id in case.answer.required_fact_ids],
             forbidden_claims=case.answer.forbidden_claims,
         ),
@@ -286,6 +305,26 @@ async def _evaluate_real_case(
     return result
 
 
+def _mock_knowledge_query(case: RagEvalCase) -> str | None:
+    if case.rewrite.decision == "skip":
+        return None
+    return " ".join(case.rewrite.must_include) or case.user_query
+
+
+def _mock_knowledge_hits(case: RagEvalCase) -> list[RagKnowledgeHit]:
+    facts = {fact.fact_id: fact for fact in case.authoritative_facts}
+    return [
+        RagKnowledgeHit(
+            rank=rank,
+            chunk_uid=f"mock-{case.case_id}-{fact_id}",
+            title=f"模拟召回：{facts[fact_id].provenance}"[:300],
+            source_type="mock",
+            content=facts[fact_id].statement,
+        )
+        for rank, fact_id in enumerate(case.retrieval.required_fact_ids, start=1)
+    ]
+
+
 def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
     output: list[RagEvaluationCaseResult] = []
     for index, case in enumerate(cases):
@@ -294,13 +333,14 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
         result.actual.decision_source = (
             "rewritten" if case.rewrite.decision == "retrieve" else "explicit_skip"
         )
-        result.actual.knowledge_query = (
-            case.user_query if case.rewrite.decision == "retrieve" else None
-        )
+        result.actual.knowledge_query = _mock_knowledge_query(case)
         result.actual.response = (
             _reference(case) or "收到，我会按你刚才说的情况接着处理。"
         )
         if case.rewrite.decision == "retrieve":
+            mock_hits = _mock_knowledge_hits(case)
+            result.actual.raw_query_hits = list(mock_hits)
+            result.actual.rewritten_query_hits = list(mock_hits)
             value = 0.88 + (index % 5) * 0.015
             result.scores = RagCaseScores(
                 context_recall=min(value, 0.98),

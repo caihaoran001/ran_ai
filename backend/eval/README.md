@@ -14,7 +14,8 @@ docker compose -f docker-compose.eval.yml up --no-deps rag-eval
 ## 再次运行
 
 ```bash
-docker compose -f docker-compose.eval.yml start --attach rag-eval
+docker compose -f docker-compose.eval.yml start rag-eval
+docker compose -f docker-compose.eval.yml logs --tail 100 rag-eval
 ```
 
 脚本和用例通过只读挂载更新，不需要重建镜像；只有 `requirements.txt` 或基础后端镜像变化时才重新 build/up。正式运行会产生真实模型费用，执行前仍需当次授权。
@@ -29,5 +30,7 @@ docker compose \
 ```
 
 Mock 覆盖文件只改变启动参数，仍使用同一个评测镜像。运行结束后容器保留为 `Exited`，可在前端查看演示报告；它不连接数据库，也不调用模型。
+
+每份新报告都明确记录 `mock` 或 `real` 运行类型。Mock 会生成与题库权威事实一致的模拟召回证据和模拟分数；它只用于验收数据链路，不能作为真实模型质量结论。
 
 报告写入 `diagnostics/rag-evaluations/<run_id>/`，后台页面只读这些文件，不持有 Docker 权限。

@@ -14,6 +14,7 @@ def _summary(run_id: str, *, status: str = "completed", minute: int = 0) -> dict
     return {
         "schema_version": 1,
         "run_id": run_id,
+        "run_mode": "mock",
         "status": status,
         "started_at": timestamp,
         "updated_at": timestamp,
@@ -67,6 +68,11 @@ def _report(run_id: str) -> dict:
                 "user_query": "一瓶盖够一大刻度吗？",
                 "expected": {
                     "retrieval_decision": "retrieve",
+                    "rewrite": {
+                        "must_include": ["瓶盖", "一大刻度", "用量"],
+                        "must_preserve_meanings": ["比较瓶盖和一大刻度的用量"],
+                        "forbidden_inferences": ["用户在问怎么盖瓶盖"],
+                    },
                     "required_facts": ["一瓶盖约1.5小刻度"],
                     "forbidden_claims": ["一瓶盖够一大刻度"],
                 },
@@ -118,6 +124,12 @@ async def test_rag_evaluation_api_lists_status_and_returns_report(
 
     detail = await admin_client.get("/rag-evaluations/eval-later")
     assert detail.status_code == 200
+    assert detail.json()["summary"]["run_mode"] == "mock"
+    assert detail.json()["cases"][0]["expected"]["rewrite"]["must_include"] == [
+        "瓶盖",
+        "一大刻度",
+        "用量",
+    ]
     assert detail.json()["cases"][0]["actual"]["response"].startswith("一瓶盖")
 
 
@@ -138,3 +150,24 @@ async def test_rag_evaluation_api_rejects_bad_paths_and_invalid_reports(
     listing = await admin_client.get("/rag-evaluations")
     assert listing.status_code == 200
     assert listing.json() == {"items": []}
+
+
+@pytest.mark.asyncio
+async def test_legacy_report_without_run_mode_remains_readable(admin_client, tmp_path):
+    app = admin_client._transport.app
+    store = RagEvaluationReportStore(tmp_path)
+    app.dependency_overrides[get_report_store] = lambda: store
+    legacy = _report("eval-legacy")
+    legacy["summary"].pop("run_mode")
+    legacy["cases"][0]["expected"].pop("rewrite")
+    _write_json(tmp_path / "eval-legacy" / "report.json", legacy)
+
+    response = await admin_client.get("/rag-evaluations/eval-legacy")
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["run_mode"] == "unknown"
+    assert response.json()["cases"][0]["expected"]["rewrite"] == {
+        "must_include": [],
+        "must_preserve_meanings": [],
+        "forbidden_inferences": [],
+    }
