@@ -5,6 +5,7 @@ const adminPages = [
   { path: "/users", heading: "用户管理" },
   { path: "/documents", heading: "审核控制台" },
   { path: "/questionnaire-config", heading: "运营规则配置" },
+  { path: "/rag-evaluations", heading: "RAG 评测" },
   { path: "/system-diagnostics", heading: "系统诊断控制台" },
 ];
 
@@ -34,4 +35,3 @@ test.describe("admin console smoke", () => {
     await expect(page.getByText("outcome_engine")).toBeVisible();
   });
 });
-
