@@ -527,7 +527,11 @@ async def test_agent_data_unavailable_records_safe_reply(
         "enabled": True,
         "data_unavailable": True,
         "info_gap": {"type": "data_unavailable", "query": "用户：我现在第几天？"},
-        "knowledge": {"decision": "fallback", "query": "用户：我现在第几天？"},
+        "knowledge": {
+            "decision": "fallback",
+            "original_query": "用户：我现在第几天？",
+            "query": "用户：我现在第几天？",
+        },
     }
     assert msg.analysis_json["_delivery"]["state_machine"] == "agent_outbound_v1"
 
@@ -810,6 +814,7 @@ async def test_skipped_knowledge_search_lands_in_agent_run_metadata(
     assert run is not None
     assert run.metadata_json["knowledge"] == {
         "decision": "skipped",
+        "original_query": "用户：今天体重78.2，午B忘了喝",
         "skipped_product_terms": ["午B"],
     }
 

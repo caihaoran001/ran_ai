@@ -27,6 +27,7 @@ from app.schemas.agent_operations import (
     AgentOperationsOverview,
     AgentConversationMessage,
     AgentKnowledgeDecision,
+    AgentKnowledgeHit,
     AgentOutcomeCount,
     AgentRunDetail,
     AgentRunPage,
@@ -170,6 +171,11 @@ def _knowledge_decision(run: AgentRun) -> AgentKnowledgeDecision | None:
         return None
     return AgentKnowledgeDecision(
         decision=str(knowledge.get("decision")),
+        original_query=(
+            str(knowledge["original_query"])
+            if isinstance(knowledge.get("original_query"), str)
+            else None
+        ),
         query=(
             str(knowledge["query"])
             if isinstance(knowledge.get("query"), str)
@@ -181,7 +187,23 @@ def _knowledge_decision(run: AgentRun) -> AgentKnowledgeDecision | None:
             for term in (knowledge.get("skipped_product_terms") or [])
             if isinstance(term, str)
         ],
+        hits=_knowledge_hits(knowledge.get("hits")),
     )
+
+
+def _knowledge_hits(value: Any) -> list[AgentKnowledgeHit]:
+    if not isinstance(value, list):
+        return []
+    hits: list[AgentKnowledgeHit] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        try:
+            hits.append(AgentKnowledgeHit.model_validate(item))
+        except (TypeError, ValueError):
+            # 观测元数据不得拖垮整个运行详情：历史异常项单独忽略。
+            continue
+    return hits
 
 
 def _failure_detail(

@@ -23,8 +23,7 @@ logger = logging.getLogger(__name__)
 VECTOR_DISTANCE_THRESHOLD = 0.4
 
 
-# 命中标记前缀。检索结果按 f"{KNOWLEDGE_HIT_PREFIX}{n}]" 逐条编号，调用方据此统计召回条数，
-# 改格式必须同时改 agent/graph.py 的计数逻辑。
+# 命中标记前缀。检索结果按 f"{KNOWLEDGE_HIT_PREFIX}{n}]" 逐条编号后注入提示词。
 KNOWLEDGE_HIT_PREFIX = "[知识库命中 "
 
 
@@ -36,6 +35,38 @@ class KnowledgeSyncResult:
     unchanged: int = 0
     embedded: int = 0
     embedding_skipped: int = 0
+
+
+@dataclass(frozen=True)
+class IndexedKnowledgeHit:
+    rank: int
+    chunk_id: int
+    chunk_uid: str
+    title: str
+    source_type: str
+    source_version: int | None
+    updated_at: datetime | None
+    content_hash: str
+    content: str
+
+    def observation(self) -> dict[str, Any]:
+        return {
+            "rank": self.rank,
+            "chunk_id": self.chunk_id,
+            "chunk_uid": self.chunk_uid,
+            "title": self.title,
+            "source_type": self.source_type,
+            "source_version": self.source_version,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "content_hash": self.content_hash,
+            "content_excerpt": self.content[:1500],
+        }
+
+
+@dataclass(frozen=True)
+class IndexedKnowledgeResult:
+    context: str
+    hits: list[IndexedKnowledgeHit]
 
 
 async def sync_knowledge_chunks(
@@ -208,10 +239,26 @@ async def retrieve_indexed_knowledge(
     settings: Settings | None = None,
     exclude_source_types: set[str] | None = None,
 ) -> str:
+    result = await retrieve_indexed_knowledge_result(
+        session,
+        query,
+        settings=settings,
+        exclude_source_types=exclude_source_types,
+    )
+    return result.context
+
+
+async def retrieve_indexed_knowledge_result(
+    session: AsyncSession,
+    query: str,
+    *,
+    settings: Settings | None = None,
+    exclude_source_types: set[str] | None = None,
+) -> IndexedKnowledgeResult:
     settings = settings or get_settings()
     query = query.strip()
     if not query:
-        return ""
+        return IndexedKnowledgeResult(context="", hits=[])
     vec_results: list[tuple[int, str]] = []
     text_results: list[tuple[int, str]] = []
 
@@ -241,16 +288,43 @@ async def retrieve_indexed_knowledge(
         contents[chunk_id] = content
 
     if not scores:
-        return ""
+        return IndexedKnowledgeResult(context="", hits=[])
 
     # Sort by RRF score descending
     ranked_ids = sorted(scores.keys(), key=lambda cid: scores[cid], reverse=True)
     top_ids = ranked_ids[:settings.knowledge_base_top_k]
-
-    return "\n\n".join(
-        f"{KNOWLEDGE_HIT_PREFIX}{index + 1}]\n{contents[cid]}"
-        for index, cid in enumerate(top_ids)
+    chunk_rows = list(
+        await session.scalars(
+            select(KnowledgeChunk).where(KnowledgeChunk.id.in_(top_ids))
+        )
     )
+    chunks_by_id = {chunk.id: chunk for chunk in chunk_rows}
+    hits: list[IndexedKnowledgeHit] = []
+    for rank, chunk_id in enumerate(top_ids, start=1):
+        chunk = chunks_by_id.get(chunk_id)
+        if chunk is None:
+            continue
+        source_version = (chunk.metadata_json or {}).get("version")
+        if not isinstance(source_version, int):
+            source_version = None
+        hits.append(
+            IndexedKnowledgeHit(
+                rank=rank,
+                chunk_id=chunk.id,
+                chunk_uid=chunk.chunk_uid,
+                title=chunk.title,
+                source_type=chunk.source_type,
+                source_version=source_version,
+                updated_at=chunk.updated_at,
+                content_hash=chunk.content_hash,
+                content=contents.get(chunk_id, chunk.content).strip(),
+            )
+        )
+
+    context = "\n\n".join(
+        f"{KNOWLEDGE_HIT_PREFIX}{hit.rank}]\n{hit.content}" for hit in hits
+    )
+    return IndexedKnowledgeResult(context=context, hits=hits)
 
 
 async def retrieve_case_context_db(

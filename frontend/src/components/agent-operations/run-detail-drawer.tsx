@@ -55,9 +55,23 @@ type AgentConversationMessage = {
 
 type AgentKnowledgeDecision = {
   decision: string;
+  original_query?: string | null;
   query?: string | null;
   hit_count?: number | null;
   skipped_product_terms?: string[];
+  hits?: AgentKnowledgeHit[];
+};
+
+type AgentKnowledgeHit = {
+  rank: number;
+  chunk_id: number;
+  chunk_uid: string;
+  title: string;
+  source_type: string;
+  source_version?: number | null;
+  updated_at?: string | null;
+  content_hash: string;
+  content_excerpt: string;
 };
 
 type ArchivistDroppedItem = {
@@ -714,6 +728,7 @@ function KnowledgeDecisionCard({
 
   const skipped = knowledge.decision === "skipped";
   const missedProductTerms = knowledge.skipped_product_terms ?? [];
+  const hits = knowledge.hits ?? [];
   // 提到产品名却没查库 = 产品规则这轮可能没进提示词，是最需要人工回看的情况。
   const isSuspect = skipped && missedProductTerms.length > 0;
   const emptyHit = knowledge.hit_count === 0;
@@ -753,12 +768,68 @@ function KnowledgeDecisionCard({
         )}
       </div>
 
-      {knowledge.query && (
-        <p className="mt-2 break-words text-xs text-slate-700">
-          <span className="text-slate-500">检索问题：</span>
-          {knowledge.query}
-        </p>
+      <div className="mt-2 space-y-1.5 text-xs text-slate-700">
+        {knowledge.original_query && (
+          <p className="break-words">
+            <span className="text-slate-500">用户原问：</span>
+            {knowledge.original_query}
+          </p>
+        )}
+        {knowledge.query && knowledge.query !== knowledge.original_query && (
+          <p className="break-words">
+            <span className="text-slate-500">改写问题：</span>
+            {knowledge.query}
+          </p>
+        )}
+      </div>
+
+      {hits.length > 0 && (
+        <ol className="mt-3 space-y-2" aria-label="实际命中的参考问答">
+          {hits.map((hit) => (
+            <li
+              key={`${hit.chunk_id}-${hit.rank}`}
+              className="rounded-md border border-slate-200 bg-white px-3 py-2"
+            >
+              <div className="flex items-start gap-2">
+                <span className="flex h-5 min-w-5 items-center justify-center rounded bg-cyan-50 px-1 text-[10px] font-black text-cyan-800">
+                  {hit.rank}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-xs font-bold text-slate-900">
+                    {hit.title}
+                  </p>
+                  <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
+                    <span>知识 #{hit.chunk_id}</span>
+                    <span>{hit.source_type === "faq" ? "参考问答" : hit.source_type}</span>
+                    {hit.source_version != null && <span>版本 {hit.source_version}</span>}
+                    {hit.updated_at && (
+                      <span>更新于 {formatChinaShortDateTime(hit.updated_at)}</span>
+                    )}
+                  </p>
+                  <p className="mt-2 whitespace-pre-wrap break-words border-l-2 border-cyan-100 pl-2 text-xs leading-5 text-slate-700">
+                    {hit.content_excerpt}
+                  </p>
+                  <p
+                    className="mt-1 truncate font-mono text-[10px] text-slate-400"
+                    title={hit.content_hash}
+                  >
+                    内容指纹 {hit.content_hash.slice(0, 12)}
+                  </p>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
       )}
+
+      {!skipped &&
+        knowledge.hit_count != null &&
+        knowledge.hit_count > 0 &&
+        hits.length === 0 && (
+          <p className="mt-2 text-xs text-slate-500">
+            这条历史运行只保存了命中数量，当时的具体知识未留存。
+          </p>
+        )}
 
       {isSuspect && (
         <p className="mt-2 flex items-start gap-1.5 text-xs font-semibold text-amber-800">

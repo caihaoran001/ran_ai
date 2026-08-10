@@ -114,14 +114,28 @@ class RecentAgentRun(BaseModel):
     finished_at: datetime | None = None
 
 
+class AgentKnowledgeHit(BaseModel):
+    rank: int
+    chunk_id: int
+    chunk_uid: str
+    title: str
+    source_type: str
+    source_version: int | None = None
+    updated_at: datetime | None = None
+    content_hash: str
+    content_excerpt: str
+
+
 class AgentKnowledgeDecision(BaseModel):
-    """本轮参考问答检索的决策。searched=按改写查询检索，skipped=判定不需要、完全没查库，
-    fallback=改写缺失退回原问题。hit_count=0 表示查了但没命中，与 skipped 含义不同。"""
+    """本轮参考问答检索的决策。searched=按改写查询检索，skipped=判定无需检索，
+    fallback=改写缺失退回原问题；hits 仅记录真实运行当时保存的命中。"""
 
     decision: str
+    original_query: str | None = None
     query: str | None = None
     hit_count: int | None = None
-    skipped_product_terms: list[str] = []
+    skipped_product_terms: list[str] = Field(default_factory=list)
+    hits: list[AgentKnowledgeHit] = Field(default_factory=list)
 
 
 class AgentFailureDetail(BaseModel):

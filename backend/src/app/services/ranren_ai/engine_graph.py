@@ -154,6 +154,7 @@ def _knowledge_observation(
     knowledge_query: str | None,
     user_query: str,
     hit_count: int | None = None,
+    hits: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """把本轮参考问答检索的决策压成观测记录，写进 agent_runs.metadata_json。
 
@@ -176,6 +177,9 @@ def _knowledge_observation(
         query = knowledge_query.strip()
 
     observation: dict[str, Any] = {"decision": decision}
+    original_query = (user_query or "").strip()
+    if original_query:
+        observation["original_query"] = original_query[:300]
     if query:
         observation["query"] = query[:300]
     if decision == "skipped":
@@ -184,6 +188,8 @@ def _knowledge_observation(
             observation["skipped_product_terms"] = terms
     elif hit_count is not None:
         observation["hit_count"] = int(hit_count)
+        if hits:
+            observation["hits"] = list(hits)
     return observation
 
 
@@ -1420,6 +1426,7 @@ class EngineGraph:
                     knowledge_query=knowledge_query,
                     user_query=user_query,
                     hit_count=agent_result.knowledge_hit_count,
+                    hits=agent_result.knowledge_hits,
                 ),
             }
             info_gap = _build_agent_info_gap(

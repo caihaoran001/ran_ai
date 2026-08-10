@@ -4,6 +4,7 @@ import asyncio
 import secrets
 from io import BytesIO
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -15,6 +16,8 @@ from app.models.archivist_case_memory import ArchivistCaseMemory
 from app.models.checkin import Checkin
 from app.models.checkin_followup_preference import CheckinFollowupPreference
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
+from app.models.knowledge_chunk import KnowledgeChunk
+from app.models.knowledge_faq import KnowledgeFAQ
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
@@ -32,7 +35,8 @@ from app.services.content_policy import set_ai_reply_enabled
 from app.services.message_insight_service import normalize_insight
 from app.services.profile_memory_service import load_profile_memory_context
 from app.services.ranren_ai.engine import RanrenAIEngine
-from app.services.knowledge_index import KNOWLEDGE_HIT_PREFIX
+from app.services.knowledge_index import IndexedKnowledgeHit, IndexedKnowledgeResult
+from app.services import knowledge_index as knowledge_index_mod
 from app.services.ranren_ai.engine_graph import (
     _insight_recent_messages,
     _knowledge_observation,
@@ -142,11 +146,38 @@ def test_knowledge_observation_records_decision_hits_and_skipped_product_terms()
         knowledge_query="经期期间晚A应该如何使用？",
         user_query="那经期呢？",
         hit_count=3,
+        hits=[
+            {
+                "rank": 1,
+                "chunk_id": 12,
+                "chunk_uid": "faq:8",
+                "title": "晚A使用规则",
+                "source_type": "faq",
+                "source_version": 2,
+                "updated_at": "2026-08-10T00:00:00+00:00",
+                "content_hash": "a" * 64,
+                "content_excerpt": "一瓶盖约等于一点五个小刻度。",
+            }
+        ],
     )
     assert searched == {
         "decision": "searched",
+        "original_query": "那经期呢？",
         "query": "经期期间晚A应该如何使用？",
         "hit_count": 3,
+        "hits": [
+            {
+                "rank": 1,
+                "chunk_id": 12,
+                "chunk_uid": "faq:8",
+                "title": "晚A使用规则",
+                "source_type": "faq",
+                "source_version": 2,
+                "updated_at": "2026-08-10T00:00:00+00:00",
+                "content_hash": "a" * 64,
+                "content_excerpt": "一瓶盖约等于一点五个小刻度。",
+            }
+        ],
     }
 
     # 查了但库里没有 → hit_count 0，与"根本没查"必须区分开。
@@ -155,16 +186,25 @@ def test_knowledge_observation_records_decision_hits_and_skipped_product_terms()
     )["hit_count"] == 0
 
     fallback = _knowledge_observation(knowledge_query=None, user_query="我现在第几天？")
-    assert fallback == {"decision": "fallback", "query": "我现在第几天？"}
+    assert fallback == {
+        "decision": "fallback",
+        "original_query": "我现在第几天？",
+        "query": "我现在第几天？",
+    }
 
     # 跳过检索且用户提到产品名 → 这正是删掉 product_usage skill 后最可能漏规则的轮次，必须能捞出来。
     skipped = _knowledge_observation(
         knowledge_query="", user_query="今天体重78.2，午B忘了喝"
     )
-    assert skipped == {"decision": "skipped", "skipped_product_terms": ["午B"]}
+    assert skipped == {
+        "decision": "skipped",
+        "original_query": "今天体重78.2，午B忘了喝",
+        "skipped_product_terms": ["午B"],
+    }
     # 跳过检索但与产品无关（普通闲聊/上报）→ 不记产品词，避免噪声。
     assert _knowledge_observation(knowledge_query="", user_query="今天心情不错") == {
-        "decision": "skipped"
+        "decision": "skipped",
+        "original_query": "今天心情不错",
     }
     # 跳过时不记召回条数：没查库，任何数字都是假的。
     assert "hit_count" not in _knowledge_observation(
@@ -177,6 +217,69 @@ def test_knowledge_observation_records_decision_hits_and_skipped_product_terms()
         "knowledge": skipped,
     }
     assert _reply_run_metadata({"data_unavailable": True}) == {"data_tool_failed": True}
+
+
+@pytest.mark.asyncio
+async def test_indexed_knowledge_result_keeps_ranked_hit_identity_and_faq_version(
+    db_session,
+    monkeypatch,
+):
+    faq = KnowledgeFAQ(
+        faq_uid="faq-observation-test",
+        status="active",
+        title="瓶盖和刻度怎么换算",
+        question="一瓶盖是多少？",
+        answer="一瓶盖约等于一点五个小刻度。",
+        version=3,
+    )
+    db_session.add(faq)
+    await db_session.flush()
+    faq_chunk = KnowledgeChunk(
+        chunk_uid=f"faq:{faq.id}",
+        source_type="faq",
+        source_uri=f"knowledge_faqs/{faq.id}",
+        source_title="参考问答",
+        title=faq.title,
+        content=faq.answer,
+        content_hash="a" * 64,
+        metadata_json={"version": 3},
+        status="active",
+    )
+    noise_chunk = KnowledgeChunk(
+        chunk_uid="md:observation-noise",
+        source_type="markdown",
+        source_uri="knowledge_base/noise.md",
+        source_title="普通素材",
+        title="无关内容",
+        content="无关内容",
+        content_hash="b" * 64,
+        status="active",
+    )
+    db_session.add_all([faq_chunk, noise_chunk])
+    await db_session.flush()
+
+    async def fake_vector(*args, **kwargs):
+        return [(faq_chunk.id, faq_chunk.content), (noise_chunk.id, noise_chunk.content)]
+
+    async def fake_text(*args, **kwargs):
+        return [(faq_chunk.id, faq_chunk.content)]
+
+    monkeypatch.setattr(knowledge_index_mod, "_retrieve_by_embedding", fake_vector)
+    monkeypatch.setattr(knowledge_index_mod, "_retrieve_by_text", fake_text)
+    result = await knowledge_index_mod.retrieve_indexed_knowledge_result(
+        db_session,
+        "一瓶盖够吗",
+        settings=SimpleNamespace(embedding_api_key="configured", knowledge_base_top_k=2),
+        exclude_source_types={"case"},
+    )
+
+    assert [hit.chunk_id for hit in result.hits] == [faq_chunk.id, noise_chunk.id]
+    assert result.hits[0].source_version == 3
+    assert result.hits[0].title == "瓶盖和刻度怎么换算"
+    assert result.hits[0].observation()["chunk_uid"] == f"faq:{faq.id}"
+    assert result.hits[0].observation()["content_excerpt"] == faq.answer
+    assert result.hits[0].observation()["content_hash"] == "a" * 64
+    assert "[知识库命中 1]" in result.context
 
 
 async def _case(db_session, *, started_at=None):
@@ -229,11 +332,29 @@ async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
     ):
         retrieved_queries.append(query)
         assert exclude_source_types == {"case"}
-        # 用真实命中格式，好让召回条数统计有意义（观测字段按命中标记数数）。
-        return f"{KNOWLEDGE_HIT_PREFIX}1]\n参考问答命中\n\n{KNOWLEDGE_HIT_PREFIX}2]\n另一条"
+        hits = [
+            IndexedKnowledgeHit(
+                rank=index,
+                chunk_id=index,
+                chunk_uid=f"faq:{index}",
+                title=f"参考问答 {index}",
+                source_type="faq",
+                source_version=1,
+                updated_at=None,
+                content_hash=str(index) * 64,
+                content=content,
+            )
+            for index, content in enumerate(("参考问答命中", "另一条"), start=1)
+        ]
+        return IndexedKnowledgeResult(
+            context="\n\n".join(
+                f"[知识库命中 {hit.rank}]\n{hit.content}" for hit in hits
+            ),
+            hits=hits,
+        )
 
     monkeypatch.setattr(
-        "app.services.agent.graph.retrieve_indexed_knowledge",
+        "app.services.agent.graph.retrieve_indexed_knowledge_result",
         fake_retrieve,
     )
 
@@ -261,6 +382,7 @@ async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
         assert retrieved_queries[-1] == expected_query
         # 观测：searched / fallback 两种都查了库，召回条数按命中标记计数。
         assert result.knowledge_hit_count == 2
+        assert [hit["chunk_id"] for hit in result.knowledge_hits] == [1, 2]
 
     assert retrieved_queries == ["经期期间晚A应该如何使用？", "那经期呢？"]
 
