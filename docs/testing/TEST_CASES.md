@@ -149,16 +149,27 @@ OpenCode 执行测试时必须覆盖三类自动化：
 | ID | 执行方式 | 范围 | 最低验收 |
 |---|---|---|---|
 | RAG-01 | repo-spec | `rag_eval_cases.v1.json` 数据契约 | 用例 ID/事实 ID 唯一，引用有效，同时覆盖检索与跳过场景，关键风险标签无缺失 |
-| RAG-02 | 授权后自动评测 | 问题改写 | 保留产品、动作、数字、单位、比较和否定关系；有歧义时不强行补全 |
-| RAG-03 | 授权后自动评测 | 知识召回 | 必需事实被命中，不相关知识和 `case` 素材不混入普通参考问答 |
-| RAG-04 | 授权后自动评测 | 回复忠诚度 | 最终回复不反转数字、比较、单位或否定关系，不增加召回事实之外的确定性结论 |
+| RAG-02 | 授权后自动评测 | 检索决策与改写传导 | 报告检索决策错误率；用原问题与实际改写分别召回，报告改写伤害率，不用改写文本相似度代替真实召回收益 |
+| RAG-03 | 授权后自动评测 | 知识召回 | RAGAS Context Recall / Context Precision 均有分数和逐条证据；普通问答排除 `case` 素材 |
+| RAG-04 | 授权后自动评测 | 回复忠诚度 | RAGAS Faithfulness / Answer Relevancy 均有分数；数字、比较、单位或否定反转另计关键事实红色告警，不被均值抵消 |
+| RAG-05 | repo-spec | 隔离运行与报告 | RAGAS 固化在专用镜像；Mock 运行零模型/零 DB 调用；容器结束后为 `Exited (0)`；报告 API 可列出和读取明细 |
+| RAG-06 | repo-spec + opencode-mcp | 评测前端 | 可切换历史批次，六项指标分组展示，关键事实告警醒目，可沿原问题→改写/召回→最终回复下钻失败证据 |
 
 RAG-01 零费用入口：
 
 ```bash
 cd backend
-uv run python scripts/validate_rag_eval_cases.py
-uv run pytest tests/test_rag_eval_cases.py -q
+UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache \
+  uv run python scripts/validate_rag_eval_cases.py
+UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache \
+  uv run pytest tests/test_rag_eval_cases.py tests/test_rag_eval_runtime.py \
+  tests/test_rag_evaluation_reports.py -q
+
+cd ..
+docker compose \
+  -f docker-compose.eval.yml \
+  -f docker-compose.eval.mock.yml \
+  up --no-deps rag-eval
 ```
 
-该入口只证明评测集结构和覆盖面合格，**不代表当前模型的改写、召回或回复质量已通过**。RAG-02 至 RAG-04 涉及真实模型或 Embedding 时，仍需按测试规范单独授权。
+上述入口只证明评测集、报告链路和页面数据源可用，**不代表当前模型的改写、召回或回复质量已通过**。RAG-02 至 RAG-04 的正式运行必须在 ECS 连接只读 RDS，并在真实模型与 Embedding 获得当次授权后执行。

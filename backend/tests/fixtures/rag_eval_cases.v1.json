@@ -105,15 +105,15 @@
       ],
       "user_query": "那我就按300ml来对吧？",
       "authoritative_facts": [
-        {"fact_id": "corrected-water", "statement": "晚A本次按300ml左右温水冲泡。", "provenance": "工作人员对当前会话的最新纠正"}
+        {"fact_id": "corrected-water", "statement": "晚A本次按300ml左右温水冲泡。", "provenance": "工作人员对当前会话的最新纠正", "source_scope": "conversation"}
       ],
       "rewrite": {
-        "decision": "retrieve",
-        "must_include": ["晚A", "300ml", "温水"],
+        "decision": "skip",
+        "must_include": [],
         "must_preserve_meanings": ["最新工作人员纠正优先于旧机器人回复"],
         "forbidden_inferences": ["仍以150ml为当前口径"]
       },
-      "retrieval": {"required_fact_ids": ["corrected-water"], "forbidden_source_types": ["case"]},
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
       "answer": {"response_mode": "answer", "required_fact_ids": ["corrected-water"], "forbidden_claims": ["晚A用150ml水", "300ml是早C的用水量"]}
     },
     {
@@ -239,15 +239,15 @@
       ],
       "user_query": "所以不是200ml了？",
       "authoritative_facts": [
-        {"fact_id": "latest-300", "statement": "最新纠正值是300ml左右，200ml已被否定。", "provenance": "工作人员对当前会话的最新纠正"}
+        {"fact_id": "latest-300", "statement": "最新纠正值是300ml左右，200ml已被否定。", "provenance": "工作人员对当前会话的最新纠正", "source_scope": "conversation"}
       ],
       "rewrite": {
-        "decision": "retrieve",
-        "must_include": ["200ml", "300ml", "最新纠正"],
+        "decision": "skip",
+        "must_include": [],
         "must_preserve_meanings": ["用户在确认200ml已不再适用"],
         "forbidden_inferences": ["用户要改回200ml"]
       },
-      "retrieval": {"required_fact_ids": ["latest-300"], "forbidden_source_types": ["case"]},
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
       "answer": {"response_mode": "answer", "required_fact_ids": ["latest-300"], "forbidden_claims": ["继续用200ml", "300ml已被否定"]}
     },
     {
@@ -368,6 +368,150 @@
       },
       "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
       "answer": {"response_mode": "acknowledge", "required_fact_ids": [], "forbidden_claims": ["对正常好心情做疾病化解读"]}
+    },
+    {
+      "case_id": "rag-breakfast-photo-report",
+      "title": "发送餐食照片是上报而非知识提问",
+      "tags": ["skip_retrieval", "data_report", "image_report"],
+      "history": [],
+      "user_query": "早餐照片发了",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["用户只是在说明已经上报早餐照片"],
+        "forbidden_inferences": ["改写成早餐应该吃什么"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "acknowledge", "required_fact_ids": [], "forbidden_claims": ["在没有图片内容时编造早餐食物"]}
+    },
+    {
+      "case_id": "rag-emoji-only",
+      "title": "纯表情不触发知识检索",
+      "tags": ["skip_retrieval", "acknowledgement"],
+      "history": [{"role": "staff", "content": "今天执行得不错，继续保持。"}],
+      "user_query": "👍",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["这是简单确认或回应"],
+        "forbidden_inferences": ["扩写成健康知识问题"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "acknowledge", "required_fact_ids": [], "forbidden_claims": ["无端输出整套执行建议"]}
+    },
+    {
+      "case_id": "rag-thanks-close",
+      "title": "感谢收尾不重复检索",
+      "tags": ["skip_retrieval", "acknowledgement"],
+      "history": [{"role": "assistant", "content": "有变化随时告诉我。"}],
+      "user_query": "谢谢，辛苦啦",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["用户在礼貌收尾"],
+        "forbidden_inferences": ["改写成服务规则咨询"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "acknowledge", "required_fact_ids": [], "forbidden_claims": ["重新讲一遍无关知识"]}
+    },
+    {
+      "case_id": "rag-reminder-operation",
+      "title": "创建提醒属于系统操作而非知识问题",
+      "tags": ["skip_retrieval", "runtime_data", "system_operation"],
+      "history": [],
+      "user_query": "明天早上8点提醒我喝早C",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["用户要求系统创建一个定时提醒"],
+        "forbidden_inferences": ["改写成早C什么时候喝"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "use_runtime_data", "required_fact_ids": [], "forbidden_claims": ["没有执行系统操作却声称提醒已创建"]}
+    },
+    {
+      "case_id": "rag-checkin-count-runtime",
+      "title": "近期打卡次数依赖实时业务数据",
+      "tags": ["skip_retrieval", "runtime_data", "number"],
+      "history": [],
+      "user_query": "我这周已经打卡几天了？",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["问题需要读取该用户本周打卡记录"],
+        "forbidden_inferences": ["改写成每周应该打卡几天"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "use_runtime_data", "required_fact_ids": [], "forbidden_claims": ["没有查记录就猜测打卡天数"]}
+    },
+    {
+      "case_id": "rag-private-phone-update",
+      "title": "隐私资料修改不进入知识检索",
+      "tags": ["skip_retrieval", "runtime_data", "system_operation", "privacy"],
+      "history": [],
+      "user_query": "把我的手机号改成13800000000",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["用户要求修改个人资料"],
+        "forbidden_inferences": ["把手机号改写成健康知识查询"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "use_runtime_data", "required_fact_ids": [], "forbidden_claims": ["没有执行修改却声称号码已经更新"]}
+    },
+    {
+      "case_id": "rag-staff-internal-note",
+      "title": "工作人员内部交接不查知识库",
+      "tags": ["skip_retrieval", "staff_message", "data_report"],
+      "history": [],
+      "user_query": "这个用户今天情绪一般，我晚点跟进",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["工作人员在做内部状态交接"],
+        "forbidden_inferences": ["改写成情绪管理知识咨询"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "acknowledge", "required_fact_ids": [], "forbidden_claims": ["把内部交接当作对用户的诊断"]}
+    },
+    {
+      "case_id": "rag-tired-sharing",
+      "title": "普通疲惫分享先接住情绪",
+      "tags": ["skip_retrieval", "casual_chat", "support"],
+      "history": [],
+      "user_query": "今天有点累，不太想动",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["用户在分享当下感受，没有提出知识问题"],
+        "forbidden_inferences": ["强行补全为运动时长咨询"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "support", "required_fact_ids": [], "forbidden_claims": ["仅凭一句疲惫就诊断疾病"]}
+    },
+    {
+      "case_id": "rag-mixed-daily-report",
+      "title": "多项执行上报仍不需要知识检索",
+      "tags": ["skip_retrieval", "data_report", "number", "product_rule"],
+      "history": [],
+      "user_query": "今天走了8000步，午B也按时喝了",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["用户同时上报步数和产品执行情况"],
+        "forbidden_inferences": ["改写成8000步是否足够或午B怎么喝"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "acknowledge", "required_fact_ids": [], "forbidden_claims": ["无端改变用户当天产品用量"]}
     }
   ]
 }

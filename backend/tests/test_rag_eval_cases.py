@@ -35,3 +35,15 @@ def test_ambiguous_case_requires_clarification_without_forced_retrieval():
     assert case.rewrite.decision == "skip"
     assert case.answer.response_mode == "clarify"
     assert not case.retrieval.required_fact_ids
+
+
+def test_staff_correction_is_conversation_fact_and_skips_knowledge_retrieval():
+    suite = load_rag_eval_suite()
+    case = next(
+        item for item in suite.cases if item.case_id == "rag-staff-correction-water"
+    )
+
+    assert case.rewrite.decision == "skip"
+    assert not case.retrieval.required_fact_ids
+    assert case.answer.required_fact_ids == ["corrected-water"]
+    assert case.authoritative_facts[0].source_scope == "conversation"

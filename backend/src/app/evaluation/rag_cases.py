@@ -35,8 +35,10 @@ class RagHistoryMessage(StrictModel):
 
 class RagAuthoritativeFact(StrictModel):
     fact_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
-    statement: str = Field(min_length=1, max_length=500)
+    statement: str = Field(min_length=1, max_length=12000)
     provenance: str = Field(min_length=1, max_length=200)
+    source_scope: Literal["knowledge", "conversation", "runtime"] = "knowledge"
+    source_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
 class RagRewriteExpectation(StrictModel):
@@ -85,13 +87,25 @@ class RagEvalCase(StrictModel):
         unknown = referenced - set(fact_ids)
         if unknown:
             raise ValueError(f"expectations reference unknown facts: {sorted(unknown)}")
+        fact_by_id = {fact.fact_id: fact for fact in self.authoritative_facts}
+        retrieval_scopes = {
+            fact_by_id[fact_id].source_scope
+            for fact_id in self.retrieval.required_fact_ids
+        }
+        if retrieval_scopes - {"knowledge"}:
+            raise ValueError("retrieval can require only knowledge-scoped facts")
         if self.rewrite.decision == "retrieve":
             if not self.retrieval.required_fact_ids:
                 raise ValueError("retrieve case must declare required retrieval facts")
             if not self.answer.required_fact_ids:
                 raise ValueError("retrieve case must declare grounded answer facts")
-        elif self.retrieval.required_fact_ids or self.answer.required_fact_ids:
-            raise ValueError("skip case cannot require knowledge facts")
+        elif self.retrieval.required_fact_ids:
+            raise ValueError("skip case cannot require retrieved knowledge facts")
+        elif any(
+            fact_by_id[fact_id].source_scope == "knowledge"
+            for fact_id in self.answer.required_fact_ids
+        ):
+            raise ValueError("skip case cannot require knowledge-scoped answer facts")
         return self
 
 

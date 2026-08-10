@@ -1,0 +1,3 @@
+services:
+  rag-eval:
+    command: ["--mock"]
