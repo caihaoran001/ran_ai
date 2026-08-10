@@ -68,9 +68,7 @@ type AgentKnowledgeHit = {
   chunk_uid: string;
   title: string;
   source_type: string;
-  source_version?: number | null;
   updated_at?: string | null;
-  content_hash: string;
   content_excerpt: string;
 };
 
@@ -801,20 +799,18 @@ function KnowledgeDecisionCard({
                   <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
                     <span>知识 #{hit.chunk_id}</span>
                     <span>{hit.source_type === "faq" ? "参考问答" : hit.source_type}</span>
-                    {hit.source_version != null && <span>版本 {hit.source_version}</span>}
                     {hit.updated_at && (
                       <span>更新于 {formatChinaShortDateTime(hit.updated_at)}</span>
                     )}
                   </p>
-                  <p className="mt-2 whitespace-pre-wrap break-words border-l-2 border-cyan-100 pl-2 text-xs leading-5 text-slate-700">
-                    {hit.content_excerpt}
-                  </p>
-                  <p
-                    className="mt-1 truncate font-mono text-[10px] text-slate-400"
-                    title={hit.content_hash}
-                  >
-                    内容指纹 {hit.content_hash.slice(0, 12)}
-                  </p>
+                  <div className="mt-2 border-l-2 border-cyan-100 pl-2">
+                    <p className="text-[10px] font-bold tracking-wide text-slate-400">
+                      当时召回内容
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">
+                      {hit.content_excerpt}
+                    </p>
+                  </div>
                 </div>
               </div>
             </li>

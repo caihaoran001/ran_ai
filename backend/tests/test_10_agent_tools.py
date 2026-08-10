@@ -153,9 +153,7 @@ def test_knowledge_observation_records_decision_hits_and_skipped_product_terms()
                 "chunk_uid": "faq:8",
                 "title": "晚A使用规则",
                 "source_type": "faq",
-                "source_version": 2,
                 "updated_at": "2026-08-10T00:00:00+00:00",
-                "content_hash": "a" * 64,
                 "content_excerpt": "一瓶盖约等于一点五个小刻度。",
             }
         ],
@@ -172,9 +170,7 @@ def test_knowledge_observation_records_decision_hits_and_skipped_product_terms()
                 "chunk_uid": "faq:8",
                 "title": "晚A使用规则",
                 "source_type": "faq",
-                "source_version": 2,
                 "updated_at": "2026-08-10T00:00:00+00:00",
-                "content_hash": "a" * 64,
                 "content_excerpt": "一瓶盖约等于一点五个小刻度。",
             }
         ],
@@ -220,7 +216,7 @@ def test_knowledge_observation_records_decision_hits_and_skipped_product_terms()
 
 
 @pytest.mark.asyncio
-async def test_indexed_knowledge_result_keeps_ranked_hit_identity_and_faq_version(
+async def test_indexed_knowledge_result_keeps_ranked_hit_identity_and_content(
     db_session,
     monkeypatch,
 ):
@@ -274,11 +270,9 @@ async def test_indexed_knowledge_result_keeps_ranked_hit_identity_and_faq_versio
     )
 
     assert [hit.chunk_id for hit in result.hits] == [faq_chunk.id, noise_chunk.id]
-    assert result.hits[0].source_version == 3
     assert result.hits[0].title == "瓶盖和刻度怎么换算"
     assert result.hits[0].observation()["chunk_uid"] == f"faq:{faq.id}"
     assert result.hits[0].observation()["content_excerpt"] == faq.answer
-    assert result.hits[0].observation()["content_hash"] == "a" * 64
     assert "[知识库命中 1]" in result.context
 
 
@@ -339,9 +333,7 @@ async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
                 chunk_uid=f"faq:{index}",
                 title=f"参考问答 {index}",
                 source_type="faq",
-                source_version=1,
                 updated_at=None,
-                content_hash=str(index) * 64,
                 content=content,
             )
             for index, content in enumerate(("参考问答命中", "另一条"), start=1)

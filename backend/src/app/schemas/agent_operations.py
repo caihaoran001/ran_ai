@@ -120,9 +120,7 @@ class AgentKnowledgeHit(BaseModel):
     chunk_uid: str
     title: str
     source_type: str
-    source_version: int | None = None
     updated_at: datetime | None = None
-    content_hash: str
     content_excerpt: str
 
 

@@ -44,9 +44,7 @@ class IndexedKnowledgeHit:
     chunk_uid: str
     title: str
     source_type: str
-    source_version: int | None
     updated_at: datetime | None
-    content_hash: str
     content: str
 
     def observation(self) -> dict[str, Any]:
@@ -56,9 +54,7 @@ class IndexedKnowledgeHit:
             "chunk_uid": self.chunk_uid,
             "title": self.title,
             "source_type": self.source_type,
-            "source_version": self.source_version,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "content_hash": self.content_hash,
             "content_excerpt": self.content[:1500],
         }
 
@@ -304,9 +300,6 @@ async def retrieve_indexed_knowledge_result(
         chunk = chunks_by_id.get(chunk_id)
         if chunk is None:
             continue
-        source_version = (chunk.metadata_json or {}).get("version")
-        if not isinstance(source_version, int):
-            source_version = None
         hits.append(
             IndexedKnowledgeHit(
                 rank=rank,
@@ -314,9 +307,7 @@ async def retrieve_indexed_knowledge_result(
                 chunk_uid=chunk.chunk_uid,
                 title=chunk.title,
                 source_type=chunk.source_type,
-                source_version=source_version,
                 updated_at=chunk.updated_at,
-                content_hash=chunk.content_hash,
                 content=contents.get(chunk_id, chunk.content).strip(),
             )
         )
