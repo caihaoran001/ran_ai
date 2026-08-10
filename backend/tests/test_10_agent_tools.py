@@ -34,6 +34,7 @@ from app.services.profile_memory_service import load_profile_memory_context
 from app.services.ranren_ai.engine import RanrenAIEngine
 from app.services.knowledge_index import KNOWLEDGE_HIT_PREFIX
 from app.services.ranren_ai.engine_graph import (
+    _insight_recent_messages,
     _knowledge_observation,
     _knowledge_query_from_analysis,
     _reply_run_metadata,
@@ -124,6 +125,15 @@ def test_knowledge_query_analysis_preserves_search_skip_and_fallback_states():
     assert _knowledge_query_from_analysis({}) is None
     assert _knowledge_query_from_analysis({"knowledge_query": "   "}) is None
     assert _knowledge_query_from_analysis({"knowledge_query": ["非法类型"]}) is None
+
+
+def test_insight_context_keeps_latest_ten_without_shrinking_reply_history():
+    reply_history = [f"message-{index:02d}" for index in range(20)]
+
+    insight_history = _insight_recent_messages(reply_history)
+
+    assert insight_history == reply_history[-10:]
+    assert len(reply_history) == 20
 
 
 def test_knowledge_observation_records_decision_hits_and_skipped_product_terms():

@@ -75,6 +75,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("uvicorn.error")
 
+_INSIGHT_RECENT_MESSAGE_LIMIT = 10
+
 
 class EngineState(TypedDict, total=False):
     # 输入
@@ -126,6 +128,11 @@ def _knowledge_query_from_analysis(analysis: dict | None) -> str | None:
         return None
     clean = value.strip()
     return clean or None
+
+
+def _insight_recent_messages(recent_messages: list[str]) -> list[str]:
+    """Keep intent/rewrite context local without shrinking the reply Agent history."""
+    return list(recent_messages[-_INSIGHT_RECENT_MESSAGE_LIMIT:])
 
 
 def _reply_run_metadata(agent_metadata: dict[str, Any]) -> dict[str, Any]:
@@ -1164,7 +1171,9 @@ class EngineGraph:
                         "message_id": inbound_id,
                         "group_id": message.chat_id,
                         "current_message": analysis_input,
-                        "recent_user_messages": recent_user_messages,
+                        "recent_user_messages": _insight_recent_messages(
+                            recent_user_messages
+                        ),
                     },
                 )
                 if image_prompt:
