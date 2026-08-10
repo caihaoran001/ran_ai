@@ -202,6 +202,48 @@ async def test_next_batch_uses_abstracted_history_without_old_raw_messages(db_se
     assert "原始成效原话不得进入下一轮提示词" not in prompt
 
 
+@pytest.mark.asyncio
+async def test_staff_mention_cannot_override_authoritative_user_name(db_session):
+    case, msgs, progress = await _setup(db_session)
+    progress.last_archived_message_id = msgs[-1].id
+    db_session.add(
+        ArchivistCaseMemory(
+            service_case_id=case.id,
+            summary="新用户（蔡浩然）已入群。",
+            summary_watermark_message_id=msgs[-1].id,
+        )
+    )
+    wrong_mention = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="text",
+        content="@蔡浩然",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(wrong_mention)
+    await db_session.flush()
+    fake = _FakeArchivist(AIMessage(content="", tool_calls=[]))
+
+    await run_archivist(
+        db_session,
+        service_case=case,
+        progress=progress,
+        chat_model=fake,
+    )
+
+    system_prompt = fake.calls[0][0].content
+    batch_prompt = fake.calls[0][-1].content
+    assert '"authoritative_user_name": "记忆测试用户"' in batch_prompt
+    assert "新用户（蔡浩然）已入群" in batch_prompt
+    assert f"[{wrong_mention.id}] 班主任：@蔡浩然" in batch_prompt
+    assert "唯一权威来源" in system_prompt
+    assert "不得据此新增或改写" in system_prompt
+    assert "必须改回权威姓名" in system_prompt
+
+
 def test_profile_memory_reads_multi_facts_and_hides_resolved_state() -> None:
     preferences, _habits, current_state, _warnings = _memory_from_state(
         {

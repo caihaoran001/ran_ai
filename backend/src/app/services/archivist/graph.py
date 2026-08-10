@@ -27,6 +27,7 @@ from app.models.archivist_progress import ArchivistProgress
 from app.models.message import Message, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.outcome import OutcomeEvent
 from app.models.service_case import ServiceCase
+from app.models.user import User
 from app.models.user_state_profile import UserStateProfile
 from app.services.archivist.checkin_projection import CheckinUpsertResult, upsert_checkin
 from app.services.archivist.followup import (
@@ -408,6 +409,14 @@ class ArchivistPipeline:
 
     async def _load_archive_context(self) -> dict[str, Any]:
         """加载已抽象的历史，不把已归档聊天原文重复喂给模型。"""
+        authoritative_user_name = None
+        if self.service_case.user_id is not None:
+            authoritative_user_name = await self.session.scalar(
+                select(User.name).where(User.id == self.service_case.user_id)
+            )
+            authoritative_user_name = (
+                str(authoritative_user_name or "").strip() or None
+            )
         memory = await self.session.scalar(
             select(ArchivistCaseMemory).where(
                 ArchivistCaseMemory.service_case_id == self.service_case.id
@@ -427,6 +436,8 @@ class ArchivistPipeline:
             service_case_id=self.service_case.id,
         )
         return {
+            # 服务单绑定用户是姓名唯一权威来源；群聊中的 @/称呼可能发错人，不能反推身份。
+            "authoritative_user_name": authoritative_user_name,
             "existing_user_summary": memory.summary if memory else None,
             "existing_case_material_summary": (
                 memory.case_material_summary if memory else None
