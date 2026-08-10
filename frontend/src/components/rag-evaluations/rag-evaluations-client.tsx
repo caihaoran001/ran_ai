@@ -438,6 +438,7 @@ export function RagEvaluationsClient({
       item.failure_reasons.some((reason) => reason.stage === filter),
     );
   }, [detail, filter]);
+  const isMockRun = summary?.model.toLowerCase().includes("mock") ?? false;
 
   if (!initialRuns.length) {
     return (
@@ -512,6 +513,18 @@ export function RagEvaluationsClient({
           </div>
         )}
       </header>
+
+      {isMockRun && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <div className="flex items-start gap-2">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+            <p className="leading-6">
+              <span className="font-bold">当前是 Mock 结构验收批次。</span>
+              实际改写、召回、回复和得分由评测脚本模拟，仅用于检查链路与页面，不能代表真实模型质量。
+            </p>
+          </div>
+        </div>
+      )}
 
       {loadError && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
