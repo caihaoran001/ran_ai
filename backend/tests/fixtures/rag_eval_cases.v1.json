@@ -1,0 +1,373 @@
+{
+  "suite_id": "rag-chat-core-v1",
+  "version": 1,
+  "description": "群聊 RAG 核心风险集：分开约束问题改写、参考问答召回和最终回复忠诚度。权威事实是用例快照，不代表生产知识库已无冲突。",
+  "cases": [
+    {
+      "case_id": "rag-cap-ellipsis",
+      "title": "瓶盖用量省略句不得改成盖瓶动作",
+      "tags": ["ellipsis", "reference_resolution", "number", "comparison", "negation", "staff_correction"],
+      "history": [
+        {"role": "user", "content": "瓶盖一盖就可以了吗"},
+        {"role": "assistant", "content": "一大刻度不够一瓶盖，晚A用300ml温水。"},
+        {"role": "staff", "content": "一瓶盖约1.5小刻度，一大刻度是3小刻度，按瓶体刻度量最准。"}
+      ],
+      "user_query": "所以一瓶盖够一大刻度吗？",
+      "authoritative_facts": [
+        {"fact_id": "cap-small", "statement": "一瓶盖约等于1.5个小刻度。", "provenance": "已审核参考问答快照"},
+        {"fact_id": "large-small", "statement": "一大刻度等于3个小刻度，因此约等于两瓶盖。", "provenance": "已审核参考问答快照"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["瓶盖", "一大刻度", "用量"],
+        "must_preserve_meanings": ["用量", "用户在问一瓶盖是否足以达到一大刻度"],
+        "forbidden_inferences": ["产品冲泡后需要盖上瓶盖", "用户在问容器的密封方法"]
+      },
+      "retrieval": {"required_fact_ids": ["cap-small", "large-small"], "forbidden_source_types": ["case"]},
+      "answer": {
+        "response_mode": "answer",
+        "required_fact_ids": ["cap-small", "large-small"],
+        "forbidden_claims": ["一大刻度不够一瓶盖", "一瓶盖够一大刻度", "一瓶盖等于两个大刻度"]
+      }
+    },
+    {
+      "case_id": "rag-warm-water-all",
+      "title": "多产品的都要指代",
+      "tags": ["ellipsis", "reference_resolution", "multi_product"],
+      "history": [
+        {"role": "user", "content": "早C和午B我都收到了"},
+        {"role": "staff", "content": "晚A也一起开始用。"}
+      ],
+      "user_query": "都要用温水泡吗？",
+      "authoritative_facts": [
+        {"fact_id": "warm-products", "statement": "早C、午B和晚A均使用温水冲泡。", "provenance": "产品使用规则评测快照"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["早C", "午B", "晚A", "温水冲泡"],
+        "must_preserve_meanings": ["都指向上文同时提到的三种产品"],
+        "forbidden_inferences": ["只询问晚A"]
+      },
+      "retrieval": {"required_fact_ids": ["warm-products"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["warm-products"], "forbidden_claims": ["只有晚A需要温水"]}
+    },
+    {
+      "case_id": "rag-period-followup",
+      "title": "经期追问必须继承当前产品",
+      "tags": ["ellipsis", "reference_resolution", "health_service"],
+      "history": [
+        {"role": "user", "content": "晚A一般什么时候喝？"},
+        {"role": "assistant", "content": "晚餐后按计划使用。"}
+      ],
+      "user_query": "那经期呢？",
+      "authoritative_facts": [
+        {"fact_id": "period-evening-a", "statement": "本用例的已审核规则是：经期晚A按当前执行计划使用，不自行加量；如工作人员已针对个人情况调整，以最新安排为准。", "provenance": "经期产品规则评测快照"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["经期", "晚A", "使用方法"],
+        "must_preserve_meanings": ["用户追问经期的晚A使用规则"],
+        "forbidden_inferences": ["用户在问经期饮食"]
+      },
+      "retrieval": {"required_fact_ids": ["period-evening-a"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["period-evening-a"], "forbidden_claims": ["脱离晚A改答其他产品"]}
+    },
+    {
+      "case_id": "rag-product-switch-this",
+      "title": "产品切换后这个指向最近对象",
+      "tags": ["product_switch", "reference_resolution", "number"],
+      "history": [
+        {"role": "staff", "content": "早C用一大刻度。"},
+        {"role": "user", "content": "好的，那晚A呢？"},
+        {"role": "staff", "content": "晚A按瓶体刻度量。"}
+      ],
+      "user_query": "这个也是一瓶盖半吗？",
+      "authoritative_facts": [
+        {"fact_id": "evening-a-dose", "statement": "晚A本次用量为一大刻度。", "provenance": "本用例当前执行计划"},
+        {"fact_id": "cap-conversion", "statement": "一瓶盖约等于1.5小刻度，一大刻度等于3小刻度。", "provenance": "已审核换算规则快照"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["晚A", "一瓶盖半", "用量"],
+        "must_preserve_meanings": ["这个指向最近讨论的晚A"],
+        "forbidden_inferences": ["这个指向早C"]
+      },
+      "retrieval": {"required_fact_ids": ["evening-a-dose", "cap-conversion"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["evening-a-dose", "cap-conversion"], "forbidden_claims": ["把早C的用量当成晚A的用量", "一瓶盖半等于一大刻度"]}
+    },
+    {
+      "case_id": "rag-staff-correction-water",
+      "title": "工作人员纠正必须覆盖旧机器人口径",
+      "tags": ["staff_correction", "number", "unit"],
+      "history": [
+        {"role": "assistant", "content": "晚A用150ml温水冲泡。"},
+        {"role": "staff", "content": "更正一下，晚A用300ml左右温水。"}
+      ],
+      "user_query": "那我就按300ml来对吧？",
+      "authoritative_facts": [
+        {"fact_id": "corrected-water", "statement": "晚A本次按300ml左右温水冲泡。", "provenance": "工作人员对当前会话的最新纠正"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["晚A", "300ml", "温水"],
+        "must_preserve_meanings": ["最新工作人员纠正优先于旧机器人回复"],
+        "forbidden_inferences": ["仍以150ml为当前口径"]
+      },
+      "retrieval": {"required_fact_ids": ["corrected-water"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["corrected-water"], "forbidden_claims": ["晚A用150ml水", "300ml是早C的用水量"]}
+    },
+    {
+      "case_id": "rag-explicit-less-than",
+      "title": "小于关系不得反转",
+      "tags": ["comparison", "negation", "number"],
+      "history": [],
+      "user_query": "一瓶盖不到一大格，是不是？",
+      "authoritative_facts": [
+        {"fact_id": "cap-less-large", "statement": "一瓶盖的量小于一大刻度。", "provenance": "已审核换算规则快照"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["一瓶盖", "小于", "一大刻度"],
+        "must_preserve_meanings": ["一瓶盖小于一大刻度"],
+        "forbidden_inferences": ["一大刻度小于一瓶盖"]
+      },
+      "retrieval": {"required_fact_ids": ["cap-less-large"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["cap-less-large"], "forbidden_claims": ["一大刻度不够一瓶盖"]}
+    },
+    {
+      "case_id": "rag-negated-quantity",
+      "title": "纠正句中的否定和新数字都要保留",
+      "tags": ["negation", "number", "correction"],
+      "history": [],
+      "user_query": "不是两瓶盖，是一瓶盖半对吗？",
+      "authoritative_facts": [
+        {"fact_id": "one-half-cap", "statement": "本用例正确用量为一瓶盖半，不是两瓶盖。", "provenance": "本用例给定的当前执行计划"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["不是两瓶盖", "一瓶盖半"],
+        "must_preserve_meanings": ["否定旧数字并确认新数字"],
+        "forbidden_inferences": ["用量是两瓶盖"]
+      },
+      "retrieval": {"required_fact_ids": ["one-half-cap"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["one-half-cap"], "forbidden_claims": ["建议使用两瓶盖"]}
+    },
+    {
+      "case_id": "rag-unit-comparison",
+      "title": "多单位换算保持方向",
+      "tags": ["number", "comparison", "unit"],
+      "history": [],
+      "user_query": "1大格是3小格，一瓶盖是1.5小格，哪个多？",
+      "authoritative_facts": [
+        {"fact_id": "unit-math", "statement": "1大刻度=3小刻度，1瓶盖≈1.5小刻度，因此1大刻度约是1瓶盖的2倍。", "provenance": "已审核换算规则快照"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["1大刻度", "3小刻度", "1瓶盖", "1.5小刻度"],
+        "must_preserve_meanings": ["比较1大刻度和1瓶盖的量"],
+        "forbidden_inferences": ["比较水量"]
+      },
+      "retrieval": {"required_fact_ids": ["unit-math"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["unit-math"], "forbidden_claims": ["1瓶盖比1大刻度多", "1大刻度等于1.5小刻度"]}
+    },
+    {
+      "case_id": "rag-multi-product-dose",
+      "title": "多产品各自的用量不得合并",
+      "tags": ["multi_product", "product_switch", "number"],
+      "history": [],
+      "user_query": "早C和午B都各一大刻度吗？",
+      "authoritative_facts": [
+        {"fact_id": "morning-c-dose", "statement": "早C本次用量为一大刻度。", "provenance": "本用例执行计划"},
+        {"fact_id": "noon-b-dose", "statement": "午B本次用量为一大刻度。", "provenance": "本用例执行计划"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["早C", "午B", "各一大刻度"],
+        "must_preserve_meanings": ["用户分别确认两种产品的用量"],
+        "forbidden_inferences": ["两种产品合计一大刻度"]
+      },
+      "retrieval": {"required_fact_ids": ["morning-c-dose", "noon-b-dose"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["morning-c-dose", "noon-b-dose"], "forbidden_claims": ["早C和午B一起总共一大刻度"]}
+    },
+    {
+      "case_id": "rag-diet-followup",
+      "title": "饮食追问继承最近食物",
+      "tags": ["ellipsis", "reference_resolution", "diet"],
+      "history": [
+        {"role": "user", "content": "晚餐可以吃红薯吗？"},
+        {"role": "assistant", "content": "可以按执行计划控制份量。"}
+      ],
+      "user_query": "那放到早餐呢？",
+      "authoritative_facts": [
+        {"fact_id": "sweet-potato-breakfast", "statement": "红薯放在早餐时仍应按执行计划控制份量和搭配。", "provenance": "饮食执行规则评测快照"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["红薯", "早餐", "份量和搭配"],
+        "must_preserve_meanings": ["把上文的红薯改到早餐场景"],
+        "forbidden_inferences": ["用户改问早C产品"]
+      },
+      "retrieval": {"required_fact_ids": ["sweet-potato-breakfast"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["sweet-potato-breakfast"], "forbidden_claims": ["红薯不限量"]}
+    },
+    {
+      "case_id": "rag-exercise-ellipsis",
+      "title": "运动量追问不丢项目",
+      "tags": ["ellipsis", "reference_resolution", "exercise", "number"],
+      "history": [
+        {"role": "staff", "content": "今天完成快走，不用另外加高强度训练。"}
+      ],
+      "user_query": "做多久合适？",
+      "authoritative_facts": [
+        {"fact_id": "walk-duration", "statement": "本次快走目标为30分钟，以当天状态可承受为前提。", "provenance": "本用例当日行动计划"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["快走", "时长"],
+        "must_preserve_meanings": ["询问上文快走的时长"],
+        "forbidden_inferences": ["询问高强度训练时长"]
+      },
+      "retrieval": {"required_fact_ids": ["walk-duration"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["walk-duration"], "forbidden_claims": ["必须完成30分钟不得调整"]}
+    },
+    {
+      "case_id": "rag-water-correction-confirmation",
+      "title": "用户反问旧数字时保留疑问语气",
+      "tags": ["staff_correction", "number", "negation", "unit"],
+      "history": [
+        {"role": "staff", "content": "刚才说的200ml不对，这次按300ml左右。"}
+      ],
+      "user_query": "所以不是200ml了？",
+      "authoritative_facts": [
+        {"fact_id": "latest-300", "statement": "最新纠正值是300ml左右，200ml已被否定。", "provenance": "工作人员对当前会话的最新纠正"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["200ml", "300ml", "最新纠正"],
+        "must_preserve_meanings": ["用户在确认200ml已不再适用"],
+        "forbidden_inferences": ["用户要改回200ml"]
+      },
+      "retrieval": {"required_fact_ids": ["latest-300"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["latest-300"], "forbidden_claims": ["继续用200ml", "300ml已被否定"]}
+    },
+    {
+      "case_id": "rag-evening-dose-choice",
+      "title": "二选一用量问题必须保留两个候选值",
+      "tags": ["number", "comparison", "product_rule"],
+      "history": [],
+      "user_query": "晚A到底是一瓶盖还是两瓶盖？",
+      "authoritative_facts": [
+        {"fact_id": "evening-large-mark", "statement": "晚A本次用量以一大刻度为准，一大刻度约为两瓶盖。", "provenance": "当前执行计划与已审核换算规则快照"}
+      ],
+      "rewrite": {
+        "decision": "retrieve",
+        "must_include": ["晚A", "一瓶盖", "两瓶盖", "用量"],
+        "must_preserve_meanings": ["用户要求确认两个候选用量中的正确值"],
+        "forbidden_inferences": ["用户询问冲泡水量"]
+      },
+      "retrieval": {"required_fact_ids": ["evening-large-mark"], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "answer", "required_fact_ids": ["evening-large-mark"], "forbidden_claims": ["一大刻度约为一瓶盖"]}
+    },
+    {
+      "case_id": "rag-ambiguous-this",
+      "title": "上下文不足时不强行补产品和动作",
+      "tags": ["ambiguous", "reference_resolution", "skip_retrieval"],
+      "history": [
+        {"role": "user", "content": "我收到了"},
+        {"role": "staff", "content": "好的"}
+      ],
+      "user_query": "这样就可以了吗？",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["当前无法判断这样指向的产品或动作"],
+        "forbidden_inferences": ["自行补全为冲泡某产品", "自行补全为盖上瓶盖"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "clarify", "required_fact_ids": [], "forbidden_claims": ["在不知道指代对象时给出确定产品操作建议"]}
+    },
+    {
+      "case_id": "rag-weight-report",
+      "title": "纯体重上报不查参考问答",
+      "tags": ["skip_retrieval", "data_report", "number", "unit"],
+      "history": [],
+      "user_query": "今天体重78.2kg",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["这是用户上报当天体重，不是知识问题"],
+        "forbidden_inferences": ["改写成78.2kg是否健康"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "acknowledge", "required_fact_ids": [], "forbidden_claims": ["未经询问就对78.2kg下健康结论"]}
+    },
+    {
+      "case_id": "rag-acknowledgement",
+      "title": "确认收尾不检索",
+      "tags": ["skip_retrieval", "acknowledgement"],
+      "history": [
+        {"role": "staff", "content": "今天就先按这个节奏执行。"}
+      ],
+      "user_query": "好的，知道了",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["用户只是确认收到"],
+        "forbidden_inferences": ["生成新的产品使用问题"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "acknowledge", "required_fact_ids": [], "forbidden_claims": ["无端重复整套使用说明"]}
+    },
+    {
+      "case_id": "rag-missed-dose-report",
+      "title": "提到产品但只是上报漏喝",
+      "tags": ["skip_retrieval", "data_report", "product_rule"],
+      "history": [],
+      "user_query": "今天午B忘了喝",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["用户在上报本次漏喝事实，未询问补喝方法"],
+        "forbidden_inferences": ["改写成午B忘喝后如何补喝"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "acknowledge", "required_fact_ids": [], "forbidden_claims": ["用户没问时直接要求加倍补喝"]}
+    },
+    {
+      "case_id": "rag-service-day-runtime",
+      "title": "实时服务日数应查业务数据而非知识库",
+      "tags": ["skip_retrieval", "runtime_data", "number"],
+      "history": [],
+      "user_query": "我现在是服务的第几天？",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["问题依赖当前服务单日期数据"],
+        "forbidden_inferences": ["把实时日数改成通用健康知识问题"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "use_runtime_data", "required_fact_ids": [], "forbidden_claims": ["未查当前服务数据就猜测第几天"]}
+    },
+    {
+      "case_id": "rag-casual-chat",
+      "title": "普通闲聊不检索",
+      "tags": ["skip_retrieval", "casual_chat"],
+      "history": [],
+      "user_query": "今天天气真不错，心情也好",
+      "authoritative_facts": [],
+      "rewrite": {
+        "decision": "skip",
+        "must_include": [],
+        "must_preserve_meanings": ["这是日常分享，不是健康知识问题"],
+        "forbidden_inferences": ["改写成情绪疾病咨询"]
+      },
+      "retrieval": {"required_fact_ids": [], "forbidden_source_types": ["case"]},
+      "answer": {"response_mode": "acknowledge", "required_fact_ids": [], "forbidden_claims": ["对正常好心情做疾病化解读"]}
+    }
+  ]
+}
