@@ -1,0 +1,67 @@
+{
+  "calibration_id": "answer-relevancy-zh-v1",
+  "version": 1,
+  "description": "固定十组中文问题与直接答案；负例通过一对一交换不同主题的正确答案生成。",
+  "cases": [
+    {
+      "case_id": "relevancy-cap-dose",
+      "user_input": "一瓶盖够一大刻度吗？",
+      "positive_response": "不够。一瓶盖约等于1.5个小刻度，一大刻度是3个小刻度，按一大刻度执行时约需两瓶盖。",
+      "negative_source_case_id": "relevancy-sleep-training"
+    },
+    {
+      "case_id": "relevancy-sleep-training",
+      "user_input": "昨晚只睡了四小时，今天还适合做高强度训练吗？",
+      "positive_response": "今天不建议做高强度训练，可以改成散步或低强度活动，优先补足休息并观察身体状态。",
+      "negative_source_case_id": "relevancy-meal-order"
+    },
+    {
+      "case_id": "relevancy-meal-order",
+      "user_input": "正餐应该先吃蛋白质还是先吃主食？",
+      "positive_response": "先吃蛋白质，再吃蔬菜，最后吃适量主食。",
+      "negative_source_case_id": "relevancy-waist-change"
+    },
+    {
+      "case_id": "relevancy-waist-change",
+      "user_input": "体重没变但腰围小了，这算有进展吗？",
+      "positive_response": "算有进展。腰围减小反映身体围度在改善，不能只用体重一个数字判断效果。",
+      "negative_source_case_id": "relevancy-reminder-list"
+    },
+    {
+      "case_id": "relevancy-reminder-list",
+      "user_input": "我现在设置了哪些提醒？",
+      "positive_response": "这是实时信息，需要读取你当前的提醒列表后才能准确回答。",
+      "negative_source_case_id": "relevancy-constipation"
+    },
+    {
+      "case_id": "relevancy-constipation",
+      "user_input": "已经两天没有排便了，可以自己猛加产品用量吗？",
+      "positive_response": "不要自行猛加用量。先确认正在使用的产品和当前剂量，并结合腹痛、呕吐等不适情况决定是否需要及时就医。",
+      "negative_source_case_id": "relevancy-period-product"
+    },
+    {
+      "case_id": "relevancy-period-product",
+      "user_input": "经期还能照常使用这些产品吗？",
+      "positive_response": "需要结合具体产品和你的不适情况判断，不要自行加量；如果经期反应明显，应先暂停并让工作人员确认安排。",
+      "negative_source_case_id": "relevancy-exercise-soreness"
+    },
+    {
+      "case_id": "relevancy-exercise-soreness",
+      "user_input": "昨天训练后腿很酸，今天还要继续练腿吗？",
+      "positive_response": "今天先不要继续高强度练腿，可以做轻量活动和拉伸，等酸痛明显缓解后再恢复训练。",
+      "negative_source_case_id": "relevancy-sugar-label"
+    },
+    {
+      "case_id": "relevancy-sugar-label",
+      "user_input": "怎么看配料表里有没有额外添加糖？",
+      "positive_response": "查看配料表是否出现白砂糖、蔗糖、果葡糖浆、麦芽糖浆等名称，同时结合营养成分表中的糖和碳水化合物含量判断。",
+      "negative_source_case_id": "relevancy-missed-dose"
+    },
+    {
+      "case_id": "relevancy-missed-dose",
+      "user_input": "中午忘记喝了，晚上能不能一次补两份？",
+      "positive_response": "不要把漏掉的用量集中到晚上一次补齐，也不要自行翻倍；按下一次正常安排继续即可。",
+      "negative_source_case_id": "relevancy-cap-dose"
+    }
+  ]
+}

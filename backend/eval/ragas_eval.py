@@ -197,11 +197,9 @@ class RagasScorer:
             if retrieved_contexts
             else 0.0
         )
-        relevancy = self._value(
-            await self._answer_relevancy.ascore(
-                user_input=user_input,
-                response=response,
-            )
+        relevancy = await self.score_answer_relevancy(
+            user_input=user_input,
+            response=response,
         )
         return RagasScores(
             context_recall=recall,
@@ -209,4 +207,17 @@ class RagasScorer:
             faithfulness=faithfulness,
             answer_relevancy=relevancy,
             raw_context_recall=raw_recall,
+        )
+
+    async def score_answer_relevancy(
+        self,
+        *,
+        user_input: str,
+        response: str,
+    ) -> float:
+        return self._value(
+            await self._answer_relevancy.ascore(
+                user_input=user_input,
+                response=response,
+            )
         )

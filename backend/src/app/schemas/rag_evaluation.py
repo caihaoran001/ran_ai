@@ -25,6 +25,50 @@ class RagMetricValue(StrictModel):
     denominator: int | None = Field(default=None, ge=0)
 
 
+class AnswerRelevancyCalibrationItem(StrictModel):
+    case_id: str = Field(pattern=r"^relevancy-[a-z0-9-]+$")
+    negative_source_case_id: str = Field(pattern=r"^relevancy-[a-z0-9-]+$")
+    user_input: str = Field(min_length=1, max_length=1000)
+    positive_response: str = Field(min_length=1, max_length=4000)
+    negative_response: str = Field(min_length=1, max_length=4000)
+    positive_score: float = Field(ge=0.0, le=1.0)
+    negative_score: float = Field(ge=0.0, le=1.0)
+
+
+class AnswerRelevancyCalibrationMetrics(StrictModel):
+    positive_mean: float = Field(ge=0.0, le=1.0)
+    negative_mean: float = Field(ge=0.0, le=1.0)
+    mean_gap: float = Field(ge=-1.0, le=1.0)
+    auc: float = Field(ge=0.0, le=1.0)
+    paired_accuracy: float = Field(ge=0.0, le=1.0)
+    positive_pass_rate: float = Field(ge=0.0, le=1.0)
+    negative_rejection_rate: float = Field(ge=0.0, le=1.0)
+
+
+class AnswerRelevancyCalibrationReport(StrictModel):
+    schema_version: Literal[1] = 1
+    calibration_id: str = Field(pattern=r"^answer-relevancy-zh-v\d+$")
+    dataset_version: int = Field(ge=1)
+    run_id: str = Field(pattern=r"^relevancy-calibration-[A-Za-z0-9._-]+$")
+    status: Literal["running", "completed", "failed"]
+    started_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+    git_sha: str = Field(min_length=7, max_length=64)
+    model: str = Field(min_length=1, max_length=120)
+    embedding_model: str = Field(min_length=1, max_length=120)
+    ragas_version: str = Field(min_length=1, max_length=40)
+    threshold: float = Field(ge=0.0, le=1.0)
+    base_pair_count: int = Field(ge=1)
+    completed_pair_count: int = Field(ge=0)
+    passed: bool | None = None
+    metrics: AnswerRelevancyCalibrationMetrics | None = None
+    failed_criteria: list[str] = Field(default_factory=list)
+    items: list[AnswerRelevancyCalibrationItem] = Field(default_factory=list)
+    estimated_cost_yuan: float | None = Field(default=None, ge=0)
+    error: str | None = Field(default=None, max_length=2000)
+
+
 class RagEvaluationMetrics(StrictModel):
     retrieval_decision_error_rate: RagMetricValue
     rewrite_harm_rate: RagMetricValue

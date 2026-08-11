@@ -15,6 +15,18 @@ docker compose -f docker-compose.eval.yml up --no-deps rag-eval
 
 RAGAS 判官的最大输出默认是 50,000 tokens，由 `RAG_EVAL_JUDGE_MAX_TOKENS` 控制。它只放宽离线判官生成结构化评分的上限，不改变线上回复长度，也不会固定消耗 50,000 tokens；计费仍以实际生成量为准。
 
+## 回复相关性中文校准
+
+正式使用 Answer Relevancy 的 0.80 门槛前，先用固定 10 个中文正例和 10 个一对一错配负例检查判官能否区分两类。该入口只调用 RAGAS 判官与 Embedding，不检索生产数据库、不生成用户回复：
+
+```bash
+docker compose -f docker-compose.eval.yml run --rm --no-deps \
+  --entrypoint /app/.venv/bin/python \
+  rag-eval /app/eval/calibrate_answer_relevancy.py
+```
+
+报告写入 `diagnostics/rag-evaluations/calibrations/`，同时原子更新 `diagnostics/rag-evaluations/answer-relevancy-calibration.json`。校准同时检查正负排序能力和当前 0.80 门槛，不会通过直接降低阈值来迎合结果。
+
 ## 再次运行
 
 ```bash
