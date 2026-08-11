@@ -4,7 +4,7 @@ import { flushSync } from "react-dom";
 import { useEffect, useRef, useState, useTransition, type MouseEvent } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Activity, BarChart3, LoaderCircle, LogOut, PieChart, Settings, ShieldCheck, Stethoscope, Users } from "lucide-react";
+import { Activity, BarChart3, LoaderCircle, LogOut, PieChart, Settings, ShieldCheck, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { InterventionBadge } from "@/components/intervention-notifier";
 
@@ -41,7 +41,6 @@ const navGroups: NavGroup[] = [
         icon: Activity,
         activeHrefs: ["/rag-evaluations"],
       },
-      { href: "/system-diagnostics", label: "系统诊断", icon: Stethoscope },
     ],
   },
 ];

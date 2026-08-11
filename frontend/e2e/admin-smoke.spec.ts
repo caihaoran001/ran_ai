@@ -46,6 +46,7 @@ test.describe("admin console smoke", () => {
     await expect(sidebar.getByText("系统", { exact: true })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "AI 管理" })).toHaveAttribute("aria-current", "page");
     await expect(sidebar.getByRole("link", { name: "RAG 评测" })).toHaveCount(0);
+    await expect(sidebar.getByRole("link", { name: "系统诊断" })).toHaveCount(0);
 
     const corpus = page.getByRole("region", { name: "固定题库构成" });
     await expect(corpus).toContainText("FAQ 改写");
