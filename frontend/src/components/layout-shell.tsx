@@ -1,14 +1,19 @@
 "use client";
 
 import { flushSync } from "react-dom";
-import { useEffect, useState, useTransition, type MouseEvent } from "react";
+import { useEffect, useRef, useState, useTransition, type MouseEvent } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Activity, BarChart3, LoaderCircle, LogOut, PieChart, SearchCheck, Settings, ShieldCheck, Users } from "lucide-react";
+import { Activity, BarChart3, LoaderCircle, LogOut, PieChart, Settings, ShieldCheck, Stethoscope, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { InterventionBadge } from "@/components/intervention-notifier";
 
-type NavItem = { href: string; label: string; icon: LucideIcon };
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  activeHrefs?: string[];
+};
 type NavGroup = { title: string; items: NavItem[] };
 
 const navGroups: NavGroup[] = [
@@ -21,12 +26,22 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    title: "监控",
+    title: "数据",
     items: [
       { href: "/dashboard", label: "数据看板", icon: BarChart3 },
-      { href: "/agent-operations", label: "AI 运行", icon: Activity },
-      { href: "/rag-evaluations", label: "RAG 评测", icon: SearchCheck },
       { href: "/user-segments", label: "群体画像", icon: PieChart },
+    ],
+  },
+  {
+    title: "系统",
+    items: [
+      {
+        href: "/agent-operations",
+        label: "AI 管理",
+        icon: Activity,
+        activeHrefs: ["/rag-evaluations"],
+      },
+      { href: "/system-diagnostics", label: "系统诊断", icon: Stethoscope },
     ],
   },
 ];
@@ -51,6 +66,12 @@ function isActivePath(pathname: string | null, href: string) {
   // href 可能带 query(如 /users?active=1)，高亮只按路径部分匹配。
   const base = href.split("?")[0];
   return pathname === base || pathname?.startsWith(`${base}/`) || false;
+}
+
+function isActiveNavItem(pathname: string | null, item: NavItem) {
+  return [item.href, ...(item.activeHrefs ?? [])].some((href) =>
+    isActivePath(pathname, href),
+  );
 }
 
 function Brand({
@@ -128,6 +149,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [, startNavigation] = useTransition();
   const [loggingOut, setLoggingOut] = useState(false);
+  const mobileNavRef = useRef<HTMLElement>(null);
   const isNoShell = pathname?.startsWith("/q/") || pathname === "/login";
 
   useEffect(() => {
@@ -145,6 +167,13 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
     const timer = window.setInterval(clearWhenCommitted, 50);
     return () => window.clearInterval(timer);
   }, [pathname, pendingHref]);
+
+  useEffect(() => {
+    const activeItem = mobileNavRef.current?.querySelector<HTMLElement>(
+      'a[aria-current="page"]',
+    );
+    activeItem?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [pathname]);
 
   function navigate(event: MouseEvent<HTMLAnchorElement>, href: string) {
     if (
@@ -188,7 +217,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   }
 
   const sectionMatch =
-    flatNav.find((item) => isActivePath(pathname, item.href)) ??
+    flatNav.find((item) => isActiveNavItem(pathname, item)) ??
     Object.entries(extraRouteLabels)
       .map(([href, label]) => ({ href, label }))
       .find((item) => isActivePath(pathname, item.href)) ??
@@ -216,9 +245,12 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
             内部运营
           </span>
         </div>
-        <nav className="flex gap-2 overflow-x-auto px-3 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <nav
+          ref={mobileNavRef}
+          className="flex gap-2 overflow-x-auto px-3 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {flatNav.map((item) => {
-            const active = isActivePath(pathname, item.href);
+            const active = isActiveNavItem(pathname, item);
             const Icon = item.icon;
             return (
               <Link
@@ -269,7 +301,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
               </div>
               <div className="space-y-1">
                 {group.items.map((item) => {
-                  const active = isActivePath(pathname, item.href);
+                  const active = isActiveNavItem(pathname, item);
                   const Icon = item.icon;
                   return (
                     <Link

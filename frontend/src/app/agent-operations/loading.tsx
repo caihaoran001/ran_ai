@@ -1,14 +1,17 @@
+import { AIManagementNav } from "@/components/ai-management-nav";
+
 export default function AgentOperationsLoading() {
   return (
     <div
       className="page-stack"
       aria-busy="true"
-      aria-label="正在加载 AI 运行"
+      aria-label="正在加载运行监控"
     >
+      <AIManagementNav active="operations" />
       <div className="page-header">
         <div className="page-header-row">
           <div>
-            <h1 className="page-heading">AI 运行监控与下钻分析</h1>
+            <h1 className="page-heading">AI 助教运行情况</h1>
             <p className="page-subtitle" role="status" aria-live="polite">
               正在加载运行记录和成本数据，请稍候…
             </p>

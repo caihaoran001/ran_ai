@@ -5,6 +5,7 @@ import {
   AgentOperationsData,
   DeepseekBalance,
 } from "@/components/agent-operations/agent-operations-client";
+import { AIManagementNav } from "@/components/ai-management-nav";
 
 const TABS = ["overview", "reply", "archivist", "costs"] as const;
 
@@ -32,10 +33,11 @@ export default async function AgentOperationsPage({
   if (!data) {
     return (
       <div className="page-stack">
+        <AIManagementNav active="operations" />
         <div className="empty-state py-20">
           <TriangleAlert className="h-8 w-8 text-amber-500 mb-2" />
           <p className="text-base font-bold text-slate-800">
-            AI 运行统计数据暂时无法读取
+            运行监控数据暂时无法读取
           </p>
           <p className="text-xs text-slate-500 mt-1 max-w-md">
             可能是后端服务正在升级或连接超时，请尝试刷新页面。

@@ -4,6 +4,7 @@ import {
   RagEvaluationsClient,
   type RagEvaluationRunList,
 } from "@/components/rag-evaluations/rag-evaluations-client";
+import { AIManagementNav } from "@/components/ai-management-nav";
 
 export default async function RagEvaluationsPage() {
   const data = await api<RagEvaluationRunList>("/rag-evaluations").catch(
@@ -13,10 +14,11 @@ export default async function RagEvaluationsPage() {
   if (!data) {
     return (
       <div className="page-stack">
+        <AIManagementNav active="quality" />
         <div className="empty-state py-20">
           <TriangleAlert className="mb-2 h-8 w-8 text-amber-500" />
           <p className="text-base font-bold text-slate-800">
-            RAG 评测报告暂时无法读取
+            AI 回复质量报告暂时无法读取
           </p>
           <p className="mt-1 max-w-md text-xs leading-5 text-slate-500">
             可能是后端正在升级，或报告目录尚未挂载。请稍后刷新。

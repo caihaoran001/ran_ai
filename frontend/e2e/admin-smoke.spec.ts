@@ -5,7 +5,8 @@ const adminPages = [
   { path: "/users", heading: "用户管理" },
   { path: "/documents", heading: "审核控制台" },
   { path: "/questionnaire-config", heading: "运营规则配置" },
-  { path: "/rag-evaluations", heading: "RAG 评测" },
+  { path: "/agent-operations", heading: "AI 助教运行情况" },
+  { path: "/rag-evaluations", heading: "AI 回复质量" },
   { path: "/system-diagnostics", heading: "系统诊断控制台" },
 ];
 
@@ -35,8 +36,16 @@ test.describe("admin console smoke", () => {
     await expect(page.getByText("outcome_engine")).toBeVisible();
   });
 
-  test("RAG evaluation exposes the fixed corpus and per-case evidence", async ({ page }) => {
+  test("AI reply quality exposes the fixed corpus and per-case evidence", async ({ page }) => {
     await page.goto("/rag-evaluations");
+
+    const aiManagement = page.getByRole("navigation", { name: "AI 管理栏目" });
+    await expect(aiManagement.getByRole("link", { name: "运行监控" })).toBeVisible();
+    await expect(aiManagement.getByRole("link", { name: "回复质量" })).toHaveAttribute("aria-current", "page");
+    const sidebar = page.locator("aside");
+    await expect(sidebar.getByText("系统", { exact: true })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "AI 管理" })).toHaveAttribute("aria-current", "page");
+    await expect(sidebar.getByRole("link", { name: "RAG 评测" })).toHaveCount(0);
 
     const corpus = page.getByRole("region", { name: "固定题库构成" });
     await expect(corpus).toContainText("FAQ 改写");
@@ -55,5 +64,14 @@ test.describe("admin console smoke", () => {
     await expect(page.getByText("回答依据的权威事实")).toBeVisible();
     await expect(page.getByText("模拟回复", { exact: true })).toBeVisible();
     await expect(page.getByText("最终回复反转了瓶盖与大刻度的比较方向")).toBeVisible();
+  });
+
+  test("AI management stays visible in the mobile navigation", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/rag-evaluations");
+
+    const activeItem = page.locator('header nav a[aria-current="page"]');
+    await expect(activeItem).toHaveText("AI 管理");
+    await expect(activeItem).toBeInViewport();
   });
 });

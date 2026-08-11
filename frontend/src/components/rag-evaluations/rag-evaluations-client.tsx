@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { formatChinaShortDateTime } from "@/lib/format";
+import { AIManagementNav } from "@/components/ai-management-nav";
 
 type MetricValue = {
   value?: number | null;
@@ -520,11 +521,12 @@ export function RagEvaluationsClient({
   if (!initialRuns.length) {
     return (
       <div className="page-stack">
+        <AIManagementNav active="quality" />
         <header className="page-header">
           <div className="page-header-row">
             <div>
-              <p className="section-label">AI 质量控制</p>
-              <h1 className="page-heading">RAG 评测</h1>
+              <p className="section-label">固定题库验收</p>
+              <h1 className="page-heading">AI 回复质量</h1>
               <p className="page-subtitle">
                 分开检查问题有没有找对、知识有没有找准，以及最终回复有没有忠于事实。
               </p>
@@ -544,11 +546,12 @@ export function RagEvaluationsClient({
 
   return (
     <div className="page-stack">
+      <AIManagementNav active="quality" />
       <header className="page-header">
         <div className="page-header-row">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <p className="section-label">AI 质量控制</p>
+              <p className="section-label">固定题库验收</p>
               {summary && (
                 <span className={`status-pill ${summary.status === "completed" ? "pill-ok" : summary.status === "running" ? "pill-info" : "pill-warn"}`}>
                   {summary.status === "running" && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
@@ -561,9 +564,9 @@ export function RagEvaluationsClient({
                 </span>
               )}
             </div>
-            <h1 className="page-heading">RAG 评测</h1>
+            <h1 className="page-heading">AI 回复质量</h1>
             <p className="page-subtitle">
-              检索决策和改写伤害单独看，四项 RAGAS 评价召回与回复；数字、单位、否定和比较反转另外记红色告警。
+              先看问题有没有理解对、知识有没有找准，再看最终回复是否忠于事实；数字、单位、否定和比较反转会单独标红。
             </p>
           </div>
           <label className="min-w-0 sm:w-80">
