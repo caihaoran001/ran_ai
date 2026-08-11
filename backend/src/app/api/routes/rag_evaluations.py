@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.rag_evaluation import (
     AnswerRelevancyCalibrationReport,
+    FaithfulnessCalibrationReport,
     RagEvaluationRunDetail,
     RagEvaluationRunList,
 )
@@ -39,6 +40,19 @@ async def get_answer_relevancy_calibration(
 ) -> AnswerRelevancyCalibrationReport | None:
     try:
         return await asyncio.to_thread(store.get_answer_relevancy_calibration)
+    except RagEvaluationReportInvalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get(
+    "/calibrations/faithfulness",
+    response_model=FaithfulnessCalibrationReport | None,
+)
+async def get_faithfulness_calibration(
+    store: RagEvaluationReportStore = Depends(get_report_store),
+) -> FaithfulnessCalibrationReport | None:
+    try:
+        return await asyncio.to_thread(store.get_faithfulness_calibration)
     except RagEvaluationReportInvalid as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from app.schemas.rag_evaluation import (
     AnswerRelevancyCalibrationReport,
+    FaithfulnessCalibrationReport,
     RagEvaluationRunDetail,
     RagEvaluationSummary,
 )
@@ -77,6 +78,14 @@ class RagEvaluationReportStore:
         if not path.exists():
             return None
         return self._read_model(path, AnswerRelevancyCalibrationReport)
+
+    def get_faithfulness_calibration(
+        self,
+    ) -> FaithfulnessCalibrationReport | None:
+        path = self.root / "faithfulness-calibration.json"
+        if not path.exists():
+            return None
+        return self._read_model(path, FaithfulnessCalibrationReport)
 
     def _read_summary(self, run_dir: Path) -> RagEvaluationSummary:
         report_path = run_dir / "report.json"

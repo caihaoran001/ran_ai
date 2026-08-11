@@ -132,6 +132,37 @@ def _calibration_report() -> dict:
     }
 
 
+def _faithfulness_calibration_report() -> dict:
+    return {
+        "schema_version": 1,
+        "calibration_id": "faithfulness-zh-v1",
+        "dataset_version": 1,
+        "run_id": "faithfulness-calibration-20260811T080000Z",
+        "status": "completed",
+        "started_at": "2026-08-11T08:00:00Z",
+        "updated_at": "2026-08-11T08:10:00Z",
+        "finished_at": "2026-08-11T08:10:00Z",
+        "git_sha": "1234567",
+        "model": "deepseek-chat",
+        "ragas_version": "0.4.3",
+        "threshold": 0.85,
+        "base_pair_count": 10,
+        "completed_pair_count": 10,
+        "passed": True,
+        "metrics": {
+            "positive_mean": 0.92,
+            "negative_mean": 0.18,
+            "mean_gap": 0.74,
+            "auc": 1.0,
+            "paired_accuracy": 1.0,
+            "positive_pass_rate": 0.9,
+            "negative_rejection_rate": 1.0,
+        },
+        "failed_criteria": [],
+        "items": [],
+    }
+
+
 def _write_json(path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -207,6 +238,37 @@ async def test_missing_answer_relevancy_calibration_returns_null(
 
 
 @pytest.mark.asyncio
+async def test_rag_evaluation_api_returns_latest_faithfulness_calibration(
+    admin_client, tmp_path
+):
+    app = admin_client._transport.app
+    store = RagEvaluationReportStore(tmp_path)
+    app.dependency_overrides[get_report_store] = lambda: store
+    _write_json(
+        tmp_path / "faithfulness-calibration.json",
+        _faithfulness_calibration_report(),
+    )
+
+    response = await admin_client.get("/rag-evaluations/calibrations/faithfulness")
+
+    assert response.status_code == 200
+    assert response.json()["passed"] is True
+    assert response.json()["threshold"] == 0.85
+
+
+@pytest.mark.asyncio
+async def test_missing_faithfulness_calibration_returns_null(admin_client, tmp_path):
+    app = admin_client._transport.app
+    store = RagEvaluationReportStore(tmp_path)
+    app.dependency_overrides[get_report_store] = lambda: store
+
+    response = await admin_client.get("/rag-evaluations/calibrations/faithfulness")
+
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+@pytest.mark.asyncio
 async def test_rag_evaluation_api_rejects_bad_paths_and_invalid_reports(
     admin_client, tmp_path
 ):
@@ -245,6 +307,12 @@ async def test_legacy_report_without_run_mode_remains_readable(admin_client, tmp
     assert response.status_code == 200
     assert response.json()["summary"]["run_mode"] == "unknown"
     assert response.json()["summary"]["answer_relevancy_policy"] == {
+        "status": "legacy",
+        "enforced": True,
+        "calibration_run_id": None,
+        "reason": "该历史批次未记录校准状态，生成时仍按原规则参与判定",
+    }
+    assert response.json()["summary"]["faithfulness_policy"] == {
         "status": "legacy",
         "enforced": True,
         "calibration_run_id": None,

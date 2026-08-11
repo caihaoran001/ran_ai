@@ -3,14 +3,18 @@ import { api } from "@/lib/api";
 import {
   RagEvaluationsClient,
   type AnswerRelevancyCalibrationReport,
+  type FaithfulnessCalibrationReport,
   type RagEvaluationRunList,
 } from "@/components/rag-evaluations/rag-evaluations-client";
 
 export default async function RagEvaluationsPage() {
-  const [data, calibration] = await Promise.all([
+  const [data, calibration, faithfulnessCalibration] = await Promise.all([
     api<RagEvaluationRunList>("/rag-evaluations").catch(() => null),
     api<AnswerRelevancyCalibrationReport | null>(
       "/rag-evaluations/calibrations/answer-relevancy",
+    ).catch(() => null),
+    api<FaithfulnessCalibrationReport | null>(
+      "/rag-evaluations/calibrations/faithfulness",
     ).catch(() => null),
   ]);
 
@@ -34,6 +38,7 @@ export default async function RagEvaluationsPage() {
     <RagEvaluationsClient
       initialRuns={data.items}
       initialCalibration={calibration}
+      initialFaithfulnessCalibration={faithfulnessCalibration}
     />
   );
 }

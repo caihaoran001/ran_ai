@@ -128,7 +128,10 @@ def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():
 
 
 def test_uncalibrated_answer_relevancy_is_scored_but_not_thresholded():
-    active = _active_ragas_thresholds(answer_relevancy_enforced=False)
+    active = _active_ragas_thresholds(
+        answer_relevancy_enforced=False,
+        faithfulness_enforced=True,
+    )
 
     assert "answer_relevancy" not in active
     assert active == {
@@ -136,6 +139,42 @@ def test_uncalibrated_answer_relevancy_is_scored_but_not_thresholded():
         "context_precision": 0.70,
         "faithfulness": 0.85,
     }
+
+
+def test_uncalibrated_faithfulness_is_scored_but_not_thresholded():
+    active = _active_ragas_thresholds(
+        answer_relevancy_enforced=False,
+        faithfulness_enforced=False,
+    )
+
+    assert active == {
+        "context_recall": 0.80,
+        "context_precision": 0.70,
+    }
+
+
+class _FaithfulnessMetric:
+    async def ascore(self, **kwargs):
+        assert kwargs == {
+            "user_input": "问题",
+            "response": "忠实回复",
+            "retrieved_contexts": ["权威事实"],
+        }
+        return SimpleNamespace(value=0.92)
+
+
+@pytest.mark.asyncio
+async def test_faithfulness_calibration_uses_same_metric_adapter_as_full_eval():
+    scorer = RagasScorer.__new__(RagasScorer)
+    scorer._faithfulness = _FaithfulnessMetric()
+
+    score = await scorer.score_faithfulness(
+        user_input="问题",
+        response="忠实回复",
+        retrieved_contexts=["权威事实"],
+    )
+
+    assert score == 0.92
 
 
 class _FactJudgeCompletions:

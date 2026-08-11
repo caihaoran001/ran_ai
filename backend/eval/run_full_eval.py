@@ -15,9 +15,15 @@ from app.evaluation.answer_relevancy_calibration import (
     CALIBRATION_THRESHOLD,
     resolve_answer_relevancy_policy,
 )
+from app.evaluation.faithfulness_calibration import (
+    CALIBRATION_THRESHOLD as FAITHFULNESS_CALIBRATION_THRESHOLD,
+)
+from app.evaluation.faithfulness_calibration import resolve_faithfulness_policy
 from app.schemas.rag_evaluation import (
     AnswerRelevancyCalibrationReport,
     AnswerRelevancyPolicy,
+    FaithfulnessCalibrationReport,
+    FaithfulnessPolicy,
     RagCaseActual,
     RagCaseExpected,
     RagCaseOrigin,
@@ -80,13 +86,20 @@ def _empty_metrics() -> RagEvaluationMetrics:
     )
 
 
-def _active_ragas_thresholds(*, answer_relevancy_enforced: bool) -> dict[str, float]:
-    if answer_relevancy_enforced:
-        return THRESHOLDS
+def _active_ragas_thresholds(
+    *,
+    answer_relevancy_enforced: bool,
+    faithfulness_enforced: bool,
+) -> dict[str, float]:
+    disabled = set()
+    if not answer_relevancy_enforced:
+        disabled.add("answer_relevancy")
+    if not faithfulness_enforced:
+        disabled.add("faithfulness")
     return {
         name: threshold
         for name, threshold in THRESHOLDS.items()
-        if name != "answer_relevancy"
+        if name not in disabled
     }
 
 
@@ -98,6 +111,7 @@ def _base_summary(
     total: int,
     mock: bool,
     answer_relevancy_policy: AnswerRelevancyPolicy,
+    faithfulness_policy: FaithfulnessPolicy,
 ) -> RagEvaluationSummary:
     settings = get_settings()
     now = utc_now()
@@ -123,6 +137,7 @@ def _base_summary(
         ),
         metrics=_empty_metrics(),
         answer_relevancy_policy=answer_relevancy_policy,
+        faithfulness_policy=faithfulness_policy,
     )
 
 
@@ -163,6 +178,45 @@ def _load_answer_relevancy_policy(
         embedding_model=settings.embedding_model,
         ragas_version=RAGAS_VERSION,
         threshold=CALIBRATION_THRESHOLD,
+    )
+
+
+def _load_faithfulness_policy(
+    *,
+    mock: bool,
+    reports_root: Path,
+    settings,
+) -> FaithfulnessPolicy:
+    if mock:
+        return FaithfulnessPolicy(
+            status="mock",
+            enforced=True,
+            reason="模拟批次使用固定分数，只验证评测链路和页面结构",
+        )
+
+    path = Path(
+        os.getenv(
+            "RAG_FAITHFULNESS_CALIBRATION_LATEST_PATH",
+            str(reports_root / "faithfulness-calibration.json"),
+        )
+    ).resolve()
+    try:
+        report = FaithfulnessCalibrationReport.model_validate(
+            json.loads(path.read_text(encoding="utf-8"))
+        )
+    except FileNotFoundError:
+        report = None
+    except Exception:
+        return FaithfulnessPolicy(
+            status="not_calibrated",
+            enforced=False,
+            reason="中文校准报告无法读取，回复忠实度仅展示、不参与通过判定",
+        )
+    return resolve_faithfulness_policy(
+        report,
+        model=settings.ai_model,
+        ragas_version=RAGAS_VERSION,
+        threshold=FAITHFULNESS_CALIBRATION_THRESHOLD,
     )
 
 
@@ -247,6 +301,7 @@ async def _evaluate_real_case(
     scorer: RagasScorer,
     settings,
     answer_relevancy_enforced: bool,
+    faithfulness_enforced: bool,
 ) -> RagEvaluationCaseResult:
     started = time.monotonic()
     result = _base_case(case, status="passed")
@@ -336,7 +391,8 @@ async def _evaluate_real_case(
                     )
                 )
             for name, threshold in _active_ragas_thresholds(
-                answer_relevancy_enforced=answer_relevancy_enforced
+                answer_relevancy_enforced=answer_relevancy_enforced,
+                faithfulness_enforced=faithfulness_enforced,
             ).items():
                 value = getattr(scores, name)
                 if value < threshold:
@@ -460,6 +516,11 @@ async def async_main(args: argparse.Namespace) -> int:
         reports_root=reports_root,
         settings=settings,
     )
+    faithfulness_policy = _load_faithfulness_policy(
+        mock=args.mock,
+        reports_root=reports_root,
+        settings=settings,
+    )
 
     base = _base_summary(
         run_id=run_id,
@@ -468,6 +529,7 @@ async def async_main(args: argparse.Namespace) -> int:
         total=len(cases),
         mock=args.mock,
         answer_relevancy_policy=answer_relevancy_policy,
+        faithfulness_policy=faithfulness_policy,
     )
     atomic_write_json(run_dir / "status.json", base.model_dump(mode="json"))
     try:
@@ -485,6 +547,7 @@ async def async_main(args: argparse.Namespace) -> int:
                         scorer=scorer,
                         settings=settings,
                         answer_relevancy_enforced=(answer_relevancy_policy.enforced),
+                        faithfulness_enforced=faithfulness_policy.enforced,
                     )
                 )
                 running = aggregate_summary(base=base, cases=results, status="running")

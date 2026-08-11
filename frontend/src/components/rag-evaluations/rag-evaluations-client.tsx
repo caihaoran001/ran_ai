@@ -27,6 +27,13 @@ type MetricValue = {
   denominator?: number | null;
 };
 
+type RagMetricPolicy = {
+  status: "enforced" | "calibration_failed" | "not_calibrated" | "mock" | "legacy";
+  enforced: boolean;
+  calibration_run_id?: string | null;
+  reason: string;
+};
+
 export type RagEvaluationSummary = {
   schema_version: 1;
   run_id: string;
@@ -57,12 +64,8 @@ export type RagEvaluationSummary = {
     faithfulness: MetricValue;
     answer_relevancy: MetricValue;
   };
-  answer_relevancy_policy: {
-    status: "enforced" | "calibration_failed" | "not_calibrated" | "mock" | "legacy";
-    enforced: boolean;
-    calibration_run_id?: string | null;
-    reason: string;
-  };
+  answer_relevancy_policy: RagMetricPolicy;
+  faithfulness_policy: RagMetricPolicy;
   critical_fact_errors: number;
   estimated_cost_yuan?: number | null;
   error?: string | null;
@@ -128,7 +131,17 @@ type RagEvaluationRunDetail = {
 
 export type RagEvaluationRunList = { items: RagEvaluationSummary[] };
 
-export type AnswerRelevancyCalibrationReport = {
+type CalibrationMetrics = {
+  positive_mean: number;
+  negative_mean: number;
+  mean_gap: number;
+  auc: number;
+  paired_accuracy: number;
+  positive_pass_rate: number;
+  negative_rejection_rate: number;
+};
+
+type MetricCalibrationReport = {
   schema_version: 1;
   calibration_id: string;
   dataset_version: number;
@@ -139,23 +152,20 @@ export type AnswerRelevancyCalibrationReport = {
   finished_at?: string | null;
   git_sha: string;
   model: string;
-  embedding_model: string;
   ragas_version: string;
   threshold: number;
   base_pair_count: number;
   completed_pair_count: number;
   passed?: boolean | null;
-  metrics?: {
-    positive_mean: number;
-    negative_mean: number;
-    mean_gap: number;
-    auc: number;
-    paired_accuracy: number;
-    positive_pass_rate: number;
-    negative_rejection_rate: number;
-  } | null;
+  metrics?: CalibrationMetrics | null;
   failed_criteria: string[];
 };
+
+export type AnswerRelevancyCalibrationReport = MetricCalibrationReport & {
+  embedding_model: string;
+};
+
+export type FaithfulnessCalibrationReport = MetricCalibrationReport;
 
 const STATUS_LABELS: Record<RagEvaluationSummary["status"], string> = {
   queued: "等待运行",
@@ -308,10 +318,12 @@ function EvidenceDetail({
   item,
   runMode,
   answerRelevancyEnforced,
+  faithfulnessEnforced,
 }: {
   item: EvaluationCase;
   runMode: RagEvaluationSummary["run_mode"];
   answerRelevancyEnforced: boolean;
+  faithfulnessEnforced: boolean;
 }) {
   const hits = item.actual.rewritten_query_hits;
   const actualDecision = item.actual.retrieval_decision;
@@ -320,7 +332,7 @@ function EvidenceDetail({
   const scoreItems = [
     ["事实召回", item.scores.context_recall],
     ["召回精确", item.scores.context_precision],
-    ["回复忠实", item.scores.faithfulness],
+    [faithfulnessEnforced ? "回复忠实" : "回复忠实（仅观察）", item.scores.faithfulness],
     [answerRelevancyEnforced ? "回复相关" : "回复相关（仅观察）", item.scores.answer_relevancy],
   ] as const;
 
@@ -485,10 +497,14 @@ function EvidenceDetail({
   );
 }
 
-function AnswerRelevancyCalibrationCard({
+function MetricCalibrationCard({
+  title,
+  negativeLabel,
   calibration,
 }: {
-  calibration: AnswerRelevancyCalibrationReport | null;
+  title: string;
+  negativeLabel: string;
+  calibration: MetricCalibrationReport | null;
 }) {
   const completed = calibration?.status === "completed";
   const passed = completed && calibration?.passed === true;
@@ -507,15 +523,15 @@ function AnswerRelevancyCalibrationCard({
     : "border-amber-200 bg-amber-50/75";
 
   return (
-    <section className={`overflow-hidden rounded-2xl border ${tone}`} aria-label="回复相关性指标校准">
-      <div className="flex flex-col gap-4 px-5 py-5 lg:flex-row lg:items-center lg:justify-between lg:px-6">
+    <article className={`overflow-hidden rounded-xl border ${tone}`} aria-label={`${title}指标校准`}>
+      <div className="px-5 py-5">
         <div className="flex min-w-0 items-start gap-3">
           <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${passed ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
             <Gauge className="h-5 w-5" />
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-extrabold text-slate-950">回复相关性指标校准</h2>
+              <h3 className="text-sm font-extrabold text-slate-950">{title}</h3>
               <span className={`status-pill ${passed ? "pill-ok" : "pill-warn"}`}>
                 {statusLabel}
               </span>
@@ -525,7 +541,7 @@ function AnswerRelevancyCalibrationCard({
               {passed
                 ? "固定中文正负样本已证明当前门槛可用，新批次会把该指标纳入通过判定。"
                 : calibration
-                  ? "真实校准没有证明 0.80 门槛有效。新批次仍记录分数，但不会因这一项单独判失败；历史报告保持原判定。"
+                  ? `真实校准没有证明 ${percent(calibration.threshold)} 门槛有效。新批次仍记录分数，但不会因这一项单独判失败；历史报告保持原判定。`
                   : "尚未找到中文校准报告。新批次会保留分数，但不把该指标作为硬门槛。"}
             </p>
             {calibration && (
@@ -536,10 +552,10 @@ function AnswerRelevancyCalibrationCard({
           </div>
         </div>
         {metrics && (
-          <dl className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+          <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-3 border-t border-slate-900/5 pt-4">
             {[
               ["正确回答均值", metrics.positive_mean],
-              ["错配回答均值", metrics.negative_mean],
+              [negativeLabel, metrics.negative_mean],
               ["区分度 AUC", metrics.auc],
               [`正确回答过 ${percent(calibration?.threshold)}`, metrics.positive_pass_rate],
             ].map(([label, value]) => (
@@ -554,10 +570,44 @@ function AnswerRelevancyCalibrationCard({
         )}
       </div>
       {calibration?.failed_criteria.length ? (
-        <div className="border-t border-amber-200/70 px-5 py-3 text-xs leading-5 text-amber-900 lg:px-6">
+        <div className="border-t border-amber-200/70 px-5 py-3 text-xs leading-5 text-amber-900">
           未通过原因：{calibration.failed_criteria.join("；")}
         </div>
       ) : null}
+    </article>
+  );
+}
+
+function MetricCalibrationPanel({
+  answerRelevancy,
+  faithfulness,
+}: {
+  answerRelevancy: AnswerRelevancyCalibrationReport | null;
+  faithfulness: FaithfulnessCalibrationReport | null;
+}) {
+  return (
+    <section className="panel overflow-hidden" aria-label="RAGAS 指标校准">
+      <div className="panel-header-clean">
+        <div className="flex items-center gap-2">
+          <Gauge className="h-5 w-5 text-cyan-700" />
+          <h2 className="panel-title">评测尺子校准</h2>
+        </div>
+        <p className="panel-subtitle">
+          用同一批中文正确回答和确定性错误回答，先验证指标能否区分正误，再决定是否参与判定。
+        </p>
+      </div>
+      <div className="grid gap-4 px-5 pb-5 sm:px-6 sm:pb-6 lg:grid-cols-2">
+        <MetricCalibrationCard
+          title="回复相关性"
+          negativeLabel="错配回答均值"
+          calibration={answerRelevancy}
+        />
+        <MetricCalibrationCard
+          title="回复忠实度"
+          negativeLabel="冲突回答均值"
+          calibration={faithfulness}
+        />
+      </div>
     </section>
   );
 }
@@ -565,9 +615,11 @@ function AnswerRelevancyCalibrationCard({
 export function RagEvaluationsClient({
   initialRuns,
   initialCalibration,
+  initialFaithfulnessCalibration,
 }: {
   initialRuns: RagEvaluationSummary[];
   initialCalibration: AnswerRelevancyCalibrationReport | null;
+  initialFaithfulnessCalibration: FaithfulnessCalibrationReport | null;
 }) {
   const [runs, setRuns] = useState(initialRuns);
   const [selectedRunId, setSelectedRunId] = useState(initialRuns[0]?.run_id ?? "");
@@ -738,7 +790,10 @@ export function RagEvaluationsClient({
         </div>
       )}
 
-      <AnswerRelevancyCalibrationCard calibration={initialCalibration} />
+      <MetricCalibrationPanel
+        answerRelevancy={initialCalibration}
+        faithfulness={initialFaithfulnessCalibration}
+      />
 
       {loadError && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
@@ -816,15 +871,21 @@ export function RagEvaluationsClient({
                   <h2 className="panel-title">RAGAS 四项{isMockRun ? "（模拟）" : ""}</h2>
                 </div>
                 <p className="panel-subtitle">
-                  {summary.answer_relevancy_policy.enforced
+                  {summary.answer_relevancy_policy.enforced && summary.faithfulness_policy.enforced
                     ? "四项都保留，各自回答不同问题，不合并成一个总分。"
-                    : "四项分数都保留；回复相关性尚未校准，只观察，不参与本批次通过判定。"}
+                    : "四项分数都保留；未通过中文校准的指标只观察，不参与本批次通过判定。"}
                 </p>
               </div>
               <div className="grid px-5 sm:grid-cols-2 sm:gap-x-6 sm:px-6">
                 <MetricLine label="事实召回率" hint="该找到的权威事实找全了吗？" metric={summary.metrics.context_recall} threshold={0.8} />
                 <MetricLine label="召回精确率" hint="找回来的内容是否真正有用？" metric={summary.metrics.context_precision} threshold={0.7} />
-                <MetricLine label="回复忠实度" hint="最终回复是否脱离或反转召回事实？" metric={summary.metrics.faithfulness} threshold={0.85} />
+                <MetricLine
+                  label="回复忠实度"
+                  hint={summary.faithfulness_policy.enforced ? "最终回复是否脱离或反转召回事实？" : summary.faithfulness_policy.reason}
+                  metric={summary.metrics.faithfulness}
+                  threshold={0.85}
+                  observational={!summary.faithfulness_policy.enforced}
+                />
                 <MetricLine
                   label="回复相关性"
                   hint={summary.answer_relevancy_policy.enforced ? "有没有正面回答用户当前问题？" : summary.answer_relevancy_policy.reason}
@@ -920,6 +981,7 @@ export function RagEvaluationsClient({
                           item={item}
                           runMode={summary.run_mode}
                           answerRelevancyEnforced={summary.answer_relevancy_policy.enforced}
+                          faithfulnessEnforced={summary.faithfulness_policy.enforced}
                         />
                       )}
                     </article>

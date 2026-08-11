@@ -25,9 +25,7 @@ def ragas_judge_max_tokens() -> int:
             "RAG_EVAL_JUDGE_MAX_TOKENS must be a positive integer"
         ) from exc
     if value <= 0:
-        raise RuntimeError(
-            "RAG_EVAL_JUDGE_MAX_TOKENS must be a positive integer"
-        )
+        raise RuntimeError("RAG_EVAL_JUDGE_MAX_TOKENS must be a positive integer")
     return value
 
 
@@ -57,8 +55,12 @@ class FactConsistencyResult:
 class RagasScorer:
     """Thin adapter around the non-deprecated RAGAS 0.4 collections API."""
 
-    def __init__(self, settings: Settings):
-        from ragas.embeddings import embedding_factory
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        include_answer_relevancy: bool = True,
+    ):
         from ragas.llms import llm_factory
         from ragas.metrics.collections import (
             AnswerRelevancy,
@@ -72,28 +74,32 @@ class RagasScorer:
             base_url=settings.ai_base_url,
             timeout=settings.ai_timeout_seconds,
         )
-        embedding_client = AsyncOpenAI(
-            api_key=settings.embedding_api_key,
-            base_url=settings.embedding_base_url,
-            timeout=settings.ai_timeout_seconds,
-        )
         llm = _create_ragas_llm(
             llm_factory,
             model=settings.ai_model,
             client=judge_client,
         )
-        embeddings = embedding_factory(
-            "openai",
-            model=settings.embedding_model,
-            client=embedding_client,
-        )
         self._context_recall = ContextRecall(llm=llm)
         self._context_precision = ContextPrecision(llm=llm)
         self._faithfulness = Faithfulness(llm=llm)
-        self._answer_relevancy = AnswerRelevancy(
-            llm=llm,
-            embeddings=embeddings,
-        )
+        self._answer_relevancy = None
+        if include_answer_relevancy:
+            from ragas.embeddings import embedding_factory
+
+            embedding_client = AsyncOpenAI(
+                api_key=settings.embedding_api_key,
+                base_url=settings.embedding_base_url,
+                timeout=settings.ai_timeout_seconds,
+            )
+            embeddings = embedding_factory(
+                "openai",
+                model=settings.embedding_model,
+                client=embedding_client,
+            )
+            self._answer_relevancy = AnswerRelevancy(
+                llm=llm,
+                embeddings=embeddings,
+            )
         self._judge_client = judge_client
         self._judge_model = settings.ai_model
 
@@ -186,16 +192,10 @@ class RagasScorer:
             if retrieved_contexts
             else 0.0
         )
-        faithfulness = (
-            self._value(
-                await self._faithfulness.ascore(
-                    user_input=user_input,
-                    response=response,
-                    retrieved_contexts=retrieved_contexts,
-                )
-            )
-            if retrieved_contexts
-            else 0.0
+        faithfulness = await self.score_faithfulness(
+            user_input=user_input,
+            response=response,
+            retrieved_contexts=retrieved_contexts,
         )
         relevancy = await self.score_answer_relevancy(
             user_input=user_input,
@@ -215,9 +215,28 @@ class RagasScorer:
         user_input: str,
         response: str,
     ) -> float:
+        if self._answer_relevancy is None:
+            raise RuntimeError("answer relevancy scorer is not initialized")
         return self._value(
             await self._answer_relevancy.ascore(
                 user_input=user_input,
                 response=response,
+            )
+        )
+
+    async def score_faithfulness(
+        self,
+        *,
+        user_input: str,
+        response: str,
+        retrieved_contexts: list[str],
+    ) -> float:
+        if not retrieved_contexts:
+            return 0.0
+        return self._value(
+            await self._faithfulness.ascore(
+                user_input=user_input,
+                response=response,
+                retrieved_contexts=retrieved_contexts,
             )
         )

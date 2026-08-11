@@ -69,6 +69,50 @@ class AnswerRelevancyCalibrationReport(StrictModel):
     error: str | None = Field(default=None, max_length=2000)
 
 
+class FaithfulnessCalibrationItem(StrictModel):
+    case_id: str = Field(pattern=r"^faithfulness-[a-z0-9-]+$")
+    source_case_id: str = Field(pattern=r"^rag-(faq|chat)-[a-z0-9-]+$")
+    user_input: str = Field(min_length=1, max_length=1000)
+    retrieved_contexts: list[str] = Field(min_length=1, max_length=3)
+    positive_response: str = Field(min_length=1, max_length=4000)
+    negative_response: str = Field(min_length=1, max_length=4000)
+    positive_score: float = Field(ge=0.0, le=1.0)
+    negative_score: float = Field(ge=0.0, le=1.0)
+
+
+class FaithfulnessCalibrationMetrics(StrictModel):
+    positive_mean: float = Field(ge=0.0, le=1.0)
+    negative_mean: float = Field(ge=0.0, le=1.0)
+    mean_gap: float = Field(ge=-1.0, le=1.0)
+    auc: float = Field(ge=0.0, le=1.0)
+    paired_accuracy: float = Field(ge=0.0, le=1.0)
+    positive_pass_rate: float = Field(ge=0.0, le=1.0)
+    negative_rejection_rate: float = Field(ge=0.0, le=1.0)
+
+
+class FaithfulnessCalibrationReport(StrictModel):
+    schema_version: Literal[1] = 1
+    calibration_id: str = Field(pattern=r"^faithfulness-zh-v\d+$")
+    dataset_version: int = Field(ge=1)
+    run_id: str = Field(pattern=r"^faithfulness-calibration-[A-Za-z0-9._-]+$")
+    status: Literal["running", "completed", "failed"]
+    started_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+    git_sha: str = Field(min_length=7, max_length=64)
+    model: str = Field(min_length=1, max_length=120)
+    ragas_version: str = Field(min_length=1, max_length=40)
+    threshold: float = Field(ge=0.0, le=1.0)
+    base_pair_count: int = Field(ge=1)
+    completed_pair_count: int = Field(ge=0)
+    passed: bool | None = None
+    metrics: FaithfulnessCalibrationMetrics | None = None
+    failed_criteria: list[str] = Field(default_factory=list)
+    items: list[FaithfulnessCalibrationItem] = Field(default_factory=list)
+    estimated_cost_yuan: float | None = Field(default=None, ge=0)
+    error: str | None = Field(default=None, max_length=2000)
+
+
 class RagEvaluationMetrics(StrictModel):
     retrieval_decision_error_rate: RagMetricValue
     rewrite_harm_rate: RagMetricValue
@@ -79,6 +123,23 @@ class RagEvaluationMetrics(StrictModel):
 
 
 class AnswerRelevancyPolicy(StrictModel):
+    status: Literal[
+        "enforced",
+        "calibration_failed",
+        "not_calibrated",
+        "mock",
+        "legacy",
+    ] = "legacy"
+    enforced: bool = True
+    calibration_run_id: str | None = None
+    reason: str = Field(
+        default="该历史批次未记录校准状态，生成时仍按原规则参与判定",
+        min_length=1,
+        max_length=1000,
+    )
+
+
+class FaithfulnessPolicy(StrictModel):
     status: Literal[
         "enforced",
         "calibration_failed",
@@ -114,6 +175,7 @@ class RagEvaluationSummary(StrictModel):
     answer_relevancy_policy: AnswerRelevancyPolicy = Field(
         default_factory=AnswerRelevancyPolicy
     )
+    faithfulness_policy: FaithfulnessPolicy = Field(default_factory=FaithfulnessPolicy)
     critical_fact_errors: int = Field(default=0, ge=0)
     estimated_cost_yuan: float | None = Field(default=None, ge=0)
     error: str | None = Field(default=None, max_length=2000)

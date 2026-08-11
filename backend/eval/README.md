@@ -20,12 +20,26 @@ RAGAS 判官的最大输出默认是 50,000 tokens，由 `RAG_EVAL_JUDGE_MAX_TOK
 正式使用 Answer Relevancy 的 0.80 门槛前，先用固定 10 个中文正例和 10 个一对一错配负例检查判官能否区分两类。该入口只调用 RAGAS 判官与 Embedding，不检索生产数据库、不生成用户回复：
 
 ```bash
-docker compose -f docker-compose.eval.yml run --rm --no-deps \
+docker compose -f docker-compose.eval.yml run --name ran_ai-rag-relevancy-calibration --no-deps \
   --entrypoint /app/.venv/bin/python \
   rag-eval /app/eval/calibrate_answer_relevancy.py
 ```
 
 报告写入 `diagnostics/rag-evaluations/calibrations/`，同时原子更新 `diagnostics/rag-evaluations/answer-relevancy-calibration.json`。校准同时检查正负排序能力和当前 0.80 门槛，不会通过直接降低阈值来迎合结果。
+
+## 回复忠实度中文校准
+
+Faithfulness 的 0.85 门槛也必须先用固定中文事实验证。10 组用例全部复用正式 50 题中的权威事实，每组分别提供忠实回复和关键关系反转回复；该入口不检索 RDS、不生成用户回复：
+
+```bash
+docker compose -f docker-compose.eval.yml run --name ran_ai-rag-faithfulness-calibration --no-deps \
+  --entrypoint /app/.venv/bin/python \
+  rag-eval /app/eval/calibrate_faithfulness.py
+```
+
+报告写入同一 `calibrations/` 目录，并原子更新 `diagnostics/rag-evaluations/faithfulness-calibration.json`。校准未通过时，正式评测仍保留 Faithfulness 分数，但不会用该项单独判定失败。
+
+以上校准容器均不使用 `--rm`：跑完后保留为 `Exited`，下次可用 `docker start -a <容器名>` 重新执行。依赖本身固化在镜像中，不会重复下载。
 
 ## 再次运行
 
