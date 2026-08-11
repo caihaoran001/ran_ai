@@ -5,7 +5,6 @@ import {
   AgentOperationsData,
   DeepseekBalance,
 } from "@/components/agent-operations/agent-operations-client";
-import { AIManagementNav } from "@/components/ai-management-nav";
 
 const TABS = ["overview", "reply", "archivist", "costs"] as const;
 
@@ -33,7 +32,6 @@ export default async function AgentOperationsPage({
   if (!data) {
     return (
       <div className="page-stack">
-        <AIManagementNav active="operations" />
         <div className="empty-state py-20">
           <TriangleAlert className="h-8 w-8 text-amber-500 mb-2" />
           <p className="text-base font-bold text-slate-800">

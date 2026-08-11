@@ -23,7 +23,6 @@ import {
   Wallet,
 } from "lucide-react";
 import { formatChinaShortDateTime } from "@/lib/format";
-import { AIManagementNav } from "@/components/ai-management-nav";
 import { RunDetailDrawer, RunDetailData } from "./run-detail-drawer";
 import { ToolDetailModal, ToolStat } from "./tool-detail-modal";
 import { ScenarioCostModal, CaseCostDrawer, ScenarioCost, CaseCost } from "./cost-detail-modal";
@@ -381,8 +380,6 @@ export function AgentOperationsClient({
 
   return (
     <div className="page-stack">
-      <AIManagementNav active="operations" />
-
       {/* Page Header */}
       <header className="page-header">
         <div className="page-header-row">

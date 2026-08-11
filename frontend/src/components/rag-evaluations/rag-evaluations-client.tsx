@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { formatChinaShortDateTime } from "@/lib/format";
-import { AIManagementNav } from "@/components/ai-management-nav";
 
 type MetricValue = {
   value?: number | null;
@@ -521,7 +520,6 @@ export function RagEvaluationsClient({
   if (!initialRuns.length) {
     return (
       <div className="page-stack">
-        <AIManagementNav active="quality" />
         <header className="page-header">
           <div className="page-header-row">
             <div>
@@ -546,7 +544,6 @@ export function RagEvaluationsClient({
 
   return (
     <div className="page-stack">
-      <AIManagementNav active="quality" />
       <header className="page-header">
         <div className="page-header-row">
           <div>

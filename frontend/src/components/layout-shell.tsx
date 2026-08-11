@@ -33,13 +33,17 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    title: "系统",
+    title: "AI 管理",
     items: [
       {
         href: "/agent-operations",
-        label: "AI 管理",
+        label: "运行监控",
         icon: Activity,
-        activeHrefs: ["/rag-evaluations"],
+      },
+      {
+        href: "/rag-evaluations",
+        label: "回复质量",
+        icon: ShieldCheck,
       },
     ],
   },

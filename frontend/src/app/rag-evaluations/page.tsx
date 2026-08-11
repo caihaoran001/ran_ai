@@ -4,7 +4,6 @@ import {
   RagEvaluationsClient,
   type RagEvaluationRunList,
 } from "@/components/rag-evaluations/rag-evaluations-client";
-import { AIManagementNav } from "@/components/ai-management-nav";
 
 export default async function RagEvaluationsPage() {
   const data = await api<RagEvaluationRunList>("/rag-evaluations").catch(
@@ -14,7 +13,6 @@ export default async function RagEvaluationsPage() {
   if (!data) {
     return (
       <div className="page-stack">
-        <AIManagementNav active="quality" />
         <div className="empty-state py-20">
           <TriangleAlert className="mb-2 h-8 w-8 text-amber-500" />
           <p className="text-base font-bold text-slate-800">

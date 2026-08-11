@@ -1,5 +1,3 @@
-import { AIManagementNav } from "@/components/ai-management-nav";
-
 export default function AgentOperationsLoading() {
   return (
     <div
@@ -7,7 +5,6 @@ export default function AgentOperationsLoading() {
       aria-busy="true"
       aria-label="正在加载运行监控"
     >
-      <AIManagementNav active="operations" />
       <div className="page-header">
         <div className="page-header-row">
           <div>
