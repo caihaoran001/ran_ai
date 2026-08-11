@@ -22,3 +22,7 @@ www.humanburning.ai {
 	encode zstd gzip
 	reverse_proxy website:80
 }
+
+humanburning.com, www.humanburning.com {
+	redir https://www.humanburning.ai{uri} permanent
+}
