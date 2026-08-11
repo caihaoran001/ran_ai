@@ -17,3 +17,8 @@
 		reverse_proxy frontend:3000
 	}
 }
+
+www.humanburning.ai {
+	encode zstd gzip
+	reverse_proxy website:80
+}
