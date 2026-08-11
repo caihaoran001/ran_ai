@@ -6,7 +6,42 @@ from app.evaluation.answer_relevancy_calibration import (
     assess_answer_relevancy_calibration,
     build_answer_relevancy_calibration_pairs,
     load_answer_relevancy_calibration_suite,
+    resolve_answer_relevancy_policy,
 )
+from app.schemas.rag_evaluation import AnswerRelevancyCalibrationReport
+
+
+def _calibration_report(*, passed: bool) -> AnswerRelevancyCalibrationReport:
+    return AnswerRelevancyCalibrationReport.model_validate(
+        {
+            "calibration_id": "answer-relevancy-zh-v1",
+            "dataset_version": 1,
+            "run_id": "relevancy-calibration-test",
+            "status": "completed",
+            "started_at": "2026-08-11T07:00:00Z",
+            "updated_at": "2026-08-11T07:10:00Z",
+            "finished_at": "2026-08-11T07:10:00Z",
+            "git_sha": "1234567",
+            "model": "deepseek-chat",
+            "embedding_model": "text-embedding-v4",
+            "ragas_version": "0.4.3",
+            "threshold": 0.8,
+            "base_pair_count": 10,
+            "completed_pair_count": 10,
+            "passed": passed,
+            "metrics": {
+                "positive_mean": 0.55,
+                "negative_mean": 0.26,
+                "mean_gap": 0.29,
+                "auc": 0.885,
+                "paired_accuracy": 0.8,
+                "positive_pass_rate": 0.0,
+                "negative_rejection_rate": 1.0,
+            },
+            "failed_criteria": [] if passed else ["正例在0.80门槛下通过率低于0.80"],
+            "items": [],
+        }
+    )
 
 
 def test_fixed_chinese_calibration_suite_uses_one_to_one_answer_swaps():
@@ -46,9 +81,7 @@ def test_calibration_fails_when_metric_ranks_well_but_point_eight_is_invalid():
     assert assessment.positive_pass_rate == 0.0
     assert assessment.negative_rejection_rate == 1.0
     assert assessment.passed is False
-    assert assessment.failed_criteria == (
-        "正例在0.80门槛下通过率低于0.80",
-    )
+    assert assessment.failed_criteria == ("正例在0.80门槛下通过率低于0.80",)
 
 
 @pytest.mark.parametrize(
@@ -58,3 +91,30 @@ def test_calibration_fails_when_metric_ranks_well_but_point_eight_is_invalid():
 def test_calibration_rejects_invalid_score_inputs(positive, negative):
     with pytest.raises(ValueError, match="calibration"):
         assess_answer_relevancy_calibration(positive, negative)
+
+
+def test_failed_calibration_makes_answer_relevancy_observational_only():
+    policy = resolve_answer_relevancy_policy(
+        _calibration_report(passed=False),
+        model="deepseek-chat",
+        embedding_model="text-embedding-v4",
+        ragas_version="0.4.3",
+    )
+
+    assert policy.status == "calibration_failed"
+    assert policy.enforced is False
+    assert policy.calibration_run_id == "relevancy-calibration-test"
+    assert "仅展示" in policy.reason
+
+
+def test_calibration_only_applies_to_matching_runtime():
+    policy = resolve_answer_relevancy_policy(
+        _calibration_report(passed=True),
+        model="different-model",
+        embedding_model="text-embedding-v4",
+        ragas_version="0.4.3",
+    )
+
+    assert policy.status == "not_calibrated"
+    assert policy.enforced is False
+    assert "判官模型" in policy.reason

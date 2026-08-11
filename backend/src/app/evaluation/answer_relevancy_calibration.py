@@ -6,6 +6,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.rag_evaluation import (
+    AnswerRelevancyCalibrationReport,
+    AnswerRelevancyPolicy,
+)
+
 
 CALIBRATION_THRESHOLD = 0.80
 MIN_AUC = 0.90
@@ -48,7 +53,9 @@ class AnswerRelevancyCalibrationSuite(StrictModel):
             if case.negative_source_case_id not in known:
                 raise ValueError("calibration negative source does not exist")
         negative_sources = [case.negative_source_case_id for case in self.cases]
-        if set(negative_sources) != known or len(negative_sources) != len(set(negative_sources)):
+        if set(negative_sources) != known or len(negative_sources) != len(
+            set(negative_sources)
+        ):
             raise ValueError("calibration negatives must be a one-to-one answer swap")
         return self
 
@@ -126,7 +133,9 @@ def assess_answer_relevancy_calibration(
     threshold: float = CALIBRATION_THRESHOLD,
 ) -> AnswerRelevancyCalibrationAssessment:
     if not positive_scores or len(positive_scores) != len(negative_scores):
-        raise ValueError("calibration requires equal non-empty positive and negative scores")
+        raise ValueError(
+            "calibration requires equal non-empty positive and negative scores"
+        )
     if not 0.0 <= threshold <= 1.0:
         raise ValueError("calibration threshold must be between 0 and 1")
     if any(not 0.0 <= score <= 1.0 for score in positive_scores + negative_scores):
@@ -143,9 +152,9 @@ def assess_answer_relevancy_calibration(
     positive_pass_rate = sum(score >= threshold for score in positive_scores) / len(
         positive_scores
     )
-    negative_rejection_rate = sum(
-        score < threshold for score in negative_scores
-    ) / len(negative_scores)
+    negative_rejection_rate = sum(score < threshold for score in negative_scores) / len(
+        negative_scores
+    )
 
     checks = {
         f"AUC低于{MIN_AUC:.2f}": auc >= MIN_AUC,
@@ -171,4 +180,66 @@ def assess_answer_relevancy_calibration(
         negative_rejection_rate=negative_rejection_rate,
         passed=not failed,
         failed_criteria=failed,
+    )
+
+
+def resolve_answer_relevancy_policy(
+    report: AnswerRelevancyCalibrationReport | None,
+    *,
+    model: str,
+    embedding_model: str,
+    ragas_version: str,
+    threshold: float = CALIBRATION_THRESHOLD,
+) -> AnswerRelevancyPolicy:
+    if report is None:
+        return AnswerRelevancyPolicy(
+            status="not_calibrated",
+            enforced=False,
+            reason="没有可用的中文校准报告，回复相关性仅展示、不参与通过判定",
+        )
+
+    mismatches = []
+    if report.model != model:
+        mismatches.append("判官模型")
+    if report.embedding_model != embedding_model:
+        mismatches.append("向量模型")
+    if report.ragas_version != ragas_version:
+        mismatches.append("RAGAS 版本")
+    if report.threshold != threshold:
+        mismatches.append("判定门槛")
+    if mismatches:
+        return AnswerRelevancyPolicy(
+            status="not_calibrated",
+            enforced=False,
+            calibration_run_id=report.run_id,
+            reason=(
+                f"最近校准的{'、'.join(mismatches)}与本批次不一致，"
+                "回复相关性仅展示、不参与通过判定"
+            ),
+        )
+
+    complete_result = (
+        report.status == "completed"
+        and report.completed_pair_count == report.base_pair_count
+        and report.metrics is not None
+    )
+    if not complete_result or report.passed is not True:
+        criteria = "；".join(report.failed_criteria)
+        reason = "最近一次中文校准未通过"
+        if not complete_result:
+            reason = "最近一次中文校准未完整完成"
+        if criteria:
+            reason = f"{reason}：{criteria}"
+        return AnswerRelevancyPolicy(
+            status="calibration_failed",
+            enforced=False,
+            calibration_run_id=report.run_id,
+            reason=f"{reason}；回复相关性仅展示、不参与通过判定",
+        )
+
+    return AnswerRelevancyPolicy(
+        status="enforced",
+        enforced=True,
+        calibration_run_id=report.run_id,
+        reason="中文正负样本校准通过，回复相关性参与本批次通过判定",
     )

@@ -2,13 +2,17 @@ import { TriangleAlert } from "lucide-react";
 import { api } from "@/lib/api";
 import {
   RagEvaluationsClient,
+  type AnswerRelevancyCalibrationReport,
   type RagEvaluationRunList,
 } from "@/components/rag-evaluations/rag-evaluations-client";
 
 export default async function RagEvaluationsPage() {
-  const data = await api<RagEvaluationRunList>("/rag-evaluations").catch(
-    () => null,
-  );
+  const [data, calibration] = await Promise.all([
+    api<RagEvaluationRunList>("/rag-evaluations").catch(() => null),
+    api<AnswerRelevancyCalibrationReport | null>(
+      "/rag-evaluations/calibrations/answer-relevancy",
+    ).catch(() => null),
+  ]);
 
   if (!data) {
     return (
@@ -26,5 +30,10 @@ export default async function RagEvaluationsPage() {
     );
   }
 
-  return <RagEvaluationsClient initialRuns={data.items} />;
+  return (
+    <RagEvaluationsClient
+      initialRuns={data.items}
+      initialCalibration={calibration}
+    />
+  );
 }

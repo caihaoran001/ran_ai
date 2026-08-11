@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import time
 from datetime import datetime, timezone
@@ -10,7 +11,13 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.db.session import SessionLocal, engine
 from app.evaluation.rag_cases import RagEvalCase, load_rag_eval_suite
+from app.evaluation.answer_relevancy_calibration import (
+    CALIBRATION_THRESHOLD,
+    resolve_answer_relevancy_policy,
+)
 from app.schemas.rag_evaluation import (
+    AnswerRelevancyCalibrationReport,
+    AnswerRelevancyPolicy,
     RagCaseActual,
     RagCaseExpected,
     RagCaseOrigin,
@@ -58,6 +65,7 @@ THRESHOLDS = {
     "faithfulness": 0.85,
     "answer_relevancy": 0.80,
 }
+RAGAS_VERSION = "0.4.3"
 CRITICAL_RELATION_TAGS = frozenset({"number", "unit", "comparison", "negation"})
 
 
@@ -72,6 +80,16 @@ def _empty_metrics() -> RagEvaluationMetrics:
     )
 
 
+def _active_ragas_thresholds(*, answer_relevancy_enforced: bool) -> dict[str, float]:
+    if answer_relevancy_enforced:
+        return THRESHOLDS
+    return {
+        name: threshold
+        for name, threshold in THRESHOLDS.items()
+        if name != "answer_relevancy"
+    }
+
+
 def _base_summary(
     *,
     run_id: str,
@@ -79,6 +97,7 @@ def _base_summary(
     dataset_version: int,
     total: int,
     mock: bool,
+    answer_relevancy_policy: AnswerRelevancyPolicy,
 ) -> RagEvaluationSummary:
     settings = get_settings()
     now = utc_now()
@@ -93,7 +112,7 @@ def _base_summary(
         dataset_version=dataset_version,
         model="mock-model" if mock else settings.ai_model,
         embedding_model="mock-embedding" if mock else settings.embedding_model,
-        ragas_version="0.4.3",
+        ragas_version=RAGAS_VERSION,
         counts=RagEvaluationCounts(
             total=total,
             completed=0,
@@ -103,6 +122,47 @@ def _base_summary(
             errors=0,
         ),
         metrics=_empty_metrics(),
+        answer_relevancy_policy=answer_relevancy_policy,
+    )
+
+
+def _load_answer_relevancy_policy(
+    *,
+    mock: bool,
+    reports_root: Path,
+    settings,
+) -> AnswerRelevancyPolicy:
+    if mock:
+        return AnswerRelevancyPolicy(
+            status="mock",
+            enforced=True,
+            reason="模拟批次使用固定分数，只验证评测链路和页面结构",
+        )
+
+    path = Path(
+        os.getenv(
+            "RAG_ANSWER_RELEVANCY_CALIBRATION_LATEST_PATH",
+            str(reports_root / "answer-relevancy-calibration.json"),
+        )
+    ).resolve()
+    try:
+        report = AnswerRelevancyCalibrationReport.model_validate(
+            json.loads(path.read_text(encoding="utf-8"))
+        )
+    except FileNotFoundError:
+        report = None
+    except Exception:
+        return AnswerRelevancyPolicy(
+            status="not_calibrated",
+            enforced=False,
+            reason="中文校准报告无法读取，回复相关性仅展示、不参与通过判定",
+        )
+    return resolve_answer_relevancy_policy(
+        report,
+        model=settings.ai_model,
+        embedding_model=settings.embedding_model,
+        ragas_version=RAGAS_VERSION,
+        threshold=CALIBRATION_THRESHOLD,
     )
 
 
@@ -169,7 +229,9 @@ def _base_case(case: RagEvalCase, *, status: str) -> RagEvaluationCaseResult:
                 must_include=case.rewrite.must_include,
                 must_preserve_meanings=case.rewrite.must_preserve_meanings,
             ),
-            required_facts=[facts[fact_id] for fact_id in case.answer.required_fact_ids],
+            required_facts=[
+                facts[fact_id] for fact_id in case.answer.required_fact_ids
+            ],
         ),
         actual=RagCaseActual(
             retrieval_decision=None,
@@ -184,6 +246,7 @@ async def _evaluate_real_case(
     *,
     scorer: RagasScorer,
     settings,
+    answer_relevancy_enforced: bool,
 ) -> RagEvaluationCaseResult:
     started = time.monotonic()
     result = _base_case(case, status="passed")
@@ -198,9 +261,7 @@ async def _evaluate_real_case(
                 RagFailureReason(
                     stage="decision",
                     code="retrieval_decision_mismatch",
-                    message=(
-                        f"期望{case.rewrite.decision}，实际{intent.decision}"
-                    ),
+                    message=(f"期望{case.rewrite.decision}，实际{intent.decision}"),
                 )
             )
 
@@ -234,11 +295,7 @@ async def _evaluate_real_case(
         response = await _agent_reply(case, intent, settings)
         result.actual.response = response
         reference = _reference(case)
-        if (
-            response
-            and reference
-            and CRITICAL_RELATION_TAGS.intersection(case.tags)
-        ):
+        if response and reference and CRITICAL_RELATION_TAGS.intersection(case.tags):
             consistency = await scorer.check_fact_consistency(
                 response=response,
                 reference=reference,
@@ -253,10 +310,7 @@ async def _evaluate_real_case(
                     )
                 )
 
-        if (
-            case.rewrite.decision == "retrieve"
-            and response
-        ):
+        if case.rewrite.decision == "retrieve" and response:
             scores = await scorer.score(
                 user_input=case.user_query,
                 response=response,
@@ -281,7 +335,9 @@ async def _evaluate_real_case(
                         ),
                     )
                 )
-            for name, threshold in THRESHOLDS.items():
+            for name, threshold in _active_ragas_thresholds(
+                answer_relevancy_enforced=answer_relevancy_enforced
+            ).items():
                 value = getattr(scores, name)
                 if value < threshold:
                     reasons.append(
@@ -361,11 +417,7 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
 
     if output:
         failure = next(
-            (
-                item
-                for item in output
-                if item.case_id == "rag-chat-cap-ambiguity"
-            ),
+            (item for item in output if item.case_id == "rag-chat-cap-ambiguity"),
             output[0],
         )
         failure.status = "failed"
@@ -402,26 +454,38 @@ async def async_main(args: argparse.Namespace) -> int:
         install_read_only_guards(engine)
         install_in_memory_usage_collector()
 
+    settings = get_settings()
+    answer_relevancy_policy = _load_answer_relevancy_policy(
+        mock=args.mock,
+        reports_root=reports_root,
+        settings=settings,
+    )
+
     base = _base_summary(
         run_id=run_id,
         dataset_id=dataset_id,
         dataset_version=dataset_version,
         total=len(cases),
         mock=args.mock,
+        answer_relevancy_policy=answer_relevancy_policy,
     )
     atomic_write_json(run_dir / "status.json", base.model_dump(mode="json"))
     try:
         if args.mock:
             results = _mock_cases(cases)
         else:
-            settings = get_settings()
             if not settings.ai_api_key or not settings.embedding_api_key:
                 raise RuntimeError("真实评测要求 AI_API_KEY 和 EMBEDDING_API_KEY")
             scorer = RagasScorer(settings)
             results = []
             for case in cases:
                 results.append(
-                    await _evaluate_real_case(case, scorer=scorer, settings=settings)
+                    await _evaluate_real_case(
+                        case,
+                        scorer=scorer,
+                        settings=settings,
+                        answer_relevancy_enforced=(answer_relevancy_policy.enforced),
+                    )
                 )
                 running = aggregate_summary(base=base, cases=results, status="running")
                 running.finished_at = None

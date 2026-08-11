@@ -7,7 +7,7 @@ import pytest
 from app.evaluation.rag_cases import load_rag_eval_suite
 from eval.intent_eval import resolve_intent
 from eval.ragas_eval import RagasScorer, _create_ragas_llm, ragas_judge_max_tokens
-from eval.run_full_eval import _mock_cases
+from eval.run_full_eval import _active_ragas_thresholds, _mock_cases
 
 
 def test_ragas_judge_uses_large_configurable_output_limit(monkeypatch):
@@ -125,6 +125,17 @@ def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():
         "一瓶盖约等于1.5个小刻度，一大刻度等于3个小刻度，按一大刻度执行时约需两瓶盖，一瓶盖不够；量取以瓶体刻度为准。",
     ]
     assert result.actual.raw_query_hits == result.actual.rewritten_query_hits
+
+
+def test_uncalibrated_answer_relevancy_is_scored_but_not_thresholded():
+    active = _active_ragas_thresholds(answer_relevancy_enforced=False)
+
+    assert "answer_relevancy" not in active
+    assert active == {
+        "context_recall": 0.80,
+        "context_precision": 0.70,
+        "faithfulness": 0.85,
+    }
 
 
 class _FactJudgeCompletions:

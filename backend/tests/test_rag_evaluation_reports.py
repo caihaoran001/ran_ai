@@ -100,6 +100,38 @@ def _report(run_id: str) -> dict:
     }
 
 
+def _calibration_report() -> dict:
+    return {
+        "schema_version": 1,
+        "calibration_id": "answer-relevancy-zh-v1",
+        "dataset_version": 1,
+        "run_id": "relevancy-calibration-20260811T070447Z",
+        "status": "completed",
+        "started_at": "2026-08-11T07:04:47Z",
+        "updated_at": "2026-08-11T07:10:00Z",
+        "finished_at": "2026-08-11T07:10:00Z",
+        "git_sha": "1234567",
+        "model": "deepseek-chat",
+        "embedding_model": "text-embedding-v4",
+        "ragas_version": "0.4.3",
+        "threshold": 0.8,
+        "base_pair_count": 10,
+        "completed_pair_count": 10,
+        "passed": False,
+        "metrics": {
+            "positive_mean": 0.5548,
+            "negative_mean": 0.2654,
+            "mean_gap": 0.2894,
+            "auc": 0.885,
+            "paired_accuracy": 0.8,
+            "positive_pass_rate": 0.0,
+            "negative_rejection_rate": 1.0,
+        },
+        "failed_criteria": ["正例在0.80门槛下通过率低于0.80"],
+        "items": [],
+    }
+
+
 def _write_json(path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -142,6 +174,39 @@ async def test_rag_evaluation_api_lists_status_and_returns_report(
 
 
 @pytest.mark.asyncio
+async def test_rag_evaluation_api_returns_latest_answer_relevancy_calibration(
+    admin_client, tmp_path
+):
+    app = admin_client._transport.app
+    store = RagEvaluationReportStore(tmp_path)
+    app.dependency_overrides[get_report_store] = lambda: store
+    _write_json(
+        tmp_path / "answer-relevancy-calibration.json",
+        _calibration_report(),
+    )
+
+    response = await admin_client.get("/rag-evaluations/calibrations/answer-relevancy")
+
+    assert response.status_code == 200
+    assert response.json()["passed"] is False
+    assert response.json()["metrics"]["positive_pass_rate"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_missing_answer_relevancy_calibration_returns_null(
+    admin_client, tmp_path
+):
+    app = admin_client._transport.app
+    store = RagEvaluationReportStore(tmp_path)
+    app.dependency_overrides[get_report_store] = lambda: store
+
+    response = await admin_client.get("/rag-evaluations/calibrations/answer-relevancy")
+
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+@pytest.mark.asyncio
 async def test_rag_evaluation_api_rejects_bad_paths_and_invalid_reports(
     admin_client, tmp_path
 ):
@@ -172,19 +237,25 @@ async def test_legacy_report_without_run_mode_remains_readable(admin_client, tmp
     legacy["cases"][0]["expected"]["rewrite"]["forbidden_inferences"] = [
         "用户在问怎么盖瓶盖"
     ]
-    legacy["cases"][0]["expected"]["forbidden_claims"] = [
-        "一瓶盖够一大刻度"
-    ]
+    legacy["cases"][0]["expected"]["forbidden_claims"] = ["一瓶盖够一大刻度"]
     _write_json(tmp_path / "eval-legacy" / "report.json", legacy)
 
     response = await admin_client.get("/rag-evaluations/eval-legacy")
 
     assert response.status_code == 200
     assert response.json()["summary"]["run_mode"] == "unknown"
+    assert response.json()["summary"]["answer_relevancy_policy"] == {
+        "status": "legacy",
+        "enforced": True,
+        "calibration_run_id": None,
+        "reason": "该历史批次未记录校准状态，生成时仍按原规则参与判定",
+    }
     assert response.json()["cases"][0]["origin"] == {
         "kind": "unknown",
         "reference_id": "legacy-report",
     }
     assert response.json()["cases"][0]["expected"]["response_mode"] is None
-    assert "forbidden_inferences" not in response.json()["cases"][0]["expected"]["rewrite"]
+    assert (
+        "forbidden_inferences" not in response.json()["cases"][0]["expected"]["rewrite"]
+    )
     assert "forbidden_claims" not in response.json()["cases"][0]["expected"]

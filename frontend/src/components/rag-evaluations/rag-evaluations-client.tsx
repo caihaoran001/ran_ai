@@ -10,6 +10,7 @@ import {
   Clock3,
   Database,
   FileSearch,
+  Gauge,
   LoaderCircle,
   MessageSquareText,
   SearchCheck,
@@ -55,6 +56,12 @@ export type RagEvaluationSummary = {
     context_precision: MetricValue;
     faithfulness: MetricValue;
     answer_relevancy: MetricValue;
+  };
+  answer_relevancy_policy: {
+    status: "enforced" | "calibration_failed" | "not_calibrated" | "mock" | "legacy";
+    enforced: boolean;
+    calibration_run_id?: string | null;
+    reason: string;
   };
   critical_fact_errors: number;
   estimated_cost_yuan?: number | null;
@@ -121,6 +128,35 @@ type RagEvaluationRunDetail = {
 
 export type RagEvaluationRunList = { items: RagEvaluationSummary[] };
 
+export type AnswerRelevancyCalibrationReport = {
+  schema_version: 1;
+  calibration_id: string;
+  dataset_version: number;
+  run_id: string;
+  status: "running" | "completed" | "failed";
+  started_at: string;
+  updated_at: string;
+  finished_at?: string | null;
+  git_sha: string;
+  model: string;
+  embedding_model: string;
+  ragas_version: string;
+  threshold: number;
+  base_pair_count: number;
+  completed_pair_count: number;
+  passed?: boolean | null;
+  metrics?: {
+    positive_mean: number;
+    negative_mean: number;
+    mean_gap: number;
+    auc: number;
+    paired_accuracy: number;
+    positive_pass_rate: number;
+    negative_rejection_rate: number;
+  } | null;
+  failed_criteria: string[];
+};
+
 const STATUS_LABELS: Record<RagEvaluationSummary["status"], string> = {
   queued: "等待运行",
   running: "正在评测",
@@ -177,16 +213,18 @@ function MetricLine({
   metric,
   lowerIsBetter = false,
   threshold,
+  observational = false,
 }: {
   label: string;
   hint: string;
   metric: MetricValue;
   lowerIsBetter?: boolean;
   threshold?: number;
+  observational?: boolean;
 }) {
   const value = metric.value ?? null;
   const healthy =
-    value == null
+    value == null || observational
       ? null
       : lowerIsBetter
         ? value === 0
@@ -198,6 +236,9 @@ function MetricLine({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-bold text-slate-900">{label}</span>
+            {observational && (
+              <span className="status-pill pill-neutral">仅观察</span>
+            )}
             {healthy === true && (
               <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-label="达标" />
             )}
@@ -221,7 +262,7 @@ function MetricLine({
       </div>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
         <div
-          className={`h-full rounded-full ${healthy === false ? "bg-rose-500" : lowerIsBetter ? "bg-cyan-500" : "bg-emerald-500"}`}
+          className={`h-full rounded-full ${observational ? "bg-slate-400" : healthy === false ? "bg-rose-500" : lowerIsBetter ? "bg-cyan-500" : "bg-emerald-500"}`}
           style={{ width: `${width}%` }}
         />
       </div>
@@ -266,9 +307,11 @@ function FactList({
 function EvidenceDetail({
   item,
   runMode,
+  answerRelevancyEnforced,
 }: {
   item: EvaluationCase;
   runMode: RagEvaluationSummary["run_mode"];
+  answerRelevancyEnforced: boolean;
 }) {
   const hits = item.actual.rewritten_query_hits;
   const actualDecision = item.actual.retrieval_decision;
@@ -278,7 +321,7 @@ function EvidenceDetail({
     ["事实召回", item.scores.context_recall],
     ["召回精确", item.scores.context_precision],
     ["回复忠实", item.scores.faithfulness],
-    ["回复相关", item.scores.answer_relevancy],
+    [answerRelevancyEnforced ? "回复相关" : "回复相关（仅观察）", item.scores.answer_relevancy],
   ] as const;
 
   return (
@@ -441,10 +484,90 @@ function EvidenceDetail({
     </div>
   );
 }
+
+function AnswerRelevancyCalibrationCard({
+  calibration,
+}: {
+  calibration: AnswerRelevancyCalibrationReport | null;
+}) {
+  const completed = calibration?.status === "completed";
+  const passed = completed && calibration?.passed === true;
+  const metrics = calibration?.metrics ?? null;
+  const statusLabel = passed
+    ? "校准通过"
+    : calibration?.status === "completed"
+      ? "校准未通过"
+      : calibration?.status === "running"
+        ? "校准进行中"
+        : calibration
+          ? "校准运行失败"
+          : "尚未校准";
+  const tone = passed
+    ? "border-emerald-200 bg-emerald-50/70"
+    : "border-amber-200 bg-amber-50/75";
+
+  return (
+    <section className={`overflow-hidden rounded-2xl border ${tone}`} aria-label="回复相关性指标校准">
+      <div className="flex flex-col gap-4 px-5 py-5 lg:flex-row lg:items-center lg:justify-between lg:px-6">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${passed ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+            <Gauge className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-extrabold text-slate-950">回复相关性指标校准</h2>
+              <span className={`status-pill ${passed ? "pill-ok" : "pill-warn"}`}>
+                {statusLabel}
+              </span>
+              {!passed && <span className="status-pill pill-neutral">新批次仅观察</span>}
+            </div>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">
+              {passed
+                ? "固定中文正负样本已证明当前门槛可用，新批次会把该指标纳入通过判定。"
+                : calibration
+                  ? "真实校准没有证明 0.80 门槛有效。新批次仍记录分数，但不会因这一项单独判失败；历史报告保持原判定。"
+                  : "尚未找到中文校准报告。新批次会保留分数，但不把该指标作为硬门槛。"}
+            </p>
+            {calibration && (
+              <p className="mt-1 text-[11px] font-semibold text-slate-400">
+                {calibration.completed_pair_count}/{calibration.base_pair_count} 组正负对照 · {calibration.model} · {formatChinaShortDateTime(calibration.updated_at)}
+              </p>
+            )}
+          </div>
+        </div>
+        {metrics && (
+          <dl className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+            {[
+              ["正确回答均值", metrics.positive_mean],
+              ["错配回答均值", metrics.negative_mean],
+              ["区分度 AUC", metrics.auc],
+              [`正确回答过 ${percent(calibration?.threshold)}`, metrics.positive_pass_rate],
+            ].map(([label, value]) => (
+              <div key={String(label)}>
+                <dt className="text-[11px] font-bold text-slate-500">{label}</dt>
+                <dd className="mt-0.5 text-lg font-black tabular-nums text-slate-900">
+                  {percent(value as number)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </div>
+      {calibration?.failed_criteria.length ? (
+        <div className="border-t border-amber-200/70 px-5 py-3 text-xs leading-5 text-amber-900 lg:px-6">
+          未通过原因：{calibration.failed_criteria.join("；")}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function RagEvaluationsClient({
   initialRuns,
+  initialCalibration,
 }: {
   initialRuns: RagEvaluationSummary[];
+  initialCalibration: AnswerRelevancyCalibrationReport | null;
 }) {
   const [runs, setRuns] = useState(initialRuns);
   const [selectedRunId, setSelectedRunId] = useState(initialRuns[0]?.run_id ?? "");
@@ -615,6 +738,8 @@ export function RagEvaluationsClient({
         </div>
       )}
 
+      <AnswerRelevancyCalibrationCard calibration={initialCalibration} />
+
       {loadError && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
           <div className="flex items-center gap-2 font-bold"><AlertOctagon className="h-5 w-5" />报告读取失败</div>
@@ -690,13 +815,23 @@ export function RagEvaluationsClient({
                   <Sparkles className="h-5 w-5 text-cyan-700" />
                   <h2 className="panel-title">RAGAS 四项{isMockRun ? "（模拟）" : ""}</h2>
                 </div>
-                <p className="panel-subtitle">四项都保留，各自回答不同问题，不合并成一个总分。</p>
+                <p className="panel-subtitle">
+                  {summary.answer_relevancy_policy.enforced
+                    ? "四项都保留，各自回答不同问题，不合并成一个总分。"
+                    : "四项分数都保留；回复相关性尚未校准，只观察，不参与本批次通过判定。"}
+                </p>
               </div>
               <div className="grid px-5 sm:grid-cols-2 sm:gap-x-6 sm:px-6">
                 <MetricLine label="事实召回率" hint="该找到的权威事实找全了吗？" metric={summary.metrics.context_recall} threshold={0.8} />
                 <MetricLine label="召回精确率" hint="找回来的内容是否真正有用？" metric={summary.metrics.context_precision} threshold={0.7} />
                 <MetricLine label="回复忠实度" hint="最终回复是否脱离或反转召回事实？" metric={summary.metrics.faithfulness} threshold={0.85} />
-                <MetricLine label="回复相关性" hint="有没有正面回答用户当前问题？" metric={summary.metrics.answer_relevancy} threshold={0.8} />
+                <MetricLine
+                  label="回复相关性"
+                  hint={summary.answer_relevancy_policy.enforced ? "有没有正面回答用户当前问题？" : summary.answer_relevancy_policy.reason}
+                  metric={summary.metrics.answer_relevancy}
+                  threshold={0.8}
+                  observational={!summary.answer_relevancy_policy.enforced}
+                />
               </div>
             </section>
           </div>
@@ -780,7 +915,13 @@ export function RagEvaluationsClient({
                         </span>
                         <ChevronRight className={`h-5 w-5 shrink-0 text-slate-400 transition ${expanded ? "rotate-90" : ""}`} />
                       </button>
-                      {expanded && <EvidenceDetail item={item} runMode={summary.run_mode} />}
+                      {expanded && (
+                        <EvidenceDetail
+                          item={item}
+                          runMode={summary.run_mode}
+                          answerRelevancyEnforced={summary.answer_relevancy_policy.enforced}
+                        />
+                      )}
                     </article>
                   );
                 })}

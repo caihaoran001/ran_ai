@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.schemas.rag_evaluation import (
+    AnswerRelevancyCalibrationReport,
     RagEvaluationRunDetail,
     RagEvaluationSummary,
 )
@@ -34,9 +35,7 @@ def default_rag_evaluation_report_root() -> Path:
         return Path(configured)
     diagnostics_history = os.getenv("DIAGNOSTICS_HISTORY_PATH", "").strip()
     diagnostics_dir = (
-        Path(diagnostics_history).parent
-        if diagnostics_history
-        else Path("diagnostics")
+        Path(diagnostics_history).parent if diagnostics_history else Path("diagnostics")
     )
     return diagnostics_dir / "rag-evaluations"
 
@@ -71,6 +70,14 @@ class RagEvaluationReportStore:
             return RagEvaluationRunDetail(summary=summary, cases=[])
         return self._read_model(report_path, RagEvaluationRunDetail)
 
+    def get_answer_relevancy_calibration(
+        self,
+    ) -> AnswerRelevancyCalibrationReport | None:
+        path = self.root / "answer-relevancy-calibration.json"
+        if not path.exists():
+            return None
+        return self._read_model(path, AnswerRelevancyCalibrationReport)
+
     def _read_summary(self, run_dir: Path) -> RagEvaluationSummary:
         report_path = run_dir / "report.json"
         if report_path.is_file():
@@ -78,7 +85,9 @@ class RagEvaluationReportStore:
         status_path = run_dir / "status.json"
         if status_path.is_file():
             return self._read_model(status_path, RagEvaluationSummary)
-        raise RagEvaluationReportInvalid("run contains neither report.json nor status.json")
+        raise RagEvaluationReportInvalid(
+            "run contains neither report.json nor status.json"
+        )
 
     def _safe_run_dir(self, run_id: str) -> Path:
         allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"

@@ -78,6 +78,23 @@ class RagEvaluationMetrics(StrictModel):
     answer_relevancy: RagMetricValue
 
 
+class AnswerRelevancyPolicy(StrictModel):
+    status: Literal[
+        "enforced",
+        "calibration_failed",
+        "not_calibrated",
+        "mock",
+        "legacy",
+    ] = "legacy"
+    enforced: bool = True
+    calibration_run_id: str | None = None
+    reason: str = Field(
+        default="该历史批次未记录校准状态，生成时仍按原规则参与判定",
+        min_length=1,
+        max_length=1000,
+    )
+
+
 class RagEvaluationSummary(StrictModel):
     schema_version: Literal[1] = 1
     run_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
@@ -94,6 +111,9 @@ class RagEvaluationSummary(StrictModel):
     ragas_version: str = Field(min_length=1, max_length=40)
     counts: RagEvaluationCounts
     metrics: RagEvaluationMetrics
+    answer_relevancy_policy: AnswerRelevancyPolicy = Field(
+        default_factory=AnswerRelevancyPolicy
+    )
     critical_fact_errors: int = Field(default=0, ge=0)
     estimated_cost_yuan: float | None = Field(default=None, ge=0)
     error: str | None = Field(default=None, max_length=2000)
@@ -133,13 +153,16 @@ class RagCaseOrigin(StrictModel):
 
 class RagCaseExpected(StrictModel):
     retrieval_decision: Literal["retrieve", "skip"]
-    response_mode: Literal[
-        "answer",
-        "acknowledge",
-        "clarify",
-        "use_runtime_data",
-        "support",
-    ] | None = None
+    response_mode: (
+        Literal[
+            "answer",
+            "acknowledge",
+            "clarify",
+            "use_runtime_data",
+            "support",
+        ]
+        | None
+    ) = None
     rewrite: RagRewriteExpected = Field(default_factory=RagRewriteExpected)
     required_facts: list[str] = Field(default_factory=list)
     # Accepted only so historical report files remain readable; never emitted.
@@ -148,7 +171,9 @@ class RagCaseExpected(StrictModel):
 
 class RagCaseActual(StrictModel):
     retrieval_decision: Literal["retrieve", "skip"] | None = None
-    decision_source: Literal["rewritten", "explicit_skip", "fallback_original", "unavailable"]
+    decision_source: Literal[
+        "rewritten", "explicit_skip", "fallback_original", "unavailable"
+    ]
     knowledge_query: str | None = Field(default=None, max_length=500)
     raw_query_hits: list[RagKnowledgeHit] = Field(default_factory=list)
     rewritten_query_hits: list[RagKnowledgeHit] = Field(default_factory=list)

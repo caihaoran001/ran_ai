@@ -4,7 +4,11 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.schemas.rag_evaluation import RagEvaluationRunDetail, RagEvaluationRunList
+from app.schemas.rag_evaluation import (
+    AnswerRelevancyCalibrationReport,
+    RagEvaluationRunDetail,
+    RagEvaluationRunList,
+)
 from app.services.rag_evaluation_reports import (
     RagEvaluationReportInvalid,
     RagEvaluationReportNotFound,
@@ -26,6 +30,19 @@ async def list_rag_evaluations(
     return RagEvaluationRunList(items=await asyncio.to_thread(store.list_runs))
 
 
+@router.get(
+    "/calibrations/answer-relevancy",
+    response_model=AnswerRelevancyCalibrationReport | None,
+)
+async def get_answer_relevancy_calibration(
+    store: RagEvaluationReportStore = Depends(get_report_store),
+) -> AnswerRelevancyCalibrationReport | None:
+    try:
+        return await asyncio.to_thread(store.get_answer_relevancy_calibration)
+    except RagEvaluationReportInvalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("/{run_id}", response_model=RagEvaluationRunDetail)
 async def get_rag_evaluation(
     run_id: str,
@@ -37,4 +54,3 @@ async def get_rag_evaluation(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RagEvaluationReportInvalid as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-
