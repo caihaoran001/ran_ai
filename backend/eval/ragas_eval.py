@@ -1,12 +1,42 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
 from openai import AsyncOpenAI
 
 from app.core.config import Settings
+
+
+DEFAULT_RAG_EVAL_JUDGE_MAX_TOKENS = 50_000
+
+
+def ragas_judge_max_tokens() -> int:
+    raw_value = os.getenv(
+        "RAG_EVAL_JUDGE_MAX_TOKENS",
+        str(DEFAULT_RAG_EVAL_JUDGE_MAX_TOKENS),
+    ).strip()
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(
+            "RAG_EVAL_JUDGE_MAX_TOKENS must be a positive integer"
+        ) from exc
+    if value <= 0:
+        raise RuntimeError(
+            "RAG_EVAL_JUDGE_MAX_TOKENS must be a positive integer"
+        )
+    return value
+
+
+def _create_ragas_llm(factory: Any, *, model: str, client: Any) -> Any:
+    return factory(
+        model,
+        client=client,
+        max_tokens=ragas_judge_max_tokens(),
+    )
 
 
 @dataclass(frozen=True)
@@ -47,7 +77,11 @@ class RagasScorer:
             base_url=settings.embedding_base_url,
             timeout=settings.ai_timeout_seconds,
         )
-        llm = llm_factory(settings.ai_model, client=judge_client)
+        llm = _create_ragas_llm(
+            llm_factory,
+            model=settings.ai_model,
+            client=judge_client,
+        )
         embeddings = embedding_factory(
             "openai",
             model=settings.embedding_model,

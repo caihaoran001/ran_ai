@@ -13,6 +13,8 @@ docker compose -f docker-compose.eval.yml up --no-deps rag-eval
 
 `ragas==0.4.3` 已固化在 `ran-ai-rag-eval:local` 镜像中。评测结束后容器是 `Exited`，不会常驻，但镜像和依赖仍在。
 
+RAGAS 判官的最大输出默认是 50,000 tokens，由 `RAG_EVAL_JUDGE_MAX_TOKENS` 控制。它只放宽离线判官生成结构化评分的上限，不改变线上回复长度，也不会固定消耗 50,000 tokens；计费仍以实际生成量为准。
+
 ## 再次运行
 
 ```bash

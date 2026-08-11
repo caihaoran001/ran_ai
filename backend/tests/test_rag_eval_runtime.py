@@ -6,8 +6,43 @@ import pytest
 
 from app.evaluation.rag_cases import load_rag_eval_suite
 from eval.intent_eval import resolve_intent
-from eval.ragas_eval import RagasScorer
+from eval.ragas_eval import RagasScorer, _create_ragas_llm, ragas_judge_max_tokens
 from eval.run_full_eval import _mock_cases
+
+
+def test_ragas_judge_uses_large_configurable_output_limit(monkeypatch):
+    monkeypatch.delenv("RAG_EVAL_JUDGE_MAX_TOKENS", raising=False)
+    assert ragas_judge_max_tokens() == 50_000
+
+    monkeypatch.setenv("RAG_EVAL_JUDGE_MAX_TOKENS", "60000")
+    assert ragas_judge_max_tokens() == 60_000
+
+
+def test_ragas_llm_factory_receives_configured_output_limit(monkeypatch):
+    monkeypatch.setenv("RAG_EVAL_JUDGE_MAX_TOKENS", "50000")
+    captured: dict[str, object] = {}
+    judge_client = object()
+
+    def factory(model: str, **kwargs: object) -> object:
+        captured["model"] = model
+        captured.update(kwargs)
+        return object()
+
+    _create_ragas_llm(factory, model="judge-model", client=judge_client)
+
+    assert captured == {
+        "model": "judge-model",
+        "client": judge_client,
+        "max_tokens": 50_000,
+    }
+
+
+@pytest.mark.parametrize("value", ["", "0", "-1", "not-a-number"])
+def test_ragas_judge_rejects_invalid_output_limit(monkeypatch, value):
+    monkeypatch.setenv("RAG_EVAL_JUDGE_MAX_TOKENS", value)
+
+    with pytest.raises(RuntimeError, match="must be a positive integer"):
+        ragas_judge_max_tokens()
 
 
 def test_intent_resolution_preserves_runtime_three_state_contract():

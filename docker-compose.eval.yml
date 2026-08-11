@@ -29,6 +29,7 @@ services:
       WEB_SEARCH_ENABLED: "false"
       QIWEI_ENABLED: "false"
       RAN_AI_RAG_EVAL_MODE: "true"
+      RAG_EVAL_JUDGE_MAX_TOKENS: ${RAG_EVAL_JUDGE_MAX_TOKENS:-50000}
       RAG_EVAL_GIT_SHA: ${RAG_EVAL_GIT_SHA:-unknown}
       RAG_EVALUATION_REPORTS_PATH: /app/diagnostics/rag-evaluations
       RAG_EVALUATION_DATASET_PATH: /app/tests/fixtures/rag_eval_cases.v1.json
