@@ -152,7 +152,15 @@ def _item_matches(
         return False
     if str(item.get("fromRoomId") or "") != str(message.group_id):
         return False
-    if _history_content(item) != message.content:
+    analysis = message.analysis_json if isinstance(message.analysis_json, dict) else {}
+    curated = analysis.get("curated_video") if isinstance(analysis.get("curated_video"), dict) else None
+    if curated:
+        msg_data = item.get("msgData") if isinstance(item.get("msgData"), dict) else {}
+        if item.get("msgType") != 141:
+            return False
+        if str(msg_data.get("feedId") or "") != str(curated.get("feed_id") or ""):
+            return False
+    elif _history_content(item) != message.content:
         return False
     return abs(sent_at - _request_started_at(message)) <= MATCH_WINDOW
 

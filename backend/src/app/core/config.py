@@ -181,6 +181,19 @@ class Settings(BaseSettings):
         default=60.0,
         validation_alias="QIWEI_SHUTDOWN_DRAIN_SECONDS",
     )
+    # 视频号选品群：只收该群新转入的视频号卡片，每天按队列顺序向在服群分发一条。
+    curated_video_enabled: bool = Field(
+        default=True,
+        validation_alias="CURATED_VIDEO_ENABLED",
+    )
+    curated_video_source_group_id: str = Field(
+        default="10928203839633338",
+        validation_alias="CURATED_VIDEO_SOURCE_GROUP_ID",
+    )
+    curated_video_send_at: str = Field(
+        default="12:00",
+        validation_alias="CURATED_VIDEO_SEND_AT",
+    )
 
     # 注意：12点泛化文字催打卡(check_once)已退役并入打卡追问(check_checkin_followup_v2_once)。
     # 本开关现仅剩门控阶段报告生成(check_stage_reports_once)，reminder_at/reminder_message 已不再使用。

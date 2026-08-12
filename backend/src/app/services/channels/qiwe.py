@@ -334,6 +334,39 @@ class QiWeChannel:
         }
         return await self._post_json("/api/qw/doApi", payload, rate_limit=True)
 
+    async def send_feed_video(
+        self,
+        chat_id: str,
+        feed: dict[str, Any],
+    ) -> ChannelSendResult:
+        """发送视频号原生卡片；字段来自 msgType=141 入站回调。"""
+        if not self._ready:
+            return ChannelSendResult(success=False, error="QIWEI_TOKEN or QIWEI_GUID is missing")
+
+        required = (
+            "channelName",
+            "channelUrl",
+            "coverUrl",
+            "encodeData",
+            "headImgUrl",
+            "feedId",
+            "feedNo",
+            "username",
+        )
+        missing = [key for key in required if not feed.get(key)]
+        if missing:
+            return ChannelSendResult(
+                success=False,
+                error=f"video channel payload missing fields: {', '.join(missing)}",
+            )
+        params = {key: feed[key] for key in required}
+        params.update({"guid": self.guid, "toId": str(chat_id)})
+        return await self._post_json(
+            "/api/qw/doApi",
+            {"method": "/msg/sendFeedVideo", "params": params},
+            rate_limit=True,
+        )
+
     async def transcribe_voice(
         self,
         msg_server_id: Any,

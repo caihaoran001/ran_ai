@@ -254,6 +254,10 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
             else:
                 message_type = "voice"
                 content = content or "[语音]"
+        elif msg_type == 141:
+            message_type = "video_channel"
+            title = str(msg_data.get("channelName") or "").strip()
+            content = f"[视频号] {title}" if title else "[视频号]"
         else:
             message_type = "non_text"
             content = content or "[表情/图片等非文本消息]"

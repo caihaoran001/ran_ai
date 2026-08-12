@@ -52,6 +52,7 @@ async def lifespan(app: FastAPI):
     channel: QiWeChannel | None = None
     qiwe_aggregator: QiWeMessageAggregator | None = None
     qiwe_inbox_dispatcher: QiWeInboxDispatcher | None = None
+    curated_video_service = None
     frozen_outbound_ids: list[int] = []
     # 运营在后台切换的账号落库 app_settings，优先于 env；重启后据此恢复。
     from app.db.session import SessionLocal
@@ -111,6 +112,14 @@ async def lifespan(app: FastAPI):
             timeout_seconds=30.0,
         )
 
+        if settings.curated_video_enabled:
+            from app.services.curated_video_distribution import (
+                CuratedVideoDistributionService,
+            )
+
+            curated_video_service = CuratedVideoDistributionService(channel, settings)
+            await curated_video_service.start()
+
     await reminder_service.start()
     app.state.reminder_service = reminder_service
     app.state.qiwe_aggregator = qiwe_aggregator
@@ -137,6 +146,8 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await reminder_service.stop()
+        if curated_video_service:
+            await curated_video_service.stop()
         if qiwe_inbox_dispatcher:
             await qiwe_inbox_dispatcher.stop()
         if qiwe_aggregator:

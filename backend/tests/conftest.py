@@ -69,6 +69,13 @@ def mock_message_channel():
         ) -> ChannelSendResult:
             return ChannelSendResult(success=True, message_id="mock-doc-id")
 
+        async def send_feed_video(
+            self,
+            chat_id: str,
+            feed: dict[str, Any],
+        ) -> ChannelSendResult:
+            return ChannelSendResult(success=True, message_id="mock-feed-video-id")
+
     channel = TestMessageChannel()
     set_current_channel(channel)
     yield channel
@@ -491,6 +498,12 @@ async def db_session():
         CheckinRewardQualification,
         CheckinRewardShipment,
     )
+    from app.models.curated_video import (
+        CuratedVideoDailyRun,
+        CuratedVideoDelivery,
+        CuratedVideoItem,
+        CuratedVideoSourceCursor,
+    )
 
     async with SessionLocal() as session:
         trans = await session.begin()
@@ -505,6 +518,10 @@ async def db_session():
             CheckinRewardShipment.__table__,
             CheckinRewardQualification.__table__,
             CheckinRewardProgressNotice.__table__,
+            CuratedVideoSourceCursor.__table__,
+            CuratedVideoItem.__table__,
+            CuratedVideoDailyRun.__table__,
+            CuratedVideoDelivery.__table__,
         ):
             await connection.run_sync(
                 lambda sync_connection, target=table: target.create(
@@ -580,6 +597,7 @@ async def mock_session_local(db_session):
         "app.services.agent_observability",
         "app.services.reminder_service",
         "app.services.checkin_rewards",
+        "app.services.curated_video_distribution",
         "app.services.archivist.trigger",
     ]
     for mod_name in modules_to_patch:

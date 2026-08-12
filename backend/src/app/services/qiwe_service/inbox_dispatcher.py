@@ -6,6 +6,7 @@ import logging
 
 from sqlalchemy import case, func, select
 
+from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.inbound_event import InboundEvent
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator
@@ -201,6 +202,18 @@ class QiWeInboxDispatcher:
         try:
             if event.event_type == InboundEvent.EVENT_QIWE_SPAM_BLOCK:
                 await self._dispatch_spam_block(event)
+                return
+
+            settings = get_settings()
+            if (
+                settings.curated_video_enabled
+                and event.chat_id == settings.curated_video_source_group_id.strip()
+            ):
+                # The selection room is an operations-only transport source,
+                # never a customer service case. The distribution worker reads
+                # its durable raw callbacks independently, including after this
+                # event has been marked processed here.
+                await mark_inbound_events_processed([event.id])
                 return
 
             message = channel_message_from_inbound_event(event)

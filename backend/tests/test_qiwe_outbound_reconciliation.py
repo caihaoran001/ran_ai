@@ -271,6 +271,51 @@ async def test_unique_history_match_marks_only_frozen_unknown_sent(db_session):
 
 
 @pytest.mark.asyncio
+async def test_video_channel_history_match_uses_feed_id_after_restart(db_session):
+    from app.services.qiwe_service.outbound_reconciliation import (
+        reconcile_frozen_unknown_sends,
+    )
+
+    started_at = datetime.now(timezone.utc) - timedelta(seconds=90)
+    anchor = _sent_anchor(
+        group_id="group-video-reconcile",
+        created_at=started_at - timedelta(seconds=10),
+        seq=8817100,
+    )
+    unknown = _unknown(
+        group_id="group-video-reconcile",
+        content="Y Combinator最近...",
+        request_started_at=started_at,
+    )
+    unknown.message_type = "video_channel"
+    unknown.purpose = MessagePurpose.REMINDER
+    unknown.analysis_json = {
+        **unknown.analysis_json,
+        "curated_video": {"feed_id": "feed-yc-1"},
+    }
+    history = _history_item(
+        group_id=unknown.group_id,
+        content="历史接口不一定返回本地标题",
+        sent_at=started_at + timedelta(seconds=1),
+        seq=8817101,
+    )
+    history["msgType"] = 141
+    history["msgData"] = {"feedId": "feed-yc-1"}
+    db_session.add_all([anchor, unknown])
+    await db_session.flush()
+
+    result = await reconcile_frozen_unknown_sends(
+        FakeHistoryChannel([history]),
+        [unknown.id],
+    )
+
+    await db_session.refresh(unknown)
+    assert result.confirmed_sent == 1
+    assert unknown.status == MessageStatus.SENT
+    assert unknown.wecom_message_id == "history-8817101"
+
+
+@pytest.mark.asyncio
 async def test_empty_frozen_batch_does_not_call_qiwe(db_session):
     from app.services.qiwe_service.outbound_reconciliation import (
         reconcile_frozen_unknown_sends,

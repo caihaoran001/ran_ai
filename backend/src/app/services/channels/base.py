@@ -74,3 +74,10 @@ class MessageChannel(Protocol):
         reply_context: Any = None,
     ) -> ChannelSendResult:
         ...
+
+    async def send_feed_video(
+        self,
+        chat_id: str,
+        feed: dict[str, Any],
+    ) -> ChannelSendResult:
+        ...

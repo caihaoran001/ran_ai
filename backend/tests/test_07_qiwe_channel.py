@@ -120,6 +120,69 @@ async def test_qiwe_send_text_uses_to_id():
 
 
 @pytest.mark.asyncio
+async def test_qiwe_send_feed_video_uses_native_card_endpoint():
+    client = FakeClient([
+        {"code": 0, "msg": "成功", "data": {"msgUniqueIdentifier": "msg-feed-1"}}
+    ])
+    channel = QiWeChannel(_settings(), http_client=client)
+    feed = {
+        "channelName": "Y Combinator最近...",
+        "channelUrl": "https://channels.example/video",
+        "coverUrl": "https://channels.example/cover.jpg",
+        "encodeData": "encoded-feed",
+        "headImgUrl": "https://channels.example/avatar.jpg",
+        "feedId": "feed-1",
+        "feedNo": "feed-no-1",
+        "username": "finder-user",
+    }
+
+    result = await channel.send_feed_video("room-1", feed)
+
+    assert result.success is True
+    assert result.message_id == "msg-feed-1"
+    _, kwargs = client.calls[0]
+    assert kwargs["json"]["method"] == "/msg/sendFeedVideo"
+    assert kwargs["json"]["params"] == {
+        "guid": "guid",
+        "toId": "room-1",
+        **feed,
+    }
+
+
+def test_qiwe_callback_parses_video_channel_card():
+    feed = {
+        "channelName": "Y Combinator最近...",
+        "channelUrl": "https://channels.example/video",
+        "coverUrl": "https://channels.example/cover.jpg",
+        "encodeData": "encoded-feed",
+        "headImgUrl": "https://channels.example/avatar.jpg",
+        "feedId": "feed-1",
+        "feedNo": "feed-no-1",
+        "username": "finder-user",
+    }
+
+    message = _channel_message_from_qiwe(
+        {
+            "cmd": 15000,
+            "msgType": 141,
+            "msgData": feed,
+            "fromRoomId": "10928203839633338",
+            "senderId": "operator-1",
+            "userId": "bot-1",
+            "senderName": "运营",
+            "msgUniqueIdentifier": "source-message-1",
+            "timestamp": 1786507200,
+        }
+    )
+
+    assert message is not None
+    assert message.message_type == "video_channel"
+    assert message.text == "[视频号] Y Combinator最近..."
+    assert message.chat_id == "10928203839633338"
+    assert message.raw_payload["msgData"]["feedId"] == "feed-1"
+
+
+@pytest.mark.asyncio
 async def test_qiwe_sync_message_history_reads_one_bounded_page():
     client = FakeClient([
         {
