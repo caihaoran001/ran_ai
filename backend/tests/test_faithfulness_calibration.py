@@ -111,6 +111,22 @@ def test_faithfulness_calibration_only_applies_to_matching_judge():
     assert "判官模型" in policy.reason
 
 
+def test_faithfulness_calibration_only_applies_to_current_dataset_version():
+    report = _calibration_report(passed=True).model_copy(
+        update={"calibration_id": "faithfulness-zh-v2", "dataset_version": 2}
+    )
+
+    policy = resolve_faithfulness_policy(
+        report,
+        model="deepseek-chat",
+        ragas_version="0.4.3",
+    )
+
+    assert policy.status == "not_calibrated"
+    assert policy.enforced is False
+    assert "校准题版本" in policy.reason
+
+
 @pytest.mark.parametrize(
     ("positive", "negative"),
     [([], []), ([0.9], []), ([1.1], [0.1])],

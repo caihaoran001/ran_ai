@@ -129,7 +129,13 @@ def resolve_answer_relevancy_policy(
             reason="没有可用的中文校准报告，回复相关性仅展示、不参与通过判定",
         )
 
+    expected_suite = load_answer_relevancy_calibration_suite()
     mismatches = []
+    if (
+        report.calibration_id != expected_suite.calibration_id
+        or report.dataset_version != expected_suite.version
+    ):
+        mismatches.append("校准题版本")
     if report.model != model:
         mismatches.append("判官模型")
     if report.embedding_model != embedding_model:

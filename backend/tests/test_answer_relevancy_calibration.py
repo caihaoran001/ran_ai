@@ -14,8 +14,8 @@ from app.schemas.rag_evaluation import AnswerRelevancyCalibrationReport
 def _calibration_report(*, passed: bool) -> AnswerRelevancyCalibrationReport:
     return AnswerRelevancyCalibrationReport.model_validate(
         {
-            "calibration_id": "answer-relevancy-zh-v1",
-            "dataset_version": 1,
+            "calibration_id": "answer-relevancy-zh-v2",
+            "dataset_version": 2,
             "run_id": "relevancy-calibration-test",
             "status": "completed",
             "started_at": "2026-08-11T07:00:00Z",
@@ -124,3 +124,20 @@ def test_calibration_only_applies_to_matching_runtime():
     assert policy.status == "not_calibrated"
     assert policy.enforced is False
     assert "判官模型" in policy.reason
+
+
+def test_calibration_only_applies_to_current_dataset_version():
+    report = _calibration_report(passed=True).model_copy(
+        update={"calibration_id": "answer-relevancy-zh-v1", "dataset_version": 1}
+    )
+
+    policy = resolve_answer_relevancy_policy(
+        report,
+        model="deepseek-chat",
+        embedding_model="text-embedding-v4",
+        ragas_version="0.4.3",
+    )
+
+    assert policy.status == "not_calibrated"
+    assert policy.enforced is False
+    assert "校准题版本" in policy.reason

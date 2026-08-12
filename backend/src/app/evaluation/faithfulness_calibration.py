@@ -129,7 +129,13 @@ def resolve_faithfulness_policy(
             reason="没有可用的中文校准报告，回复忠实度仅展示、不参与通过判定",
         )
 
+    expected_suite = load_faithfulness_calibration_suite()
     mismatches = []
+    if (
+        report.calibration_id != expected_suite.calibration_id
+        or report.dataset_version != expected_suite.version
+    ):
+        mismatches.append("校准题版本")
     if report.model != model:
         mismatches.append("判官模型")
     if report.ragas_version != ragas_version:
