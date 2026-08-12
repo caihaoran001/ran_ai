@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+
+from pydantic import BaseModel
+
+
+class RewardQualificationRead(BaseModel):
+    id: int
+    tier_days: int
+    reward: str
+    qualified_on: date
+    shipment_id: int | None
+    shipment_status: str | None
+
+
+class RewardShipmentRead(BaseModel):
+    id: int
+    status: str
+    rewards: str
+    recipient_name: str | None
+    recipient_phone: str | None
+    shipping_address: str | None
+    requested_at: datetime
+    shipped_at: datetime | None
+    marked_by: str | None
+
+
+class RewardAdminCaseRead(BaseModel):
+    service_case_id: int
+    case_no: str
+    user_name: str
+    group_id: str
+    group_name: str | None
+    service_status: str
+    effective_days: int
+    current_choice: str | None
+    unshipped_rewards: str
+    operational_status: str
+    qualifications: list[RewardQualificationRead]
+    shipments: list[RewardShipmentRead]
+
+
+class MarkShipmentRead(BaseModel):
+    ok: bool
+    shipment_id: int
+    status: str
+    shipped_at: datetime
+    marked_by: str
+    user_notification_sent: bool

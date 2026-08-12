@@ -7,6 +7,12 @@ from app.models.archivist_progress import ArchivistProgress
 from app.models.archivist_quarantine import ArchivistQuarantine
 from app.models.archivist_shadow_outcome import ArchivistShadowOutcome
 from app.models.checkin import Checkin
+from app.models.checkin_reward import (
+    CheckinRewardProgram,
+    CheckinRewardProgressNotice,
+    CheckinRewardQualification,
+    CheckinRewardShipment,
+)
 from app.models.checkin_checklist_version import CheckinChecklistVersion
 from app.models.checkin_followup_cycle import CheckinFollowupCycle
 from app.models.checkin_followup_preference import CheckinFollowupPreference
@@ -35,6 +41,10 @@ from app.models.user_state_profile import UserStateProfile
 
 __all__ = [
     "Checkin",
+    "CheckinRewardProgram",
+    "CheckinRewardProgressNotice",
+    "CheckinRewardQualification",
+    "CheckinRewardShipment",
     "CheckinChecklistVersion",
     "CheckinFollowupCycle",
     "CheckinFollowupPreference",

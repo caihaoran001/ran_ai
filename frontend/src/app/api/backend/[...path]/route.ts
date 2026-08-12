@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { sessionUsername } from "@/lib/auth";
 
 const SERVER_API_BASE_URL = process.env.SERVER_API_BASE_URL ?? "http://localhost:8000/api";
 
 async function proxy(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
   const { path } = await params;
@@ -17,6 +19,8 @@ async function proxy(
   if (contentType) headers.set("content-type", contentType);
   if (accept) headers.set("accept", accept);
   headers.set("x-admin-api-key", process.env.BACKEND_ADMIN_API_KEY ?? "change-me-internal-api-key");
+  const operator = await sessionUsername(request.cookies.get("session_token")?.value);
+  if (operator) headers.set("x-admin-operator", operator);
 
   const method = request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer();

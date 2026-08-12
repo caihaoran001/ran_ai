@@ -35,3 +35,8 @@ export async function verifySessionToken(token: string | undefined): Promise<boo
     return false;
   }
 }
+
+export async function sessionUsername(token: string | undefined): Promise<string | null> {
+  if (!(await verifySessionToken(token))) return null;
+  return token?.split(":", 1)[0] ?? null;
+}

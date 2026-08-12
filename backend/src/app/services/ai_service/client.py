@@ -12,10 +12,13 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, RateLimitError
+from sqlalchemy import select
 
 from app.core.config import Settings, get_settings
 from app.db.session import SessionLocal
 from app.models.ai_usage import AIUsageLog
+from app.models.message import Message
+from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ai_service.json_utils import parse_json_object
 
 logger = logging.getLogger("uvicorn.error")
@@ -177,6 +180,67 @@ def _conservative_image_description(description: str) -> str:
     return text
 
 
+def _find_product_schedule(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        schedule = value.get("product_schedule")
+        if isinstance(schedule, dict) and schedule:
+            return schedule
+        for nested in value.values():
+            found = _find_product_schedule(nested)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for nested in value:
+            found = _find_product_schedule(nested)
+            if found:
+                return found
+    return None
+
+
+async def _image_checkin_context(
+    *, service_case_id: int | None, message_id: int | None
+) -> str:
+    """把这张图的真实发送时间和当前执行方案交给视觉模型。"""
+    if service_case_id is None or message_id is None:
+        return "发送时间或个人执行方案不可用，不能用时段猜产品。"
+    try:
+        async with SessionLocal() as session:
+            message = await session.get(Message, message_id)
+            document = await session.scalar(
+                select(UserDocument)
+                .where(
+                    UserDocument.service_case_id == service_case_id,
+                    UserDocument.document_type == DocumentType.DAY28_EXECUTION_STANDARD,
+                    UserDocument.status == DocumentStatus.SENT,
+                )
+                .order_by(UserDocument.sent_at.desc(), UserDocument.id.desc())
+                .limit(1)
+            )
+        if message is None or message.created_at is None:
+            time_text = "发送时间不可用"
+        else:
+            sent_at = message.created_at
+            if sent_at.tzinfo is None:
+                sent_at = sent_at.replace(tzinfo=ZoneInfo("UTC"))
+            time_text = sent_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime(
+                "%Y-%m-%d %H:%M"
+            )
+        schedule = _find_product_schedule(document.content_json) if document else None
+        schedule_text = (
+            json.dumps(schedule, ensure_ascii=False, separators=(",", ":"))[:1500]
+            if schedule
+            else "未取到个人产品时段，只能在画面和常规时段同时非常明确时才弱推断"
+        )
+        return f"北京时间：{time_text}\n当前个人早C/午B/晚A执行安排：{schedule_text}"
+    except Exception:
+        logger.exception(
+            "Failed to load image check-in context service_case_id=%s message_id=%s",
+            service_case_id,
+            message_id,
+        )
+        return "个人执行上下文加载失败，不能用时段猜产品。"
+
+
 class AIService:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
@@ -204,6 +268,10 @@ class AIService:
             return "用户上传了一张图片。"
 
         model = self.settings.qwen_model or "qwen-vl-plus"
+        checkin_context = await _image_checkin_context(
+            service_case_id=service_case_id,
+            message_id=message_id,
+        )
         system_prompt = (
             "你是燃人AI的图片理解助手。请输出一段自然语言描述，供后续文本大模型理解用户发来的图片。"
             "输出必须保守、准确、可直接放进聊天上下文，不要输出 JSON、表格、问候语或解释过程。\n"
@@ -213,10 +281,17 @@ class AIService:
             "数字必须逐位核对，尤其区分数码管中的 5/6/8/9/0，小数点和单位看不清时不要猜。\n"
             "2. 如果是餐食图片，优先描述主要食物、疑似食材、烹饪方式、明显份量，以及是否能看出主食、蛋白质、蔬菜、油脂；"
             "不能确定的食材必须写“疑似”，不要把相似食物说成确定事实。\n"
-            "3. 不要输出“置信度”之类的自我评分（模型自评并不可靠）；如果画面模糊、遮挡、反光、字号太小或食物混杂，直接说明具体哪些部分无法确认即可。\n"
-            "4. 只要涉及关键数字或食材，描述结尾必须提醒“需向用户确认，不要把该识别结果当作确定事实”，无论画面是否清晰。\n"
+            "3. 同一张图可以同时上报咖啡类产品和餐食，两部分都要描述，不要二选一。\n"
+            "4. 判断早C/午B/晚A时，同时看画面、发送时间和下方个人执行上下文。"
+            "如果时间与个人方案强匹配，且画面是相符的饮用物（例如上午 9 点杯中有黑色咖啡状液体），"
+            "可直接描述为对应时段产品已上报，并写“无需再向用户确认时段”；"
+            "只有画面与时间/方案不能一起排除歧义时，才写“无法判断是早C、午B还是晚A，需自然追问”。"
+            "不能只看固定钟点硬猜，个人方案优先。\n"
+            "5. 不要输出“置信度”之类的自我评分（模型自评并不可靠）；如果画面模糊、遮挡、反光、字号太小或食物混杂，直接说明具体哪些部分无法确认。"
+            "体重、体脂、营养标签等关键数字看不清时必须要求确认；餐食图和已经由画面+时间+个人方案排除歧义的产品时段不需一律追问。\n"
             "示例：用户上传了一张体重秤照片，屏幕数字疑似为 72.5kg，小数位略模糊无法完全确认，建议向用户确认后再记录。\n"
-            "示例：用户上传了一张餐食照片，可见米饭、青菜和一份疑似鸡肉的蛋白质食物，肉类种类不够清楚，建议向用户确认。"
+            "示例：用户上传了一张餐食照片，可见米饭、青菜和一份疑似鸡肉的蛋白质食物。\n"
+            f"\n【本次打卡上下文】\n{checkin_context}"
         )
 
         started_at = time.monotonic()

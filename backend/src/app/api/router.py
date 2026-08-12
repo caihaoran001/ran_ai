@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     agent_operations,
     checkins,
+    checkin_rewards,
     dashboard,
     diagnostics,
     documents,
@@ -42,6 +43,7 @@ api_router.include_router(documents.router, tags=["documents"])
 api_router.include_router(knowledge_drafts.router, tags=["knowledge-drafts"])
 api_router.include_router(knowledge_faqs.router, tags=["knowledge-faqs"])
 api_router.include_router(checkins.router, tags=["checkins"])
+api_router.include_router(checkin_rewards.router, tags=["checkin-rewards"])
 api_router.include_router(messages.router, tags=["messages"])
 api_router.include_router(outcomes.router, tags=["outcomes"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])

@@ -485,6 +485,12 @@ async def mock_ai():
 async def db_session():
     from app.db.session import SessionLocal
     from app.models.checkin_checklist_version import CheckinChecklistVersion
+    from app.models.checkin_reward import (
+        CheckinRewardProgram,
+        CheckinRewardProgressNotice,
+        CheckinRewardQualification,
+        CheckinRewardShipment,
+    )
 
     async with SessionLocal() as session:
         trans = await session.begin()
@@ -494,6 +500,17 @@ async def db_session():
                 sync_connection, checkfirst=True
             )
         )
+        for table in (
+            CheckinRewardProgram.__table__,
+            CheckinRewardShipment.__table__,
+            CheckinRewardQualification.__table__,
+            CheckinRewardProgressNotice.__table__,
+        ):
+            await connection.run_sync(
+                lambda sync_connection, target=table: target.create(
+                    sync_connection, checkfirst=True
+                )
+            )
         
         orig_commit = session.commit
         async def mock_commit():
@@ -558,9 +575,11 @@ async def mock_session_local(db_session):
         "app.services.agent.tools.checkin_checklist_tools",
         "app.services.agent.tools.followup_preference_tools",
         "app.services.agent.tools.service_lifecycle_tools",
+        "app.services.agent.tools.reward_shipping_tools",
         "app.services.agent.tools.knowledge_tools",
         "app.services.agent_observability",
         "app.services.reminder_service",
+        "app.services.checkin_rewards",
         "app.services.archivist.trigger",
     ]
     for mod_name in modules_to_patch:

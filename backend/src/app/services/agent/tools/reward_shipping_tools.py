@@ -1,0 +1,317 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Literal
+
+from langchain_core.tools import BaseTool, StructuredTool
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+
+from app.db.session import SessionLocal
+from app.models.checkin_reward import (
+    CheckinRewardProgram,
+    CheckinRewardQualification,
+    CheckinRewardShipment,
+)
+from app.models.message import (
+    Message,
+    MessageDirection,
+    MessagePurpose,
+    MessageSenderType,
+)
+from app.models.service_case import ServiceCase
+from app.services.agent.state import AgentRunContext
+from app.services.checkin_rewards import OPEN_SHIPMENT_STATUSES, _qualification_display
+from app.services.service_case_queries import select_active_service_cases
+
+
+RewardShippingAction = Literal[
+    "get_status",
+    "ship_now",
+    "accumulate",
+    "save_shipping_info",
+]
+
+
+class RewardShippingArgs(BaseModel):
+    action: RewardShippingAction = Field(
+        description=(
+            "get_status=read current reward/shipping context; ship_now=user clearly chooses immediate shipment; "
+            "accumulate=user clearly chooses to wait for a later tier; save_shipping_info=add or correct recipient details."
+        )
+    )
+    recipient_name: str | None = Field(
+        default=None,
+        description="Recipient name explicitly supplied by the user; never infer it from profile or nickname.",
+    )
+    recipient_phone: str | None = Field(
+        default=None,
+        description="Phone number explicitly supplied by the user; preserve it exactly as text.",
+    )
+    shipping_address: str | None = Field(
+        default=None,
+        description="Detailed shipping address explicitly supplied by the user; preserve the full text.",
+    )
+    reuse_saved_address: bool = Field(
+        default=False,
+        description="True only when the user explicitly asks to reuse their previously saved recipient information.",
+    )
+
+
+def _clean(value: str | None) -> str | None:
+    cleaned = " ".join(str(value or "").split()).strip()
+    return cleaned or None
+
+
+async def _current_user_source(session, context: AgentRunContext) -> Message | None:
+    if context.trigger_id is None:
+        return None
+    return await session.scalar(
+        select(Message).where(
+            Message.id == context.trigger_id,
+            Message.service_case_id == context.service_case_id,
+            Message.direction == MessageDirection.INBOUND,
+            Message.purpose == MessagePurpose.CHAT,
+            Message.sender_type == MessageSenderType.USER,
+        )
+    )
+
+
+async def _reward_status(session, *, service_case_id: int) -> dict[str, Any]:
+    program = await session.scalar(
+        select(CheckinRewardProgram).where(
+            CheckinRewardProgram.service_case_id == service_case_id
+        )
+    )
+    qualifications = list(
+        await session.scalars(
+            select(CheckinRewardQualification)
+            .where(CheckinRewardQualification.service_case_id == service_case_id)
+            .order_by(CheckinRewardQualification.tier_days)
+        )
+    )
+    shipments = list(
+        await session.scalars(
+            select(CheckinRewardShipment)
+            .where(CheckinRewardShipment.service_case_id == service_case_id)
+            .order_by(CheckinRewardShipment.id)
+        )
+    )
+    shipped_ids = {row.id for row in shipments if row.status == "shipped"}
+    unsent = [row for row in qualifications if row.shipment_id not in shipped_ids]
+    active = next(
+        (row for row in reversed(shipments) if row.status in OPEN_SHIPMENT_STATUSES),
+        None,
+    )
+    active_items = (
+        [row for row in qualifications if row.shipment_id == active.id]
+        if active is not None
+        else []
+    )
+    missing_fields = []
+    if active is not None:
+        if not _clean(active.recipient_name):
+            missing_fields.append("收件人")
+        if not _clean(active.recipient_phone):
+            missing_fields.append("手机号")
+        if not _clean(active.shipping_address):
+            missing_fields.append("详细地址")
+    return {
+        "program": program,
+        "qualifications": qualifications,
+        "unsent": unsent,
+        "active_shipment": active,
+        "active_items": active_items,
+        "missing_fields": missing_fields,
+    }
+
+
+def _public_payload(status: dict[str, Any]) -> dict[str, Any]:
+    program: CheckinRewardProgram | None = status["program"]
+    active: CheckinRewardShipment | None = status["active_shipment"]
+    qualifications: list[CheckinRewardQualification] = status["qualifications"]
+    unsent: list[CheckinRewardQualification] = status["unsent"]
+    payload = {
+        "ok": True,
+        "has_earned_rewards": bool(qualifications),
+        "earned_rewards": _qualification_display(qualifications),
+        "unshipped_rewards": _qualification_display(unsent),
+        "awaiting_choice": bool(
+            program is not None
+            and program.current_choice == "pending_choice"
+            and unsent
+            and active is None
+        ),
+        "current_choice": program.current_choice if program is not None else None,
+        "choice_tier_days": program.choice_tier_days if program is not None else None,
+        "active_shipment": active is not None,
+        "shipment_status": active.status if active is not None else None,
+        "shipment_rewards": _qualification_display(status["active_items"]),
+        "missing_shipping_fields": status["missing_fields"],
+        "has_saved_shipping_info": bool(
+            program
+            and _clean(program.recipient_name)
+            and _clean(program.recipient_phone)
+            and _clean(program.shipping_address)
+        ),
+    }
+    return payload
+
+
+def build_reward_shipping_tools(*, context: AgentRunContext) -> list[BaseTool]:
+    async def manage_reward_shipping(
+        action: RewardShippingAction,
+        recipient_name: str | None = None,
+        recipient_phone: str | None = None,
+        shipping_address: str | None = None,
+        reuse_saved_address: bool = False,
+    ) -> dict[str, Any]:
+        """Read or update the current service user's earned-reward shipping decision."""
+        now = datetime.now(timezone.utc)
+        async with SessionLocal() as session:
+            service_case = await session.scalar(
+                select_active_service_cases(
+                    ServiceCase.id == context.service_case_id
+                ).with_for_update()
+            )
+            if service_case is None:
+                return {"ok": False, "error": "当前服务单不存在或已删除。"}
+
+            status = await _reward_status(session, service_case_id=service_case.id)
+            if action == "get_status":
+                return _public_payload(status)
+
+            source = await _current_user_source(session, context)
+            if source is None:
+                return {
+                    "ok": False,
+                    "error": "只能根据当前群里这位用户本人的明确回复记录寄送选择或地址。",
+                }
+            if not status["qualifications"] or not status["unsent"]:
+                return {
+                    "ok": False,
+                    "error": "当前没有已获得且尚未寄出的打卡奖励，不记录这次选择。",
+                }
+            program: CheckinRewardProgram | None = status["program"]
+            if program is None:
+                return {
+                    "ok": False,
+                    "error": "奖励账本尚未就绪，请稍后再试或联系班主任。",
+                }
+
+            if action == "accumulate":
+                active: CheckinRewardShipment | None = status["active_shipment"]
+                if active is not None:
+                    for qualification in status["active_items"]:
+                        qualification.shipment_id = None
+                    active.status = "cancelled"
+                program.current_choice = "accumulate"
+                program.choice_updated_at = now
+                await session.commit()
+                return {
+                    **_public_payload(
+                        await _reward_status(session, service_case_id=service_case.id)
+                    ),
+                    "recorded": "accumulate",
+                    "reply_instruction": "已记下继续累积，告诉用户等下一阶段达标后再一起确认寄送。",
+                }
+
+            cleaned_name = _clean(recipient_name)
+            cleaned_phone = _clean(recipient_phone)
+            cleaned_address = _clean(shipping_address)
+            source_text = _clean(source.content) or ""
+            ungrounded = [
+                label
+                for label, value in (
+                    ("收件人", cleaned_name),
+                    ("手机号", cleaned_phone),
+                    ("详细地址", cleaned_address),
+                )
+                if value is not None and value not in source_text
+            ]
+            if ungrounded:
+                return {
+                    "ok": False,
+                    "error": (
+                        "这些信息没有原样出现在用户当前消息里，不能代填："
+                        + "、".join(ungrounded)
+                    ),
+                }
+            if (
+                action == "save_shipping_info"
+                and not any((cleaned_name, cleaned_phone, cleaned_address))
+                and not reuse_saved_address
+            ):
+                return {"ok": False, "error": "用户本条消息没有提供可记录的收件信息。"}
+            active = status["active_shipment"]
+            if action == "save_shipping_info" and active is None:
+                return {
+                    "ok": False,
+                    "error": "还没有待完善地址的寄送批次。如果用户是想现在寄，请用 ship_now 并同时传入已明确给出的收件信息。",
+                }
+
+            if active is None:
+                active = CheckinRewardShipment(
+                    service_case_id=service_case.id,
+                    status="missing_address",
+                    requested_at=now,
+                )
+                session.add(active)
+                await session.flush()
+                for qualification in status["unsent"]:
+                    if qualification.shipment_id is None:
+                        qualification.shipment_id = active.id
+
+            if reuse_saved_address:
+                active.recipient_name = program.recipient_name
+                active.recipient_phone = program.recipient_phone
+                active.shipping_address = program.shipping_address
+            if cleaned_name is not None:
+                active.recipient_name = cleaned_name
+                program.recipient_name = cleaned_name
+            if cleaned_phone is not None:
+                active.recipient_phone = cleaned_phone
+                program.recipient_phone = cleaned_phone
+            if cleaned_address is not None:
+                active.shipping_address = cleaned_address
+                program.shipping_address = cleaned_address
+
+            missing = [
+                label
+                for label, value in (
+                    ("收件人", active.recipient_name),
+                    ("手机号", active.recipient_phone),
+                    ("详细地址", active.shipping_address),
+                )
+                if not _clean(value)
+            ]
+            active.status = "missing_address" if missing else "pending_shipment"
+            program.current_choice = "ship_now"
+            program.choice_updated_at = now
+            await session.commit()
+            refreshed = await _reward_status(session, service_case_id=service_case.id)
+            return {
+                **_public_payload(refreshed),
+                "recorded": "ship_now",
+                "reply_instruction": (
+                    f"已记录现在寄出，只追问这些缺失信息：{'、'.join(missing)}。"
+                    if missing
+                    else "收件信息已齐，告诉用户已记下，等待班主任安排寄出。"
+                ),
+            }
+
+    return [
+        StructuredTool.from_function(
+            coroutine=manage_reward_shipping,
+            name="manage_reward_shipping",
+            description=(
+                "Read and record THIS user's cumulative check-in reward shipping context. All ordinary replies, "
+                "including a bare 1 or 2, still go through the Agent: first call get_status when context is unclear. "
+                "Call ship_now/accumulate only if this user's current message clearly answers a pending reward "
+                "shipping choice. Save only recipient name, phone, and detailed address explicitly supplied in the "
+                "current message, or reuse prior data only on an explicit request. The tool never calculates awards, "
+                "changes quantities, or marks a shipment as shipped."
+            ),
+            args_schema=RewardShippingArgs,
+        )
+    ]

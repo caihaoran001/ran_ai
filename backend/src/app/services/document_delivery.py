@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """交付文档的发送、阅读提醒、临时 docx 落盘、发送记录与自动发送判定。"""
+
+from __future__ import annotations
 
 import asyncio
 import shutil
@@ -12,6 +12,7 @@ from typing import Callable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.message import (
     Message,
     MessageDirection,
@@ -20,8 +21,10 @@ from app.models.message import (
     MessageStatus,
 )
 from app.models.service_case import ServiceCase
+from app.models.checkin_reward import CheckinRewardProgram
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.channels import send_channel_document, send_channel_text
+from app.services.checkin_checklists import get_effective_daily_checklist
 from app.services.content_policy import get_content_delivery_mode
 from app.services.risk_service import is_high_risk
 from app.services.service_case_queries import get_active_service_case
@@ -37,30 +40,146 @@ from app.services.document_common import (
 )
 
 
-async def _send_document_reading_reminder(session: AsyncSession, service_case: ServiceCase) -> None:
-    """两份文件发送后，提醒用户先阅读、随时答疑。"""
-    content = (
-        "两份专属文件都发给您啦 📄\n\n"
-        "请先花几分钟仔细阅读《个人能量重启诊断报告》和《28天高燃人生执行建议书》，把今天的方案看明白；"
-        "任何有疑问的地方都可以随时在群里提出来，我和班主任都会帮您解答。\n\n"
-        "今天先安心熟悉文件、不用急着执行，我们一步步来，陪您把这 28 天走扎实 🌟"
-    )
-    result = await send_channel_text(service_case.group_id, content)
-    session.add(
-        Message(
-            service_case_id=service_case.id,
-            group_id=service_case.group_id,
-            wecom_message_id=result.message_id,
-            direction=MessageDirection.OUTBOUND,
-            sender_type=MessageSenderType.BOT,
-            message_type="markdown",
-            content=content,
-            purpose=MessagePurpose.DOCUMENT_DELIVERY,
-            status=MessageStatus.SENT if result.success else MessageStatus.FAILED,
-            error=result.error,
+async def _both_latest_intake_documents_sent(
+    session: AsyncSession, *, service_case_id: int
+) -> bool:
+    documents = list(
+        await session.scalars(
+            select(UserDocument)
+            .where(
+                UserDocument.service_case_id == service_case_id,
+                UserDocument.document_type.in_(tuple(DOCUMENT_DEFINITIONS)),
+            )
+            .order_by(UserDocument.created_at.desc(), UserDocument.id.desc())
         )
     )
+    latest_by_type: dict[DocumentType, UserDocument] = {}
+    for document in documents:
+        latest_by_type.setdefault(document.document_type, document)
+    return all(
+        latest_by_type.get(document_type) is not None
+        and latest_by_type[document_type].status == DocumentStatus.SENT
+        for document_type in DOCUMENT_DEFINITIONS
+    )
+
+
+async def _render_checkin_reward_intro(
+    session: AsyncSession, *, service_case_id: int
+) -> str:
+    checklist = await get_effective_daily_checklist(
+        session,
+        service_case_id=service_case_id,
+    )
+    items = checklist.resolved_items()
+    if len(items) != 5:
+        raise RuntimeError("服务单每日打卡清单不是 5 项。")
+    item_lines = ["1. 产品：早C＿＿ / 午B＿＿ / 晚A＿＿"]
+    item_lines.extend(
+        f"{index}. {item['label']}" for index, item in enumerate(items[1:], start=2)
+    )
+    return "\n".join(
+        [
+            "两份专属文件都发给你啦，有疑问随时在群里问。",
+            "",
+            "从服务第 1 天起，每天在群里发一次打卡：",
+            "【每日打卡】",
+            *item_lines,
+            "",
+            "喝早C、午B、晚A时建议拍照发群里，吃的饭也建议拍照；同一张图里同时有咖啡和饭也可以。",
+            "五项都有回答、且早C/午B/晚A三段都有上报，才算 1 天有效打卡；没做到或暂停也照实说，不要紧。累计即可，不要求连续。",
+            "",
+            "累计打卡奖励：",
+            "· 满 3 天：1 管咖啡",
+            "· 满 7 天：再得 1 盒钥匙",
+            "· 满 14 天：再得 1 瓶 C8",
+            "· 满 28 天：再得 3 管咖啡",
+            "奖励可以叠加；每次达标后可选现在寄出，也可继续累积后一起寄。",
+        ]
+    )
+
+
+async def _maybe_send_checkin_reward_intro(
+    session: AsyncSession, service_case: ServiceCase
+) -> bool:
+    """两份当前入营文件都成功后的唯一触发点。
+
+    批量发送和运营逐份发送都必须调到这里，去重不依赖调用入口。
+    """
+    if not get_settings().checkin_rewards_enabled:
+        return False
+    if not await _both_latest_intake_documents_sent(
+        session, service_case_id=service_case.id
+    ):
+        return False
+    locked_case = await session.scalar(
+        select(ServiceCase).where(ServiceCase.id == service_case.id).with_for_update()
+    )
+    if locked_case is None:
+        return False
+    program = await session.scalar(
+        select(CheckinRewardProgram).where(
+            CheckinRewardProgram.service_case_id == service_case.id
+        )
+    )
+    if program is None:
+        program = CheckinRewardProgram(service_case_id=service_case.id)
+        session.add(program)
+        await session.flush()
+    if program.intro_status == "sending" and program.intro_message_id is not None:
+        previous = await session.get(Message, program.intro_message_id)
+        if previous is not None and previous.status in {
+            MessageStatus.SENT,
+            MessageStatus.FAILED,
+            MessageStatus.UNKNOWN,
+        }:
+            program.intro_status = previous.status.value
+    if program.intro_status in {"sending", "sent", "unknown"}:
+        return False
+
+    content = await _render_checkin_reward_intro(
+        session, service_case_id=service_case.id
+    )
+    message = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.BOT,
+        message_type="markdown",
+        content=content,
+        purpose=MessagePurpose.DOCUMENT_DELIVERY,
+        status=MessageStatus.SENDING,
+        analysis_json={"checkin_reward": {"kind": "intro"}},
+    )
+    session.add(message)
+    await session.flush()
+    program.intro_status = "sending"
+    program.intro_message_id = message.id
+    # 先固化 sending：如果请求已发出却丢了回包，不能自动再发。
     await session.commit()
+    try:
+        result = await send_channel_text(service_case.group_id, content)
+    except Exception as exc:
+        message.status = MessageStatus.UNKNOWN
+        message.error = f"send raised: {type(exc).__name__}: {exc}"
+        program.intro_status = "unknown"
+        await session.commit()
+        return False
+    if result.success:
+        message.status = MessageStatus.SENT
+        message.wecom_message_id = result.message_id
+        message.sent_at = _utc_now()
+        message.error = None
+        program.intro_status = "sent"
+    elif result.delivery_uncertain:
+        message.status = MessageStatus.UNKNOWN
+        message.error = result.error
+        program.intro_status = "unknown"
+    else:
+        message.status = MessageStatus.FAILED
+        message.error = result.error
+        program.intro_status = "failed"
+    await session.commit()
+    return bool(result.success)
 
 
 async def send_case_documents(session: AsyncSession, service_case_id: int) -> list[UserDocument]:
@@ -86,6 +205,7 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
         raise RuntimeError("documents are required before sending")
     documents_to_send = [document for document in documents if document.status != DocumentStatus.SENT]
     if not documents_to_send:
+        await _maybe_send_checkin_reward_intro(session, service_case)
         return documents
 
     should_send_intro = not any(
@@ -137,8 +257,7 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
         document.sent_at = _utc_now()
         _record_document_delivery(session, service_case, document, result.message_id)
         await session.commit()
-    if should_send_intro:
-        await _send_document_reading_reminder(session, service_case)
+    await _maybe_send_checkin_reward_intro(session, service_case)
     for document in documents:
         await session.refresh(document)
     return documents
@@ -172,6 +291,7 @@ async def send_one_document(session: AsyncSession, document: UserDocument) -> Us
     document.sent_at = _utc_now()
     _record_document_delivery(session, service_case, document, result.message_id)
     await session.commit()
+    await _maybe_send_checkin_reward_intro(session, service_case)
     await session.refresh(document)
     return document
 

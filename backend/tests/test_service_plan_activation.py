@@ -6,10 +6,12 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
+from app.models.checkin_reward import CheckinRewardProgram
 from app.services import document_delivery
 from app.services.document_delivery import send_one_document
 from app.services.reminder_service import ReminderService
@@ -182,3 +184,80 @@ async def test_sending_document_no_longer_starts_service(
     assert document.status == DocumentStatus.SENT
     assert service_case.status == ServiceCaseStatus.REVIEWING
     assert service_case.started_at is None
+
+
+@pytest.mark.asyncio
+async def test_two_documents_sent_one_by_one_trigger_reward_intro_once(
+    db_session, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        document_delivery,
+        "get_settings",
+        lambda: SimpleNamespace(checkin_rewards_enabled=True),
+    )
+    service_case = _case(status=ServiceCaseStatus.REVIEWING, plan=date(2026, 8, 12))
+    db_session.add(service_case)
+    await db_session.flush()
+    documents = [
+        UserDocument(
+            service_case_id=service_case.id,
+            document_type=document_type,
+            title=title,
+            content_md="内容",
+            content_json={
+                "blocks": [],
+                "personalized_checkin_fields": [
+                    {"title": "今日是否完成早C/午B/晚A？", "key": "personalized_checkin_1"},
+                    {"title": "餐食是否符合方案？"},
+                    {"title": "饮水是否完成？"},
+                    {"title": "运动是否完成？"},
+                    {"title": "睡眠情况如何？"},
+                ],
+            },
+            status=DocumentStatus.APPROVED,
+        )
+        for document_type, title in (
+            (DocumentType.ENERGY_RESTART_PRESCRIPTION, "个人能量重启诊断报告"),
+            (DocumentType.DAY28_EXECUTION_STANDARD, "28天高燃人生执行建议书"),
+        )
+    ]
+    db_session.add_all(documents)
+    await db_session.flush()
+    rendered = tmp_path / "document.docx"
+    rendered.write_bytes(b"docx")
+    sent_texts: list[str] = []
+
+    async def fake_create_temporary_document_file(session, item):
+        return rendered, lambda: None
+
+    async def fake_send_channel_document(group_id, file_path, *, caption=None):
+        return SimpleNamespace(success=True, message_id=f"doc-{caption}", error=None)
+
+    async def fake_send_channel_text(group_id, content):
+        sent_texts.append(content)
+        return SimpleNamespace(
+            success=True,
+            message_id="intro-1",
+            error=None,
+            delivery_uncertain=False,
+        )
+
+    monkeypatch.setattr(document_delivery, "create_temporary_document_file", fake_create_temporary_document_file)
+    monkeypatch.setattr(document_delivery, "send_channel_document", fake_send_channel_document)
+    monkeypatch.setattr(document_delivery, "send_channel_text", fake_send_channel_text)
+
+    await send_one_document(db_session, documents[0])
+    assert sent_texts == []
+    await send_one_document(db_session, documents[1])
+    await send_one_document(db_session, documents[1])
+
+    program = await db_session.scalar(
+        select(CheckinRewardProgram).where(
+            CheckinRewardProgram.service_case_id == service_case.id
+        )
+    )
+    assert len(sent_texts) == 1
+    assert "1 管咖啡" in sent_texts[0]
+    assert "1 盒钥匙" in sent_texts[0]
+    assert "同一张图里同时有咖啡和饭也可以" in sent_texts[0]
+    assert program.intro_status == "sent"

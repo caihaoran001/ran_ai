@@ -226,6 +226,12 @@ class Settings(BaseSettings):
     #  - 日五项：次日早上回顾昨日执行单中尚未回答的项。
     # 会发送真实群消息，默认 False=不追问；设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
     checkin_followup_enabled: bool = Field(default=False, validation_alias="CHECKIN_FOLLOWUP_ENABLED")
+    # 打卡奖励会主动发真实群消息，默认关闭以便先预览历史补算名单，
+    # 确认后再在生产配置 CHECKIN_REWARDS_ENABLED=true 正式开启。
+    checkin_rewards_enabled: bool = Field(
+        default=False,
+        validation_alias="CHECKIN_REWARDS_ENABLED",
+    )
     # 傍晚窗口[start,end)：① 不活跃兜底按 (case_id,日期) 在窗口内确定性伪随机落一个发送时刻(规避定点风控)；
     # ② 日常缺口追问的发送时间闸——仅当当前时刻落在此窗口内才发缺口追问(早C/午B 此时必已过点、晚A 未到点)。
     checkin_followup_window_start: str = Field(

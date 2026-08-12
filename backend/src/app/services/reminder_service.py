@@ -46,6 +46,7 @@ from app.services.agent_observability import (
     sweep_interrupted_agent_runs,
 )
 from app.services.channels import get_current_channel, send_channel_text
+from app.services.checkin_rewards import check_checkin_rewards_once
 from app.services.document_common import DOCUMENT_DEFINITIONS
 from app.services.document_service import (
     generate_profile_and_documents,
@@ -106,6 +107,7 @@ class ReminderService:
             and not self.settings.agent_reminders_enabled
             and not self.settings.outcome_snapshots_enabled
             and not self.settings.checkin_followup_enabled
+            and not self.settings.checkin_rewards_enabled
             and not self.settings.population_insight_enabled
         )
         if optional_services_disabled:
@@ -153,6 +155,9 @@ class ReminderService:
                         await sweep_interrupted_agent_runs()
                         if self.settings.archivist_enabled:
                             await self.check_archivist_once()
+                        # 先等档案官把本轮补问/图片投影到指定日期，再重算奖励。
+                        if self.settings.checkin_rewards_enabled:
+                            await check_checkin_rewards_once()
                         if self.settings.checkin_followup_enabled:
                             await self.check_checkin_followup_v2_once()
                         if self.settings.churn_recall_enabled:

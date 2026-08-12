@@ -82,6 +82,42 @@ export type ServiceCaseStats = {
   ai_vision_cost_yuan: number;
 };
 
+export type RewardQualification = {
+  id: number;
+  tier_days: number;
+  reward: string;
+  qualified_on: string;
+  shipment_id?: number | null;
+  shipment_status?: string | null;
+};
+
+export type RewardShipment = {
+  id: number;
+  status: string;
+  rewards: string;
+  recipient_name?: string | null;
+  recipient_phone?: string | null;
+  shipping_address?: string | null;
+  requested_at: string;
+  shipped_at?: string | null;
+  marked_by?: string | null;
+};
+
+export type RewardAdminCase = {
+  service_case_id: number;
+  case_no: string;
+  user_name: string;
+  group_id: string;
+  group_name?: string | null;
+  service_status: string;
+  effective_days: number;
+  current_choice?: string | null;
+  unshipped_rewards: string;
+  operational_status: string;
+  qualifications: RewardQualification[];
+  shipments: RewardShipment[];
+};
+
 export type UserProfile = {
   id: number;
   service_case_id: number;
