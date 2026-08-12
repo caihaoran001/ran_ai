@@ -125,6 +125,9 @@ def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():
         "一瓶盖约等于1.5个小刻度，一大刻度等于3个小刻度，按一大刻度执行时约需两瓶盖，一瓶盖不够；量取以瓶体刻度为准。",
     ]
     assert result.actual.raw_query_hits == result.actual.rewritten_query_hits
+    assert [reason.code for reason in result.failure_reasons] == [
+        "faithfulness_below_threshold"
+    ]
 
 
 def test_uncalibrated_answer_relevancy_is_scored_but_not_thresholded():
@@ -175,35 +178,3 @@ async def test_faithfulness_calibration_uses_same_metric_adapter_as_full_eval():
     )
 
     assert score == 0.92
-
-
-class _FactJudgeCompletions:
-    async def create(self, **kwargs):
-        assert kwargs["temperature"] == 0
-        assert "数字、单位、大小比较" in kwargs["messages"][0]["content"]
-        return SimpleNamespace(
-            choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(
-                        content='{"consistent": false, "reason": "把一瓶盖和一大刻度的大小关系说反了"}'
-                    )
-                )
-            ]
-        )
-
-
-@pytest.mark.asyncio
-async def test_fact_consistency_judge_detects_relation_contradiction():
-    scorer = RagasScorer.__new__(RagasScorer)
-    scorer._judge_model = "judge-model"
-    scorer._judge_client = SimpleNamespace(
-        chat=SimpleNamespace(completions=_FactJudgeCompletions())
-    )
-
-    result = await scorer.check_fact_consistency(
-        reference="一瓶盖约1.5小刻度，一大刻度等于3小刻度。",
-        response="一瓶盖比一大刻度更多。",
-    )
-
-    assert result.consistent is False
-    assert "大小关系说反" in result.reason

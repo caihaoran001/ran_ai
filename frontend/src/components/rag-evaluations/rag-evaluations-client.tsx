@@ -738,7 +738,7 @@ export function RagEvaluationsClient({
             </div>
             <h1 className="page-heading">AI 回复质量</h1>
             <p className="page-subtitle">
-              先看问题有没有理解对、知识有没有找准，再看最终回复是否忠于事实；数字、单位、否定和比较反转会单独标红。
+              先看问题有没有理解对、知识有没有找准，再用经过中文校准的指标判断最终回复是否忠于事实。
             </p>
           </div>
           <label className="min-w-0 sm:w-80">
@@ -829,9 +829,9 @@ export function RagEvaluationsClient({
                 <ShieldAlert className="h-5 w-5" />
               </span>
               <div>
-                <h2 className="text-base font-extrabold">发现关键事实错误</h2>
+                <h2 className="text-base font-extrabold">历史独立判官告警</h2>
                 <p className="mt-1 text-sm leading-6 text-rose-100/75">
-                  涉及数字、单位、否定或比较方向的回复错误，不会被平均分抵消。
+                  该批次曾额外检查数字、单位、否定和比较关系；新批次已统一由忠实度评价，不再重复判罚。
                 </p>
               </div>
             </div>
@@ -914,7 +914,7 @@ export function RagEvaluationsClient({
                     ["all", `全部 ${summary.counts.total}`],
                     ["failed", `未通过 ${summary.counts.failed + summary.counts.errors}`],
                     ["passed", `通过 ${summary.counts.passed}`],
-                    ["critical", `关键事实 ${summary.critical_fact_errors}`],
+                    ["critical", `历史事实告警 ${summary.critical_fact_errors}`],
                     ["faq_rewrite", `FAQ 改写 ${originCounts.faq}`],
                     ["real_chat", `真实聊天 ${originCounts.chat}`],
                     ["decision", "检索决策异常"],

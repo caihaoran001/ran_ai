@@ -72,7 +72,6 @@ THRESHOLDS = {
     "answer_relevancy": 0.80,
 }
 RAGAS_VERSION = "0.4.3"
-CRITICAL_RELATION_TAGS = frozenset({"number", "unit", "comparison", "negation"})
 
 
 def _empty_metrics() -> RagEvaluationMetrics:
@@ -350,20 +349,6 @@ async def _evaluate_real_case(
         response = await _agent_reply(case, intent, settings)
         result.actual.response = response
         reference = _reference(case)
-        if response and reference and CRITICAL_RELATION_TAGS.intersection(case.tags):
-            consistency = await scorer.check_fact_consistency(
-                response=response,
-                reference=reference,
-            )
-            if not consistency.consistent:
-                reasons.append(
-                    RagFailureReason(
-                        stage="answer",
-                        code="critical_fact_contradiction",
-                        message=f"关键事实关系与权威事实冲突：{consistency.reason}",
-                        severity="critical",
-                    )
-                )
 
         if case.rewrite.decision == "retrieve" and response:
             scores = await scorer.score(
@@ -480,12 +465,6 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
         failure.actual.response = "一大刻度不够一瓶盖。"
         failure.scores.faithfulness = 0.42
         failure.failure_reasons = [
-            RagFailureReason(
-                stage="answer",
-                code="critical_fact_contradiction",
-                message="最终回复反转了瓶盖与大刻度的比较方向",
-                severity="critical",
-            ),
             RagFailureReason(
                 stage="ragas",
                 code="faithfulness_below_threshold",
