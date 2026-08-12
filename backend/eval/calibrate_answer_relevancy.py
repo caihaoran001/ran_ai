@@ -18,6 +18,7 @@ from app.schemas.rag_evaluation import (
     AnswerRelevancyCalibrationItem,
     AnswerRelevancyCalibrationMetrics,
     AnswerRelevancyCalibrationReport,
+    RagAnswerRelevancyJudgement,
 )
 
 if __package__:
@@ -108,11 +109,19 @@ async def async_main(args: argparse.Namespace) -> int:
     )
     try:
         for pair in pairs:
-            positive_score = await scorer.score_answer_relevancy(
+            (
+                positive_score,
+                positive_details,
+                positive_all_noncommittal,
+            ) = await scorer.score_answer_relevancy_with_details(
                 user_input=pair.user_input,
                 response=pair.positive_response,
             )
-            negative_score = await scorer.score_answer_relevancy(
+            (
+                negative_score,
+                negative_details,
+                negative_all_noncommittal,
+            ) = await scorer.score_answer_relevancy_with_details(
                 user_input=pair.user_input,
                 response=pair.negative_response,
             )
@@ -125,6 +134,24 @@ async def async_main(args: argparse.Namespace) -> int:
                     negative_response=pair.negative_response,
                     positive_score=positive_score,
                     negative_score=negative_score,
+                    positive_details=[
+                        RagAnswerRelevancyJudgement(
+                            generated_question=item.generated_question,
+                            noncommittal=item.noncommittal,
+                            similarity=item.similarity,
+                        )
+                        for item in positive_details
+                    ],
+                    negative_details=[
+                        RagAnswerRelevancyJudgement(
+                            generated_question=item.generated_question,
+                            noncommittal=item.noncommittal,
+                            similarity=item.similarity,
+                        )
+                        for item in negative_details
+                    ],
+                    positive_all_noncommittal=positive_all_noncommittal,
+                    negative_all_noncommittal=negative_all_noncommittal,
                 )
             )
             atomic_write_json(

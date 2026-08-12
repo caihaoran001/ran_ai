@@ -25,7 +25,7 @@ docker compose -f docker-compose.eval.yml run --name ran_ai-rag-relevancy-calibr
   rag-eval /app/eval/calibrate_answer_relevancy.py
 ```
 
-报告写入 `diagnostics/rag-evaluations/calibrations/`，同时原子更新 `diagnostics/rag-evaluations/answer-relevancy-calibration.json`。校准同时检查正负排序能力和当前 0.80 门槛，不会通过直接降低阈值来迎合结果。
+报告写入 `diagnostics/rag-evaluations/calibrations/`，同时原子更新 `diagnostics/rag-evaluations/answer-relevancy-calibration.json`。校准同时检查正负排序能力和当前 0.80 门槛，不会通过直接降低阈值来迎合结果。v2 校准集只包含可直接回答的中文知识问题，不把实时工具查询当成直接回答样本；新报告同时保存每次反向生成的问题、回避判断和向量相似度。
 
 ## 回复忠实度中文校准
 
@@ -40,6 +40,8 @@ docker compose -f docker-compose.eval.yml run --name ran_ai-rag-faithfulness-cal
 报告写入同一 `calibrations/` 目录，并原子更新 `diagnostics/rag-evaluations/faithfulness-calibration.json`。校准未通过时，正式评测仍保留 Faithfulness 分数，但不会用该项单独判定失败。
 
 正式评测不再为数字、单位、否定或比较关系额外调用第二个事实判官；这些关系统一由已校准的 Faithfulness 评价，避免同一回复被两次 LLM 判定和重复判罚。历史报告中的独立告警字段继续保留兼容。
+
+新报告会在不增加模型调用的前提下保留 RAGAS 原始中间判断：Context Recall 的参考事实覆盖、Context Precision 的逐条召回判定、Faithfulness 的回复陈述与依据、Answer Relevancy 的三次反向问题/回避标记/相似度。历史报告没有这些明细时，API 和前端返回空列表并明确标注为历史缺失。
 
 以上校准容器均不使用 `--rm`：跑完后保留为 `Exited`，下次可用 `docker start -a <容器名>` 重新执行。依赖本身固化在镜像中，不会重复下载。
 

@@ -25,6 +25,33 @@ class RagMetricValue(StrictModel):
     denominator: int | None = Field(default=None, ge=0)
 
 
+class RagBinaryJudgement(StrictModel):
+    statement: str = Field(min_length=1, max_length=12000)
+    reason: str = Field(max_length=4000)
+    verdict: int = Field(ge=0, le=1)
+
+
+class RagContextPrecisionJudgement(StrictModel):
+    rank: int = Field(ge=1)
+    reason: str = Field(max_length=4000)
+    verdict: int = Field(ge=0, le=1)
+
+
+class RagAnswerRelevancyJudgement(StrictModel):
+    generated_question: str = Field(min_length=1, max_length=4000)
+    noncommittal: int = Field(ge=0, le=1)
+    similarity: float = Field(ge=-1.0, le=1.0)
+
+
+class RagMetricEvidence(StrictModel):
+    context_recall: list[RagBinaryJudgement] = Field(default_factory=list)
+    raw_context_recall: list[RagBinaryJudgement] = Field(default_factory=list)
+    context_precision: list[RagContextPrecisionJudgement] = Field(default_factory=list)
+    faithfulness: list[RagBinaryJudgement] = Field(default_factory=list)
+    answer_relevancy: list[RagAnswerRelevancyJudgement] = Field(default_factory=list)
+    answer_relevancy_all_noncommittal: bool | None = None
+
+
 class AnswerRelevancyCalibrationItem(StrictModel):
     case_id: str = Field(pattern=r"^relevancy-[a-z0-9-]+$")
     negative_source_case_id: str = Field(pattern=r"^relevancy-[a-z0-9-]+$")
@@ -33,6 +60,10 @@ class AnswerRelevancyCalibrationItem(StrictModel):
     negative_response: str = Field(min_length=1, max_length=4000)
     positive_score: float = Field(ge=0.0, le=1.0)
     negative_score: float = Field(ge=0.0, le=1.0)
+    positive_details: list[RagAnswerRelevancyJudgement] = Field(default_factory=list)
+    negative_details: list[RagAnswerRelevancyJudgement] = Field(default_factory=list)
+    positive_all_noncommittal: bool | None = None
+    negative_all_noncommittal: bool | None = None
 
 
 class AnswerRelevancyCalibrationMetrics(StrictModel):
@@ -78,6 +109,8 @@ class FaithfulnessCalibrationItem(StrictModel):
     negative_response: str = Field(min_length=1, max_length=4000)
     positive_score: float = Field(ge=0.0, le=1.0)
     negative_score: float = Field(ge=0.0, le=1.0)
+    positive_details: list[RagBinaryJudgement] = Field(default_factory=list)
+    negative_details: list[RagBinaryJudgement] = Field(default_factory=list)
 
 
 class FaithfulnessCalibrationMetrics(StrictModel):
@@ -260,6 +293,7 @@ class RagEvaluationCaseResult(StrictModel):
     expected: RagCaseExpected
     actual: RagCaseActual
     scores: RagCaseScores
+    metric_evidence: RagMetricEvidence = Field(default_factory=RagMetricEvidence)
     failure_reasons: list[RagFailureReason] = Field(default_factory=list)
     elapsed_ms: int | None = Field(default=None, ge=0)
 

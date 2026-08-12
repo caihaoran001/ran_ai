@@ -79,6 +79,33 @@ type KnowledgeHit = {
   content: string;
 };
 
+type BinaryJudgement = {
+  statement: string;
+  reason: string;
+  verdict: number;
+};
+
+type ContextPrecisionJudgement = {
+  rank: number;
+  reason: string;
+  verdict: number;
+};
+
+type AnswerRelevancyJudgement = {
+  generated_question: string;
+  noncommittal: number;
+  similarity: number;
+};
+
+type MetricEvidence = {
+  context_recall: BinaryJudgement[];
+  raw_context_recall: BinaryJudgement[];
+  context_precision: ContextPrecisionJudgement[];
+  faithfulness: BinaryJudgement[];
+  answer_relevancy: AnswerRelevancyJudgement[];
+  answer_relevancy_all_noncommittal?: boolean | null;
+};
+
 type FailureReason = {
   stage: "decision" | "rewrite" | "retrieval" | "answer" | "ragas" | "runtime";
   code: string;
@@ -120,6 +147,7 @@ type EvaluationCase = {
     faithfulness?: number | null;
     answer_relevancy?: number | null;
   };
+  metric_evidence?: MetricEvidence;
   failure_reasons: FailureReason[];
   elapsed_ms?: number | null;
 };
@@ -161,11 +189,38 @@ type MetricCalibrationReport = {
   failed_criteria: string[];
 };
 
-export type AnswerRelevancyCalibrationReport = MetricCalibrationReport & {
-  embedding_model: string;
+type AnswerRelevancyCalibrationItem = {
+  case_id: string;
+  user_input: string;
+  positive_response: string;
+  negative_response: string;
+  positive_score: number;
+  negative_score: number;
+  positive_details: AnswerRelevancyJudgement[];
+  negative_details: AnswerRelevancyJudgement[];
+  positive_all_noncommittal?: boolean | null;
+  negative_all_noncommittal?: boolean | null;
 };
 
-export type FaithfulnessCalibrationReport = MetricCalibrationReport;
+type FaithfulnessCalibrationItem = {
+  case_id: string;
+  user_input: string;
+  positive_response: string;
+  negative_response: string;
+  positive_score: number;
+  negative_score: number;
+  positive_details: BinaryJudgement[];
+  negative_details: BinaryJudgement[];
+};
+
+export type AnswerRelevancyCalibrationReport = MetricCalibrationReport & {
+  embedding_model: string;
+  items: AnswerRelevancyCalibrationItem[];
+};
+
+export type FaithfulnessCalibrationReport = MetricCalibrationReport & {
+  items: FaithfulnessCalibrationItem[];
+};
 
 const STATUS_LABELS: Record<RagEvaluationSummary["status"], string> = {
   queued: "等待运行",
@@ -314,6 +369,166 @@ function FactList({
   );
 }
 
+function VerdictBadge({ verdict }: { verdict: number }) {
+  return (
+    <span className={`status-pill ${verdict === 1 ? "pill-ok" : "pill-risk"}`}>
+      {verdict === 1 ? "支持" : "不支持"}
+    </span>
+  );
+}
+
+function BinaryJudgementList({
+  items,
+  empty,
+}: {
+  items: BinaryJudgement[];
+  empty: string;
+}) {
+  if (!items.length) {
+    return <p className="text-xs leading-5 text-slate-400">{empty}</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {items.map((judgement, index) => (
+        <div key={`${judgement.statement}-${index}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-xs font-bold leading-5 text-slate-800">{judgement.statement}</p>
+            <VerdictBadge verdict={judgement.verdict} />
+          </div>
+          <p className="mt-1 text-[11px] leading-5 text-slate-500">
+            {judgement.reason || "判官未返回文字理由。"}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MetricEvidencePanel({
+  evidence,
+  hits,
+  retrievalDecision,
+  hasMetricScore,
+}: {
+  evidence?: MetricEvidence;
+  hits: KnowledgeHit[];
+  retrievalDecision: EvaluationCase["actual"]["retrieval_decision"];
+  hasMetricScore: boolean;
+}) {
+  const hasEvidence = Boolean(
+    evidence && (
+      evidence.context_recall.length ||
+      evidence.raw_context_recall.length ||
+      evidence.context_precision.length ||
+      evidence.faithfulness.length ||
+      evidence.answer_relevancy.length ||
+      evidence.answer_relevancy_all_noncommittal != null
+    ),
+  );
+  if (!hasEvidence || !evidence) {
+    const emptyMessage = retrievalDecision === "skip"
+      ? "本条按预期跳过了知识检索，因此不运行 RAGAS 四项知识问答指标。"
+      : hasMetricScore
+        ? "这份历史报告只保存了最终分数；新批次会显示每条事实、召回内容和回复陈述的判断依据。"
+        : "本条没有完成 RAGAS 评分，因此没有可展示的判官证据。";
+    return (
+      <section className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/60 px-4 py-3" aria-label="RAGAS 判断明细">
+        <p className="text-xs font-bold text-slate-600">RAGAS 判断明细</p>
+        <p className="mt-1 text-xs leading-5 text-slate-500">{emptyMessage}</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="mt-4 border-t border-slate-200 pt-4" aria-label="RAGAS 判断明细">
+      <div className="mb-3">
+        <p className="text-xs font-extrabold text-slate-700">RAGAS 怎么得出这些分数</p>
+        <p className="mt-1 text-[11px] leading-5 text-slate-500">直接展示本轮判官的拆分结果和理由，不再只给一个最终数字。</p>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <article className="rounded-xl border border-slate-200 bg-slate-100/60 p-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h4 className="text-xs font-extrabold text-slate-800">事实召回率</h4>
+            <span className="text-[11px] font-semibold text-slate-500">权威事实是否找全</span>
+          </div>
+          <BinaryJudgementList items={evidence.context_recall} empty="没有可展示的事实覆盖判断。" />
+          {evidence.raw_context_recall.length > 0 && (
+            <details className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <summary className="cursor-pointer text-[11px] font-bold text-slate-600">查看原问题召回的对照判断</summary>
+              <div className="mt-2">
+                <BinaryJudgementList items={evidence.raw_context_recall} empty="没有原问题召回对照。" />
+              </div>
+            </details>
+          )}
+        </article>
+
+        <article className="rounded-xl border border-slate-200 bg-slate-100/60 p-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h4 className="text-xs font-extrabold text-slate-800">召回精确率</h4>
+            <span className="text-[11px] font-semibold text-slate-500">逐条判断并考虑排名</span>
+          </div>
+          {evidence.context_precision.length ? (
+            <div className="space-y-2">
+              {evidence.context_precision.map((judgement) => {
+                const hit = hits.find((item) => item.rank === judgement.rank);
+                return (
+                  <div key={judgement.rank} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-xs font-bold leading-5 text-slate-800">#{judgement.rank} {hit?.title || "召回内容"}</p>
+                      <VerdictBadge verdict={judgement.verdict} />
+                    </div>
+                    <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                      {judgement.reason || "判官未返回文字理由。"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-xs leading-5 text-slate-400">没有可展示的逐条召回判断。</p>
+          )}
+        </article>
+
+        <article className="rounded-xl border border-slate-200 bg-slate-100/60 p-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h4 className="text-xs font-extrabold text-slate-800">回复忠实度</h4>
+            <span className="text-[11px] font-semibold text-slate-500">回复陈述是否有召回依据</span>
+          </div>
+          <BinaryJudgementList items={evidence.faithfulness} empty="没有可展示的回复陈述判断。" />
+        </article>
+
+        <article className="rounded-xl border border-slate-200 bg-slate-100/60 p-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h4 className="text-xs font-extrabold text-slate-800">回复相关性</h4>
+            {evidence.answer_relevancy_all_noncommittal != null && (
+              <span className={`status-pill ${evidence.answer_relevancy_all_noncommittal ? "pill-risk" : "pill-ok"}`}>
+                {evidence.answer_relevancy_all_noncommittal ? "三次均判回避" : "未被整体判回避"}
+              </span>
+            )}
+          </div>
+          {evidence.answer_relevancy.length ? (
+            <div className="space-y-2">
+              {evidence.answer_relevancy.map((judgement, index) => (
+                <div key={`${judgement.generated_question}-${index}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-xs font-bold leading-5 text-slate-800">{judgement.generated_question}</p>
+                    <span className="text-xs font-black tabular-nums text-slate-700">{percent(judgement.similarity)}</span>
+                  </div>
+                  <p className={`mt-1 text-[11px] font-semibold ${judgement.noncommittal ? "text-rose-600" : "text-emerald-700"}`}>
+                    {judgement.noncommittal ? "本次被判为回避/含糊" : "本次被判为有明确内容"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs leading-5 text-slate-400">没有成功生成反向问题。</p>
+          )}
+        </article>
+      </div>
+    </section>
+  );
+}
+
 function EvidenceDetail({
   item,
   runMode,
@@ -454,6 +669,13 @@ function EvidenceDetail({
         </section>
       </div>
 
+      <MetricEvidencePanel
+        evidence={item.metric_evidence}
+        hits={hits}
+        retrievalDecision={actualDecision}
+        hasMetricScore={scoreItems.some(([, value]) => value != null)}
+      />
+
       <section className="mt-4 border-t border-slate-200 pt-4" aria-label="评测判定">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -497,14 +719,85 @@ function EvidenceDetail({
   );
 }
 
+type CalibrationItem = AnswerRelevancyCalibrationItem | FaithfulnessCalibrationItem;
+
+function CalibrationAnswer({
+  item,
+  kind,
+  side,
+}: {
+  item: CalibrationItem;
+  kind: "relevancy" | "faithfulness";
+  side: "positive" | "negative";
+}) {
+  const response = side === "positive" ? item.positive_response : item.negative_response;
+  const score = side === "positive" ? item.positive_score : item.negative_score;
+  const label = side === "positive" ? "正确回答" : kind === "relevancy" ? "错配回答" : "冲突回答";
+
+  if (kind === "relevancy") {
+    const relevancyItem = item as AnswerRelevancyCalibrationItem;
+    const details = side === "positive" ? relevancyItem.positive_details : relevancyItem.negative_details;
+    const allNoncommittal = side === "positive"
+      ? relevancyItem.positive_all_noncommittal
+      : relevancyItem.negative_all_noncommittal;
+    return (
+      <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[11px] font-extrabold text-slate-500">{label}</p>
+          <span className="text-sm font-black tabular-nums text-slate-900">{percent(score)}</span>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-slate-700">{response}</p>
+        {allNoncommittal === true && (
+          <p className="mt-2 text-[11px] font-bold text-rose-700">三次均被判为回避，最终分数归零</p>
+        )}
+        {details.length ? (
+          <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">
+            {details.map((detail, index) => (
+              <div key={`${detail.generated_question}-${index}`} className="flex items-start justify-between gap-3 text-[11px] leading-5">
+                <span className="text-slate-600">{detail.generated_question}</span>
+                <span className={`shrink-0 font-bold tabular-nums ${detail.noncommittal ? "text-rose-600" : "text-slate-500"}`}>
+                  {percent(detail.similarity)}{detail.noncommittal ? " · 回避" : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-slate-400">历史校准未保存反向问题明细。</p>
+        )}
+      </div>
+    );
+  }
+
+  const faithfulnessItem = item as FaithfulnessCalibrationItem;
+  const details = side === "positive" ? faithfulnessItem.positive_details : faithfulnessItem.negative_details;
+  return (
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] font-extrabold text-slate-500">{label}</p>
+        <span className="text-sm font-black tabular-nums text-slate-900">{percent(score)}</span>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-slate-700">{response}</p>
+      {details.length ? (
+        <div className="mt-2 border-t border-slate-100 pt-2">
+          <BinaryJudgementList items={details} empty="没有陈述判断。" />
+        </div>
+      ) : (
+        <p className="mt-2 text-[11px] text-slate-400">历史校准未保存陈述判断明细。</p>
+      )}
+    </div>
+  );
+}
+
 function MetricCalibrationCard({
   title,
   negativeLabel,
   calibration,
+  kind,
 }: {
   title: string;
   negativeLabel: string;
-  calibration: MetricCalibrationReport | null;
+  calibration: AnswerRelevancyCalibrationReport | FaithfulnessCalibrationReport | null;
+  kind: "relevancy" | "faithfulness";
 }) {
   const completed = calibration?.status === "completed";
   const passed = completed && calibration?.passed === true;
@@ -574,6 +867,27 @@ function MetricCalibrationCard({
           未通过原因：{calibration.failed_criteria.join("；")}
         </div>
       ) : null}
+      {calibration?.items.length ? (
+        <details className="border-t border-slate-200/80 bg-white/60">
+          <summary className="cursor-pointer px-5 py-3 text-xs font-extrabold text-slate-700">
+            查看 {calibration.items.length} 组校准题和实际判分
+          </summary>
+          <div className="max-h-[36rem] space-y-3 overflow-y-auto border-t border-slate-100 px-4 py-4">
+            {calibration.items.map((item, index) => (
+              <article key={item.case_id} className="rounded-xl border border-slate-200 bg-slate-100/70 p-3">
+                <div className="flex items-start gap-2">
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-slate-800 px-1 text-[10px] font-black tabular-nums text-white">{index + 1}</span>
+                  <p className="text-xs font-extrabold leading-5 text-slate-900">{item.user_input}</p>
+                </div>
+                <div className="mt-3 grid gap-2 xl:grid-cols-2">
+                  <CalibrationAnswer item={item} kind={kind} side="positive" />
+                  <CalibrationAnswer item={item} kind={kind} side="negative" />
+                </div>
+              </article>
+            ))}
+          </div>
+        </details>
+      ) : null}
     </article>
   );
 }
@@ -601,11 +915,13 @@ function MetricCalibrationPanel({
           title="回复相关性"
           negativeLabel="错配回答均值"
           calibration={answerRelevancy}
+          kind="relevancy"
         />
         <MetricCalibrationCard
           title="回复忠实度"
           negativeLabel="冲突回答均值"
           calibration={faithfulness}
+          kind="faithfulness"
         />
       </div>
     </section>

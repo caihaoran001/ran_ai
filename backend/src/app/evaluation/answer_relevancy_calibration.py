@@ -73,7 +73,7 @@ def default_answer_relevancy_calibration_path() -> Path:
         Path(__file__).resolve().parents[3]
         / "tests"
         / "fixtures"
-        / "rag_answer_relevancy_calibration.v1.json"
+        / "rag_answer_relevancy_calibration.v2.json"
     )
 
 

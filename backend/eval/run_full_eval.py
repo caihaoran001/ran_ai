@@ -28,6 +28,9 @@ from app.schemas.rag_evaluation import (
     RagCaseExpected,
     RagCaseOrigin,
     RagCaseScores,
+    RagAnswerRelevancyJudgement,
+    RagBinaryJudgement,
+    RagContextPrecisionJudgement,
     RagEvaluationCaseResult,
     RagEvaluationCounts,
     RagEvaluationMetrics,
@@ -37,6 +40,7 @@ from app.schemas.rag_evaluation import (
     RagHistoryMessage,
     RagKnowledgeHit,
     RagMetricValue,
+    RagMetricEvidence,
     RagRewriteExpected,
 )
 from app.services.agent.graph import RanrenAgentGraph
@@ -364,6 +368,51 @@ async def _evaluate_real_case(
                 faithfulness=scores.faithfulness,
                 answer_relevancy=scores.answer_relevancy,
             )
+            result.metric_evidence = RagMetricEvidence(
+                context_recall=[
+                    RagBinaryJudgement(
+                        statement=item.statement,
+                        reason=item.reason,
+                        verdict=item.verdict,
+                    )
+                    for item in scores.context_recall_details
+                ],
+                raw_context_recall=[
+                    RagBinaryJudgement(
+                        statement=item.statement,
+                        reason=item.reason,
+                        verdict=item.verdict,
+                    )
+                    for item in scores.raw_context_recall_details
+                ],
+                context_precision=[
+                    RagContextPrecisionJudgement(
+                        rank=item.rank,
+                        reason=item.reason,
+                        verdict=item.verdict,
+                    )
+                    for item in scores.context_precision_details
+                ],
+                faithfulness=[
+                    RagBinaryJudgement(
+                        statement=item.statement,
+                        reason=item.reason,
+                        verdict=item.verdict,
+                    )
+                    for item in scores.faithfulness_details
+                ],
+                answer_relevancy=[
+                    RagAnswerRelevancyJudgement(
+                        generated_question=item.generated_question,
+                        noncommittal=item.noncommittal,
+                        similarity=item.similarity,
+                    )
+                    for item in scores.answer_relevancy_details
+                ],
+                answer_relevancy_all_noncommittal=(
+                    scores.answer_relevancy_all_noncommittal
+                ),
+            )
             if scores.context_recall + 0.05 < scores.raw_context_recall:
                 reasons.append(
                     RagFailureReason(
@@ -454,6 +503,50 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
                 faithfulness=min(value + 0.03, 0.99),
                 answer_relevancy=min(value - 0.01, 0.97),
             )
+            facts = [hit.content for hit in mock_hits]
+            result.metric_evidence = RagMetricEvidence(
+                context_recall=[
+                    RagBinaryJudgement(
+                        statement=fact,
+                        reason="模拟召回内容覆盖该权威事实",
+                        verdict=1,
+                    )
+                    for fact in facts
+                ],
+                raw_context_recall=[
+                    RagBinaryJudgement(
+                        statement=fact,
+                        reason="模拟原问题召回内容覆盖该权威事实",
+                        verdict=1,
+                    )
+                    for fact in facts
+                ],
+                context_precision=[
+                    RagContextPrecisionJudgement(
+                        rank=hit.rank,
+                        reason="模拟召回内容可用于回答当前问题",
+                        verdict=1,
+                    )
+                    for hit in mock_hits
+                ],
+                faithfulness=[
+                    RagBinaryJudgement(
+                        statement=fact,
+                        reason="模拟回复陈述可由召回内容推出",
+                        verdict=1,
+                    )
+                    for fact in facts
+                ],
+                answer_relevancy=[
+                    RagAnswerRelevancyJudgement(
+                        generated_question=case.user_query,
+                        noncommittal=0,
+                        similarity=result.scores.answer_relevancy or 0.0,
+                    )
+                    for _ in range(3)
+                ],
+                answer_relevancy_all_noncommittal=False,
+            )
         output.append(result)
 
     if output:
@@ -464,6 +557,13 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
         failure.status = "failed"
         failure.actual.response = "一大刻度不够一瓶盖。"
         failure.scores.faithfulness = 0.42
+        failure.metric_evidence.faithfulness = [
+            RagBinaryJudgement(
+                statement="一大刻度不够一瓶盖。",
+                reason="模拟回复反转了瓶盖与一大刻度的用量关系",
+                verdict=0,
+            )
+        ]
         failure.failure_reasons = [
             RagFailureReason(
                 stage="ragas",

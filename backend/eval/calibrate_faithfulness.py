@@ -18,6 +18,7 @@ from app.schemas.rag_evaluation import (
     FaithfulnessCalibrationItem,
     FaithfulnessCalibrationMetrics,
     FaithfulnessCalibrationReport,
+    RagBinaryJudgement,
 )
 
 if __package__:
@@ -107,12 +108,18 @@ async def async_main(args: argparse.Namespace) -> int:
     )
     try:
         for pair in pairs:
-            positive_score = await scorer.score_faithfulness(
+            (
+                positive_score,
+                positive_details,
+            ) = await scorer.score_faithfulness_with_details(
                 user_input=pair.user_input,
                 response=pair.positive_response,
                 retrieved_contexts=pair.retrieved_contexts,
             )
-            negative_score = await scorer.score_faithfulness(
+            (
+                negative_score,
+                negative_details,
+            ) = await scorer.score_faithfulness_with_details(
                 user_input=pair.user_input,
                 response=pair.negative_response,
                 retrieved_contexts=pair.retrieved_contexts,
@@ -127,6 +134,22 @@ async def async_main(args: argparse.Namespace) -> int:
                     negative_response=pair.negative_response,
                     positive_score=positive_score,
                     negative_score=negative_score,
+                    positive_details=[
+                        RagBinaryJudgement(
+                            statement=item.statement,
+                            reason=item.reason,
+                            verdict=item.verdict,
+                        )
+                        for item in positive_details
+                    ],
+                    negative_details=[
+                        RagBinaryJudgement(
+                            statement=item.statement,
+                            reason=item.reason,
+                            verdict=item.verdict,
+                        )
+                        for item in negative_details
+                    ],
                 )
             )
             atomic_write_json(

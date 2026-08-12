@@ -85,6 +85,121 @@ class _AnswerMetric:
         return SimpleNamespace(value=0.75)
 
 
+class _TraceInput(SimpleNamespace):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+class _TracePrompt:
+    input_model = _TraceInput
+    output_model = SimpleNamespace
+
+    @staticmethod
+    def to_string(input_data):
+        return input_data
+
+
+class _RecallLlm:
+    async def agenerate(self, prompt, _output_model):
+        fully_covered = "干扰内容" not in prompt.context
+        return SimpleNamespace(
+            classifications=[
+                SimpleNamespace(
+                    statement="事实一",
+                    reason="召回内容包含事实一",
+                    attributed=1,
+                ),
+                SimpleNamespace(
+                    statement="事实二",
+                    reason="召回内容包含事实二" if fully_covered else "未包含事实二",
+                    attributed=1 if fully_covered else 0,
+                ),
+            ]
+        )
+
+
+class _RecallMetric:
+    prompt = _TracePrompt()
+    llm = _RecallLlm()
+
+
+class _PrecisionLlm:
+    async def agenerate(self, prompt, _output_model):
+        useful = prompt.context == "有效内容"
+        return SimpleNamespace(
+            reason="可用于回答" if useful else "与问题无关",
+            verdict=1 if useful else 0,
+        )
+
+
+class _PrecisionMetric:
+    prompt = _TracePrompt()
+    llm = _PrecisionLlm()
+
+    @staticmethod
+    def _calculate_average_precision(verdicts):
+        denominator = sum(verdicts) + 1e-10
+        numerator = sum(
+            (sum(verdicts[: index + 1]) / (index + 1)) * verdict
+            for index, verdict in enumerate(verdicts)
+        )
+        return numerator / denominator
+
+
+class _DetailedFaithfulnessMetric:
+    async def _create_statements(self, question, response):
+        assert (question, response) == ("问题", "回复")
+        return ["有依据的陈述", "没有依据的陈述"]
+
+    async def _create_verdicts(self, statements, context):
+        assert context == "有效内容\n干扰内容"
+        return SimpleNamespace(
+            statements=[
+                SimpleNamespace(
+                    statement=statements[0], reason="召回内容支持", verdict=1
+                ),
+                SimpleNamespace(
+                    statement=statements[1], reason="召回内容未支持", verdict=0
+                ),
+            ]
+        )
+
+    @staticmethod
+    def _compute_score(verdicts):
+        return sum(item.verdict for item in verdicts.statements) / len(
+            verdicts.statements
+        )
+
+
+class _RelevancyLlm:
+    def __init__(self):
+        self.calls = 0
+
+    async def agenerate(self, _prompt, _output_model):
+        self.calls += 1
+        return SimpleNamespace(
+            question=f"反向问题{self.calls}",
+            noncommittal=0,
+        )
+
+
+class _TraceEmbeddings:
+    async def aembed_text(self, text):
+        assert text == "问题"
+        return [1.0, 0.0]
+
+    async def aembed_texts(self, texts):
+        assert texts == ["反向问题1", "反向问题2", "反向问题3"]
+        return [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+
+
+class _DetailedAnswerMetric:
+    prompt = _TracePrompt()
+    llm = _RelevancyLlm()
+    embeddings = _TraceEmbeddings()
+    strictness = 3
+
+
 @pytest.mark.asyncio
 async def test_empty_retrieval_is_scored_as_zero_instead_of_skipped():
     scorer = RagasScorer.__new__(RagasScorer)
@@ -106,6 +221,42 @@ async def test_empty_retrieval_is_scored_as_zero_instead_of_skipped():
     assert scores.context_precision == 0.0
     assert scores.faithfulness == 0.0
     assert scores.answer_relevancy == 0.75
+    assert scores.context_recall_details == ()
+    assert scores.faithfulness_details == ()
+
+
+@pytest.mark.asyncio
+async def test_ragas_score_preserves_all_intermediate_judgements_without_extra_calls():
+    scorer = RagasScorer.__new__(RagasScorer)
+    scorer._context_recall = _RecallMetric()
+    scorer._context_precision = _PrecisionMetric()
+    scorer._faithfulness = _DetailedFaithfulnessMetric()
+    scorer._answer_relevancy = _DetailedAnswerMetric()
+
+    scores = await scorer.score(
+        user_input="问题",
+        response="回复",
+        reference="事实一；事实二",
+        retrieved_contexts=["有效内容", "干扰内容"],
+        raw_contexts=["有效内容"],
+    )
+
+    assert scores.context_recall == 0.5
+    assert [item.verdict for item in scores.context_recall_details] == [1, 0]
+    assert scores.raw_context_recall == 1.0
+    assert [item.verdict for item in scores.raw_context_recall_details] == [1, 1]
+    assert scores.context_precision == pytest.approx(1.0)
+    assert [item.verdict for item in scores.context_precision_details] == [1, 0]
+    assert scores.faithfulness == 0.5
+    assert [item.verdict for item in scores.faithfulness_details] == [1, 0]
+    assert scores.answer_relevancy == pytest.approx((1 + 2**-0.5) / 3)
+    assert [item.generated_question for item in scores.answer_relevancy_details] == [
+        "反向问题1",
+        "反向问题2",
+        "反向问题3",
+    ]
+    assert scores.answer_relevancy_all_noncommittal is False
+    assert scorer._answer_relevancy.llm.calls == 3
 
 
 def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():

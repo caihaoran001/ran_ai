@@ -93,6 +93,34 @@ def _report(run_id: str) -> dict:
                     "faithfulness": 0.94,
                     "answer_relevancy": 0.89,
                 },
+                "metric_evidence": {
+                    "context_recall": [
+                        {
+                            "statement": "一瓶盖约1.5小刻度",
+                            "reason": "召回内容覆盖该事实",
+                            "verdict": 1,
+                        }
+                    ],
+                    "raw_context_recall": [],
+                    "context_precision": [
+                        {"rank": 1, "reason": "内容可用于回答", "verdict": 1}
+                    ],
+                    "faithfulness": [
+                        {
+                            "statement": "一瓶盖约1.5小刻度",
+                            "reason": "召回内容支持该陈述",
+                            "verdict": 1,
+                        }
+                    ],
+                    "answer_relevancy": [
+                        {
+                            "generated_question": "一瓶盖等于几个小刻度？",
+                            "noncommittal": 0,
+                            "similarity": 0.89,
+                        }
+                    ],
+                    "answer_relevancy_all_noncommittal": False,
+                },
                 "failure_reasons": [],
                 "elapsed_ms": 42,
             }
@@ -202,6 +230,10 @@ async def test_rag_evaluation_api_lists_status_and_returns_report(
     }
     assert detail.json()["cases"][0]["expected"]["response_mode"] == "answer"
     assert detail.json()["cases"][0]["actual"]["response"].startswith("一瓶盖")
+    evidence = detail.json()["cases"][0]["metric_evidence"]
+    assert evidence["context_recall"][0]["verdict"] == 1
+    assert evidence["context_precision"][0]["rank"] == 1
+    assert evidence["answer_relevancy"][0]["similarity"] == 0.89
 
 
 @pytest.mark.asyncio
@@ -295,6 +327,7 @@ async def test_legacy_report_without_run_mode_remains_readable(admin_client, tmp
     legacy = _report("eval-legacy")
     legacy["summary"].pop("run_mode")
     legacy["cases"][0].pop("origin")
+    legacy["cases"][0].pop("metric_evidence")
     legacy["cases"][0]["expected"].pop("response_mode")
     legacy["cases"][0]["expected"]["rewrite"]["forbidden_inferences"] = [
         "用户在问怎么盖瓶盖"
@@ -323,6 +356,14 @@ async def test_legacy_report_without_run_mode_remains_readable(admin_client, tmp
         "reference_id": "legacy-report",
     }
     assert response.json()["cases"][0]["expected"]["response_mode"] is None
+    assert response.json()["cases"][0]["metric_evidence"] == {
+        "context_recall": [],
+        "raw_context_recall": [],
+        "context_precision": [],
+        "faithfulness": [],
+        "answer_relevancy": [],
+        "answer_relevancy_all_noncommittal": None,
+    }
     assert (
         "forbidden_inferences" not in response.json()["cases"][0]["expected"]["rewrite"]
     )

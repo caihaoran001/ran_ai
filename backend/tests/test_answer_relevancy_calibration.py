@@ -48,7 +48,13 @@ def test_fixed_chinese_calibration_suite_uses_one_to_one_answer_swaps():
     suite = load_answer_relevancy_calibration_suite()
     pairs = build_answer_relevancy_calibration_pairs(suite)
 
-    assert suite.calibration_id == "answer-relevancy-zh-v1"
+    assert suite.calibration_id == "answer-relevancy-zh-v2"
+    assert suite.version == 2
+    assert "relevancy-reminder-list" not in {pair.case_id for pair in pairs}
+    constipation = next(
+        pair for pair in pairs if pair.case_id == "relevancy-constipation"
+    )
+    assert "加量" not in constipation.negative_response
     assert len(pairs) == 10
     assert len({pair.case_id for pair in pairs}) == 10
     assert len({pair.negative_source_case_id for pair in pairs}) == 10
