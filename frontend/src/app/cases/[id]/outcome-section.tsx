@@ -198,7 +198,7 @@ function SnapshotSummary({ snapshot, state }: { snapshot: OutcomeSnapshot; state
       )}
       <p className="line-clamp-2 text-slate-600">{snapshot.ai_summary || "已生成快照。"}</p>
       <div className="flex flex-wrap gap-2">
-        <MetricPill label="打卡" value={metricValue(metrics.checkin_days, "天")} />
+        <MetricPill label="有打卡" value={metricValue(metrics.checkin_days, "天")} />
         <MetricPill label="已收集" value={metricValue(metrics.collected_count, "项")} />
         <MetricPill label="缺失" value={metricValue(metrics.missing_count, "项")} />
         {trendLabel(metrics.weight_trend) && <MetricPill label="体重趋势" value={trendLabel(metrics.weight_trend)} />}

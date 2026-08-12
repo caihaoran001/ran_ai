@@ -68,7 +68,7 @@ def _max_waist_delta(window: int) -> float:
     return min(max(_MAX_WAIST_DELTA_PER_DAY * window, _MIN_WAIST_DELTA_ALLOWANCE_CM), _MAX_WAIST_DELTA_CM)
 
 # 未纳入原因（case 级）
-EXCLUDE_NO_BASELINE = "no_baseline"  # 既没问卷起始值，前三天也没有效打卡
+EXCLUDE_NO_BASELINE = "no_baseline"  # 既没问卷起始值，前三天也没有可用的打卡指标
 EXCLUDE_NO_ENDPOINT = "no_endpoint"  # 窗口末附近没有可用记录
 EXCLUDE_IMPLAUSIBLE = "implausible_delta"  # 变化幅度不可能，判定为录入问题
 EXCLUDE_BELOW_RATE = "below_checkin_rate"  # 没达到打卡率门槛

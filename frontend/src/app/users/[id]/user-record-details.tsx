@@ -94,7 +94,7 @@ export function UserRecordDetails({
             </section>
 
             <section>
-              <SectionHeading title="打卡记录" note={`${uniqueCheckinDays(state.checkins)} 个有效打卡日`} />
+              <SectionHeading title="打卡记录" note={`${uniqueCheckinDays(state.checkins)} 天有打卡 · ${completeCheckinDays(state.checkins)} 天完整打卡`} />
               {state.checkins.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   <Info label="体重变化" value={weightTrend(state.checkins)} />
@@ -284,6 +284,10 @@ function splitChecklist(value: string) {
 
 function uniqueCheckinDays(checkins: Checkin[]) {
   return new Set(checkins.map((item) => item.checkin_date).filter(Boolean)).size;
+}
+
+function completeCheckinDays(checkins: Checkin[]) {
+  return new Set(checkins.filter((item) => item.is_complete).map((item) => item.checkin_date).filter(Boolean)).size;
 }
 
 function weightTrend(checkins: Checkin[]) {

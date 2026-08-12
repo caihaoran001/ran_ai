@@ -152,8 +152,8 @@ export default async function RewardsPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm lg:text-right">
                   <div>
-                    <span className="block text-xs font-semibold text-slate-500">有效打卡</span>
-                    <span className="font-extrabold text-slate-950">{row.effective_days} 天</span>
+                    <span className="block text-xs font-semibold text-slate-500">完整打卡</span>
+                    <span className="font-extrabold text-slate-950">{row.complete_checkin_days} 天</span>
                   </div>
                   <div>
                     <span className="block text-xs font-semibold text-slate-500">尚未寄出</span>

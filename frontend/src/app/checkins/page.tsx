@@ -23,7 +23,7 @@ export default async function CheckinsPage() {
         <div className="page-header-row">
           <div>
             <h1 className="page-heading">打卡记录</h1>
-            <p className="page-subtitle">按服务单查看最近 100 条打卡，便于运营快速判断执行连续性。</p>
+            <p className="page-subtitle">按服务单查看最近 100 条有打卡记录；早C/午B/晚A及第2—5项都已回答才标为完整打卡。</p>
           </div>
           <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">
             最近 {recentCheckins.length} 条
@@ -43,7 +43,12 @@ export default async function CheckinsPage() {
             <div className="grid gap-2 p-4 text-sm sm:p-5">
               {checkins.slice(0, 7).map((checkin) => (
                 <div key={checkin.id} className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
-                  <div className="mb-2 text-xs font-bold text-slate-600">{checkin.checkin_date}</div>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-600">
+                    <span>{checkin.checkin_date}</span>
+                    <span className={`status-pill ${checkin.is_complete ? "pill-ok" : "pill-warn"}`}>
+                      {checkin.is_complete ? "完整打卡" : "有打卡·未完整"}
+                    </span>
+                  </div>
                   <StructuredCheckin parsed={checkin.parsed_json} />
                 </div>
               ))}

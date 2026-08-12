@@ -692,7 +692,7 @@ def _snapshot_summary(spec: OutcomeMilestoneSpec, metrics: dict[str, Any], evide
     missing_count = metrics.get("missing_count", 0)
     return (
         f"{spec.name}已收集 {collected_count} 项成效证据，仍缺 {missing_count} 项。"
-        f"当前有 {metrics.get('checkin_days', 0)} 天打卡可参考。"
+        f"当前有 {metrics.get('checkin_days', 0)} 天有打卡记录可参考。"
     )
 
 

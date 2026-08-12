@@ -69,6 +69,8 @@ class ServiceCaseStats(BaseModel):
     last_message_at: datetime | None
     last_user_message_at: datetime | None
     checkin_count: int
+    checkin_days: int
+    complete_checkin_days: int
     last_checkin_at: datetime | None
     ai_total_calls: int = 0
     ai_total_tokens: int = 0

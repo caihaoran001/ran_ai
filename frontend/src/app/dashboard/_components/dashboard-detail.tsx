@@ -56,6 +56,7 @@ export type DashboardCheckinEvent = {
   checkin_date: string;
   content: string;
   parsed_json?: CheckinParsed | null;
+  is_complete: boolean;
   created_at: string;
 };
 
@@ -231,6 +232,9 @@ export function CheckinDetailList({ items }: { items: DashboardCaseCheckins[] })
                 <div className="mb-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
                   <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-cyan-700">
                     打卡日期：{checkin.checkin_date}
+                  </span>
+                  <span className={`status-pill ${checkin.is_complete ? "pill-ok" : "pill-warn"}`}>
+                    {checkin.is_complete ? "完整打卡" : "有打卡·未完整"}
                   </span>
                   <span>{formatChinaShortDateTime(checkin.created_at)}</span>
                 </div>

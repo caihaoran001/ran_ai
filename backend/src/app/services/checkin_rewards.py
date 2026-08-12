@@ -30,7 +30,15 @@ from app.models.message import (
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.channels import send_channel_text
 from app.services.channels.base import ChannelSendResult
-from app.services.service_case_queries import checkin_first_day, select_active_service_cases
+from app.services.checkin_completion import is_complete_checkin
+from app.services.service_case_queries import (
+    SERVICE_CASE_SETTLEMENT_GRACE,
+    checkin_first_day,
+    select_active_service_cases,
+    service_continuation_active,
+    service_phase_end_date,
+    service_settlement_ended,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -64,41 +72,15 @@ PROGRESS_THRESHOLDS = {2: 3, 6: 7, 13: 14, 27: 28}
 
 @dataclass(frozen=True, slots=True)
 class RewardReconciliation:
-    effective_days: int
+    complete_checkin_days: int
     valid_dates: tuple[date, ...]
     new_qualification_days: tuple[int, ...]
     new_progress_threshold: int | None
 
 
-def _nonempty(value: object) -> bool:
-    return bool(str(value or "").strip())
-
-
 def is_effective_reward_checkin(checkin: Checkin) -> bool:
-    """奖励口径：产品三段和同一版五项清单的其余四项都有回答。
-
-    回答只要非空就算如实上报；「未完成」和「暂停」不会被当成缺失。
-    """
-    parsed = checkin.parsed_json if isinstance(checkin.parsed_json, dict) else {}
-    schedule = parsed.get("product_schedule")
-    if not isinstance(schedule, dict) or not all(
-        _nonempty(schedule.get(key))
-        for key in ("morning_c", "noon_b", "night_a")
-    ):
-        return False
-
-    custom = parsed.get("custom_checkin")
-    if not isinstance(custom, dict):
-        return False
-    answered_by_prefix: dict[str, set[int]] = defaultdict(set)
-    for raw_item_id, value in custom.items():
-        if not isinstance(value, dict) or not _nonempty(value.get("answer")):
-            continue
-        prefix, separator, raw_index = str(raw_item_id).rpartition(":")
-        if not separator or raw_index not in {"2", "3", "4", "5"}:
-            continue
-        answered_by_prefix[prefix].add(int(raw_index))
-    return any(indexes == {2, 3, 4, 5} for indexes in answered_by_prefix.values())
+    """向后兼容的奖励判定入口；权威口径已下沉到打卡模块。"""
+    return is_complete_checkin(checkin)
 
 
 async def valid_reward_checkin_dates(
@@ -117,6 +99,10 @@ async def valid_reward_checkin_dates(
         Checkin.checkin_date >= first_day,
         Checkin.deleted_at.is_(None),
     ]
+    if not service_continuation_active(service_case):
+        phase_end = service_phase_end_date(service_case, tz)
+        if phase_end is not None:
+            conditions.append(Checkin.checkin_date <= phase_end)
     if through_date is not None:
         conditions.append(Checkin.checkin_date <= through_date)
     rows = list(
@@ -125,7 +111,7 @@ async def valid_reward_checkin_dates(
         )
     )
     # 活跃记录在 DB 层已按服务单+日期唯一，此处仍用 set 防御旧数据。
-    return sorted({row.checkin_date for row in rows if is_effective_reward_checkin(row)})
+    return sorted({row.checkin_date for row in rows if is_complete_checkin(row)})
 
 
 async def _program_for_locked_case(
@@ -163,6 +149,7 @@ async def reconcile_case_rewards(
     service_case_id: int,
     through_date: date | None = None,
     timezone_name: str | None = None,
+    allow_completed_settlement: bool = False,
 ) -> RewardReconciliation:
     """按现有打卡账本补齐奖励资格和进度提醒。
 
@@ -174,7 +161,10 @@ async def reconcile_case_rewards(
     )
     if service_case is None:
         raise ValueError("服务单不存在或已删除。")
-    if service_case.status != ServiceCaseStatus.IN_SERVICE:
+    allowed_statuses = {ServiceCaseStatus.IN_SERVICE}
+    if allow_completed_settlement:
+        allowed_statuses.add(ServiceCaseStatus.COMPLETED)
+    if service_case.status not in allowed_statuses:
         return RewardReconciliation(0, (), (), None)
 
     valid_dates = await valid_reward_checkin_dates(
@@ -183,7 +173,7 @@ async def reconcile_case_rewards(
         through_date=through_date,
         timezone_name=timezone_name,
     )
-    effective_days = len(valid_dates)
+    complete_checkin_days = len(valid_dates)
     existing = {
         row.tier_days: row
         for row in await session.scalars(
@@ -198,7 +188,7 @@ async def reconcile_case_rewards(
         await session.scalars(
             select(CheckinRewardProgressNotice).where(
                 CheckinRewardProgressNotice.service_case_id == service_case_id,
-                CheckinRewardProgressNotice.next_tier_days <= effective_days,
+                CheckinRewardProgressNotice.next_tier_days <= complete_checkin_days,
                 CheckinRewardProgressNotice.notification_status.in_(PENDING_NOTICE_STATUSES),
             )
         )
@@ -207,7 +197,7 @@ async def reconcile_case_rewards(
         row.notification_status = "skipped"
     new_rows: list[CheckinRewardQualification] = []
     for tier in REWARD_TIERS:
-        if effective_days < tier.days or tier.days in existing:
+        if complete_checkin_days < tier.days or tier.days in existing:
             continue
         row = CheckinRewardQualification(
             service_case_id=service_case_id,
@@ -231,27 +221,27 @@ async def reconcile_case_rewards(
         program.choice_updated_at = datetime.now(timezone.utc)
 
     new_progress_threshold = None
-    next_tier_days = PROGRESS_THRESHOLDS.get(effective_days)
+    next_tier_days = PROGRESS_THRESHOLDS.get(complete_checkin_days)
     if next_tier_days is not None and next_tier_days not in existing:
         progress = await session.scalar(
             select(CheckinRewardProgressNotice).where(
                 CheckinRewardProgressNotice.service_case_id == service_case_id,
-                CheckinRewardProgressNotice.threshold_days == effective_days,
+                CheckinRewardProgressNotice.threshold_days == complete_checkin_days,
             )
         )
         if progress is None:
             session.add(
                 CheckinRewardProgressNotice(
                     service_case_id=service_case_id,
-                    threshold_days=effective_days,
+                    threshold_days=complete_checkin_days,
                     next_tier_days=next_tier_days,
                 )
             )
-            new_progress_threshold = effective_days
+            new_progress_threshold = complete_checkin_days
 
     await session.flush()
     return RewardReconciliation(
-        effective_days=effective_days,
+        complete_checkin_days=complete_checkin_days,
         valid_dates=tuple(valid_dates),
         new_qualification_days=tuple(row.tier_days for row in new_rows),
         new_progress_threshold=new_progress_threshold,
@@ -304,7 +294,7 @@ async def render_qualification_notice(
     active_shipment = await _open_shipment(session, service_case_id=service_case_id)
     highest = max(row.tier_days for row in newly_qualified)
     lines = [
-        f"🎉 恭喜你累计完成 {highest} 天有效打卡！",
+        f"🎉 恭喜你累计完成 {highest} 天完整打卡！",
         f"本次新获得：{_qualification_display(newly_qualified)}",
         f"累计已获得：{_qualification_display(all_rows)}",
         f"目前尚未寄出：{_qualification_display(unsent)}",
@@ -330,7 +320,7 @@ async def render_qualification_notice(
 def render_progress_notice(row: CheckinRewardProgressNotice) -> str:
     tier = REWARD_TIER_BY_DAYS[row.next_tier_days]
     return (
-        f"你已经累计完成 {row.threshold_days} 天有效打卡，"
+        f"你已经累计完成 {row.threshold_days} 天完整打卡，"
         f"再完成 1 天，就能获得 {tier.display}～"
     )
 
@@ -640,14 +630,32 @@ async def check_checkin_rewards_once(
     local_now = now.astimezone(tz) if now is not None else datetime.now(tz)
     await recover_interrupted_reward_notices()
     async with SessionLocal() as session:
-        case_ids = list(
+        settlement_cutoff = local_now.astimezone(timezone.utc) - SERVICE_CASE_SETTLEMENT_GRACE
+        case_rows = list(
             await session.scalars(
-                select(ServiceCase.id).where(
+                select(ServiceCase).where(
                     ServiceCase.deleted_at.is_(None),
-                    ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                    (
+                        (ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
+                        | (
+                            (ServiceCase.status == ServiceCaseStatus.COMPLETED)
+                            & ServiceCase.ended_at.is_not(None)
+                            & (ServiceCase.ended_at >= settlement_cutoff)
+                        )
+                    ),
                 )
             )
         )
+    case_rows = [
+        row
+        for row in case_rows
+        if row.status != ServiceCaseStatus.COMPLETED
+        or not service_settlement_ended(row, local_now, tz)
+    ]
+    case_ids = [row.id for row in case_rows]
+    completed_case_ids = {
+        row.id for row in case_rows if row.status == ServiceCaseStatus.COMPLETED
+    }
     for service_case_id in case_ids:
         async with SessionLocal() as session:
             await reconcile_case_rewards(
@@ -655,6 +663,7 @@ async def check_checkin_rewards_once(
                 service_case_id=service_case_id,
                 through_date=local_now.date(),
                 timezone_name=settings.reminder_timezone,
+                allow_completed_settlement=service_case_id in completed_case_ids,
             )
             await session.commit()
 

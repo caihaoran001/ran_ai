@@ -18,8 +18,10 @@ from app.services.service_case_queries import select_active_service_cases
 
 
 CHECKLIST_SIZE = 5
+MANUAL_FOLLOWUP_SIZE = CHECKLIST_SIZE - 1
 MAX_QUESTION_CHARS = 200
 TRACKING_PRODUCT_SCHEDULE = "product_schedule"
+PRODUCT_CHECKIN_QUESTION = "产品：早C / 午B / 晚A"
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,29 @@ def normalize_manual_checklist_items(values: Iterable[object]) -> list[dict[str,
     if len(set(normalized)) != CHECKLIST_SIZE:
         raise ValueError("五项追问不能有重复内容。")
     return [{"text": question} for question in questions]
+
+
+def normalize_manual_followup_items(values: Iterable[object]) -> list[dict[str, str]]:
+    questions = [_clean_question(value) for value in values]
+    if len(questions) != MANUAL_FOLLOWUP_SIZE:
+        raise ValueError("只能设置第 2—5 项，必须正好提供 4 项。")
+    # 复用五项清单的非空、长度和去重校验，固定第1项不参与人工校验。
+    validated = normalize_manual_checklist_items([PRODUCT_CHECKIN_QUESTION, *questions])
+    return validated[1:]
+
+
+def _lock_product_checkin_item(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """兼容历史人工版本：无论当时第1项写了什么，读取时都固定为产品三段。"""
+    if len(items) != CHECKLIST_SIZE:
+        return items
+    locked = [dict(item) for item in items]
+    if locked[0].get("tracking_kind") == TRACKING_PRODUCT_SCHEDULE:
+        return locked
+    locked[0] = {
+        "text": PRODUCT_CHECKIN_QUESTION,
+        "tracking_kind": TRACKING_PRODUCT_SCHEDULE,
+    }
+    return locked
 
 
 def _snapshot_items(raw: object) -> list[dict[str, Any]]:
@@ -164,7 +189,7 @@ async def get_system_daily_checklist(
                     "sent_document" if sent_documents_only else "latest_document_preview"
                 ),
                 source_ref=f"document:{document.id}",
-                items=items,
+                items=_lock_product_checkin_item(items),
                 source_document_id=document.id,
             )
 
@@ -190,7 +215,7 @@ async def get_system_daily_checklist(
             return DailyChecklist(
                 source_type="generated_profile",
                 source_ref=f"profile:{profile.id}",
-                items=items,
+                items=_lock_product_checkin_item(items),
             )
 
     items = _items_from_fields(
@@ -202,7 +227,7 @@ async def get_system_daily_checklist(
     return DailyChecklist(
         source_type="safe_default",
         source_ref="default:v1",
-        items=items,
+        items=_lock_product_checkin_item(items),
     )
 
 
@@ -224,6 +249,7 @@ async def get_effective_daily_checklist(
     if version is not None:
         items = _snapshot_items(version.items_json)
         if items:
+            items = _lock_product_checkin_item(items)
             return DailyChecklist(
                 source_type=version.source_type,
                 source_ref=f"checklist:{version.id}",
@@ -260,7 +286,7 @@ async def create_daily_checklist_version(
     if existing is not None:
         existing_items = _snapshot_items(existing.items_json)
         if existing.source_type != source_type or existing_items != items:
-            raise ValueError("本条消息已经执行过另一项五项清单修改，不能重复改写。")
+            raise ValueError("本条消息已经执行过另一项打卡清单修改，不能重复改写。")
         return existing
     latest = await session.scalar(
         select(CheckinChecklistVersion)
@@ -292,7 +318,13 @@ async def set_manual_daily_checklist(
     questions: Iterable[object],
     source_message: Message,
 ) -> DailyChecklist:
-    items = normalize_manual_checklist_items(questions)
+    items = [
+        {
+            "text": PRODUCT_CHECKIN_QUESTION,
+            "tracking_kind": TRACKING_PRODUCT_SCHEDULE,
+        },
+        *normalize_manual_followup_items(questions),
+    ]
     version = await create_daily_checklist_version(
         session,
         service_case_id=service_case_id,

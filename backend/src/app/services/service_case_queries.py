@@ -12,6 +12,9 @@ from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 
 SERVICE_CASE_WINDOW_DAYS = 28
+# 第 28 天结束后保留次日的补问和归档/奖励结算。
+# 服务单仍按原规则完结；仅补问/归档/奖励结算留窗口，且奖励只统计第 1—28 天。
+SERVICE_CASE_SETTLEMENT_GRACE = timedelta(days=1)
 
 
 def effective_start_at(service_case: ServiceCase) -> datetime | None:
@@ -87,6 +90,18 @@ def service_window_ended(service_case: ServiceCase, now: datetime, tz: ZoneInfo)
         return False
     phase_end = service_phase_end_date(service_case, tz)
     return phase_end is not None and now.date() > phase_end
+
+
+def service_settlement_ended(service_case: ServiceCase, now: datetime, tz: ZoneInfo) -> bool:
+    """服务完结结算线：允许第 28 天次早补答完成归档与奖励结算。"""
+    if service_continuation_active(service_case):
+        return False
+    phase_end = service_phase_end_at(service_case, tz)
+    if phase_end is None:
+        return False
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=tz)
+    return now.astimezone(tz) > phase_end + SERVICE_CASE_SETTLEMENT_GRACE
 
 
 def service_phase_end_at(service_case: ServiceCase, tz: ZoneInfo) -> datetime | None:

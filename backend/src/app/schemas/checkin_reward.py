@@ -33,7 +33,7 @@ class RewardAdminCaseRead(BaseModel):
     group_id: str
     group_name: str | None
     service_status: str
-    effective_days: int
+    complete_checkin_days: int
     current_choice: str | None
     unshipped_rewards: str
     operational_status: str

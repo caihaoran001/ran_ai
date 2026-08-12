@@ -131,9 +131,9 @@ function OperationsSummary({
         <OperationFact label="最近动态事实" fact={snapshot?.latest_change} empty="暂无新的动态事实" />
         <div className="min-w-0 px-5 py-4 sm:px-6">
           <dt className="text-xs font-bold text-slate-500">打卡进度</dt>
-          <dd className="mt-1 text-sm font-bold text-slate-900">已打卡 {snapshot?.checkin_days ?? 0} 天</dd>
+          <dd className="mt-1 text-sm font-bold text-slate-900">有打卡 {snapshot?.checkin_days ?? 0} 天 · 完整打卡 {snapshot?.complete_checkin_days ?? 0} 天</dd>
           <p className="mt-1 text-xs text-slate-500">
-            {snapshot?.last_checkin_at ? `最近 ${formatDateTime(snapshot.last_checkin_at)}` : "当前服务单尚无有效打卡"}
+            {snapshot?.last_checkin_at ? `最近 ${formatDateTime(snapshot.last_checkin_at)}` : "当前服务单尚无打卡"}
           </p>
         </div>
       </dl>

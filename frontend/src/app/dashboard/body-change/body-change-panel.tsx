@@ -469,7 +469,7 @@ function SampleAudit({
                   <SampleStatus status={sample.status} />
                 </div>
                 <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <SampleField label="打卡执行">{sample.checkin_days}/{windowDay} 天（{Math.round(sample.checkin_rate * 100)}%）</SampleField>
+                  <SampleField label="有打卡">{sample.checkin_days}/{windowDay} 天（{Math.round(sample.checkin_rate * 100)}%）</SampleField>
                   <SampleField label="变化"><ChangeValue value={sample.delta} unit={unit} inline /></SampleField>
                   <SampleField label="起点">{formatSampleReading(sample.baseline, sample.baseline_day, sample.baseline_source, unit)}</SampleField>
                   <SampleField label="终点">{formatSampleReading(sample.endpoint, sample.endpoint_day, null, unit)}</SampleField>
@@ -480,7 +480,7 @@ function SampleAudit({
           <div className="hidden overflow-x-auto md:block">
             <table className="data-table min-w-[980px]">
               <thead>
-                <tr><th>用户 / 服务单</th><th>是否纳入</th><th>打卡执行</th><th>起点</th><th>终点</th><th className="text-right">变化</th></tr>
+                <tr><th>用户 / 服务单</th><th>是否纳入</th><th>有打卡</th><th>起点</th><th>终点</th><th className="text-right">变化</th></tr>
               </thead>
               <tbody>
                 {metric.samples.map((sample) => (

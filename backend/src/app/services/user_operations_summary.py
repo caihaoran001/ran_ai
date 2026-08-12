@@ -3,13 +3,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.checkin import Checkin
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_state_profile import UserStateProfile
 from app.schemas.user import UserOperationsFact, UserOperationsSnapshot
+from app.services.checkin_completion import complete_checkin_day_count
 from app.services.health_taxonomy import health_profile_dimension_labels
 
 
@@ -32,16 +33,16 @@ async def build_user_operations_snapshot(
     service_case: ServiceCase,
     state_profile: UserStateProfile | None,
 ) -> UserOperationsSnapshot:
-    checkin_result = await session.execute(
-        select(
-            func.count(distinct(Checkin.checkin_date)),
-            func.max(Checkin.created_at),
-        ).where(
-            Checkin.service_case_id == service_case.id,
-            Checkin.deleted_at.is_(None),
+    checkins = list(
+        await session.scalars(
+            select(Checkin).where(
+                Checkin.service_case_id == service_case.id,
+                Checkin.deleted_at.is_(None),
+            )
         )
     )
-    checkin_days, last_checkin_at = checkin_result.one()
+    checkin_days = len({row.checkin_date for row in checkins})
+    last_checkin_at = max((row.created_at for row in checkins), default=None)
     state_json = state_profile.state_json if state_profile else {}
     confirmed_guidance = latest_staff_guidance(state_json)
     latest_change = latest_dynamic_fact(state_json)
@@ -62,6 +63,7 @@ async def build_user_operations_snapshot(
         confirmed_guidance=confirmed_guidance,
         latest_change=latest_change,
         checkin_days=int(checkin_days or 0),
+        complete_checkin_days=complete_checkin_day_count(checkins),
         last_checkin_at=last_checkin_at,
         updated_at=updated_at,
     )

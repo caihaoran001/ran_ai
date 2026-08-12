@@ -387,7 +387,7 @@ async def test_endpoint_reports_samples_and_exclusion_reasons(db_session, admin_
         "customer_type",
     ]
     execution = day28["weight"]["segments"][0]
-    assert execution["label"] == "打卡执行度"
+    assert execution["label"] == "有打卡执行度"
     assert {item["bucket"] for item in execution["buckets"]} <= {
         "低于60%",
         "60%–79%",

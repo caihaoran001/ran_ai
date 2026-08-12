@@ -74,6 +74,8 @@ export type ServiceCaseStats = {
   last_message_at?: string | null;
   last_user_message_at?: string | null;
   checkin_count: number;
+  checkin_days: number;
+  complete_checkin_days: number;
   last_checkin_at?: string | null;
   ai_total_calls: number;
   ai_total_tokens: number;
@@ -110,7 +112,7 @@ export type RewardAdminCase = {
   group_id: string;
   group_name?: string | null;
   service_status: string;
-  effective_days: number;
+  complete_checkin_days: number;
   current_choice?: string | null;
   unshipped_rewards: string;
   operational_status: string;
@@ -155,6 +157,7 @@ export type UserOperationsSnapshot = {
   confirmed_guidance?: UserOperationsFact | null;
   latest_change?: UserOperationsFact | null;
   checkin_days: number;
+  complete_checkin_days: number;
   last_checkin_at?: string | null;
   updated_at?: string | null;
 };
@@ -255,6 +258,7 @@ export type Checkin = {
   checkin_date: string;
   content: string;
   parsed_json?: CheckinParsed | null;
+  is_complete: boolean;
   created_at: string;
 };
 

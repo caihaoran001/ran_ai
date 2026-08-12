@@ -119,7 +119,7 @@ TREND_METRICS: tuple[TrendMetricSpec, ...] = (
     ),
     TrendMetricSpec(
         "day28_checkin_completion_rate",
-        "28天打卡完成率",
+        "28天有打卡达标率",
         "participation",
         28,
         "higher_is_better",

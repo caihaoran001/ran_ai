@@ -724,7 +724,7 @@ class ArchivistPipeline:
                 if item.get("cycle_date") and item.get("item_id")
             ],
         )
-        # 不只“直接回复提醒”才算有效打卡：用户在普通聊天中报早C/午B/晚A、
+        # 不只“直接回复提醒”才算有打卡：用户在普通聊天中报早C/午B/晚A、
         # 体重或执行单个性化题目，同样应解除连续无回应的暂停状态。
         if state.get("has_checkin_activity"):
             await mark_latest_followup_cycle_answered(

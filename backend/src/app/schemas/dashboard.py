@@ -192,6 +192,7 @@ class DashboardCheckinEvent(BaseModel):
     checkin_date: str
     content: str
     parsed_json: dict | None = None
+    is_complete: bool = False
     created_at: datetime
 
 
@@ -364,6 +365,7 @@ class DashboardSummary(BaseModel):
     service_cases_total: int
     service_cases_in_service: int
     checkins_today: int
+    complete_checkins_today: int = 0
     messages_today: int
     messages_outbound_today: int = 0
     pending_documents: int

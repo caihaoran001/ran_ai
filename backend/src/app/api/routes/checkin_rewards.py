@@ -112,7 +112,7 @@ async def list_checkin_rewards(
                 group_id=service_case.group_id,
                 group_name=service_case.group_name,
                 service_status=service_case.status.value,
-                effective_days=len(valid_dates),
+                complete_checkin_days=len(valid_dates),
                 current_choice=program.current_choice if program else None,
                 unshipped_rewards=_qualification_display(unshipped),
                 operational_status=_operational_status(

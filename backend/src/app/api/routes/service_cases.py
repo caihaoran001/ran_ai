@@ -21,6 +21,7 @@ from app.schemas.service_case import (
     ServiceCaseUpdate,
 )
 from app.services.agent.context_builder import build_agent_memory_context
+from app.services.checkin_completion import complete_checkin_day_count
 from app.services.service_case_queries import (
     active_service_case_condition,
     get_active_service_case,
@@ -126,12 +127,21 @@ async def get_service_case_stats(
         first_inbound_at,
     ) = message_stats.one()
 
-    checkin_stats = await session.execute(
-        select(func.count(Checkin.id), func.max(Checkin.created_at)).where(
-            Checkin.service_case_id == service_case_id
+    checkin_rows = list(
+        await session.scalars(
+            select(Checkin).where(
+                Checkin.service_case_id == service_case_id,
+                Checkin.deleted_at.is_(None),
+            )
         )
     )
-    checkin_count, last_checkin_at = checkin_stats.one()
+    checkin_count = len(checkin_rows)
+    checkin_days = len({row.checkin_date for row in checkin_rows})
+    complete_checkin_days = complete_checkin_day_count(checkin_rows)
+    last_checkin_at = max(
+        (row.created_at for row in checkin_rows),
+        default=None,
+    )
 
     now = datetime.now(timezone.utc)
     days = 1.0
@@ -165,6 +175,8 @@ async def get_service_case_stats(
         last_message_at=last_message_at,
         last_user_message_at=last_user_message_at,
         checkin_count=checkin_count,
+        checkin_days=checkin_days,
+        complete_checkin_days=complete_checkin_days,
         last_checkin_at=last_checkin_at,
         ai_total_calls=ai_calls or 0,
         ai_total_tokens=ai_tokens or 0,

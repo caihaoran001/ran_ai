@@ -208,7 +208,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           valueClassName="text-base sm:text-lg"
         />
         <InfoCard title="交付文件" value={`${documents.length} 份`} icon={FileText} className="xl:col-span-2" />
-        <InfoCard title="打卡记录" value={`${checkins.length} 条`} icon={CheckCircle2} className="xl:col-span-2" />
+        <InfoCard title="打卡进度" value={`${stats?.checkin_days ?? 0} 天有打卡 · ${stats?.complete_checkin_days ?? 0} 天完整打卡`} icon={CheckCircle2} className="xl:col-span-2" valueClassName="text-base sm:text-lg" />
         <InfoCard title="聊天记录" value={`${stats?.message_count ?? messages.length} 条`} icon={MessageCircle} className="xl:col-span-2" />
       </div>
 
@@ -313,6 +313,9 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                       <CheckCircle2 className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
+                      <span className={`status-pill mb-2 ${checkin.is_complete ? "pill-ok" : "pill-warn"}`}>
+                        {checkin.is_complete ? "完整打卡" : "有打卡·未完整"}
+                      </span>
                       <StructuredCheckin parsed={checkin.parsed_json} />
                       <div className="mt-2 text-xs font-semibold text-slate-500">{formatDateTime(checkin.created_at)}</div>
                     </div>

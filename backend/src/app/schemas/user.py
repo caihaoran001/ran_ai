@@ -34,6 +34,7 @@ class UserOperationsSnapshot(BaseModel):
     confirmed_guidance: UserOperationsFact | None = None
     latest_change: UserOperationsFact | None = None
     checkin_days: int = 0
+    complete_checkin_days: int = 0
     last_checkin_at: datetime | None = None
     updated_at: datetime | None = None
 

@@ -47,7 +47,7 @@ async def main(*, apply: bool) -> None:
                         "case_no": service_case.case_no,
                         "user_name": service_case.user.name if service_case.user else None,
                         "group_id": service_case.group_id,
-                        "effective_days": len(valid_dates),
+                        "complete_checkin_days": len(valid_dates),
                         "valid_dates": [item.isoformat() for item in valid_dates],
                         "earned_tiers": earned,
                     }
@@ -71,7 +71,7 @@ async def main(*, apply: bool) -> None:
             {
                 "apply": apply,
                 "active_cases": len(cases),
-                "cases_with_effective_days": len(details),
+                "cases_with_complete_checkin_days": len(details),
                 "cases_with_earned_tiers": sum(bool(row["earned_tiers"]) for row in details),
                 "details": details,
             },

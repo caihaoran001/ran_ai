@@ -23,19 +23,21 @@ from app.services.agent.tools.checkin_checklist_tools import (
 )
 from app.services.archivist.followup import compose_document_checklist_followup
 from app.services.checkin_checklists import (
+    PRODUCT_CHECKIN_QUESTION,
     get_effective_daily_checklist,
+    normalize_manual_followup_items,
     normalize_manual_checklist_items,
 )
 from app.services.checkin_presentation import load_personalized_checkin_labels
 
 
-QUESTIONS = [
-    "早餐是否按计划完成？",
+EDITABLE_QUESTIONS = [
     "今天蔬菜吃够两拳了吗？",
     "今天完成了计划内运动吗？",
     "昨晚几点入睡？",
     "今天的精神状态打几分？",
 ]
+QUESTIONS = [PRODUCT_CHECKIN_QUESTION, *EDITABLE_QUESTIONS]
 
 
 async def _case(db_session) -> ServiceCase:
@@ -61,7 +63,7 @@ async def _source(
     explicit: bool = True,
     query: str | None = None,
 ) -> Message:
-    query = query or "设置五项追问：" + "；".join(QUESTIONS)
+    query = query or "设置第2到5项追问：" + "；".join(EDITABLE_QUESTIONS)
     meta = {
         "sender_id": "staff-1",
         "sender_name": "班主任小王",
@@ -90,15 +92,15 @@ def _tools(context: AgentRunContext):
 
 
 @pytest.mark.asyncio
-async def test_staff_explicit_mention_sets_exact_five_and_audit(db_session):
+async def test_staff_explicit_mention_sets_items_two_to_five_and_locks_product(db_session):
     service_case = await _case(db_session)
     source = await _source(db_session, service_case)
     tool = _tools(
         AgentRunContext(service_case_id=service_case.id, trigger_id=source.id)
     )["set_checkin_checklist"]
 
-    result = await tool.ainvoke({"questions": QUESTIONS})
-    retry_result = await tool.ainvoke({"questions": QUESTIONS})
+    result = await tool.ainvoke({"questions": EDITABLE_QUESTIONS})
+    retry_result = await tool.ainvoke({"questions": EDITABLE_QUESTIONS})
 
     assert result == {
         "ok": True,
@@ -140,7 +142,7 @@ async def test_set_rejects_user_or_message_without_explicit_mention(
         AgentRunContext(service_case_id=service_case.id, trigger_id=source.id)
     )["set_checkin_checklist"]
 
-    result = await tool.ainvoke({"questions": QUESTIONS})
+    result = await tool.ainvoke({"questions": EDITABLE_QUESTIONS})
 
     assert result["ok"] is False
     assert await db_session.scalar(select(CheckinChecklistVersion)) is None
@@ -158,7 +160,7 @@ async def test_set_rejects_questions_not_written_in_same_message(db_session):
         AgentRunContext(service_case_id=service_case.id, trigger_id=source.id)
     )["set_checkin_checklist"]
 
-    result = await tool.ainvoke({"questions": QUESTIONS})
+    result = await tool.ainvoke({"questions": EDITABLE_QUESTIONS})
 
     assert result["ok"] is False
     assert "不能补写或改写" in result["error"]
@@ -172,10 +174,12 @@ def test_manual_checklist_requires_five_nonempty_unique_questions():
         normalize_manual_checklist_items([*QUESTIONS[:4], ""])
     with pytest.raises(ValueError, match="重复内容"):
         normalize_manual_checklist_items([*QUESTIONS[:4], QUESTIONS[0]])
+    with pytest.raises(ValueError, match="正好提供 4 项"):
+        normalize_manual_followup_items(EDITABLE_QUESTIONS[:3])
 
 
 @pytest.mark.asyncio
-async def test_safe_default_does_not_treat_weight_as_product_schedule(db_session):
+async def test_safe_default_also_locks_first_item_to_product_schedule(db_session):
     service_case = await _case(db_session)
 
     checklist = await get_effective_daily_checklist(
@@ -183,8 +187,32 @@ async def test_safe_default_does_not_treat_weight_as_product_schedule(db_session
     )
 
     assert checklist.source_type == "safe_default"
-    assert checklist.resolved_items()[0]["label"] == "今日晨起体重（kg）"
-    assert "tracking_kind" not in checklist.resolved_items()[0]
+    assert checklist.resolved_items()[0]["label"] == PRODUCT_CHECKIN_QUESTION
+    assert checklist.resolved_items()[0]["tracking_kind"] == "product_schedule"
+
+
+@pytest.mark.asyncio
+async def test_legacy_manual_version_is_read_with_locked_product_item(db_session):
+    service_case = await _case(db_session)
+    db_session.add(
+        CheckinChecklistVersion(
+            service_case_id=service_case.id,
+            version_no=1,
+            items_json=[
+                {"text": "历史可编辑第1项"},
+                *[{"text": question} for question in EDITABLE_QUESTIONS],
+            ],
+            source_type="staff_override",
+        )
+    )
+    await db_session.flush()
+
+    checklist = await get_effective_daily_checklist(
+        db_session, service_case_id=service_case.id
+    )
+
+    assert [item["label"] for item in checklist.resolved_items()] == QUESTIONS
+    assert checklist.resolved_items()[0]["tracking_kind"] == "product_schedule"
 
 
 @pytest.mark.asyncio
@@ -194,7 +222,7 @@ async def test_restore_default_creates_next_version_without_erasing_history(db_s
     tools = _tools(
         AgentRunContext(service_case_id=service_case.id, trigger_id=source.id)
     )
-    await tools["set_checkin_checklist"].ainvoke({"questions": QUESTIONS})
+    await tools["set_checkin_checklist"].ainvoke({"questions": EDITABLE_QUESTIONS})
 
     reset_source = await _source(
         db_session,
@@ -260,12 +288,13 @@ async def test_manual_version_wins_over_unsent_document_and_generated_profile(
     )
     assert system_checklist.source_type == "generated_profile"
     assert [item["label"] for item in system_checklist.resolved_items()] == [
-        f"画像问题{i}" for i in range(1, 6)
+        PRODUCT_CHECKIN_QUESTION,
+        *[f"画像问题{i}" for i in range(2, 6)],
     ]
     source = await _source(db_session, service_case)
     await _tools(
         AgentRunContext(service_case_id=service_case.id, trigger_id=source.id)
-    )["set_checkin_checklist"].ainvoke({"questions": QUESTIONS})
+    )["set_checkin_checklist"].ainvoke({"questions": EDITABLE_QUESTIONS})
 
     checklist = await get_effective_daily_checklist(
         db_session, service_case_id=service_case.id
@@ -281,7 +310,7 @@ async def test_manual_question_ids_restore_historical_labels(db_session):
     source = await _source(db_session, service_case)
     await _tools(
         AgentRunContext(service_case_id=service_case.id, trigger_id=source.id)
-    )["set_checkin_checklist"].ainvoke({"questions": QUESTIONS})
+    )["set_checkin_checklist"].ainvoke({"questions": EDITABLE_QUESTIONS})
     version = await db_session.scalar(select(CheckinChecklistVersion))
 
     labels = await load_personalized_checkin_labels(
@@ -299,7 +328,7 @@ async def test_followup_uses_manual_questions_without_document(db_session):
     source = await _source(db_session, service_case)
     await _tools(
         AgentRunContext(service_case_id=service_case.id, trigger_id=source.id)
-    )["set_checkin_checklist"].ainvoke({"questions": QUESTIONS})
+    )["set_checkin_checklist"].ainvoke({"questions": EDITABLE_QUESTIONS})
 
     followup = await compose_document_checklist_followup(
         db_session,

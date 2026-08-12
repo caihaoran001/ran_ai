@@ -7,7 +7,7 @@ H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部
 （`ReminderEvent(rule_id="checkin_followup:{kind}")`）后，再由 `render_scheduled_followup`
 填充固定模板。整条追问链路不调用 LLM，每天最多 3 条：
 
-- 五项清单（daily_checklist）：早上回顾**昨天**当前生效清单里尚未回答的项；系统清单第1项跟踪早C/午B/晚A，工作人员自定义清单不强加该语义。
+- 五项清单（daily_checklist）：早上回顾**昨天**当前生效清单里尚未回答的项；第1项始终跟踪早C/午B/晚A，工作人员只能调整第2—5项。
 - 矛盾核对（contradiction）：表单值≠聊天值时下午发一句自然核对。
 - 次晨空腹打卡提醒（milestone）：day3/7/14/21/28 前一晚提醒用户次日早起如厕后、空腹测量并打卡。
 
@@ -263,7 +263,7 @@ def _answered_checklist_items(
 ) -> set[str]:
     """已答的自定义清单项（custom_checkin）。
 
-    系统清单第1项若标记为早C/午B/晚A三合一，则按子产品逐项判缺；工作人员自定义项正常按 item_id 判定。
+    第1项若标记为早C/午B/晚A三合一，则按子产品逐项判缺；第2—5项按 item_id 判定。
     """
     parsed = (
         checkin.parsed_json if checkin and isinstance(checkin.parsed_json, dict) else {}

@@ -121,7 +121,7 @@ async def test_reconcile_creates_each_tier_once_and_skips_stale_progress(db_sess
             CheckinRewardProgressNotice.service_case_id == service_case.id
         )
     )
-    assert first.effective_days == 7
+    assert first.complete_checkin_days == 7
     assert first.new_qualification_days == (3, 7)
     assert second.new_qualification_days == ()
     assert [row.tier_days for row in qualifications] == [3, 7]
@@ -136,6 +136,85 @@ async def test_reconcile_creates_each_tier_once_and_skips_stale_progress(db_sess
     assert "目前尚未寄出：1 管咖啡、1 盒钥匙" in text
     assert "1 现在寄出" in text
     assert "2 继续累积" in text
+
+
+@pytest.mark.asyncio
+async def test_completed_case_can_settle_day28_during_grace_without_counting_day29(
+    db_session,
+) -> None:
+    service_case = _case()
+    service_case.status = ServiceCaseStatus.COMPLETED
+    service_case.ended_at = datetime(2026, 8, 28, 15, 59, tzinfo=timezone.utc)
+    db_session.add(service_case)
+    await db_session.flush()
+    for offset in range(29):
+        db_session.add(
+            Checkin(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                content=f"打卡 {offset + 1}",
+                parsed_json=_parsed(),
+            )
+        )
+    await db_session.flush()
+
+    result = await reconcile_case_rewards(
+        db_session,
+        service_case_id=service_case.id,
+        through_date=date(2026, 8, 29),
+        allow_completed_settlement=True,
+    )
+
+    assert result.complete_checkin_days == 28
+    assert result.valid_dates[-1] == date(2026, 8, 28)
+    assert result.new_qualification_days == (3, 7, 14, 28)
+
+
+@pytest.mark.asyncio
+async def test_refunded_case_stops_new_rewards_but_keeps_existing_qualification(
+    db_session,
+) -> None:
+    service_case = _case()
+    service_case.status = ServiceCaseStatus.REFUNDED
+    db_session.add(service_case)
+    await db_session.flush()
+    existing = CheckinRewardQualification(
+        service_case_id=service_case.id,
+        tier_days=3,
+        reward_code="coffee_tube",
+        reward_name="咖啡",
+        quantity=1,
+        qualified_on=date(2026, 8, 3),
+    )
+    db_session.add(existing)
+    for offset in range(7):
+        db_session.add(
+            Checkin(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                content=f"退款前完整打卡 {offset + 1}",
+                parsed_json=_parsed(),
+            )
+        )
+    await db_session.flush()
+
+    result = await reconcile_case_rewards(
+        db_session,
+        service_case_id=service_case.id,
+        through_date=date(2026, 8, 28),
+    )
+    qualifications = list(
+        await db_session.scalars(
+            select(CheckinRewardQualification).where(
+                CheckinRewardQualification.service_case_id == service_case.id
+            )
+        )
+    )
+
+    assert result.new_qualification_days == ()
+    assert [row.tier_days for row in qualifications] == [3]
 
 
 @pytest.mark.asyncio

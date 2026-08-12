@@ -69,7 +69,7 @@ async def _generate_stage_payload(
         + _stage_report_method_prompt(stage)
         + "\n\n"
         "【JSON 字段写作要求】\n"
-        "- stage_summary：总结本阶段用户的整体执行情况。必须结合打卡记录中的真实数据（体重趋势、打卡天数、产品执行率、睡眠和饮水变化），写出'做得好的地方'和'需要微调的地方'，禁止只写空泛的'执行不错继续加油'。\n"
+        "- stage_summary：总结本阶段用户的整体执行情况。必须结合打卡记录中的真实数据（体重趋势、有打卡天数、产品执行率、睡眠和饮水变化），写出'做得好的地方'和'需要微调的地方'，禁止只写空泛的'执行不错继续加油'。\n"
         "- risk_reminder：检查用户打卡和聊天中是否出现过体感不适（胸闷、心悸、严重失眠、过敏等），如有则写出具体提醒并建议就医；如无明显风险，写一句通用安全提示即可。\n"
         "- adjustment_advice：基于用户当前最薄弱的1-2个维度（如晚餐收口、睡眠时间、饮水量），给出具体、量化、可执行的微调建议。禁止写'适当控制饮食'等模糊表达。\n"
         "- followup_advice：只写当前28天服务内的后续执行重点，帮助用户把现阶段动作做稳。严禁出现复购、续购、续费、续营、购买、囤货、补货、下一期、报名、优惠、活动等商业转化表达。\n\n"
@@ -222,7 +222,7 @@ def _preview_text(text: str, limit: int = 500) -> str:
 def _fallback_stage_payload(stage: str, payload: dict, checkins: list[Checkin]) -> dict:
     checkin_days = len({item.checkin_date for item in checkins})
     latest = checkins[-1].parsed_json if checkins and checkins[-1].parsed_json else {}
-    payload.setdefault("stage_summary", f"本阶段已记录 {checkin_days} 天打卡，最新反馈：{json.dumps(latest, ensure_ascii=False) if latest else '暂无结构化反馈'}。")
+    payload.setdefault("stage_summary", f"本阶段已记录 {checkin_days} 天有打卡，最新反馈：{json.dumps(latest, ensure_ascii=False) if latest else '暂无结构化反馈'}。")
     payload.setdefault("risk_reminder", "如出现胸闷、心悸、严重失眠、过敏等明显不适，请及时联系班主任并建议就医。")
     payload.setdefault("adjustment_advice", "继续守住早C/午B/晚A、饮水、睡眠、情绪、运动和体重记录六项基础动作。")
     payload.setdefault("followup_advice", "接下来先稳住本阶段执行节奏，继续按日记录产品、饮水、睡眠、排便、运动和体重变化。")

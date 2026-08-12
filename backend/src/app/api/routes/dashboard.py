@@ -65,6 +65,7 @@ from app.services.body_change_stats import (
     compute_case_window_changes,
     summarize_deltas,
 )
+from app.services.checkin_completion import is_complete_checkin
 from app.services.china_regions import match_city
 from app.schemas.service_case import ServiceCaseRead
 from app.services.intake_facts import (
@@ -156,14 +157,19 @@ async def dashboard_summary(
     )
     today_start, today_end = _today_bounds()
     today = today_start.astimezone(ZoneInfo("Asia/Shanghai")).date()
-    checkins_today = await session.scalar(
-        select(func.count(Checkin.id))
-        .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
-        .where(
-            active_service_case_condition(),
-            Checkin.checkin_date == today,
+    today_checkins = list(
+        await session.scalars(
+            select(Checkin)
+            .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
+            .where(
+                active_service_case_condition(),
+                Checkin.deleted_at.is_(None),
+                Checkin.checkin_date == today,
+            )
         )
     )
+    checkins_today = len(today_checkins)
+    complete_checkins_today = sum(is_complete_checkin(row) for row in today_checkins)
     messages_today = await session.scalar(
         select(func.count(Message.id))
         .join(ServiceCase, Message.service_case_id == ServiceCase.id)
@@ -226,7 +232,7 @@ async def dashboard_summary(
         )
     )
     # 今日转人工事件数：同一用户多次触发算多条；这不是服务单上的持续状态。
-    # 口径与「今日用户消息/今日打卡」一致，每日自然滚动，无需人工清零机制。
+    # 口径与「今日用户消息/今日有打卡」一致，每日自然滚动，无需人工清零机制。
     # 判定信号：入站用户消息的 analysis_json.requires_human_intervention（由 analyze_message_insight 写入，
     # 正是 engine 触发 @班主任 handoff 的条件）。注：旧的「待审核 AI 回复(PENDING)」机制已废弃——
     # 现凡需介入一律直接 @班主任(status=SENT)，不再生成 PENDING 回复，故不能再用它统计。
@@ -323,6 +329,7 @@ async def dashboard_summary(
         service_cases_total=total or 0,
         service_cases_in_service=in_service or 0,
         checkins_today=checkins_today or 0,
+        complete_checkins_today=complete_checkins_today,
         messages_today=messages_today or 0,
         messages_outbound_today=messages_outbound_today or 0,
         pending_documents=pending_documents or 0,
@@ -1373,7 +1380,11 @@ async def dashboard_today_checkins(
             select(Checkin, ServiceCase, User)
             .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
             .outerjoin(User, ServiceCase.user_id == User.id)
-            .where(active_service_case_condition(), Checkin.checkin_date == today)
+            .where(
+                active_service_case_condition(),
+                Checkin.deleted_at.is_(None),
+                Checkin.checkin_date == today,
+            )
             .order_by(Checkin.created_at.desc(), Checkin.id.desc())
         )
     ).all()
@@ -1389,6 +1400,7 @@ async def dashboard_today_checkins(
                 checkin_date=checkin.checkin_date.isoformat(),
                 content=checkin.content,
                 parsed_json=checkin.parsed_json,
+                is_complete=is_complete_checkin(checkin),
                 created_at=checkin.created_at,
             )
         )
@@ -1822,10 +1834,10 @@ async def _build_outcome_summary(
             ),
             _rate_metric(
                 key="day28_checkin_completion_rate",
-                label="28天打卡完成率",
+                label="28天有打卡达标率",
                 numerator=day28_complete_checkins,
                 denominator=day28_eligible,
-                description="已到第28天的服务单中，至少沉淀20天打卡记录的占比。",
+                description="已到第28天的服务单中，至少有20天打卡记录的占比；不代表完整打卡。",
             ),
             _rate_metric(
                 key="result_signal_rate",
@@ -2262,8 +2274,8 @@ def _body_change_segment(
 
     dim = (
         {
-            "label": "打卡执行度",
-            "description": "按当前窗口内有打卡的天数占比互斥分组，三组人数不会重复。",
+            "label": "有打卡执行度",
+            "description": "按当前窗口内有打卡的天数占比互斥分组，三组人数不会重复；不要求五项完整。",
             "numeric": True,
             "labels": _CHECKIN_RATE_BANDS,
         }

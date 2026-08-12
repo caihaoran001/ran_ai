@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from app.schemas.common import Timestamped
+from app.services.checkin_completion import is_complete_checkin_payload
 
 
 class CheckinCreate(BaseModel):
@@ -23,3 +24,8 @@ class CheckinRead(Timestamped):
     content: str
     raw_message_id: str | None
     parsed_json: dict | None
+
+    @computed_field
+    @property
+    def is_complete(self) -> bool:
+        return is_complete_checkin_payload(self.parsed_json)

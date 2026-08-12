@@ -11,7 +11,11 @@ from zoneinfo import ZoneInfo
 from app.core.config import get_settings
 from app.models.service_case import ServiceCaseStatus
 from app.services.reminder_service import _due_stage_reports
-from app.services.service_case_queries import service_phase_end_date, service_window_ended
+from app.services.service_case_queries import (
+    service_phase_end_date,
+    service_settlement_ended,
+    service_window_ended,
+)
 
 TZ = ZoneInfo(get_settings().reminder_timezone)
 
@@ -88,6 +92,12 @@ def test_service_phase_ends_after_day28_not_on_day28():
     assert service_phase_end_date(case, TZ) == date(2026, 6, 28)
     assert service_window_ended(case, _at(2026, 6, 28, 23), TZ) is False
     assert service_window_ended(case, _at(2026, 6, 29, 0), TZ) is True
+
+
+def test_reward_settlement_grace_covers_next_day_only():
+    case = _case(plan=date(2026, 6, 1))
+    assert service_settlement_ended(case, _at(2026, 6, 29, 10), TZ) is False
+    assert service_settlement_ended(case, _at(2026, 6, 30, 0), TZ) is True
 
 
 def test_continued_service_does_not_end_again_or_regenerate_standard_reports():

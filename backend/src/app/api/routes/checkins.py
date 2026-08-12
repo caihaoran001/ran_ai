@@ -35,7 +35,10 @@ async def list_case_checkins(
 
     result = await session.scalars(
         select(Checkin)
-        .where(Checkin.service_case_id == service_case_id)
+        .where(
+            Checkin.service_case_id == service_case_id,
+            Checkin.deleted_at.is_(None),
+        )
         .order_by(Checkin.checkin_date.desc(), Checkin.created_at.desc())
     )
     return list(result)
@@ -49,7 +52,7 @@ async def list_checkins(
     result = await session.scalars(
         select(Checkin)
         .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
-        .where(active_service_case_condition())
+        .where(active_service_case_condition(), Checkin.deleted_at.is_(None))
         .order_by(Checkin.created_at.desc())
         .limit(min(max(limit, 1), 100))
     )

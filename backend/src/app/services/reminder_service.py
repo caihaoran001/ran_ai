@@ -56,6 +56,7 @@ from app.services.document_service import (
 from app.services.outcome_engine import generate_outcome_snapshot
 from app.services.stage_report_settings import get_stage_report_schedule
 from app.services.service_case_queries import (
+    SERVICE_CASE_SETTLEMENT_GRACE,
     active_service_case_condition,
     checkin_day,
     effective_service_day,
@@ -64,6 +65,7 @@ from app.services.service_case_queries import (
     select_active_service_cases,
     service_continuation_active,
     service_phase_end_at,
+    service_settlement_ended,
     service_window_ended,
 )
 from app.services.service_case_activation import (
@@ -365,15 +367,28 @@ class ReminderService:
         today = now.date()
         async with SessionLocal() as session:
             await finalize_checkin_followup_cycles(session, today=today)
+            settlement_cutoff = now.astimezone(timezone.utc) - SERVICE_CASE_SETTLEMENT_GRACE
             service_cases = list(
                 await session.scalars(
                     select_active_service_cases(
-                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                        or_(
+                            ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                            and_(
+                                ServiceCase.status == ServiceCaseStatus.COMPLETED,
+                                ServiceCase.ended_at.is_not(None),
+                                ServiceCase.ended_at >= settlement_cutoff,
+                            ),
+                        ),
                         ServiceCase.ai_auto_reply_enabled.is_(True),
                     )
                 )
             )
             for service_case in service_cases:
+                if (
+                    service_case.status == ServiceCaseStatus.COMPLETED
+                    and service_settlement_ended(service_case, now, tz)
+                ):
+                    continue
                 if checkin_day(service_case, now, tz) is None:
                     continue
                 if await is_followup_paused(session, service_case_id=service_case.id):
@@ -388,6 +403,8 @@ class ReminderService:
                 plans = await plan_scheduled_followups(
                     session, service_case=service_case, now=now, tz=tz
                 )
+                if service_case.status == ServiceCaseStatus.COMPLETED:
+                    plans = [plan for plan in plans if plan.kind == "daily_checklist"]
                 for plan in plans:
                     if len(sent_kinds) >= 3 or plan.kind in sent_kinds:
                         continue

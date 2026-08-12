@@ -25,6 +25,7 @@ type Summary = {
   service_cases_total: number;
   service_cases_in_service: number;
   checkins_today: number;
+  complete_checkins_today: number;
   messages_today: number;
   messages_outbound_today?: number;
   pending_documents: number;
@@ -90,6 +91,7 @@ export default async function DashboardPage() {
     service_cases_total: 0,
     service_cases_in_service: 0,
     checkins_today: 0,
+    complete_checkins_today: 0,
     messages_today: 0,
     messages_outbound_today: 0,
     pending_documents: 0,
@@ -157,7 +159,7 @@ export default async function DashboardPage() {
           <div className="grid grid-cols-2 divide-x divide-y divide-slate-800/80 sm:grid-cols-4 sm:divide-y-0">
             <CommandMetric label="风险待处理" value={(summary.handoff_events_today ?? 0) + (summary.refund_intent_users ?? 0) + (summary.refund_pending_users ?? 0) + (summary.emotional_users_today ?? 0)} tone="risk" />
             <CommandMetric label="今日消息" value={summary.messages_today} tone="info" />
-            <CommandMetric label="今日打卡" value={summary.checkins_today} tone="work" />
+            <CommandMetric label="今日有打卡" value={summary.checkins_today} tone="work" />
             <CommandMetric label="待审核文件" value={summary.pending_documents} tone="review" />
           </div>
         </div>
@@ -172,7 +174,7 @@ export default async function DashboardPage() {
 
       <DashboardMetricSection title="今日运营节奏" description="用于判断当天服务触达、审核和跟进压力。">
         <StatCard label="今日用户消息" value={summary.messages_today} icon={MessageCircle} color="cyan" href="/dashboard/today-messages" description={<>今天收到的用户入站消息数。今日社群双向消息共 <span className="font-bold text-cyan-900">{summary.messages_today + (summary.messages_outbound_today ?? 0)}</span> 条。</>} />
-        <StatCard label="今日打卡" value={summary.checkins_today} icon={CheckCircle2} color="yellow" href="/dashboard/today-checkins" description="今天提交的打卡记录数；点击只看今日打卡，并按服务单聚合。" />
+        <StatCard label="今日有打卡" value={summary.checkins_today} icon={CheckCircle2} color="yellow" href="/dashboard/today-checkins" description={`今天有打卡记录 ${summary.checkins_today} 条，其中完整打卡 ${summary.complete_checkins_today} 条；点击按服务单查看。`} />
         <StatCard label="待审核文件" value={summary.pending_documents} icon={FileText} color="orange" href="/dashboard/pending-documents" description="当前有效最新文档中，草稿或待审核的文件数；点击查看具体服务单和文件。" />
         <StatCard label="今日新增用户" value={summary.new_users_today} icon={Plus} color="blue" href="/users?filter=new_today" description="今天新创建且未删除的服务单。" />
       </DashboardMetricSection>

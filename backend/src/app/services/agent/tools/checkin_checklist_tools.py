@@ -15,7 +15,7 @@ from app.models.message import (
 )
 from app.services.agent.state import AgentRunContext
 from app.services.checkin_checklists import (
-    CHECKLIST_SIZE,
+    MANUAL_FOLLOWUP_SIZE,
     get_effective_daily_checklist,
     restore_system_daily_checklist,
     set_manual_daily_checklist,
@@ -24,10 +24,11 @@ from app.services.checkin_checklists import (
 
 class SetCheckinChecklistArgs(BaseModel):
     questions: list[str] = Field(
-        min_length=CHECKLIST_SIZE,
-        max_length=CHECKLIST_SIZE,
+        min_length=MANUAL_FOLLOWUP_SIZE,
+        max_length=MANUAL_FOLLOWUP_SIZE,
         description=(
-            "工作人员在本条消息中逐项写出的五个追问原文，必须按原意原文拆成正好 5 项，"
+            "工作人员在本条消息中逐项写出的第 2—5 项追问原文，必须按原意原文拆成正好 4 项，"
+            "第 1 项固定为早C/午B/晚A，"
             "不要补写、改写、合并或推测。"
         ),
     )
@@ -84,18 +85,18 @@ def build_checkin_checklist_tools(*, context: AgentRunContext) -> list[BaseTool]
         return {"ok": True, **_checklist_payload(checklist)}
 
     async def set_checkin_checklist(questions: list[str]) -> dict[str, Any]:
-        """Save five verbatim questions from an explicitly mentioned staff command."""
+        """Save items 2-5 from an explicitly mentioned staff command; item 1 is fixed."""
         async with SessionLocal() as session:
             source, query = await _explicit_staff_source(session, context)
             if source is None:
                 return {
                     "ok": False,
-                    "error": "只有当前群内已识别的班主任或运营明确 @ 机器人，并在同一条消息写全五项后才能修改。",
+                    "error": "只有当前群内已识别的班主任或运营明确 @ 机器人，并在同一条消息写全第 2—5 项后才能修改。",
                 }
             if not _questions_are_grounded(query, questions):
                 return {
                     "ok": False,
-                    "error": "五项内容必须全部来自本条 @ 消息，不能补写或改写；请在同一条消息中完整列出五项。",
+                    "error": "第 2—5 项内容必须全部来自本条 @ 消息，不能补写或改写；请在同一条消息中完整列出 4 项。",
                 }
             try:
                 checklist = await set_manual_daily_checklist(
@@ -142,9 +143,10 @@ def build_checkin_checklist_tools(*, context: AgentRunContext) -> list[BaseTool]
             coroutine=set_checkin_checklist,
             name="set_checkin_checklist",
             description=(
-                "Set the five daily follow-up questions for THIS group. Call only when an identified staff member "
-                "explicitly @mentions the bot and writes all five questions in the SAME message. Pass exactly the "
-                "five verbatim questions; never invent, paraphrase, merge, or copy them from a file."
+                "Set daily follow-up items 2-5 for THIS group; item 1 is always the fixed morning-C/noon-B/night-A "
+                "product check-in. Call only when an identified staff member explicitly @mentions the bot and writes "
+                "all four editable questions in the SAME message. Pass exactly those four verbatim questions; never "
+                "invent, paraphrase, merge, or copy them from a file."
             ),
             args_schema=SetCheckinChecklistArgs,
         ),

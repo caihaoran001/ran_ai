@@ -4,12 +4,13 @@ import { CheckinDetailList, DetailHeader, type DashboardCaseCheckins } from "../
 export default async function TodayCheckinsPage() {
   const items = await api<DashboardCaseCheckins[]>("/dashboard/today-checkins").catch(() => []);
   const checkinCount = items.reduce((sum, item) => sum + item.checkins.length, 0);
+  const completeCount = items.reduce((sum, item) => sum + item.checkins.filter((checkin) => checkin.is_complete).length, 0);
 
   return (
     <div className="page-stack">
       <DetailHeader
-        title="今日打卡"
-        subtitle={`今天共有 ${items.length} 个服务单、${checkinCount} 条打卡记录。`}
+        title="今日有打卡"
+        subtitle={`今天共有 ${items.length} 个服务单、${checkinCount} 条有打卡记录，其中 ${completeCount} 条为完整打卡。`}
       />
       <CheckinDetailList items={items} />
     </div>

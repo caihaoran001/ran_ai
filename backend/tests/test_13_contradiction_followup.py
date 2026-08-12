@@ -52,6 +52,7 @@ from app.services.archivist.followup import (
     compose_scheduled_followups,
 )
 from app.services.checkin_followup_preferences import set_followup_preference_states
+from app.services.service_case_queries import service_phase_end_at
 from app.services.archivist.trigger import (
     KEY_INFO_SETTLE_SECONDS,
     _evaluate,
@@ -440,6 +441,64 @@ async def test_followup_scheduler_sends_fixed_copy_once_when_due(
     )
     assert len(messages) == 1
     assert messages[0].status == MessageStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_completed_day28_case_still_gets_next_morning_checklist_followup(
+    db_session,
+    monkeypatch,
+):
+    from app.services import reminder_service as reminder_module
+
+    connection = await db_session.connection()
+    await connection.run_sync(
+        lambda sync_connection: CheckinFollowupCycle.__table__.create(
+            sync_connection, checkfirst=True
+        )
+    )
+    await connection.run_sync(
+        lambda sync_connection: CheckinFollowupPreference.__table__.create(
+            sync_connection, checkfirst=True
+        )
+    )
+    now = datetime.now(_TZ).replace(hour=10, minute=29, second=59, microsecond=0)
+    case = await _case(db_session)
+    case.service_plan_start_date = now.date() - timedelta(days=28)
+    case.status = ServiceCaseStatus.COMPLETED
+    case.ended_at = service_phase_end_at(case, _TZ)
+    case.ai_auto_reply_enabled = True
+    await db_session.flush()
+
+    monkeypatch.setattr(
+        reminder_module,
+        "select_active_service_cases",
+        lambda *conditions: select(ServiceCase).where(
+            ServiceCase.id == case.id,
+            *conditions,
+        ),
+    )
+    sent: list[tuple[str, str]] = []
+
+    async def fake_send(chat_id: str, content: str) -> ChannelSendResult:
+        sent.append((chat_id, content))
+        return ChannelSendResult(success=True, message_id="settlement-followup")
+
+    monkeypatch.setattr(
+        reminder_module,
+        "_send_channel_text_with_retries",
+        fake_send,
+    )
+    service = reminder_module.ReminderService(
+        Settings(
+            CHECKIN_FOLLOWUP_ENABLED=True,
+            REMINDER_TIMEZONE="Asia/Shanghai",
+        )
+    )
+
+    await service.check_checkin_followup_v2_once(now=now)
+
+    assert len(sent) == 1
+    assert sent[0][1].startswith("早上好，补一下昨天的打卡：")
 
 
 async def _sent_execution_document(db_session, case: ServiceCase) -> UserDocument:
