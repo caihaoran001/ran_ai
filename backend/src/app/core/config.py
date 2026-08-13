@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     ai_model: str = Field(default="deepseek-v4-pro", validation_alias="AI_MODEL")
     # 交付文档/阶段报告专用模型；留空则回退 ai_model，避免聊天回复和风控被一起切到更慢模型。
     ai_document_model: str = Field(default="", validation_alias="AI_DOCUMENT_MODEL")
+    # 文档主模型在网络重试耗尽、空正文、截断或结构校验失败时切换到该模型。
+    # 留空表示不切换；与主模型相同也视为未配置。
+    ai_document_fallback_model: str = Field(
+        default="",
+        validation_alias="AI_DOCUMENT_FALLBACK_MODEL",
+    )
     # 风险/意图判断(message_insight 场景)专用模型；留空则回退 ai_model。判断准确度最关键，可单独配更强模型。
     ai_risk_model: str = Field(default="", validation_alias="AI_RISK_MODEL")
     ai_temperature: float = Field(default=0.3, validation_alias="AI_TEMPERATURE")

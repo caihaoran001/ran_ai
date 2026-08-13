@@ -244,6 +244,8 @@ async def _image_checkin_context(
 class AIService:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
+        self._document_fallback_scenarios: set[str] = set()
+        self._last_successful_model_by_scenario: dict[str, str] = {}
         self._client = AsyncOpenAI(
             api_key=self.settings.ai_api_key or "missing",
             base_url=self.settings.ai_base_url,
@@ -418,6 +420,31 @@ class AIService:
             return self.settings.ai_document_model.strip()
         return self.settings.ai_model
 
+    def _fallback_model_for(self, scenario: str) -> str | None:
+        if scenario not in _DOCUMENT_JSON_SCENARIOS:
+            return None
+        fallback = (self.settings.ai_document_fallback_model or "").strip()
+        primary = self._model_for(scenario)
+        return fallback if fallback and fallback != primary else None
+
+    def activate_fallback_model(self, scenario: str) -> bool:
+        """后置结构校验失败时，让该 AIService 实例后续文档重试固定走备用模型。"""
+
+        if self._fallback_model_for(scenario) is None:
+            return False
+        scenarios = getattr(self, "_document_fallback_scenarios", None)
+        if scenarios is None:
+            scenarios = set()
+            self._document_fallback_scenarios = scenarios
+        scenarios.add(scenario)
+        return True
+
+    def last_model_for(self, scenario: str) -> str:
+        """返回该实例在场景中最后成功产出正文的真实型号，供文档审计落库。"""
+
+        used = getattr(self, "_last_successful_model_by_scenario", {}).get(scenario)
+        return used or self._model_for(scenario)
+
     def _max_tokens_for(self, scenario: str) -> int:
         """文档 thinking 和最终 JSON 共享输出预算，用独立上限避免挤占聊天配额。"""
 
@@ -437,7 +464,81 @@ class AIService:
     ) -> str:
         if not self.settings.ai_api_key:
             raise RuntimeError("AI_API_KEY is required")
-        model = self._model_for(scenario)
+        primary_model = self._model_for(scenario)
+        fallback_model = self._fallback_model_for(scenario)
+        activated = scenario in getattr(self, "_document_fallback_scenarios", set())
+        model = fallback_model if activated and fallback_model else primary_model
+        try:
+            return await self._generate_text_with_model(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                scenario=scenario,
+                temperature=temperature,
+                service_case_id=service_case_id,
+                message_id=message_id,
+                model=model,
+            )
+        except Exception as exc:
+            if (
+                model == primary_model
+                and fallback_model is not None
+                and self._fallback_eligible(exc)
+            ):
+                self.activate_fallback_model(scenario)
+                logger.warning(
+                    "document model fallback activated scenario=%s service_case_id=%s "
+                    "primary_model=%s fallback_model=%s error_type=%s",
+                    scenario,
+                    service_case_id,
+                    primary_model,
+                    fallback_model,
+                    type(exc).__name__,
+                )
+                return await self._generate_text_with_model(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    scenario=scenario,
+                    temperature=temperature,
+                    service_case_id=service_case_id,
+                    message_id=message_id,
+                    model=fallback_model,
+                )
+            raise
+
+    @staticmethod
+    def _fallback_eligible(exc: Exception) -> bool:
+        if isinstance(
+            exc,
+            (
+                RetryableAIContentError,
+                APIConnectionError,
+                APITimeoutError,
+                RateLimitError,
+            ),
+        ):
+            return True
+        return isinstance(exc, APIStatusError) and exc.status_code in {
+            408,
+            409,
+            425,
+            429,
+            500,
+            502,
+            503,
+            504,
+        }
+
+    async def _generate_text_with_model(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        scenario: str,
+        temperature: float | None,
+        service_case_id: int | None,
+        message_id: int | None,
+        model: str,
+    ) -> str:
         max_tokens = self._max_tokens_for(scenario)
         started_at = time.monotonic()
         finish = None
@@ -507,6 +608,11 @@ class AIService:
                 service_case_id=service_case_id,
                 message_id=message_id,
             )
+            used = getattr(self, "_last_successful_model_by_scenario", None)
+            if used is None:
+                used = {}
+                self._last_successful_model_by_scenario = used
+            used[scenario] = model
             return (content or "").strip()
         except Exception as exc:
             logger.info(

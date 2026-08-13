@@ -116,6 +116,9 @@ async def _generate_stage_payload(
                 len(raw_text or ""),
                 _preview_text(raw_text),
             )
+            activate_fallback = getattr(ai, "activate_fallback_model", None)
+            if callable(activate_fallback):
+                activate_fallback("stage_report")
         except Exception:
             logger.exception(
                 "Stage report payload generation failed (LLM/parse) stage=%s case_no=%s attempt=%s/%s",
@@ -124,6 +127,9 @@ async def _generate_stage_payload(
                 attempt,
                 max_attempts,
             )
+            activate_fallback = getattr(ai, "activate_fallback_model", None)
+            if callable(activate_fallback):
+                activate_fallback("stage_report")
 
     logger.error(
         "Stage report payload unusable after retries; using degraded fallback stage=%s case_no=%s keys=%s",

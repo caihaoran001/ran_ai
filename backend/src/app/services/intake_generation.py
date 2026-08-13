@@ -850,11 +850,17 @@ async def _generate_intake_analysis_package(
             last_error = exc
             if attempt >= INTAKE_DOCUMENT_MAX_ATTEMPTS:
                 raise
+            activate_fallback = getattr(ai, "activate_fallback_model", None)
+            fallback_activated = bool(
+                callable(activate_fallback) and activate_fallback("intake_doc")
+            )
             logger.warning(
-                "intake document content invalid; regenerating service_case_id=%s attempt=%s/%s error=%s",
+                "intake document content invalid; regenerating service_case_id=%s "
+                "attempt=%s/%s fallback_activated=%s error=%s",
                 service_case.id,
                 attempt,
                 INTAKE_DOCUMENT_MAX_ATTEMPTS,
+                fallback_activated,
                 exc,
             )
     raise RuntimeError("intake document generation retry loop exited unexpectedly")

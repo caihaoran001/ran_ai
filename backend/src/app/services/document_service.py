@@ -67,6 +67,13 @@ from app.services.document_delivery import (
 
 logger = logging.getLogger(__name__)
 
+
+def _actual_model_for(ai: AIService, scenario: str) -> str:
+    last_model_for = getattr(ai, "last_model_for", None)
+    if callable(last_model_for):
+        return str(last_model_for(scenario))
+    return str(ai._model_for(scenario))
+
 __all__ = [
     "generate_profile",
     "generate_documents",
@@ -124,7 +131,7 @@ async def generate_profile_and_documents(
         submission=submission,
     )
     llm_output_at = datetime.now(timezone.utc)
-    intake_model = ai._model_for("intake_doc")
+    intake_model = _actual_model_for(ai, "intake_doc")
     intake_facts = package.get("intake_facts") if isinstance(package.get("intake_facts"), dict) else {}
     legal_name = str(intake_facts.get("legal_name") or user_name or "未提供").strip()
     display_name = str(intake_facts.get("recipient_name") or user_name or "未提供").strip()
@@ -293,7 +300,7 @@ async def generate_stage_report(
         content_json=content_json,
         file_path=None,
         status=DocumentStatus.REVIEWING,
-        generated_by_model=ai._model_for("stage_report"),
+        generated_by_model=_actual_model_for(ai, "stage_report"),
     )
     session.add(document)
     await session.commit()
@@ -375,7 +382,7 @@ async def retry_degraded_stage_report(session: AsyncSession, document: UserDocum
     document.content_json = content_json  # 不含 degraded / degraded_retry_count
     document.content_md = render_document_content(content_json)
     document.file_path = None
-    document.generated_by_model = ai._model_for("stage_report")
+    document.generated_by_model = _actual_model_for(ai, "stage_report")
     await session.commit()
     logger.info("Stage report degraded -> recovered doc_id=%s stage=%s", document.id, stage)
     return True
