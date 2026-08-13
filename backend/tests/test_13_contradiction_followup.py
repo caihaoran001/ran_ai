@@ -126,6 +126,37 @@ async def test_form_vs_chat_contradiction_is_kept_and_flagged(db_session):
 
 
 @pytest.mark.asyncio
+async def test_checkin_upsert_merges_exact_message_evidence(db_session):
+    case = await _case(db_session)
+    today = date.today()
+
+    first = await upsert_checkin(
+        db_session,
+        service_case=case,
+        checkin_date=today,
+        fields={"weight": "168斤"},
+        evidence_msg_ids=[101, 102],
+    )
+    second = await upsert_checkin(
+        db_session,
+        service_case=case,
+        checkin_date=today,
+        fields={"weight": "168斤", "exercise": "快走25分钟"},
+        evidence_msg_ids=[102, 103],
+    )
+
+    row = await db_session.scalar(
+        select(Checkin).where(
+            Checkin.service_case_id == case.id, Checkin.deleted_at.is_(None)
+        )
+    )
+    assert first.evidence_updated is True
+    assert second.evidence_updated is True
+    assert row.parsed_json["_meta"]["evidence_message_ids"] == [101, 102, 103]
+    assert row.raw_message_id == "103"
+
+
+@pytest.mark.asyncio
 async def test_detect_and_compose_confirmation(db_session):
     case = await _case(db_session)
     today = date.today()

@@ -23,9 +23,16 @@ def is_complete_checkin_payload(parsed_json: object) -> bool:
     ):
         return False
 
+    return complete_checkin_item_prefix(parsed) is not None
+
+
+def complete_checkin_item_prefix(parsed_json: object) -> str | None:
+    """返回使当天完整的清单版本；多版都完整时固定取字典序最小者。"""
+
+    parsed = parsed_json if isinstance(parsed_json, dict) else {}
     custom = parsed.get("custom_checkin")
     if not isinstance(custom, dict):
-        return False
+        return None
     answered_by_prefix: dict[str, set[int]] = defaultdict(set)
     for raw_item_id, value in custom.items():
         if not isinstance(value, dict) or not _nonempty(value.get("answer")):
@@ -34,7 +41,12 @@ def is_complete_checkin_payload(parsed_json: object) -> bool:
         if not separator or raw_index not in {"2", "3", "4", "5"}:
             continue
         answered_by_prefix[prefix].add(int(raw_index))
-    return any(indexes == {2, 3, 4, 5} for indexes in answered_by_prefix.values())
+    complete_prefixes = sorted(
+        prefix
+        for prefix, indexes in answered_by_prefix.items()
+        if indexes == {2, 3, 4, 5}
+    )
+    return complete_prefixes[0] if complete_prefixes else None
 
 
 def is_complete_checkin(checkin: Checkin) -> bool:

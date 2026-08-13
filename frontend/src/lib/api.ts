@@ -105,6 +105,29 @@ export type RewardShipment = {
   marked_by?: string | null;
 };
 
+export type RewardCheckinItem = {
+  order: number;
+  item_id: string;
+  question: string;
+  answer: string;
+};
+
+export type RewardCheckinSourceMessage = {
+  id: number;
+  message_type: string;
+  content: string;
+  created_at: string;
+};
+
+export type RewardCheckinDay = {
+  checkin_id: number;
+  checkin_date: string;
+  cumulative_day: number;
+  items: RewardCheckinItem[];
+  source_messages: RewardCheckinSourceMessage[];
+  original_submission?: string | null;
+};
+
 export type RewardAdminCase = {
   service_case_id: number;
   case_no: string;
@@ -118,6 +141,7 @@ export type RewardAdminCase = {
   operational_status: string;
   qualifications: RewardQualification[];
   shipments: RewardShipment[];
+  checkin_days: RewardCheckinDay[];
 };
 
 export type UserProfile = {

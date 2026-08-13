@@ -13,18 +13,26 @@ from app.models.checkin_reward import (
     CheckinRewardQualification,
     CheckinRewardShipment,
 )
+from app.models.checkin import Checkin
+from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.schemas.checkin_reward import (
     MarkShipmentRead,
     RewardAdminCaseRead,
+    RewardCheckinDayRead,
+    RewardCheckinItemRead,
+    RewardCheckinSourceMessageRead,
     RewardQualificationRead,
     RewardShipmentRead,
 )
+from app.services.checkin_presentation import load_personalized_checkin_labels
 from app.services.checkin_rewards import (
     OPEN_SHIPMENT_STATUSES,
     _qualification_display,
     deliver_pending_shipment_notices,
-    valid_reward_checkin_dates,
+    reward_checkin_evidence_message_ids,
+    reward_checkin_items,
+    valid_reward_checkins,
 )
 from app.services.service_case_queries import active_service_case_condition
 
@@ -91,6 +99,60 @@ async def list_checkin_rewards(
         shipments_by_case.setdefault(row.service_case_id, []).append(row)
         shipments_by_id[row.id] = row
 
+    reward_case_ids = {
+        *qualifications_by_case.keys(),
+        *shipments_by_case.keys(),
+    }
+    valid_checkins_by_case: dict[int, list[Checkin]] = {}
+    evidence_ids_by_checkin: dict[int, list[int]] = {}
+    all_evidence_ids: set[int] = set()
+    for service_case in service_cases:
+        if service_case.id not in reward_case_ids:
+            continue
+        valid_checkins = await valid_reward_checkins(
+            session,
+            service_case=service_case,
+        )
+        valid_checkins_by_case[service_case.id] = valid_checkins
+        for checkin in valid_checkins:
+            message_ids = reward_checkin_evidence_message_ids(checkin)
+            evidence_ids_by_checkin[checkin.id] = message_ids
+            all_evidence_ids.update(message_ids)
+    source_messages = {
+        row.id: row
+        for row in (
+            list(
+                await session.scalars(
+                    select(Message).where(
+                        Message.id.in_(all_evidence_ids),
+                        Message.service_case_id.in_(reward_case_ids),
+                        Message.direction == MessageDirection.INBOUND,
+                        Message.sender_type == MessageSenderType.USER,
+                    )
+                )
+            )
+            if all_evidence_ids
+            else []
+        )
+    }
+    labels_by_id_by_case: dict[int, dict[str, str]] = {}
+    for service_case_id, valid_checkins in valid_checkins_by_case.items():
+        case_item_ids = {
+            str(item_id)
+            for checkin in valid_checkins
+            for item_id in (
+                (checkin.parsed_json or {}).get("custom_checkin", {}).keys()
+                if isinstance(checkin.parsed_json, dict)
+                and isinstance((checkin.parsed_json or {}).get("custom_checkin"), dict)
+                else []
+            )
+        }
+        labels_by_id_by_case[service_case_id] = await load_personalized_checkin_labels(
+            session,
+            service_case_id=service_case_id,
+            item_ids=case_item_ids,
+        )
+
     response: list[RewardAdminCaseRead] = []
     for service_case in service_cases:
         qualifications = qualifications_by_case.get(service_case.id, [])
@@ -100,10 +162,8 @@ async def list_checkin_rewards(
             continue
         shipped_ids = {row.id for row in shipments if row.status == "shipped"}
         unshipped = [row for row in qualifications if row.shipment_id not in shipped_ids]
-        valid_dates = await valid_reward_checkin_dates(
-            session,
-            service_case=service_case,
-        )
+        valid_checkins = valid_checkins_by_case.get(service_case.id, [])
+        labels_by_id = labels_by_id_by_case.get(service_case.id, {})
         response.append(
             RewardAdminCaseRead(
                 service_case_id=service_case.id,
@@ -112,7 +172,7 @@ async def list_checkin_rewards(
                 group_id=service_case.group_id,
                 group_name=service_case.group_name,
                 service_status=service_case.status.value,
-                complete_checkin_days=len(valid_dates),
+                complete_checkin_days=len(valid_checkins),
                 current_choice=program.current_choice if program else None,
                 unshipped_rewards=_qualification_display(unshipped),
                 operational_status=_operational_status(
@@ -151,6 +211,39 @@ async def list_checkin_rewards(
                     )
                     for shipment in reversed(shipments)
                     if shipment.status != "cancelled"
+                ],
+                checkin_days=[
+                    RewardCheckinDayRead(
+                        checkin_id=checkin.id,
+                        checkin_date=checkin.checkin_date,
+                        cumulative_day=index,
+                        items=[
+                            RewardCheckinItemRead(**item)
+                            for item in reward_checkin_items(
+                                checkin,
+                                labels_by_id=labels_by_id,
+                            )
+                        ],
+                        source_messages=[
+                            RewardCheckinSourceMessageRead(
+                                id=source.id,
+                                message_type=source.message_type,
+                                content=source.content,
+                                created_at=source.created_at,
+                            )
+                            for message_id in evidence_ids_by_checkin[checkin.id]
+                            if (source := source_messages.get(message_id)) is not None
+                            and source.service_case_id == service_case.id
+                        ],
+                        original_submission=(
+                            checkin.content
+                            if not evidence_ids_by_checkin[checkin.id]
+                            and checkin.content
+                            not in {"（聊天自动归档）", "（历史打卡漏记修复）"}
+                            else None
+                        ),
+                    )
+                    for index, checkin in enumerate(valid_checkins, start=1)
                 ],
             )
         )

@@ -65,6 +65,7 @@ class FakeToolCallingModel:
 def test_report_checkin_uses_integer_evidence_message_ids():
     payload = ReportCheckinArgs(
         target_date="2026-08-10",
+        evidence_message_ids=[43420, 43421],
         followup_answers=[
             {
                 "item_id": "milestone_morning_checkin",
@@ -86,6 +87,7 @@ def test_report_checkin_uses_integer_evidence_message_ids():
 
     assert payload["followup_answers"][0]["evidence_message_id"] == 43438
     assert payload["checklist_answers"][0]["evidence_message_id"] == 43428
+    assert payload["evidence_message_ids"] == [43420, 43421]
     schema = ReportCheckinArgs.model_json_schema()
     definitions = schema["$defs"]
     assert (
@@ -100,6 +102,7 @@ def test_report_checkin_uses_integer_evidence_message_ids():
         ]["type"]
         == "integer"
     )
+    assert schema["properties"]["evidence_message_ids"]["anyOf"][0]["items"]["type"] == "integer"
 
 
 @pytest.mark.asyncio
@@ -441,6 +444,7 @@ async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
                         "target_date": target_date,
                         "weight": "168斤",
                         "product_schedule": {"morning_c": "已喝"},
+                        "evidence_message_ids": [msgs[0].id],
                     },
                     "id": "c1",
                 },
@@ -494,6 +498,8 @@ async def test_archivist_writes_outcome_and_profile_to_real_tables(db_session):
     )
     assert checkin is not None
     assert (checkin.parsed_json or {}).get("weight") == "168斤"
+    assert checkin.parsed_json["_meta"]["evidence_message_ids"] == [msgs[0].id]
+    assert checkin.raw_message_id == str(msgs[0].id)
 
     # 2) 成效直写真表：两条合法事件落库，source=archivist、message_id=anchor(最后一条)、里程碑 day7；
     #    非白名单 mood_change 被丢弃。

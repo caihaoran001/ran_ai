@@ -52,7 +52,9 @@ _SYSTEM_PROMPT = (
     "【可用工具与调用纪律】\n"
     "- report_checkin：按北京时间自然日上报打卡。一批可能跨多天，每天分别调用一次并填写"
     "target_date；同一天的信息合并到一次调用。只填用户明确说了的，没提到的字段一律留空，"
-    "禁止脑补或换算单位。用户消息里的「图片内容：」是视觉模型对同一条用户图片的观察："
+    "禁止脑补或换算单位。只要填了任一固定打卡字段，必须同时在 evidence_message_ids "
+    "列出直接支持这些字段的用户消息 ID；不得把同日无关闲聊、助教或班主任消息当证据。"
+    "用户消息里的「图片内容：」是视觉模型对同一条用户图片的观察："
     "餐食内容可直接记入 diet；同图有餐食和产品时两者都要上报。产品时段只在图片描述已明确写出早C/午B/晚A"
     "以及「无需再向用户确认时段」时才填对应的已喝；若描述说无法判断哪一段，不填产品字段。\n"
     "- report_outcome：每发现一条**成效维度上的变化**就调用一次，必须带来自用户原话的 "
@@ -194,6 +196,7 @@ async def run_extract_agent(
     """
     collector: dict[str, Any] = {
         "checkins": {},
+        "checkin_evidence_ids": {},
         "followup_answers": [],
         "checklist_answers": [],
         "outcome": [],
@@ -337,6 +340,12 @@ async def run_extract_agent(
                 # 同一天多次 report_checkin：后填的补进来（不覆盖已填的非空值）。
                 for k, v in fields.items():
                     day_fields.setdefault(k, v)
+                evidence_ids = collector["checkin_evidence_ids"].setdefault(
+                    target_date, []
+                )
+                for raw_id in validated.get("evidence_message_ids") or []:
+                    if raw_id not in evidence_ids:
+                        evidence_ids.append(raw_id)
             allowed = {
                 (str(item.get("item_id")), str(item.get("cycle_date")), str(item.get("target_date")))
                 for item in (followup_context or [])
@@ -389,6 +398,7 @@ async def run_extract_agent(
             day: sorted(fields.keys())
             for day, fields in collector["checkins"].items()
         },
+        "checkin_evidence_ids": collector["checkin_evidence_ids"],
         "checklist_item_ids": [str(a.get("item_id") or "") for a in collector["checklist_answers"]],
         "followup_item_ids": [str(a.get("item_id") or "") for a in collector["followup_answers"]],
         "outcome": len(collector["outcome"]),

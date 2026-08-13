@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { CheckCircle2, Gift, MapPin, PackageOpen, Truck } from "lucide-react";
-import { api, type RewardAdminCase, type RewardShipment } from "@/lib/api";
+import { CheckCircle2, ChevronDown, FileText, Gift, MapPin, MessageSquareQuote, PackageOpen, Truck } from "lucide-react";
+import { api, type RewardAdminCase, type RewardCheckinDay, type RewardShipment } from "@/lib/api";
 import { ShipmentAction } from "./shipment-action";
 
 const statusCopy: Record<string, { label: string; className: string }> = {
@@ -93,6 +93,66 @@ function ShipmentCard({ shipment }: { shipment: RewardShipment }) {
         </p>
       ) : null}
     </div>
+  );
+}
+
+function CheckinEvidenceDay({ day }: { day: RewardCheckinDay }) {
+  return (
+    <li className="border-t border-slate-200 first:border-t-0">
+      <details className="group/day">
+        <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="font-bold text-slate-950">{day.checkin_date}</span>
+            <span className="text-xs font-semibold text-slate-600">累计第 {day.cumulative_day} 天</span>
+            <span className="status-pill pill-ok">完整打卡</span>
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform duration-200 group-open/day:rotate-180 motion-reduce:transition-none" />
+        </summary>
+        <div className="grid gap-4 border-t border-slate-100 bg-slate-50/60 px-4 py-4 lg:grid-cols-[minmax(22rem,1.35fr)_minmax(18rem,0.65fr)]">
+          <div>
+            <p className="mb-2 flex items-center gap-2 text-xs font-bold text-slate-700">
+              <FileText className="h-3.5 w-3.5 text-cyan-700" />
+              当天计入的五项
+            </p>
+            <ol className="grid gap-2">
+              {day.items.map((item) => (
+                <li key={item.item_id} className="grid gap-1 rounded-lg bg-white px-3 py-2.5 text-sm ring-1 ring-slate-200 sm:grid-cols-[minmax(10rem,0.9fr)_minmax(12rem,1.1fr)] sm:gap-4">
+                  <span className="text-break font-semibold text-slate-700">{item.order}. {item.question}</span>
+                  <span className="text-break text-slate-950">{item.answer}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+          <div>
+            <p className="mb-2 flex items-center gap-2 text-xs font-bold text-slate-700">
+              <MessageSquareQuote className="h-3.5 w-3.5 text-cyan-700" />
+              用户原话
+            </p>
+            {day.source_messages.length ? (
+              <div className="grid gap-2">
+                {day.source_messages.map((message) => (
+                  <blockquote key={message.id} className="rounded-lg bg-white px-3 py-2.5 text-sm leading-6 text-slate-800 ring-1 ring-slate-200">
+                    <p className="text-break whitespace-pre-wrap">{message.content}</p>
+                    <footer className="mt-1 text-xs font-medium text-slate-500">
+                      消息 #{message.id} · {formatDate(message.created_at)}
+                    </footer>
+                  </blockquote>
+                ))}
+              </div>
+            ) : day.original_submission ? (
+              <blockquote className="rounded-lg bg-white px-3 py-2.5 text-sm leading-6 text-slate-800 ring-1 ring-slate-200">
+                <p className="text-break whitespace-pre-wrap">{day.original_submission}</p>
+                <footer className="mt-1 text-xs font-medium text-slate-500">原始打卡提交</footer>
+              </blockquote>
+            ) : (
+              <p className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-3 text-sm leading-6 text-slate-600">
+                该历史打卡没有可回查的群消息证据；五项答案仍来自当天打卡账本。
+              </p>
+            )}
+          </div>
+        </div>
+      </details>
+    </li>
   );
 }
 
@@ -192,6 +252,26 @@ export default async function RewardsPage() {
                     )}
                   </div>
                 </div>
+              </div>
+
+              <div className="border-t border-slate-200 px-4 py-4 sm:px-5 sm:py-5">
+                <details
+                  className="group/evidence"
+                  open={row.operational_status === "pending_shipment"}
+                >
+                  <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden">
+                    <span className="min-w-0">
+                      <span className="block text-sm font-bold text-slate-950">完整打卡证据</span>
+                      <span className="mt-0.5 block text-xs leading-5 text-slate-600">
+                        共 {row.checkin_days.length} 天；展开后可核对日期、五项答案和用户原话
+                      </span>
+                    </span>
+                    <ChevronDown className="h-5 w-5 shrink-0 text-slate-500 transition-transform duration-200 group-open/evidence:rotate-180 motion-reduce:transition-none" />
+                  </summary>
+                  <ol className="border-t border-slate-200">
+                    {row.checkin_days.map((day) => <CheckinEvidenceDay key={day.checkin_id} day={day} />)}
+                  </ol>
+                </details>
               </div>
             </section>
           );

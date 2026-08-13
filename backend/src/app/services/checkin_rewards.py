@@ -31,6 +31,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.channels import send_channel_text
 from app.services.channels.base import ChannelSendResult
 from app.services.checkin_completion import is_complete_checkin
+from app.services.checkin_completion import complete_checkin_item_prefix
 from app.services.service_case_queries import (
     SERVICE_CASE_SETTLEMENT_GRACE,
     checkin_first_day,
@@ -90,6 +91,26 @@ async def valid_reward_checkin_dates(
     through_date: date | None = None,
     timezone_name: str | None = None,
 ) -> list[date]:
+    return [
+        row.checkin_date
+        for row in await valid_reward_checkins(
+            session,
+            service_case=service_case,
+            through_date=through_date,
+            timezone_name=timezone_name,
+        )
+    ]
+
+
+async def valid_reward_checkins(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    through_date: date | None = None,
+    timezone_name: str | None = None,
+) -> list[Checkin]:
+    """返回该服务单奖励累计实际计入的完整打卡行。"""
+
     tz = ZoneInfo(timezone_name or get_settings().reminder_timezone)
     first_day = checkin_first_day(service_case, tz)
     if first_day is None:
@@ -110,8 +131,101 @@ async def valid_reward_checkin_dates(
             select(Checkin).where(*conditions).order_by(Checkin.checkin_date, Checkin.id)
         )
     )
-    # 活跃记录在 DB 层已按服务单+日期唯一，此处仍用 set 防御旧数据。
-    return sorted({row.checkin_date for row in rows if is_complete_checkin(row)})
+    # 活跃记录在 DB 层已按服务单+日期唯一；仍按日期去重防御旧数据。
+    by_date: dict[date, Checkin] = {}
+    for row in rows:
+        if is_complete_checkin(row):
+            by_date.setdefault(row.checkin_date, row)
+    return [by_date[checkin_date] for checkin_date in sorted(by_date)]
+
+
+def reward_checkin_items(
+    checkin: Checkin,
+    *,
+    labels_by_id: dict[str, str] | None = None,
+) -> list[dict[str, object]]:
+    """整理使某天完整的同一版五项答案，供运营核验。"""
+
+    parsed = checkin.parsed_json if isinstance(checkin.parsed_json, dict) else {}
+    prefix = complete_checkin_item_prefix(parsed)
+    schedule = parsed.get("product_schedule")
+    custom = parsed.get("custom_checkin")
+    if prefix is None or not isinstance(schedule, dict) or not isinstance(custom, dict):
+        return []
+    labels = labels_by_id or {}
+
+    product_item_id = f"{prefix}:1"
+    raw_product_item = custom.get(product_item_id)
+    product_question = (
+        str(raw_product_item.get("question") or "").strip()
+        if isinstance(raw_product_item, dict)
+        else ""
+    )
+    items: list[dict[str, object]] = [
+        {
+            "order": 1,
+            "item_id": product_item_id,
+            "question": product_question or labels.get(product_item_id) or "早C、午B、晚A",
+            "answer": "；".join(
+                (
+                    f"早C：{str(schedule.get('morning_c') or '').strip()}",
+                    f"午B：{str(schedule.get('noon_b') or '').strip()}",
+                    f"晚A：{str(schedule.get('night_a') or '').strip()}",
+                )
+            ),
+        }
+    ]
+    for index in range(2, 6):
+        item_id = f"{prefix}:{index}"
+        raw_item = custom.get(item_id)
+        if not isinstance(raw_item, dict):
+            return []
+        answer = str(raw_item.get("answer") or "").strip()
+        question = str(raw_item.get("question") or "").strip()
+        if not answer:
+            return []
+        items.append(
+            {
+                "order": index,
+                "item_id": item_id,
+                "question": question or labels.get(item_id) or f"专属第 {index} 项",
+                "answer": answer,
+            }
+        )
+    return items
+
+
+def reward_checkin_evidence_message_ids(checkin: Checkin) -> list[int]:
+    """只收集落库时保存的用户证据 ID，不从邻近聊天猜测。"""
+
+    parsed = checkin.parsed_json if isinstance(checkin.parsed_json, dict) else {}
+    prefix = complete_checkin_item_prefix(parsed)
+    custom = parsed.get("custom_checkin")
+    values: list[object] = []
+    meta = parsed.get("_meta")
+    if isinstance(meta, dict):
+        stored_ids = meta.get("evidence_message_ids")
+        if isinstance(stored_ids, list):
+            values.extend(stored_ids)
+    if prefix is not None and isinstance(custom, dict):
+        for index in range(1, 6):
+            item = custom.get(f"{prefix}:{index}")
+            if isinstance(item, dict):
+                values.append(item.get("evidence_message_id"))
+    # 旧数据只有 raw_message_id，它是当批最后一条用户消息，关联精度低。
+    # 有逐项或新版精确证据时不再混入该兜底，避免展示同日无关闲聊。
+    if not any(value is not None for value in values):
+        values.append(checkin.raw_message_id)
+
+    ids: list[int] = []
+    for value in values:
+        try:
+            message_id = int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            continue
+        if message_id > 0 and message_id not in ids:
+            ids.append(message_id)
+    return sorted(ids)
 
 
 async def _program_for_locked_case(

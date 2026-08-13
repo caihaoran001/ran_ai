@@ -85,6 +85,13 @@ class ReportCheckinArgs(BaseModel):
         pattern=r"^\d{4}-\d{2}-\d{2}$",
         description="这条打卡所属的北京时间自然日，必须来自输入里的日期分组（YYYY-MM-DD）",
     )
+    evidence_message_ids: list[int] | None = Field(
+        default=None,
+        description=(
+            "支持本次固定打卡字段（如产品、饮食、运动）的用户消息数字 ID；"
+            "只列输入中直接提供这些信息的用户消息，不要列助教或班主任消息。"
+        ),
+    )
     product_schedule: dict[str, str] | None = Field(
         default=None,
         description=(

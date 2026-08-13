@@ -27,6 +27,7 @@ from app.services.checkin_rewards import (
     is_effective_reward_checkin,
     reconcile_case_rewards,
     render_qualification_notice,
+    reward_checkin_evidence_message_ids,
 )
 
 
@@ -72,6 +73,35 @@ def test_effective_reward_checkin_requires_one_complete_checklist_version() -> N
     row.parsed_json = _parsed(complete=False)
     row.parsed_json["custom_checkin"]["checklist:other:5"] = {"answer": "已回答"}
     assert is_effective_reward_checkin(row) is False
+
+
+def test_reward_evidence_prefers_exact_ids_over_legacy_batch_anchor() -> None:
+    parsed = _parsed()
+    parsed["_meta"] = {"evidence_message_ids": [31, "32"]}
+    parsed["custom_checkin"]["checklist:7:2"]["evidence_message_id"] = 33
+    row = Checkin(
+        service_case_id=1,
+        group_id="g",
+        checkin_date=date(2026, 8, 1),
+        content="五项都回了",
+        raw_message_id="99",
+        parsed_json=parsed,
+    )
+
+    assert reward_checkin_evidence_message_ids(row) == [31, 32, 33]
+
+
+def test_reward_evidence_falls_back_to_legacy_batch_anchor() -> None:
+    row = Checkin(
+        service_case_id=1,
+        group_id="g",
+        checkin_date=date(2026, 8, 1),
+        content="五项都回了",
+        raw_message_id="99",
+        parsed_json=_parsed(),
+    )
+
+    assert reward_checkin_evidence_message_ids(row) == [99]
 
 
 @pytest.mark.asyncio
@@ -329,6 +359,87 @@ async def test_reward_shipping_tool_does_not_treat_unrelated_one_as_choice(db_se
     assert status_payload["has_earned_rewards"] is False
     assert rejected["ok"] is False
     assert "没有已获得" in rejected["error"]
+
+
+@pytest.mark.asyncio
+async def test_reward_admin_lists_each_counted_day_with_five_items_and_original_messages(
+    db_session, admin_client
+) -> None:
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    db_session.add(
+        CheckinRewardQualification(
+            service_case_id=service_case.id,
+            tier_days=3,
+            reward_code="coffee_tube",
+            reward_name="咖啡",
+            quantity=1,
+            qualified_on=date(2026, 8, 3),
+        )
+    )
+    await db_session.flush()
+
+    for offset in range(3):
+        message = Message(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            direction=MessageDirection.INBOUND,
+            sender_type=MessageSenderType.USER,
+            message_type="text",
+            content=f"第{offset + 1}天原话：早C喝了，午B没喝，晚A暂停；蔬菜2拳；快走25分钟；23:20睡；情绪4分",
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.RECEIVED,
+        )
+        db_session.add(message)
+        await db_session.flush()
+        parsed = _parsed(prefix="checklist:7")
+        parsed["custom_checkin"] = {
+            f"checklist:7:{index}": {
+                "question": f"个性题目{index}",
+                "answer": f"第{index}项回答",
+                "evidence_message_id": message.id,
+            }
+            for index in range(2, 6)
+        }
+        db_session.add(
+            Checkin(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                content="结构化打卡",
+                raw_message_id=str(message.id),
+                parsed_json=parsed,
+            )
+        )
+    await db_session.flush()
+
+    response = await admin_client.get("/checkin-rewards")
+
+    assert response.status_code == 200, response.text
+    row = next(
+        item
+        for item in response.json()
+        if item["service_case_id"] == service_case.id
+    )
+    assert row["complete_checkin_days"] == 3
+    assert [item["checkin_date"] for item in row["checkin_days"]] == [
+        "2026-08-01",
+        "2026-08-02",
+        "2026-08-03",
+    ]
+    first_day = row["checkin_days"][0]
+    assert first_day["cumulative_day"] == 1
+    assert len(first_day["items"]) == 5
+    assert first_day["items"][0] == {
+        "order": 1,
+        "item_id": "checklist:7:1",
+        "question": "早C、午B、晚A",
+        "answer": "早C：已喝；午B：未喝；晚A：暂停",
+    }
+    assert first_day["items"][1]["question"] == "个性题目2"
+    assert first_day["source_messages"][0]["content"].startswith("第1天原话")
+    assert first_day["original_submission"] is None
 
 
 @pytest.mark.asyncio

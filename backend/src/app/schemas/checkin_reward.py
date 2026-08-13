@@ -26,6 +26,29 @@ class RewardShipmentRead(BaseModel):
     marked_by: str | None
 
 
+class RewardCheckinItemRead(BaseModel):
+    order: int
+    item_id: str
+    question: str
+    answer: str
+
+
+class RewardCheckinSourceMessageRead(BaseModel):
+    id: int
+    message_type: str
+    content: str
+    created_at: datetime
+
+
+class RewardCheckinDayRead(BaseModel):
+    checkin_id: int
+    checkin_date: date
+    cumulative_day: int
+    items: list[RewardCheckinItemRead]
+    source_messages: list[RewardCheckinSourceMessageRead]
+    original_submission: str | None
+
+
 class RewardAdminCaseRead(BaseModel):
     service_case_id: int
     case_no: str
@@ -39,6 +62,7 @@ class RewardAdminCaseRead(BaseModel):
     operational_status: str
     qualifications: list[RewardQualificationRead]
     shipments: list[RewardShipmentRead]
+    checkin_days: list[RewardCheckinDayRead]
 
 
 class MarkShipmentRead(BaseModel):

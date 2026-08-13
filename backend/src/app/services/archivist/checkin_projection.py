@@ -44,6 +44,7 @@ class CheckinUpsertResult:
     skipped_same: list[str] = field(default_factory=list)    # 值相同、无需改
     kept_form: list[str] = field(default_factory=list)       # 表单已填、聊天不覆盖
     contradictions: list[dict] = field(default_factory=list)  # 表单值≠聊天值，留痕待人工
+    evidence_updated: bool = False
 
 
 def _is_empty(value: object) -> bool:
@@ -58,6 +59,31 @@ def _is_empty(value: object) -> bool:
 
 def _equivalent(a: object, b: object) -> bool:
     return str(a).strip() == str(b).strip()
+
+
+def _merge_evidence_message_ids(meta: dict, values: list[int] | None) -> bool:
+    """合并用户原话证据；只保留正整数并去重，方便后续可回查。"""
+
+    current: list[int] = []
+    for raw_value in meta.get("evidence_message_ids") or []:
+        try:
+            message_id = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if message_id > 0 and message_id not in current:
+            current.append(message_id)
+    merged = list(current)
+    for raw_value in values or []:
+        try:
+            message_id = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if message_id > 0 and message_id not in merged:
+            merged.append(message_id)
+    if merged == current:
+        return False
+    meta["evidence_message_ids"] = merged
+    return True
 
 
 def _field_source(meta: dict, key: str) -> str:
@@ -210,6 +236,7 @@ async def upsert_checkin(
         result.custom_answers_written.extend(
             _merge_custom_answers(parsed, custom_answers)
         )
+        result.evidence_updated = _merge_evidence_message_ids(meta, evidence_msg_ids)
         # 个性化执行单题目的回答本身也应能创建当天打卡；它不一定同时能映射到
         # 固定的 CHECKIN_KEYS（例如“今天午餐有没有按计划吃”）。
         if not parsed:
@@ -249,14 +276,18 @@ async def upsert_checkin(
     result.custom_answers_written.extend(
         _merge_custom_answers(parsed, custom_answers)
     )
+    result.evidence_updated = _merge_evidence_message_ids(meta, evidence_msg_ids)
     parsed["_meta"] = meta
     # 只有真正有变化才写(补空/更新/矛盾)，避免无谓 UPDATE
     if (
         result.filled
         or result.contradictions
         or result.custom_answers_written
+        or result.evidence_updated
     ):
         checkin.parsed_json = parsed
+        if evidence_msg_ids:
+            checkin.raw_message_id = str(evidence_msg_ids[-1])
     return result
 
 

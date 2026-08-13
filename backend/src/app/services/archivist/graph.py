@@ -500,16 +500,24 @@ class ArchivistPipeline:
         }
         dates = sorted(delta_by_date)
         content_parts: list[str] = []
-        evidence_ids_by_date: dict[str, list[int]] = {}
+        user_message_ids: set[int] = set()
+        user_message_date_by_id: dict[int, str] = {}
         for date_iso in dates:
             msgs = delta_by_date[date_iso]
             content_parts.append(f"【日期 {date_iso}】")
             content_parts.extend(
                 f"[{item['id']}] {item['role']}：{item['text']}" for item in msgs
             )
-            evidence_ids_by_date[date_iso] = [
+            user_message_ids.update(
                 item["id"] for item in msgs if item["sender_type"] == "user"
-            ]
+            )
+            user_message_date_by_id.update(
+                {
+                    item["id"]: date_iso
+                    for item in msgs
+                    if item["sender_type"] == "user"
+                }
+            )
 
         followup_context = [
             context
@@ -561,17 +569,31 @@ class ArchivistPipeline:
         for date_iso, fields in (collector.get("checkins") or {}).items():
             has_checkin_activity = has_checkin_activity or bool(fields)
             if fields:
+                exact_evidence_ids = [
+                    message_id
+                    for message_id in (
+                        collector.get("checkin_evidence_ids", {}).get(date_iso) or []
+                    )
+                    if user_message_date_by_id.get(message_id) == date_iso
+                ]
                 day_candidates.setdefault(
                     date_iso,
                     {
                         "fields": {},
-                        "evidence_ids": evidence_ids_by_date.get(date_iso, []),
+                        "evidence_ids": [],
                         "custom_answers": [],
                     },
                 )["fields"].update(fields)
+                payload = day_candidates[date_iso]
+                payload["evidence_ids"] = list(
+                    dict.fromkeys([*payload["evidence_ids"], *exact_evidence_ids])
+                )
 
         for raw_answer in collector.get("followup_answers") or []:
             item_id = str(raw_answer.get("item_id") or "")
+            evidence_message_id = raw_answer.get("evidence_message_id")
+            if evidence_message_id not in user_message_ids:
+                continue
             answer = {
                 **raw_answer,
                 "question": checklist_labels.get(item_id, ""),
@@ -585,14 +607,21 @@ class ArchivistPipeline:
                 target_date,
                 {
                     "fields": {},
-                    "evidence_ids": evidence_ids_by_date.get(target_date, []),
+                    "evidence_ids": [],
                     "custom_answers": [],
                 },
+            )
+            payload["evidence_ids"] = list(
+                dict.fromkeys([*payload["evidence_ids"], evidence_message_id])
             )
             payload["custom_answers"].append(answer)
 
         for raw_answer in collector.get("checklist_answers") or []:
             item_id = str(raw_answer.get("item_id") or "")
+            target_date = str(raw_answer.get("target_date") or "")
+            evidence_message_id = raw_answer.get("evidence_message_id")
+            if user_message_date_by_id.get(evidence_message_id) != target_date:
+                continue
             answer = {
                 **raw_answer,
                 "question": checklist_labels.get(item_id, ""),
@@ -600,14 +629,16 @@ class ArchivistPipeline:
             }
             checklist_answers.append(answer)
             has_checkin_activity = True
-            target_date = str(answer.get("target_date") or "")
             payload = day_candidates.setdefault(
                 target_date,
                 {
                     "fields": {},
-                    "evidence_ids": evidence_ids_by_date.get(target_date, []),
+                    "evidence_ids": [],
                     "custom_answers": [],
                 },
+            )
+            payload["evidence_ids"] = list(
+                dict.fromkeys([*payload["evidence_ids"], evidence_message_id])
             )
             payload["custom_answers"].append(answer)
 
