@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models.checkin import Checkin
 from app.models.questionnaire import QuestionnaireSubmission
-from app.models.service_case import ServiceCase
+from app.models.service_case import ServiceCase, ServiceCaseGroupType
 from app.services.body_metrics import BodyValue, parse_waist_cm, parse_weight_kg
 from app.services.intake_facts import build_intake_fact_summary
 from app.services.questionnaire_template import get_active_questionnaire_fields
@@ -179,7 +179,12 @@ async def compute_case_window_changes(
 
     tz = _tz()
     cases = list(
-        await session.scalars(select(ServiceCase).where(active_service_case_condition()))
+        await session.scalars(
+            select(ServiceCase).where(
+                active_service_case_condition(),
+                ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
+            )
+        )
     )
     case_ids = [case.id for case in cases]
     if not case_ids:

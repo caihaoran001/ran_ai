@@ -13,7 +13,7 @@ from app.models.message import (
     MessageStatus,
 )
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.outcome_trends import build_outcome_trend_summary
@@ -27,6 +27,7 @@ async def _trend_case(db_session, start: date) -> ServiceCase:
         questionnaire_token=f"trend-token-{suffix}",
         status=ServiceCaseStatus.IN_SERVICE,
         service_plan_start_date=start,
+        group_type=ServiceCaseGroupType.NEW_GROUP.value,
     )
     db_session.add(service_case)
     await db_session.flush()

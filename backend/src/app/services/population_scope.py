@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user import User
 from app.services.service_case_queries import active_service_case_condition
 
@@ -20,7 +20,11 @@ async def select_population_service_cases(session: AsyncSession) -> list[Service
         await session.scalars(
             select(ServiceCase)
             .join(User, ServiceCase.user_id == User.id)
-            .where(active_service_case_condition(), User.deleted_at.is_(None))
+            .where(
+                active_service_case_condition(),
+                ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
+                User.deleted_at.is_(None),
+            )
             .options(selectinload(ServiceCase.user))
             .order_by(
                 ServiceCase.user_id,

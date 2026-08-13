@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.service_case import ServiceCaseStatus
+from app.models.service_case import ServiceCaseGroupType, ServiceCaseStatus
 from app.schemas.common import Timestamped
 
 
@@ -20,6 +20,7 @@ class ServiceCaseUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     group_id: str | None = None
+    group_type: ServiceCaseGroupType | None = None
     status: ServiceCaseStatus | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
@@ -36,6 +37,7 @@ class ServiceCaseRead(Timestamped):
     user_id: int | None
     group_id: str
     group_name: str | None = None
+    group_type: ServiceCaseGroupType = ServiceCaseGroupType.LEGACY
     questionnaire_token: str
     status: ServiceCaseStatus
     started_at: datetime | None

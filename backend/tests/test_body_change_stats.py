@@ -15,7 +15,7 @@ import pytest
 
 from app.models.checkin import Checkin
 from app.models.questionnaire import QuestionnaireSubmission
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user import User
 from app.services.body_change_stats import (
     EXCLUDE_IMPLAUSIBLE,
@@ -47,6 +47,7 @@ async def _case_with_checkins(
         questionnaire_token=uuid4().hex,
         status=ServiceCaseStatus.IN_SERVICE,
         started_at=now - timedelta(days=service_days - 1),
+        group_type=ServiceCaseGroupType.NEW_GROUP.value,
     )
     db_session.add(case)
     await db_session.flush()

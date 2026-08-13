@@ -20,7 +20,7 @@ from app.core.config import get_settings
 from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot
-from app.models.service_case import ServiceCase
+from app.models.service_case import ServiceCase, ServiceCaseGroupType
 from app.models.user_document import DocumentType, UserDocument
 from app.models.user_profile import UserProfile
 from app.services.outcome_engine import POSITIVE_EVENT_TYPES
@@ -241,6 +241,7 @@ async def build_outcome_trend_summary(
         await session.scalars(
             select(ServiceCase).where(
                 active_service_case_condition(),
+                ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
                 or_(
                     ServiceCase.service_plan_start_date.is_not(None),
                     ServiceCase.started_at.is_not(None),

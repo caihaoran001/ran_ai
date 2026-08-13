@@ -21,7 +21,7 @@ from app.models.message import (
     MessageStatus,
 )
 from app.models.questionnaire import QuestionnaireSubmission
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user import User
 from app.services.checkin_checklists import get_effective_daily_checklist
 from app.services.intake_generation import (
@@ -137,6 +137,7 @@ async def submit_questionnaire(
     if template == "intake":
         pending_status = ServiceCaseStatus.GENERATING
         service_case.status = pending_status
+        service_case.group_type = ServiceCaseGroupType.NEW_GROUP.value
         await _sync_user_from_answers(session, service_case, fields, payload.answers)
         set_pre_service_status_or_activate(
             service_case,

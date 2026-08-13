@@ -9,7 +9,7 @@ from sqlalchemy import func, select, text
 
 from app.db.session import SessionLocal
 from app.models.knowledge_draft import KnowledgeDraft
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, UserDocument
 from app.services.service_case_queries import active_service_case_condition
 
@@ -44,6 +44,7 @@ async def _review_counts() -> dict[str, int]:
         refund_pending = await session.scalar(
             select(func.count(ServiceCase.id)).where(
                 active_service_case_condition(),
+                ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
                 ServiceCase.refund_pending_confirmation.is_(True),
                 ServiceCase.status != ServiceCaseStatus.REFUNDED,
             )
@@ -69,6 +70,7 @@ async def _pending_latest_document_count(session) -> int:
         .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
         .where(
             active_service_case_condition(),
+            ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
             UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
         )
         .order_by(

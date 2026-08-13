@@ -39,6 +39,8 @@ export type ServiceCase = {
   case_no: string;
   group_id: string;
   group_name?: string | null;
+  /** new_group=本系统入营问卷已提交(新群)；legacy=老群/未填问卷 */
+  group_type: "new_group" | "legacy" | string;
   questionnaire_token: string;
   status: string;
   notes?: string | null;

@@ -17,7 +17,7 @@ from app.api.routes.dashboard import (
     _questionnaire_portrait_option_order,
 )
 from app.models.questionnaire import QuestionnaireSubmission
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_state_profile import UserStateProfile
 from app.services.china_regions import match_city
@@ -50,6 +50,7 @@ async def _create_portrait_case(
         deleted_at=deleted_at,
         refund_pending_confirmation=refund_pending_confirmation,
         health_profile=health_profile,
+        group_type=ServiceCaseGroupType.NEW_GROUP.value,
     )
     db_session.add(service_case)
     await db_session.flush()

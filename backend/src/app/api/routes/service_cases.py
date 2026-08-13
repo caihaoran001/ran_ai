@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -33,9 +34,11 @@ from app.services.service_case_queries import (
 router = APIRouter()
 
 
-def _search_service_cases(statement, filter: str | None, q: str | None):
+def _search_service_cases(statement, filter: str | None, q: str | None, group_type: str | None = None):
     """列表与计数共用同一套筛选条件，避免"总数和列表对不上"。"""
     statement = _apply_service_case_filter(statement, filter)
+    if group_type:
+        statement = statement.where(ServiceCase.group_type == group_type)
     if q and q.strip():
         # 按 用户名 / 手机号 / 群名 模糊搜索。outerjoin 保留未绑定用户但有群名的服务单。
         like = f"%{q.strip()}%"
@@ -53,6 +56,7 @@ def _search_service_cases(statement, filter: str | None, q: str | None):
 async def list_service_cases(
     filter: str | None = None,
     q: str | None = None,
+    group_type: Literal["new_group", "legacy"] | None = None,
     limit: int | None = Query(default=None, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
@@ -63,7 +67,7 @@ async def list_service_cases(
         .options(selectinload(ServiceCase.user))
         .order_by(ServiceCase.created_at.desc())
     )
-    statement = _search_service_cases(statement, filter, q)
+    statement = _search_service_cases(statement, filter, q, group_type)
     if limit is not None:
         statement = statement.offset(offset).limit(limit)
     elif offset:
@@ -76,6 +80,7 @@ async def list_service_cases(
 async def count_service_cases(
     filter: str | None = None,
     q: str | None = None,
+    group_type: Literal["new_group", "legacy"] | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, int]:
     """只回条数，供前端显示"共 N 条"而不必拉全量列表。"""
@@ -83,6 +88,7 @@ async def count_service_cases(
         select(func.count()).select_from(ServiceCase).where(active_service_case_condition()),
         filter,
         q,
+        group_type,
     )
     return {"total": await session.scalar(statement) or 0}
 

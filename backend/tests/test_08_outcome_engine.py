@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessagePurpose, MessageSenderType, MessageStatus
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.models.user_profile import UserProfile
@@ -32,6 +32,7 @@ async def _setup_outcome_case(db_session, *, days: int = 7):
         questionnaire_token=uuid4().hex,
         status=ServiceCaseStatus.IN_SERVICE,
         started_at=datetime.now(timezone.utc) - timedelta(days=days - 1),
+        group_type=ServiceCaseGroupType.NEW_GROUP.value,
     )
     db_session.add(case)
     await db_session.flush()

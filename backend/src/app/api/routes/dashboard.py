@@ -17,7 +17,7 @@ from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot
 from app.models.reminder import CHURN_RECALL_RULE_ID, ReminderEvent
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user import User
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, DocumentType, UserDocument
@@ -95,6 +95,17 @@ from app.services.service_case_queries import (
 router = APIRouter()
 
 
+def _stats_case_condition():
+    """看板统计口径：只统计已通过本系统入营问卷的新群；老群不进统计避免稀释。
+
+    服务/聊天链路保持全量（老群照常被服务），仅看板与群体画像默认只看新群。
+    """
+    return and_(
+        active_service_case_condition(),
+        ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
+    )
+
+
 @router.get("/deepseek-balance", response_model=AIBalanceSummary)
 async def dashboard_deepseek_balance() -> AIBalanceSummary:
     """DeepSeek 账户实时余额（独立于逐 token 估算成本）。
@@ -147,11 +158,11 @@ async def dashboard_summary(
     session: AsyncSession = Depends(get_session),
 ) -> DashboardSummary:
     total = await session.scalar(
-        select(func.count(ServiceCase.id)).where(active_service_case_condition())
+        select(func.count(ServiceCase.id)).where(_stats_case_condition())
     )
     in_service = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
         )
     )
@@ -162,7 +173,7 @@ async def dashboard_summary(
             select(Checkin)
             .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
             .where(
-                active_service_case_condition(),
+                _stats_case_condition(),
                 Checkin.deleted_at.is_(None),
                 Checkin.checkin_date == today,
             )
@@ -174,7 +185,7 @@ async def dashboard_summary(
         select(func.count(Message.id))
         .join(ServiceCase, Message.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             Message.created_at >= today_start,
             Message.created_at < today_end,
             Message.direction == MessageDirection.INBOUND,
@@ -185,7 +196,7 @@ async def dashboard_summary(
         select(func.count(Message.id))
         .join(ServiceCase, Message.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             Message.created_at >= today_start,
             Message.created_at < today_end,
             Message.direction == MessageDirection.OUTBOUND,
@@ -202,7 +213,7 @@ async def dashboard_summary(
         )
         .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
         )
         .order_by(
@@ -220,14 +231,14 @@ async def dashboard_summary(
     ) or 0
     new_users_today = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             ServiceCase.created_at >= today_start,
             ServiceCase.created_at < today_end,
         )
     )
     risk_users = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             ServiceCase.risk_level == "high",
         )
     )
@@ -240,7 +251,7 @@ async def dashboard_summary(
         select(func.count(Message.id))
         .join(ServiceCase, Message.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             Message.created_at >= today_start,
             Message.created_at < today_end,
             Message.direction == MessageDirection.INBOUND,
@@ -256,7 +267,7 @@ async def dashboard_summary(
         select(func.count(ServiceCase.id))
         .outerjoin(last_message_subq, last_message_subq.c.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
             last_activity_at < now - timedelta(days=2),
             last_activity_at >= now - timedelta(days=7),
@@ -266,14 +277,14 @@ async def dashboard_summary(
         select(func.count(ServiceCase.id))
         .outerjoin(last_message_subq, last_message_subq.c.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
             last_activity_at < now - timedelta(days=7),
         )
     )
     renewal_followup_users = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
             ServiceCase.started_at.is_not(None),
             ServiceCase.started_at <= now - timedelta(days=18),
@@ -301,7 +312,7 @@ async def dashboard_summary(
             select(Message)
             .join(ServiceCase, Message.service_case_id == ServiceCase.id)
             .where(
-                active_service_case_condition(),
+                _stats_case_condition(),
                 Message.created_at >= today_start,
                 Message.created_at < today_end,
                 Message.direction == MessageDirection.INBOUND,
@@ -1030,7 +1041,7 @@ async def dashboard_emotional_alerts(
             .join(ServiceCase, Message.service_case_id == ServiceCase.id)
             .outerjoin(User, ServiceCase.user_id == User.id)
             .where(
-                active_service_case_condition(),
+                _stats_case_condition(),
                 Message.created_at >= today_start,
                 Message.created_at < today_end,
                 Message.direction == MessageDirection.INBOUND,
@@ -1072,7 +1083,7 @@ async def dashboard_attention_events(
             .join(ServiceCase, Message.service_case_id == ServiceCase.id)
             .outerjoin(User, ServiceCase.user_id == User.id)
             .where(
-                active_service_case_condition(),
+                _stats_case_condition(),
                 Message.created_at >= today_start,
                 Message.created_at < today_end,
                 Message.direction == MessageDirection.INBOUND,
@@ -1153,7 +1164,7 @@ async def dashboard_risk_cases(
         await session.execute(
             select(ServiceCase, User)
             .outerjoin(User, ServiceCase.user_id == User.id)
-            .where(active_service_case_condition(), ServiceCase.risk_level == "high")
+            .where(_stats_case_condition(), ServiceCase.risk_level == "high")
             .order_by(ServiceCase.updated_at.desc(), ServiceCase.id.desc())
         )
     ).all()
@@ -1178,7 +1189,7 @@ async def _idle_cases(
     last_message_subq = last_user_inbound_subquery()
     last_activity_at = func.coalesce(last_message_subq.c.last_at, ServiceCase.created_at)
     conditions = [
-        active_service_case_condition(),
+        _stats_case_condition(),
         ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
         last_activity_at < now - timedelta(days=min_days),
     ]
@@ -1271,7 +1282,7 @@ async def dashboard_renewal_followup_cases(
             select(ServiceCase, User)
             .outerjoin(User, ServiceCase.user_id == User.id)
             .where(
-                active_service_case_condition(),
+                _stats_case_condition(),
                 ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
                 ServiceCase.started_at.is_not(None),
                 ServiceCase.started_at <= now - timedelta(days=18),
@@ -1303,7 +1314,7 @@ async def dashboard_intent_events(
         await session.execute(
             select(ServiceCase, User)
             .outerjoin(User, ServiceCase.user_id == User.id)
-            .where(active_service_case_condition(), flag_column.is_not(None))
+            .where(_stats_case_condition(), flag_column.is_not(None))
             .order_by(ServiceCase.updated_at.desc(), ServiceCase.id.desc())
         )
     ).all()
@@ -1345,7 +1356,7 @@ async def dashboard_today_messages(
             .join(ServiceCase, Message.service_case_id == ServiceCase.id)
             .outerjoin(User, ServiceCase.user_id == User.id)
             .where(
-                active_service_case_condition(),
+                _stats_case_condition(),
                 Message.created_at >= today_start,
                 Message.created_at < today_end,
                 Message.direction == MessageDirection.INBOUND,
@@ -1381,7 +1392,7 @@ async def dashboard_today_checkins(
             .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
             .outerjoin(User, ServiceCase.user_id == User.id)
             .where(
-                active_service_case_condition(),
+                _stats_case_condition(),
                 Checkin.deleted_at.is_(None),
                 Checkin.checkin_date == today,
             )
@@ -1422,7 +1433,7 @@ async def dashboard_pending_documents(
         )
         .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
         )
         .order_by(
@@ -1508,7 +1519,7 @@ async def dashboard_ai_costs(
         )
         .join(ServiceCase, AIUsageLog.service_case_id == ServiceCase.id)
         .outerjoin(User, ServiceCase.user_id == User.id)
-        .where(active_service_case_condition(), AIUsageLog.is_diagnostic.is_(False))
+        .where(_stats_case_condition(), AIUsageLog.is_diagnostic.is_(False))
         .group_by(ServiceCase.id, ServiceCase.case_no, ServiceCase.user_id, User.name, ServiceCase.group_id)
         .order_by(total_cost_expr.desc(), func.max(AIUsageLog.created_at).desc())
     )
@@ -1723,7 +1734,7 @@ async def _build_ai_cost_summary(session: AsyncSession) -> AICostSummary:
         .outerjoin(ServiceCase, AIUsageLog.service_case_id == ServiceCase.id)
         .where(
             AIUsageLog.is_diagnostic.is_(False),
-            (AIUsageLog.service_case_id.is_(None)) | active_service_case_condition(),
+            (AIUsageLog.service_case_id.is_(None)) | _stats_case_condition(),
         )
     )
     total_calls, total_tokens, prompt_tokens, completion_tokens, cost, deepseek_cost, vision_cost = row.one()
@@ -1752,7 +1763,7 @@ def _analysis_has_emotion_code(analysis: dict) -> bool:
 async def _count_flagged_cases(session: AsyncSession, condition) -> int:
     count = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             condition,
         )
     )
@@ -1958,7 +1969,7 @@ async def _eligible_case_count(session: AsyncSession, *, now: datetime, day: int
     eligible_before = _service_day_eligible_before(now, day)
     count = await session.scalar(
         select(func.count(ServiceCase.id)).where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             ServiceCase.started_at.is_not(None),
             ServiceCase.started_at < eligible_before,
         )
@@ -1970,7 +1981,7 @@ async def _distinct_active_case_count(session: AsyncSession, service_case_column
     count = await session.scalar(
         select(func.count(distinct(service_case_column)))
         .join(ServiceCase, service_case_column == ServiceCase.id)
-        .where(active_service_case_condition())
+        .where(_stats_case_condition())
     )
     return count or 0
 
@@ -1983,7 +1994,7 @@ async def _core_document_case_count(session: AsyncSession) -> int:
         )
         .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             UserDocument.document_type.in_(
                 [
                     DocumentType.ENERGY_RESTART_PRESCRIPTION,
@@ -2006,7 +2017,7 @@ async def _snapshot_case_count(session: AsyncSession, *, milestone: str, now: da
         select(func.count(distinct(ServiceCase.id)))
         .join(OutcomeSnapshot, OutcomeSnapshot.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             ServiceCase.started_at.is_not(None),
             ServiceCase.started_at < eligible_before,
             OutcomeSnapshot.milestone == milestone,
@@ -2030,7 +2041,7 @@ async def _checkin_completion_case_count(
         )
         .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             ServiceCase.started_at.is_not(None),
             ServiceCase.started_at < eligible_before,
         )
@@ -2050,7 +2061,7 @@ async def _outcome_event_case_count(
     event_types: set[str] | None = None,
 ) -> int:
     conditions = [
-        active_service_case_condition(),
+        _stats_case_condition(),
         OutcomeEvent.field_key.in_(sorted(field_keys)),
     ]
     if event_types:
@@ -2076,7 +2087,7 @@ async def _sleep_checkin_coverage(session: AsyncSession) -> tuple[int, int]:
         select(distinct(Checkin.service_case_id).label("service_case_id"))
         .join(ServiceCase, Checkin.service_case_id == ServiceCase.id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             Checkin.deleted_at.is_(None),
             sleep_value.is_not(None),
             func.btrim(sleep_value) != "",
@@ -2090,7 +2101,7 @@ async def _sleep_checkin_coverage(session: AsyncSession) -> tuple[int, int]:
         .join(ServiceCase, OutcomeEvent.service_case_id == ServiceCase.id)
         .join(reported_cases, reported_cases.c.service_case_id == OutcomeEvent.service_case_id)
         .where(
-            active_service_case_condition(),
+            _stats_case_condition(),
             OutcomeEvent.field_key == "sleep_change",
             OutcomeEvent.event_type.in_(sorted(POSITIVE_OUTCOME_EVENT_TYPES)),
         )
@@ -2405,7 +2416,7 @@ async def dashboard_case_health(session: AsyncSession = Depends(get_session)) ->
     cases = list(
         await session.scalars(
             select(ServiceCase)
-            .where(active_service_case_condition(), ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
+            .where(_stats_case_condition(), ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
             .order_by(ServiceCase.started_at.asc())
         )
     )

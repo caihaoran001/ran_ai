@@ -9,7 +9,7 @@ import pytest
 
 from app.core.config import Settings
 from app.models.population_insight import PopulationInsightSnapshot
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.schemas.dashboard import PopulationInsightContent
@@ -75,6 +75,7 @@ async def _add_profiled_case(db_session, *, name: str, phone: str, customer_type
         group_id=f"insight-group-{tag}",
         questionnaire_token=f"insight-token-{tag}",
         status=ServiceCaseStatus.IN_SERVICE,
+        group_type=ServiceCaseGroupType.NEW_GROUP.value,
     )
     db_session.add(service_case)
     await db_session.flush()

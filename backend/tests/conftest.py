@@ -650,7 +650,7 @@ async def create_case(db_session):
     import secrets as _secrets
     from datetime import datetime as _dt
 
-    from app.models.service_case import ServiceCase
+    from app.models.service_case import ServiceCase, ServiceCaseGroupType
     from app.models.user import User
 
     class _FakeResp:
@@ -678,6 +678,7 @@ async def create_case(db_session):
             group_id=payload["group_id"],
             questionnaire_token=_secrets.token_urlsafe(24),
             notes=payload.get("notes"),
+            group_type=payload.get("group_type", ServiceCaseGroupType.NEW_GROUP.value),
         )
         db_session.add(service_case)
         await db_session.flush()

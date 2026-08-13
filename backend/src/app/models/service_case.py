@@ -36,6 +36,11 @@ class ServiceCaseStatus(str, enum.Enum):
     REFUNDED = "refunded"
 
 
+class ServiceCaseGroupType(str, enum.Enum):
+    NEW_GROUP = "new_group"
+    LEGACY = "legacy"
+
+
 class ServiceCase(TimestampMixin, Base):
     __tablename__ = "service_cases"
     __table_args__ = (
@@ -53,6 +58,15 @@ class ServiceCase(TimestampMixin, Base):
     group_id: Mapped[str] = mapped_column(String(128), nullable=False)
     # QiWe 群名(/room/batchGetRoomDetail 的 roomName)：定时回填，用于按群名搜索服务单；空表示取不到(机器人已退/群解散)
     group_name: Mapped[str | None] = mapped_column(String(128))
+    # 群类型：new_group=本群用户通过本系统问卷提交过入营问卷；legacy=老群/未填问卷。
+    # 存量按问卷提交记录回填，运营可在后台手动修正（见 ServiceCaseGroupType）。
+    group_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="legacy",
+        default=ServiceCaseGroupType.LEGACY.value,
+        index=True,
+    )
     questionnaire_token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     status: Mapped[ServiceCaseStatus] = mapped_column(
         Enum(ServiceCaseStatus, name="service_case_status"),

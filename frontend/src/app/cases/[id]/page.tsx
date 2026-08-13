@@ -4,6 +4,7 @@ import { api, FRONTEND_BASE, ServiceCase, ServiceCaseStats, UserDocument, Checki
 import { formatChinaDateTime } from "@/lib/format";
 import { CaseActions } from "./case-actions";
 import { CaseRiskReset } from "./case-risk-reset";
+import { CaseGroupType } from "./case-group-type";
 import { CaseRefundControls } from "./case-refund-controls";
 import { CaseGeneratingPoller } from "./case-generating-poller";
 import { ChatMessages } from "./chat-messages";
@@ -128,6 +129,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
               </p>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              <CaseGroupType caseId={serviceCase.id} groupType={serviceCase.group_type ?? "legacy"} />
               {serviceCase.risk_level === "high" && (structuredHealthHeadline || highRiskFlag) && (
                 <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
                   <AlertTriangle className="h-3.5 w-3.5" />

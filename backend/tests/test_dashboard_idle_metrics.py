@@ -23,7 +23,7 @@ from app.models.reminder import (
     ReminderEvent,
     ReminderEventType,
 )
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user import User
 
 
@@ -60,6 +60,7 @@ async def _idle_case(
         status=ServiceCaseStatus.IN_SERVICE,
         started_at=now - timedelta(days=20),
         created_at=now - timedelta(days=20),
+        group_type=ServiceCaseGroupType.NEW_GROUP.value,
     )
     db_session.add(case)
     await db_session.flush()
