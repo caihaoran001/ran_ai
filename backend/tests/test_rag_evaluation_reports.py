@@ -162,9 +162,9 @@ def _calibration_report() -> dict:
 
 def _faithfulness_calibration_report() -> dict:
     return {
-        "schema_version": 1,
-        "calibration_id": "faithfulness-zh-v3",
-        "dataset_version": 3,
+        "schema_version": 2,
+        "calibration_id": "faithfulness-zh-v4",
+        "dataset_version": 4,
         "run_id": "faithfulness-calibration-20260811T080000Z",
         "status": "completed",
         "started_at": "2026-08-11T08:00:00Z",
@@ -173,9 +173,9 @@ def _faithfulness_calibration_report() -> dict:
         "git_sha": "1234567",
         "model": "deepseek-chat",
         "ragas_version": "0.4.3",
-        "threshold": 0.85,
-        "base_pair_count": 10,
-        "completed_pair_count": 10,
+        "threshold": 0.55,
+        "base_pair_count": 30,
+        "completed_pair_count": 30,
         "passed": True,
         "metrics": {
             "positive_mean": 0.92,
@@ -188,6 +188,12 @@ def _faithfulness_calibration_report() -> dict:
         },
         "failed_criteria": [],
         "items": [],
+        "repeat_count": 2,
+        "selection_case_count": 20,
+        "validation_case_count": 10,
+        "selected_threshold": 0.55,
+        "candidate_results": [],
+        "validation_results": [],
     }
 
 
@@ -305,7 +311,9 @@ async def test_rag_evaluation_api_returns_latest_faithfulness_calibration(
 
     assert response.status_code == 200
     assert response.json()["passed"] is True
-    assert response.json()["threshold"] == 0.85
+    assert response.json()["threshold"] == 0.55
+    assert response.json()["selection_case_count"] == 20
+    assert response.json()["validation_case_count"] == 10
 
 
 @pytest.mark.asyncio
@@ -387,6 +395,7 @@ async def test_legacy_report_without_run_mode_remains_readable(admin_client, tmp
         "status": "legacy",
         "enforced": True,
         "calibration_run_id": None,
+        "threshold": None,
         "reason": "该历史批次未记录校准状态，生成时仍按原规则参与判定",
     }
     assert response.json()["cases"][0]["origin"] == {

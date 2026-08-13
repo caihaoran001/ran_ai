@@ -29,7 +29,7 @@ docker compose -f docker-compose.eval.yml run --name ran_ai-rag-relevancy-calibr
 
 ## 回复忠实度中文校准
 
-Faithfulness 的 0.85 门槛也必须先用固定中文事实验证。v3 的 10 组用例只使用正式 50 题中的召回知识作为依据，每组分别提供忠实回复和关键关系反转回复。近期对话只用于理解问题和生成回复，不参与忠实度计算。该入口不检索 RDS、不生成用户回复：
+Faithfulness 不再使用未经验证的固定 0.85 门槛。v4 从正式 50 题的召回事实中固定选取 30 组不重复来源：前 20 组从 0.50 / 0.55 / 0.60 中选择门槛，后 10 组不参与选择、只做锁定验证；全部题独立判分两轮。每一轮的正确回答识别率和错误回答拒绝率都至少达到 90%，该门槛才进入正式评测。反例覆盖数字或单位错误、否定反转、条件遗漏、事实方向反转和无依据建议。近期对话只用于理解问题和生成回复，不参与忠实度计算。该入口不检索 RDS、不生成用户回复：
 
 ```bash
 docker compose -f docker-compose.eval.yml run --name ran_ai-rag-faithfulness-calibration --no-deps \
@@ -37,7 +37,7 @@ docker compose -f docker-compose.eval.yml run --name ran_ai-rag-faithfulness-cal
   rag-eval /app/eval/calibrate_faithfulness.py
 ```
 
-报告写入同一 `calibrations/` 目录，并原子更新 `diagnostics/rag-evaluations/faithfulness-calibration.json`。校准未通过时，正式评测仍保留 Faithfulness 分数，但不会用该项单独判定失败。
+报告写入同一 `calibrations/` 目录，并原子更新 `diagnostics/rag-evaluations/faithfulness-calibration.json`。报告会保存三个候选门槛的两轮选择结果和锁定验证的两轮结果；校准未通过时，正式评测仍保留 Faithfulness 分数，但不会用该项单独判定失败。
 
 正式评测不再为数字、单位、否定或比较关系额外调用第二个事实判官；这些关系统一由已校准的 Faithfulness 评价，避免同一回复被两次 LLM 判定和重复判罚。历史报告中的独立告警字段继续保留兼容。
 

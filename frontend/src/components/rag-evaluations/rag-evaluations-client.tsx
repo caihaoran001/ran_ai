@@ -31,6 +31,7 @@ type RagMetricPolicy = {
   status: "enforced" | "calibration_failed" | "not_calibrated" | "mock" | "legacy";
   enforced: boolean;
   calibration_run_id?: string | null;
+  threshold?: number | null;
   reason: string;
 };
 
@@ -170,7 +171,7 @@ type CalibrationMetrics = {
 };
 
 type MetricCalibrationReport = {
-  schema_version: 1;
+  schema_version: 1 | 2;
   calibration_id: string;
   dataset_version: number;
   run_id: string;
@@ -211,6 +212,21 @@ type FaithfulnessCalibrationItem = {
   negative_score: number;
   positive_details: BinaryJudgement[];
   negative_details: BinaryJudgement[];
+  phase?: "selection" | "validation" | "legacy";
+  error_type?: string;
+  repeat_index?: number;
+};
+
+type FaithfulnessStageRun = {
+  repeat_index: number;
+  passed: boolean;
+  metrics: CalibrationMetrics;
+};
+
+type FaithfulnessCandidate = {
+  threshold: number;
+  eligible: boolean;
+  runs: FaithfulnessStageRun[];
 };
 
 export type AnswerRelevancyCalibrationReport = MetricCalibrationReport & {
@@ -220,6 +236,12 @@ export type AnswerRelevancyCalibrationReport = MetricCalibrationReport & {
 
 export type FaithfulnessCalibrationReport = MetricCalibrationReport & {
   items: FaithfulnessCalibrationItem[];
+  repeat_count?: number;
+  selection_case_count?: number;
+  validation_case_count?: number;
+  selected_threshold?: number | null;
+  candidate_results?: FaithfulnessCandidate[];
+  validation_results?: FaithfulnessStageRun[];
 };
 
 const STATUS_LABELS: Record<RagEvaluationSummary["status"], string> = {
@@ -802,6 +824,12 @@ function MetricCalibrationCard({
   const completed = calibration?.status === "completed";
   const passed = completed && calibration?.passed === true;
   const metrics = calibration?.metrics ?? null;
+  const faithfulnessCalibration = kind === "faithfulness"
+    ? calibration as FaithfulnessCalibrationReport | null
+    : null;
+  const isTwoStageCalibration = faithfulnessCalibration?.schema_version === 2;
+  const hasTwoStageResult = isTwoStageCalibration
+    && Boolean(faithfulnessCalibration.candidate_results?.length);
   const statusLabel = passed
     ? "校准通过"
     : calibration?.status === "completed"
@@ -831,7 +859,11 @@ function MetricCalibrationCard({
               {!passed && <span className="status-pill pill-neutral">新批次仅观察</span>}
             </div>
             <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">
-              {passed
+              {calibration?.status === "running"
+                ? "正在对 30 题分别完成两轮判分；跑完后才会选择和验证门槛。"
+                : hasTwoStageResult && passed
+                ? `先用 ${faithfulnessCalibration?.selection_case_count} 题选择门槛，再用未参与选择的 ${faithfulnessCalibration?.validation_case_count} 题复核；两轮都通过后才用于正式判定。`
+                : passed
                 ? "固定中文正负样本已证明当前门槛可用，新批次会把该指标纳入通过判定。"
                 : calibration
                   ? `真实校准没有证明 ${percent(calibration.threshold)} 门槛有效。新批次仍记录分数，但不会因这一项单独判失败；历史报告保持原判定。`
@@ -839,7 +871,9 @@ function MetricCalibrationCard({
             </p>
             {calibration && (
               <p className="mt-1 text-[11px] font-semibold text-slate-400">
-                {calibration.completed_pair_count}/{calibration.base_pair_count} 组正负对照 · {calibration.model} · {formatChinaShortDateTime(calibration.updated_at)}
+                {isTwoStageCalibration
+                  ? `${calibration.items.length}/${calibration.base_pair_count * (faithfulnessCalibration?.repeat_count ?? 1)} 次题目轮次`
+                  : `${calibration.completed_pair_count}/${calibration.base_pair_count} 组正负对照`} · {calibration.model} · {formatChinaShortDateTime(calibration.updated_at)}
               </p>
             )}
           </div>
@@ -861,6 +895,47 @@ function MetricCalibrationCard({
             ))}
           </dl>
         )}
+        {hasTwoStageResult && (
+          <div className="mt-4 space-y-3 border-t border-slate-900/5 pt-4">
+            <div>
+              <p className="text-[11px] font-extrabold text-slate-500">第一步 · 20 题选门槛</p>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {faithfulnessCalibration?.candidate_results?.map((candidate) => (
+                  <div
+                    key={candidate.threshold}
+                    className={`rounded-lg border px-3 py-2 ${candidate.threshold === faithfulnessCalibration.selected_threshold ? "border-cyan-300 bg-cyan-50" : "border-slate-200 bg-white/70"}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-black tabular-nums text-slate-900">{candidate.threshold.toFixed(2)}</span>
+                      <span className={`text-[10px] font-extrabold ${candidate.eligible ? "text-emerald-700" : "text-slate-400"}`}>
+                        {candidate.threshold === faithfulnessCalibration.selected_threshold ? "已选" : candidate.eligible ? "可用" : "未达标"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                      {candidate.runs.map((run) => `第${run.repeat_index}轮 ${percent(run.metrics.positive_pass_rate)}/${percent(run.metrics.negative_rejection_rate)}`).join(" · ")}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[10px] text-slate-400">每轮依次显示正确回答识别率 / 错误回答拒绝率，两项都至少 90%。</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white/70 px-3 py-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] font-extrabold text-slate-500">第二步 · 10 题锁定验证</p>
+                <span className={`text-[10px] font-extrabold ${faithfulnessCalibration.validation_results?.every((run) => run.passed) ? "text-emerald-700" : "text-amber-700"}`}>
+                  {faithfulnessCalibration.validation_results?.length
+                    ? faithfulnessCalibration.validation_results.every((run) => run.passed) ? "两轮通过" : "存在未通过轮次"
+                    : "等待选择门槛"}
+                </span>
+              </div>
+              <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                {faithfulnessCalibration.validation_results?.length
+                  ? faithfulnessCalibration.validation_results.map((run) => `第${run.repeat_index}轮 ${percent(run.metrics.positive_pass_rate)}/${percent(run.metrics.negative_rejection_rate)}`).join(" · ")
+                  : "第一步没有选出稳定门槛，因此不使用验证题反向调参。"}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
       {calibration?.failed_criteria.length ? (
         <div className="border-t border-amber-200/70 px-5 py-3 text-xs leading-5 text-amber-900">
@@ -870,14 +945,23 @@ function MetricCalibrationCard({
       {calibration?.items.length ? (
         <details className="border-t border-slate-200/80 bg-white/60">
           <summary className="cursor-pointer px-5 py-3 text-xs font-extrabold text-slate-700">
-            查看 {calibration.items.length} 组校准题和实际判分
+            {isTwoStageCalibration
+              ? `查看 ${calibration.base_pair_count} 题 × ${faithfulnessCalibration?.repeat_count} 轮的 ${calibration.items.length} 次实际判分`
+              : `查看 ${calibration.items.length} 组校准题和实际判分`}
           </summary>
           <div className="max-h-[36rem] space-y-3 overflow-y-auto border-t border-slate-100 px-4 py-4">
             {calibration.items.map((item, index) => (
-              <article key={item.case_id} className="rounded-xl border border-slate-200 bg-slate-100/70 p-3">
+              <article key={`${item.case_id}-${"repeat_index" in item ? item.repeat_index ?? 1 : 1}`} className="rounded-xl border border-slate-200 bg-slate-100/70 p-3">
                 <div className="flex items-start gap-2">
                   <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-slate-800 px-1 text-[10px] font-black tabular-nums text-white">{index + 1}</span>
-                  <p className="text-xs font-extrabold leading-5 text-slate-900">{item.user_input}</p>
+                  <div className="min-w-0">
+                    <p className="text-xs font-extrabold leading-5 text-slate-900">{item.user_input}</p>
+                    {kind === "faithfulness" && "phase" in item && item.phase !== "legacy" && (
+                      <p className="mt-0.5 text-[10px] font-semibold text-slate-400">
+                        {item.phase === "selection" ? "选门槛题" : "锁定验证题"} · 第 {item.repeat_index ?? 1} 轮
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-3 grid gap-2 xl:grid-cols-2">
                   <CalibrationAnswer item={item} kind={kind} side="positive" />
@@ -1199,7 +1283,7 @@ export function RagEvaluationsClient({
                   label="回复忠实度"
                   hint={summary.faithfulness_policy.enforced ? "最终回复是否脱离或反转召回事实？" : summary.faithfulness_policy.reason}
                   metric={summary.metrics.faithfulness}
-                  threshold={0.85}
+                  threshold={summary.faithfulness_policy.threshold ?? undefined}
                   observational={!summary.faithfulness_policy.enforced}
                 />
                 <MetricLine

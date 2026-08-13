@@ -15,9 +15,6 @@ from app.evaluation.answer_relevancy_calibration import (
     CALIBRATION_THRESHOLD,
     resolve_answer_relevancy_policy,
 )
-from app.evaluation.faithfulness_calibration import (
-    CALIBRATION_THRESHOLD as FAITHFULNESS_CALIBRATION_THRESHOLD,
-)
 from app.evaluation.faithfulness_calibration import resolve_faithfulness_policy
 from app.schemas.rag_evaluation import (
     AnswerRelevancyCalibrationReport,
@@ -93,17 +90,21 @@ def _active_ragas_thresholds(
     *,
     answer_relevancy_enforced: bool,
     faithfulness_enforced: bool,
+    faithfulness_threshold: float | None = None,
 ) -> dict[str, float]:
     disabled = set()
     if not answer_relevancy_enforced:
         disabled.add("answer_relevancy")
     if not faithfulness_enforced:
         disabled.add("faithfulness")
-    return {
+    thresholds = {
         name: threshold
         for name, threshold in THRESHOLDS.items()
         if name not in disabled
     }
+    if faithfulness_enforced and faithfulness_threshold is not None:
+        thresholds["faithfulness"] = faithfulness_threshold
+    return thresholds
 
 
 def _base_summary(
@@ -194,6 +195,7 @@ def _load_faithfulness_policy(
         return FaithfulnessPolicy(
             status="mock",
             enforced=True,
+            threshold=THRESHOLDS["faithfulness"],
             reason="模拟批次使用固定分数，只验证评测链路和页面结构",
         )
 
@@ -219,7 +221,6 @@ def _load_faithfulness_policy(
         report,
         model=settings.ai_model,
         ragas_version=RAGAS_VERSION,
-        threshold=FAITHFULNESS_CALIBRATION_THRESHOLD,
     )
 
 
@@ -305,6 +306,7 @@ async def _evaluate_real_case(
     settings,
     answer_relevancy_enforced: bool,
     faithfulness_enforced: bool,
+    faithfulness_threshold: float | None,
 ) -> RagEvaluationCaseResult:
     started = time.monotonic()
     result = _base_case(case, status="passed")
@@ -427,6 +429,7 @@ async def _evaluate_real_case(
             for name, threshold in _active_ragas_thresholds(
                 answer_relevancy_enforced=answer_relevancy_enforced,
                 faithfulness_enforced=faithfulness_enforced,
+                faithfulness_threshold=faithfulness_threshold,
             ).items():
                 value = getattr(scores, name)
                 if value < threshold:
@@ -627,6 +630,7 @@ async def async_main(args: argparse.Namespace) -> int:
                         settings=settings,
                         answer_relevancy_enforced=(answer_relevancy_policy.enforced),
                         faithfulness_enforced=faithfulness_policy.enforced,
+                        faithfulness_threshold=faithfulness_policy.threshold,
                     )
                 )
                 running = aggregate_summary(base=base, cases=results, status="running")

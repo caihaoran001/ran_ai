@@ -111,6 +111,16 @@ class FaithfulnessCalibrationItem(StrictModel):
     negative_score: float = Field(ge=0.0, le=1.0)
     positive_details: list[RagBinaryJudgement] = Field(default_factory=list)
     negative_details: list[RagBinaryJudgement] = Field(default_factory=list)
+    phase: Literal["selection", "validation", "legacy"] = "legacy"
+    error_type: Literal[
+        "number_or_unit",
+        "negation",
+        "condition_omission",
+        "fact_reversal",
+        "unsupported_advice",
+        "legacy",
+    ] = "legacy"
+    repeat_index: int = Field(default=1, ge=1, le=10)
 
 
 class FaithfulnessCalibrationMetrics(StrictModel):
@@ -123,8 +133,20 @@ class FaithfulnessCalibrationMetrics(StrictModel):
     negative_rejection_rate: float = Field(ge=0.0, le=1.0)
 
 
+class FaithfulnessCalibrationStageRun(StrictModel):
+    repeat_index: int = Field(ge=1, le=10)
+    passed: bool
+    metrics: FaithfulnessCalibrationMetrics
+
+
+class FaithfulnessCalibrationCandidate(StrictModel):
+    threshold: float = Field(ge=0.0, le=1.0)
+    eligible: bool
+    runs: list[FaithfulnessCalibrationStageRun] = Field(min_length=1)
+
+
 class FaithfulnessCalibrationReport(StrictModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     calibration_id: str = Field(pattern=r"^faithfulness-zh-v\d+$")
     dataset_version: int = Field(ge=1)
     run_id: str = Field(pattern=r"^faithfulness-calibration-[A-Za-z0-9._-]+$")
@@ -142,6 +164,16 @@ class FaithfulnessCalibrationReport(StrictModel):
     metrics: FaithfulnessCalibrationMetrics | None = None
     failed_criteria: list[str] = Field(default_factory=list)
     items: list[FaithfulnessCalibrationItem] = Field(default_factory=list)
+    repeat_count: int = Field(default=1, ge=1)
+    selection_case_count: int = Field(default=0, ge=0)
+    validation_case_count: int = Field(default=0, ge=0)
+    selected_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    candidate_results: list[FaithfulnessCalibrationCandidate] = Field(
+        default_factory=list
+    )
+    validation_results: list[FaithfulnessCalibrationStageRun] = Field(
+        default_factory=list
+    )
     estimated_cost_yuan: float | None = Field(default=None, ge=0)
     error: str | None = Field(default=None, max_length=2000)
 
@@ -182,6 +214,7 @@ class FaithfulnessPolicy(StrictModel):
     ] = "legacy"
     enforced: bool = True
     calibration_run_id: str | None = None
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     reason: str = Field(
         default="该历史批次未记录校准状态，生成时仍按原规则参与判定",
         min_length=1,

@@ -1,0 +1,307 @@
+{
+  "calibration_id": "faithfulness-zh-v4",
+  "version": 4,
+  "description": "仅以本轮召回知识校准中文 Faithfulness：20组选择0.50/0.55/0.60门槛，10组独立验证，每组重复判分两轮。",
+  "cases": [
+    {
+      "case_id": "faithfulness-cap-conversion",
+      "source_case_id": "rag-chat-cap-ambiguity",
+      "phase": "selection",
+      "error_type": "number_or_unit",
+      "user_input": "瓶盖一盖就可以了吗",
+      "retrieved_contexts": ["一瓶盖约等于1.5个小刻度，一大刻度等于3个小刻度，按一大刻度执行时约需两瓶盖，一瓶盖不够；量取以瓶体刻度为准。"],
+      "positive_response": "一盖不够。1大刻度约两瓶盖，一盖约1.5小刻度，按瓶体刻度量最准。",
+      "negative_response": "一盖不够。因为一瓶盖只有0.5个小刻度，一大刻度要6瓶盖，量取时按瓶体刻度。"
+    },
+    {
+      "case_id": "faithfulness-evening-water",
+      "source_case_id": "rag-faq-evening-water",
+      "phase": "selection",
+      "error_type": "number_or_unit",
+      "user_input": "晚A应该怎么冲泡、什么时候喝？",
+      "retrieved_contexts": ["晚A每次用1大刻度（等于3小刻度，约两瓶盖），配约300ml温水冲泡，在睡前1至2小时喝；水温控制在85℃以下。"],
+      "positive_response": "晚A用1大刻度、约300ml温水冲泡，睡前1至2小时喝，水温不超过85℃。",
+      "negative_response": "晚A仍用1大刻度，但只配100ml沸水，临睡前马上喝。"
+    },
+    {
+      "case_id": "faithfulness-cold-water",
+      "source_case_id": "rag-faq-cold-water",
+      "phase": "selection",
+      "error_type": "condition_omission",
+      "user_input": "这些产品都能用冷水冲吗？",
+      "retrieved_contexts": ["早C、午B、晚A可以用冷水冲泡，冷水不影响产品效果；加卡点钥匙时需要热水冲开，经期建议热水冲调。"],
+      "positive_response": "早C、午B、晚A可以用冷水，冷水不影响效果；卡点钥匙要用热水冲开，经期也建议用热水。",
+      "negative_response": "都可以直接用冷水，包括卡点钥匙，经期也不必考虑热水。"
+    },
+    {
+      "case_id": "faithfulness-missed-dose",
+      "source_case_id": "rag-faq-missed-dose",
+      "phase": "selection",
+      "error_type": "negation",
+      "user_input": "漏喝了一次需要补回来吗？",
+      "retrieved_contexts": ["漏喝或拿错产品时不要集中补喝，也不要用另一款产品替代；漏掉的一次直接跳过，下一次按原计划恢复。"],
+      "positive_response": "不用补，漏掉这次直接跳过，下次按原计划恢复，也不要用另一款替代。",
+      "negative_response": "漏掉这次先跳过，但下次要加量补回来，也可以临时用另一款替代。"
+    },
+    {
+      "case_id": "faithfulness-noon-boundary",
+      "source_case_id": "rag-faq-noon-boundary",
+      "phase": "selection",
+      "error_type": "condition_omission",
+      "user_input": "午B超过下午两点还能喝吗？",
+      "retrieved_contexts": ["午B随午餐前后饮用，尽量下午两点前完成；超过时间当天跳过，不要补喝，晚A照常。倒班时应与计划睡眠间隔至少8小时。"],
+      "positive_response": "超过时间当天跳过，不要补喝，晚A照常；倒班时还要和计划睡眠至少间隔8小时。",
+      "negative_response": "倒班时只要还没睡就能喝午B，不需要保留与计划睡眠的8小时间隔。"
+    },
+    {
+      "case_id": "faithfulness-period-products",
+      "source_case_id": "rag-faq-period-products",
+      "phase": "selection",
+      "error_type": "condition_omission",
+      "user_input": "经期还能继续喝吗？",
+      "retrieved_contexts": ["经期没有不适时可以继续喝早C、午B、晚A；想更稳妥也可以等经期结束再开始，以自身感受为准，出现不适就暂停。"],
+      "positive_response": "经期没有不适可以继续；想稳妥也可等结束后再开始，如果出现不适就暂停。",
+      "negative_response": "经期都可以照常继续，就算出现不适也不需要暂停。"
+    },
+    {
+      "case_id": "faithfulness-caffeine-stack",
+      "source_case_id": "rag-faq-caffeine-stack",
+      "phase": "selection",
+      "error_type": "negation",
+      "user_input": "喝了早C午B还能再喝咖啡吗？",
+      "retrieved_contexts": ["早C和午B本身含咖啡因，不建议再随意叠加咖啡、能量饮料或大量浓茶；出现睡眠变差、心慌或手抖时应停止叠加并减少咖啡因。"],
+      "positive_response": "不建议随意叠加咖啡、能量饮料或大量浓茶；如果心慌、手抖或睡眠变差，要停止叠加并减少咖啡因。",
+      "negative_response": "可以随意叠加咖啡；如果心慌或手抖，继续喝一些帮助身体适应即可。"
+    },
+    {
+      "case_id": "faithfulness-palpitations",
+      "source_case_id": "rag-faq-palpitations",
+      "phase": "selection",
+      "error_type": "fact_reversal",
+      "user_input": "喝完心慌手抖是不是代谢启动？",
+      "retrieved_contexts": ["喝早C或午B后心慌、手抖、失眠可能是咖啡因摄入过多或个人敏感，不应解释为代谢启动；应先暂停含咖啡因产品，出现胸痛、呼吸困难、晕厥或持续明显心悸时及时就医。"],
+      "positive_response": "不能当成代谢启动，可能是咖啡因过多或个人敏感，应先暂停；出现胸痛、呼吸困难等情况要及时就医。",
+      "negative_response": "这通常是代谢启动，可以继续喝；只有轻微手抖时才需要去医院。"
+    },
+    {
+      "case_id": "faithfulness-diarrhea",
+      "source_case_id": "rag-faq-diarrhea",
+      "phase": "selection",
+      "error_type": "unsupported_advice",
+      "user_input": "喝完腹泻怎么办？",
+      "retrieved_contexts": ["喝产品后腹痛、恶心、呕吐或腹泻时应先暂停当天相关产品，不能解释为排毒，也不要自行加量；症状持续或明显加重时应及时就医。"],
+      "positive_response": "先暂停当天相关产品，不要当成排毒或自行加量；如果持续或明显加重要及时就医。",
+      "negative_response": "先暂停当天产品，同时自行服用双倍止泻药，第二天把产品加量补回。"
+    },
+    {
+      "case_id": "faithfulness-night-shift",
+      "source_case_id": "rag-faq-night-shift",
+      "phase": "selection",
+      "error_type": "fact_reversal",
+      "user_input": "上夜班怎么安排三款产品？",
+      "retrieved_contexts": ["倒班时不要机械照搬白天钟点，应按清醒周期安排：早C在起床后的第一餐，午B在清醒周期中段且与计划睡眠至少间隔8小时，晚A在最后一餐或准备结束清醒周期时。"],
+      "positive_response": "按清醒周期安排：早C放在起床后第一餐，午B放在中段并与睡眠间隔至少8小时，晚A放在最后一餐或清醒周期结束前。",
+      "negative_response": "夜班也按白天钟点不变：早C在睡前，午B距离睡眠两小时内，晚A在起床第一餐。"
+    },
+    {
+      "case_id": "faithfulness-low-carb",
+      "source_case_id": "rag-faq-low-carb",
+      "phase": "selection",
+      "error_type": "fact_reversal",
+      "user_input": "低碳是不是完全不吃碳水？",
+      "retrieved_contexts": ["低碳是减少精制碳水和重复叠加的主食，不是把碳水完全清零；可以选择全谷物、薯类、豆类等相对少加工的碳水，并结合蛋白质和蔬菜。"],
+      "positive_response": "不是完全清零，而是减少精制碳水和重复主食，可以选全谷物、薯类或豆类并搭配蛋白质和蔬菜。",
+      "negative_response": "是的，低碳就是把所有碳水清零，全谷物、薯类和豆类也都不能吃。"
+    },
+    {
+      "case_id": "faithfulness-meal-order",
+      "source_case_id": "rag-faq-meal-order",
+      "phase": "selection",
+      "error_type": "fact_reversal",
+      "user_input": "正餐应该按什么顺序吃？",
+      "retrieved_contexts": ["正餐按蛋白质、蔬菜、粗粮主食的顺序进食：先吃蛋白质打底，再吃蔬菜，最后吃适量粗粮主食；三餐都应保证蛋白质，无需完全戒主食。"],
+      "positive_response": "先吃蛋白质，再吃蔬菜，最后吃适量粗粮主食；不用完全戒主食。",
+      "negative_response": "先吃粗粮主食，再吃蔬菜，最后才吃蛋白质，但也不用完全戒主食。"
+    },
+    {
+      "case_id": "faithfulness-snack",
+      "source_case_id": "rag-faq-snack",
+      "phase": "selection",
+      "error_type": "unsupported_advice",
+      "user_input": "两餐之间饿了能加餐吗？",
+      "retrieved_contexts": ["两餐之间可以加餐，优先选择鸡蛋、无糖酸奶、水果、少量原味坚果或蔬菜，并根据距离下一餐的时间控制份量；经常需要加餐时应回看正餐是否过少。"],
+      "positive_response": "可以，优先鸡蛋、无糖酸奶、水果、少量原味坚果或蔬菜，并根据离下一餐多久控制份量。",
+      "negative_response": "可以加餐，建议每次固定吃两大把坚果，不用根据下一餐时间调整。"
+    },
+    {
+      "case_id": "faithfulness-staple-substitution",
+      "source_case_id": "rag-faq-staple-substitution",
+      "phase": "selection",
+      "error_type": "negation",
+      "user_input": "吃了红薯还需要减少米饭吗？",
+      "retrieved_contexts": ["玉米、土豆、红薯、南瓜和山药含淀粉，吃到接近一份主食时应计入当餐碳水，并相应减少米饭、面条、馒头等其他主食，避免同餐叠加。"],
+      "positive_response": "红薯吃到接近一份主食时要算进当餐碳水，并相应减少米饭等其他主食。",
+      "negative_response": "红薯含淀粉，但不需要计入当餐碳水，米饭可以保持原量。"
+    },
+    {
+      "case_id": "faithfulness-skip-dinner",
+      "source_case_id": "rag-faq-skip-dinner",
+      "phase": "selection",
+      "error_type": "condition_omission",
+      "user_input": "不饿可以不吃晚饭吗？",
+      "retrieved_contexts": ["减重期间不饿时可以不吃晚饭，但不建议长期完全跳过；可以把晚餐做轻，保留蛋白质和蔬菜，主食按活动和饥饿程度调整。"],
+      "positive_response": "偶尔不饿可以不吃，但不建议长期完全跳过；也可把晚餐做轻，保留蛋白质和蔬菜。",
+      "negative_response": "不饿就可以长期完全跳过晚饭，而且晚餐做轻时只留主食、不留蛋白质和蔬菜。"
+    },
+    {
+      "case_id": "faithfulness-eating-out",
+      "source_case_id": "rag-faq-eating-out",
+      "phase": "selection",
+      "error_type": "unsupported_advice",
+      "user_input": "减重期聚餐怎么吃？",
+      "retrieved_contexts": ["减重期间可以外出就餐，优先选择蛋白质和蔬菜、主食取一份、少选油炸浓汁和含糖饮料；聚餐后恢复正常饮食，不需要断食或加量补偿。"],
+      "positive_response": "优先蛋白质和蔬菜，主食取一份，少选油炸浓汁和含糖饮料；聚餐后恢复正常饮食即可。",
+      "negative_response": "聚餐后第二天应断食，并把产品加量来补偿这顿饭。"
+    },
+    {
+      "case_id": "faithfulness-sugar-label",
+      "source_case_id": "rag-faq-sugar-label",
+      "phase": "selection",
+      "error_type": "fact_reversal",
+      "user_input": "怎么看配料表里的糖多不多？",
+      "retrieved_contexts": ["配料表按添加量从高到低排列，糖排在前列通常说明添加较多；应同时查看每100克糖和能量，优先选择少添加糖的产品，已经购买的可以控制份量。"],
+      "positive_response": "糖排在配料表前列通常表示添加较多，还要一起看每100克糖和能量。",
+      "negative_response": "配料表按添加量从低到高排列，所以糖排得越靠前反而越少。"
+    },
+    {
+      "case_id": "faithfulness-sudden-weight-gain",
+      "source_case_id": "rag-faq-sudden-weight-gain",
+      "phase": "selection",
+      "error_type": "fact_reversal",
+      "user_input": "一天重了一公斤就是长了一公斤脂肪吗？",
+      "retrieved_contexts": ["单日体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响，不能直接等同于长了同样重量的脂肪；应在相同条件下继续记录并观察一周左右趋势。"],
+      "positive_response": "不能直接这样判断，单日变化还会受水分、盐分、胃肠内容物等影响，要在相同条件下继续看一周左右趋势。",
+      "negative_response": "可以直接判断为长了一公斤脂肪，水分、盐分和排便不会造成单日变化。"
+    },
+    {
+      "case_id": "faithfulness-weighing-time",
+      "source_case_id": "rag-faq-weighing-time",
+      "phase": "selection",
+      "error_type": "condition_omission",
+      "user_input": "什么时候称体重最准？",
+      "retrieved_contexts": ["称重应尽量使用同一台秤并在相近时间和状态下测量，通常可固定在早晨；记录后看连续趋势，不要把早晚体重或不同秤的单次数字直接比较。"],
+      "positive_response": "可以固定早晨，用同一台秤、相近状态测量，重点看连续趋势。",
+      "negative_response": "只要都在早晨，不同秤测出的单次数字也可以直接比较。"
+    },
+    {
+      "case_id": "faithfulness-waist-change",
+      "source_case_id": "rag-faq-waist-change",
+      "phase": "selection",
+      "error_type": "negation",
+      "user_input": "体重没变但腰围小了算有效果吗？",
+      "retrieved_contexts": ["体重不变但腰围腿围变小、衣服变松是积极变化，不等于没有效果；除了称重，可以每周在固定条件下记录腰围。"],
+      "positive_response": "算积极变化，不等于没效果；可以每周在固定条件下记录腰围。",
+      "negative_response": "不算效果，只有体重下降才有意义，不需要再记录腰围。"
+    },
+    {
+      "case_id": "faithfulness-low-impact-exercise",
+      "source_case_id": "rag-faq-low-impact-exercise",
+      "phase": "validation",
+      "error_type": "condition_omission",
+      "user_input": "膝盖不舒服也必须跑步吗？",
+      "retrieved_contexts": ["减重不需要强行跑步，可以从短时间快走、饭后散步、骑行或家务等活动开始；膝盖、脚踝或腰部有伤时不要用跑跳硬顶，应选择不加重疼痛的低冲击活动。"],
+      "positive_response": "不必强行跑步；有关节或腰部伤痛时应选不加重疼痛的低冲击活动。",
+      "negative_response": "膝盖不舒服也要坚持跑跳，疼痛说明运动正在起效。"
+    },
+    {
+      "case_id": "faithfulness-sleep-adjustment",
+      "source_case_id": "rag-faq-sleep-adjustment",
+      "phase": "validation",
+      "error_type": "number_or_unit",
+      "user_input": "怎么把睡觉时间慢慢调早？",
+      "retrieved_contexts": ["不要强迫自己突然提前很久入睡；先固定起床时间并减少睡前咖啡因、酒精和屏幕刺激，再每几天把上床时间提前15至30分钟。"],
+      "positive_response": "先固定起床时间，减少睡前咖啡因、酒精和屏幕刺激，再每几天提前15至30分钟上床。",
+      "negative_response": "先固定起床时间，然后每天一次把上床时间提前3至4小时。"
+    },
+    {
+      "case_id": "faithfulness-checkin-method",
+      "source_case_id": "rag-faq-checkin-method",
+      "phase": "validation",
+      "error_type": "unsupported_advice",
+      "user_input": "打卡需要等链接吗？",
+      "retrieved_contexts": ["可以直接在当前打卡群里发文字记录，无需等待链接或进入其他系统；只填写当天实际发生的体重、饮食、运动、睡眠、排便、身体感受和产品完成情况。"],
+      "positive_response": "不用等链接，直接在当前群里按当天实际情况发文字记录即可。",
+      "negative_response": "需要先下载新的打卡应用并上传身份证，群里的文字记录不算打卡。"
+    },
+    {
+      "case_id": "faithfulness-constipation",
+      "source_case_id": "rag-faq-constipation",
+      "phase": "validation",
+      "error_type": "unsupported_advice",
+      "user_input": "便秘时能不能自己加大胶囊剂量？",
+      "retrieved_contexts": ["便秘时先排查饮水、膳食纤维、久坐和作息，逐步增加活动并固定排便时间；不要自行猛灌水、长期依赖泻药或随意加大胶囊剂量，出现便血、持续腹痛、无法排气、呕吐或发热时应就医。"],
+      "positive_response": "不要自行加大胶囊剂量，先调整饮水、纤维、活动和作息；有便血、持续腹痛等情况应就医。",
+      "negative_response": "可以先把胶囊剂量加倍并长期服用泻药，一般不需要就医。"
+    },
+    {
+      "case_id": "faithfulness-questionnaire-purpose",
+      "source_case_id": "rag-faq-questionnaire-purpose",
+      "phase": "validation",
+      "error_type": "negation",
+      "user_input": "为什么要填入营问卷？",
+      "retrieved_contexts": ["入营问卷用于记录基础信息、目标、生活习惯和健康边界，系统据此生成用户画像并支持个性化文件和后续服务调整；敏感字段不应要求用户在群里公开。"],
+      "positive_response": "问卷用于记录基础信息、目标、习惯和健康边界，以支持用户画像、个性化文件和后续服务调整；敏感字段不应在群里公开。",
+      "negative_response": "问卷只用于公开展示个人信息，敏感字段也应直接发到群里。"
+    },
+    {
+      "case_id": "faithfulness-unify-dose",
+      "source_case_id": "rag-chat-unify-dose",
+      "phase": "validation",
+      "error_type": "number_or_unit",
+      "user_input": "一大刻度到底是几瓶盖？",
+      "retrieved_contexts": ["一瓶盖约等于1.5个小刻度，一大刻度等于3个小刻度，也就是约两瓶盖；用量应优先按瓶体刻度或刻度杯量取。"],
+      "positive_response": "一大刻度是3小刻度，约两瓶盖；实际量取优先看瓶体刻度或刻度杯。",
+      "negative_response": "一大刻度是1.5小刻度，正好一瓶盖，瓶盖比刻度杯更准确。"
+    },
+    {
+      "case_id": "faithfulness-before-meal",
+      "source_case_id": "rag-chat-before-meal",
+      "phase": "validation",
+      "error_type": "fact_reversal",
+      "user_input": "早C和午B要空腹喝吗？",
+      "retrieved_contexts": ["早C和午B随餐进行，也就是边吃边喝；不建议空腹饮用。"],
+      "positive_response": "不建议空腹，早C和午B随餐边吃边喝。",
+      "negative_response": "建议空腹喝，吃饭时反而不要喝。"
+    },
+    {
+      "case_id": "faithfulness-no-staple-dinner",
+      "source_case_id": "rag-chat-no-staple-dinner",
+      "phase": "validation",
+      "error_type": "condition_omission",
+      "user_input": "晚饭能完全不吃主食吗？",
+      "retrieved_contexts": ["不饿时可以把晚餐做轻，但不建议长期完全跳过晚餐；可保留蛋白质和蔬菜，主食量按当天活动和饥饿程度调整。低碳不等于把碳水完全清零。"],
+      "positive_response": "低碳不是完全清零碳水；晚餐可做轻，保留蛋白质和蔬菜，主食按活动和饥饿程度调整。",
+      "negative_response": "晚餐主食应该长期完全清零，也可以长期整顿晚餐都跳过。"
+    },
+    {
+      "case_id": "faithfulness-coffee-weight",
+      "source_case_id": "rag-chat-coffee-weight",
+      "phase": "validation",
+      "error_type": "fact_reversal",
+      "user_input": "今天重了就是因为昨天喝咖啡吗？",
+      "retrieved_contexts": ["单日或短期体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响，不能只凭时间先后认定是咖啡导致，也不能等同于长了同样重量的脂肪。"],
+      "positive_response": "不能只凭先后就认定是咖啡导致，短期体重还受水分、盐分、排便等影响，也不等于长了同样重量的脂肪。",
+      "negative_response": "可以确定是咖啡导致，而且增加多少体重就等于增加了多少脂肪。"
+    },
+    {
+      "case_id": "faithfulness-rice-at-lunch",
+      "source_case_id": "rag-chat-rice-at-lunch",
+      "phase": "validation",
+      "error_type": "negation",
+      "user_input": "低碳期中午能吃米饭吗？",
+      "retrieved_contexts": ["低碳不是把碳水完全清零，午餐可以吃适量米饭；应避免同一餐重复叠加多份主食，并与蛋白质和蔬菜搭配。"],
+      "positive_response": "可以吃适量米饭，避免同一餐叠加多份主食，并搭配蛋白质和蔬菜。",
+      "negative_response": "不能吃米饭，低碳期需要把碳水完全清零。"
+    }
+  ]
+}

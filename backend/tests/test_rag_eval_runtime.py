@@ -285,13 +285,14 @@ def test_uncalibrated_answer_relevancy_is_scored_but_not_thresholded():
     active = _active_ragas_thresholds(
         answer_relevancy_enforced=False,
         faithfulness_enforced=True,
+        faithfulness_threshold=0.55,
     )
 
     assert "answer_relevancy" not in active
     assert active == {
         "context_recall": 0.80,
         "context_precision": 0.70,
-        "faithfulness": 0.85,
+        "faithfulness": 0.55,
     }
 
 
@@ -305,6 +306,16 @@ def test_uncalibrated_faithfulness_is_scored_but_not_thresholded():
         "context_recall": 0.80,
         "context_precision": 0.70,
     }
+
+
+def test_faithfulness_uses_threshold_selected_by_matching_calibration():
+    active = _active_ragas_thresholds(
+        answer_relevancy_enforced=False,
+        faithfulness_enforced=True,
+        faithfulness_threshold=0.60,
+    )
+
+    assert active["faithfulness"] == 0.60
 
 
 class _FaithfulnessMetric:
