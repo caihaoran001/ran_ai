@@ -576,6 +576,10 @@ async def test_recent_checkins_separate_general_and_personalized_items(db_sessio
 
     item = result["items"][0]
     assert "parsed" not in item
+    assert result["complete_checkin_days"] == 0
+    assert item["is_complete"] is False
+    assert item["counts_toward_complete_total"] is False
+    assert item["complete_items"] == []
     assert item["general"] == {"weight": "65", "sleep": "7小时"}
     assert item["personalized"] == [
         {
@@ -589,6 +593,64 @@ async def test_recent_checkins_separate_general_and_personalized_items(db_sessio
             "answer": "4",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_recent_checkins_returns_authoritative_total_and_exact_complete_items(db_session):
+    settings = get_settings()
+    service_case = await _case(db_session)
+    service_case.service_plan_start_date = date.today()
+    db_session.add(
+        Checkin(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            checkin_date=date.today(),
+            content="早C喝了，午B没喝，晚A暂停；其余四项已回答",
+            parsed_json={
+                "product_schedule": {
+                    "morning_c": "已喝",
+                    "noon_b": "未喝",
+                    "night_a": "暂停",
+                },
+                "custom_checkin": {
+                    "default:v1:2": {"question": "蔬菜两拳", "answer": "完成"},
+                    "default:v1:3": {"question": "快走25分钟", "answer": "未完成"},
+                    "default:v1:4": {"question": "23:30前上床", "answer": "完成"},
+                    "default:v1:5": {"question": "情绪评分", "answer": "4分"},
+                },
+            },
+        )
+    )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_service_case_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+            settings=settings,
+        )
+    }
+
+    result = await tools["get_recent_checkins"].ainvoke(
+        {
+            "days": 1,
+            "date_from": date.today().isoformat(),
+            "date_to": date.today().isoformat(),
+        }
+    )
+
+    assert result["complete_checkin_days"] == 1
+    assert result["has_more"] is False
+    item = result["items"][0]
+    assert item["is_complete"] is True
+    assert item["counts_toward_complete_total"] is True
+    assert [entry["question"] for entry in item["complete_items"]] == [
+        "早C、午B、晚A",
+        "蔬菜两拳",
+        "快走25分钟",
+        "23:30前上床",
+        "情绪评分",
+    ]
+    assert item["complete_items"][0]["answer"] == "早C：已喝；午B：未喝；晚A：暂停"
 
 
 @pytest.mark.asyncio

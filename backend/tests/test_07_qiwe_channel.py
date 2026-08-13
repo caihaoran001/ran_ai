@@ -694,6 +694,9 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "“刚刚冲的”等仍未区分候选的回答不能当作确认" in AGENT_SYSTEM_PROMPT
     assert "饮食以低碳为日常底盘" in AGENT_SYSTEM_PROMPT
     assert "低碳不是断碳" in AGENT_SYSTEM_PROMPT
+    assert "累计完整打卡天数" in AGENT_SYSTEM_PROMPT
+    assert "get_checkin_reward_status" in AGENT_SYSTEM_PROMPT
+    assert "get_recent_checkins" in AGENT_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio

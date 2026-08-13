@@ -155,17 +155,13 @@ def reward_checkin_items(
     labels = labels_by_id or {}
 
     product_item_id = f"{prefix}:1"
-    raw_product_item = custom.get(product_item_id)
-    product_question = (
-        str(raw_product_item.get("question") or "").strip()
-        if isinstance(raw_product_item, dict)
-        else ""
-    )
     items: list[dict[str, object]] = [
         {
             "order": 1,
             "item_id": product_item_id,
-            "question": product_question or labels.get(product_item_id) or "早C、午B、晚A",
+            # 第 1 项是全局固定产品执行项；旧版 default/profile 标签里的第 1 项
+            # 可能仍是晨起体重，不能拿来覆盖当前统一口径。
+            "question": "早C、午B、晚A",
             "answer": "；".join(
                 (
                     f"早C：{str(schedule.get('morning_c') or '').strip()}",

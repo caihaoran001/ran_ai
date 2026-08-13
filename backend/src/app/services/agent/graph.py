@@ -787,6 +787,7 @@ def _is_data_tool(name: str) -> bool:
         "read_delivery_document",
         "list_group_files",
         "read_group_file",
+        "get_checkin_reward_status",
         "get_checkin_followup_preferences",
     }
 

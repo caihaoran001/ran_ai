@@ -362,6 +362,116 @@ async def test_reward_shipping_tool_does_not_treat_unrelated_one_as_choice(db_se
 
 
 @pytest.mark.asyncio
+async def test_reward_status_tool_returns_total_tiers_choice_and_shipment_history(
+    db_session,
+) -> None:
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    shipment = CheckinRewardShipment(
+        service_case_id=service_case.id,
+        status="shipped",
+        requested_at=datetime(2026, 8, 4, tzinfo=timezone.utc),
+        shipped_at=datetime(2026, 8, 5, tzinfo=timezone.utc),
+        marked_by="ops-a",
+    )
+    program = CheckinRewardProgram(
+        service_case_id=service_case.id,
+        current_choice="accumulate",
+        choice_tier_days=7,
+    )
+    db_session.add_all([shipment, program])
+    await db_session.flush()
+    qualifications = [
+        CheckinRewardQualification(
+            service_case_id=service_case.id,
+            tier_days=3,
+            reward_code="coffee_tube",
+            reward_name="咖啡",
+            quantity=1,
+            qualified_on=date(2026, 8, 3),
+            shipment_id=shipment.id,
+        ),
+        CheckinRewardQualification(
+            service_case_id=service_case.id,
+            tier_days=7,
+            reward_code="key_box",
+            reward_name="钥匙",
+            quantity=1,
+            qualified_on=date(2026, 8, 7),
+        ),
+    ]
+    db_session.add_all(qualifications)
+    for offset in range(7):
+        db_session.add(
+            Checkin(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                content=f"完整打卡 {offset + 1}",
+                parsed_json=_parsed(),
+            )
+        )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reward_shipping_tools(
+            context=AgentRunContext(service_case_id=service_case.id)
+        )
+    }
+
+    result = await tools["get_checkin_reward_status"].ainvoke({})
+
+    assert result["complete_checkin_days"] == 7
+    assert result["current_choice"] == "accumulate"
+    assert result["current_choice_text"] == "选择继续累积"
+    assert result["operational_status_text"] == "已选择继续累积"
+    assert result["earned_rewards"] == "1 管咖啡、1 盒钥匙"
+    assert result["shipped_rewards"] == "1 管咖啡"
+    assert result["unshipped_rewards"] == "1 盒钥匙"
+    assert result["reward_tiers"] == [
+        {
+            "required_complete_days": 3,
+            "reward": "1 管咖啡",
+            "earned": True,
+            "qualified_on": "2026-08-03",
+            "shipment_status": "shipped",
+        },
+        {
+            "required_complete_days": 7,
+            "reward": "1 盒钥匙",
+            "earned": True,
+            "qualified_on": "2026-08-07",
+            "shipment_status": None,
+        },
+        {
+            "required_complete_days": 14,
+            "reward": "1 瓶C8",
+            "earned": False,
+            "qualified_on": None,
+            "shipment_status": None,
+        },
+        {
+            "required_complete_days": 28,
+            "reward": "3 管咖啡",
+            "earned": False,
+            "qualified_on": None,
+            "shipment_status": None,
+        },
+    ]
+    assert result["shipment_history"] == [
+        {
+            "shipment_id": shipment.id,
+            "status": "shipped",
+            "status_text": "已发货",
+            "rewards": "1 管咖啡",
+            "requested_at": "2026-08-04T00:00:00+00:00",
+            "shipped_at": "2026-08-05T00:00:00+00:00",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_reward_admin_lists_each_counted_day_with_five_items_and_original_messages(
     db_session, admin_client
 ) -> None:

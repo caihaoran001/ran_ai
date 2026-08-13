@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -22,7 +22,9 @@ from app.services.checkin_presentation import (
     personalized_checkin_answers,
     personalized_checkin_item_ids,
 )
+from app.services.checkin_completion import is_complete_checkin
 from app.services.checkin_queries import recent_checkins
+from app.services.checkin_rewards import reward_checkin_items, valid_reward_checkins
 from app.services.checkin_service import CHECKIN_KEYS
 from app.services.service_case_queries import (
     effective_service_day,
@@ -34,6 +36,29 @@ from app.services.service_case_queries import (
 
 class DaysArgs(BaseModel):
     days: int = Field(default=7, ge=1, le=30, description="Lookback days, from 1 to 30.")
+
+
+class CheckinQueryArgs(BaseModel):
+    days: int = Field(
+        default=7,
+        ge=1,
+        le=30,
+        description="Maximum check-in records to return in this page, from 1 to 30.",
+    )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        le=365,
+        description="How many newest matching check-in records to skip for older-page lookup.",
+    )
+    date_from: date | None = Field(
+        default=None,
+        description="Optional inclusive start date in YYYY-MM-DD for a specific day or range.",
+    )
+    date_to: date | None = Field(
+        default=None,
+        description="Optional inclusive end date in YYYY-MM-DD for a specific day or range.",
+    )
 
 
 class ListFilesArgs(BaseModel):
@@ -170,10 +195,37 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
                 "documents": document_statuses,
             }
 
-    async def get_recent_checkins(days: int = 7) -> dict[str, Any]:
+    async def get_recent_checkins(
+        days: int = 7,
+        offset: int = 0,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> dict[str, Any]:
         days = _clamp_days(days)
+        offset = max(0, min(int(offset), 365))
+        if date_from is not None and date_to is not None and date_from > date_to:
+            return {"ok": False, "error": "开始日期不能晚于结束日期。"}
         async with SessionLocal() as session:
-            rows = await _recent_checkins(session, context.service_case_id, days)
+            service_case = await session.scalar(
+                select_active_service_cases(ServiceCase.id == context.service_case_id)
+            )
+            if service_case is None:
+                return {"ok": False, "error": "当前服务单不存在或已删除。"}
+            page_rows = await _recent_checkins(
+                session,
+                context.service_case_id,
+                days + 1,
+                offset=offset,
+                date_from=date_from,
+                date_to=date_to,
+            )
+            has_more = len(page_rows) > days
+            rows = page_rows[-days:] if has_more else page_rows
+            counted_complete_rows = await valid_reward_checkins(
+                session,
+                service_case=service_case,
+            )
+            counted_complete_dates = {row.checkin_date for row in counted_complete_rows}
             item_ids = set().union(
                 *(personalized_checkin_item_ids(row.parsed_json) for row in rows)
             ) if rows else set()
@@ -185,10 +237,18 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             items = []
             for row in rows:
                 parsed = row.parsed_json or {}
+                complete = is_complete_checkin(row)
                 items.append(
                     {
                         "date": row.checkin_date.isoformat(),
+                        "is_complete": complete,
+                        "counts_toward_complete_total": row.checkin_date in counted_complete_dates,
                         "content": row.content[:300],
+                        "complete_items": (
+                            reward_checkin_items(row, labels_by_id=labels_by_id)
+                            if complete
+                            else []
+                        ),
                         "general": {
                             key: parsed[key]
                             for key in CHECKIN_KEYS
@@ -203,9 +263,15 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             return {
                 "ok": True,
                 "days": days,
+                "offset": offset,
+                "date_from": date_from.isoformat() if date_from else None,
+                "date_to": date_to.isoformat() if date_to else None,
                 "count": len(rows),
+                "complete_checkin_days": len(counted_complete_rows),
+                "has_more": has_more,
+                "next_offset": offset + len(rows) if has_more else None,
                 "items": items,
-                "note": "数据不足，不能判断趋势。" if len(rows) < 2 else "",
+                "note": "没有匹配的打卡记录。" if not rows else "",
             }
 
     async def get_weight_trend(days: int = 7) -> dict[str, Any]:
@@ -457,11 +523,12 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             coroutine=get_recent_checkins,
             name="get_recent_checkins",
             description=(
-                "Read recent structured check-in records for the current service case only. "
-                "Each day separates general metrics (weight, sleep, diet, etc.) from "
-                "personalized execution-item answers."
+                "Read THIS user's authoritative cumulative complete-checkin count and paged daily check-in details. "
+                "Each day includes is_complete, whether it counts toward the service total, exact five complete items "
+                "when complete, general metrics, and personalized answers. Use date_from/date_to for a specific day; "
+                "use next_offset to continue into older records. Never count or infer completeness yourself."
             ),
-            args_schema=DaysArgs,
+            args_schema=CheckinQueryArgs,
         ),
         StructuredTool.from_function(
             coroutine=get_weight_trend,
@@ -519,9 +586,25 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
     ]
 
 
-async def _recent_checkins(session, service_case_id: int, days: int) -> list[Checkin]:
+async def _recent_checkins(
+    session,
+    service_case_id: int,
+    days: int,
+    *,
+    offset: int = 0,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> list[Checkin]:
     # 时间正序（旧→新），便于按顺序算体重趋势。查询主体见 checkin_queries.recent_checkins。
-    return await recent_checkins(session, service_case_id, limit=days, ascending=True)
+    return await recent_checkins(
+        session,
+        service_case_id,
+        limit=days,
+        ascending=True,
+        offset=offset,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
 
 async def _initial_weight_from_profile(session, service_case_id: int) -> float | None:

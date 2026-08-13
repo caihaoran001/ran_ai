@@ -21,7 +21,12 @@ from app.models.message import (
 )
 from app.models.service_case import ServiceCase
 from app.services.agent.state import AgentRunContext
-from app.services.checkin_rewards import OPEN_SHIPMENT_STATUSES, _qualification_display
+from app.services.checkin_rewards import (
+    OPEN_SHIPMENT_STATUSES,
+    REWARD_TIERS,
+    _qualification_display,
+    valid_reward_checkins,
+)
 from app.services.service_case_queries import select_active_service_cases
 
 
@@ -78,6 +83,11 @@ async def _current_user_source(session, context: AgentRunContext) -> Message | N
 
 
 async def _reward_status(session, *, service_case_id: int) -> dict[str, Any]:
+    service_case = await session.scalar(
+        select_active_service_cases(ServiceCase.id == service_case_id)
+    )
+    if service_case is None:
+        raise ValueError("当前服务单不存在或已删除。")
     program = await session.scalar(
         select(CheckinRewardProgram).where(
             CheckinRewardProgram.service_case_id == service_case_id
@@ -116,9 +126,16 @@ async def _reward_status(session, *, service_case_id: int) -> dict[str, Any]:
             missing_fields.append("手机号")
         if not _clean(active.shipping_address):
             missing_fields.append("详细地址")
+    complete_checkins = await valid_reward_checkins(
+        session,
+        service_case=service_case,
+    )
     return {
+        "service_case": service_case,
+        "complete_checkin_days": len(complete_checkins),
         "program": program,
         "qualifications": qualifications,
+        "shipments": shipments,
         "unsent": unsent,
         "active_shipment": active,
         "active_items": active_items,
@@ -131,10 +148,82 @@ def _public_payload(status: dict[str, Any]) -> dict[str, Any]:
     active: CheckinRewardShipment | None = status["active_shipment"]
     qualifications: list[CheckinRewardQualification] = status["qualifications"]
     unsent: list[CheckinRewardQualification] = status["unsent"]
+    shipments: list[CheckinRewardShipment] = status["shipments"]
+    shipments_by_id = {row.id: row for row in shipments}
+    qualifications_by_tier = {row.tier_days: row for row in qualifications}
+    shipped_qualifications = [
+        row
+        for row in qualifications
+        if row.shipment_id in shipments_by_id
+        and shipments_by_id[row.shipment_id].status == "shipped"
+    ]
+    choice = program.current_choice if program is not None else None
+    choice_text = {
+        "pending_choice": "待选择现在发货或继续累积",
+        "ship_now": "选择现在发货",
+        "accumulate": "选择继续累积",
+    }.get(choice, "尚未选择")
+    if active is not None:
+        operational_status = active.status
+    elif unsent:
+        operational_status = "accumulating" if choice == "accumulate" else "waiting_choice"
+    elif any(row.status == "shipped" for row in shipments):
+        operational_status = "shipped"
+    else:
+        operational_status = "no_reward"
+    operational_status_text = {
+        "missing_address": "已选择发货，收件信息未齐",
+        "pending_shipment": "已选择发货，等待运营寄出",
+        "accumulating": "已选择继续累积",
+        "waiting_choice": "已有奖品，等待选择发货或继续累积",
+        "shipped": "已发货",
+        "no_reward": "尚未获得奖品",
+    }[operational_status]
+    reward_tiers = []
+    for tier in REWARD_TIERS:
+        qualification = qualifications_by_tier.get(tier.days)
+        shipment = (
+            shipments_by_id.get(qualification.shipment_id)
+            if qualification is not None and qualification.shipment_id is not None
+            else None
+        )
+        reward_tiers.append(
+            {
+                "required_complete_days": tier.days,
+                "reward": tier.display,
+                "earned": qualification is not None,
+                "qualified_on": (
+                    qualification.qualified_on.isoformat() if qualification is not None else None
+                ),
+                "shipment_status": shipment.status if shipment is not None else None,
+            }
+        )
+    shipment_history = [
+        {
+            "shipment_id": shipment.id,
+            "status": shipment.status,
+            "status_text": {
+                "missing_address": "收件信息未齐",
+                "pending_shipment": "等待运营寄出",
+                "shipped": "已发货",
+                "cancelled": "已取消该寄送批次",
+            }.get(shipment.status, shipment.status),
+            "rewards": _qualification_display(
+                [row for row in qualifications if row.shipment_id == shipment.id]
+            ),
+            "requested_at": shipment.requested_at.isoformat(),
+            "shipped_at": shipment.shipped_at.isoformat() if shipment.shipped_at else None,
+        }
+        for shipment in reversed(shipments)
+        if shipment.status != "cancelled"
+    ]
     payload = {
         "ok": True,
+        "complete_checkin_days": status["complete_checkin_days"],
+        "reward_tiers": reward_tiers,
         "has_earned_rewards": bool(qualifications),
         "earned_rewards": _qualification_display(qualifications),
+        "shipped_rewards": _qualification_display(shipped_qualifications),
         "unshipped_rewards": _qualification_display(unsent),
         "awaiting_choice": bool(
             program is not None
@@ -142,11 +231,17 @@ def _public_payload(status: dict[str, Any]) -> dict[str, Any]:
             and unsent
             and active is None
         ),
-        "current_choice": program.current_choice if program is not None else None,
+        "current_choice": choice,
+        "current_choice_text": choice_text,
         "choice_tier_days": program.choice_tier_days if program is not None else None,
+        "operational_status": operational_status,
+        "operational_status_text": operational_status_text,
         "active_shipment": active is not None,
         "shipment_status": active.status if active is not None else None,
         "shipment_rewards": _qualification_display(status["active_items"]),
+        "shipment_history": shipment_history,
+        "has_shipped_rewards": bool(shipped_qualifications),
+        "all_earned_rewards_shipped": bool(qualifications) and not unsent,
         "missing_shipping_fields": status["missing_fields"],
         "has_saved_shipping_info": bool(
             program
@@ -159,6 +254,18 @@ def _public_payload(status: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_reward_shipping_tools(*, context: AgentRunContext) -> list[BaseTool]:
+    async def get_checkin_reward_status() -> dict[str, Any]:
+        """Read the current user's complete-checkin and reward/shipping status."""
+        async with SessionLocal() as session:
+            service_case = await session.scalar(
+                select_active_service_cases(ServiceCase.id == context.service_case_id)
+            )
+            if service_case is None:
+                return {"ok": False, "error": "当前服务单不存在或已删除。"}
+            return _public_payload(
+                await _reward_status(session, service_case_id=service_case.id)
+            )
+
     async def manage_reward_shipping(
         action: RewardShippingAction,
         recipient_name: str | None = None,
@@ -313,5 +420,15 @@ def build_reward_shipping_tools(*, context: AgentRunContext) -> list[BaseTool]:
                 "changes quantities, or marks a shipment as shipped."
             ),
             args_schema=RewardShippingArgs,
-        )
+        ),
+        StructuredTool.from_function(
+            coroutine=get_checkin_reward_status,
+            name="get_checkin_reward_status",
+            description=(
+                "Read THIS user's authoritative cumulative complete-checkin days, all 3/7/14/28-day reward "
+                "rules, earned and unshipped rewards, current ship-now/accumulate choice, and actual shipment "
+                "history/status. Use this for every customer question about check-in totals or rewards; never "
+                "derive an exact total from the highest earned tier. This tool is read-only."
+            ),
+        ),
     ]
