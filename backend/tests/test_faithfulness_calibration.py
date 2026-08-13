@@ -15,8 +15,8 @@ from app.schemas.rag_evaluation import FaithfulnessCalibrationReport
 def _calibration_report(*, passed: bool) -> FaithfulnessCalibrationReport:
     return FaithfulnessCalibrationReport.model_validate(
         {
-            "calibration_id": "faithfulness-zh-v1",
-            "dataset_version": 1,
+            "calibration_id": "faithfulness-zh-v2",
+            "dataset_version": 2,
             "run_id": "faithfulness-calibration-test",
             "status": "completed",
             "started_at": "2026-08-11T08:00:00Z",
@@ -49,7 +49,8 @@ def test_fixed_faithfulness_suite_reuses_authoritative_rag_facts():
     pairs = build_faithfulness_calibration_pairs(suite)
     rag_cases = {case.case_id: case for case in load_rag_eval_suite().cases}
 
-    assert suite.calibration_id == "faithfulness-zh-v1"
+    assert suite.calibration_id == "faithfulness-zh-v2"
+    assert suite.version == 2
     assert len(pairs) == 10
     assert len({pair.case_id for pair in pairs}) == 10
     assert len({pair.source_case_id for pair in pairs}) == 10
@@ -58,8 +59,17 @@ def test_fixed_faithfulness_suite_reuses_authoritative_rag_facts():
             fact.statement
             for fact in rag_cases[pair.source_case_id].authoritative_facts
         }
-        assert set(pair.retrieved_contexts).issubset(source_statements)
+        assert any(
+            statement in context
+            for statement in source_statements
+            for context in pair.retrieved_contexts
+        )
         assert pair.positive_response != pair.negative_response
+    assert any(
+        "【近期对话】" in context
+        for pair in pairs
+        for context in pair.retrieved_contexts
+    )
 
 
 def test_faithfulness_calibration_passes_when_threshold_separates_both_classes():
@@ -113,7 +123,7 @@ def test_faithfulness_calibration_only_applies_to_matching_judge():
 
 def test_faithfulness_calibration_only_applies_to_current_dataset_version():
     report = _calibration_report(passed=True).model_copy(
-        update={"calibration_id": "faithfulness-zh-v2", "dataset_version": 2}
+        update={"calibration_id": "faithfulness-zh-v1", "dataset_version": 1}
     )
 
     policy = resolve_faithfulness_policy(

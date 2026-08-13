@@ -134,6 +134,7 @@ class RagasScorer:
         reference: str,
         retrieved_contexts: list[str],
         raw_contexts: list[str],
+        faithfulness_contexts: list[str],
     ) -> RagasScores:
         recall, recall_details = await self.score_context_recall_with_details(
             user_input=user_input,
@@ -153,7 +154,7 @@ class RagasScorer:
         faithfulness, faithfulness_details = await self.score_faithfulness_with_details(
             user_input=user_input,
             response=response,
-            retrieved_contexts=retrieved_contexts,
+            retrieved_contexts=faithfulness_contexts,
         )
         (
             relevancy,

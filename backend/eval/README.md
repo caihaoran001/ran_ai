@@ -2,7 +2,7 @@
 
 评测只在 ECS 上连接生产 RDS，进程启动后同时启用 PostgreSQL 只读会话和 SQL 写入拦截；意图模型原有的用量日志写入会改为进程内收集。不会调用消息渠道，也不会创建提醒或修改服务单。
 
-正式题库固定为 `tests/fixtures/rag_eval_cases.v1.json`：25 条依据生产 FAQ 改写，25 条来自一次性筛选并脱敏的生产聊天。每次运行只读取这个文件，不会重新抽 FAQ、聊天或自动替换题目。
+正式题库固定为 `tests/fixtures/rag_eval_cases.v2.json`：25 条依据生产 FAQ 改写，25 条来自一次性筛选并脱敏的生产聊天。v2 为两道省略问法补齐了能确定所指对象的前文；每次运行只读取这个文件，不会重新抽 FAQ、聊天或自动替换题目。
 
 ## 首次安装或依赖版本变化
 
@@ -29,7 +29,7 @@ docker compose -f docker-compose.eval.yml run --name ran_ai-rag-relevancy-calibr
 
 ## 回复忠实度中文校准
 
-Faithfulness 的 0.85 门槛也必须先用固定中文事实验证。10 组用例全部复用正式 50 题中的权威事实，每组分别提供忠实回复和关键关系反转回复；该入口不检索 RDS、不生成用户回复：
+Faithfulness 的 0.85 门槛也必须先用固定中文事实验证。v2 的 10 组用例复用正式 50 题中的权威事实，并加入近期对话和更接近真实长度的回复；每组分别提供忠实回复和关键关系反转回复。正式评测只用知识命中计算召回指标，但判断回复忠实度时会同时参考知识命中、本轮问题和近期对话。该入口不检索 RDS、不生成用户回复：
 
 ```bash
 docker compose -f docker-compose.eval.yml run --name ran_ai-rag-faithfulness-calibration --no-deps \

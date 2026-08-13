@@ -7,8 +7,8 @@ from app.evaluation.rag_cases import REQUIRED_RISK_TAGS, load_rag_eval_suite
 def test_fixed_rag_eval_suite_has_exact_contract_and_risk_coverage():
     suite = load_rag_eval_suite()
 
-    assert suite.suite_id == "rag-fixed-50-v1"
-    assert suite.version == 1
+    assert suite.suite_id == "rag-fixed-50-v2"
+    assert suite.version == 2
     assert len(suite.cases) == 50
     assert Counter(case.origin.kind for case in suite.cases) == {
         "faq_rewrite": 25,
@@ -48,6 +48,17 @@ def test_original_bottle_cap_case_uses_positive_fact_relationships():
     assert set(case.answer.required_fact_ids) == {"chat-r01"}
     assert "一瓶盖不够" in case.authoritative_facts[0].statement
     assert "约需两瓶盖" in case.authoritative_facts[0].statement
+
+
+def test_ellipsis_cases_include_the_context_needed_to_resolve_the_reference():
+    suite = load_rag_eval_suite()
+    cases = {case.case_id: case for case in suite.cases}
+
+    noon = cases["rag-faq-noon-boundary"]
+    questionnaire = cases["rag-faq-questionnaire-purpose"]
+
+    assert any("午B" in item.content for item in noon.history)
+    assert any("入营问卷" in item.content for item in questionnaire.history)
 
 
 def test_ambiguous_real_chat_requires_clarification_without_retrieval():

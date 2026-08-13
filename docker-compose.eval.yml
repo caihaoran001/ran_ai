@@ -32,7 +32,7 @@ services:
       RAG_EVAL_JUDGE_MAX_TOKENS: ${RAG_EVAL_JUDGE_MAX_TOKENS:-50000}
       RAG_EVAL_GIT_SHA: ${RAG_EVAL_GIT_SHA:-unknown}
       RAG_EVALUATION_REPORTS_PATH: /app/diagnostics/rag-evaluations
-      RAG_EVALUATION_DATASET_PATH: /app/tests/fixtures/rag_eval_cases.v1.json
+      RAG_EVALUATION_DATASET_PATH: /app/tests/fixtures/rag_eval_cases.v2.json
     volumes:
       - ./backend/eval:/app/eval:ro
       - ./backend/src:/app/src:ro
