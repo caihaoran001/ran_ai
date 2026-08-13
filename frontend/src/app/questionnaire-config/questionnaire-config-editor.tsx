@@ -39,7 +39,7 @@ type ScheduleConfig = {
 };
 
 const DEFAULT_INTAKE_REPLY =
-  "问卷已收到，正在生成专属方案。\n\n我们会基于你的填写结果生成：\n1.《个人能量重启诊断报告》\n2.《28天高燃人生执行建议书》\n\n生成完成后会第一时间发送给你，请稍等。";
+  "问卷已收到，正在为你生成两份专属方案，完成后会第一时间发到群里。\n\n{reward_intro}\n\n{plan_start_line}";
 
 const TEMPLATE_LABELS: Record<string, string> = {
   intake: "入营问卷",
@@ -167,7 +167,7 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
             <div>
               <h2 className="panel-title">入营问卷回执</h2>
               <p className="panel-subtitle">
-              用户提交入营问卷后机器人在群内自动回复。话术支持 {"{user_name}"}、{"{case_no}"}、{"{group_id}"} 变量。
+              用户提交入营问卷后机器人在群内自动回复。奖励规则和服务开始提示由开关与服务单自动填入。
               </p>
             </div>
           </div>
@@ -410,7 +410,7 @@ function ScheduleEditor({
               <span>回执话术</span>
               <div className="flex flex-wrap items-center justify-end gap-1">
                 <span className="mr-1.5 text-xs text-slate-400">点击追加变量:</span>
-                {["{user_name}", "{case_no}", "{group_id}"].map((varName) => (
+                {["{user_name}", "{case_no}", "{group_id}", "{reward_intro}", "{plan_start_line}"].map((varName) => (
                   <button
                     key={varName}
                     type="button"

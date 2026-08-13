@@ -39,7 +39,10 @@ from app.schemas.questionnaire import (
 from app.services.document_service import generate_profile_and_documents
 from app.db.session import SessionLocal
 from app.services.channels import send_channel_text
-from app.services.checkin_questionnaires import get_checkin_questionnaire_schedule
+from app.services.checkin_questionnaires import (
+    CHECKIN_REWARD_RECEIPT_PARAGRAPH,
+    get_checkin_questionnaire_schedule,
+)
 from app.services.message_insight_service import (
     analyze_message_insight,
     mark_intake_age_risk,
@@ -521,14 +524,23 @@ async def _send_intake_submit_reply(service_case_id: int) -> None:
         else:
             plan_start_date = ""
             plan_start_line = "收到文件后先好好看看内容，提前熟悉，有任何问题随时在群里问我们～"
+        rewards_enabled = get_settings().checkin_rewards_enabled
+        # 新默认话术通过变量控制奖励承诺；同时剔除已被运营静态粘进旧配置的标准奖励段，
+        # 保证日后关闭开关时不会继续向用户承诺发奖。
+        message_template = str(reply.get("message") or "")
+        if not rewards_enabled:
+            message_template = message_template.replace(CHECKIN_REWARD_RECEIPT_PARAGRAPH, "")
         content = _format_template(
-            str(reply.get("message") or ""),
+            message_template,
             {
                 "user_name": user.name if user else "",
                 "case_no": service_case.case_no,
                 "group_id": service_case.group_id,
                 "plan_start_date": plan_start_date,
                 "plan_start_line": plan_start_line,
+                "reward_intro": (
+                    CHECKIN_REWARD_RECEIPT_PARAGRAPH if rewards_enabled else ""
+                ),
             },
         ).strip()
         if not content:

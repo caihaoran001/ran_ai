@@ -46,6 +46,7 @@ from app.services.intake_generation import (
     _apply_shared_activity_frequency_to_documents,
     _apply_shared_activity_frequency_to_profile,
     _normalize_shared_activity_frequency,
+    _generated_daily_checkin_errors,
     _normalize_safety_factors,
     _resolve_management_band,
     _scrub_internal_text,
@@ -265,15 +266,20 @@ def _make_intake_mock_response(
                     ],
                     "daily_checkin": [
                         {"order": 1, "category": "product", "title": "个案产品排班是否按方案完成",
-                         "answer_type": "yes_no", "options": ["是", "否"]},
+                         "answer_type": "yes_no", "options": ["是", "否"],
+                         "example_answer": "早C已完成；午B未完成；晚A按方案暂停"},
                         {"order": 2, "category": "sleep", "title": "是否在23:30前上床",
-                         "answer_type": "yes_no", "options": ["是", "否"]},
+                         "answer_type": "yes_no", "options": ["是", "否"],
+                         "example_answer": "是，已完成"},
                         {"order": 3, "category": "diet", "title": "蔬菜总量是否达到2拳",
-                         "answer_type": "yes_no", "options": ["是", "否"]},
+                         "answer_type": "yes_no", "options": ["是", "否"],
+                         "example_answer": "是，已完成"},
                         {"order": 4, "category": "activity", "title": "是否完成7000步或有氧30分钟",
-                         "answer_type": "yes_no", "options": ["是", "否"]},
+                         "answer_type": "yes_no", "options": ["是", "否"],
+                         "example_answer": "是，已完成"},
                         {"order": 5, "category": "state", "title": "饭后困评分（1分很困、5分不困）",
-                         "answer_type": "score_1_5", "options": ["1", "2", "3", "4", "5"]},
+                         "answer_type": "score_1_5", "options": ["1", "2", "3", "4", "5"],
+                         "example_answer": "4分，饭后精神尚可"},
                     ],
                     "weekly_standard": "个案产品排班和晚间收口至少完成5天；完成计划运动；至少记录1次体重或围度/体感",
                     "adjust_stop_conditions": "持续心慌或睡眠明显恶化时暂停并联系班主任；胸痛、呼吸困难或明显不适时及时就医。",
@@ -400,12 +406,14 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     daily_checkin_spec = execution_spec["daily_checkin"]
     assert isinstance(daily_checkin_spec, list) and len(daily_checkin_spec) == 1
     item_spec = daily_checkin_spec[0]
-    assert set(item_spec) == {"order", "category", "title", "answer_type", "options"}
+    assert set(item_spec) == {"order", "category", "title", "answer_type", "options", "example_answer"}
     assert "数组长度必须正好5项，禁止4项或6项" in item_spec["order"]
     assert "第1项固定 product，5项中必须有1项 activity" in item_spec["category"]
     assert "严禁合并成一项综合评分" in item_spec["title"]
     assert "禁止写「每餐蔬菜至少2拳」" in item_spec["title"]
     assert "只能取 yes_no / score_1_5 / number / text" in item_spec["answer_type"]
+    assert "早C、午B、晚A" in item_spec["example_answer"]
+    assert "示例回答" in item_spec["example_answer"]
 
     fallback = _daily_checkin_text(None)
     assert "个案产品排班是否按方案完成" in fallback
@@ -1975,6 +1983,76 @@ def test_daily_checkin_logs_every_substitution(caplog):
     assert any("fallback_used=" in message for message in messages)
 
 
+def test_generated_daily_checkin_examples_match_answer_contract():
+    items = normalize_daily_checkin_items(
+        [
+            {
+                "order": 1,
+                "category": "product",
+                "title": "早C随早餐、午B随午餐、晚A最晚睡前1小时是否按方案完成？",
+                "answer_type": "yes_no",
+                "options": ["是", "否"],
+                "example_answer": "早C已完成；午B未完成；晚A按方案暂停",
+            },
+            {
+                "order": 2,
+                "category": "diet",
+                "title": "蔬菜总量是否至少2拳？",
+                "answer_type": "yes_no",
+                "options": ["是", "否"],
+                "example_answer": "是，已完成",
+            },
+            {
+                "order": 3,
+                "category": "activity",
+                "title": "是否完成30分钟快走？",
+                "answer_type": "yes_no",
+                "options": ["是", "否"],
+                "example_answer": "是，已完成",
+            },
+            {
+                "order": 4,
+                "category": "sleep",
+                "title": "睡眠时长（小时）",
+                "answer_type": "number",
+                "options": [],
+                "example_answer": "7小时",
+            },
+            {
+                "order": 5,
+                "category": "state",
+                "title": "饭后困评分（1分很困、5分不困）",
+                "answer_type": "score_1_5",
+                "options": ["1", "2", "3", "4", "5"],
+                "example_answer": "4分，饭后精神尚可",
+            },
+        ],
+        allow_fallback=False,
+    )
+
+    assert _generated_daily_checkin_errors(items) == []
+
+
+def test_generated_daily_checkin_examples_reject_empty_or_mismatched_answers():
+    items = normalize_daily_checkin_items(
+        [
+            {"order": 1, "category": "product", "title": "早C、午B、晚A是否完成？", "answer_type": "yes_no", "example_answer": "是，已完成"},
+            {"order": 2, "category": "diet", "title": "蔬菜是否完成？", "answer_type": "yes_no", "example_answer": "请填写"},
+            {"order": 3, "category": "activity", "title": "是否完成7000步？", "answer_type": "yes_no", "example_answer": "完成了"},
+            {"order": 4, "category": "sleep", "title": "睡眠时长（小时）", "answer_type": "number", "example_answer": "7"},
+            {"order": 5, "category": "state", "title": "状态评分（1-5）", "answer_type": "score_1_5", "example_answer": "4"},
+        ],
+        allow_fallback=False,
+    )
+
+    errors = _generated_daily_checkin_errors(items)
+    assert any("早C、午B、晚A" in error for error in errors)
+    assert any("填写提示" in error for error in errors)
+    assert any("明确是或否" in error for error in errors)
+    assert any("单位" in error for error in errors)
+    assert any("1-5分" in error for error in errors)
+
+
 def test_execution_document_keeps_single_page_content_budget(caplog):
     """一页执行纸的内容预算：目标摘要5行、产品排班3行、饮食≤3条、运动≤2条。
 
@@ -2005,15 +2083,20 @@ def test_execution_document_keeps_single_page_content_budget(caplog):
             "daily_checkin": normalize_daily_checkin_items(
                 [
                     {"order": 1, "category": "product", "title": "个案产品排班是否按方案完成",
-                     "answer_type": "yes_no", "options": ["是", "否"]},
+                     "answer_type": "yes_no", "options": ["是", "否"],
+                     "example_answer": "早C已完成；午B未完成；晚A按方案暂停"},
                     {"order": 2, "category": "diet", "title": "蔬菜总量是否至少2拳",
-                     "answer_type": "yes_no", "options": ["是", "否"]},
+                     "answer_type": "yes_no", "options": ["是", "否"],
+                     "example_answer": "是，已完成"},
                     {"order": 3, "category": "activity", "title": "是否完成30分钟快走或7000步",
-                     "answer_type": "yes_no", "options": ["是", "否"]},
+                     "answer_type": "yes_no", "options": ["是", "否"],
+                     "example_answer": "是，已完成"},
                     {"order": 4, "category": "sleep", "title": "是否在23:30前闭眼",
-                     "answer_type": "yes_no", "options": ["是", "否"]},
+                     "answer_type": "yes_no", "options": ["是", "否"],
+                     "example_answer": "是，已完成"},
                     {"order": 5, "category": "state", "title": "饭后困评分（1分很困、5分不困）",
-                     "answer_type": "score_1_5", "options": ["1", "2", "3", "4", "5"]},
+                     "answer_type": "score_1_5", "options": ["1", "2", "3", "4", "5"],
+                     "example_answer": "4分，饭后精神尚可"},
                 ],
                 facts={"weight_kg": "78"},
             ),
@@ -2064,6 +2147,7 @@ def test_execution_document_keeps_single_page_content_budget(caplog):
     checkin_block = blocks["daily_checkin"]
     assert len(checkin_block["checkin_items"]) == 5
     assert [item["order"] for item in checkin_block["checkin_items"]] == [1, 2, 3, 4, 5]
+    assert all(item["example_answer"] for item in checkin_block["checkin_items"])
     assert checkin_block["content"].splitlines()[0].startswith("1. ")
     assert "每日固定打卡" not in checkin_block["content"]
 
@@ -2650,6 +2734,73 @@ async def test_submit_receipt_is_sent_before_generation(
     failed_case = await db_session.get(ServiceCase, case_id)
     await db_session.refresh(failed_case)
     assert failed_case.status == ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("enabled", "expects_reward"),
+    [(False, False), (True, True)],
+)
+async def test_intake_receipt_only_promises_rewards_when_enabled(
+    db_session, monkeypatch, enabled, expects_reward
+):
+    from types import SimpleNamespace
+
+    from app.api.routes import questionnaires
+    from app.core.config import get_settings
+    from app.models.message import Message, MessageDirection
+    from app.models.service_case import ServiceCase
+    from app.models.user import User
+    from app.services.checkin_questionnaires import (
+        CHECKIN_REWARD_RECEIPT_PARAGRAPH,
+        default_checkin_schedule,
+    )
+
+    user = User(name="奖励回执用户")
+    db_session.add(user)
+    await db_session.flush()
+    service_case = ServiceCase(
+        case_no=f"RECEIPT-{secrets.token_hex(4)}",
+        user_id=user.id,
+        group_id=f"group-receipt-{secrets.token_hex(4)}",
+        questionnaire_token=secrets.token_urlsafe(12),
+        service_plan_start_date=datetime(2026, 8, 20).date(),
+    )
+    db_session.add(service_case)
+    await db_session.flush()
+
+    settings = get_settings()
+    monkeypatch.setattr(
+        questionnaires,
+        "get_settings",
+        lambda: SimpleNamespace(
+            checkin_rewards_enabled=enabled,
+            reminder_timezone=settings.reminder_timezone,
+        ),
+    )
+
+    async def fake_schedule(session):
+        schedule = default_checkin_schedule()
+        if not enabled:
+            schedule["intake_submit_reply"]["message"] = schedule[
+                "intake_submit_reply"
+            ]["message"].replace("{reward_intro}", CHECKIN_REWARD_RECEIPT_PARAGRAPH)
+        return schedule
+
+    monkeypatch.setattr(questionnaires, "get_checkin_questionnaire_schedule", fake_schedule)
+    await questionnaires._send_intake_submit_reply(service_case.id)
+
+    receipt = await db_session.scalar(
+        select(Message).where(
+            Message.service_case_id == service_case.id,
+            Message.direction == MessageDirection.OUTBOUND,
+        )
+    )
+    assert receipt is not None
+    assert (CHECKIN_REWARD_RECEIPT_PARAGRAPH in receipt.content) is expects_reward
+    assert "{reward_intro}" not in receipt.content
+    assert "{plan_start_line}" not in receipt.content
+    assert "2026年08月20日" in receipt.content
 
 
 def test_overview_measurements_only_get_units_when_numeric():

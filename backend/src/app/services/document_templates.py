@@ -153,6 +153,10 @@ EXECUTION_FIELD_SPEC = {
             "yes_no 对应「是否……」判断题；score_1_5 对应「……评分（1-5）」评分题；"
             "number 对应必须写明单位的填数题（如「晨起体重（kg）」）；text 对应必须用户描述的情况",
             "options": "answer_type=yes_no 固定 [\"是\",\"否\"]；score_1_5 固定 [\"1\",\"2\",\"3\",\"4\",\"5\"]；number 和 text 为空数组 []",
+            "example_answer": "与本项 title、answer_type 和 options 同时生成的一条简短已填写答案。"
+            "yes_no 写「是，已完成」或与真实题意匹配的否定答案；score_1_5 写「4分，……」；"
+            "number 必须带 title 要求的单位；text 直接写具体情况。第1项必须分别写清早C、午B、晚A，"
+            "并至少展示一个未完成或按方案暂停的情况。不得出现「示例回答」「请填写」「按实际情况填写」「答：」",
         }
     ],
     "weekly_standard": "每周通过标准，1句 ≤76字，必须包含4要素：个案产品排班完成情况 + 关键饮食动作 + 运动/步数达标 + 至少1次体重/围度/体感记录。减量或暂停用户不得写三杯完成要求。",
@@ -980,6 +984,7 @@ def _daily_checkin_block(value: Any) -> dict[str, Any]:
                 "title": _clean_text(item.get("title") or item.get("label")),
                 "answer_type": str(item.get("answer_type") or ""),
                 "options": [str(option) for option in item.get("options") or []],
+                "example_answer": _clean_text(item.get("example_answer")),
             }
             for index, item in enumerate(value, start=1)
             if isinstance(item, dict) and _clean_text(item.get("title") or item.get("label"))

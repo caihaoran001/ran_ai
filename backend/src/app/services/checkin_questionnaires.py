@@ -8,6 +8,10 @@ from app.models.app_setting import AppSetting
 
 
 CHECKIN_SCHEDULE_SETTING_KEY = "checkin_questionnaire_schedule"
+CHECKIN_REWARD_RECEIPT_PARAGRAPH = (
+    "从服务第1天起，每天完成专属五项打卡。累计完整打卡满3、7、14、28天，"
+    "依次可获得1管咖啡、再得1盒钥匙、再得1瓶C8、再得3管咖啡；奖励可以叠加，不要求连续。"
+)
 
 
 def default_checkin_questionnaire_templates() -> list[dict[str, Any]]:
@@ -43,11 +47,8 @@ def default_checkin_schedule() -> dict[str, Any]:
         "intake_submit_reply": {
             "enabled": True,
             "message": (
-                "问卷已收到，正在生成专属方案。\n\n"
-                "我们会基于你的填写结果生成：\n"
-                "1.《个人能量重启诊断报告》\n"
-                "2.《28天高燃人生执行建议书》\n\n"
-                "生成完成后会第一时间发送给你，请稍等。\n\n"
+                "问卷已收到，正在为你生成两份专属方案，完成后会第一时间发到群里。\n\n"
+                "{reward_intro}\n\n"
                 "{plan_start_line}"
             ),
         },

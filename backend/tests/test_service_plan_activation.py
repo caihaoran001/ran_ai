@@ -190,30 +190,62 @@ async def test_sending_document_no_longer_starts_service(
 async def test_two_documents_sent_one_by_one_trigger_reward_intro_once(
     db_session, monkeypatch, tmp_path
 ):
-    monkeypatch.setattr(
-        document_delivery,
-        "get_settings",
-        lambda: SimpleNamespace(checkin_rewards_enabled=True),
-    )
     service_case = _case(status=ServiceCaseStatus.REVIEWING, plan=date(2026, 8, 12))
     db_session.add(service_case)
     await db_session.flush()
+    personalized_items = [
+        {
+            "order": 1,
+            "category": "product",
+            "title": "早C早餐后30分钟内、午B随午餐、晚A最晚睡前1小时是否按个案方案完成？",
+            "answer_type": "yes_no",
+            "options": ["是", "否"],
+            "example_answer": "早C已完成；午B未完成；晚A按方案暂停",
+        },
+        {
+            "order": 2,
+            "category": "diet",
+            "title": "蔬菜总量是否至少2拳、晚餐主食不超过1拳？",
+            "answer_type": "yes_no",
+            "options": ["是", "否"],
+            "example_answer": "是，已完成",
+        },
+        {
+            "order": 3,
+            "category": "activity",
+            "title": "是否完成7000步或30分钟快走？",
+            "answer_type": "yes_no",
+            "options": ["是", "否"],
+            "example_answer": "是，已完成",
+        },
+        {
+            "order": 4,
+            "category": "sleep",
+            "title": "23:30前上床后的睡眠时长（小时）",
+            "answer_type": "number",
+            "options": [],
+            "example_answer": "7小时",
+        },
+        {
+            "order": 5,
+            "category": "state",
+            "title": "午餐后困倦评分（1分很困、5分不困）",
+            "answer_type": "score_1_5",
+            "options": ["1", "2", "3", "4", "5"],
+            "example_answer": "4分，饭后精神尚可",
+        },
+    ]
     documents = [
         UserDocument(
             service_case_id=service_case.id,
             document_type=document_type,
             title=title,
             content_md="内容",
-            content_json={
-                "blocks": [],
-                "personalized_checkin_fields": [
-                    {"title": "今日是否完成早C/午B/晚A？", "key": "personalized_checkin_1"},
-                    {"title": "餐食是否符合方案？"},
-                    {"title": "饮水是否完成？"},
-                    {"title": "运动是否完成？"},
-                    {"title": "睡眠情况如何？"},
-                ],
-            },
+            content_json={"blocks": (
+                [{"key": "daily_checkin", "checkin_items": personalized_items}]
+                if document_type == DocumentType.DAY28_EXECUTION_STANDARD
+                else []
+            )},
             status=DocumentStatus.APPROVED,
         )
         for document_type, title in (
@@ -257,7 +289,129 @@ async def test_two_documents_sent_one_by_one_trigger_reward_intro_once(
         )
     )
     assert len(sent_texts) == 1
-    assert "1 管咖啡" in sent_texts[0]
-    assert "1 盒钥匙" in sent_texts[0]
-    assert "同一张图里同时有咖啡和饭也可以" in sent_texts[0]
+    for index, item in enumerate(personalized_items, start=1):
+        assert f"{index}. {item['title']}｜{item['example_answer']}" in sent_texts[0]
+    assert sent_texts[0].index(personalized_items[0]["title"]) < sent_texts[0].index(personalized_items[4]["title"])
+    assert "产品：早C" not in sent_texts[0]
+    assert "示例回答" not in sent_texts[0]
+    assert "产品和餐食建议随手拍照发群里" in sent_texts[0]
     assert program.intro_status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_bulk_send_uses_same_completion_trigger(db_session, monkeypatch, tmp_path):
+    service_case = _case(status=ServiceCaseStatus.REVIEWING, plan=date(2026, 8, 12))
+    db_session.add(service_case)
+    await db_session.flush()
+    items = [
+        {
+            "order": index,
+            "category": "product" if index == 1 else ("activity" if index == 3 else "state"),
+            "title": f"个性化原题{index}（条件{index * 10}分钟）",
+            "answer_type": "text",
+            "options": [],
+            "example_answer": (
+                "早C已完成；午B未完成；晚A按方案暂停" if index == 1 else f"已完成第{index}项"
+            ),
+        }
+        for index in range(1, 6)
+    ]
+    documents = [
+        UserDocument(
+            service_case_id=service_case.id,
+            document_type=document_type,
+            title=title,
+            content_md="内容",
+            content_json={"blocks": (
+                [{"key": "daily_checkin", "checkin_items": items}]
+                if document_type == DocumentType.DAY28_EXECUTION_STANDARD
+                else []
+            )},
+            status=DocumentStatus.APPROVED,
+        )
+        for document_type, title in (
+            (DocumentType.ENERGY_RESTART_PRESCRIPTION, "个人能量重启诊断报告"),
+            (DocumentType.DAY28_EXECUTION_STANDARD, "28天高燃人生执行建议书"),
+        )
+    ]
+    db_session.add_all(documents)
+    await db_session.flush()
+    rendered = tmp_path / "document.docx"
+    rendered.write_bytes(b"docx")
+    sent_texts: list[str] = []
+
+    async def fake_create_temporary_document_file(session, item):
+        return rendered, lambda: None
+
+    async def fake_send_channel_document(group_id, file_path, *, caption=None):
+        return SimpleNamespace(success=True, message_id=f"doc-{caption}", error=None)
+
+    async def fake_send_channel_text(group_id, content):
+        sent_texts.append(content)
+        return SimpleNamespace(success=True, message_id="intro-bulk", error=None, delivery_uncertain=False)
+
+    monkeypatch.setattr(document_delivery, "create_temporary_document_file", fake_create_temporary_document_file)
+    monkeypatch.setattr(document_delivery, "send_channel_document", fake_send_channel_document)
+    monkeypatch.setattr(document_delivery, "send_channel_text", fake_send_channel_text)
+
+    await document_delivery.send_case_documents(db_session, service_case.id)
+    await document_delivery.send_case_documents(db_session, service_case.id)
+
+    assert len(sent_texts) == 2  # 文件发送前的固定说明 + 两份发送完成后的打卡示例
+    assert sent_texts[1].count("【每日打卡】") == 1
+    assert all(f"个性化原题{index}" in sent_texts[1] for index in range(1, 6))
+
+
+@pytest.mark.asyncio
+async def test_missing_example_answers_skip_message_without_blocking_files(
+    db_session, monkeypatch, tmp_path, caplog
+):
+    service_case = _case(status=ServiceCaseStatus.REVIEWING, plan=date(2026, 8, 12))
+    db_session.add(service_case)
+    await db_session.flush()
+    documents = [
+        UserDocument(
+            service_case_id=service_case.id,
+            document_type=document_type,
+            title=title,
+            content_md="历史内容",
+            content_json={"blocks": ([{
+                "key": "daily_checkin",
+                "checkin_items": [
+                    {"order": index, "title": f"历史原题{index}"}
+                    for index in range(1, 6)
+                ],
+            }] if document_type == DocumentType.DAY28_EXECUTION_STANDARD else [])},
+            status=DocumentStatus.APPROVED,
+        )
+        for document_type, title in (
+            (DocumentType.ENERGY_RESTART_PRESCRIPTION, "个人能量重启诊断报告"),
+            (DocumentType.DAY28_EXECUTION_STANDARD, "28天高燃人生执行建议书"),
+        )
+    ]
+    db_session.add_all(documents)
+    await db_session.flush()
+    rendered = tmp_path / "document.docx"
+    rendered.write_bytes(b"docx")
+    sent_texts: list[str] = []
+
+    async def fake_create_temporary_document_file(session, item):
+        return rendered, lambda: None
+
+    async def fake_send_channel_document(group_id, file_path, *, caption=None):
+        return SimpleNamespace(success=True, message_id=f"doc-{caption}", error=None)
+
+    async def fake_send_channel_text(group_id, content):
+        sent_texts.append(content)
+        return SimpleNamespace(success=True, message_id="text", error=None, delivery_uncertain=False)
+
+    monkeypatch.setattr(document_delivery, "create_temporary_document_file", fake_create_temporary_document_file)
+    monkeypatch.setattr(document_delivery, "send_channel_document", fake_send_channel_document)
+    monkeypatch.setattr(document_delivery, "send_channel_text", fake_send_channel_text)
+
+    with caplog.at_level("WARNING", logger="app.services.document_delivery"):
+        await document_delivery.send_case_documents(db_session, service_case.id)
+
+    assert all(document.status == DocumentStatus.SENT for document in documents)
+    assert len(sent_texts) == 1  # 仅文件发送前的固定说明，历史文档不补造打卡答案
+    assert any("five generated items with answers required" in record.getMessage() for record in caplog.records)

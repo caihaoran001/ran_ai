@@ -1,4 +1,7 @@
-from app.services.checkin_questionnaires import default_checkin_schedule
+from app.services.checkin_questionnaires import (
+    CHECKIN_REWARD_RECEIPT_PARAGRAPH,
+    default_checkin_schedule,
+)
 from app.services.checkin_questionnaires import normalize_checkin_schedule
 
 
@@ -9,7 +12,10 @@ def test_default_schedule_only_carries_intake_submit_reply():
     assert set(schedule.keys()) == {"intake_submit_reply"}
     intake = schedule["intake_submit_reply"]
     assert intake["enabled"] is True
-    assert "正在生成专属方案" in intake["message"]
+    assert "正在为你生成两份专属方案" in intake["message"]
+    assert "{reward_intro}" in intake["message"]
+    assert "{plan_start_line}" in intake["message"]
+    assert CHECKIN_REWARD_RECEIPT_PARAGRAPH not in intake["message"]
 
 
 def test_normalize_drops_legacy_link_fields():
@@ -56,4 +62,24 @@ def test_normalize_falls_back_to_default_intake_reply():
 
     empty = normalize_checkin_schedule({})
     assert empty["intake_submit_reply"]["enabled"] is True
-    assert "正在生成专属方案" in empty["intake_submit_reply"]["message"]
+    assert "正在为你生成两份专属方案" in empty["intake_submit_reply"]["message"]
+
+
+def test_default_receipt_renders_the_final_enabled_copy():
+    from app.api.routes.questionnaires import _format_template
+    from app.services.checkin_questionnaires import CHECKIN_REWARD_RECEIPT_PARAGRAPH
+
+    template = default_checkin_schedule()["intake_submit_reply"]["message"]
+    content = _format_template(
+        template,
+        {
+            "reward_intro": CHECKIN_REWARD_RECEIPT_PARAGRAPH,
+            "plan_start_line": "你的服务计划于 2026年08月20日 正式开始（打卡也从那天开始）。",
+        },
+    )
+
+    assert content == (
+        "问卷已收到，正在为你生成两份专属方案，完成后会第一时间发到群里。\n\n"
+        f"{CHECKIN_REWARD_RECEIPT_PARAGRAPH}\n\n"
+        "你的服务计划于 2026年08月20日 正式开始（打卡也从那天开始）。"
+    )

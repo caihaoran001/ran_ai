@@ -1182,6 +1182,8 @@ def _personalized_checkin_fields_from_documents(document_payloads: dict[str, dic
                 "options": checkin_options_for(answer_type),
                 "answer_type": answer_type,
                 "category": str(item.get("category") or ""),
+                "order": index,
+                "example_answer": str(item.get("example_answer") or ""),
             }
         )
     return fields
@@ -1215,6 +1217,18 @@ _FALLBACK_CHECKIN_CATEGORIES = {
     "personalized_exercise": "activity",
 }
 _RELATIVE_TIME_WORDS = ("今天", "今日", "今早", "今晚", "昨天", "昨日", "昨晚", "当天", "本日")
+_FORBIDDEN_CHECKIN_EXAMPLE_MARKERS = (
+    "示例回答",
+    "请填写",
+    "按实际情况填写",
+    "按当天实际情况",
+    "答：",
+    "答:",
+)
+_CHECKIN_NUMBER_UNIT_PATTERN = re.compile(
+    r"kg|公斤|斤|cm|厘米|mm|毫米|ml|毫升|l|升|步|次|分钟|小时|克|拳|份|点",
+    re.IGNORECASE,
+)
 
 
 def _normalize_daily_checkin_in_payloads(
@@ -1224,10 +1238,16 @@ def _normalize_daily_checkin_in_payloads(
     execution = payloads.get(DocumentType.DAY28_EXECUTION_STANDARD.value)
     if not isinstance(execution, dict):
         return
-    execution["daily_checkin"] = normalize_daily_checkin_items(
+    normalized = normalize_daily_checkin_items(
         execution.get("daily_checkin"),
         facts=facts,
     )
+    errors = _generated_daily_checkin_errors(normalized)
+    if errors:
+        raise RetryableIntakePackageError(
+            f"执行建议书五项打卡与示例答案校验未通过：{'；'.join(errors)}"
+        )
+    execution["daily_checkin"] = normalized
 
 
 def normalize_daily_checkin_items(
@@ -1278,6 +1298,12 @@ def normalize_daily_checkin_items(
             if len(accepted) >= DAILY_CHECKIN_SIZE:
                 break
 
+    # 新生成文件的答案必须来自同一次模型输出。题面被兜底替换时，原答案已经不再
+    # 对应新题；将其清空让生成契约触发整包重试，绝不能把答非所问的组合落库。
+    if substituted:
+        for item in accepted:
+            item.pop("example_answer", None)
+
     # 换题必须留痕：兜底题一顶上来，个性化打卡就被通用题替掉了，
     # 而后台只看得到最终这 5 项，看不出哪一项不是模型挑的。
     if rejected or duplicated or substituted:
@@ -1326,10 +1352,12 @@ def _validated_checkin_item(candidate: object, *, strict_style: bool = True) -> 
         )
         answer_type = str(candidate.get("answer_type") or "").strip()
         category = str(candidate.get("category") or "").strip()
+        example_answer = _clean_checkin_example_answer(candidate.get("example_answer"))
     else:
         title = _clean_checkin_item_text(candidate)
         answer_type = ""
         category = ""
+        example_answer = ""
 
     if not _is_valid_checkin_title(title, strict_style=strict_style):
         return None
@@ -1337,13 +1365,65 @@ def _validated_checkin_item(candidate: object, *, strict_style: bool = True) -> 
         answer_type = _infer_checkin_answer_type(title)
     if not _answer_type_matches_title(answer_type, title):
         return None
-    return {
+    item: dict[str, object] = {
         "order": 0,
         "category": category if category in CHECKIN_CATEGORIES else _infer_checkin_category(answer_type),
         "title": title,
         "answer_type": answer_type,
         "options": checkin_options_for(answer_type),
     }
+    if example_answer:
+        item["example_answer"] = example_answer
+    return item
+
+
+def _clean_checkin_example_answer(value: object) -> str:
+    """只清理展示噪声，不根据题面替用户编答案。"""
+
+    text = str(value or "").strip()
+    text = re.sub(r"^\s*[-•*]\s*", "", text)
+    return " ".join(text.split())
+
+
+def _generated_daily_checkin_errors(items: list[dict[str, object]]) -> list[str]:
+    """新生成文件的打卡契约；历史读取不经过这道闸门。"""
+
+    errors: list[str] = []
+    if len(items) != DAILY_CHECKIN_SIZE:
+        return ["必须正好生成5项"]
+    if str(items[0].get("category") or "") != "product":
+        errors.append("第1项必须是个案产品项")
+    if sum(item.get("category") == "activity" for item in items) != 1:
+        errors.append("必须恰好包含1项运动项")
+    for index, item in enumerate(items, start=1):
+        answer = str(item.get("example_answer") or "").strip()
+        if not answer:
+            errors.append(f"第{index}项缺少已填写答案")
+            continue
+        if any(marker in answer for marker in _FORBIDDEN_CHECKIN_EXAMPLE_MARKERS):
+            errors.append(f"第{index}项答案仍是填写提示")
+            continue
+        answer_type = str(item.get("answer_type") or "")
+        category = str(item.get("category") or "")
+        title = str(item.get("title") or "")
+        if category == "product":
+            if not all(name in answer for name in ("早C", "午B", "晚A")):
+                errors.append(f"第{index}项答案没有分别写清早C、午B、晚A")
+            if not any(marker in answer for marker in ("未完成", "暂停")):
+                errors.append(f"第{index}项答案没有展示未完成或按方案暂停")
+        elif answer_type == "yes_no" and not answer.startswith(("是", "否")):
+            errors.append(f"第{index}项判断题答案没有明确是或否")
+        elif answer_type == "score_1_5" and not re.match(r"^[1-5]\s*分\s*[,，。；;].+", answer):
+            errors.append(f"第{index}项评分答案不是已填写的1-5分答案")
+        elif answer_type == "number":
+            units = _CHECKIN_NUMBER_UNIT_PATTERN.findall(title)
+            if not units:
+                errors.append(f"第{index}项数字题题面没有写单位")
+            elif not re.search(r"\d", answer) or not any(
+                unit.casefold() in answer.casefold() for unit in units
+            ):
+                errors.append(f"第{index}项数字答案没有带题目要求的单位")
+    return errors
 
 
 def _is_valid_checkin_title(title: str, *, strict_style: bool = True) -> bool:

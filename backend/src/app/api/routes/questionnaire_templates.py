@@ -11,6 +11,7 @@ from app.schemas.questionnaire_template import (
     QuestionnaireTemplateUpdate,
 )
 from app.services.checkin_questionnaires import (
+    default_checkin_schedule,
     get_checkin_questionnaire_schedule,
     save_checkin_questionnaire_schedule,
 )
@@ -96,5 +97,9 @@ async def reset_templates(
         QuestionnaireTemplateRead(**item)
         for item in await save_questionnaire_templates(session, defaults)
     ]
-    schedule = await get_checkin_questionnaire_schedule(session)
+    schedule = (
+        await save_checkin_questionnaire_schedule(session, default_checkin_schedule())
+        if template_key is None
+        else await get_checkin_questionnaire_schedule(session)
+    )
     return QuestionnaireTemplateConfigRead(templates=templates, schedule=schedule)

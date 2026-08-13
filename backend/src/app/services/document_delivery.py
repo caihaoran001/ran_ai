@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import tempfile
 from datetime import datetime, timezone
@@ -24,7 +25,6 @@ from app.models.service_case import ServiceCase
 from app.models.checkin_reward import CheckinRewardProgram
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.channels import send_channel_document, send_channel_text
-from app.services.checkin_checklists import get_effective_daily_checklist
 from app.services.content_policy import get_content_delivery_mode
 from app.services.risk_service import is_high_risk
 from app.services.service_case_queries import get_active_service_case
@@ -38,6 +38,9 @@ from app.services.document_common import (
     _recipient_name_and_gender,
     _user_name,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 async def _both_latest_intake_documents_sent(
@@ -63,53 +66,110 @@ async def _both_latest_intake_documents_sent(
     )
 
 
-async def _render_checkin_reward_intro(
+async def _render_post_document_checkin_example(
     session: AsyncSession, *, service_case_id: int
-) -> str:
-    checklist = await get_effective_daily_checklist(
-        session,
-        service_case_id=service_case_id,
+) -> str | None:
+    """从最新已发送执行建议书读取生成时保存的原题和答案。
+
+    这里不走日常追问的有效清单：那条链路会优先人工版本并固定改写产品项，和用户
+    实际收到的执行建议书不是同一份内容。历史文档缺少答案时宁可跳过，也不在发送时猜。
+    """
+
+    document = await session.scalar(
+        select(UserDocument)
+        .where(
+            UserDocument.service_case_id == service_case_id,
+            UserDocument.document_type == DocumentType.DAY28_EXECUTION_STANDARD,
+            UserDocument.status == DocumentStatus.SENT,
+        )
+        .order_by(UserDocument.sent_at.desc(), UserDocument.id.desc())
+        .limit(1)
     )
-    items = checklist.resolved_items()
+    if document is None or not isinstance(document.content_json, dict):
+        logger.warning(
+            "checkin example skipped: sent execution document missing service_case_id=%s",
+            service_case_id,
+        )
+        return None
+    items = _raw_checkin_example_items(document.content_json)
     if len(items) != 5:
-        raise RuntimeError("服务单每日打卡清单不是 5 项。")
-    item_lines = ["1. 产品：早C＿＿ / 午B＿＿ / 晚A＿＿"]
-    item_lines.extend(
-        f"{index}. {item['label']}" for index, item in enumerate(items[1:], start=2)
-    )
+        logger.warning(
+            "checkin example skipped: five generated items with answers required "
+            "service_case_id=%s document_id=%s item_count=%s",
+            service_case_id,
+            document.id,
+            len(items),
+        )
+        return None
+    item_lines = [
+        f"{index}. {item['title']}｜{item['example_answer']}"
+        for index, item in enumerate(items, start=1)
+    ]
     return "\n".join(
         [
-            "两份专属文件都发给你啦，有疑问随时在群里问。",
+            "两份专属文件都发给你啦。每天直接复制下面这段，只把“｜”后面的内容改成当天实际情况：",
             "",
-            "从服务第 1 天起，每天在群里发一次打卡：",
             "【每日打卡】",
+            "",
             *item_lines,
             "",
-            "喝早C、午B、晚A时建议拍照发群里，吃的饭也建议拍照；同一张图里同时有咖啡和饭也可以。",
-            "早C/午B/晚A和其余四项都有回答，才算 1 天完整打卡；没做到或暂停也照实说，不要紧。奖励累计完整打卡，不要求连续。",
-            "",
-            "累计打卡奖励：",
-            "· 满 3 天：1 管咖啡",
-            "· 满 7 天：再得 1 盒钥匙",
-            "· 满 14 天：再得 1 瓶 C8",
-            "· 满 28 天：再得 3 管咖啡",
-            "奖励可以叠加；每次达标后可选现在寄出，也可继续累积后一起寄。",
+            "没完成也照实改，五项都有回答就算完整打卡。产品和餐食建议随手拍照发群里，有疑问随时问我们。",
         ]
     )
 
 
-async def _maybe_send_checkin_reward_intro(
+def _raw_checkin_example_items(content_json: dict) -> list[dict[str, str]]:
+    """读取文档自身保存的结构化五项，不套清单兜底、不改写第一项。"""
+
+    raw_items: object = None
+    blocks = content_json.get("blocks")
+    if isinstance(blocks, list):
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if str(block.get("key") or "") == "daily_checkin":
+                raw_items = block.get("checkin_items")
+                break
+    # 兼容早期直接保存生成 payload 的内部格式；没有答案的历史数据仍会在下方返回空。
+    if raw_items is None:
+        raw_items = content_json.get("daily_checkin")
+    if not isinstance(raw_items, list) or len(raw_items) != 5:
+        return []
+
+    ordered = [item for item in raw_items if isinstance(item, dict)]
+    if len(ordered) != 5:
+        return []
+    try:
+        ordered.sort(key=lambda item: int(item.get("order")))
+    except (TypeError, ValueError):
+        return []
+    if [int(item.get("order")) for item in ordered] != [1, 2, 3, 4, 5]:
+        return []
+    result: list[dict[str, str]] = []
+    for item in ordered:
+        title = str(item.get("title") or "").strip()
+        answer = str(item.get("example_answer") or "").strip()
+        if not title or not answer:
+            return []
+        result.append({"title": title, "example_answer": answer})
+    return result
+
+
+async def _maybe_send_post_document_checkin_example(
     session: AsyncSession, service_case: ServiceCase
 ) -> bool:
     """两份当前入营文件都成功后的唯一触发点。
 
     批量发送和运营逐份发送都必须调到这里，去重不依赖调用入口。
     """
-    if not get_settings().checkin_rewards_enabled:
-        return False
     if not await _both_latest_intake_documents_sent(
         session, service_case_id=service_case.id
     ):
+        return False
+    content = await _render_post_document_checkin_example(
+        session, service_case_id=service_case.id
+    )
+    if content is None:
         return False
     locked_case = await session.scalar(
         select(ServiceCase).where(ServiceCase.id == service_case.id).with_for_update()
@@ -136,9 +196,6 @@ async def _maybe_send_checkin_reward_intro(
     if program.intro_status in {"sending", "sent", "unknown"}:
         return False
 
-    content = await _render_checkin_reward_intro(
-        session, service_case_id=service_case.id
-    )
     message = Message(
         service_case_id=service_case.id,
         group_id=service_case.group_id,
@@ -205,7 +262,7 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
         raise RuntimeError("documents are required before sending")
     documents_to_send = [document for document in documents if document.status != DocumentStatus.SENT]
     if not documents_to_send:
-        await _maybe_send_checkin_reward_intro(session, service_case)
+        await _maybe_send_post_document_checkin_example(session, service_case)
         return documents
 
     should_send_intro = not any(
@@ -257,7 +314,7 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
         document.sent_at = _utc_now()
         _record_document_delivery(session, service_case, document, result.message_id)
         await session.commit()
-    await _maybe_send_checkin_reward_intro(session, service_case)
+    await _maybe_send_post_document_checkin_example(session, service_case)
     for document in documents:
         await session.refresh(document)
     return documents
@@ -291,7 +348,7 @@ async def send_one_document(session: AsyncSession, document: UserDocument) -> Us
     document.sent_at = _utc_now()
     _record_document_delivery(session, service_case, document, result.message_id)
     await session.commit()
-    await _maybe_send_checkin_reward_intro(session, service_case)
+    await _maybe_send_post_document_checkin_example(session, service_case)
     await session.refresh(document)
     return document
 
