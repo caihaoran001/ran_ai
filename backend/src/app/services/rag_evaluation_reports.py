@@ -6,6 +6,12 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from app.evaluation.answer_relevancy_calibration import (
+    load_answer_relevancy_calibration_suite,
+)
+from app.evaluation.faithfulness_calibration import (
+    load_faithfulness_calibration_suite,
+)
 from app.schemas.rag_evaluation import (
     AnswerRelevancyCalibrationReport,
     FaithfulnessCalibrationReport,
@@ -77,7 +83,14 @@ class RagEvaluationReportStore:
         path = self.root / "answer-relevancy-calibration.json"
         if not path.exists():
             return None
-        return self._read_model(path, AnswerRelevancyCalibrationReport)
+        report = self._read_model(path, AnswerRelevancyCalibrationReport)
+        expected = load_answer_relevancy_calibration_suite()
+        if (
+            report.calibration_id != expected.calibration_id
+            or report.dataset_version != expected.version
+        ):
+            return None
+        return report
 
     def get_faithfulness_calibration(
         self,
@@ -85,7 +98,14 @@ class RagEvaluationReportStore:
         path = self.root / "faithfulness-calibration.json"
         if not path.exists():
             return None
-        return self._read_model(path, FaithfulnessCalibrationReport)
+        report = self._read_model(path, FaithfulnessCalibrationReport)
+        expected = load_faithfulness_calibration_suite()
+        if (
+            report.calibration_id != expected.calibration_id
+            or report.dataset_version != expected.version
+        ):
+            return None
+        return report
 
     def _read_summary(self, run_dir: Path) -> RagEvaluationSummary:
         report_path = run_dir / "report.json"

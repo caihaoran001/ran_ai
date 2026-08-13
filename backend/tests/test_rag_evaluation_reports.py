@@ -131,8 +131,8 @@ def _report(run_id: str) -> dict:
 def _calibration_report() -> dict:
     return {
         "schema_version": 1,
-        "calibration_id": "answer-relevancy-zh-v1",
-        "dataset_version": 1,
+        "calibration_id": "answer-relevancy-zh-v2",
+        "dataset_version": 2,
         "run_id": "relevancy-calibration-20260811T070447Z",
         "status": "completed",
         "started_at": "2026-08-11T07:04:47Z",
@@ -163,8 +163,8 @@ def _calibration_report() -> dict:
 def _faithfulness_calibration_report() -> dict:
     return {
         "schema_version": 1,
-        "calibration_id": "faithfulness-zh-v1",
-        "dataset_version": 1,
+        "calibration_id": "faithfulness-zh-v2",
+        "dataset_version": 2,
         "run_id": "faithfulness-calibration-20260811T080000Z",
         "status": "completed",
         "started_at": "2026-08-11T08:00:00Z",
@@ -270,6 +270,26 @@ async def test_missing_answer_relevancy_calibration_returns_null(
 
 
 @pytest.mark.asyncio
+async def test_stale_answer_relevancy_calibration_returns_null(
+    admin_client, tmp_path
+):
+    app = admin_client._transport.app
+    store = RagEvaluationReportStore(tmp_path)
+    app.dependency_overrides[get_report_store] = lambda: store
+    stale = _calibration_report()
+    stale.update(
+        calibration_id="answer-relevancy-zh-v1",
+        dataset_version=1,
+    )
+    _write_json(tmp_path / "answer-relevancy-calibration.json", stale)
+
+    response = await admin_client.get("/rag-evaluations/calibrations/answer-relevancy")
+
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+@pytest.mark.asyncio
 async def test_rag_evaluation_api_returns_latest_faithfulness_calibration(
     admin_client, tmp_path
 ):
@@ -293,6 +313,24 @@ async def test_missing_faithfulness_calibration_returns_null(admin_client, tmp_p
     app = admin_client._transport.app
     store = RagEvaluationReportStore(tmp_path)
     app.dependency_overrides[get_report_store] = lambda: store
+
+    response = await admin_client.get("/rag-evaluations/calibrations/faithfulness")
+
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+@pytest.mark.asyncio
+async def test_stale_faithfulness_calibration_returns_null(admin_client, tmp_path):
+    app = admin_client._transport.app
+    store = RagEvaluationReportStore(tmp_path)
+    app.dependency_overrides[get_report_store] = lambda: store
+    stale = _faithfulness_calibration_report()
+    stale.update(
+        calibration_id="faithfulness-zh-v1",
+        dataset_version=1,
+    )
+    _write_json(tmp_path / "faithfulness-calibration.json", stale)
 
     response = await admin_client.get("/rag-evaluations/calibrations/faithfulness")
 
