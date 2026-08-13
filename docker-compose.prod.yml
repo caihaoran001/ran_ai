@@ -95,6 +95,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL for Aliyun RDS PostgreSQL is required}
       QIWEI_CALLBACK_SECRET: ${QIWEI_CALLBACK_SECRET:?QIWEI_CALLBACK_SECRET is required}
+      CHECKIN_REWARDS_ENABLED: ${CHECKIN_REWARDS_ENABLED:-false}
     healthcheck:
       test:
         [
