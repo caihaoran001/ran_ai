@@ -29,7 +29,7 @@ docker compose -f docker-compose.eval.yml run --name ran_ai-rag-relevancy-calibr
 
 ## 回复忠实度中文校准
 
-Faithfulness 的 0.85 门槛也必须先用固定中文事实验证。v2 的 10 组用例复用正式 50 题中的权威事实，并加入近期对话和更接近真实长度的回复；每组分别提供忠实回复和关键关系反转回复。正式评测只用知识命中计算召回指标，但判断回复忠实度时会同时参考知识命中、本轮问题和近期对话。该入口不检索 RDS、不生成用户回复：
+Faithfulness 的 0.85 门槛也必须先用固定中文事实验证。v3 的 10 组用例只使用正式 50 题中的召回知识作为依据，每组分别提供忠实回复和关键关系反转回复。近期对话只用于理解问题和生成回复，不参与忠实度计算。该入口不检索 RDS、不生成用户回复：
 
 ```bash
 docker compose -f docker-compose.eval.yml run --name ran_ai-rag-faithfulness-calibration --no-deps \

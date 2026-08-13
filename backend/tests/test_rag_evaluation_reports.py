@@ -163,8 +163,8 @@ def _calibration_report() -> dict:
 def _faithfulness_calibration_report() -> dict:
     return {
         "schema_version": 1,
-        "calibration_id": "faithfulness-zh-v2",
-        "dataset_version": 2,
+        "calibration_id": "faithfulness-zh-v3",
+        "dataset_version": 3,
         "run_id": "faithfulness-calibration-20260811T080000Z",
         "status": "completed",
         "started_at": "2026-08-11T08:00:00Z",
@@ -327,8 +327,8 @@ async def test_stale_faithfulness_calibration_returns_null(admin_client, tmp_pat
     app.dependency_overrides[get_report_store] = lambda: store
     stale = _faithfulness_calibration_report()
     stale.update(
-        calibration_id="faithfulness-zh-v1",
-        dataset_version=1,
+        calibration_id="faithfulness-zh-v2",
+        dataset_version=2,
     )
     _write_json(tmp_path / "faithfulness-calibration.json", stale)
 

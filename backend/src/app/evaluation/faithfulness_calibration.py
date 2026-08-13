@@ -74,7 +74,7 @@ def default_faithfulness_calibration_path() -> Path:
         Path(__file__).resolve().parents[3]
         / "tests"
         / "fixtures"
-        / "rag_faithfulness_calibration.v2.json"
+        / "rag_faithfulness_calibration.v3.json"
     )
 
 

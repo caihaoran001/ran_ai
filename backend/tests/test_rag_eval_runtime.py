@@ -7,11 +7,7 @@ import pytest
 from app.evaluation.rag_cases import load_rag_eval_suite
 from eval.intent_eval import resolve_intent
 from eval.ragas_eval import RagasScorer, _create_ragas_llm, ragas_judge_max_tokens
-from eval.run_full_eval import (
-    _active_ragas_thresholds,
-    _faithfulness_contexts,
-    _mock_cases,
-)
+from eval.run_full_eval import _active_ragas_thresholds, _mock_cases
 
 
 def test_ragas_judge_uses_large_configurable_output_limit(monkeypatch):
@@ -156,7 +152,7 @@ class _DetailedFaithfulnessMetric:
         return ["有依据的陈述", "没有依据的陈述"]
 
     async def _create_verdicts(self, statements, context):
-        assert context == "【权威知识】有效内容\n【近期对话】用户说过某件事"
+        assert context == "有效内容\n干扰内容"
         return SimpleNamespace(
             statements=[
                 SimpleNamespace(
@@ -218,7 +214,6 @@ async def test_empty_retrieval_is_scored_as_zero_instead_of_skipped():
         reference="权威事实",
         retrieved_contexts=[],
         raw_contexts=[],
-        faithfulness_contexts=[],
     )
 
     assert scores.context_recall == 0.0
@@ -244,10 +239,6 @@ async def test_ragas_score_preserves_all_intermediate_judgements_without_extra_c
         reference="事实一；事实二",
         retrieved_contexts=["有效内容", "干扰内容"],
         raw_contexts=["有效内容"],
-        faithfulness_contexts=[
-            "【权威知识】有效内容",
-            "【近期对话】用户说过某件事",
-        ],
     )
 
     assert scores.context_recall == 0.5
@@ -266,23 +257,6 @@ async def test_ragas_score_preserves_all_intermediate_judgements_without_extra_c
     ]
     assert scores.answer_relevancy_all_noncommittal is False
     assert scorer._answer_relevancy.llm.calls == 3
-
-
-def test_faithfulness_uses_knowledge_and_recent_conversation_as_evidence():
-    case = next(
-        item
-        for item in load_rag_eval_suite().cases
-        if item.case_id == "rag-chat-unify-dose"
-    )
-    contexts = _faithfulness_contexts(
-        case,
-        [SimpleNamespace(content="一大刻度约等于两瓶盖。")],
-    )
-
-    assert contexts[0] == "【权威知识 1】\n一大刻度约等于两瓶盖。"
-    assert "用户：我今天早中晚都按两瓶盖" in contexts[1]
-    assert f"用户（本轮）：{case.user_query}" in contexts[1]
-    assert "通用规则以权威知识为准" in contexts[1]
 
 
 def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():

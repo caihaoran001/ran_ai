@@ -241,25 +241,6 @@ def _reference(case: RagEvalCase) -> str:
     return "\n".join(statements)
 
 
-def _faithfulness_contexts(case: RagEvalCase, knowledge_hits: list) -> list[str]:
-    """Keep retrieval scoring separate from all evidence available to the reply."""
-
-    contexts = [
-        f"【权威知识 {index}】\n{hit.content}"
-        for index, hit in enumerate(knowledge_hits, start=1)
-    ]
-    conversation = [
-        *format_history(case, limit=10),
-        f"用户（本轮）：{case.user_query}",
-    ]
-    contexts.append(
-        "【近期对话】\n"
-        + "\n".join(conversation)
-        + "\n对话仅用于核对用户自身情况和前文指代；通用规则以权威知识为准。"
-    )
-    return contexts
-
-
 async def _agent_reply(case: RagEvalCase, intent: IntentResult, settings) -> str | None:
     if case.answer.response_mode == "use_runtime_data":
         return None
@@ -380,10 +361,6 @@ async def _evaluate_real_case(
                 reference=reference,
                 retrieved_contexts=[hit.content for hit in rewritten_hits],
                 raw_contexts=[hit.content for hit in raw_hits],
-                faithfulness_contexts=_faithfulness_contexts(
-                    case,
-                    rewritten_hits,
-                ),
             )
             result.scores = RagCaseScores(
                 context_recall=scores.context_recall,

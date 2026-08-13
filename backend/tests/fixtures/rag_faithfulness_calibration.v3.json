@@ -1,0 +1,107 @@
+{
+  "calibration_id": "faithfulness-zh-v3",
+  "version": 3,
+  "description": "仅用本轮召回知识校准 RAGAS Faithfulness 及 0.85 门槛，不把聊天前文作为忠实度依据。",
+  "cases": [
+    {
+      "case_id": "faithfulness-cap-conversion",
+      "source_case_id": "rag-chat-cap-ambiguity",
+      "user_input": "瓶盖一盖就可以了吗",
+      "retrieved_contexts": [
+        "一瓶盖约等于1.5个小刻度，一大刻度等于3个小刻度，按一大刻度执行时约需两瓶盖，一瓶盖不够；量取以瓶体刻度为准。"
+      ],
+      "positive_response": "一盖不够。1大刻度约两瓶盖，一盖约1.5小刻度，按瓶体刻度量，瓶盖只是粗略参考。",
+      "negative_response": "够。一瓶盖比一大刻度还多，按一大刻度执行时倒一盖就已经超量了。"
+    },
+    {
+      "case_id": "faithfulness-evening-water",
+      "source_case_id": "rag-faq-evening-water",
+      "user_input": "晚A应该怎么冲泡、什么时候喝？",
+      "retrieved_contexts": [
+        "晚A每次用1大刻度（等于3小刻度，约两瓶盖），配约300ml温水冲泡，在睡前1至2小时喝；水温控制在85℃以下。"
+      ],
+      "positive_response": "晚A用1大刻度、约300ml温水冲泡，水温不超过85℃，放在睡前1至2小时喝。",
+      "negative_response": "晚A只用1小刻度配150ml沸水，最好临睡前马上喝。"
+    },
+    {
+      "case_id": "faithfulness-missed-dose",
+      "source_case_id": "rag-faq-missed-dose",
+      "user_input": "漏喝了一次需要补回来吗？",
+      "retrieved_contexts": [
+        "漏喝或拿错产品时不要集中补喝，也不要用另一款产品替代；漏掉的一次直接跳过，下一次按原计划恢复。"
+      ],
+      "positive_response": "不用补。漏掉这次直接跳过，下一次按原计划恢复，也不要拿另一款产品替代。",
+      "negative_response": "需要补回来，可以下次加倍喝，或者先用另一款产品顶上。"
+    },
+    {
+      "case_id": "faithfulness-noon-boundary",
+      "source_case_id": "rag-faq-noon-boundary",
+      "user_input": "午B超过下午两点还能补喝吗？",
+      "retrieved_contexts": [
+        "午B随午餐前后饮用，尽量下午两点前完成；超过时间当天跳过，不要补喝，晚A照常。倒班时应与计划睡眠间隔至少8小时。"
+      ],
+      "positive_response": "超过时间当天就跳过，不要补喝；晚A照常。倒班时午B要与计划睡眠至少间隔8小时。",
+      "negative_response": "超过下午两点也要当天补喝，哪怕距离计划睡眠只剩两小时也没关系。"
+    },
+    {
+      "case_id": "faithfulness-palpitations",
+      "source_case_id": "rag-faq-palpitations",
+      "user_input": "喝完心慌手抖是不是代谢启动？",
+      "retrieved_contexts": [
+        "喝早C或午B后心慌、手抖、失眠可能是咖啡因摄入过多或个人敏感，不应解释为代谢启动；应先暂停含咖啡因产品，出现胸痛、呼吸困难、晕厥或持续明显心悸时及时就医。"
+      ],
+      "positive_response": "不能当成代谢启动，可能是咖啡因过多或比较敏感，应先暂停含咖啡因产品；出现胸痛、呼吸困难等情况要及时就医。",
+      "negative_response": "这就是代谢启动的正常表现，不需要暂停，出现胸痛或持续心悸也可以继续观察。"
+    },
+    {
+      "case_id": "faithfulness-meal-order",
+      "source_case_id": "rag-faq-meal-order",
+      "user_input": "正餐应该按什么顺序吃？",
+      "retrieved_contexts": [
+        "正餐按蛋白质、蔬菜、粗粮主食的顺序进食：先吃蛋白质打底，再吃蔬菜，最后吃适量粗粮主食；三餐都应保证蛋白质，无需完全戒主食。"
+      ],
+      "positive_response": "先吃蛋白质，再吃蔬菜，最后吃适量粗粮主食；不用完全戒主食。",
+      "negative_response": "先吃粗粮主食，再吃蔬菜，最后才吃蛋白质，而且主食需要完全戒掉。"
+    },
+    {
+      "case_id": "faithfulness-staple-substitution",
+      "source_case_id": "rag-faq-staple-substitution",
+      "user_input": "吃了红薯还需要减少米饭吗？",
+      "retrieved_contexts": [
+        "玉米、土豆、红薯、南瓜和山药含淀粉，吃到接近一份主食时应计入当餐碳水，并相应减少米饭、面条、馒头等其他主食，避免同餐叠加。"
+      ],
+      "positive_response": "需要。红薯接近一份主食时要计入当餐碳水，并相应减少米饭等其他主食。",
+      "negative_response": "不需要。红薯不算主食，吃完后米饭和面条都可以保持原量。"
+    },
+    {
+      "case_id": "faithfulness-sudden-weight-gain",
+      "source_case_id": "rag-faq-sudden-weight-gain",
+      "user_input": "一天重了一公斤就是长了一公斤脂肪吗？",
+      "retrieved_contexts": [
+        "单日体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响，不能直接等同于长了同样重量的脂肪；应在相同条件下继续记录并观察一周左右趋势。"
+      ],
+      "positive_response": "不能直接这样判断，单日变化还会受水分、盐分和胃肠内容物等影响，建议在相同条件下继续看一周左右趋势。",
+      "negative_response": "是的，一天重一公斤就等于长了一公斤脂肪，不需要再观察后续趋势。"
+    },
+    {
+      "case_id": "faithfulness-sleep-adjustment",
+      "source_case_id": "rag-faq-sleep-adjustment",
+      "user_input": "怎么把睡觉时间慢慢调早？",
+      "retrieved_contexts": [
+        "不要强迫自己突然提前很久入睡；先固定起床时间并减少睡前咖啡因、酒精和屏幕刺激，再每几天把上床时间提前15至30分钟。"
+      ],
+      "positive_response": "先固定起床时间，减少睡前咖啡因、酒精和屏幕刺激，再每几天把上床时间提前15至30分钟。",
+      "negative_response": "不用固定起床时间，睡前多喝咖啡提神，然后一次把入睡时间提前三四个小时。"
+    },
+    {
+      "case_id": "faithfulness-constipation",
+      "source_case_id": "rag-faq-constipation",
+      "user_input": "便秘时能不能自己加大胶囊剂量？",
+      "retrieved_contexts": [
+        "便秘时先排查饮水、膳食纤维、久坐和作息，逐步增加活动并固定排便时间；不要自行猛灌水、长期依赖泻药或随意加大胶囊剂量，出现便血、持续腹痛、无法排气、呕吐或发热时应就医。"
+      ],
+      "positive_response": "不要自行加大胶囊剂量。先调整饮水、纤维、活动和作息；出现便血、持续腹痛或无法排气等情况应就医。",
+      "negative_response": "可以直接把胶囊剂量加倍并长期依赖泻药，出现便血或持续腹痛也不需要就医。"
+    }
+  ]
+}
