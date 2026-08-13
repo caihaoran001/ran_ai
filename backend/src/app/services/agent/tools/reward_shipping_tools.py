@@ -37,6 +37,8 @@ RewardShippingAction = Literal[
     "save_shipping_info",
 ]
 
+REWARD_PROGRAM_PAUSED_REPLY = "奖励规则正在讨论中，确认后会另行通知。"
+
 
 class RewardShippingArgs(BaseModel):
     action: RewardShippingAction = Field(
@@ -66,6 +68,15 @@ class RewardShippingArgs(BaseModel):
 def _clean(value: str | None) -> str | None:
     cleaned = " ".join(str(value or "").split()).strip()
     return cleaned or None
+
+
+def _paused_reward_payload() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "rewards_enabled": False,
+        "program_paused": True,
+        "reply_instruction": REWARD_PROGRAM_PAUSED_REPLY,
+    }
 
 
 async def _current_user_source(session, context: AgentRunContext) -> Message | None:
@@ -219,6 +230,8 @@ def _public_payload(status: dict[str, Any]) -> dict[str, Any]:
     ]
     payload = {
         "ok": True,
+        "rewards_enabled": True,
+        "program_paused": False,
         "complete_checkin_days": status["complete_checkin_days"],
         "reward_tiers": reward_tiers,
         "has_earned_rewards": bool(qualifications),
@@ -253,9 +266,15 @@ def _public_payload(status: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def build_reward_shipping_tools(*, context: AgentRunContext) -> list[BaseTool]:
+def build_reward_shipping_tools(
+    *,
+    context: AgentRunContext,
+    rewards_enabled: bool = True,
+) -> list[BaseTool]:
     async def get_checkin_reward_status() -> dict[str, Any]:
         """Read the current user's complete-checkin and reward/shipping status."""
+        if not rewards_enabled:
+            return _paused_reward_payload()
         async with SessionLocal() as session:
             service_case = await session.scalar(
                 select_active_service_cases(ServiceCase.id == context.service_case_id)
@@ -274,6 +293,16 @@ def build_reward_shipping_tools(*, context: AgentRunContext) -> list[BaseTool]:
         reuse_saved_address: bool = False,
     ) -> dict[str, Any]:
         """Read or update the current service user's earned-reward shipping decision."""
+        if not rewards_enabled:
+            if action == "get_status":
+                return _paused_reward_payload()
+            return {
+                "ok": False,
+                "rewards_enabled": False,
+                "program_paused": True,
+                "error": "奖励计划已暂停，不记录发货、累积或收件信息。",
+                "reply_instruction": REWARD_PROGRAM_PAUSED_REPLY,
+            }
         now = datetime.now(timezone.utc)
         async with SessionLocal() as session:
             service_case = await session.scalar(
@@ -417,7 +446,8 @@ def build_reward_shipping_tools(*, context: AgentRunContext) -> list[BaseTool]:
                 "Call ship_now/accumulate only if this user's current message clearly answers a pending reward "
                 "shipping choice. Save only recipient name, phone, and detailed address explicitly supplied in the "
                 "current message, or reuse prior data only on an explicit request. The tool never calculates awards, "
-                "changes quantities, or marks a shipment as shipped."
+                "changes quantities, or marks a shipment as shipped. When the program is paused, do not write "
+                "anything and reply only with reply_instruction."
             ),
             args_schema=RewardShippingArgs,
         ),
@@ -428,7 +458,8 @@ def build_reward_shipping_tools(*, context: AgentRunContext) -> list[BaseTool]:
                 "Read THIS user's authoritative cumulative complete-checkin days, all 3/7/14/28-day reward "
                 "rules, earned and unshipped rewards, current ship-now/accumulate choice, and actual shipment "
                 "history/status. Use this for every customer question about check-in totals or rewards; never "
-                "derive an exact total from the highest earned tier. This tool is read-only."
+                "derive an exact total from the highest earned tier. If program_paused=true, disclose no old "
+                "reward rules or history and reply only with reply_instruction. This tool is read-only."
             ),
         ),
     ]

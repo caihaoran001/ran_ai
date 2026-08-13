@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.checkin_reward import (
     CheckinRewardProgram,
@@ -261,6 +262,11 @@ async def mark_reward_shipment_shipped(
     x_admin_operator: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> MarkShipmentRead:
+    if not get_settings().checkin_rewards_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="check-in reward program is paused",
+        )
     shipment = await session.scalar(
         select(CheckinRewardShipment)
         .where(CheckinRewardShipment.id == shipment_id)

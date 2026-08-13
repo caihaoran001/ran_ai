@@ -33,7 +33,12 @@ def build_agent_tools(
         tools.extend(build_checkin_checklist_tools(context=context))
     if include_reminder_tools:
         tools.extend(build_reminder_tools(context=context, settings=settings))
-        tools.extend(build_reward_shipping_tools(context=context))
+        tools.extend(
+            build_reward_shipping_tools(
+                context=context,
+                rewards_enabled=settings.checkin_rewards_enabled,
+            )
+        )
     if include_service_lifecycle_tools:
         tools.extend(build_service_lifecycle_tools(context=context, settings=settings))
     tools.extend(build_knowledge_tools(settings=settings))

@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.models.checkin import Checkin
 from app.models.checkin_reward import (
     CheckinRewardProgram,
@@ -362,6 +363,41 @@ async def test_reward_shipping_tool_does_not_treat_unrelated_one_as_choice(db_se
 
 
 @pytest.mark.asyncio
+async def test_reward_tools_return_pause_copy_and_reject_all_writes() -> None:
+    tools = {
+        tool.name: tool
+        for tool in build_reward_shipping_tools(
+            context=AgentRunContext(service_case_id=999),
+            rewards_enabled=False,
+        )
+    }
+
+    status_result = await tools["get_checkin_reward_status"].ainvoke({})
+    legacy_status_result = await tools["manage_reward_shipping"].ainvoke(
+        {"action": "get_status"}
+    )
+    write_result = await tools["manage_reward_shipping"].ainvoke(
+        {
+            "action": "ship_now",
+            "recipient_name": "张三",
+            "recipient_phone": "13800138000",
+            "shipping_address": "杭州市西湖区某街道 88 号",
+        }
+    )
+
+    assert status_result == {
+        "ok": True,
+        "rewards_enabled": False,
+        "program_paused": True,
+        "reply_instruction": "奖励规则正在讨论中，确认后会另行通知。",
+    }
+    assert legacy_status_result == status_result
+    assert write_result["ok"] is False
+    assert write_result["program_paused"] is True
+    assert "不记录发货、累积或收件信息" in write_result["error"]
+
+
+@pytest.mark.asyncio
 async def test_reward_status_tool_returns_total_tiers_choice_and_shipment_history(
     db_session,
 ) -> None:
@@ -554,8 +590,9 @@ async def test_reward_admin_lists_each_counted_day_with_five_items_and_original_
 
 @pytest.mark.asyncio
 async def test_admin_marks_complete_shipment_as_shipped_and_notifies(
-    db_session, admin_client
+    db_session, admin_client, monkeypatch
 ) -> None:
+    monkeypatch.setattr(get_settings(), "checkin_rewards_enabled", True)
     service_case = _case()
     db_session.add(service_case)
     await db_session.flush()
@@ -594,3 +631,33 @@ async def test_admin_marks_complete_shipment_as_shipped_and_notifies(
     assert shipment.notification_status == "sent"
     message = await db_session.get(Message, shipment.notification_message_id)
     assert message.content == "你的打卡奖励已寄出，请留意查收～"
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_mark_reward_shipped_while_program_is_paused(
+    db_session, admin_client, monkeypatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "checkin_rewards_enabled", False)
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    shipment = CheckinRewardShipment(
+        service_case_id=service_case.id,
+        status="pending_shipment",
+        recipient_name="张三",
+        recipient_phone="13800138000",
+        shipping_address="杭州市西湖区某街道 88 号",
+        requested_at=datetime.now(timezone.utc),
+    )
+    db_session.add(shipment)
+    await db_session.flush()
+
+    response = await admin_client.post(
+        f"/checkin-rewards/shipments/{shipment.id}/mark-shipped",
+        headers={"x-admin-operator": "ops-a"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "check-in reward program is paused"
+    assert shipment.status == "pending_shipment"
+    assert shipment.shipped_at is None

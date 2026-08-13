@@ -697,6 +697,7 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "累计完整打卡天数" in AGENT_SYSTEM_PROMPT
     assert "get_checkin_reward_status" in AGENT_SYSTEM_PROMPT
     assert "get_recent_checkins" in AGENT_SYSTEM_PROMPT
+    assert "奖励规则正在讨论中，确认后会另行通知" in AGENT_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio
