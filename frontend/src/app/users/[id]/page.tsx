@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, Clock3, ShieldCheck } from "lucide-react";
 import {
   api,
+  ServiceCase,
   User,
   UserOperationsFact,
   UserOperationsSnapshot,
@@ -53,6 +54,8 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           stateProfile={stateProfile}
         />
       )}
+
+      {serviceCase && <PlateauPanel serviceCase={serviceCase} />}
 
       {profile || stateProfile ? (
         <PersonalPortraitPanel profile={profile} stateProfile={stateProfile} />
@@ -156,6 +159,68 @@ function OperationFact({
       <dd className="text-break mt-1 text-sm font-semibold leading-6 text-slate-900">{fact?.value || empty}</dd>
       {fact?.occurred_at && <p className="mt-1 text-xs text-slate-500">{formatDateTime(fact.occurred_at)}</p>}
     </div>
+  );
+}
+
+const PLATEAU_STATUS_META: Record<string, { label: string; pill: string }> = {
+  plateau: { label: "平台期", pill: "border-violet-200 bg-violet-50 text-violet-700" },
+  insufficient_data: { label: "打卡数据不足", pill: "pill-neutral" },
+  normal: { label: "正常", pill: "pill-ok" },
+};
+
+function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
+  const status = serviceCase.plateau_status;
+  if (!status || status === "normal") return null;
+  const meta = PLATEAU_STATUS_META[status] ?? { label: "待判定", pill: "pill-neutral" };
+  const evidence = recordValue(serviceCase.plateau_evidence);
+  const basis = Array.isArray(evidence.basis) ? evidence.basis : [];
+  const basisText = basis
+    .map((item) => (item === "statistical" ? "近 7 天体重无变化" : "用户自述体重卡住"))
+    .join("、");
+  const declared = Array.isArray(evidence.declared_evidence) ? evidence.declared_evidence : [];
+  const firstWeight = text(evidence.first_weight_kg);
+  const lastWeight = text(evidence.last_weight_kg);
+  const delta = typeof evidence.delta_kg === "number" ? String(evidence.delta_kg) : "";
+  const validRows = typeof evidence.valid_weight_rows === "number" ? String(evidence.valid_weight_rows) : "";
+
+  return (
+    <section className="panel overflow-hidden" aria-labelledby="plateau-heading">
+      <div className="panel-header-clean flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 id="plateau-heading" className="panel-title">平台期识别</h2>
+          <p className="panel-subtitle">近 7 天体重无动静，或用户主动说体重卡住。建议及时调整方案。</p>
+        </div>
+        <span className={`status-pill ${meta.pill}`}>{meta.label}</span>
+      </div>
+      <div className="grid divide-y divide-slate-200 border-t border-slate-200 text-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <div className="min-w-0 px-5 py-4 sm:px-6">
+          <dt className="text-xs font-bold text-slate-500">判定依据</dt>
+          <dd className="mt-1 text-sm font-semibold leading-6 text-slate-900">{basisText || "—"}</dd>
+          {validRows && <p className="mt-1 text-xs text-slate-500">窗口内有效体重记录 {validRows} 条</p>}
+        </div>
+        <div className="min-w-0 px-5 py-4 sm:px-6">
+          <dt className="text-xs font-bold text-slate-500">体重变化</dt>
+          <dd className="text-break mt-1 text-sm font-semibold leading-6 text-slate-900">
+            {firstWeight && lastWeight && delta ? `${firstWeight} → ${lastWeight} kg（${delta} kg）` : "—"}
+          </dd>
+          <p className="mt-1 text-xs text-slate-500">近 7 天窗口内首尾体重</p>
+        </div>
+        <div className="min-w-0 px-5 py-4 sm:px-6">
+          <dt className="text-xs font-bold text-slate-500">用户自述</dt>
+          {declared.length > 0 ? (
+            <ul className="mt-1 space-y-1">
+              {declared.map((item, index) => (
+                <li key={index} className="text-break text-sm font-medium leading-6 text-slate-800">
+                  “{item}”
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <dd className="mt-1 text-sm font-semibold leading-6 text-slate-900">无</dd>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

@@ -336,6 +336,14 @@ function ServiceCaseItem({
         {serviceCase.risk_level === "high" && (
           <span className="status-pill border-orange-200 bg-orange-50 text-orange-700">高风险</span>
         )}
+        {serviceCase.plateau_status === "plateau" && (
+          <span
+            className="status-pill border-violet-200 bg-violet-50 text-violet-700"
+            title={plateauBasisTitle(serviceCase.plateau_evidence)}
+          >
+            平台期
+          </span>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-500 sm:shrink-0 sm:justify-end">
         <span className="hidden max-w-52 truncate lg:inline">
@@ -373,4 +381,14 @@ function OpeningIndicator() {
       正在打开…
     </span>
   );
+}
+
+function plateauBasisTitle(evidence?: Record<string, unknown> | null): string {
+  const basis = Array.isArray(evidence?.basis) ? evidence.basis : [];
+  if (basis.length > 0) {
+    return `依据：${basis
+      .map((item) => (item === "statistical" ? "近7天体重无变化" : "用户自述体重卡住"))
+      .join("、")}`;
+  }
+  return "近 7 天体重无变化或用户自述体重卡住";
 }

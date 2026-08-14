@@ -63,6 +63,10 @@ export type ServiceCase = {
   renewal_intent_flags?: Array<Record<string, string | boolean>> | null;
   refund_intent_flags?: Array<Record<string, string | boolean>> | null;
   refund_pending_confirmation?: boolean;
+  /** normal / plateau / insufficient_data（平台期检测结果） */
+  plateau_status?: string;
+  plateau_evidence?: Record<string, unknown> | null;
+  plateau_updated_at?: string | null;
   user?: { id: number; name: string; phone?: string | null; wecom_user_id?: string | null } | null;
   created_at: string;
   updated_at: string;
