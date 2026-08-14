@@ -59,6 +59,9 @@ class ServiceCaseRead(Timestamped):
     renewal_intent_flags: list[dict] | None = None
     refund_intent_flags: list[dict] | None = None
     refund_pending_confirmation: bool = False
+    plateau_status: str = "normal"
+    plateau_evidence: dict | None = None
+    plateau_updated_at: datetime | None = None
     deleted_at: datetime | None = None
     user: UserRead | None = None
 

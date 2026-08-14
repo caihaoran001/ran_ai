@@ -110,6 +110,13 @@ class ServiceCase(TimestampMixin, Base):
     refund_pending_confirmation: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default=text("false")
     )
+    # 平台期检测结果（plateau_detector 周期扫描写入）：normal / plateau / insufficient_data。
+    # plateau_evidence 记录判定依据（窗口、首尾体重、差值、用户自述原话），供运营详情页核对。
+    plateau_status: Mapped[str] = mapped_column(
+        String(20), default="normal", nullable=False, server_default="normal", index=True
+    )
+    plateau_evidence: Mapped[dict | None] = mapped_column(JSON)
+    plateau_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User | None] = relationship(back_populates="service_cases")

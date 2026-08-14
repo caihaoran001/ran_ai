@@ -283,6 +283,8 @@ def _apply_service_case_filter(statement, metric: str | None):
         )
     if metric == "risk":
         return statement.where(ServiceCase.risk_level == "high")
+    if metric == "plateau":
+        return statement.where(ServiceCase.plateau_status == "plateau")
     if metric == "in_service":
         return statement.where(ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
     if metric == "renewal_followup":

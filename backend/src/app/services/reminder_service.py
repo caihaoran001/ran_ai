@@ -99,6 +99,7 @@ class ReminderService:
         self._last_image_cache_cleanup: datetime | None = None
         self._last_population_insight_check_date: date | None = None
         self._last_balance_check_at: float | None = None  # clock.monotonic()，余额检查间隔闸
+        self._last_plateau_check_at: float | None = None  # clock.monotonic()，平台期扫描间隔闸
         # 阶段报告生成时间配置缓存（5 分钟 TTL，避免白天每 30s 都查一次 DB）
         self._stage_report_schedule: tuple[int, int] | None = None
         self._stage_report_schedule_at: datetime | None = None
@@ -155,6 +156,7 @@ class ReminderService:
                         await self.check_room_names_once()
                         await self.check_image_cache_cleanup_once()
                         await sweep_interrupted_agent_runs()
+                        await self.check_plateau_once()
                         if self.settings.archivist_enabled:
                             await self.check_archivist_once()
                         # 先等档案官把本轮补问/图片投影到指定日期，再重算奖励。
@@ -192,6 +194,34 @@ class ReminderService:
         stats = await run_archivist_scan()
         if stats.get("ran"):
             logger.info("Archivist scan stats=%s", stats)
+
+    async def check_plateau_once(self) -> None:
+        """平台期检测：7 天窗口体重无动静或用户自述「体重卡住」→ 写 service_cases。
+
+        体重数据一天最多变化几次，不需要每 30s 主循环都扫全量服务单，
+        按间隔闸限流（默认每 6 小时一次）即可。
+        """
+        interval = float(getattr(self.settings, "plateau_check_interval_seconds", 0) or 0)
+        now = clock.monotonic()
+        if (
+            interval > 0
+            and self._last_plateau_check_at is not None
+            and now - self._last_plateau_check_at < interval
+        ):
+            return
+        self._last_plateau_check_at = now
+        from app.services.plateau_detector import scan_plateaus
+
+        async with SessionLocal() as session:
+            stats = await scan_plateaus(session)
+        if stats.scanned:
+            logger.info(
+                "Plateau scan scanned=%d plateau=%d insufficient=%d declared=%d",
+                stats.scanned,
+                stats.plateau,
+                stats.insufficient,
+                stats.declared,
+            )
 
     async def check_low_balance_once(self) -> None:
         """查 DeepSeek 账户余额，跌破阈值/账户不可用时向指定群告警，每天最多一条(天闸)。

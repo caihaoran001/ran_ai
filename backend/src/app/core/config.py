@@ -240,6 +240,12 @@ class Settings(BaseSettings):
     # 档案官（Archivist）总开关：聊天转打卡的后台扫描。默认开；缺省不注入也为开，
     # 需临时停用时在 compose environment 设 ARCHIVIST_ENABLED=false。
     archivist_enabled: bool = Field(default=True, validation_alias="ARCHIVIST_ENABLED")
+    # 平台期检测扫描间隔（秒）：7 天窗口体重无动静或用户自述「体重卡住」→ 写 service_cases。
+    # 体重数据变化慢，默认每 6 小时扫一次全量活跃服务单即可。
+    plateau_check_interval_seconds: float = Field(
+        default=21600.0,
+        validation_alias="PLATEAU_CHECK_INTERVAL_SECONDS",
+    )
     # 打卡追问(H5 完整替代)：外部确定性触发，日五项/矛盾核对/次晨空腹提醒分窗口发送，每天最多 3 条。
     #  - 里程碑前夜：晚间只提醒用户次晨起床如厕后空腹测量并打卡，不要求当晚称重。
     #  - 日五项：次日早上回顾昨日执行单中尚未回答的项。
