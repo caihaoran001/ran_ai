@@ -132,6 +132,35 @@ class TestEvaluatePlateau:
         )
         assert result.status == STATUS_PLATEAU
 
+    def test_two_days_apart_is_not_plateau(self):
+        now = date(2026, 8, 14)
+        start, end = _window(now)
+        rows = [_checkin(start, "70.0"), _checkin(start + timedelta(days=1), "70.1")]
+        result = _evaluate_plateau(
+            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+        )
+        assert result.status == STATUS_INSUFFICIENT_DATA
+        assert "未隔满一周" in result.evidence["note"]
+
+    def test_three_days_apart_is_not_plateau(self):
+        now = date(2026, 8, 14)
+        start, end = _window(now)
+        rows = [_checkin(start, "70.0"), _checkin(start + timedelta(days=3), "70.1")]
+        result = _evaluate_plateau(
+            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+        )
+        assert result.status == STATUS_INSUFFICIENT_DATA
+
+    def test_exactly_six_days_apart_is_plateau(self):
+        now = date(2026, 8, 14)
+        start, end = _window(now)
+        rows = [_checkin(start, "70.0"), _checkin(start + timedelta(days=6), "70.1")]
+        result = _evaluate_plateau(
+            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+        )
+        assert result.status == STATUS_PLATEAU
+        assert result.evidence["basis"] == ["statistical"]
+
 
 async def _make_in_service_case(db_session) -> ServiceCase:
     user = User(name="平台期测试用户")

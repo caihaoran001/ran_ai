@@ -45,6 +45,9 @@ PLATEAU_WINDOW_DAYS = 7
 PLATEAU_MAX_DELTA_KG = 0.5
 # 窗口内至少 2 条有效体重记录才能下统计结论。
 MIN_VALID_WEIGHT_ROWS = 2
+# 首尾两次有效打卡必须隔满一周（至少 6 个自然日），才足以支撑「一星期没动静」的结论；
+# 否则（如连着两天打卡）只是称了两次，不能说明体重卡了一周。
+PLATEAU_MIN_SPAN_DAYS = 6
 # 相邻跳变剔除：复用 body_change_stats 的口径（日内波动 + 可能真实变化的和）。
 _MAX_WEIGHT_DELTA_PER_DAY = 0.5
 _MIN_WEIGHT_DELTA_ALLOWANCE_KG = 2.5
@@ -172,7 +175,19 @@ def _evaluate_plateau(
     in_window = [(day, value) for day, value in usable if window_start <= day <= window_end]
 
     user_declared = bool(declared_evidence)
-    if len(in_window) < MIN_VALID_WEIGHT_ROWS and not user_declared:
+
+    span_days = 0
+    if len(in_window) >= MIN_VALID_WEIGHT_ROWS:
+        first_day = in_window[0][0]
+        last_day = in_window[-1][0]
+        span_days = (last_day - first_day).days
+
+    if not user_declared and (len(in_window) < MIN_VALID_WEIGHT_ROWS or span_days < PLATEAU_MIN_SPAN_DAYS):
+        note = (
+            "窗口内有效体重记录不足，无法判定平台期"
+            if len(in_window) < MIN_VALID_WEIGHT_ROWS
+            else "窗口内两次打卡未隔满一周，不足以说明体重卡了一周"
+        )
         return PlateauResult(
             STATUS_INSUFFICIENT_DATA,
             {
@@ -181,14 +196,14 @@ def _evaluate_plateau(
                 "window_start": window_start.isoformat(),
                 "window_end": window_end.isoformat(),
                 "valid_weight_rows": len(in_window),
-                "note": "窗口内有效体重记录不足，无法判定平台期",
+                "note": note,
             },
         )
 
     delta_kg: float | None = None
     first_weight: float | None = None
     last_weight: float | None = None
-    if len(in_window) >= MIN_VALID_WEIGHT_ROWS:
+    if len(in_window) >= MIN_VALID_WEIGHT_ROWS and span_days >= PLATEAU_MIN_SPAN_DAYS:
         first_day, first_weight = in_window[0]
         last_day, last_weight = in_window[-1]
         delta_kg = round(last_weight - first_weight, 2)
