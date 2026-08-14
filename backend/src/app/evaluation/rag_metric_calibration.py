@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import ceil
 
 
 MIN_AUC = 0.90
@@ -8,6 +9,7 @@ MIN_PAIRED_ACCURACY = 0.80
 MIN_POSITIVE_PASS_RATE = 0.80
 MIN_NEGATIVE_REJECTION_RATE = 0.80
 MIN_MEAN_GAP = 0.20
+STABLE_INTERVAL_SELECTION_RULE = "class_rate_interval_midpoint_v1"
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,87 @@ class RagMetricCalibrationAssessment:
     negative_rejection_rate: float
     passed: bool
     failed_criteria: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RagMetricThresholdSelection:
+    """A data-derived threshold that is stable across every selection repeat.
+
+    A score equal to the threshold is accepted as positive.  Therefore the
+    lower bound is exclusive (negative scores must be below it) and the upper
+    bound is inclusive (positive scores may equal it).
+    """
+
+    rule: str
+    minimum_classification_rate: float
+    lower_exclusive: float
+    upper_inclusive: float
+    selected_threshold: float
+    safety_margin: float
+
+
+def select_stable_calibration_threshold(
+    runs: list[tuple[list[float], list[float]]],
+    *,
+    minimum_classification_rate: float,
+) -> RagMetricThresholdSelection | None:
+    """Select the midpoint of the common, data-supported threshold interval.
+
+    For each repeat, find every threshold at which both the positive pass rate
+    and the negative rejection rate meet the required rate.  Only the
+    intersection of those intervals is eligible.  Its midpoint maximizes the
+    distance to either observed boundary, so a default configuration value
+    never decides a tie.
+    """
+
+    if not runs:
+        raise ValueError("calibration threshold selection requires at least one run")
+    if not 0.0 < minimum_classification_rate <= 1.0:
+        raise ValueError("minimum classification rate must be in (0, 1]")
+
+    lower_bounds: list[float] = []
+    upper_bounds: list[float] = []
+    for positive_scores, negative_scores in runs:
+        if not positive_scores or len(positive_scores) != len(negative_scores):
+            raise ValueError(
+                "calibration threshold selection requires equal non-empty score pairs"
+            )
+        if any(
+            not 0.0 <= score <= 1.0
+            for score in positive_scores + negative_scores
+        ):
+            raise ValueError("calibration scores must be between 0 and 1")
+
+        required_correct = ceil(
+            len(positive_scores) * minimum_classification_rate - 1e-12
+        )
+        ordered_positive = sorted(positive_scores)
+        ordered_negative = sorted(negative_scores)
+        # At least `required_correct` positives must be >= threshold, while at
+        # least that many negatives must remain strictly below it.
+        upper_bounds.append(ordered_positive[len(positive_scores) - required_correct])
+        lower_bounds.append(ordered_negative[required_correct - 1])
+
+    lower_exclusive = max(lower_bounds)
+    upper_inclusive = min(upper_bounds)
+    if lower_exclusive >= upper_inclusive:
+        return None
+
+    selected_threshold = (lower_exclusive + upper_inclusive) / 2
+    rounded_threshold = round(selected_threshold, 6)
+    if lower_exclusive < rounded_threshold < upper_inclusive:
+        selected_threshold = rounded_threshold
+    return RagMetricThresholdSelection(
+        rule=STABLE_INTERVAL_SELECTION_RULE,
+        minimum_classification_rate=minimum_classification_rate,
+        lower_exclusive=lower_exclusive,
+        upper_inclusive=upper_inclusive,
+        selected_threshold=selected_threshold,
+        safety_margin=min(
+            selected_threshold - lower_exclusive,
+            upper_inclusive - selected_threshold,
+        ),
+    )
 
 
 def _auc(positive_scores: list[float], negative_scores: list[float]) -> float:

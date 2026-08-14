@@ -318,6 +318,16 @@ def test_faithfulness_uses_threshold_selected_by_matching_calibration():
     assert active["faithfulness"] == 0.60
 
 
+def test_answer_relevancy_uses_threshold_selected_by_matching_calibration():
+    active = _active_ragas_thresholds(
+        answer_relevancy_enforced=True,
+        answer_relevancy_threshold=0.45,
+        faithfulness_enforced=False,
+    )
+
+    assert active["answer_relevancy"] == 0.45
+
+
 class _FaithfulnessMetric:
     async def ascore(self, **kwargs):
         assert kwargs == {

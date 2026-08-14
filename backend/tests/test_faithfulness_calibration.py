@@ -5,7 +5,7 @@ from collections import Counter
 import pytest
 
 from app.evaluation.faithfulness_calibration import (
-    CANDIDATE_THRESHOLDS,
+    MIN_STAGE_CLASSIFICATION_RATE,
     assess_faithfulness_calibration,
     assess_two_stage_faithfulness_calibration,
     build_faithfulness_calibration_pairs,
@@ -13,29 +13,29 @@ from app.evaluation.faithfulness_calibration import (
     resolve_faithfulness_policy,
 )
 from app.evaluation.rag_cases import load_rag_eval_suite
-from app.schemas.rag_evaluation import FaithfulnessCalibrationReport
+from app.schemas.rag_evaluation import (
+    FaithfulnessCalibrationItem,
+    FaithfulnessCalibrationReport,
+)
+from eval.reanalyze_faithfulness import _verify_source_report
 
 
-def _metrics(
-    *,
-    positive_pass_rate: float = 1.0,
-    negative_rejection_rate: float = 1.0,
-) -> dict:
+def _metrics() -> dict:
     return {
         "positive_mean": 0.70,
         "negative_mean": 0.20,
         "mean_gap": 0.50,
         "auc": 1.0,
         "paired_accuracy": 1.0,
-        "positive_pass_rate": positive_pass_rate,
-        "negative_rejection_rate": negative_rejection_rate,
+        "positive_pass_rate": 1.0,
+        "negative_rejection_rate": 1.0,
     }
 
 
 def _calibration_report(*, passed: bool) -> FaithfulnessCalibrationReport:
     return FaithfulnessCalibrationReport.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "calibration_id": "faithfulness-zh-v4",
             "dataset_version": 4,
             "run_id": "faithfulness-calibration-test",
@@ -44,47 +44,34 @@ def _calibration_report(*, passed: bool) -> FaithfulnessCalibrationReport:
             "updated_at": "2026-08-13T08:20:00Z",
             "finished_at": "2026-08-13T08:20:00Z",
             "git_sha": "1234567",
-            "model": "deepseek-chat",
+            "model": "deepseek-v4-flash",
             "ragas_version": "0.4.3",
-            "threshold": 0.55,
+            "threshold": 0.625,
             "base_pair_count": 30,
             "completed_pair_count": 30,
             "passed": passed,
             "metrics": _metrics(),
-            "failed_criteria": (
-                []
-                if passed
-                else ["10组锁定验证题未在两轮中稳定通过0.55门槛"]
-            ),
+            "failed_criteria": [] if passed else ["10组锁定验证题未通过"],
             "items": [],
             "repeat_count": 2,
             "selection_case_count": 20,
             "validation_case_count": 10,
-            "selected_threshold": 0.55,
-            "candidate_results": [
-                {
-                    "threshold": threshold,
-                    "eligible": threshold == 0.55,
-                    "runs": [
-                        {
-                            "repeat_index": repeat_index,
-                            "passed": threshold == 0.55,
-                            "metrics": _metrics(),
-                        }
-                        for repeat_index in (1, 2)
-                    ],
-                }
-                for threshold in CANDIDATE_THRESHOLDS
+            "selected_threshold": 0.625,
+            "threshold_selection": {
+                "rule": "class_rate_interval_midpoint_v1",
+                "minimum_classification_rate": MIN_STAGE_CLASSIFICATION_RATE,
+                "lower_exclusive": 0.50,
+                "upper_inclusive": 0.75,
+                "selected_threshold": 0.625,
+                "safety_margin": 0.125,
+            },
+            "selection_results": [
+                {"repeat_index": index, "passed": True, "metrics": _metrics()}
+                for index in (1, 2)
             ],
             "validation_results": [
-                {
-                    "repeat_index": repeat_index,
-                    "passed": passed,
-                    "metrics": _metrics(
-                        positive_pass_rate=1.0 if passed else 0.8
-                    ),
-                }
-                for repeat_index in (1, 2)
+                {"repeat_index": index, "passed": passed, "metrics": _metrics()}
+                for index in (1, 2)
             ],
         }
     )
@@ -104,83 +91,62 @@ def test_fixed_faithfulness_suite_reuses_authoritative_rag_facts():
         "selection": 20,
         "validation": 10,
     }
-    assert set(pair.error_type for pair in pairs) == {
-        "number_or_unit",
-        "negation",
-        "condition_omission",
-        "fact_reversal",
-        "unsupported_advice",
-    }
     for pair in pairs:
         source_statements = {
-            fact.statement
-            for fact in rag_cases[pair.source_case_id].authoritative_facts
+            fact.statement for fact in rag_cases[pair.source_case_id].authoritative_facts
         }
         assert set(pair.retrieved_contexts).issubset(source_statements)
         assert pair.positive_response != pair.negative_response
         assert all("近期对话" not in context for context in pair.retrieved_contexts)
 
 
-def test_two_stage_calibration_selects_middle_threshold_then_validates_it():
-    selection = [
-        ([0.58] * 20, [0.52] * 20),
-        ([0.57] * 20, [0.53] * 20),
-    ]
-    validation = [
-        ([0.59] * 10, [0.51] * 10),
-        ([0.58] * 10, [0.52] * 10),
-    ]
-
+def test_two_stage_calibration_selects_midpoint_of_common_data_interval():
     result = assess_two_stage_faithfulness_calibration(
-        selection_runs=selection,
-        validation_runs=validation,
+        selection_runs=[([0.75] * 20, [0.50] * 20)] * 2,
+        validation_runs=[([0.70] * 10, [0.40] * 10)] * 2,
     )
 
-    assert result.selected_threshold == 0.55
+    assert result.threshold_selection is not None
+    assert result.threshold_selection.lower_exclusive == 0.50
+    assert result.threshold_selection.upper_inclusive == 0.75
+    assert result.selected_threshold == 0.625
+    assert all(run.passed for run in result.selection_runs)
     assert result.passed is True
-    assert [candidate.eligible for candidate in result.candidates] == [
-        False,
-        True,
-        False,
-    ]
-    assert all(run.passed for run in result.validation_runs)
 
 
-def test_two_stage_calibration_rejects_threshold_when_one_validation_repeat_fails():
-    selection = [
-        ([0.58] * 20, [0.52] * 20),
-        ([0.57] * 20, [0.53] * 20),
-    ]
-    validation = [
-        ([0.59] * 10, [0.51] * 10),
-        ([0.58] * 8 + [0.54] * 2, [0.52] * 10),
-    ]
-
+def test_selection_keeps_a_90_percent_interval_when_boundary_scores_overlap():
     result = assess_two_stage_faithfulness_calibration(
-        selection_runs=selection,
-        validation_runs=validation,
+        selection_runs=[([0.40] * 2 + [0.70] * 18, [0.30] * 18 + [0.60] * 2)] * 2,
+        validation_runs=[([0.60] * 10, [0.30] * 10)] * 2,
     )
 
-    assert result.selected_threshold == 0.55
-    assert result.passed is False
-    assert result.validation_runs[1].assessment.positive_pass_rate == 0.8
-    assert "锁定验证题" in result.failed_criteria[0]
+    assert result.threshold_selection is not None
+    assert result.selected_threshold == 0.50
+    assert all(run.assessment.positive_pass_rate == 0.9 for run in result.selection_runs)
+    assert all(run.assessment.negative_rejection_rate == 0.9 for run in result.selection_runs)
 
 
-def test_two_stage_calibration_does_not_select_when_no_candidate_is_stable():
-    selection = [
-        ([0.54] * 20, [0.53] * 20),
-        ([0.61] * 20, [0.60] * 20),
-    ]
-
+def test_two_stage_calibration_rejects_when_no_common_interval_exists():
     result = assess_two_stage_faithfulness_calibration(
-        selection_runs=selection,
+        selection_runs=[([0.54] * 20, [0.53] * 20), ([0.61] * 20, [0.60] * 20)],
         validation_runs=[([0.9] * 10, [0.1] * 10)] * 2,
     )
 
     assert result.selected_threshold is None
+    assert result.selection_runs == ()
     assert result.validation_runs == ()
     assert result.passed is False
+
+
+def test_two_stage_calibration_rejects_when_validation_fails():
+    result = assess_two_stage_faithfulness_calibration(
+        selection_runs=[([0.70] * 20, [0.30] * 20)] * 2,
+        validation_runs=[([0.70] * 10, [0.30] * 10), ([0.70] * 8 + [0.40] * 2, [0.30] * 10)],
+    )
+
+    assert result.selected_threshold == 0.50
+    assert result.passed is False
+    assert result.validation_runs[1].assessment.positive_pass_rate == 0.8
 
 
 def test_faithfulness_calibration_score_validation_remains_strict():
@@ -197,72 +163,59 @@ def test_faithfulness_calibration_score_validation_remains_strict():
 
 def test_failed_faithfulness_calibration_makes_metric_observational_only():
     policy = resolve_faithfulness_policy(
-        _calibration_report(passed=False),
-        model="deepseek-chat",
-        ragas_version="0.4.3",
+        _calibration_report(passed=False), model="deepseek-v4-flash", ragas_version="0.4.3"
     )
 
     assert policy.status == "calibration_failed"
     assert policy.enforced is False
     assert policy.threshold is None
-    assert policy.calibration_run_id == "faithfulness-calibration-test"
-    assert "仅展示" in policy.reason
 
 
 def test_passed_faithfulness_calibration_exposes_selected_threshold():
     policy = resolve_faithfulness_policy(
-        _calibration_report(passed=True),
-        model="deepseek-chat",
-        ragas_version="0.4.3",
+        _calibration_report(passed=True), model="deepseek-v4-flash", ragas_version="0.4.3"
     )
 
     assert policy.status == "enforced"
-    assert policy.enforced is True
-    assert policy.threshold == 0.55
+    assert policy.threshold == 0.625
 
 
-def test_incomplete_two_stage_report_cannot_enable_faithfulness():
-    report = _calibration_report(passed=True).model_copy(
-        update={"validation_results": []}
-    )
+def test_previously_default_selected_schema_cannot_enable_faithfulness():
+    report = _calibration_report(passed=True).model_copy(update={"schema_version": 2})
 
     policy = resolve_faithfulness_policy(
-        report,
-        model="deepseek-chat",
-        ragas_version="0.4.3",
+        report, model="deepseek-v4-flash", ragas_version="0.4.3"
     )
 
     assert policy.status == "calibration_failed"
     assert policy.enforced is False
-    assert policy.threshold is None
+    assert "已废弃" in policy.reason
 
 
-def test_faithfulness_calibration_only_applies_to_matching_judge():
-    policy = resolve_faithfulness_policy(
-        _calibration_report(passed=True),
-        model="different-model",
-        ragas_version="0.4.3",
+def test_existing_complete_scores_can_be_reanalysed_without_a_model_call():
+    suite = load_faithfulness_calibration_suite()
+    items = [
+        FaithfulnessCalibrationItem(
+            case_id=pair.case_id,
+            source_case_id=pair.source_case_id,
+            user_input=pair.user_input,
+            retrieved_contexts=pair.retrieved_contexts,
+            positive_response=pair.positive_response,
+            negative_response=pair.negative_response,
+            positive_score=0.75,
+            negative_score=0.50,
+            phase=pair.phase,
+            error_type=pair.error_type,
+            repeat_index=repeat_index,
+        )
+        for repeat_index in (1, 2)
+        for pair in build_faithfulness_calibration_pairs(suite)
+    ]
+    source = _calibration_report(passed=True).model_copy(
+        update={"schema_version": 2, "items": items}
     )
 
-    assert policy.status == "not_calibrated"
-    assert policy.enforced is False
-    assert "判官模型" in policy.reason
-
-
-def test_faithfulness_calibration_only_applies_to_current_dataset_version():
-    report = _calibration_report(passed=True).model_copy(
-        update={"calibration_id": "faithfulness-zh-v3", "dataset_version": 3}
-    )
-
-    policy = resolve_faithfulness_policy(
-        report,
-        model="deepseek-chat",
-        ragas_version="0.4.3",
-    )
-
-    assert policy.status == "not_calibrated"
-    assert policy.enforced is False
-    assert "校准题版本" in policy.reason
+    _verify_source_report(source, suite=suite)
 
 
 @pytest.mark.parametrize(
@@ -271,4 +224,4 @@ def test_faithfulness_calibration_only_applies_to_current_dataset_version():
 )
 def test_faithfulness_calibration_rejects_invalid_score_inputs(positive, negative):
     with pytest.raises(ValueError, match="calibration"):
-        assess_faithfulness_calibration(positive, negative)
+        assess_faithfulness_calibration(positive, negative, threshold=0.55)

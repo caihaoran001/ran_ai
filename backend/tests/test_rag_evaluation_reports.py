@@ -139,7 +139,7 @@ def _calibration_report() -> dict:
         "updated_at": "2026-08-11T07:10:00Z",
         "finished_at": "2026-08-11T07:10:00Z",
         "git_sha": "1234567",
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
         "embedding_model": "text-embedding-v4",
         "ragas_version": "0.4.3",
         "threshold": 0.8,
@@ -171,7 +171,7 @@ def _faithfulness_calibration_report() -> dict:
         "updated_at": "2026-08-11T08:10:00Z",
         "finished_at": "2026-08-11T08:10:00Z",
         "git_sha": "1234567",
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
         "ragas_version": "0.4.3",
         "threshold": 0.55,
         "base_pair_count": 30,
@@ -276,7 +276,7 @@ async def test_missing_answer_relevancy_calibration_returns_null(
 
 
 @pytest.mark.asyncio
-async def test_stale_answer_relevancy_calibration_returns_null(
+async def test_stale_answer_relevancy_calibration_remains_visible_for_audit(
     admin_client, tmp_path
 ):
     app = admin_client._transport.app
@@ -292,7 +292,7 @@ async def test_stale_answer_relevancy_calibration_returns_null(
     response = await admin_client.get("/rag-evaluations/calibrations/answer-relevancy")
 
     assert response.status_code == 200
-    assert response.json() is None
+    assert response.json()["calibration_id"] == "answer-relevancy-zh-v1"
 
 
 @pytest.mark.asyncio
@@ -389,6 +389,7 @@ async def test_legacy_report_without_run_mode_remains_readable(admin_client, tmp
         "status": "legacy",
         "enforced": True,
         "calibration_run_id": None,
+        "threshold": None,
         "reason": "该历史批次未记录校准状态，生成时仍按原规则参与判定",
     }
     assert response.json()["summary"]["faithfulness_policy"] == {

@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.evaluation.rag_metric_calibration import (
     RagMetricCalibrationAssessment,
+    RagMetricThresholdSelection,
     assess_rag_metric_calibration,
+    select_stable_calibration_threshold,
 )
 from app.schemas.rag_evaluation import (
     FaithfulnessCalibrationReport,
@@ -18,8 +20,6 @@ from app.schemas.rag_evaluation import (
 )
 
 
-CANDIDATE_THRESHOLDS = (0.50, 0.55, 0.60)
-DEFAULT_CALIBRATION_THRESHOLD = 0.55
 FIXED_CALIBRATION_CASE_COUNT = 30
 SELECTION_CASE_COUNT = 20
 VALIDATION_CASE_COUNT = 10
@@ -102,17 +102,9 @@ class FaithfulnessCalibrationRunAssessment:
 
 
 @dataclass(frozen=True)
-class FaithfulnessThresholdAssessment:
-    threshold: float
-    runs: tuple[FaithfulnessCalibrationRunAssessment, ...]
-    eligible: bool
-    worst_positive_pass_rate: float
-    worst_negative_rejection_rate: float
-
-
-@dataclass(frozen=True)
 class FaithfulnessTwoStageAssessment:
-    candidates: tuple[FaithfulnessThresholdAssessment, ...]
+    threshold_selection: RagMetricThresholdSelection | None
+    selection_runs: tuple[FaithfulnessCalibrationRunAssessment, ...]
     selected_threshold: float | None
     validation_runs: tuple[FaithfulnessCalibrationRunAssessment, ...]
     passed: bool
@@ -158,7 +150,7 @@ def assess_faithfulness_calibration(
     positive_scores: list[float],
     negative_scores: list[float],
     *,
-    threshold: float = DEFAULT_CALIBRATION_THRESHOLD,
+    threshold: float,
 ) -> RagMetricCalibrationAssessment:
     return assess_rag_metric_calibration(
         positive_scores,
@@ -212,49 +204,25 @@ def assess_two_stage_faithfulness_calibration(
     ):
         raise ValueError("faithfulness validation repeat must contain 10 pairs")
 
-    candidates = []
-    for threshold in CANDIDATE_THRESHOLDS:
-        runs = tuple(
+    threshold_selection = select_stable_calibration_threshold(
+        selection_runs,
+        minimum_classification_rate=MIN_STAGE_CLASSIFICATION_RATE,
+    )
+    selected_threshold = (
+        threshold_selection.selected_threshold if threshold_selection else None
+    )
+    selection_assessments = (
+        tuple(
             _assess_stage_run(
                 positive,
                 negative,
                 repeat_index=index,
-                threshold=threshold,
+                threshold=selected_threshold,
             )
             for index, (positive, negative) in enumerate(selection_runs, start=1)
         )
-        candidates.append(
-            FaithfulnessThresholdAssessment(
-                threshold=threshold,
-                runs=runs,
-                eligible=all(run.passed for run in runs),
-                worst_positive_pass_rate=min(
-                    run.assessment.positive_pass_rate for run in runs
-                ),
-                worst_negative_rejection_rate=min(
-                    run.assessment.negative_rejection_rate for run in runs
-                ),
-            )
-        )
-
-    eligible = [candidate for candidate in candidates if candidate.eligible]
-    selected = (
-        max(
-            eligible,
-            key=lambda candidate: (
-                min(
-                    candidate.worst_positive_pass_rate,
-                    candidate.worst_negative_rejection_rate,
-                ),
-                (
-                    candidate.worst_positive_pass_rate
-                    + candidate.worst_negative_rejection_rate
-                ),
-                -abs(candidate.threshold - DEFAULT_CALIBRATION_THRESHOLD),
-            ),
-        )
-        if eligible
-        else None
+        if selected_threshold is not None
+        else ()
     )
 
     validation_assessments = (
@@ -263,23 +231,24 @@ def assess_two_stage_faithfulness_calibration(
                 positive,
                 negative,
                 repeat_index=index,
-                threshold=selected.threshold,
+                threshold=selected_threshold,
             )
             for index, (positive, negative) in enumerate(validation_runs, start=1)
         )
-        if selected is not None
+        if selected_threshold is not None
         else ()
     )
     failed = []
-    if selected is None:
-        failed.append("20组定门槛题没有候选值能在两轮中稳定达到90%")
+    if selected_threshold is None:
+        failed.append("20组定门槛题没有两轮共同的90%可用范围")
     elif not all(run.passed for run in validation_assessments):
         failed.append(
-            f"10组锁定验证题未在两轮中稳定通过{selected.threshold:.2f}门槛"
+            f"10组锁定验证题未在两轮中稳定通过{selected_threshold:.3f}门槛"
         )
     return FaithfulnessTwoStageAssessment(
-        candidates=tuple(candidates),
-        selected_threshold=selected.threshold if selected is not None else None,
+        threshold_selection=threshold_selection,
+        selection_runs=selection_assessments,
+        selected_threshold=selected_threshold,
         validation_runs=validation_assessments,
         passed=not failed,
         failed_criteria=tuple(failed),
@@ -322,19 +291,14 @@ def resolve_faithfulness_policy(
         )
 
     complete_result = (
-        report.schema_version == 2
-        and len(report.candidate_results) == len(CANDIDATE_THRESHOLDS)
-        and {item.threshold for item in report.candidate_results}
-        == set(CANDIDATE_THRESHOLDS)
-        and all(
-            len(candidate.runs) == CALIBRATION_REPEAT_COUNT
-            for candidate in report.candidate_results
-        )
-        and any(
-            candidate.threshold == report.selected_threshold
-            and candidate.eligible
-            for candidate in report.candidate_results
-        )
+        report.schema_version == 3
+        and report.threshold_selection is not None
+        and report.threshold_selection.selected_threshold == report.selected_threshold
+        and report.threshold_selection.selected_threshold == report.threshold
+        and report.threshold_selection.minimum_classification_rate
+        == MIN_STAGE_CLASSIFICATION_RATE
+        and len(report.selection_results) == CALIBRATION_REPEAT_COUNT
+        and all(run.passed for run in report.selection_results)
         and len(report.validation_results) == CALIBRATION_REPEAT_COUNT
         and all(run.passed for run in report.validation_results)
         and report.status == "completed"
@@ -343,13 +307,14 @@ def resolve_faithfulness_policy(
         and report.repeat_count == CALIBRATION_REPEAT_COUNT
         and report.selection_case_count == SELECTION_CASE_COUNT
         and report.validation_case_count == VALIDATION_CASE_COUNT
-        and report.selected_threshold in CANDIDATE_THRESHOLDS
         and report.threshold == report.selected_threshold
     )
     if not complete_result or report.passed is not True:
         criteria = "；".join(report.failed_criteria)
         reason = "最近一次中文校准未通过"
-        if not complete_result:
+        if report.schema_version != 3:
+            reason = "最近一次中文校准使用了已废弃的默认值选线方式"
+        elif not complete_result:
             reason = "最近一次中文校准未完整完成"
         if criteria:
             reason = f"{reason}：{criteria}"

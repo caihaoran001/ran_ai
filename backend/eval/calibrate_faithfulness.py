@@ -9,7 +9,6 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.evaluation.faithfulness_calibration import (
     CALIBRATION_REPEAT_COUNT,
-    DEFAULT_CALIBRATION_THRESHOLD,
     SELECTION_CASE_COUNT,
     VALIDATION_CASE_COUNT,
     assess_faithfulness_calibration,
@@ -20,10 +19,10 @@ from app.evaluation.faithfulness_calibration import (
 )
 from app.schemas.rag_evaluation import (
     FaithfulnessCalibrationItem,
-    FaithfulnessCalibrationCandidate,
     FaithfulnessCalibrationMetrics,
     FaithfulnessCalibrationReport,
     FaithfulnessCalibrationStageRun,
+    RagMetricThresholdSelection,
     RagBinaryJudgement,
 )
 
@@ -43,6 +42,8 @@ def _report(
     status: str,
     items: list[FaithfulnessCalibrationItem],
     error: str | None = None,
+    score_source: str = "fresh_llm_scores",
+    source_run_id: str | None = None,
 ) -> FaithfulnessCalibrationReport:
     settings = get_settings()
     two_stage = None
@@ -55,19 +56,18 @@ def _report(
             selection_runs=selection_runs,
             validation_runs=validation_runs,
         )
-        effective_threshold = (
-            two_stage.selected_threshold or DEFAULT_CALIBRATION_THRESHOLD
-        )
-        overall = assess_faithfulness_calibration(
-            [item.positive_score for item in items],
-            [item.negative_score for item in items],
-            threshold=effective_threshold,
-        )
+        effective_threshold = two_stage.selected_threshold
+        if effective_threshold is not None:
+            overall = assess_faithfulness_calibration(
+                [item.positive_score for item in items],
+                [item.negative_score for item in items],
+                threshold=effective_threshold,
+            )
     else:
-        effective_threshold = DEFAULT_CALIBRATION_THRESHOLD
+        effective_threshold = None
     now = utc_now()
     return FaithfulnessCalibrationReport(
-        schema_version=2,
+        schema_version=3,
         calibration_id=suite.calibration_id,
         dataset_version=suite.version,
         run_id=run_id,
@@ -93,15 +93,13 @@ def _report(
         selection_case_count=SELECTION_CASE_COUNT,
         validation_case_count=VALIDATION_CASE_COUNT,
         selected_threshold=(two_stage.selected_threshold if two_stage else None),
-        candidate_results=(
-            [
-                FaithfulnessCalibrationCandidate(
-                    threshold=candidate.threshold,
-                    eligible=candidate.eligible,
-                    runs=[_stage_run_model(run) for run in candidate.runs],
-                )
-                for candidate in two_stage.candidates
-            ]
+        threshold_selection=(
+            _threshold_selection_model(two_stage.threshold_selection)
+            if two_stage and two_stage.threshold_selection
+            else None
+        ),
+        selection_results=(
+            [_stage_run_model(run) for run in two_stage.selection_runs]
             if two_stage
             else []
         ),
@@ -110,6 +108,8 @@ def _report(
             if two_stage
             else []
         ),
+        score_source=score_source,
+        source_run_id=source_run_id,
         error=error,
     )
 
@@ -131,6 +131,17 @@ def _stage_run_model(run) -> FaithfulnessCalibrationStageRun:
         repeat_index=run.repeat_index,
         passed=run.passed,
         metrics=_metrics_model(run.assessment),
+    )
+
+
+def _threshold_selection_model(selection) -> RagMetricThresholdSelection:
+    return RagMetricThresholdSelection(
+        rule=selection.rule,
+        minimum_classification_rate=selection.minimum_classification_rate,
+        lower_exclusive=selection.lower_exclusive,
+        upper_inclusive=selection.upper_inclusive,
+        selected_threshold=selection.selected_threshold,
+        safety_margin=selection.safety_margin,
     )
 
 

@@ -8,8 +8,11 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from app.evaluation.answer_relevancy_calibration import (
-    CALIBRATION_THRESHOLD,
+    CALIBRATION_REPEAT_COUNT,
+    SELECTION_CASE_COUNT,
+    VALIDATION_CASE_COUNT,
     assess_answer_relevancy_calibration,
+    assess_two_stage_answer_relevancy_calibration,
     build_answer_relevancy_calibration_pairs,
     default_answer_relevancy_calibration_path,
     load_answer_relevancy_calibration_suite,
@@ -18,6 +21,8 @@ from app.schemas.rag_evaluation import (
     AnswerRelevancyCalibrationItem,
     AnswerRelevancyCalibrationMetrics,
     AnswerRelevancyCalibrationReport,
+    AnswerRelevancyCalibrationStageRun,
+    RagMetricThresholdSelection,
     RagAnswerRelevancyJudgement,
 )
 
@@ -39,14 +44,26 @@ def _report(
     error: str | None = None,
 ) -> AnswerRelevancyCalibrationReport:
     settings = get_settings()
+    two_stage = None
     assessment = None
-    if len(items) == len(suite.cases):
-        assessment = assess_answer_relevancy_calibration(
-            [item.positive_score for item in items],
-            [item.negative_score for item in items],
+    expected_item_count = len(suite.cases) * CALIBRATION_REPEAT_COUNT
+    if len(items) == expected_item_count:
+        two_stage = assess_two_stage_answer_relevancy_calibration(
+            selection_runs=_scores_by_stage(items, phase="selection"),
+            validation_runs=_scores_by_stage(items, phase="validation"),
         )
+        effective_threshold = two_stage.selected_threshold
+        if effective_threshold is not None:
+            assessment = assess_answer_relevancy_calibration(
+                [item.positive_score for item in items],
+                [item.negative_score for item in items],
+                threshold=effective_threshold,
+            )
+    else:
+        effective_threshold = None
     now = utc_now()
     return AnswerRelevancyCalibrationReport(
+        schema_version=2,
         calibration_id=suite.calibration_id,
         dataset_version=suite.version,
         run_id=run_id,
@@ -58,10 +75,10 @@ def _report(
         model=settings.ai_model,
         embedding_model=settings.embedding_model,
         ragas_version="0.4.3",
-        threshold=CALIBRATION_THRESHOLD,
+        threshold=effective_threshold,
         base_pair_count=len(suite.cases),
-        completed_pair_count=len(items),
-        passed=assessment.passed if assessment else None,
+        completed_pair_count=_completed_case_count(items),
+        passed=two_stage.passed if two_stage else None,
         metrics=(
             AnswerRelevancyCalibrationMetrics(
                 positive_mean=assessment.positive_mean,
@@ -75,9 +92,91 @@ def _report(
             if assessment
             else None
         ),
-        failed_criteria=list(assessment.failed_criteria) if assessment else [],
+        failed_criteria=list(two_stage.failed_criteria) if two_stage else [],
         items=items,
+        repeat_count=CALIBRATION_REPEAT_COUNT,
+        selection_case_count=SELECTION_CASE_COUNT,
+        validation_case_count=VALIDATION_CASE_COUNT,
+        selected_threshold=(two_stage.selected_threshold if two_stage else None),
+        threshold_selection=(
+            _threshold_selection_model(two_stage.threshold_selection)
+            if two_stage and two_stage.threshold_selection
+            else None
+        ),
+        selection_results=(
+            [_stage_run_model(run) for run in two_stage.selection_runs]
+            if two_stage
+            else []
+        ),
+        validation_results=(
+            [_stage_run_model(run) for run in two_stage.validation_runs]
+            if two_stage
+            else []
+        ),
         error=error,
+    )
+
+
+def _metrics_model(assessment) -> AnswerRelevancyCalibrationMetrics:
+    return AnswerRelevancyCalibrationMetrics(
+        positive_mean=assessment.positive_mean,
+        negative_mean=assessment.negative_mean,
+        mean_gap=assessment.mean_gap,
+        auc=assessment.auc,
+        paired_accuracy=assessment.paired_accuracy,
+        positive_pass_rate=assessment.positive_pass_rate,
+        negative_rejection_rate=assessment.negative_rejection_rate,
+    )
+
+
+def _stage_run_model(run) -> AnswerRelevancyCalibrationStageRun:
+    return AnswerRelevancyCalibrationStageRun(
+        repeat_index=run.repeat_index,
+        passed=run.passed,
+        metrics=_metrics_model(run.assessment),
+    )
+
+
+def _threshold_selection_model(selection) -> RagMetricThresholdSelection:
+    return RagMetricThresholdSelection(
+        rule=selection.rule,
+        minimum_classification_rate=selection.minimum_classification_rate,
+        lower_exclusive=selection.lower_exclusive,
+        upper_inclusive=selection.upper_inclusive,
+        selected_threshold=selection.selected_threshold,
+        safety_margin=selection.safety_margin,
+    )
+
+
+def _scores_by_stage(
+    items: list[AnswerRelevancyCalibrationItem],
+    *,
+    phase: str,
+) -> list[tuple[list[float], list[float]]]:
+    return [
+        (
+            [
+                item.positive_score
+                for item in items
+                if item.phase == phase and item.repeat_index == repeat_index
+            ],
+            [
+                item.negative_score
+                for item in items
+                if item.phase == phase and item.repeat_index == repeat_index
+            ],
+        )
+        for repeat_index in range(1, CALIBRATION_REPEAT_COUNT + 1)
+    ]
+
+
+def _completed_case_count(items: list[AnswerRelevancyCalibrationItem]) -> int:
+    repeats_by_case: dict[str, set[int]] = {}
+    for item in items:
+        repeats_by_case.setdefault(item.case_id, set()).add(item.repeat_index)
+    return sum(
+        len(repeats) == CALIBRATION_REPEAT_COUNT
+        for repeats in repeats_by_case.values()
     )
 
 
@@ -108,62 +207,66 @@ async def async_main(args: argparse.Namespace) -> int:
         ).model_dump(mode="json"),
     )
     try:
-        for pair in pairs:
-            (
-                positive_score,
-                positive_details,
-                positive_all_noncommittal,
-            ) = await scorer.score_answer_relevancy_with_details(
-                user_input=pair.user_input,
-                response=pair.positive_response,
-            )
-            (
-                negative_score,
-                negative_details,
-                negative_all_noncommittal,
-            ) = await scorer.score_answer_relevancy_with_details(
-                user_input=pair.user_input,
-                response=pair.negative_response,
-            )
-            items.append(
-                AnswerRelevancyCalibrationItem(
-                    case_id=pair.case_id,
-                    negative_source_case_id=pair.negative_source_case_id,
+        for repeat_index in range(1, CALIBRATION_REPEAT_COUNT + 1):
+            for pair in pairs:
+                (
+                    positive_score,
+                    positive_details,
+                    positive_all_noncommittal,
+                ) = await scorer.score_answer_relevancy_with_details(
                     user_input=pair.user_input,
-                    positive_response=pair.positive_response,
-                    negative_response=pair.negative_response,
-                    positive_score=positive_score,
-                    negative_score=negative_score,
-                    positive_details=[
-                        RagAnswerRelevancyJudgement(
-                            generated_question=item.generated_question,
-                            noncommittal=item.noncommittal,
-                            similarity=item.similarity,
-                        )
-                        for item in positive_details
-                    ],
-                    negative_details=[
-                        RagAnswerRelevancyJudgement(
-                            generated_question=item.generated_question,
-                            noncommittal=item.noncommittal,
-                            similarity=item.similarity,
-                        )
-                        for item in negative_details
-                    ],
-                    positive_all_noncommittal=positive_all_noncommittal,
-                    negative_all_noncommittal=negative_all_noncommittal,
+                    response=pair.positive_response,
                 )
-            )
-            atomic_write_json(
-                run_dir / "status.json",
-                _report(
-                    suite=suite,
-                    run_id=run_id,
-                    started_at=started_at,
-                    status="running",
-                    items=items,
-                ).model_dump(mode="json"),
-            )
+                (
+                    negative_score,
+                    negative_details,
+                    negative_all_noncommittal,
+                ) = await scorer.score_answer_relevancy_with_details(
+                    user_input=pair.user_input,
+                    response=pair.negative_response,
+                )
+                items.append(
+                    AnswerRelevancyCalibrationItem(
+                        case_id=pair.case_id,
+                        source_case_id=pair.source_case_id,
+                        negative_source_case_id=pair.negative_source_case_id,
+                        user_input=pair.user_input,
+                        positive_response=pair.positive_response,
+                        negative_response=pair.negative_response,
+                        positive_score=positive_score,
+                        negative_score=negative_score,
+                        positive_details=[
+                            RagAnswerRelevancyJudgement(
+                                generated_question=item.generated_question,
+                                noncommittal=item.noncommittal,
+                                similarity=item.similarity,
+                            )
+                            for item in positive_details
+                        ],
+                        negative_details=[
+                            RagAnswerRelevancyJudgement(
+                                generated_question=item.generated_question,
+                                noncommittal=item.noncommittal,
+                                similarity=item.similarity,
+                            )
+                            for item in negative_details
+                        ],
+                        positive_all_noncommittal=positive_all_noncommittal,
+                        negative_all_noncommittal=negative_all_noncommittal,
+                        phase=pair.phase,
+                        repeat_index=repeat_index,
+                    )
+                )
+                atomic_write_json(
+                    run_dir / "status.json",
+                    _report(
+                        suite=suite,
+                        run_id=run_id,
+                        started_at=started_at,
+                        status="running",
+                        items=items,
+                    ).model_dump(mode="json"),
+                )
 
         report = _report(
             suite=suite,

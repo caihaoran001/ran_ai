@@ -54,7 +54,8 @@ class RagMetricEvidence(StrictModel):
 
 class AnswerRelevancyCalibrationItem(StrictModel):
     case_id: str = Field(pattern=r"^relevancy-[a-z0-9-]+$")
-    negative_source_case_id: str = Field(pattern=r"^relevancy-[a-z0-9-]+$")
+    source_case_id: str | None = Field(default=None, min_length=1, max_length=160)
+    negative_source_case_id: str = Field(min_length=1, max_length=160)
     user_input: str = Field(min_length=1, max_length=1000)
     positive_response: str = Field(min_length=1, max_length=4000)
     negative_response: str = Field(min_length=1, max_length=4000)
@@ -64,6 +65,8 @@ class AnswerRelevancyCalibrationItem(StrictModel):
     negative_details: list[RagAnswerRelevancyJudgement] = Field(default_factory=list)
     positive_all_noncommittal: bool | None = None
     negative_all_noncommittal: bool | None = None
+    phase: Literal["selection", "validation", "legacy"] = "legacy"
+    repeat_index: int = Field(default=1, ge=1, le=10)
 
 
 class AnswerRelevancyCalibrationMetrics(StrictModel):
@@ -76,8 +79,23 @@ class AnswerRelevancyCalibrationMetrics(StrictModel):
     negative_rejection_rate: float = Field(ge=0.0, le=1.0)
 
 
+class RagMetricThresholdSelection(StrictModel):
+    rule: Literal["class_rate_interval_midpoint_v1"]
+    minimum_classification_rate: float = Field(gt=0.0, le=1.0)
+    lower_exclusive: float = Field(ge=0.0, le=1.0)
+    upper_inclusive: float = Field(ge=0.0, le=1.0)
+    selected_threshold: float = Field(ge=0.0, le=1.0)
+    safety_margin: float = Field(gt=0.0, le=1.0)
+
+
+class AnswerRelevancyCalibrationStageRun(StrictModel):
+    repeat_index: int = Field(ge=1, le=10)
+    passed: bool
+    metrics: AnswerRelevancyCalibrationMetrics
+
+
 class AnswerRelevancyCalibrationReport(StrictModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     calibration_id: str = Field(pattern=r"^answer-relevancy-zh-v\d+$")
     dataset_version: int = Field(ge=1)
     run_id: str = Field(pattern=r"^relevancy-calibration-[A-Za-z0-9._-]+$")
@@ -89,13 +107,24 @@ class AnswerRelevancyCalibrationReport(StrictModel):
     model: str = Field(min_length=1, max_length=120)
     embedding_model: str = Field(min_length=1, max_length=120)
     ragas_version: str = Field(min_length=1, max_length=40)
-    threshold: float = Field(ge=0.0, le=1.0)
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     base_pair_count: int = Field(ge=1)
     completed_pair_count: int = Field(ge=0)
     passed: bool | None = None
     metrics: AnswerRelevancyCalibrationMetrics | None = None
     failed_criteria: list[str] = Field(default_factory=list)
     items: list[AnswerRelevancyCalibrationItem] = Field(default_factory=list)
+    repeat_count: int = Field(default=1, ge=1)
+    selection_case_count: int = Field(default=0, ge=0)
+    validation_case_count: int = Field(default=0, ge=0)
+    selected_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    threshold_selection: RagMetricThresholdSelection | None = None
+    selection_results: list[AnswerRelevancyCalibrationStageRun] = Field(
+        default_factory=list
+    )
+    validation_results: list["AnswerRelevancyCalibrationStageRun"] = Field(
+        default_factory=list
+    )
     estimated_cost_yuan: float | None = Field(default=None, ge=0)
     error: str | None = Field(default=None, max_length=2000)
 
@@ -146,7 +175,7 @@ class FaithfulnessCalibrationCandidate(StrictModel):
 
 
 class FaithfulnessCalibrationReport(StrictModel):
-    schema_version: Literal[1, 2] = 1
+    schema_version: Literal[1, 2, 3] = 1
     calibration_id: str = Field(pattern=r"^faithfulness-zh-v\d+$")
     dataset_version: int = Field(ge=1)
     run_id: str = Field(pattern=r"^faithfulness-calibration-[A-Za-z0-9._-]+$")
@@ -157,7 +186,7 @@ class FaithfulnessCalibrationReport(StrictModel):
     git_sha: str = Field(min_length=7, max_length=64)
     model: str = Field(min_length=1, max_length=120)
     ragas_version: str = Field(min_length=1, max_length=40)
-    threshold: float = Field(ge=0.0, le=1.0)
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     base_pair_count: int = Field(ge=1)
     completed_pair_count: int = Field(ge=0)
     passed: bool | None = None
@@ -168,12 +197,20 @@ class FaithfulnessCalibrationReport(StrictModel):
     selection_case_count: int = Field(default=0, ge=0)
     validation_case_count: int = Field(default=0, ge=0)
     selected_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    threshold_selection: RagMetricThresholdSelection | None = None
+    selection_results: list[FaithfulnessCalibrationStageRun] = Field(
+        default_factory=list
+    )
     candidate_results: list[FaithfulnessCalibrationCandidate] = Field(
         default_factory=list
     )
     validation_results: list[FaithfulnessCalibrationStageRun] = Field(
         default_factory=list
     )
+    score_source: Literal["fresh_llm_scores", "existing_scores_reanalysis"] = (
+        "fresh_llm_scores"
+    )
+    source_run_id: str | None = Field(default=None, max_length=160)
     estimated_cost_yuan: float | None = Field(default=None, ge=0)
     error: str | None = Field(default=None, max_length=2000)
 
@@ -197,6 +234,7 @@ class AnswerRelevancyPolicy(StrictModel):
     ] = "legacy"
     enforced: bool = True
     calibration_run_id: str | None = None
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     reason: str = Field(
         default="该历史批次未记录校准状态，生成时仍按原规则参与判定",
         min_length=1,

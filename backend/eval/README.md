@@ -17,7 +17,7 @@ RAGAS 判官的最大输出默认是 50,000 tokens，由 `RAG_EVAL_JUDGE_MAX_TOK
 
 ## 回复相关性中文校准
 
-正式使用 Answer Relevancy 的 0.80 门槛前，先用固定 10 个中文正例和 10 个一对一错配负例检查判官能否区分两类。该入口只调用 RAGAS 判官与 Embedding，不检索生产数据库、不生成用户回复：
+Answer Relevancy 不再使用未经中文校准的固定 0.80 门槛。v3 固定 30 组中文正负对照：前 20 组只用于选门槛，后 10 组锁定验证，全部独立判分两轮。每轮正确回答识别率和错误回答拒绝率都至少 90% 时，取两轮共同可用范围的中点；没有共同范围或锁定验证失败时，该指标只展示、不参与正式判定。题目和回答来自固定 RAG 基准集，不读取线上数据。该入口只调用 RAGAS 判官与 Embedding，不检索生产数据库、不生成用户回复：
 
 ```bash
 docker compose -f docker-compose.eval.yml run --name ran_ai-rag-relevancy-calibration --no-deps \
@@ -25,11 +25,11 @@ docker compose -f docker-compose.eval.yml run --name ran_ai-rag-relevancy-calibr
   rag-eval /app/eval/calibrate_answer_relevancy.py
 ```
 
-报告写入 `diagnostics/rag-evaluations/calibrations/`，同时原子更新 `diagnostics/rag-evaluations/answer-relevancy-calibration.json`。校准同时检查正负排序能力和当前 0.80 门槛，不会通过直接降低阈值来迎合结果。v2 校准集只包含可直接回答的中文知识问题，不把实时工具查询当成直接回答样本；新报告同时保存每次反向生成的问题、回避判断和向量相似度。
+报告写入 `diagnostics/rag-evaluations/calibrations/`，同时原子更新 `diagnostics/rag-evaluations/answer-relevancy-calibration.json`。报告会保存可用范围、取中的门槛、两阶段判分和每次反向生成的问题、回避判断、向量相似度。旧 v2 报告仍可在前端查看，但不能启用该指标。
 
 ## 回复忠实度中文校准
 
-Faithfulness 不再使用未经验证的固定 0.85 门槛。v4 从正式 50 题的召回事实中固定选取 30 组不重复来源：前 20 组从 0.50 / 0.55 / 0.60 中选择门槛，后 10 组不参与选择、只做锁定验证；全部题独立判分两轮。每一轮的正确回答识别率和错误回答拒绝率都至少达到 90%，该门槛才进入正式评测。反例覆盖数字或单位错误、否定反转、条件遗漏、事实方向反转和无依据建议。近期对话只用于理解问题和生成回复，不参与忠实度计算。该入口不检索 RDS、不生成用户回复：
+Faithfulness 不使用固定门槛，也不在多个候选值都通过时偏向默认值。v4 从正式 50 题的召回事实中固定选取 30 组不重复来源：前 20 组选择门槛，后 10 组不参与选择、只做锁定验证；全部题独立判分两轮。每一轮的正确回答识别率和错误回答拒绝率都至少达到 90% 时，取两轮共同可用范围的中点；没有共同范围或锁定验证失败时，该指标只展示、不参与正式判定。反例覆盖数字或单位错误、否定反转、条件遗漏、事实方向反转和无依据建议。近期对话只用于理解问题和生成回复，不参与忠实度计算。该入口不检索 RDS、不生成用户回复：
 
 ```bash
 docker compose -f docker-compose.eval.yml run --name ran_ai-rag-faithfulness-calibration --no-deps \
@@ -37,7 +37,16 @@ docker compose -f docker-compose.eval.yml run --name ran_ai-rag-faithfulness-cal
   rag-eval /app/eval/calibrate_faithfulness.py
 ```
 
-报告写入同一 `calibrations/` 目录，并原子更新 `diagnostics/rag-evaluations/faithfulness-calibration.json`。报告会保存三个候选门槛的两轮选择结果和锁定验证的两轮结果；校准未通过时，正式评测仍保留 Faithfulness 分数，但不会用该项单独判定失败。
+报告写入同一 `calibrations/` 目录，并原子更新 `diagnostics/rag-evaluations/faithfulness-calibration.json`。报告会保存可用范围、取中的门槛和锁定验证的两轮结果；校准未通过时，正式评测仍保留 Faithfulness 分数，但不会用该项单独判定失败。
+
+如果只是修正选线算法，可以零模型调用复用一份完整的 v4 原始判分。重新分析会核对固定题集、两轮题目、判官模型和 RAGAS 版本，生成一份明确标记“复用既有分数”的新报告：
+
+```bash
+docker compose -f docker-compose.eval.yml run --name ran_ai-rag-faithfulness-reanalysis --no-deps \
+  --entrypoint /app/.venv/bin/python \
+  rag-eval /app/eval/reanalyze_faithfulness.py \
+  --source-report /app/diagnostics/rag-evaluations/calibrations/<原运行ID>/report.json
+```
 
 正式评测不再为数字、单位、否定或比较关系额外调用第二个事实判官；这些关系统一由已校准的 Faithfulness 评价，避免同一回复被两次 LLM 判定和重复判罚。历史报告中的独立告警字段继续保留兼容。
 

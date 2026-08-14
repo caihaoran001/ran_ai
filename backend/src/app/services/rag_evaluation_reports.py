@@ -6,9 +6,6 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from app.evaluation.answer_relevancy_calibration import (
-    load_answer_relevancy_calibration_suite,
-)
 from app.evaluation.faithfulness_calibration import (
     load_faithfulness_calibration_suite,
 )
@@ -83,14 +80,9 @@ class RagEvaluationReportStore:
         path = self.root / "answer-relevancy-calibration.json"
         if not path.exists():
             return None
-        report = self._read_model(path, AnswerRelevancyCalibrationReport)
-        expected = load_answer_relevancy_calibration_suite()
-        if (
-            report.calibration_id != expected.calibration_id
-            or report.dataset_version != expected.version
-        ):
-            return None
-        return report
+        # Keep an old report visible in the operations page.  Whether it may
+        # gate a new evaluation is decided separately by the policy resolver.
+        return self._read_model(path, AnswerRelevancyCalibrationReport)
 
     def get_faithfulness_calibration(
         self,
