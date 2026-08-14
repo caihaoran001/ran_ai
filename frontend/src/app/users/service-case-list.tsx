@@ -16,11 +16,13 @@ export function ServiceCaseList({
   total,
   filter,
   query,
+  groupType,
 }: {
   initialCases: ServiceCase[];
   total: number;
   filter?: string;
   query?: string;
+  groupType?: string;
 }) {
   const [cases, setCases] = useState(initialCases);
   const [loading, setLoading] = useState(false);
@@ -84,6 +86,7 @@ export function ServiceCaseList({
     const params = new URLSearchParams();
     if (filter) params.set("filter", filter);
     if (query) params.set("q", query);
+    if (groupType) params.set("group_type", groupType);
     params.set("limit", String(missing));
     params.set("offset", String(cases.length));
     api<ServiceCase[]>(`/service-cases?${params.toString()}`)
@@ -102,7 +105,7 @@ export function ServiceCaseList({
     return () => {
       cancelled = true;
     };
-  }, [cases.length, filter, query]);
+  }, [cases.length, filter, query, groupType]);
 
   const loadMore = useCallback(async () => {
     setLoading(true);
@@ -111,6 +114,7 @@ export function ServiceCaseList({
       const params = new URLSearchParams();
       if (filter) params.set("filter", filter);
       if (query) params.set("q", query);
+      if (groupType) params.set("group_type", groupType);
       params.set("limit", String(SERVICE_CASE_PAGE_SIZE));
       params.set("offset", String(cases.length));
       const page = await api<ServiceCase[]>(`/service-cases?${params.toString()}`);
@@ -121,7 +125,7 @@ export function ServiceCaseList({
     } finally {
       setLoading(false);
     }
-  }, [cases.length, filter, query]);
+  }, [cases.length, filter, query, groupType]);
 
   const hasMore = cases.length < total;
 
@@ -273,6 +277,19 @@ export function DeletedUserCard({ user }: { user: User }) {
   );
 }
 
+function GroupTypeBadge({ groupType }: { groupType?: string | null }) {
+  const isNew = groupType === "new_group";
+  return (
+    <span
+      className={`status-pill ${
+        isNew ? "border-cyan-200 bg-cyan-50 text-cyan-800" : "border-slate-200 bg-slate-100 text-slate-600"
+      }`}
+    >
+      {isNew ? "新群" : "老群"}
+    </span>
+  );
+}
+
 function ServiceCaseItem({
   serviceCase,
   onOpen,
@@ -314,6 +331,7 @@ function ServiceCaseItem({
     >
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="text-break text-sm font-semibold text-slate-950">{serviceCase.case_no}</div>
+        <GroupTypeBadge groupType={serviceCase.group_type} />
         <span
           className={`status-pill ${
             continued

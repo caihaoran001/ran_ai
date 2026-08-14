@@ -54,7 +54,6 @@ const flatNav = navGroups.flatMap((g) => g.items);
 
 // Labels for top-level routes reachable outside the sidebar (breadcrumb only).
 const extraRouteLabels: Record<string, string> = {
-  "/cases": "服务单",
   "/checkins": "打卡记录",
 };
 

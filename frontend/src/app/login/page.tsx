@@ -32,7 +32,7 @@ export default function LoginPage() {
 
       if (res.ok) {
         flushSync(() => setLoginState("redirecting"));
-        window.location.replace("/cases");
+        window.location.replace("/users");
         return;
       }
 
