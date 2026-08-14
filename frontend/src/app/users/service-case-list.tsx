@@ -6,6 +6,7 @@ import { api, ServiceCase, User } from "@/lib/api";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { DeleteServiceCaseButton } from "./user-actions";
 import { ArrowRight, Clock, LoaderCircle, MessageSquare, Phone } from "lucide-react";
+import { GroupTypeBadge } from "@/components/group-type-badge";
 import { SERVICE_CASE_PAGE_SIZE } from "./list-constants";
 
 /** 返回用户管理时用来还原滚动位置。 */
@@ -277,18 +278,6 @@ export function DeletedUserCard({ user }: { user: User }) {
   );
 }
 
-function GroupTypeBadge({ groupType }: { groupType?: string | null }) {
-  const isNew = groupType === "new_group";
-  return (
-    <span
-      className={`status-pill ${
-        isNew ? "border-cyan-200 bg-cyan-50 text-cyan-800" : "border-slate-200 bg-slate-100 text-slate-600"
-      }`}
-    >
-      {isNew ? "新群" : "老群"}
-    </span>
-  );
-}
 
 function ServiceCaseItem({
   serviceCase,
