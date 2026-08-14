@@ -94,6 +94,8 @@ def test_two_stage_calibration_selects_midpoint_then_validates_it():
 
     assert result.selected_threshold == 0.45
     assert result.threshold_selection is not None
+    assert result.threshold_selection.rule == "perfect_gap_midpoint_v1"
+    assert result.threshold_selection.minimum_classification_rate == 1.0
     assert result.threshold_selection.lower_exclusive == 0.30
     assert result.threshold_selection.upper_inclusive == 0.60
     assert result.passed is True

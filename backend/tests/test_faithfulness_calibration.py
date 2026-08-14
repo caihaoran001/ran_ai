@@ -5,7 +5,6 @@ from collections import Counter
 import pytest
 
 from app.evaluation.faithfulness_calibration import (
-    MIN_STAGE_CLASSIFICATION_RATE,
     assess_faithfulness_calibration,
     assess_two_stage_faithfulness_calibration,
     build_faithfulness_calibration_pairs,
@@ -32,6 +31,27 @@ def _metrics() -> dict:
     }
 
 
+def _complete_items() -> list[FaithfulnessCalibrationItem]:
+    suite = load_faithfulness_calibration_suite()
+    return [
+        FaithfulnessCalibrationItem(
+            case_id=pair.case_id,
+            source_case_id=pair.source_case_id,
+            user_input=pair.user_input,
+            retrieved_contexts=pair.retrieved_contexts,
+            positive_response=pair.positive_response,
+            negative_response=pair.negative_response,
+            positive_score=0.75,
+            negative_score=0.50,
+            phase=pair.phase,
+            error_type=pair.error_type,
+            repeat_index=repeat_index,
+        )
+        for repeat_index in (1, 2)
+        for pair in build_faithfulness_calibration_pairs(suite)
+    ]
+
+
 def _calibration_report(*, passed: bool) -> FaithfulnessCalibrationReport:
     return FaithfulnessCalibrationReport.model_validate(
         {
@@ -52,14 +72,14 @@ def _calibration_report(*, passed: bool) -> FaithfulnessCalibrationReport:
             "passed": passed,
             "metrics": _metrics(),
             "failed_criteria": [] if passed else ["10组锁定验证题未通过"],
-            "items": [],
+            "items": [item.model_dump(mode="json") for item in _complete_items()],
             "repeat_count": 2,
             "selection_case_count": 20,
             "validation_case_count": 10,
             "selected_threshold": 0.625,
             "threshold_selection": {
-                "rule": "class_rate_interval_midpoint_v1",
-                "minimum_classification_rate": MIN_STAGE_CLASSIFICATION_RATE,
+                "rule": "perfect_gap_midpoint_v1",
+                "minimum_classification_rate": 1.0,
                 "lower_exclusive": 0.50,
                 "upper_inclusive": 0.75,
                 "selected_threshold": 0.625,
@@ -107,6 +127,8 @@ def test_two_stage_calibration_selects_midpoint_of_common_data_interval():
     )
 
     assert result.threshold_selection is not None
+    assert result.threshold_selection.rule == "perfect_gap_midpoint_v1"
+    assert result.threshold_selection.minimum_classification_rate == 1.0
     assert result.threshold_selection.lower_exclusive == 0.50
     assert result.threshold_selection.upper_inclusive == 0.75
     assert result.selected_threshold == 0.625
@@ -121,6 +143,8 @@ def test_selection_keeps_a_90_percent_interval_when_boundary_scores_overlap():
     )
 
     assert result.threshold_selection is not None
+    assert result.threshold_selection.rule == "class_rate_interval_midpoint_v1"
+    assert result.threshold_selection.minimum_classification_rate == 0.9
     assert result.selected_threshold == 0.50
     assert all(run.assessment.positive_pass_rate == 0.9 for run in result.selection_runs)
     assert all(run.assessment.negative_rejection_rate == 0.9 for run in result.selection_runs)
@@ -192,27 +216,38 @@ def test_previously_default_selected_schema_cannot_enable_faithfulness():
     assert "已废弃" in policy.reason
 
 
+def test_report_cannot_enable_a_threshold_that_ignores_a_perfect_gap():
+    original = _calibration_report(passed=True)
+    report = original.model_copy(
+        update={
+            "threshold": 0.666667,
+            "selected_threshold": 0.666667,
+            "threshold_selection": original.threshold_selection.model_copy(
+                update={
+                    "rule": "class_rate_interval_midpoint_v1",
+                    "minimum_classification_rate": 0.9,
+                    "lower_exclusive": 0.333333,
+                    "upper_inclusive": 1.0,
+                    "selected_threshold": 0.666667,
+                    "safety_margin": 0.333333,
+                }
+            ),
+        }
+    )
+
+    policy = resolve_faithfulness_policy(
+        report, model="deepseek-v4-flash", ragas_version="0.4.3"
+    )
+
+    assert policy.status == "calibration_failed"
+    assert policy.enforced is False
+    assert "不符合当前选线规则" in policy.reason
+
+
 def test_existing_complete_scores_can_be_reanalysed_without_a_model_call():
     suite = load_faithfulness_calibration_suite()
-    items = [
-        FaithfulnessCalibrationItem(
-            case_id=pair.case_id,
-            source_case_id=pair.source_case_id,
-            user_input=pair.user_input,
-            retrieved_contexts=pair.retrieved_contexts,
-            positive_response=pair.positive_response,
-            negative_response=pair.negative_response,
-            positive_score=0.75,
-            negative_score=0.50,
-            phase=pair.phase,
-            error_type=pair.error_type,
-            repeat_index=repeat_index,
-        )
-        for repeat_index in (1, 2)
-        for pair in build_faithfulness_calibration_pairs(suite)
-    ]
     source = _calibration_report(passed=True).model_copy(
-        update={"schema_version": 2, "items": items}
+        update={"schema_version": 2}
     )
 
     _verify_source_report(source, suite=suite)

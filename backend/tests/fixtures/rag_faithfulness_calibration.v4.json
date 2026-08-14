@@ -1,7 +1,7 @@
 {
   "calibration_id": "faithfulness-zh-v4",
   "version": 4,
-  "description": "仅以本轮召回知识校准中文 Faithfulness：20组选择0.50/0.55/0.60门槛，10组独立验证，每组重复判分两轮。",
+  "description": "仅以本轮召回知识校准中文 Faithfulness：20组用于根据实际得分选门槛，10组独立验证，每组重复判分两轮。",
   "cases": [
     {
       "case_id": "faithfulness-cap-conversion",

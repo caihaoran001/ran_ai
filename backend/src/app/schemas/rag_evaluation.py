@@ -80,7 +80,10 @@ class AnswerRelevancyCalibrationMetrics(StrictModel):
 
 
 class RagMetricThresholdSelection(StrictModel):
-    rule: Literal["class_rate_interval_midpoint_v1"]
+    rule: Literal[
+        "perfect_gap_midpoint_v1",
+        "class_rate_interval_midpoint_v1",
+    ]
     minimum_classification_rate: float = Field(gt=0.0, le=1.0)
     lower_exclusive: float = Field(ge=0.0, le=1.0)
     upper_inclusive: float = Field(ge=0.0, le=1.0)

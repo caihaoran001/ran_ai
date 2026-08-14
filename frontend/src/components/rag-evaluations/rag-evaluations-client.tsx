@@ -227,7 +227,7 @@ type FaithfulnessStageRun = {
 };
 
 type ThresholdSelection = {
-  rule: "class_rate_interval_midpoint_v1";
+  rule: "perfect_gap_midpoint_v1" | "class_rate_interval_midpoint_v1";
   minimum_classification_rate: number;
   lower_exclusive: number;
   upper_inclusive: number;
@@ -919,7 +919,9 @@ function MetricCalibrationCard({
               <div className="mt-2 rounded-lg border border-cyan-200 bg-cyan-50/60 px-3 py-2.5">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                   <span className="text-sm font-black tabular-nums text-slate-900">已选 {percent(twoStageCalibration?.threshold_selection?.selected_threshold)}</span>
-                  <span className="text-[10px] font-extrabold text-cyan-800">取可用范围中点</span>
+                  <span className="text-[10px] font-extrabold text-cyan-800">
+                    {twoStageCalibration?.threshold_selection?.rule === "perfect_gap_midpoint_v1" ? "取完全分开区间中点" : "取 90% 可用范围中点"}
+                  </span>
                 </div>
                 <p className="mt-1 text-[10px] leading-4 text-slate-600">
                   两轮共同可用范围：({percent(twoStageCalibration?.threshold_selection?.lower_exclusive)}, {percent(twoStageCalibration?.threshold_selection?.upper_inclusive)}]；中点距离两侧边界各 {percent(twoStageCalibration?.threshold_selection?.safety_margin)}。

@@ -255,6 +255,39 @@ def assess_two_stage_faithfulness_calibration(
     )
 
 
+def _recalculate_two_stage_report(
+    report: FaithfulnessCalibrationReport,
+) -> FaithfulnessTwoStageAssessment | None:
+    expected_item_count = FIXED_CALIBRATION_CASE_COUNT * CALIBRATION_REPEAT_COUNT
+    if len(report.items) != expected_item_count:
+        return None
+    try:
+        return assess_two_stage_faithfulness_calibration(
+            selection_runs=_scores_by_phase(report.items, phase="selection"),
+            validation_runs=_scores_by_phase(report.items, phase="validation"),
+        )
+    except ValueError:
+        return None
+
+
+def _scores_by_phase(items, *, phase: str) -> list[tuple[list[float], list[float]]]:
+    return [
+        (
+            [
+                item.positive_score
+                for item in items
+                if item.phase == phase and item.repeat_index == repeat_index
+            ],
+            [
+                item.negative_score
+                for item in items
+                if item.phase == phase and item.repeat_index == repeat_index
+            ],
+        )
+        for repeat_index in range(1, CALIBRATION_REPEAT_COUNT + 1)
+    ]
+
+
 def resolve_faithfulness_policy(
     report: FaithfulnessCalibrationReport | None,
     *,
@@ -290,13 +323,28 @@ def resolve_faithfulness_policy(
             ),
         )
 
+    recalculated = _recalculate_two_stage_report(report)
+    selection_matches = (
+        recalculated is not None
+        and recalculated.threshold_selection is not None
+        and report.threshold_selection is not None
+        and report.selected_threshold == recalculated.selected_threshold
+        and report.threshold == recalculated.selected_threshold
+        and report.threshold_selection.selected_threshold
+        == recalculated.selected_threshold
+        and report.threshold_selection.rule == recalculated.threshold_selection.rule
+        and report.threshold_selection.lower_exclusive
+        == recalculated.threshold_selection.lower_exclusive
+        and report.threshold_selection.upper_inclusive
+        == recalculated.threshold_selection.upper_inclusive
+        and report.threshold_selection.minimum_classification_rate
+        == recalculated.threshold_selection.minimum_classification_rate
+        and all(run.passed for run in recalculated.selection_runs)
+        and all(run.passed for run in recalculated.validation_runs)
+    )
     complete_result = (
         report.schema_version == 3
-        and report.threshold_selection is not None
-        and report.threshold_selection.selected_threshold == report.selected_threshold
-        and report.threshold_selection.selected_threshold == report.threshold
-        and report.threshold_selection.minimum_classification_rate
-        == MIN_STAGE_CLASSIFICATION_RATE
+        and selection_matches
         and len(report.selection_results) == CALIBRATION_REPEAT_COUNT
         and all(run.passed for run in report.selection_results)
         and len(report.validation_results) == CALIBRATION_REPEAT_COUNT
@@ -314,6 +362,8 @@ def resolve_faithfulness_policy(
         reason = "最近一次中文校准未通过"
         if report.schema_version != 3:
             reason = "最近一次中文校准使用了已废弃的默认值选线方式"
+        elif not selection_matches:
+            reason = "最近一次中文校准的门槛不符合当前选线规则"
         elif not complete_result:
             reason = "最近一次中文校准未完整完成"
         if criteria:

@@ -9,6 +9,7 @@ MIN_PAIRED_ACCURACY = 0.80
 MIN_POSITIVE_PASS_RATE = 0.80
 MIN_NEGATIVE_REJECTION_RATE = 0.80
 MIN_MEAN_GAP = 0.20
+PERFECT_GAP_SELECTION_RULE = "perfect_gap_midpoint_v1"
 STABLE_INTERVAL_SELECTION_RULE = "class_rate_interval_midpoint_v1"
 
 
@@ -49,10 +50,10 @@ def select_stable_calibration_threshold(
 ) -> RagMetricThresholdSelection | None:
     """Select the midpoint of the common, data-supported threshold interval.
 
-    For each repeat, find every threshold at which both the positive pass rate
-    and the negative rejection rate meet the required rate.  Only the
-    intersection of those intervals is eligible.  Its midpoint maximizes the
-    distance to either observed boundary, so a default configuration value
+    First prefer a gap that classifies every observed positive and negative
+    correctly across every repeat. If no such gap exists, find every threshold
+    at which both classes meet the required rate. The midpoint of the selected
+    interval maximizes the distance to either boundary, so a default setting
     never decides a tie.
     """
 
@@ -61,6 +62,8 @@ def select_stable_calibration_threshold(
     if not 0.0 < minimum_classification_rate <= 1.0:
         raise ValueError("minimum classification rate must be in (0, 1]")
 
+    perfect_lower_bounds: list[float] = []
+    perfect_upper_bounds: list[float] = []
     lower_bounds: list[float] = []
     upper_bounds: list[float] = []
     for positive_scores, negative_scores in runs:
@@ -79,22 +82,48 @@ def select_stable_calibration_threshold(
         )
         ordered_positive = sorted(positive_scores)
         ordered_negative = sorted(negative_scores)
+        perfect_lower_bounds.append(ordered_negative[-1])
+        perfect_upper_bounds.append(ordered_positive[0])
         # At least `required_correct` positives must be >= threshold, while at
         # least that many negatives must remain strictly below it.
         upper_bounds.append(ordered_positive[len(positive_scores) - required_correct])
         lower_bounds.append(ordered_negative[required_correct - 1])
 
+    perfect_lower_exclusive = max(perfect_lower_bounds)
+    perfect_upper_inclusive = min(perfect_upper_bounds)
+    if perfect_lower_exclusive < perfect_upper_inclusive:
+        return _threshold_selection(
+            rule=PERFECT_GAP_SELECTION_RULE,
+            minimum_classification_rate=1.0,
+            lower_exclusive=perfect_lower_exclusive,
+            upper_inclusive=perfect_upper_inclusive,
+        )
+
     lower_exclusive = max(lower_bounds)
     upper_inclusive = min(upper_bounds)
     if lower_exclusive >= upper_inclusive:
         return None
+    return _threshold_selection(
+        rule=STABLE_INTERVAL_SELECTION_RULE,
+        minimum_classification_rate=minimum_classification_rate,
+        lower_exclusive=lower_exclusive,
+        upper_inclusive=upper_inclusive,
+    )
 
+
+def _threshold_selection(
+    *,
+    rule: str,
+    minimum_classification_rate: float,
+    lower_exclusive: float,
+    upper_inclusive: float,
+) -> RagMetricThresholdSelection:
     selected_threshold = (lower_exclusive + upper_inclusive) / 2
     rounded_threshold = round(selected_threshold, 6)
     if lower_exclusive < rounded_threshold < upper_inclusive:
         selected_threshold = rounded_threshold
     return RagMetricThresholdSelection(
-        rule=STABLE_INTERVAL_SELECTION_RULE,
+        rule=rule,
         minimum_classification_rate=minimum_classification_rate,
         lower_exclusive=lower_exclusive,
         upper_inclusive=upper_inclusive,
