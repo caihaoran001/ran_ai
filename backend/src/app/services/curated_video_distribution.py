@@ -30,6 +30,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.channels.base import ChannelSendResult, MessageChannel
 from app.services.channels.send_context import bind_send_request_started
 from app.services.content_policy import get_ai_reply_enabled
+from app.services.curated_video_settings import get_curated_video_push_enabled
 
 
 logger = logging.getLogger(__name__)
@@ -247,6 +248,12 @@ class CuratedVideoDistributionService:
         now = _utc(now or datetime.now(timezone.utc))
         await ingest_curated_video_events(self.settings)
         await self._sync_delivery_states(now)
+
+        async with SessionLocal() as session:
+            push_enabled = await get_curated_video_push_enabled(session)
+        if not push_enabled:
+            logger.info("Curated video push skipped: switch is off")
+            return
 
         local_now = now.astimezone(ZoneInfo(self.settings.reminder_timezone))
         if local_now.time().replace(tzinfo=None) >= _schedule_time(self.settings.curated_video_send_at):

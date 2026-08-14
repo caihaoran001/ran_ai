@@ -4,6 +4,7 @@ import { StageReportConfig } from "./stage-report-config";
 import { RiskReplyConfig } from "./risk-reply-config";
 import { StaffFilterConfig } from "./staff-filter-config";
 import { QiweAccountConfig } from "./qiwe-account-config";
+import { VideoPushConfig } from "./video-push-config";
 
 type Template = {
   template_key: string;
@@ -34,6 +35,7 @@ export default async function QuestionnaireConfigPage() {
       <div className="border-t border-slate-200 pt-7 grid gap-6">
         <QiweAccountConfig />
         <StageReportConfig />
+        <VideoPushConfig />
         <RiskReplyConfig />
         <StaffFilterConfig />
       </div>
