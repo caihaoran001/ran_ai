@@ -241,15 +241,17 @@ async def update_qiwei_staff_senders_api(
 
 class CuratedVideoPushSetting(BaseModel):
     enabled: bool = True
+    send_at: str = "12:00"
+    scope: str = "all"
 
 
 @router.get("/settings/curated-video-push", response_model=CuratedVideoPushSetting)
 async def get_curated_video_push_setting(
     session: AsyncSession = Depends(get_session),
 ) -> CuratedVideoPushSetting:
-    from app.services.curated_video_settings import get_curated_video_push_enabled
+    from app.services.curated_video_settings import get_curated_video_push_settings
 
-    return CuratedVideoPushSetting(enabled=await get_curated_video_push_enabled(session))
+    return CuratedVideoPushSetting(**await get_curated_video_push_settings(session))
 
 
 @router.post("/settings/curated-video-push", response_model=CuratedVideoPushSetting)
@@ -257,7 +259,7 @@ async def update_curated_video_push_setting(
     payload: CuratedVideoPushSetting,
     session: AsyncSession = Depends(get_session),
 ) -> CuratedVideoPushSetting:
-    from app.services.curated_video_settings import set_curated_video_push_enabled
+    from app.services.curated_video_settings import set_curated_video_push_settings
 
-    await set_curated_video_push_enabled(payload.enabled, session)
-    return CuratedVideoPushSetting(enabled=payload.enabled)
+    saved = await set_curated_video_push_settings(payload.model_dump(), session)
+    return CuratedVideoPushSetting(**saved)

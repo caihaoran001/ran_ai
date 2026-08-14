@@ -30,7 +30,7 @@ from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.channels.base import ChannelSendResult, MessageChannel
 from app.services.channels.send_context import bind_send_request_started
 from app.services.content_policy import get_ai_reply_enabled
-from app.services.curated_video_settings import get_curated_video_push_enabled
+from app.services.curated_video_settings import get_curated_video_push_settings
 
 
 logger = logging.getLogger(__name__)
@@ -250,14 +250,14 @@ class CuratedVideoDistributionService:
         await self._sync_delivery_states(now)
 
         async with SessionLocal() as session:
-            push_enabled = await get_curated_video_push_enabled(session)
-        if not push_enabled:
+            push_config = await get_curated_video_push_settings(session)
+        if not push_config["enabled"]:
             logger.info("Curated video push skipped: switch is off")
             return
 
         local_now = now.astimezone(ZoneInfo(self.settings.reminder_timezone))
-        if local_now.time().replace(tzinfo=None) >= _schedule_time(self.settings.curated_video_send_at):
-            await self._ensure_daily_run(local_now.date(), now)
+        if local_now.time().replace(tzinfo=None) >= _schedule_time(push_config["send_at"]):
+            await self._ensure_daily_run(local_now.date(), now, push_config["scope"])
 
         run_ids = list(
             await self._load_distributing_run_ids()
@@ -269,7 +269,7 @@ class CuratedVideoDistributionService:
                 logger.warning("Curated video distribution paused by account send guard")
                 break
 
-    async def _ensure_daily_run(self, run_date, now: datetime) -> int | None:
+    async def _ensure_daily_run(self, run_date, now: datetime, scope: str = "all") -> int | None:
         async with SessionLocal() as session:
             existing = await session.scalar(
                 select(CuratedVideoDailyRun).where(CuratedVideoDailyRun.run_date == run_date)
@@ -277,18 +277,29 @@ class CuratedVideoDistributionService:
             if existing is not None:
                 return existing.id
 
-            cases = list(
-                await session.scalars(
-                    select(ServiceCase)
+            base = select(ServiceCase).where(
+                ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+                ServiceCase.deleted_at.is_(None),
+                ServiceCase.user_id.is_not(None),
+                ServiceCase.group_id != "",
+                ServiceCase.group_id != self.settings.curated_video_source_group_id.strip(),
+            )
+            if scope in ("active_24h", "active_7d"):
+                hours = 24 if scope == "active_24h" else 24 * 7
+                active_subq = (
+                    select(Message.service_case_id)
                     .where(
-                        ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
-                        ServiceCase.deleted_at.is_(None),
-                        ServiceCase.user_id.is_not(None),
-                        ServiceCase.group_id != "",
-                        ServiceCase.group_id != self.settings.curated_video_source_group_id.strip(),
+                        Message.direction == MessageDirection.INBOUND,
+                        Message.sender_type == MessageSenderType.USER,
+                        Message.created_at >= now - timedelta(hours=hours),
                     )
-                    .order_by(ServiceCase.id.asc())
+                    .distinct()
+                    .subquery()
                 )
+                base = base.join(active_subq, active_subq.c.service_case_id == ServiceCase.id)
+
+            cases = list(
+                await session.scalars(base.order_by(ServiceCase.id.asc()))
             )
             targets: dict[str, ServiceCase] = {}
             for service_case in cases:
