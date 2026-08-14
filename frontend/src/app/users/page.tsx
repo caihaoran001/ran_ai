@@ -18,8 +18,8 @@ export default async function UsersPage({
   const dashboardFilter = showDeleted || showActive ? undefined : filter;
   const serviceCaseFilter = showActive ? "active_24h" : dashboardFilter;
   const searchQuery = showDeleted ? undefined : q?.trim();
-  // 群类型筛选(新群/老群)与范围/看板筛选正交，仅服务单列表视图生效。
-  const activeGroup = !showDeleted && (group === "new_group" || group === "legacy") ? group : undefined;
+  // 群类型筛选(新群/老群)只在「正常用户」视图生效：活跃/已删除视图聚焦近况与历史，不再细分。
+  const activeGroup = !showDeleted && !showActive && (group === "new_group" || group === "legacy") ? group : undefined;
   // 用户列表仅「已删除」页需要；正常/活跃页只展示服务单列表，避免多打一次无用请求。
   const users = showDeleted ? await api<User[]>(`/users?deleted=true`).catch(() => []) : [];
   const caseParams = new URLSearchParams();
@@ -67,7 +67,7 @@ export default async function UsersPage({
         <p className="mt-2 text-xs leading-relaxed text-slate-500">
           「正常用户」显示<span className="font-semibold text-slate-700">全部</span>用户；「活跃用户」只显示<span className="font-semibold text-slate-700">近 24 小时内有发言</span>的用户，便于优先处理今天在聊的客户，页面加载也更快。
         </p>
-        {!showDeleted && (
+        {!showDeleted && !showActive && (
           <GroupTypeTabs
             current={activeGroup}
             keep={{ deleted, active, filter, q }}
