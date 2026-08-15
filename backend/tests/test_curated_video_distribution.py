@@ -178,6 +178,38 @@ async def test_source_group_is_not_dispatched_as_a_customer_case(db_session, mon
 
 
 @pytest.mark.asyncio
+async def test_source_group_regular_text_still_enters_customer_flow(db_session, monkeypatch):
+    # 选品源群只拦视频号卡片(msgType=141)；普通文本必须继续走客服链路（进聚合窗口）。
+    settings = _settings()
+    monkeypatch.setattr(
+        "app.services.qiwe_service.inbox_dispatcher.get_settings",
+        lambda: settings,
+    )
+    event = _event(4, datetime(2026, 8, 12, 2, 0, tzinfo=timezone.utc))
+    event.raw_payload = {
+        "cmd": 15000,
+        "msgType": 2,
+        "msgData": {"content": "这个适合减脂嘛 怎么自己做"},
+    }
+    event.text = "这个适合减脂嘛 怎么自己做"
+    event.message_type = "text"
+    event.status = InboundEvent.STATUS_PROCESSING
+    db_session.add(event)
+    await db_session.flush()
+    aggregator = RecordingAggregator()
+    dispatcher = QiWeInboxDispatcher(aggregator)
+
+    await dispatcher._dispatch(event)
+
+    assert len(aggregator.messages) == 1
+    message, inbound_event_id = aggregator.messages[0]
+    assert inbound_event_id == event.id
+    assert message.chat_id == SOURCE_GROUP_ID
+    assert message.message_type == "text"
+    assert message.text == "这个适合减脂嘛 怎么自己做"
+
+
+@pytest.mark.asyncio
 async def test_switching_source_group_does_not_send_old_group_queue(db_session, create_case):
     old_settings = _settings()
     await ingest_curated_video_events(old_settings)

@@ -209,12 +209,14 @@ class QiWeInboxDispatcher:
                 settings.curated_video_enabled
                 and event.chat_id == settings.curated_video_source_group_id.strip()
             ):
-                # The selection room is an operations-only transport source,
-                # never a customer service case. The distribution worker reads
-                # its durable raw callbacks independently, including after this
-                # event has been marked processed here.
-                await mark_inbound_events_processed([event.id])
-                return
+                # 视频选品源群只静默收走视频号卡片(msgType=141)作为选品素材：
+                # 不落客服消息、不触发回复，由分发 worker 独立从收件箱采集。
+                # 其余普通消息（文本/图片/语音等）仍走正常客服链路（落库 + 回复），
+                # 选品源群与服务群可以共存于同一个群。
+                raw = event.raw_payload if isinstance(event.raw_payload, dict) else {}
+                if raw.get("cmd") == 15000 and raw.get("msgType") == 141:
+                    await mark_inbound_events_processed([event.id])
+                    return
 
             message = channel_message_from_inbound_event(event)
             # 语音先转文字再判定路由：转成功后它就是一条普通文本消息，应当进聚合窗口
