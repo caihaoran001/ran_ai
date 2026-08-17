@@ -162,7 +162,12 @@ class TestEvaluatePlateau:
         assert result.evidence["basis"] == ["statistical"]
 
 
-async def _make_in_service_case(db_session) -> ServiceCase:
+async def _make_case(
+    db_session,
+    *,
+    status: ServiceCaseStatus = ServiceCaseStatus.IN_SERVICE,
+    deleted_at: datetime | None = None,
+) -> ServiceCase:
     user = User(name="平台期测试用户")
     db_session.add(user)
     await db_session.flush()
@@ -172,9 +177,10 @@ async def _make_in_service_case(db_session) -> ServiceCase:
         user_id=user.id,
         group_id=f"plateau-{uuid4().hex[:8]}",
         questionnaire_token=uuid4().hex,
-        status=ServiceCaseStatus.IN_SERVICE,
+        status=status,
         started_at=now - timedelta(days=10),
         group_type=ServiceCaseGroupType.NEW_GROUP.value,
+        deleted_at=deleted_at,
     )
     db_session.add(case)
     await db_session.flush()
@@ -184,7 +190,7 @@ async def _make_in_service_case(db_session) -> ServiceCase:
 class TestScanPlateaus:
     async def test_scan_marks_plateau_and_insufficient(self, db_session):
         today = datetime.now(TZ).date()
-        plateau_case = await _make_in_service_case(db_session)
+        plateau_case = await _make_case(db_session)
         for offset, weight in [(0, "70.0"), (3, "70.2"), (6, "70.1")]:
             db_session.add(
                 Checkin(
@@ -195,7 +201,7 @@ class TestScanPlateaus:
                     parsed_json={"weight": weight},
                 )
             )
-        no_data_case = await _make_in_service_case(db_session)
+        no_data_case = await _make_case(db_session)
         db_session.add(
             Checkin(
                 service_case_id=no_data_case.id,
@@ -221,7 +227,7 @@ class TestScanPlateaus:
 
     async def test_user_declared_event_drives_plateau(self, db_session):
         today = datetime.now(TZ).date()
-        case = await _make_in_service_case(db_session)
+        case = await _make_case(db_session)
         db_session.add(
             OutcomeEvent(
                 service_case_id=case.id,
@@ -243,3 +249,62 @@ class TestScanPlateaus:
         assert stats.declared == 1
         await db_session.refresh(case)
         assert "user_declared" in case.plateau_evidence["basis"]
+
+    async def test_scan_includes_all_non_deleted_service_statuses(self, db_session):
+        today = datetime.now(TZ).date()
+        cases = [
+            await _make_case(db_session, status=ServiceCaseStatus.CREATED),
+            await _make_case(db_session, status=ServiceCaseStatus.COMPLETED),
+            await _make_case(db_session, status=ServiceCaseStatus.REFUNDED),
+        ]
+        deleted_case = await _make_case(
+            db_session,
+            status=ServiceCaseStatus.COMPLETED,
+            deleted_at=datetime.now(TZ),
+        )
+        for case in cases:
+            db_session.add_all(
+                [
+                    Checkin(
+                        service_case_id=case.id,
+                        group_id=case.group_id,
+                        checkin_date=today - timedelta(days=6),
+                        content="打卡",
+                        parsed_json={"weight": "70.0"},
+                    ),
+                    Checkin(
+                        service_case_id=case.id,
+                        group_id=case.group_id,
+                        checkin_date=today,
+                        content="打卡",
+                        parsed_json={"weight": "70.1"},
+                    ),
+                ]
+            )
+        db_session.add_all(
+            [
+                Checkin(
+                    service_case_id=deleted_case.id,
+                    group_id=deleted_case.group_id,
+                    checkin_date=today - timedelta(days=6),
+                    content="打卡",
+                    parsed_json={"weight": "70.0"},
+                ),
+                Checkin(
+                    service_case_id=deleted_case.id,
+                    group_id=deleted_case.group_id,
+                    checkin_date=today,
+                    content="打卡",
+                    parsed_json={"weight": "70.1"},
+                ),
+            ]
+        )
+        await db_session.flush()
+
+        stats = await scan_plateaus(db_session)
+
+        assert stats.scanned == 3
+        assert stats.plateau == 3
+        for case in cases:
+            await db_session.refresh(case)
+            assert case.plateau_status == STATUS_PLATEAU

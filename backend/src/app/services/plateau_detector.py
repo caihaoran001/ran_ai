@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models.checkin import Checkin
 from app.models.outcome import OutcomeEvent
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase
 from app.services.body_change_stats import load_intake_baselines
 from app.services.body_metrics import parse_weight_kg
 from app.services.service_case_queries import active_service_case_condition
@@ -81,16 +81,14 @@ def _now_utc() -> datetime:
 
 
 async def scan_plateaus(session: AsyncSession) -> ScanStats:
-    """扫一遍所有活跃服务单，把平台期状态写入 service_cases 的三个字段。
+    """扫一遍所有未软删除服务单，把平台期状态写入 service_cases 的三个字段。
 
-    只扫 IN_SERVICE 的服务单：已完成/已退款的服务单不参与运营「调整方案」。
+    服务状态只代表生命周期，不作为平台期判定前置条件；只要服务单仍保留且有近期
+    体重打卡或用户自述，就可以进入平台期计算。
     """
     cases = list(
         await session.scalars(
-            select(ServiceCase).where(
-                active_service_case_condition(),
-                ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
-            )
+            select(ServiceCase).where(active_service_case_condition())
         )
     )
     if not cases:
