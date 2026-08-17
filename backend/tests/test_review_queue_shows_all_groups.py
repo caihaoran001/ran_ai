@@ -39,7 +39,8 @@ async def _legacy_case_with_pending_documents(
     assert submit_resp.status_code == 201, submit_resp.text
     await wait_background()
 
-    # 复刻 ingress 旧代码的后果：文件生成了，但群类型没被改成 new_group。
+    # 文件生成了，但这张单子被标成老客户——8/16 是 ingress 旧代码导致的，静态化之后仍可能
+    # 来自封存的老群单子进了新流程、或运营手工标错。队列都必须照样显示。
     service_case = await db_session.get(ServiceCase, case_id)
     service_case.group_type = ServiceCaseGroupType.LEGACY.value
     documents = list(

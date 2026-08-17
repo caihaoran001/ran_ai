@@ -58,13 +58,19 @@ class ServiceCase(TimestampMixin, Base):
     group_id: Mapped[str] = mapped_column(String(128), nullable=False)
     # QiWe 群名(/room/batchGetRoomDetail 的 roomName)：定时回填，用于按群名搜索服务单；空表示取不到(机器人已退/群解散)
     group_name: Mapped[str | None] = mapped_column(String(128))
-    # 群类型：new_group=本群用户通过本系统问卷提交过入营问卷；legacy=老群/未填问卷。
-    # 存量按问卷提交记录回填，运营可在后台手动修正（见 ServiceCaseGroupType）。
+    # 群类型：new_group=走本系统新流程的客户；legacy=接入本系统之前就存在的老群。
+    #
+    # 2026-08-17 起改为**静态**：老群是一个已经封存的历史集合（当时库里 179 张单，
+    # 全部停在 CREATED、没交过入营问卷），新建服务单一律默认 new_group，不再在运行时
+    # 「识别」新老。原因：唯一的动态识别点（提交入营问卷时置 new_group）跑在部署脚本
+    # 刻意不重建的 ingress 进程里，8/13–8/17 静默失效四天，期间填过问卷的客户全被留在
+    # legacy，交付文件在审核控制台整个不可见。判定越少越不会静默失效。
+    # 老群若日后确实又新建了服务单（机器人被拉进老群），由运营在后台手动改回 legacy。
     group_type: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
-        server_default="legacy",
-        default=ServiceCaseGroupType.LEGACY.value,
+        server_default="new_group",
+        default=ServiceCaseGroupType.NEW_GROUP.value,
         index=True,
     )
     questionnaire_token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)

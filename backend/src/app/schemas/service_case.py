@@ -37,7 +37,7 @@ class ServiceCaseRead(Timestamped):
     user_id: int | None
     group_id: str
     group_name: str | None = None
-    group_type: ServiceCaseGroupType = ServiceCaseGroupType.LEGACY
+    group_type: ServiceCaseGroupType = ServiceCaseGroupType.NEW_GROUP
     questionnaire_token: str
     status: ServiceCaseStatus
     started_at: datetime | None

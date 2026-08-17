@@ -1,6 +1,10 @@
-"""群类型(new_group/legacy)隔离：入营问卷提交自动置新群、列表筛选、运营可改、看板只统计新群。
+"""群类型(new_group/legacy)隔离：静态标记、列表筛选、运营可改、看板只统计新群。
 
-老群（未通过本系统填入营问卷）照常被服务，但默认不进看板统计，避免不活跃老群稀释数据。
+老群（接入本系统之前就存在的群）照常被服务，但默认不进看板统计，避免不活跃老群稀释数据。
+
+2026-08-17 起群类型是**静态**的：新建服务单一律默认 new_group，运行时不再做任何新老识别
+（原来"提交入营问卷即置 new_group"那一步已移除，理由见 ServiceCase.group_type 注释）。
+老群是一个封存的历史集合，例外交运营在后台手动改。
 """
 
 from __future__ import annotations
@@ -32,16 +36,44 @@ async def _raw_case(db_session, *, name: str, group_type: str = ServiceCaseGroup
     return case
 
 
-async def test_intake_submit_marks_case_as_new_group(admin_client, create_case, db_session, mock_ai, cai_haoran_answers):
-    """通过本系统提交入营问卷后，服务单自动置为 new_group。"""
+async def test_new_case_defaults_to_new_group(db_session):
+    """建单即定死为新客户：不传群类型时默认 new_group，运行时不需要任何识别。
+
+    生产上服务单只有一个创建入口——群里来消息、该群还没有单子就自动建一张
+    (RanrenAIEngine._create_case_for_message，它不传群类型)，所以这个默认值就是全部。
+    """
+    from app.models.user import User
+
+    user = User(name="自动建单用户")
+    db_session.add(user)
+    await db_session.flush()
+    case = ServiceCase(
+        case_no=f"TEST-GT-{uuid4().hex[:6].upper()}",
+        user_id=user.id,
+        group_id=f"gt-{uuid4().hex[:8]}",
+        questionnaire_token=uuid4().hex,
+    )
+    db_session.add(case)
+    await db_session.flush()
+    assert case.group_type == ServiceCaseGroupType.NEW_GROUP.value
+
+
+async def test_intake_submit_does_not_touch_group_type(
+    admin_client, create_case, db_session, mock_ai, cai_haoran_answers
+):
+    """提交入营问卷不再改群类型——封存的老群单子交完问卷仍是 legacy。
+
+    这是静态化的直接后果，也是刻意的：判定放在问卷提交里就等于放在 ingress 里，而部署脚本
+    刻意不重建 ingress，那一步会随时静默失效（8/13–8/17 就失效了四天）。标记过时的代价已
+    被压到只影响看板统计——待办队列不按群类型过滤，交付文件不会再从审核控制台消失
+    （见 test_review_queue_shows_all_groups.py）。
+    """
     resp = await create_case({
         "group_id": f"test-gt-intake-{uuid4().hex[:8]}",
         "user": {"name": "蔡浩然"},
         "group_type": ServiceCaseGroupType.LEGACY.value,
     })
     case_id = resp.json()["id"]
-    case = await db_session.get(ServiceCase, case_id)
-    assert case.group_type == ServiceCaseGroupType.LEGACY.value
 
     submit_resp = await admin_client.post(
         f"/questionnaires/{resp.json()['questionnaire_token']}/submit?template=intake",
@@ -50,7 +82,8 @@ async def test_intake_submit_marks_case_as_new_group(admin_client, create_case, 
     assert submit_resp.status_code == 201, submit_resp.text
 
     case = await db_session.get(ServiceCase, case_id)
-    assert case.group_type == ServiceCaseGroupType.NEW_GROUP.value
+    await db_session.refresh(case)
+    assert case.group_type == ServiceCaseGroupType.LEGACY.value
 
 
 async def test_case_list_filters_by_group_type(admin_client, db_session):

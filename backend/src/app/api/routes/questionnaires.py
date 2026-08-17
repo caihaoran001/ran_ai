@@ -21,7 +21,7 @@ from app.models.message import (
     MessageStatus,
 )
 from app.models.questionnaire import QuestionnaireSubmission
-from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.services.checkin_checklists import get_effective_daily_checklist
 from app.services.intake_generation import (
@@ -137,7 +137,12 @@ async def submit_questionnaire(
     if template == "intake":
         pending_status = ServiceCaseStatus.GENERATING
         service_case.status = pending_status
-        service_case.group_type = ServiceCaseGroupType.NEW_GROUP.value
+        # 这里原本有一行「提交入营问卷即置 new_group」的动态识别，2026-08-17 移除：
+        # 新老群已改为建单时定死的静态标记（见 ServiceCase.group_type 注释），新单默认就是
+        # 新客户，无需在这里补标。更重要的是本函数跑在常驻 ingress 上，而部署脚本刻意不重建
+        # 它——判定放这里会随时静默失效（8/13–8/17 就整整失效四天）。
+        # 封存的老群单子若日后真进了新流程，运营在后台手动改群类型即可；待办队列已不按
+        # 群类型过滤，标记过时只影响看板统计，不会再让交付文件从审核控制台消失。
         await _sync_user_from_answers(session, service_case, fields, payload.answers)
         set_pre_service_status_or_activate(
             service_case,
