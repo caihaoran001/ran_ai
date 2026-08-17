@@ -9,7 +9,7 @@ from sqlalchemy import func, select, text
 
 from app.db.session import SessionLocal
 from app.models.knowledge_draft import KnowledgeDraft
-from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, UserDocument
 from app.services.service_case_queries import active_service_case_condition
 
@@ -41,10 +41,10 @@ async def _review_counts() -> dict[str, int]:
         ) or 0
         pending_documents = await _pending_latest_document_count(session)
         # 已退款待确认：AI 识别到客户已发起/申请退款，等运营在审核控制台核实。
+        # 与待审文件同理，待办计数不按新老群过滤（见 _pending_latest_document_count）。
         refund_pending = await session.scalar(
             select(func.count(ServiceCase.id)).where(
                 active_service_case_condition(),
-                ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
                 ServiceCase.refund_pending_confirmation.is_(True),
                 ServiceCase.status != ServiceCaseStatus.REFUNDED,
             )
@@ -60,6 +60,11 @@ async def _review_counts() -> dict[str, int]:
 
 
 async def _pending_latest_document_count(session) -> int:
+    """侧边栏红点的待审文件数：**全量**，必须与 /dashboard/pending-documents 列表同口径。
+
+    这里若按新老群过滤、列表却不过滤（或反之），就会出现"列表有 6 项、红点不计这 6 项"
+    的错乱。待办计数与待办列表永远同口径，理由见该列表接口的说明。
+    """
     latest_docs = (
         select(UserDocument.status)
         .distinct(
@@ -70,7 +75,6 @@ async def _pending_latest_document_count(session) -> int:
         .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
         .where(
             active_service_case_condition(),
-            ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
             UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
         )
         .order_by(

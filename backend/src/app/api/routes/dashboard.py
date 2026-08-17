@@ -1422,6 +1422,15 @@ async def dashboard_today_checkins(
 async def dashboard_pending_documents(
     session: AsyncSession = Depends(get_session),
 ) -> list[DashboardCasePendingDocuments]:
+    """审核控制台的待审文件队列：**全量**，不按新老群过滤。
+
+    这是待办清单而不是统计口径。新老群隔离(_stats_case_condition)的既定意图只覆盖
+    "看板与群体画像"——老群照常被服务，它们的待审文件运营必须看得到。队列一旦沿用统计
+    过滤，任何被标成老群的服务单，其待审文件就会静默消失：不报错、不提示、红点也不计数。
+
+    2026-08-16 三位新客户正是这样被隐藏的：ingress 跑的旧代码没写"提交问卷即标记新群"，
+    三个单子留在 legacy，6 份文件在控制台完全不可见，直到 8/17 客户主动来问。
+    """
     from sqlalchemy import text
 
     latest_doc_ids = (
@@ -1433,7 +1442,7 @@ async def dashboard_pending_documents(
         )
         .join(ServiceCase, UserDocument.service_case_id == ServiceCase.id)
         .where(
-            _stats_case_condition(),
+            active_service_case_condition(),
             UserDocument.document_type.in_(ACTIVE_DOCUMENT_TYPES),
         )
         .order_by(

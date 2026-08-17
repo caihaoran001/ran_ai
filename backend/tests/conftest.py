@@ -582,6 +582,9 @@ async def mock_session_local(db_session):
     modules_to_patch = [
         "app.api.routes.questionnaires",
         "app.api.routes.documents",
+        # events 的审核计数(_review_counts)自己开 SessionLocal，不patch 就读不到测试数据，
+        # 导致红点计数无法被断言(审核队列与红点必须同口径，见 test_review_queue_shows_all_groups)。
+        "app.api.routes.events",
         "app.services.ranren_ai.engine",
         "app.services.qiwe_service.inbox",
         "app.services.qiwe_service.inbox_dispatcher",
