@@ -237,3 +237,56 @@ async def test_content_failure_stops_being_retried_after_the_window(
 
     assert await _document_types(db_session, case_id) == set()
     assert [c for c in mock_ai.calls if c.get("scenario") == "intake_doc"] == []
+
+
+# --------------------------------------------------------------------------------------
+# 最终失败必须主动告警：此前只落在服务单备注里，24 小时无人知道
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_final_failure_alerts_ops_group_once_a_day(
+    admin_client, create_case, db_session, mock_ai, cai_haoran_answers, monkeypatch
+):
+    from app.services import reminder_service as reminder_module
+    from app.services.channels.base import ChannelSendResult
+
+    sent: list[tuple[str, str]] = []
+
+    async def fake_send(chat_id: str, content: str) -> ChannelSendResult:
+        sent.append((chat_id, content))
+        return ChannelSendResult(success=True, message_id=f"sent-{len(sent)}")
+
+    monkeypatch.setattr(reminder_module, "_send_channel_text_with_retries", fake_send)
+    monkeypatch.setattr(
+        reminder_module.get_settings(), "ai_balance_alert_group_id", "ops-group-1", raising=False
+    )
+
+    mock_ai._responses = {
+        INTAKE_SYSTEM_PROMPT_PREFIX: [_package_missing_documents()] * INTAKE_DOCUMENT_MAX_ATTEMPTS,
+    }
+    resp = await create_case(
+        {"group_id": f"test-group-alert-{secrets.token_hex(6)}", "user": {"name": "告警用户"}}
+    )
+    case_id = resp.json()["id"]
+    submit_resp = await admin_client.post(
+        f"/questionnaires/{resp.json()['questionnaire_token']}/submit?template=intake",
+        json={"answers": cai_haoran_answers},
+    )
+    assert submit_resp.status_code == 201, submit_resp.text
+
+    await ReminderService().check_pending_intake_generation_once()
+
+    assert len(sent) == 1, f"最终失败必须发出一条告警，实际 {len(sent)} 条"
+    chat_id, content = sent[0]
+    assert chat_id == "ops-group-1"
+    assert "交付文件生成失败" in content
+    # 用户名以问卷填写为准（提交时会把答案同步到用户档案），不是建单时的占位名。
+    assert "蔡浩然" in content
+    assert "both delivery documents" in content
+    # 告警必须带上每一次尝试的原因，否则等于把今天那次「查不到原因」的坑照搬到群里。
+    assert "第1次" in content and f"第{INTAKE_DOCUMENT_MAX_ATTEMPTS}次" in content
+
+    # 天闸：同一天同一单再失败也不再刷第二条告警。
+    await reminder_module.alert_intake_generation_failure(case_id, RuntimeError("再失败一次"))
+    assert len(sent) == 1, "同一天同一服务单不应重复告警"

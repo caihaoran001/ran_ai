@@ -474,6 +474,10 @@ async def _generate_profile_and_documents(service_case_id: int) -> None:
             if failed_case:
                 _append_generation_error_note(failed_case, exc)
                 await session.commit()
+            # 延迟导入避免与 reminder_service 循环引用（该模块也会反向导入本模块的辅助函数）。
+            from app.services.reminder_service import alert_intake_generation_failure
+
+            await alert_intake_generation_failure(service_case_id, exc)
 
 
 async def _personalized_checkin_fields(session: AsyncSession, service_case: ServiceCase) -> list[dict[str, Any]]:

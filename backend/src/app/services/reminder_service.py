@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings, get_settings
 from app.db.session import SessionLocal
@@ -87,6 +88,7 @@ INTAKE_GENERATION_SCENARIOS = (INTAKE_DOCUMENT_SCENARIO, "intake_safety_factors"
 INTAKE_DOCUMENT_RETRY_WINDOW_DAYS = 3
 # 天闸的台账规则名。写入方(本调度器)和任何读取方必须用同一个常量。
 INTAKE_DOCUMENT_RETRY_RULE_ID = "intake_doc_retry"
+INTAKE_DOCUMENT_FAILURE_ALERT_RULE_ID = "intake_doc_failure_alert"
 CHANNEL_SEND_MAX_ATTEMPTS = 3
 CHANNEL_SEND_RETRY_DELAY_SECONDS = 1.0
 _CHECKIN_FOLLOWUP_WINDOWS = {
@@ -992,6 +994,7 @@ class ReminderService:
                     if failed_case is not None:
                         _append_generation_error_note(failed_case, exc)
                         await session.commit()
+                    await alert_intake_generation_failure(service_case_id, exc)
 
     async def _release_pending_intake_generation(self) -> None:
         """本进程没有 AI key 时释放"待生成"信号，别把服务单永久锁在"生成中"。"""
@@ -1162,12 +1165,13 @@ class ReminderService:
                         service_case,
                         auto_send=self.settings.auto_send_documents,
                     )
-                except Exception:
+                except Exception as exc:
                     logger.exception(
                         "Retry stuck document generation failed service_case_id=%s",
                         service_case.id,
                     )
                     await session.rollback()
+                    await alert_intake_generation_failure(service_case.id, exc)
 
     async def check_retry_degraded_reports_once(self) -> None:
         """LLM 恢复后自动重试降级(degraded)的阶段报告，用真内容替换套话（带重试上限）。"""
@@ -1520,6 +1524,68 @@ class ReminderService:
             batch_size = 5
             for i in range(0, len(tasks), batch_size):
                 await asyncio.gather(*tasks[i : i + batch_size], return_exceptions=True)
+
+
+async def alert_intake_generation_failure(service_case_id: int, exc: Exception) -> None:
+    """入营交付文件最终生成失败时向运营群告警，每单每天最多一条。
+
+    此前这类失败只落在服务单备注里、没有任何主动通知：2026-08-16 17:01 服务单 308 失败，
+    直到 8/17 17:05 客户主动来问才被发现，中间 24 小时无人知道。用户那边已经收到
+    "正在生成、完成后第一时间发到群里"的承诺，所以静默失败等于对用户失约。
+
+    复用低余额告警的运营群配置(内部群)，不新增环境变量——加配置项要同时改 .env 和
+    compose 引用，漏一处就不注入。告警失败只记日志：通知不能反过来影响业务判断。
+    """
+    settings = get_settings()
+    group_id = (settings.ai_balance_alert_group_id or "").strip()
+    if not group_id:
+        return
+    try:
+        async with SessionLocal() as session:
+            service_case = await get_active_service_case(
+                session,
+                service_case_id,
+                options=(selectinload(ServiceCase.user),),
+            )
+            if service_case is None:
+                return
+            today = datetime.now(ZoneInfo(settings.reminder_timezone)).date()
+            reserved = await _reserve_reminder_event(
+                session,
+                service_case_id,
+                rule_id=INTAKE_DOCUMENT_FAILURE_ALERT_RULE_ID,
+                event_date=today,
+                event_type=ReminderEventType.REMINDED,
+            )
+            if reserved is None:
+                return
+            user_name = service_case.user.name if service_case.user else "未知用户"
+            alert_text = (
+                "【交付文件生成失败】\n"
+                f"服务单：{service_case.case_no}\n"
+                f"用户：{user_name}\n"
+                f"群：{service_case.group_name or service_case.group_id or '未知'}\n"
+                f"原因：{str(exc)[:600]}\n"
+                "用户已收到「正在生成」的回执，请到后台重新触发生成或人工处理。"
+            )
+            result = await _send_channel_text_with_retries(group_id, alert_text)
+            if result is not None and result.success:
+                await session.commit()  # 占住当天名额
+                logger.info(
+                    "intake generation failure alert sent service_case_id=%s",
+                    service_case_id,
+                )
+            else:
+                await session.rollback()  # 释放天闸，下一轮重试
+                logger.warning(
+                    "intake generation failure alert send failed service_case_id=%s: %s",
+                    service_case_id,
+                    getattr(result, "error", None),
+                )
+    except Exception:
+        logger.exception(
+            "intake generation failure alert crashed service_case_id=%s", service_case_id
+        )
 
 
 async def _send_channel_text_with_retries(chat_id: str, content: str):
