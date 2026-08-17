@@ -10,7 +10,9 @@
    而且一次写错单位」的用户误判成平台期。
 2. **用户自述旁证**：档案官已经按既有抽取链路把「体重没动/平台期」上报为
    ``outcome_events(field_key='weight_change', event_type='unchanged')`` 的结构化事件，
-   这里直接读该事件（最近 7 天内）作为「用户主动说体重卡住」的信号，不做关键词硬编码。
+   这里直接读该事件（最近 7 天内）作为「用户主动说体重卡住」的信号，不做关键词硬编码；
+   更新的改善/达成/变差事件，或自述之后超过 0.5kg 的新称重变化，会解除更早的自述，
+   避免用户已经掉秤或反弹后仍被旧话误标为平台期。
 
 数据不足（窗口内有效体重记录 < 2 条、也没有用户自述）→ 标记 ``insufficient_data``，
 不误报平台期——运营看到的列表应该只有「真平台期」，没数据的人需要先解决打卡问题。
@@ -57,6 +59,10 @@ STATUS_NORMAL = "normal"
 STATUS_PLATEAU = "plateau"
 STATUS_INSUFFICIENT_DATA = "insufficient_data"
 
+# 这些成效方向明确说明“体重仍未变化”的旧自述已经不是最新结论。
+_DECLARATION_RESOLVING_EVENT_TYPES = frozenset({"improved", "completed", "worsened"})
+_WEIGHT_OUTCOME_EVENT_TYPES = _DECLARATION_RESOLVING_EVENT_TYPES | {"unchanged"}
+
 
 @dataclass(frozen=True)
 class PlateauResult:
@@ -70,6 +76,13 @@ class ScanStats:
     plateau: int
     insufficient: int
     declared: int
+
+
+@dataclass(frozen=True)
+class WeightOutcomeSignal:
+    event_type: str
+    evidence_text: str
+    occurred_at: datetime
 
 
 def _tz() -> ZoneInfo:
@@ -104,20 +117,29 @@ async def scan_plateaus(session: AsyncSession) -> ScanStats:
     ):
         checkins_by_case.setdefault(checkin.service_case_id, []).append(checkin)
 
-    # 用户自述「体重没动/平台期」：档案官抽取的 unchanged 成效事件（最近 7 天）。
-    declared_by_case: dict[int, list[str]] = {}
+    # 最近 7 天体重成效事件：unchanged 可触发平台期，更新的 improved/completed/worsened
+    # 会解除更早的 unchanged，避免旧自述长期压过后续真实结果。
+    outcome_signals_by_case: dict[int, list[WeightOutcomeSignal]] = {}
     window_start = _now_utc() - timedelta(days=PLATEAU_WINDOW_DAYS)
     for event in await session.scalars(
-        select(OutcomeEvent).where(
+        select(OutcomeEvent)
+        .where(
             OutcomeEvent.service_case_id.in_(case_ids),
             OutcomeEvent.field_key == "weight_change",
-            OutcomeEvent.event_type == "unchanged",
+            OutcomeEvent.event_type.in_(_WEIGHT_OUTCOME_EVENT_TYPES),
             OutcomeEvent.occurred_at >= window_start,
         )
+        .order_by(OutcomeEvent.occurred_at.asc(), OutcomeEvent.id.asc())
     ):
         evidence = (event.evidence_text or "").strip()
-        if evidence:
-            declared_by_case.setdefault(event.service_case_id, []).append(evidence)
+        if evidence and event.occurred_at is not None:
+            outcome_signals_by_case.setdefault(event.service_case_id, []).append(
+                WeightOutcomeSignal(
+                    event_type=event.event_type,
+                    evidence_text=evidence,
+                    occurred_at=event.occurred_at,
+                )
+            )
 
     window_start_date = _window_start()
     window_end_date = _window_end()
@@ -126,7 +148,7 @@ async def scan_plateaus(session: AsyncSession) -> ScanStats:
         result = _evaluate_plateau(
             checkins_by_case.get(case.id, []),
             baseline_kg=baselines.get(case.id, (None, None))[0],
-            declared_evidence=declared_by_case.get(case.id, []),
+            outcome_signals=outcome_signals_by_case.get(case.id, []),
             window_start=window_start_date,
             window_end=window_end_date,
         )
@@ -153,7 +175,7 @@ def _evaluate_plateau(
     checkin_rows: list[Checkin],
     *,
     baseline_kg: float | None,
-    declared_evidence: list[str],
+    outcome_signals: list[WeightOutcomeSignal],
     window_start: date,
     window_end: date,
 ) -> PlateauResult:
@@ -170,9 +192,17 @@ def _evaluate_plateau(
             usable.append((row.checkin_date, parsed.value))
     usable = _drop_implausible_jumps(usable)
 
-    in_window = [(day, value) for day, value in usable if window_start <= day <= window_end]
+    in_window = [
+        (day, value) for day, value in usable if window_start <= day <= window_end
+    ]
 
-    user_declared = bool(declared_evidence)
+    (
+        user_declared,
+        latest_declaration,
+        declared_superseded_by,
+        post_declared_delta_kg,
+    ) = _resolve_user_declaration(outcome_signals, in_window)
+    declaration_was_superseded = declared_superseded_by is not None
 
     span_days = 0
     if len(in_window) >= MIN_VALID_WEIGHT_ROWS:
@@ -180,7 +210,13 @@ def _evaluate_plateau(
         last_day = in_window[-1][0]
         span_days = (last_day - first_day).days
 
-    if not user_declared and (len(in_window) < MIN_VALID_WEIGHT_ROWS or span_days < PLATEAU_MIN_SPAN_DAYS):
+    if (
+        not user_declared
+        and not declaration_was_superseded
+        and (
+            len(in_window) < MIN_VALID_WEIGHT_ROWS or span_days < PLATEAU_MIN_SPAN_DAYS
+        )
+    ):
         note = (
             "窗口内有效体重记录不足，无法判定平台期"
             if len(in_window) < MIN_VALID_WEIGHT_ROWS
@@ -194,6 +230,10 @@ def _evaluate_plateau(
                 "window_start": window_start.isoformat(),
                 "window_end": window_end.isoformat(),
                 "valid_weight_rows": len(in_window),
+                "declared_evidence": [],
+                "declared_at": None,
+                "declared_superseded_by": None,
+                "post_declared_delta_kg": None,
                 "note": note,
             },
         )
@@ -221,9 +261,101 @@ def _evaluate_plateau(
         "first_weight_kg": first_weight,
         "last_weight_kg": last_weight,
         "delta_kg": delta_kg,
-        "declared_evidence": declared_evidence[:3],
+        "declared_evidence": (
+            [latest_declaration.evidence_text] if latest_declaration is not None else []
+        ),
+        "declared_at": (
+            latest_declaration.occurred_at.isoformat()
+            if latest_declaration is not None
+            else None
+        ),
+        "declared_superseded_by": declared_superseded_by,
+        "post_declared_delta_kg": post_declared_delta_kg,
     }
     return PlateauResult(STATUS_PLATEAU if basis else STATUS_NORMAL, evidence)
+
+
+def _resolve_user_declaration(
+    outcome_signals: list[WeightOutcomeSignal],
+    in_window: list[tuple[date, float]],
+) -> tuple[bool, WeightOutcomeSignal | None, str | None, float | None]:
+    """判断最近一次“体重未变”自述是否仍有效。
+
+    更新的成效事件直接覆盖旧自述；如果没有更新事件，则看自述之后的新称重是否已经
+    发生超过平台阈值的下降或上涨。持平数据不会解除自述。
+    """
+
+    declarations = [
+        signal for signal in outcome_signals if signal.event_type == "unchanged"
+    ]
+    if not declarations:
+        return False, None, None, None
+
+    latest_declaration = max(
+        declarations, key=lambda signal: _aware_utc(signal.occurred_at)
+    )
+    declared_at_utc = _aware_utc(latest_declaration.occurred_at)
+    newer_resolutions = [
+        signal
+        for signal in outcome_signals
+        if signal.event_type in _DECLARATION_RESOLVING_EVENT_TYPES
+        and _aware_utc(signal.occurred_at) > declared_at_utc
+    ]
+    if newer_resolutions:
+        latest_resolution = max(
+            newer_resolutions,
+            key=lambda signal: _aware_utc(signal.occurred_at),
+        )
+        return (
+            False,
+            latest_declaration,
+            f"outcome_{latest_resolution.event_type}",
+            None,
+        )
+
+    declared_day = declared_at_utc.astimezone(_tz()).date()
+    post_declared_delta_kg = _weight_delta_after_declaration(in_window, declared_day)
+    if post_declared_delta_kg is not None:
+        if post_declared_delta_kg < -PLATEAU_MAX_DELTA_KG:
+            return False, latest_declaration, "weight_loss", post_declared_delta_kg
+        if post_declared_delta_kg > PLATEAU_MAX_DELTA_KG:
+            return False, latest_declaration, "weight_gain", post_declared_delta_kg
+
+    return True, latest_declaration, None, post_declared_delta_kg
+
+
+def _weight_delta_after_declaration(
+    in_window: list[tuple[date, float]],
+    declared_day: date,
+) -> float | None:
+    """取自述当天或此前最近体重为锚，再和之后最新体重比较。
+
+    如果自述前没有体重，至少需要自述后两次称重，才有可以比较的起点和终点。
+    同日只有日期精度，不能证明称重发生在自述之后，因此同日记录只可作为锚点。
+    """
+
+    at_or_before = [(day, value) for day, value in in_window if day <= declared_day]
+    after = [(day, value) for day, value in in_window if day > declared_day]
+    if not after:
+        return None
+
+    if at_or_before:
+        anchor_day, anchor_weight = at_or_before[-1]
+    elif len(after) >= 2:
+        anchor_day, anchor_weight = after[0]
+    else:
+        return None
+
+    last_day, last_weight = after[-1]
+    if last_day <= anchor_day:
+        return None
+    return round(last_weight - anchor_weight, 2)
+
+
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _window_start() -> date:
@@ -244,7 +376,10 @@ def _drop_implausible_jumps(
         if cleaned:
             prev_day, prev_value = cleaned[-1]
             span = max((day - prev_day).days, 1)
-            if abs(value - prev_value) > _MIN_WEIGHT_DELTA_ALLOWANCE_KG + _MAX_WEIGHT_DELTA_PER_DAY * span:
+            if (
+                abs(value - prev_value)
+                > _MIN_WEIGHT_DELTA_ALLOWANCE_KG + _MAX_WEIGHT_DELTA_PER_DAY * span
+            ):
                 continue
         cleaned.append((day, value))
     return cleaned

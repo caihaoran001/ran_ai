@@ -19,6 +19,7 @@ from app.services.plateau_detector import (
     STATUS_INSUFFICIENT_DATA,
     STATUS_NORMAL,
     STATUS_PLATEAU,
+    WeightOutcomeSignal,
     _evaluate_plateau,
     scan_plateaus,
 )
@@ -40,13 +41,25 @@ def _window(now: date) -> tuple[date, date]:
     return now - timedelta(days=6), now
 
 
+def _signal(day: date, event_type: str, evidence: str) -> WeightOutcomeSignal:
+    return WeightOutcomeSignal(
+        event_type=event_type,
+        evidence_text=evidence,
+        occurred_at=datetime.combine(day, datetime.min.time(), tzinfo=TZ),
+    )
+
+
 class TestEvaluatePlateau:
     def test_flat_week_is_plateau(self):
         now = date(2026, 8, 14)
         start, end = _window(now)
         rows = [_checkin(start + timedelta(days=i), "70.0") for i in range(0, 7, 2)]
         result = _evaluate_plateau(
-            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[],
+            window_start=start,
+            window_end=end,
         )
         assert result.status == STATUS_PLATEAU
         assert result.evidence["basis"] == ["statistical"]
@@ -61,7 +74,11 @@ class TestEvaluatePlateau:
             _checkin(end, "70.1"),
         ]
         result = _evaluate_plateau(
-            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[],
+            window_start=start,
+            window_end=end,
         )
         assert result.status == STATUS_PLATEAU
         assert abs(result.evidence["delta_kg"]) <= PLATEAU_MAX_DELTA_KG
@@ -75,7 +92,11 @@ class TestEvaluatePlateau:
             _checkin(end, "68.5"),
         ]
         result = _evaluate_plateau(
-            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[],
+            window_start=start,
+            window_end=end,
         )
         assert result.status == STATUS_NORMAL
         assert result.evidence["delta_kg"] == -1.5
@@ -85,7 +106,11 @@ class TestEvaluatePlateau:
         start, end = _window(now)
         rows = [_checkin(start, "70.0")]
         result = _evaluate_plateau(
-            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[],
+            window_start=start,
+            window_end=end,
         )
         assert result.status == STATUS_INSUFFICIENT_DATA
         assert result.evidence["basis"] == []
@@ -97,7 +122,7 @@ class TestEvaluatePlateau:
         result = _evaluate_plateau(
             rows,
             baseline_kg=70.0,
-            declared_evidence=["最近体重一直卡着不动"],
+            outcome_signals=[_signal(start, "unchanged", "最近体重一直卡着不动")],
             window_start=start,
             window_end=end,
         )
@@ -112,7 +137,7 @@ class TestEvaluatePlateau:
         result = _evaluate_plateau(
             [outside],
             baseline_kg=70.0,
-            declared_evidence=[],
+            outcome_signals=[],
             window_start=start,
             window_end=end,
         )
@@ -128,7 +153,11 @@ class TestEvaluatePlateau:
             _checkin(end, "70.0"),
         ]
         result = _evaluate_plateau(
-            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[],
+            window_start=start,
+            window_end=end,
         )
         assert result.status == STATUS_PLATEAU
 
@@ -137,7 +166,11 @@ class TestEvaluatePlateau:
         start, end = _window(now)
         rows = [_checkin(start, "70.0"), _checkin(start + timedelta(days=1), "70.1")]
         result = _evaluate_plateau(
-            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[],
+            window_start=start,
+            window_end=end,
         )
         assert result.status == STATUS_INSUFFICIENT_DATA
         assert "未隔满一周" in result.evidence["note"]
@@ -147,7 +180,11 @@ class TestEvaluatePlateau:
         start, end = _window(now)
         rows = [_checkin(start, "70.0"), _checkin(start + timedelta(days=3), "70.1")]
         result = _evaluate_plateau(
-            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[],
+            window_start=start,
+            window_end=end,
         )
         assert result.status == STATUS_INSUFFICIENT_DATA
 
@@ -156,10 +193,86 @@ class TestEvaluatePlateau:
         start, end = _window(now)
         rows = [_checkin(start, "70.0"), _checkin(start + timedelta(days=6), "70.1")]
         result = _evaluate_plateau(
-            rows, baseline_kg=70.0, declared_evidence=[], window_start=start, window_end=end
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[],
+            window_start=start,
+            window_end=end,
         )
         assert result.status == STATUS_PLATEAU
         assert result.evidence["basis"] == ["statistical"]
+
+    def test_newer_weight_loss_supersedes_old_user_declaration(self):
+        now = date(2026, 8, 14)
+        start, end = _window(now)
+        rows = [_checkin(start, "70.0"), _checkin(end, "68.5")]
+
+        result = _evaluate_plateau(
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[_signal(start, "unchanged", "最近体重一直卡着不动")],
+            window_start=start,
+            window_end=end,
+        )
+
+        assert result.status == STATUS_NORMAL
+        assert result.evidence["user_declared"] is False
+        assert result.evidence["declared_superseded_by"] == "weight_loss"
+        assert result.evidence["post_declared_delta_kg"] == -1.5
+
+    def test_flat_weight_keeps_user_declaration_active(self):
+        now = date(2026, 8, 14)
+        start, end = _window(now)
+        rows = [_checkin(start, "70.0"), _checkin(end, "70.1")]
+
+        result = _evaluate_plateau(
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[_signal(start, "unchanged", "最近体重一直卡着不动")],
+            window_start=start,
+            window_end=end,
+        )
+
+        assert result.status == STATUS_PLATEAU
+        assert result.evidence["user_declared"] is True
+        assert result.evidence["declared_superseded_by"] is None
+
+    def test_newer_weight_gain_supersedes_old_user_declaration(self):
+        now = date(2026, 8, 14)
+        start, end = _window(now)
+        rows = [_checkin(start, "70.0"), _checkin(end, "71.0")]
+
+        result = _evaluate_plateau(
+            rows,
+            baseline_kg=70.0,
+            outcome_signals=[_signal(start, "unchanged", "最近体重一直卡着不动")],
+            window_start=start,
+            window_end=end,
+        )
+
+        assert result.status == STATUS_NORMAL
+        assert result.evidence["user_declared"] is False
+        assert result.evidence["declared_superseded_by"] == "weight_gain"
+        assert result.evidence["post_declared_delta_kg"] == 1.0
+
+    def test_newer_improved_outcome_supersedes_old_user_declaration(self):
+        now = date(2026, 8, 14)
+        start, end = _window(now)
+
+        result = _evaluate_plateau(
+            [],
+            baseline_kg=70.0,
+            outcome_signals=[
+                _signal(start, "unchanged", "最近体重一直卡着不动"),
+                _signal(end, "improved", "这两天终于开始掉秤了"),
+            ],
+            window_start=start,
+            window_end=end,
+        )
+
+        assert result.status == STATUS_NORMAL
+        assert result.evidence["user_declared"] is False
+        assert result.evidence["declared_superseded_by"] == "outcome_improved"
 
 
 async def _make_case(
@@ -249,6 +362,42 @@ class TestScanPlateaus:
         assert stats.declared == 1
         await db_session.refresh(case)
         assert "user_declared" in case.plateau_evidence["basis"]
+
+    async def test_newer_improved_event_clears_old_declaration(self, db_session):
+        case = await _make_case(db_session)
+        now = datetime.now(timezone.utc)
+        db_session.add_all(
+            [
+                OutcomeEvent(
+                    service_case_id=case.id,
+                    message_id=None,
+                    milestone="day7",
+                    field_key="weight_change",
+                    event_type="unchanged",
+                    value_text="体重没动",
+                    evidence_text="最近体重一直卡着不动",
+                    occurred_at=now - timedelta(days=2),
+                ),
+                OutcomeEvent(
+                    service_case_id=case.id,
+                    message_id=None,
+                    milestone="day7",
+                    field_key="weight_change",
+                    event_type="improved",
+                    value_text="体重开始下降",
+                    evidence_text="这两天终于开始掉秤了",
+                    occurred_at=now,
+                ),
+            ]
+        )
+        await db_session.flush()
+
+        await scan_plateaus(db_session)
+
+        await db_session.refresh(case)
+        assert case.plateau_status == STATUS_NORMAL
+        assert case.plateau_evidence["user_declared"] is False
+        assert case.plateau_evidence["declared_superseded_by"] == "outcome_improved"
 
     async def test_scan_includes_all_non_deleted_service_statuses(self, db_session):
         today = datetime.now(TZ).date()
