@@ -821,6 +821,9 @@ async def _generate_intake_analysis_package(
         f"问卷结果：\n{document_answers}"
     )
     last_error: RetryableAIContentError | RetryableIntakePackageError | None = None
+    # 每次尝试的拒绝原因都要留下：只留最后一次的话，"第一次为什么被判不合格"只存在于
+    # 运行日志里，容器日志一轮转就永久查不到（2026-08-17 排查服务单 308 时正是如此）。
+    attempt_errors: list[str] = []
     for attempt in range(1, INTAKE_DOCUMENT_MAX_ATTEMPTS + 1):
         retry_instruction = ""
         if last_error is not None:
@@ -848,21 +851,22 @@ async def _generate_intake_analysis_package(
             )
         except (RetryableAIContentError, RetryableIntakePackageError) as exc:
             last_error = exc
-            if attempt >= INTAKE_DOCUMENT_MAX_ATTEMPTS:
-                raise
-            activate_fallback = getattr(ai, "activate_fallback_model", None)
-            fallback_activated = bool(
-                callable(activate_fallback) and activate_fallback("intake_doc")
-            )
+            attempt_errors.append(f"第{attempt}次[{type(exc).__name__}]{str(exc)[:400]}")
             logger.warning(
                 "intake document content invalid; regenerating service_case_id=%s "
-                "attempt=%s/%s fallback_activated=%s error=%s",
+                "attempt=%s/%s error=%s",
                 service_case.id,
                 attempt,
                 INTAKE_DOCUMENT_MAX_ATTEMPTS,
-                fallback_activated,
                 exc,
             )
+            if attempt >= INTAKE_DOCUMENT_MAX_ATTEMPTS:
+                # 内容不合格不换模型（原因见 AIService._fallback_eligible），所以三次都在
+                # 同一档模型上重试；最终失败时把每一次的原因一起抛出，供服务单备注留证。
+                raise RetryableIntakePackageError(
+                    f"入营交付文件 {INTAKE_DOCUMENT_MAX_ATTEMPTS} 次生成均未通过校验："
+                    + "；".join(attempt_errors)
+                ) from exc
     raise RuntimeError("intake document generation retry loop exited unexpectedly")
 
 

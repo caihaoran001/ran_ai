@@ -133,10 +133,62 @@ async def test_document_success_does_not_call_fallback_model() -> None:
 
 
 @pytest.mark.asyncio
-async def test_document_empty_primary_falls_back_to_pro_and_records_actual_model() -> None:
+async def test_empty_content_does_not_switch_model() -> None:
+    """空正文是内容质量问题，必须留在原模型重试，不能换到备用模型。
+
+    线上主模型是 pro、备用是 flash；一次空正文就永久钉到 flash 上，会把偶发问题
+    换成高发问题（生产统计：pro 空正文 0 次，flash 22 次）。
+    """
     service, completions = _service(
         [
             _response(content="", reasoning="analysis"),
+            _response(content='{"documents": {}}'),
+        ],
+        AI_DOCUMENT_FALLBACK_MODEL="deepseek-v4-flash-lite",
+    )
+
+    with pytest.raises(RetryableAIContentError, match="empty final content"):
+        await service.generate_text(
+            scenario="intake_doc",
+            system_prompt="only output json",
+            user_prompt="build documents",
+        )
+
+    assert [call["model"] for call in completions.calls] == ["deepseek-v4-flash"]
+
+
+@pytest.mark.asyncio
+async def test_truncation_does_not_switch_model() -> None:
+    """撞输出上限换模型同样没有帮助，只会把内容交给更弱的模型。"""
+    service, completions = _service(
+        [
+            _response(content="{", finish_reason="length"),
+            _response(content='{"documents": {}}'),
+        ],
+        AI_DOCUMENT_FALLBACK_MODEL="deepseek-v4-flash-lite",
+    )
+
+    with pytest.raises(RetryableAIContentError, match="AI_DOCUMENT_MAX_TOKENS"):
+        await service.generate_text(
+            scenario="intake_doc",
+            system_prompt="only output json",
+            user_prompt="build documents",
+        )
+
+    assert [call["model"] for call in completions.calls] == ["deepseek-v4-flash"]
+
+
+@pytest.mark.asyncio
+async def test_availability_failure_still_switches_model() -> None:
+    """「这个模型现在叫不通」仍然换模型：可用性故障是备用模型唯一的用途。"""
+    from openai import APITimeoutError
+
+    # 同模型内部先重试 3 次超时（_create_chat_completion_with_retry），耗尽后才轮到备用模型。
+    service, completions = _service(
+        [
+            APITimeoutError(request=SimpleNamespace()),
+            APITimeoutError(request=SimpleNamespace()),
+            APITimeoutError(request=SimpleNamespace()),
             _response(content='{"documents": {}}'),
         ],
         AI_DOCUMENT_FALLBACK_MODEL="deepseek-v4-pro",
@@ -151,36 +203,11 @@ async def test_document_empty_primary_falls_back_to_pro_and_records_actual_model
     assert result == '{"documents": {}}'
     assert [call["model"] for call in completions.calls] == [
         "deepseek-v4-flash",
+        "deepseek-v4-flash",
+        "deepseek-v4-flash",
         "deepseek-v4-pro",
     ]
     assert service.last_model_for("intake_doc") == "deepseek-v4-pro"
-    assert [call.kwargs["model"] for call in service._record_usage.await_args_list] == [
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_document_primary_and_fallback_empty_fails_explicitly() -> None:
-    service, completions = _service(
-        [
-            _response(content="", reasoning="primary analysis"),
-            _response(content="", reasoning="fallback analysis"),
-        ],
-        AI_DOCUMENT_FALLBACK_MODEL="deepseek-v4-pro",
-    )
-
-    with pytest.raises(RetryableAIContentError, match="empty final content"):
-        await service.generate_text(
-            scenario="intake_doc",
-            system_prompt="only output json",
-            user_prompt="build documents",
-        )
-
-    assert [call["model"] for call in completions.calls] == [
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
-    ]
 
 
 @pytest.mark.asyncio

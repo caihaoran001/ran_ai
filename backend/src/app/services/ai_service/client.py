@@ -539,10 +539,17 @@ class AIService:
 
     @staticmethod
     def _fallback_eligible(exc: Exception) -> bool:
+        """只有「这个模型现在叫不通」才换模型；内容质量问题一律留在原模型重试。
+
+        备用模型机制原本是按「便宜主模型失败后升级到强模型」设计的，但线上配置是反的
+        （主模型 pro、备用 flash），于是内容不合格会把后续尝试永久钉在更弱的模型上。
+        生产数据：交付文件场景 pro 的空正文失败 0 次，flash 22 次——降级等于把一个偶发
+        问题换成一个高发问题。RetryableAIContentError（空正文 / 撞输出上限）换模型都没有
+        帮助，故不在此列；换模型只用于连接、超时、限流和 5xx 这类可用性故障。
+        """
         if isinstance(
             exc,
             (
-                RetryableAIContentError,
                 APIConnectionError,
                 APITimeoutError,
                 RateLimitError,
