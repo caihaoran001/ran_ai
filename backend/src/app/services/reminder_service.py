@@ -78,9 +78,15 @@ from app.services.service_case_activation import (
 
 logger = logging.getLogger(__name__)
 SCHEDULER_ADVISORY_LOCK_KEY = 2026051901
-# 入营画像/交付文件生成会写下的模型调用场景：用于判断某个服务单是否已尝试过生成，
-# 给缺文件的自动补跑限次(尝试过就不再自动重试)。
-INTAKE_GENERATION_SCENARIOS = ("intake_doc", "intake_safety_factors")
+# 入营画像/交付文件生成会写下的模型调用场景。两个场景的先后顺序本身就是限次依据：
+# 安全提取先跑，文档模型后跑，所以"只有 intake_safety_factors"= 资料不全被确定性拦下，
+# "有 intake_doc" = 文档模型真跑过、是内容失败。详见 _cases_missing_intake_documents。
+INTAKE_DOCUMENT_SCENARIO = "intake_doc"
+INTAKE_GENERATION_SCENARIOS = (INTAKE_DOCUMENT_SCENARIO, "intake_safety_factors")
+# 内容失败的自动补跑上限：天闸(每单每天一次) × 这个天数窗口，即一个单子最多自动重试 3 次。
+INTAKE_DOCUMENT_RETRY_WINDOW_DAYS = 3
+# 天闸的台账规则名。写入方(本调度器)和任何读取方必须用同一个常量。
+INTAKE_DOCUMENT_RETRY_RULE_ID = "intake_doc_retry"
 CHANNEL_SEND_MAX_ATTEMPTS = 3
 CHANNEL_SEND_RETRY_DELAY_SECONDS = 1.0
 _CHECKIN_FOLLOWUP_WINDOWS = {
@@ -1014,16 +1020,24 @@ class ReminderService:
         self,
         session,
         threshold: datetime,
-    ) -> list[ServiceCase]:
-        """已交入营问卷、却没有任何入营交付文件、且从未尝试过生成的活跃服务单。
+    ) -> tuple[list[ServiceCase], set[int]]:
+        """已交入营问卷、却没有任何入营交付文件、且值得再试一次的活跃服务单。
 
         只按状态(GENERATING)兜底是不够的：计划开始日一到，调度器会把 pre-service 状态
         (含 GENERATING)激活成 IN_SERVICE，缺文件的单子就永久跑出兜底筛选范围。所以这里
         按结果(缺文件)捞，而不是按状态。
 
-        用"该单有没有过入营生成的模型调用记录"限次：只要尝试过一次(无论成功或失败)就不
-        再自动补跑，避免"资料待确认"之类的确定性失败每轮重复调用模型烧钱；这类单交给运营
-        在后台重新触发。
+        限次必须区分两类完全不同的失败，账本里刚好分得清(2026-08-17 教训)：
+
+        - **资料不全**(如身高体重缺失算不出安全减重空间)：在调用文档模型之前就被
+          DocumentGenerationBlocked 拦下，所以只有 intake_safety_factors 记录、没有
+          intake_doc 记录。重试一万次结果一样，永不自动补跑，交运营在后台处理。
+        - **模型内容失败**(空正文/校验不过)：文档模型真的被调用过，所以有 intake_doc
+          记录。换一次很可能就成了(生产实测：服务单 308 原样重跑一次即通过)，值得补跑。
+        - **完全没跑过**(待生成信号根本没落下)：两种记录都没有，照旧立即补跑。
+
+        旧规则把前两类一起排除("尝试过一次就永不补跑")，导致内容失败的单子永远不会自愈，
+        只能等客户来问。返回值第二项是"属于内容失败、需要走天闸限次"的服务单 id。
         """
         submitted_intake = (
             select(QuestionnaireSubmission.id)
@@ -1031,6 +1045,20 @@ class ReminderService:
                 QuestionnaireSubmission.service_case_id == ServiceCase.id,
                 QuestionnaireSubmission.template_key == "intake",
                 QuestionnaireSubmission.created_at < threshold,
+            )
+            .exists()
+        )
+        # 内容失败只在问卷提交后的有限窗口内自动补跑：配合每天一次的天闸，一个单子最多
+        # 自动重试 INTAKE_DOCUMENT_RETRY_WINDOW_DAYS 次，之后交运营，不会无限烧钱。
+        retry_window_start = datetime.now(timezone.utc) - timedelta(
+            days=INTAKE_DOCUMENT_RETRY_WINDOW_DAYS
+        )
+        submitted_within_retry_window = (
+            select(QuestionnaireSubmission.id)
+            .where(
+                QuestionnaireSubmission.service_case_id == ServiceCase.id,
+                QuestionnaireSubmission.template_key == "intake",
+                QuestionnaireSubmission.created_at >= retry_window_start,
             )
             .exists()
         )
@@ -1042,7 +1070,7 @@ class ReminderService:
             )
             .exists()
         )
-        generation_attempted = (
+        any_generation_attempted = (
             select(AIUsageLog.id)
             .where(
                 AIUsageLog.service_case_id == ServiceCase.id,
@@ -1050,15 +1078,39 @@ class ReminderService:
             )
             .exists()
         )
-        return list(
+        document_model_called = (
+            select(AIUsageLog.id)
+            .where(
+                AIUsageLog.service_case_id == ServiceCase.id,
+                AIUsageLog.scenario == INTAKE_DOCUMENT_SCENARIO,
+            )
+            .exists()
+        )
+        cases = list(
             await session.scalars(
                 select_active_service_cases(
                     submitted_intake,
                     ~intake_document_exists,
-                    ~generation_attempted,
+                    or_(
+                        ~any_generation_attempted,
+                        and_(document_model_called, submitted_within_retry_window),
+                    ),
                 )
             )
         )
+        if not cases:
+            return [], set()
+        content_failed_ids = set(
+            await session.scalars(
+                select(AIUsageLog.service_case_id)
+                .where(
+                    AIUsageLog.service_case_id.in_([case.id for case in cases]),
+                    AIUsageLog.scenario == INTAKE_DOCUMENT_SCENARIO,
+                )
+                .distinct()
+            )
+        )
+        return cases, content_failed_ids
 
     async def check_stuck_document_generation_once(self) -> None:
         """补跑没有入营交付文件的服务单（后台任务被中断，或"待生成"信号根本没落下）。"""
@@ -1075,14 +1127,30 @@ class ReminderService:
                 )
             )
             known_ids = {service_case.id for service_case in cases}
+            missing, content_failed_ids = await self._cases_missing_intake_documents(
+                session, threshold
+            )
             cases.extend(
                 service_case
-                for service_case in await self._cases_missing_intake_documents(
-                    session, threshold
-                )
+                for service_case in missing
                 if service_case.id not in known_ids
             )
+            today = datetime.now(ZoneInfo(self.settings.reminder_timezone)).date()
             for service_case in cases:
+                # 内容失败的补跑走天闸：每单每天最多自动重试一次。GENERATING 卡死的单子
+                # (进程在错误处理前就崩了)不受天闸约束，崩溃恢复要快。
+                if service_case.id in content_failed_ids:
+                    reserved = await _reserve_reminder_event(
+                        session,
+                        service_case.id,
+                        rule_id=INTAKE_DOCUMENT_RETRY_RULE_ID,
+                        event_date=today,
+                        event_type=ReminderEventType.REMINDED,
+                    )
+                    if reserved is None:
+                        continue
+                    # 先占住当天名额再生成：生成失败也不在同一天反复调用文档模型。
+                    await session.commit()
                 logger.warning(
                     "Recovering stuck document generation service_case_id=%s case_no=%s",
                     service_case.id,
