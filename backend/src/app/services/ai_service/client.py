@@ -64,6 +64,7 @@ def _estimated_cost_yuan(
     completion_tokens: int | None,
     settings: Settings,
     scenario: str | None = None,
+    model: str | None = None,
     prompt_cache_hit_tokens: int | None = None,
     now: datetime | None = None,
 ) -> float | None:
@@ -73,6 +74,7 @@ def _estimated_cost_yuan(
         prompt_tokens=prompt_tokens,
         settings=settings,
         scenario=scenario,
+        model=model,
     )
     # 输入 token 拆成缓存命中/未命中两段分别计价。命中数缺失(None)时按未命中价算，
     # 即完全保持历史行为，不擅自打折。
@@ -87,11 +89,29 @@ def _estimated_cost_yuan(
     return round(subtotal, 8)
 
 
+def _is_premium_model(*, model: str | None, settings: Settings) -> bool:
+    """本次调用的模型是否属于高价档(如 deepseek-v4-pro)。
+
+    按实际模型名前缀匹配，因此带日期后缀的 deepseek-v4-pro-0813 同样命中；
+    文档模型 fallback 回 flash 时不会命中，避免把便宜的调用按高价记账。
+    """
+    name = (model or "").strip().lower()
+    if not name:
+        return False
+    prefixes = [
+        item.strip().lower()
+        for item in str(settings.ai_premium_models or "").split(",")
+        if item.strip()
+    ]
+    return any(name.startswith(prefix) for prefix in prefixes)
+
+
 def _pricing_for_usage(
     *,
     prompt_tokens: int | None,
     settings: Settings,
     scenario: str | None,
+    model: str | None = None,
 ) -> tuple[float, float, float]:
     """返回 (未命中输入价, 缓存命中输入价, 输出价)，单位元/百万 token。"""
     if scenario == "qwen_vl_translate":
@@ -112,6 +132,18 @@ def _pricing_for_usage(
     miss = max(float(settings.ai_prompt_cost_per_1m_tokens or 0), 0.0)
     completion = max(float(settings.ai_completion_cost_per_1m_tokens or 0), 0.0)
     hit_cfg = float(settings.ai_prompt_cache_hit_cost_per_1m_tokens or 0)
+    if _is_premium_model(model=model, settings=settings):
+        # 高价档(文档生成)单价。未命中价/输出价未配置(<=0)时该项单独回退基础单价，
+        # 不因为漏配一项就整档失效。
+        premium_miss = float(settings.ai_premium_prompt_cost_per_1m_tokens or 0)
+        premium_completion = float(settings.ai_premium_completion_cost_per_1m_tokens or 0)
+        if premium_miss > 0:
+            miss = premium_miss
+        if premium_completion > 0:
+            completion = premium_completion
+        # 命中价改用本档配置：未配置时清零而不是沿用基础档命中价，
+        # 否则高价档会按便宜档的命中价记账、系统性低估。清零后统一回退到本档未命中价。
+        hit_cfg = float(settings.ai_premium_prompt_cache_hit_cost_per_1m_tokens or 0)
     # 未配置(<=0)时回退按未命中价计，避免误把命中当免费而低估成本。
     hit = hit_cfg if hit_cfg > 0 else miss
     return (miss, hit, completion)
@@ -668,6 +700,7 @@ class AIService:
             completion_tokens=completion_tokens,
             settings=self.settings,
             scenario=scenario,
+            model=model,
             prompt_cache_hit_tokens=prompt_cache_hit_tokens,
         )
         diagnostic_run_id = (os.getenv("RAN_AI_DIAGNOSTIC_RUN_ID") or "").strip() or None

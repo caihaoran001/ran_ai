@@ -132,15 +132,18 @@ async def record_model_usage(
         if prompt_tokens is not None and cache_hit_tokens is not None
         else None
     )
+    finish_reason = _finish_reason(response)
+    # 计费档位按响应实际返回的模型名判断，先于成本计算解析：
+    # 文档模型 fallback 时请求模型与实际模型可能不同，按实际的记才不会记错档。
+    response_model = _response_model(response) or model
     estimated_cost = _estimated_cost_yuan(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         settings=settings,
         scenario=scenario,
+        model=response_model,
         prompt_cache_hit_tokens=cache_hit_tokens,
     )
-    finish_reason = _finish_reason(response)
-    response_model = _response_model(response) or model
     is_diagnostic, diagnostic_run_id = _diagnostic_context()
     try:
         async with asyncio.timeout(_WRITE_TIMEOUT_SECONDS), SessionLocal() as session:
