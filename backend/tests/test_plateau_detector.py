@@ -32,6 +32,7 @@ from app.services.plateau_detector import (
     _evaluate_plateau,
     plateau_followup_done_condition,
     plateau_followup_pending_condition,
+    plateau_followup_resolved_condition,
     scan_plateaus,
 )
 from app.services.reminder_service import ReminderService
@@ -561,6 +562,57 @@ class TestFollowupQueue:
             )
         )
         return set(rows)
+
+    async def _resolved_ids(self, db_session) -> set[int]:
+        rows = await db_session.scalars(
+            select(ServiceCase.id).where(
+                ServiceCase.deleted_at.is_(None),
+                plateau_followup_resolved_condition(),
+            )
+        )
+        return set(rows)
+
+    async def test_weight_moving_again_moves_the_case_to_left_the_queue(self, db_session):
+        """跟进之后体重真的动了：从「已跟进」挪到「已离开名单」，标为体重已动。"""
+
+        today = datetime.now(TZ).date()
+        case = await _make_case(db_session)
+        _add_flat_week(db_session, case, today)
+        await db_session.flush()
+        await scan_plateaus(db_session)
+        case.plateau_followed_up_at = datetime.now(timezone.utc)
+        await db_session.flush()
+        assert case.id in await self._done_ids(db_session)
+        assert case.id not in await self._resolved_ids(db_session)
+
+        # 接着一周稳定掉秤
+        for offset, weight in enumerate(["70.0", "69.6", "69.2", "68.8", "68.4"]):
+            existing = await db_session.scalar(
+                select(Checkin).where(
+                    Checkin.service_case_id == case.id,
+                    Checkin.checkin_date == today - timedelta(days=4 - offset),
+                )
+            )
+            existing.parsed_json = {"weight": weight}
+        await db_session.flush()
+        await scan_plateaus(db_session)
+        await db_session.refresh(case)
+        assert case.plateau_status == STATUS_NORMAL
+        # 三张表互不重叠：同一个人只会出现在其中一处
+        assert case.id not in await self._pending_ids(db_session)
+        assert case.id not in await self._done_ids(db_session)
+        assert case.id in await self._resolved_ids(db_session)
+
+    async def test_never_followed_up_case_stays_out_of_the_left_queue(self, db_session):
+        """没人跟进就自己走出平台期的不进「已离开名单」——那张表回答的是跟进结果。"""
+
+        case = await _make_case(db_session)
+        await db_session.flush()
+        await scan_plateaus(db_session)
+        await db_session.refresh(case)
+        assert case.plateau_status == STATUS_INSUFFICIENT_DATA
+        assert case.plateau_followed_up_at is None
+        assert case.id not in await self._resolved_ids(db_session)
 
     async def test_plateau_case_enters_queue_and_clears_after_followup(self, db_session):
         today = datetime.now(TZ).date()

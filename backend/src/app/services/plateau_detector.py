@@ -69,6 +69,9 @@ REGAIN_MIN_KG = 0.5
 MAX_GAP_DAYS = 2
 # 用户自述的有效期（天）。
 DECLARATION_WINDOW_DAYS = 7
+# 「已离开名单」回看多久：运营想知道自己跟进的人后来怎么样了，两周足够，再长这张表
+# 会一直堆积。
+FOLLOWUP_HISTORY_DAYS = 14
 # 打卡回溯上限：判定只用一周，多读的部分是给单位跳变剔除当锚点用的。
 CHECKIN_LOOKBACK_DAYS = 40
 # 相邻跳变剔除：复用 body_change_stats 的口径（日内波动 + 可能真实变化的和）。
@@ -155,6 +158,24 @@ def plateau_followup_done_condition():
             ServiceCase.plateau_updated_at.is_(None),
             ServiceCase.plateau_followed_up_at >= ServiceCase.plateau_updated_at,
         ),
+    )
+
+
+def plateau_followup_resolved_condition(*, within_days: int = FOLLOWUP_HISTORY_DAYS):
+    """「已离开名单」的口径：跟进过、现在已经不是平台期/反弹了，近两周内跟进的。
+
+    只放跟进过的人：这张表回答的是「我跟的那些人后来怎么样了」。没人跟进就自己走出
+    平台期的不进来，混进来会稀释这张表的意义。
+
+    离开名单有两种原因，前端必须分开显示（合成一个「已解决」会骗人）：体重真的动了
+    才算解决；变回数据不足只是这人不称了、自述也过期了——那反而更该警惕。
+    """
+
+    since = _now_utc() - timedelta(days=within_days)
+    return and_(
+        ServiceCase.plateau_status.not_in((STATUS_PLATEAU, STATUS_REBOUND)),
+        ServiceCase.plateau_followed_up_at.is_not(None),
+        ServiceCase.plateau_followed_up_at >= since,
     )
 
 

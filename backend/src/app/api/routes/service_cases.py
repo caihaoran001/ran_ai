@@ -26,6 +26,7 @@ from app.services.checkin_completion import complete_checkin_day_count
 from app.services.plateau_detector import (
     plateau_followup_done_condition,
     plateau_followup_pending_condition,
+    plateau_followup_resolved_condition,
 )
 from app.services.service_case_queries import (
     active_service_case_condition,
@@ -301,6 +302,8 @@ def _apply_service_case_filter(statement, metric: str | None):
         return statement.where(plateau_followup_pending_condition())
     if metric == "plateau_followup_done":
         return statement.where(plateau_followup_done_condition())
+    if metric == "plateau_followup_resolved":
+        return statement.where(plateau_followup_resolved_condition())
     if metric == "in_service":
         return statement.where(ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
     if metric == "renewal_followup":

@@ -28,6 +28,7 @@ export default async function DocumentsListPage() {
     refundedCases,
     plateauFollowupCases,
     plateauFollowupDoneCases,
+    plateauFollowupResolvedCases,
     pendingDocumentGroups,
     pendingKnowledgeDrafts,
     knowledgeIndexStats,
@@ -40,6 +41,7 @@ export default async function DocumentsListPage() {
     api<ServiceCase[]>("/service-cases?filter=refunded&limit=20").catch(() => []),
     api<ServiceCase[]>("/service-cases?filter=plateau_followup").catch(() => []),
     api<ServiceCase[]>("/service-cases?filter=plateau_followup_done").catch(() => []),
+    api<ServiceCase[]>("/service-cases?filter=plateau_followup_resolved").catch(() => []),
     api<DashboardCasePendingDocuments[]>("/dashboard/pending-documents").catch(() => []),
     api<KnowledgeDraft[]>("/knowledge-drafts?status=pending").catch(() => []),
     api<KnowledgeIndexStats>("/knowledge-base/index/stats").catch(() => ({
@@ -97,7 +99,11 @@ export default async function DocumentsListPage() {
       <DocumentSearchList initialPendingGroups={pendingDocumentGroups} />
 
       {/* 2. 体重状态跟进（平台期/反弹） */}
-      <PlateauFollowupGroup cases={plateauFollowupCases} doneCases={plateauFollowupDoneCases} />
+      <PlateauFollowupGroup
+        cases={plateauFollowupCases}
+        doneCases={plateauFollowupDoneCases}
+        resolvedCases={plateauFollowupResolvedCases}
+      />
 
       {/* 3. 退款审核 */}
       <RefundReviewGroup cases={refundPendingCases} refundedCases={refundedCases} />
@@ -177,9 +183,11 @@ function TabEmpty({ text, tone = "ok" }: { text: string; tone?: "ok" | "muted" }
 function PlateauFollowupGroup({
   cases,
   doneCases,
+  resolvedCases,
 }: {
   cases: ServiceCase[];
   doneCases: ServiceCase[];
+  resolvedCases: ServiceCase[];
 }) {
   // 已经掉头往回涨的排最前：这类看着是"平台期"，实际方向反了，晚跟进一天代价更大。
   const ordered = [...cases].sort(
@@ -275,6 +283,37 @@ function PlateauFollowupGroup({
     );
   });
 
+  // 离开名单有两种原因，绝不能合并成一句「已解决」：体重真动了才是解决；变回数据不足
+  // 只是这人不称了、自述也过期了，看不见而已——跟进完就停秤，多半是要放弃了。
+  const resolvedRows = resolvedCases.map((item) => {
+    const lostSight = item.plateau_status !== "normal";
+    const note = plateauNote(item.plateau_evidence);
+    return (
+      <div
+        key={item.id}
+        className={`flex flex-col gap-2 rounded-lg border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between ${
+          lostSight ? "border-amber-200 bg-amber-50/40" : "border-emerald-200 bg-emerald-50/40"
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+            <span className={`font-semibold ${lostSight ? "text-amber-700" : "text-emerald-700"}`}>
+              {lostSight ? "失去数据" : "体重已动"}
+            </span>
+            <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
+              {item.case_no}
+            </Link>
+            {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
+            <span className="text-slate-400">· 跟进于 {formatChinaShortDateTime(item.plateau_followed_up_at)}</span>
+          </div>
+          <p className="text-break mt-1 text-xs leading-5 text-slate-500">
+            {lostSight ? `跟进后再没有可用体重：${note || "自述已过期"}` : note || "体重已恢复变化"}
+          </p>
+        </div>
+      </div>
+    );
+  });
+
   return (
     <section id="plateau-followups" className="panel overflow-hidden scroll-mt-6">
       <div className="panel-header">
@@ -305,6 +344,26 @@ function PlateauFollowupGroup({
                     体重真的动了才会自动消失；情况升级（掉头回涨、转成反弹）会回到待跟进。
                   </p>
                   {doneCases.length ? doneRows : <TabEmpty text="还没有标记过已跟进的人。" tone="muted" />}
+                </div>
+              ),
+            },
+            {
+              key: "resolved",
+              label: "已离开名单",
+              count: resolvedCases.length,
+              content: (
+                <div className="space-y-2.5">
+                  <p className="text-xs leading-5 text-slate-500">
+                    近两周跟进过、现在已经不在名单里的人。
+                    <span className="font-semibold text-emerald-700">体重已动</span>才是真见效；
+                    <span className="font-semibold text-amber-700">失去数据</span>只是这人不称重了、
+                    自述也过期了——跟进完就停秤，多半是要放弃了，值得再问一句。
+                  </p>
+                  {resolvedCases.length ? (
+                    resolvedRows
+                  ) : (
+                    <TabEmpty text="近两周还没有人跟进后离开名单。" tone="muted" />
+                  )}
                 </div>
               ),
             },
