@@ -13,6 +13,7 @@ import { DocumentSearchList } from "./document-search-list";
 import { ReviewConsoleLiveRefresh } from "./review-console-live-refresh";
 import { RefundReviewActions } from "./refund-review-actions";
 import { PlateauReviewActions } from "./plateau-review-actions";
+import { ReviewTabs } from "./review-tabs";
 import { CheckCircle2, Minus, RefreshCcw, TrendingUp } from "lucide-react";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { PlateauTrendChart } from "@/components/plateau-trend-chart";
@@ -155,27 +156,16 @@ function plateauDeclaredQuote(evidence?: Record<string, unknown> | null): string
   return typeof declared[0] === "string" ? declared[0] : "";
 }
 
-/** 已处理列表统一折叠：默认收起不跟待办抢注意力，但运营点完之后能回来查。 */
-function HandledDisclosure({
-  label,
-  count,
-  emptyHint,
-  children,
-}: {
-  label: string;
-  count: number;
-  emptyHint: string;
-  children: React.ReactNode;
-}) {
+/** 分区里的空状态：待办清空是好事（绿勾），已处理为空只是还没发生过（灰字）。 */
+function TabEmpty({ text, tone = "ok" }: { text: string; tone?: "ok" | "muted" }) {
+  if (tone === "muted") {
+    return <p className="px-1 py-6 text-center text-xs text-slate-500">{text}</p>;
+  }
   return (
-    <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50/60">
-      <summary className="cursor-pointer px-4 py-3 text-xs font-bold text-slate-600 hover:text-slate-900 sm:px-5">
-        {label}（{count}）
-      </summary>
-      <div className="border-t border-slate-200 px-4 py-3 sm:px-5">
-        {count > 0 ? <div className="space-y-2.5">{children}</div> : <p className="text-xs text-slate-500">{emptyHint}</p>}
-      </div>
-    </details>
+    <div className="empty-state">
+      <CheckCircle2 className="mx-auto mb-3 h-9 w-9 text-emerald-500" />
+      <p className="text-sm font-bold">{text}</p>
+    </div>
   );
 }
 
@@ -186,114 +176,111 @@ function PlateauFollowupGroup({
   cases: ServiceCase[];
   doneCases: ServiceCase[];
 }) {
+  const pendingRows = cases.map((item) => {
+    const rebound = item.plateau_status === "rebound";
+    const note = plateauNote(item.plateau_evidence);
+    const quote = plateauDeclaredQuote(item.plateau_evidence);
+    return (
+      <div
+        key={item.id}
+        className={`space-y-3 rounded-xl border bg-white px-4 py-4 transition-colors sm:px-5 ${
+          rebound ? "border-rose-200 hover:bg-rose-50/30" : "border-violet-200 hover:bg-violet-50/30"
+        }`}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+              <span
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-semibold ${
+                  rebound
+                    ? "border-rose-300 bg-rose-100 text-rose-700"
+                    : "border-violet-300 bg-violet-100 text-violet-700"
+                }`}
+              >
+                {rebound ? <TrendingUp className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
+                {rebound ? "体重反弹" : "平台期"}
+              </span>
+              <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
+                {item.case_no}
+              </Link>
+              {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
+              {item.group_id && <span className="text-slate-400">· {item.group_id}</span>}
+            </div>
+            {note && <p className="text-break text-sm leading-relaxed text-slate-700">{note}</p>}
+            {quote && (
+              <p className="text-break text-sm leading-relaxed text-slate-700">
+                <span className="font-bold text-slate-400">客户说：</span>
+                {quote}
+              </p>
+            )}
+          </div>
+          <PlateauReviewActions caseId={item.id} />
+        </div>
+        <PlateauTrendChart evidence={item.plateau_evidence} status={item.plateau_status} compact />
+      </div>
+    );
+  });
+
+  const doneRows = doneCases.map((item) => {
+    const rebound = item.plateau_status === "rebound";
+    const note = plateauNote(item.plateau_evidence);
+    return (
+      <div
+        key={item.id}
+        className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+            <span className={`font-semibold ${rebound ? "text-rose-700" : "text-violet-700"}`}>
+              {rebound ? "体重反弹" : "平台期"}
+            </span>
+            <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
+              {item.case_no}
+            </Link>
+            {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
+            <span className="text-slate-400">· 跟进于 {formatChinaShortDateTime(item.plateau_followed_up_at)}</span>
+          </div>
+          {note && <p className="text-break mt-1 text-xs leading-5 text-slate-500">{note}</p>}
+        </div>
+        <PlateauReviewActions caseId={item.id} variant="undo" />
+      </div>
+    );
+  });
+
   return (
     <section id="plateau-followups" className="panel overflow-hidden scroll-mt-6">
       <div className="panel-header">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="panel-title">体重状态跟进</h2>
-          <span className="status-pill border-violet-200 bg-violet-50 text-violet-700">
-            {cases.length} 单待跟进
-          </span>
-        </div>
+        <h2 className="panel-title">体重状态跟进</h2>
         <p className="panel-subtitle">
-          每天中午扫出的平台期与体重反弹。平台期建议调整方案，反弹更该尽快介入。跟进后点「标记已跟进」，这条会收进下面的「已跟进」；
-          之后如果结论又变了（离开平台期又回来、平台期转成反弹），会自动重新回到待跟进。
+          每天中午扫出的平台期与体重反弹。平台期建议调整方案，反弹更该尽快介入。跟进后点「标记已跟进」，这条会移到「已跟进」页签；
+          之后如果结论又变了（离开平台期又回来、平台期转成反弹），会自动回到待跟进。
         </p>
       </div>
       <div className="panel-body">
-        {cases.length > 0 ? (
-          <div className="space-y-4">
-            {cases.map((item) => {
-              const rebound = item.plateau_status === "rebound";
-              const note = plateauNote(item.plateau_evidence);
-              const quote = plateauDeclaredQuote(item.plateau_evidence);
-              return (
-                <div
-                  key={item.id}
-                  className={`space-y-3 rounded-xl border bg-white px-4 py-4 transition-colors sm:px-5 ${
-                    rebound ? "border-rose-200 hover:bg-rose-50/30" : "border-violet-200 hover:bg-violet-50/30"
-                  }`}
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0 flex-1 space-y-1.5">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-semibold ${
-                            rebound
-                              ? "border-rose-300 bg-rose-100 text-rose-700"
-                              : "border-violet-300 bg-violet-100 text-violet-700"
-                          }`}
-                        >
-                          {rebound ? <TrendingUp className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
-                          {rebound ? "体重反弹" : "平台期"}
-                        </span>
-                        <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
-                          {item.case_no}
-                        </Link>
-                        {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
-                        {item.group_id && <span className="text-slate-400">· {item.group_id}</span>}
-                      </div>
-                      {note && <p className="text-break text-sm leading-relaxed text-slate-700">{note}</p>}
-                      {quote && (
-                        <p className="text-break text-sm leading-relaxed text-slate-700">
-                          <span className="font-bold text-slate-400">客户说：</span>
-                          {quote}
-                        </p>
-                      )}
-                    </div>
-                    <PlateauReviewActions caseId={item.id} />
-                  </div>
-                  <PlateauTrendChart
-                    evidence={item.plateau_evidence}
-                    status={item.plateau_status}
-                    compact
-                  />
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="empty-state">
-            <CheckCircle2 className="mx-auto mb-3 h-9 w-9 text-emerald-500" />
-            <p className="text-sm font-bold">暂无待跟进的平台期或反弹</p>
-          </div>
-        )}
-        <HandledDisclosure
-          label="已跟进"
-          count={doneCases.length}
-          emptyHint="还没有标记过已跟进的人。"
-        >
-          {doneCases.map((item) => {
-            const rebound = item.plateau_status === "rebound";
-            return (
-              <div
-                key={item.id}
-                className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-                    <span className={`font-semibold ${rebound ? "text-rose-700" : "text-violet-700"}`}>
-                      {rebound ? "体重反弹" : "平台期"}
-                    </span>
-                    <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
-                      {item.case_no}
-                    </Link>
-                    {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
-                    <span className="text-slate-400">
-                      · 跟进于 {formatChinaShortDateTime(item.plateau_followed_up_at)}
-                    </span>
-                  </div>
-                  {plateauNote(item.plateau_evidence) && (
-                    <p className="text-break mt-1 text-xs leading-5 text-slate-500">
-                      {plateauNote(item.plateau_evidence)}
-                    </p>
-                  )}
-                </div>
-                <PlateauReviewActions caseId={item.id} variant="undo" />
-              </div>
-            );
-          })}
-        </HandledDisclosure>
+        <ReviewTabs
+          tabs={[
+            {
+              key: "pending",
+              label: "待跟进",
+              count: cases.length,
+              content: cases.length ? (
+                <div className="space-y-4">{pendingRows}</div>
+              ) : (
+                <TabEmpty text="暂无待跟进的平台期或反弹" />
+              ),
+            },
+            {
+              key: "done",
+              label: "已跟进",
+              count: doneCases.length,
+              content: doneCases.length ? (
+                <div className="space-y-2.5">{doneRows}</div>
+              ) : (
+                <TabEmpty text="还没有标记过已跟进的人。" tone="muted" />
+              ),
+            },
+          ]}
+        />
       </div>
     </section>
   );
@@ -306,73 +293,85 @@ function RefundReviewGroup({
   cases: ServiceCase[];
   refundedCases: ServiceCase[];
 }) {
+  const pendingRows = cases.map((item) => {
+    const evidence = latestRefundEvidence(item.refund_intent_flags);
+    return (
+      <div
+        key={item.id}
+        className="flex flex-col gap-3 rounded-xl border border-rose-200 bg-white px-4 py-4 transition-colors hover:bg-rose-50/30 sm:flex-row sm:items-start sm:justify-between sm:px-5"
+      >
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+            <span className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">
+              <RefreshCcw className="h-3.5 w-3.5" />
+              疑似已退款
+            </span>
+            <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
+              {item.case_no}
+            </Link>
+            {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
+            {item.group_id && <span className="text-slate-400">· {item.group_id}</span>}
+          </div>
+          {evidence && (
+            <p className="text-break text-sm leading-relaxed text-slate-700">
+              <span className="font-bold text-slate-400">客户说：</span>
+              {evidence}
+            </p>
+          )}
+        </div>
+        <RefundReviewActions caseId={item.id} />
+      </div>
+    );
+  });
+
+  const refundedRows = refundedCases.map((item) => (
+    <div
+      key={item.id}
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-500"
+    >
+      <span className="font-semibold text-rose-700">已退款</span>
+      <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
+        {item.case_no}
+      </Link>
+      {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
+      {item.group_name && <span className="text-break text-slate-400">· {item.group_name}</span>}
+    </div>
+  ));
+
   return (
     <section id="refund-reviews" className="panel overflow-hidden scroll-mt-6">
       <div className="panel-header">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="panel-title">退款审核</h2>
-          <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
-            {cases.length} 单待确认
-          </span>
-        </div>
-        <p className="panel-subtitle">AI 从群聊识别到客户已发起/申请退款，等待运营核实。确认后将停止打卡提醒、阶段报告等产品类主动推送，群内 AI 聊天仍保留。标为「不是退款」的只清掉候选标记、不留处理记录，所以下面只列已确认退款的。</p>
+        <h2 className="panel-title">退款审核</h2>
+        <p className="panel-subtitle">
+          AI 从群聊识别到客户已发起/申请退款，等待运营核实。确认后将停止打卡提醒、阶段报告等产品类主动推送，群内 AI 聊天仍保留。
+          标为「不是退款」的只清掉候选标记、不留处理记录，所以「已确认退款」只列真正确认过的。
+        </p>
       </div>
       <div className="panel-body">
-        {cases.length > 0 ? (
-          <div className="space-y-4">
-            {cases.map((item) => {
-              const evidence = latestRefundEvidence(item.refund_intent_flags);
-              return (
-                <div key={item.id} className="flex flex-col gap-3 rounded-xl border border-rose-200 bg-white px-4 py-4 transition-colors hover:bg-rose-50/30 sm:flex-row sm:items-start sm:justify-between sm:px-5">
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-                      <span className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">
-                        <RefreshCcw className="h-3.5 w-3.5" />
-                        疑似已退款
-                      </span>
-                      <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
-                        {item.case_no}
-                      </Link>
-                      {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
-                      {item.group_id && <span className="text-slate-400">· {item.group_id}</span>}
-                    </div>
-                    {evidence && (
-                      <p className="text-break text-sm leading-relaxed text-slate-700">
-                        <span className="font-bold text-slate-400">客户说：</span>
-                        {evidence}
-                      </p>
-                    )}
-                  </div>
-                  <RefundReviewActions caseId={item.id} />
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="empty-state">
-            <CheckCircle2 className="mx-auto mb-3 h-9 w-9 text-emerald-500" />
-            <p className="text-sm font-bold">暂无待审核退款</p>
-          </div>
-        )}
-        <HandledDisclosure
-          label="已确认退款（最近 20 单）"
-          count={refundedCases.length}
-          emptyHint="还没有确认过退款的服务单。"
-        >
-          {refundedCases.map((item) => (
-            <div
-              key={item.id}
-              className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-500"
-            >
-              <span className="font-semibold text-rose-700">已退款</span>
-              <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
-                {item.case_no}
-              </Link>
-              {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
-              {item.group_name && <span className="text-break text-slate-400">· {item.group_name}</span>}
-            </div>
-          ))}
-        </HandledDisclosure>
+        <ReviewTabs
+          tabs={[
+            {
+              key: "pending",
+              label: "待确认",
+              count: cases.length,
+              content: cases.length ? (
+                <div className="space-y-4">{pendingRows}</div>
+              ) : (
+                <TabEmpty text="暂无待审核退款" />
+              ),
+            },
+            {
+              key: "refunded",
+              label: "已确认退款",
+              count: refundedCases.length,
+              content: refundedCases.length ? (
+                <div className="space-y-2.5">{refundedRows}</div>
+              ) : (
+                <TabEmpty text="还没有确认过退款的服务单。" tone="muted" />
+              ),
+            },
+          ]}
+        />
       </div>
     </section>
   );
