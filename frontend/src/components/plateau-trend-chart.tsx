@@ -18,14 +18,31 @@ function plateauPoints(evidence: Record<string, unknown>): PlateauPoint[] {
 }
 
 /**
- * 判定窗口内每一次称重的折线 + 后端算出的那条趋势线（虚线）。
+ * 趋势线代表什么，用一句人话说出来——只看一条斜线运营不知道该得出什么结论。
+ *
+ * 波动那类要单独说：净变化确实接近 0，但写"几乎没动"会跟上面"大起大落"的提示条自相矛盾。
+ */
+function trendMeaning(trend: number, status: string, attention: string): string {
+  if (attention === "swing") return "上下波动，一周下来等于没变";
+  if (status === "rebound") return "在明显往上走";
+  if (status === "plateau") return "几乎没动";
+  if (trend <= -0.5) return "在稳定往下走";
+  if (trend >= 0.5) return "略有上浮";
+  return "几乎没动";
+}
+
+/**
+ * 判定窗口内每一次称重（公斤数直接标在点上方）+ 后端算出的那条趋势线（虚线）。
  *
  * 审核控制台的待跟进列表和用户详情页共用这一份：运营在控制台就该看到"怎么走成这个结论的"，
- * 不该为了看一眼走向再跳一趟详情页。compact 是列表里的小图（去掉说明文字和中间刻度）。
+ * 不该为了看一眼走向再跳一趟详情页。
  *
- * 纵轴最少铺开 2 公斤（正好是"算波动"的门槛）：否则 70.0/70.2 这种没动的一周会被自动
- * 缩放放大成剧烈锯齿，看着像大起大落，运营会得出跟结论相反的印象。
- * 横轴按真实日期排，漏称的那天会自然留出空档。
+ * 三个刻意的取舍：
+ * - 不画纵轴刻度：运营要的是"那天多少斤"，不是坐标，所以数值直接写在点上。
+ * - 数值和日期用 HTML 而不是 SVG 文字，SVG 只画两条线。SVG 里的字号会跟着图一起缩放，
+ *   手机上整块缩到四成、字只剩 5px 根本看不清，桌面宽屏又会被放大到跟正文打架。
+ * - 纵轴最少铺开 2 公斤（正好是"算波动"的门槛）：否则 70.0/70.2 这种没动的一周会被自动
+ *   缩放放大成剧烈锯齿，看着像大起大落，运营会得出跟结论相反的印象。
  */
 export function PlateauTrendChart({
   evidence,
@@ -40,20 +57,12 @@ export function PlateauTrendChart({
   const points = plateauPoints(facts);
   if (points.length < 2) return null;
 
-  const width = 640;
-  const height = compact ? 120 : 168;
-  const left = compact ? 38 : 44;
-  const right = 16;
-  const top = compact ? 12 : 16;
-  const bottom = compact ? 24 : 30;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
-
   const days = points.map((point) => Date.parse(`${point.date}T00:00:00+08:00`));
-  const firstDay = days[0];
-  const spanMs = Math.max(days[days.length - 1] - firstDay, 1);
+  const spanMs = Math.max(days[days.length - 1] - days[0], 1);
   const trendStart = typeof facts.trend_start_kg === "number" ? facts.trend_start_kg : null;
   const trendEnd = typeof facts.trend_end_kg === "number" ? facts.trend_end_kg : null;
+  const trend = typeof facts.trend_kg === "number" ? facts.trend_kg : null;
+  const attention = typeof facts.attention === "string" ? facts.attention : "";
 
   const values = points.map((point) => point.kg);
   if (trendStart !== null) values.push(trendStart);
@@ -61,69 +70,86 @@ export function PlateauTrendChart({
   const middle = (Math.min(...values) + Math.max(...values)) / 2;
   const span = Math.max(Math.max(...values) - Math.min(...values) + 0.6, 2);
   const low = middle - span / 2;
-  const x = (index: number) => left + (plotWidth * (days[index] - firstDay)) / spanMs;
-  const y = (value: number) => top + plotHeight * (1 - (value - low) / span);
+  // 两侧留 6% 空白，最边上的数值才不会被面板边缘切掉
+  const x = (index: number) => 6 + (88 * (days[index] - days[0])) / spanMs;
+  const y = (value: number) => 100 * (1 - (value - low) / span);
   const color = LINE_COLOR[status ?? "normal"] ?? LINE_COLOR.normal;
-  const ticks = compact ? [low + span, low] : [low + span, middle, low];
-  const label = points.map((point) => `${point.date} ${point.kg.toFixed(1)}公斤`).join("，");
   const dayLabel = (date: string) => date.slice(5).replace("-", "/");
+  const description = points.map((point) => `${point.date} ${point.kg.toFixed(1)}公斤`).join("，");
 
   return (
-    <div
-      className={
-        compact
-          ? "rounded-lg border border-slate-200 bg-slate-50/70 px-2 py-2"
-          : "border-t border-slate-200 px-3 py-4 sm:px-5"
-      }
-    >
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" className="h-auto w-full" aria-label={`窗口内称重：${label}`}>
-        {ticks.map((tick, index) => (
-          <g key={index}>
-            <line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} stroke="#e2e8f0" strokeWidth="1" />
-            <text x={left - 8} y={y(tick) + 4} textAnchor="end" fontSize="11" fill="#94a3b8">
-              {tick.toFixed(1)}
-            </text>
-          </g>
-        ))}
-        {trendStart !== null && trendEnd !== null && (
-          <line
-            x1={x(0)}
-            y1={y(trendStart)}
-            x2={x(points.length - 1)}
-            y2={y(trendEnd)}
-            stroke={color}
-            strokeWidth="2.5"
-            strokeDasharray="7 5"
-            strokeLinecap="round"
-          />
-        )}
-        <polyline
-          points={points.map((point, index) => `${x(index)},${y(point.kg)}`).join(" ")}
-          fill="none"
-          stroke="#94a3b8"
-          strokeWidth="2"
-          strokeLinejoin="round"
-        />
+    <div className={compact ? "" : "border-t border-slate-200 px-4 py-4 sm:px-5"}>
+      <div className="relative h-[72px] w-full" role="img" aria-label={`窗口内称重：${description}`}>
         {points.map((point, index) => (
-          <g key={point.date}>
-            <circle cx={x(index)} cy={y(point.kg)} r={compact ? 3.5 : 4.5} fill="white" stroke="#64748b" strokeWidth="2.5" />
-            {(points.length <= 7 || index === 0 || index === points.length - 1) && (
-              <text x={x(index)} y={height - 8} textAnchor="middle" fontSize="11" fill="#64748b">
-                {dayLabel(point.date)}
-              </text>
-            )}
-          </g>
-        ))}
-      </svg>
-      {!compact && (
-        <p className="mt-1 px-1 text-xs text-slate-500">
-          灰线是每天实际称重，
-          <span className="font-semibold" style={{ color }}>
-            虚线
+          <span
+            key={`value-${point.date}`}
+            className="tabular absolute top-0 -translate-x-1/2 text-[11px] font-bold leading-none text-slate-900"
+            style={{ left: `${x(index)}%` }}
+          >
+            {point.kg.toFixed(1)}
           </span>
-          是判定用的趋势线；纵轴至少铺开 2 公斤，所以真没动的一周看起来就是平的。
-        </p>
-      )}
+        ))}
+
+        <div className="absolute inset-x-0 top-[18px] h-[34px]">
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full" aria-hidden="true">
+            {trendStart !== null && trendEnd !== null && (
+              <line
+                x1={x(0)}
+                y1={y(trendStart)}
+                x2={x(points.length - 1)}
+                y2={y(trendEnd)}
+                stroke={color}
+                strokeWidth="2"
+                strokeDasharray="6 4"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+            <polyline
+              points={points.map((point, index) => `${x(index)},${y(point.kg)}`).join(" ")}
+              fill="none"
+              stroke="#cbd5e1"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+          {points.map((point, index) => (
+            <span
+              key={`dot-${point.date}`}
+              className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-500"
+              style={{ left: `${x(index)}%`, top: `${y(point.kg)}%` }}
+            />
+          ))}
+        </div>
+
+        {points.map((point, index) => (
+          <span
+            key={`date-${point.date}`}
+            className="tabular absolute bottom-0 -translate-x-1/2 text-[11px] leading-none text-slate-400"
+            style={{ left: `${x(index)}%` }}
+          >
+            {dayLabel(point.date)}
+          </span>
+        ))}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-0 w-4 border-t-[1.5px] border-slate-300" />
+          每天实际称重
+        </span>
+        {trend !== null && (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-0 w-4 border-t-2 border-dashed" style={{ borderColor: color }} />
+            <span>
+              判定用的趋势线：这一周
+              <span className="font-semibold text-slate-700">{trendMeaning(trend, status ?? "", attention)}</span>
+              （{trend > 0 ? `+${trend.toFixed(2)}` : trend.toFixed(2)} 公斤）
+            </span>
+          </span>
+        )}
+      </div>
     </div>
   );
 }
