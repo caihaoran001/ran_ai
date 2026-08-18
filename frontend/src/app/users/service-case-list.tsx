@@ -385,10 +385,12 @@ function OpeningIndicator() {
 
 function plateauBasisTitle(evidence?: Record<string, unknown> | null): string {
   const basis = Array.isArray(evidence?.basis) ? evidence.basis : [];
+  const note = typeof evidence?.note === "string" ? evidence.note : "";
   if (basis.length > 0) {
-    return `依据：${basis
-      .map((item) => (item === "statistical" ? "近7天体重无变化" : "用户自述体重卡住"))
-      .join("、")}`;
+    const reason = basis
+      .map((item) => (item === "statistical" ? "体重实测无变化" : "用户自述体重卡住"))
+      .join("、");
+    return note ? `依据：${reason}（${note}）` : `依据：${reason}`;
   }
-  return "近 7 天体重无变化或用户自述体重卡住";
+  return note || "最后一次称重往前一周体重无变化，或用户自述体重卡住";
 }

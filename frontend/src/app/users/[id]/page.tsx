@@ -168,42 +168,65 @@ const PLATEAU_STATUS_META: Record<string, { label: string; pill: string }> = {
   normal: { label: "正常", pill: "pill-ok" },
 };
 
+/** 最后一次称重距今多久——判定窗口锚在它上面，运营开口前需要知道证据截止到哪天。 */
+function lastWeightHint(evidence: Record<string, unknown>): string {
+  const day = text(evidence.last_weight_date);
+  if (!day) return "暂无体重打卡";
+  const days = typeof evidence.days_since_last_weight === "number" ? evidence.days_since_last_weight : null;
+  const freshness = days === null ? "" : days <= 0 ? "（今天）" : days === 1 ? "（昨天）" : `（${days} 天前）`;
+  return `最后一次称重 ${day}${freshness}`;
+}
+
 function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
   const status = serviceCase.plateau_status;
-  if (!status || status === "normal") return null;
-  const meta = PLATEAU_STATUS_META[status] ?? { label: "待判定", pill: "pill-neutral" };
   const evidence = recordValue(serviceCase.plateau_evidence);
+  const conflicts = evidence.declaration_conflicts_data === true;
+  // 正常且没有"自述与数据不符"时不占版面；有冲突时要露出来，这类人多半是期望落差。
+  if (!status || (status === "normal" && !conflicts)) return null;
+  const meta = PLATEAU_STATUS_META[status] ?? { label: "待判定", pill: "pill-neutral" };
   const basis = Array.isArray(evidence.basis) ? evidence.basis : [];
   const basisText = basis
-    .map((item) => (item === "statistical" ? "近 7 天体重无变化" : "用户自述体重卡住"))
+    .map((item) => (item === "statistical" ? "体重实测无变化" : "用户自述体重卡住"))
     .join("、");
   const declared = Array.isArray(evidence.declared_evidence) ? evidence.declared_evidence : [];
   const firstWeight = text(evidence.first_weight_kg);
   const lastWeight = text(evidence.last_weight_kg);
   const delta = typeof evidence.delta_kg === "number" ? String(evidence.delta_kg) : "";
-  const validRows = typeof evidence.valid_weight_rows === "number" ? String(evidence.valid_weight_rows) : "";
+  const windowStart = text(evidence.window_start);
+  const windowEnd = text(evidence.window_end);
+  const note = text(evidence.note);
 
   return (
     <section className="panel overflow-hidden" aria-labelledby="plateau-heading">
       <div className="panel-header-clean flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 id="plateau-heading" className="panel-title">平台期识别</h2>
-          <p className="panel-subtitle">近 7 天体重无动静，或用户主动说体重卡住。建议及时调整方案。</p>
+          <p className="panel-subtitle">
+            以最后一次称重往前一周判断：体重没动静，或体重数据不足时用户自述卡住。
+          </p>
         </div>
         <span className={`status-pill ${meta.pill}`}>{meta.label}</span>
       </div>
+      {conflicts && (
+        <p className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm font-medium text-amber-800 sm:px-6">
+          用户说体重卡住，但这一周实测在变化——结论以数据为准，沟通时注意可能是对减重速度的预期落差。
+        </p>
+      )}
       <div className="grid divide-y divide-slate-200 border-t border-slate-200 text-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         <div className="min-w-0 px-5 py-4 sm:px-6">
           <dt className="text-xs font-bold text-slate-500">判定依据</dt>
           <dd className="mt-1 text-sm font-semibold leading-6 text-slate-900">{basisText || "—"}</dd>
-          {validRows && <p className="mt-1 text-xs text-slate-500">窗口内有效体重记录 {validRows} 条</p>}
+          {note && <p className="text-break mt-1 text-xs text-slate-500">{note}</p>}
         </div>
         <div className="min-w-0 px-5 py-4 sm:px-6">
           <dt className="text-xs font-bold text-slate-500">体重变化</dt>
           <dd className="text-break mt-1 text-sm font-semibold leading-6 text-slate-900">
             {firstWeight && lastWeight && delta ? `${firstWeight} → ${lastWeight} kg（${delta} kg）` : "—"}
           </dd>
-          <p className="mt-1 text-xs text-slate-500">近 7 天窗口内首尾体重</p>
+          <p className="text-break mt-1 text-xs text-slate-500">
+            {windowStart && windowEnd ? `判定窗口 ${windowStart} ~ ${windowEnd}` : "无判定窗口"}
+          </p>
+          <p className="text-break mt-1 text-xs text-slate-500">{lastWeightHint(evidence)}</p>
         </div>
         <div className="min-w-0 px-5 py-4 sm:px-6">
           <dt className="text-xs font-bold text-slate-500">用户自述</dt>
