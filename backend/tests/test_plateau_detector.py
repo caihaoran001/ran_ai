@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from app.core.config import Settings
 from app.models.checkin import Checkin
 from app.models.outcome import OutcomeEvent
 from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
@@ -22,10 +23,12 @@ from app.services.plateau_detector import (
     STATUS_INSUFFICIENT_DATA,
     STATUS_NORMAL,
     STATUS_PLATEAU,
+    ScanStats,
     WeightOutcomeSignal,
     _evaluate_plateau,
     scan_plateaus,
 )
+from app.services.reminder_service import ReminderService
 
 TZ = ZoneInfo("Asia/Shanghai")
 TODAY = date(2026, 8, 17)
@@ -377,3 +380,45 @@ class TestScanPlateaus:
         await db_session.refresh(deleted_case)
         assert deleted_case.plateau_status == STATUS_NORMAL
         assert deleted_case.plateau_evidence is None
+
+
+class TestPlateauScheduling:
+    """天闸：每天到点扫一次，当天不重复；重启不会让判定时刻漂移。"""
+
+    @staticmethod
+    def _service(monkeypatch, calls: list[datetime], **overrides) -> ReminderService:
+        async def fake_scan(_session):
+            calls.append(datetime.now(timezone.utc))
+            return ScanStats(scanned=0, plateau=0, insufficient=0, declared=0, changed=0)
+
+        monkeypatch.setattr("app.services.plateau_detector.scan_plateaus", fake_scan)
+        options = {
+            "PLATEAU_DETECTION_ENABLED": True,
+            "PLATEAU_CHECK_HOUR": 12,
+            "REMINDER_TIMEZONE": "Asia/Shanghai",
+            **overrides,
+        }
+        return ReminderService(Settings(**options))
+
+    async def test_scans_once_per_day_after_configured_hour(self, monkeypatch):
+        calls: list[datetime] = []
+        service = self._service(monkeypatch, calls)
+        china = timezone(timedelta(hours=8))
+
+        await service.check_plateau_once(datetime(2026, 8, 17, 11, 59, tzinfo=china))
+        assert calls == []
+
+        await service.check_plateau_once(datetime(2026, 8, 17, 12, 1, tzinfo=china))
+        await service.check_plateau_once(datetime(2026, 8, 17, 20, 0, tzinfo=china))
+        assert len(calls) == 1
+
+        await service.check_plateau_once(datetime(2026, 8, 18, 12, 5, tzinfo=china))
+        assert len(calls) == 2
+
+    async def test_disabled_switch_skips_scan(self, monkeypatch):
+        calls: list[datetime] = []
+        service = self._service(monkeypatch, calls, PLATEAU_DETECTION_ENABLED=False)
+
+        await service.check_plateau_once(datetime(2026, 8, 17, 13, 0, tzinfo=timezone(timedelta(hours=8))))
+
+        assert calls == []

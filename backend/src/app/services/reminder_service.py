@@ -107,7 +107,7 @@ class ReminderService:
         self._last_image_cache_cleanup: datetime | None = None
         self._last_population_insight_check_date: date | None = None
         self._last_balance_check_at: float | None = None  # clock.monotonic()，余额检查间隔闸
-        self._last_plateau_check_at: float | None = None  # clock.monotonic()，平台期扫描间隔闸
+        self._last_plateau_check_date: date | None = None  # 平台期扫描天闸（北京自然日）
         # 阶段报告生成时间配置缓存（5 分钟 TTL，避免白天每 30s 都查一次 DB）
         self._stage_report_schedule: tuple[int, int] | None = None
         self._stage_report_schedule_at: datetime | None = None
@@ -203,32 +203,37 @@ class ReminderService:
         if stats.get("ran"):
             logger.info("Archivist scan stats=%s", stats)
 
-    async def check_plateau_once(self) -> None:
-        """平台期检测：7 天窗口体重无动静或用户自述「体重卡住」→ 写 service_cases。
+    async def check_plateau_once(self, now: datetime | None = None) -> None:
+        """平台期检测：最后一次称重往前 7 天没动静或用户自述「体重卡住」→ 写 service_cases。
 
-        体重数据一天最多变化几次，不需要每 30s 主循环都扫全量服务单，
-        按间隔闸限流（默认每 6 小时一次）即可。
+        每天固定钟点扫一次全量服务单。用北京自然日的天闸而不是间隔计时：间隔计时在
+        进程重启时清零，判定时刻会一天天漂移；天闸重启后当天不会重复跑。
         """
-        interval = float(getattr(self.settings, "plateau_check_interval_seconds", 0) or 0)
-        now = clock.monotonic()
-        if (
-            interval > 0
-            and self._last_plateau_check_at is not None
-            and now - self._last_plateau_check_at < interval
-        ):
+        if not self.settings.plateau_detection_enabled:
             return
-        self._last_plateau_check_at = now
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        current = now or datetime.now(tz)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=tz)
+        else:
+            current = current.astimezone(tz)
+        if current.hour < self.settings.plateau_check_hour:
+            return
+        if self._last_plateau_check_date == current.date():
+            return
+        self._last_plateau_check_date = current.date()
         from app.services.plateau_detector import scan_plateaus
 
         async with SessionLocal() as session:
             stats = await scan_plateaus(session)
         if stats.scanned:
             logger.info(
-                "Plateau scan scanned=%d plateau=%d insufficient=%d declared=%d",
+                "Plateau scan scanned=%d plateau=%d insufficient=%d declared=%d changed=%d",
                 stats.scanned,
                 stats.plateau,
                 stats.insufficient,
                 stats.declared,
+                stats.changed,
             )
 
     async def check_low_balance_once(self) -> None:
