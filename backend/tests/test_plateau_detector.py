@@ -259,6 +259,13 @@ class TestDataTooThin:
         assert result.status == STATUS_INSUFFICIENT_DATA
         assert result.evidence["days_since_last_weight"] == 3
         assert "已连续三天没有体重" in result.evidence["note"]
+        # 前端据此不画走向图：这批数字描述的已经不是"现在"
+        assert result.evidence["weights_expired"] is True
+
+    def test_current_weights_are_not_marked_expired(self):
+        rows = _daily(date(2026, 8, 11), ["70.0", "70.2", "69.9", "70.1", "70.0", "70.2", "70.1"])
+        result = _evaluate(rows)
+        assert result.evidence["weights_expired"] is False
 
     def test_gap_inside_window_blocks_judgment(self):
         rows = [

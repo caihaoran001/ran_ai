@@ -73,6 +73,19 @@ export function PlateauTrendChart({
 }) {
   const facts = evidence && typeof evidence === "object" ? (evidence as Record<string, unknown>) : {};
   const points = plateauPoints(facts);
+  // 停称太久就不画图：窗口锚在最后一次称重上，停称一个月的人画出来的是一个月前那一周，
+  // 图上只有月日、又占半张卡片，配着今天的结论看着像刚发生的。历史体重打卡栏里查得到，
+  // 这里再放一份只会误导。「太久」由后端判定（同一条线：超过它判定也不采信这批数据）。
+  // 停称多久、最后一次是哪天，判定说明那句里已经写了，这里不重复，只说图为什么不在。
+  if (facts.weights_expired === true) {
+    return (
+      <div className={compact ? "" : "border-t border-slate-200 px-4 py-4 sm:px-5"}>
+        <p className="text-xs leading-relaxed text-slate-500">
+          最近一周没有体重记录，不画走向图；历史体重请看打卡记录。
+        </p>
+      </div>
+    );
+  }
   if (points.length < 2) return null;
 
   const days = points.map((point) => Date.parse(`${point.date}T00:00:00+08:00`));

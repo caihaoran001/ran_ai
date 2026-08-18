@@ -372,6 +372,9 @@ def _evaluate_plateau(
         "last_weight_date": anchor_day.isoformat() if anchor_day else None,
         "days_since_last_weight": days_since_last,
         "valid_weight_rows": weight_days,
+        # 最后一次称重已经太久远，这批数字描述的不是"现在"。前端据此不画走向图：
+        # 停称一个月的人，图上画的是一个月前那一周，配着今天的结论，看着像最近发生的。
+        "weights_expired": expired,
         "max_gap_days": max_gap_days,
         "first_weight_kg": first_weight,
         "last_weight_kg": last_weight,
