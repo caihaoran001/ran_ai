@@ -203,6 +203,30 @@ class TestDataTooThin:
         assert result.evidence["max_gap_days"] == 3
         assert "连续 3 天没有体重" in result.evidence["note"]
 
+    def test_fresh_starter_is_told_span_is_short_not_broken(self):
+        """刚开始称重、天天全勤但跨度不够 —— 不能说成「记录断档」。
+
+        线上真实案例：8/15 起连称四天一次没落，系统却写「连续 3 天没有体重」，
+        运营照着去问「你怎么好几天没称」，问的是一个全勤的人。
+        """
+
+        rows = _daily(date(2026, 8, 14), ["68.7", "68.9", "68.3", "68.5"])
+        result = _evaluate(rows)  # 窗口 8/11~8/17，开头三天还没开始称
+        assert result.status == STATUS_INSUFFICIENT_DATA
+        assert result.evidence["valid_weight_rows"] == 4
+        assert result.evidence["max_gap_days"] == 3
+        note = result.evidence["note"]
+        assert "2026-08-14 起连续 4 天有体重" in note
+        assert "还差 1 天" in note
+        assert "没有体重" not in note
+
+    def test_fresh_starter_with_declaration_keeps_the_same_reason(self):
+        rows = _daily(date(2026, 8, 14), ["68.7", "68.9", "68.3", "68.5"])
+        result = _evaluate(rows, signals=[_signal(date(2026, 8, 17), "unchanged", "卡住了")])
+        assert result.status == STATUS_PLATEAU
+        assert result.evidence["note"].startswith("用户口述平台期；")
+        assert "称重跨度还差 1 天" in result.evidence["note"]
+
     def test_two_weigh_ins_ten_days_apart_is_insufficient(self):
         rows = [_checkin(date(2026, 8, 7), "70.0"), _checkin(date(2026, 8, 17), "70.1")]
         result = _evaluate(rows)

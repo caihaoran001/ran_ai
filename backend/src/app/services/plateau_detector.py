@@ -265,7 +265,9 @@ def _evaluate_plateau(
             (day, value) for day, value in usable if window_start <= day <= anchor_day
         ]
     weight_days = len({day for day, _ in in_window})
-    max_gap_days = _max_gap_days(in_window, window_start)
+    first_day = in_window[0][0] if in_window else None
+    gaps = _gap_breakdown(in_window, window_start)
+    max_gap_days = max(gaps) if gaps is not None else None
 
     # 最后一次称重距今超过容忍天数 → 数据描述的已经不是「现在」，结论作废。
     expired = days_since_last is not None and days_since_last > MAX_GAP_DAYS
@@ -333,18 +335,20 @@ def _evaluate_plateau(
         basis.append("user_declared")
         note = "用户口述平台期；" + _data_shortfall_note(
             anchor_day=anchor_day,
+            first_day=first_day,
             days_since_last=days_since_last,
             weight_days=weight_days,
-            max_gap_days=max_gap_days,
+            gaps=gaps,
             expired=expired,
         )
     else:
         status = STATUS_INSUFFICIENT_DATA
         note = _data_shortfall_note(
             anchor_day=anchor_day,
+            first_day=first_day,
             days_since_last=days_since_last,
             weight_days=weight_days,
-            max_gap_days=max_gap_days,
+            gaps=gaps,
             expired=expired,
         )
 
@@ -390,9 +394,10 @@ def _evaluate_plateau(
 def _data_shortfall_note(
     *,
     anchor_day: date | None,
+    first_day: date | None,
     days_since_last: int | None,
     weight_days: int,
-    max_gap_days: int | None,
+    gaps: tuple[int, int] | None,
     expired: bool,
 ) -> str:
     """说清楚这次为什么不能用体重数据下结论，供运营在详情页核对。"""
@@ -409,8 +414,19 @@ def _data_shortfall_note(
             f"近 {PLATEAU_WINDOW_DAYS} 天仅 {weight_days} 天有有效体重"
             f"（需至少 {MIN_WEIGHT_DAYS_IN_WINDOW} 天）"
         )
+    leading_gap, internal_gap = gaps if gaps is not None else (0, 0)
+    # 只有开头空着、中间没断：这人是刚开始称重，跨度还不够长，不是记录有洞。
+    if internal_gap <= MAX_GAP_DAYS < leading_gap and first_day is not None:
+        # 判定要求首次称重落在窗口前 MAX_GAP_DAYS 天内，等价于「首末至少相隔这么多天」。
+        required_span = PLATEAU_WINDOW_DAYS - 1 - MAX_GAP_DAYS
+        missing = max(required_span - (anchor_day - first_day).days, 1)
+        counted = "连续" if internal_gap == 0 else "累计"
+        return (
+            f"{first_day.isoformat()} 起{counted} {weight_days} 天有体重，"
+            f"称重跨度还差 {missing} 天才够判断（不是记录断档）"
+        )
     return (
-        f"近 {PLATEAU_WINDOW_DAYS} 天内出现连续 {max_gap_days} 天没有体重"
+        f"近 {PLATEAU_WINDOW_DAYS} 天内出现连续 {internal_gap} 天没有体重"
         f"（超过 {MAX_GAP_DAYS} 天）"
     )
 
@@ -466,22 +482,25 @@ def _usable_weights(
     return usable
 
 
-def _max_gap_days(
+def _gap_breakdown(
     in_window: list[tuple[date, float]],
     window_start: date | None,
-) -> int | None:
-    """窗口内最长的「连续几天没有体重」。
+) -> tuple[int, int] | None:
+    """拆成（窗口开头空了几天, 两次称重之间最长空了几天）。
 
-    窗口末尾就是最后一次称重当天，所以只需要看开头那段和中间各段。
+    两者都会让数据不够用，但对运营意味着完全不同的事：开头空着通常是这人刚开始称重、
+    跨度还不够长，中间空着才是记录断档。写给运营看的理由必须分清楚，否则会拿"你怎么
+    好几天没称"去问一个天天全勤的人。判定本身仍只看两者中较大的那个。
     """
 
     if not in_window or window_start is None:
         return None
     days = sorted({day for day, _ in in_window})
-    gap = (days[0] - window_start).days
+    leading = (days[0] - window_start).days
+    internal = 0
     for previous, current in zip(days, days[1:]):
-        gap = max(gap, (current - previous).days - 1)
-    return gap
+        internal = max(internal, (current - previous).days - 1)
+    return leading, internal
 
 
 def _resolve_user_declaration(
