@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { LoaderCircle } from "lucide-react";
+import { CheckCheck, LoaderCircle, RotateCcw } from "lucide-react";
 import { API_BASE } from "@/lib/api";
 
 /**
@@ -49,15 +49,18 @@ export function PlateauReviewActions({
     }
   }
 
+  // 待办里这是这一行唯一要做的事，用主按钮；已跟进里的撤销是补救动作，保持安静。
+  const Icon = pending ? LoaderCircle : undo ? RotateCcw : CheckCheck;
+
   return (
     <button
       type="button"
       onClick={markFollowedUp}
       disabled={pending}
       aria-busy={pending || undefined}
-      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+      className={`${undo ? "admin-button-secondary" : "btn-primary"} shrink-0 whitespace-nowrap`}
     >
-      {pending && <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
+      <Icon className={`h-4 w-4 ${pending ? "animate-spin motion-reduce:animate-none" : ""}`} />
       {pending ? "处理中…" : undo ? "撤销跟进" : "标记已跟进"}
     </button>
   );
