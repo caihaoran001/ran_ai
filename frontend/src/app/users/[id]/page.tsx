@@ -188,8 +188,10 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
   const status = serviceCase.plateau_status;
   const evidence = recordValue(serviceCase.plateau_evidence);
   const conflicts = evidence.declaration_conflicts_data === true;
-  // 正常且没有"自述与数据不符"时不占版面；有冲突时要露出来，这类人多半是期望落差。
-  if (!status || (status === "normal" && !conflicts)) return null;
+  const attention = text(evidence.attention);
+  // 判成"正常"时通常不占版面，但两种情况要露出来：自述与数据不符（多半是期望落差），
+  // 以及后端标了 attention 的波动/轻微上浮——否则这些人既不进名单、详情页也看不到。
+  if (!status || (status === "normal" && !conflicts && !attention)) return null;
   const meta = PLATEAU_STATUS_META[status] ?? { label: "待判定", pill: "pill-neutral" };
   const basis = Array.isArray(evidence.basis) ? evidence.basis : [];
   const basisText = basis
@@ -215,6 +217,17 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
         </div>
         <span className={`status-pill ${meta.pill}`}>{meta.label}</span>
       </div>
+      {attention === "swing" && (
+        <p className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm font-medium text-amber-800 sm:px-6">
+          这一周体重大起大落（最高最低相差 {text(evidence.spread_kg)} kg），不是卡住而是波动，
+          建议先问饮食和执行的稳定性，别按平台期调方案。
+        </p>
+      )}
+      {attention === "slight_gain" && (
+        <p className="border-t border-slate-200 bg-slate-50 px-5 py-3 text-sm font-medium text-slate-700 sm:px-6">
+          这一周体重略有上浮（{text(evidence.trend_kg)} kg），还没到反弹门槛，先观察下一次称重。
+        </p>
+      )}
       {conflicts && (
         <p className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm font-medium text-amber-800 sm:px-6">
           用户说体重卡住，但这一周实测在变化——结论以数据为准，沟通时注意可能是对减重速度的预期落差。

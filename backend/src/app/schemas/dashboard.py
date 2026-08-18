@@ -371,6 +371,8 @@ class DashboardSummary(BaseModel):
     pending_documents: int
     new_users_today: int = 0
     risk_users: int = 0
+    plateau_users: int = 0
+    rebound_users: int = 0
     handoff_events_today: int = 0
     unfollowed_users: int = 0
     renewal_followup_users: int = 0

@@ -78,6 +78,7 @@ from app.services.health_taxonomy import health_profile_dimension_labels
 # 成效表收全方向；"改善率"类指标只能取正向，复用写入侧的同一份定义避免口径漂移。
 from app.services.outcome_engine import POSITIVE_EVENT_TYPES as POSITIVE_OUTCOME_EVENT_TYPES
 from app.services.outcome_trends import build_outcome_trend_summary
+from app.services.plateau_detector import STATUS_PLATEAU, STATUS_REBOUND
 from app.services.questionnaire_template import get_active_questionnaire_fields
 from app.services.population_scope import select_population_service_cases
 from app.services.population_insight import (
@@ -242,6 +243,19 @@ async def dashboard_summary(
             ServiceCase.risk_level == "high",
         )
     )
+    # 平台期/体重反弹：plateau_detector 每天定点写入的持续状态，这里只做计数。
+    plateau_users = await session.scalar(
+        select(func.count(ServiceCase.id)).where(
+            _stats_case_condition(),
+            ServiceCase.plateau_status == STATUS_PLATEAU,
+        )
+    )
+    rebound_users = await session.scalar(
+        select(func.count(ServiceCase.id)).where(
+            _stats_case_condition(),
+            ServiceCase.plateau_status == STATUS_REBOUND,
+        )
+    )
     # 今日转人工事件数：同一用户多次触发算多条；这不是服务单上的持续状态。
     # 口径与「今日用户消息/今日有打卡」一致，每日自然滚动，无需人工清零机制。
     # 判定信号：入站用户消息的 analysis_json.requires_human_intervention（由 analyze_message_insight 写入，
@@ -346,6 +360,8 @@ async def dashboard_summary(
         pending_documents=pending_documents or 0,
         new_users_today=new_users_today or 0,
         risk_users=risk_users or 0,
+        plateau_users=plateau_users or 0,
+        rebound_users=rebound_users or 0,
         handoff_events_today=handoff_events_today or 0,
         unfollowed_users=unfollowed_users or 0,
         renewal_followup_users=renewal_followup_users or 0,

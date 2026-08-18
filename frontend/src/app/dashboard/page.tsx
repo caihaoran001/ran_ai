@@ -13,11 +13,13 @@ import {
   HeartHandshake,
   LifeBuoy,
   MessageCircle,
+  Minus,
   Plus,
   RefreshCcw,
   ShoppingCart,
   ShieldAlert,
   TrendingDown,
+  TrendingUp,
   UserCheck,
 } from "lucide-react";
 
@@ -31,6 +33,8 @@ type Summary = {
   pending_documents: number;
   new_users_today: number;
   risk_users: number;
+  plateau_users?: number;
+  rebound_users?: number;
   handoff_events_today?: number;
   unfollowed_users: number;
   renewal_followup_users?: number;
@@ -97,6 +101,8 @@ export default async function DashboardPage() {
     pending_documents: 0,
     new_users_today: 0,
     risk_users: 0,
+    plateau_users: 0,
+    rebound_users: 0,
     handoff_events_today: 0,
     unfollowed_users: 0,
     renewal_followup_users: 0,
@@ -170,6 +176,8 @@ export default async function DashboardPage() {
         <StatCard label="退款/退出意向" value={summary.refund_intent_users ?? 0} icon={RefreshCcw} color="red" href="/dashboard/refund-intents" description="用户聊天中出现退款、退费、不继续、退出、退群等表达；点击查看触发原话。" />
         <StatCard label="已退款待确认" value={summary.refund_pending_users ?? 0} icon={RefreshCcw} color="red" href="/dashboard/refund-pending" description="AI 识别到客户可能已完成退款、等待运营确认；确认后停止打卡/阶段报告等主动推送，群聊仍保留。" />
         <StatCard label="今日情绪预警" value={summary.emotional_users_today ?? 0} icon={LifeBuoy} color="red" href="/dashboard/emotional-alerts" description="今天入站消息中，经语义识别出现明显负面情绪、执行挫败或心理风险线索的用户数。" />
+        <StatCard label="平台期" value={summary.plateau_users ?? 0} icon={Minus} color="orange" href="/users?filter=plateau" description="最后一次称重往前一周体重没动静（数据不足时看用户是否自述卡住）；点击查看名单，详情页有判定依据。" />
+        <StatCard label="体重反弹" value={summary.rebound_users ?? 0} icon={TrendingUp} color="red" href="/users?filter=rebound" description="最后一次称重往前一周的体重趋势上涨超过 1 公斤，比平台期更该尽快介入。" />
       </DashboardMetricSection>
 
       <DashboardMetricSection title="今日运营节奏" description="用于判断当天服务触达、审核和跟进压力。">

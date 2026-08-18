@@ -120,6 +120,7 @@ class TestWeightDataDecides:
         assert result.status == STATUS_NORMAL
         assert result.evidence["delta_kg"] == 0.0  # 首尾相减看不出来
         assert result.evidence["spread_kg"] == 2.2
+        assert result.evidence["attention"] == "swing"
         assert "属波动而非平台期" in result.evidence["note"]
 
     def test_steady_gain_is_rebound(self):
@@ -139,6 +140,15 @@ class TestWeightDataDecides:
         assert result.status == STATUS_NORMAL
         assert result.evidence["delta_kg"] == 1.2  # 首尾相减会误报反弹
         assert result.evidence["trend_kg"] == 0.77
+        # 结论是正常，但详情页仍要露出来提醒观察下一次称重
+        assert result.evidence["attention"] == "slight_gain"
+        assert "略有上浮但未到反弹门槛" in result.evidence["note"]
+
+    def test_steady_loss_has_no_attention_flag(self):
+        rows = _daily(date(2026, 8, 11), ["70.0", "69.8", "69.6", "69.4", "69.2", "68.9", "68.5"])
+        result = _evaluate(rows)
+        assert result.status == STATUS_NORMAL
+        assert result.evidence["attention"] is None
 
     def test_rebound_with_declaration_records_conflict(self):
         rows = _daily(

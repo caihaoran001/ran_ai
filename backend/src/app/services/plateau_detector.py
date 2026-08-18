@@ -248,6 +248,9 @@ def _evaluate_plateau(
 
     basis: list[str] = []
     conflicts_data = False
+    # 结论是「正常」但仍有话要说的两种情况，供详情页决定要不要露出这块面板：
+    # swing=一周大起大落（是波动不是卡住）、slight_gain=略有上浮但未到反弹门槛。
+    attention: str | None = None
     delta_kg: float | None = None
     trend_kg: float | None = None
     spread_kg: float | None = None
@@ -274,10 +277,14 @@ def _evaluate_plateau(
         elif abs(trend_kg) <= PLATEAU_MAX_DELTA_KG:
             # 趋势是平的但一周里大起大落：这是波动，不是卡住。
             status = STATUS_NORMAL
+            attention = "swing"
             note = f"{span} 趋势 {trend_kg:+} kg，但最高最低相差 {spread_kg} kg，属波动而非平台期"
         else:
             status = STATUS_NORMAL
             note = f"{span} 趋势 {trend_kg:+} kg"
+            if trend_kg > PLATEAU_MAX_DELTA_KG:
+                attention = "slight_gain"
+                note += "，略有上浮但未到反弹门槛"
         # 数据够就以数据为准：自述压不过实测。冲突只记录，不改变结论。
         if status != STATUS_PLATEAU and user_declared:
             conflicts_data = True
@@ -328,6 +335,7 @@ def _evaluate_plateau(
         "declared_superseded_by": declared_superseded_by,
         "post_declared_delta_kg": post_declared_delta_kg,
         "declaration_conflicts_data": conflicts_data,
+        "attention": attention,
         "note": note,
     }
     return PlateauResult(status, evidence)
