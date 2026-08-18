@@ -198,9 +198,10 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
     .map((item) => (item === "statistical" ? PLATEAU_BASIS_LABELS[status] ?? "体重实测走向" : "用户自述体重卡住"))
     .join("、");
   const declared = Array.isArray(evidence.declared_evidence) ? evidence.declared_evidence : [];
-  const firstWeight = text(evidence.first_weight_kg);
-  const lastWeight = text(evidence.last_weight_kg);
-  const delta = typeof evidence.delta_kg === "number" ? String(evidence.delta_kg) : "";
+  // 体重固定一位小数，否则 80.0 会显示成"80"，看着像没记全
+  const firstWeight = kgText(evidence.first_weight_kg);
+  const lastWeight = kgText(evidence.last_weight_kg);
+  const delta = kgText(evidence.delta_kg, { sign: true });
   const trend = typeof evidence.trend_kg === "number" ? evidence.trend_kg : null;
   const windowStart = text(evidence.window_start);
   const windowEnd = text(evidence.window_end);
@@ -219,13 +220,13 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
       </div>
       {attention === "swing" && (
         <p className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm font-medium text-amber-800 sm:px-6">
-          这一周体重大起大落（最高最低相差 {text(evidence.spread_kg)} kg），不是卡住而是波动，
+          这一周体重大起大落（最高最低相差 {numberText(evidence.spread_kg)} kg），不是卡住而是波动，
           建议先问饮食和执行的稳定性，别按平台期调方案。
         </p>
       )}
       {attention === "slight_gain" && (
         <p className="border-t border-slate-200 bg-slate-50 px-5 py-3 text-sm font-medium text-slate-700 sm:px-6">
-          这一周体重略有上浮（{text(evidence.trend_kg)} kg），还没到反弹门槛，先观察下一次称重。
+          这一周体重略有上浮（+{numberText(evidence.trend_kg)} kg），还没到反弹门槛，先观察下一次称重。
         </p>
       )}
       {conflicts && (
@@ -735,6 +736,20 @@ function formatOptionalValue(value: unknown) {
 }
 
 function text(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** 数字字段的显示：text() 只认字符串，判定证据里的体重/趋势都是数字，用它渲染。 */
+/** 体重/变化量的显示：固定一位小数，正数带 + 号，让"涨了"和"掉了"一眼可辨。 */
+function kgText(value: unknown, options?: { sign?: boolean }): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "";
+  const body = Math.abs(value).toFixed(1);
+  if (value < 0) return `-${body}`;
+  return options?.sign && value > 0 ? `+${body}` : body;
+}
+
+function numberText(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return typeof value === "string" ? value.trim() : "";
 }
 

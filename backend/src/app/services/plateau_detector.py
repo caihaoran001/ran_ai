@@ -288,20 +288,20 @@ def _evaluate_plateau(
         basis.append("statistical")
         if trend_kg >= REBOUND_MIN_TREND_KG:
             status = STATUS_REBOUND
-            note = f"{span} 共 {weight_days} 天有体重，趋势 +{trend_kg} kg"
+            note = f"{span} 共 {weight_days} 天有体重，趋势 {_signed_kg(trend_kg)} kg"
         elif abs(trend_kg) <= PLATEAU_MAX_DELTA_KG and spread_kg <= MAX_SPREAD_KG:
             status = STATUS_PLATEAU
             if user_declared:
                 basis.append("user_declared")
-            note = f"{span} 共 {weight_days} 天有体重，趋势 {trend_kg:+} kg"
+            note = f"{span} 共 {weight_days} 天有体重，趋势 {_signed_kg(trend_kg)} kg"
         elif abs(trend_kg) <= PLATEAU_MAX_DELTA_KG:
             # 趋势是平的但一周里大起大落：这是波动，不是卡住。
             status = STATUS_NORMAL
             attention = "swing"
-            note = f"{span} 趋势 {trend_kg:+} kg，但最高最低相差 {spread_kg} kg，属波动而非平台期"
+            note = f"{span} 趋势 {_signed_kg(trend_kg)} kg，但最高最低相差 {spread_kg} kg，属波动而非平台期"
         else:
             status = STATUS_NORMAL
-            note = f"{span} 趋势 {trend_kg:+} kg"
+            note = f"{span} 趋势 {_signed_kg(trend_kg)} kg"
             if trend_kg > PLATEAU_MAX_DELTA_KG:
                 attention = "slight_gain"
                 note += "，略有上浮但未到反弹门槛"
@@ -389,6 +389,11 @@ def _data_shortfall_note(
     )
 
 
+def _signed_kg(value: float) -> str:
+    """带符号的公斤数；正好 0 时不写 "+0.0"（"趋势 +0.0 kg" 读起来像涨了一点）。"""
+    return f"{value:+}" if value else f"{value}"
+
+
 def _trend_delta_kg(in_window: list[tuple[date, float]]) -> float:
     """这一周体重的走向：最小二乘趋势线从首次称重走到末次称重抬升/下降了多少公斤。
 
@@ -407,7 +412,8 @@ def _trend_delta_kg(in_window: list[tuple[date, float]]) -> float:
     variance = sum((day - mean_day) ** 2 for day in days)
     if variance <= 0:  # 同一天的记录不可能出现（每天最多一条），兜底不除零
         return 0.0
-    return round(covariance / variance * (days[-1] - days[0]), 2)
+    trend = round(covariance / variance * (days[-1] - days[0]), 2)
+    return 0.0 if trend == 0 else trend  # 抹掉 -0.0，页面上「趋势 -0.0 kg」很怪
 
 
 def _usable_weights(
