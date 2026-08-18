@@ -158,6 +158,18 @@ def plateau_followup_done_condition():
     )
 
 
+def _escalated(previous: dict | None, current: dict | None) -> bool:
+    """情况有没有恶化到该让运营重新看一眼（即使状态还是平台期）。
+
+    目前只有一种：本来没掉头，现在掉头往回涨了。这会让「已跟进」标记失效、条目回到
+    待办——这正是我们要的，跟进时聊的还是「停住了」，现在方向变了得重新聊。
+    """
+
+    was = (previous or {}).get("attention")
+    now = (current or {}).get("attention")
+    return now == "regain" and was != "regain"
+
+
 async def scan_plateaus(session: AsyncSession) -> ScanStats:
     """扫一遍所有未软删除服务单，把平台期状态写入 service_cases 的三个字段。
 
@@ -221,13 +233,19 @@ async def scan_plateaus(session: AsyncSession) -> ScanStats:
             outcome_signals=outcome_signals_by_case.get(case.id, []),
             today=today,
         )
-        # 结论没变就不碰这一行：service_cases.updated_at 是后台列表排序和
+        previous_status = case.plateau_status
+        previous_evidence = case.plateau_evidence
+        # 什么都没变就不碰这一行：service_cases.updated_at 是后台列表排序和
         # 「生成中卡住超时补跑」的判据，不该被每天的派生计算刷掉。
-        if case.plateau_status != result.status or case.plateau_evidence != result.evidence:
+        if previous_status != result.status or previous_evidence != result.evidence:
             case.plateau_status = result.status
             case.plateau_evidence = result.evidence
-            case.plateau_updated_at = now
             changed_count += 1
+        # 但「结论变了」这个时间戳只在**运营该重新看一眼**时才往前推：状态变了，或者
+        # 新出现掉头回涨这类升级信号。多称一次重、图上多一个点不算——那还是同一个平台期，
+        # 运营已经跟进过了，推它只会让人在待办里天天看见同一个人。
+        if previous_status != result.status or _escalated(previous_evidence, result.evidence):
+            case.plateau_updated_at = now
         if result.status == STATUS_PLATEAU:
             plateau_count += 1
         elif result.status == STATUS_REBOUND:
@@ -347,7 +365,6 @@ def _evaluate_plateau(
         note = "用户口述平台期；" + _data_shortfall_note(
             anchor_day=anchor_day,
             first_day=first_day,
-            days_since_last=days_since_last,
             weight_days=weight_days,
             gaps=gaps,
             expired=expired,
@@ -357,7 +374,6 @@ def _evaluate_plateau(
         note = _data_shortfall_note(
             anchor_day=anchor_day,
             first_day=first_day,
-            days_since_last=days_since_last,
             weight_days=weight_days,
             gaps=gaps,
             expired=expired,
@@ -370,7 +386,6 @@ def _evaluate_plateau(
         "window_start": window_start.isoformat() if window_start else None,
         "window_end": anchor_day.isoformat() if anchor_day else None,
         "last_weight_date": anchor_day.isoformat() if anchor_day else None,
-        "days_since_last_weight": days_since_last,
         "valid_weight_rows": weight_days,
         # 最后一次称重已经太久远，这批数字描述的不是"现在"。前端据此不画走向图：
         # 停称一个月的人，图上画的是一个月前那一周，配着今天的结论，看着像最近发生的。
@@ -412,20 +427,21 @@ def _data_shortfall_note(
     *,
     anchor_day: date | None,
     first_day: date | None,
-    days_since_last: int | None,
     weight_days: int,
     gaps: tuple[int, int] | None,
     expired: bool,
 ) -> str:
-    """说清楚这次为什么不能用体重数据下结论，供运营在详情页核对。"""
+    """说清楚这次为什么不能用体重数据下结论，供运营在详情页核对。
+
+    这句话里不能出现「距今几天」这类跟着日历自己变的数：判定记录整体相等才算「结论
+    没变过」，写进去就会每天假装变一次，把已跟进的人天天弹回待办。日期存事实，「几天
+    前」由页面现算。
+    """
 
     if anchor_day is None:
         return "无有效体重打卡数据"
     if expired:
-        return (
-            f"最后一次有效体重打卡 {anchor_day.isoformat()}，距今 {days_since_last} 天，"
-            "已连续三天没有体重"
-        )
+        return f"最后一次有效体重打卡 {anchor_day.isoformat()}，之后连续三天没有体重"
     if weight_days < MIN_WEIGHT_DAYS_IN_WINDOW:
         return (
             f"近 {PLATEAU_WINDOW_DAYS} 天仅 {weight_days} 天有有效体重"

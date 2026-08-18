@@ -19,6 +19,7 @@ from app.models.checkin import Checkin
 from app.models.outcome import OutcomeEvent
 from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user import User
+from app.services import plateau_detector
 from app.services.plateau_detector import (
     MIN_WEIGHT_DAYS_IN_WINDOW,
     PLATEAU_MAX_DELTA_KG,
@@ -89,7 +90,6 @@ class TestWeightDataDecides:
         result = _evaluate(rows)
         assert result.status == STATUS_PLATEAU
         assert result.evidence["last_weight_date"] == "2026-08-16"
-        assert result.evidence["days_since_last_weight"] == 1
         # 判定区间跟着最后一次称重往前推，不是「今天往前 7 天」
         assert result.evidence["window_start"] == "2026-08-10"
         assert result.evidence["window_end"] == "2026-08-16"
@@ -257,8 +257,8 @@ class TestDataTooThin:
         rows = _daily(date(2026, 8, 8), ["70.0", "70.1", "70.0", "70.2", "70.1", "70.0", "70.1"])
         result = _evaluate(rows)  # 最后一次 8/14，今天 8/17
         assert result.status == STATUS_INSUFFICIENT_DATA
-        assert result.evidence["days_since_last_weight"] == 3
-        assert "已连续三天没有体重" in result.evidence["note"]
+        assert result.evidence["last_weight_date"] == "2026-08-14"
+        assert "之后连续三天没有体重" in result.evidence["note"]
         # 前端据此不画走向图：这批数字描述的已经不是"现在"
         assert result.evidence["weights_expired"] is True
 
@@ -582,6 +582,57 @@ class TestFollowupQueue:
         assert case.id not in await self._pending_ids(db_session)
         # 但要能在「已跟进」列表里找回来（运营点完之后要能回查、能撤销）
         assert case.id in await self._done_ids(db_session)
+
+    async def test_followed_up_item_does_not_come_back_next_day(self, db_session, monkeypatch):
+        """跟进过的人，第二天再扫不能又弹回待办。
+
+        真实事故：判定记录里存过「距今 N 天」，日历翻一页它自己就变了，系统据此认为
+        「结论变了」，把已跟进的人天天推回待办，一直烦到那句自述过期。所以这里必须真的
+        把日期往后拨——同一天连扫三次复现不了这个 bug。
+        """
+
+        today = datetime.now(TZ).date()
+        case = await _make_case(db_session)
+        db_session.add(
+            OutcomeEvent(
+                service_case_id=case.id,
+                message_id=None,
+                milestone="day7",
+                field_key="weight_change",
+                event_type="unchanged",
+                value_text="体重没动",
+                evidence_text="这两天体重一直卡着",
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=1),
+            )
+        )
+        # 只有一次很久以前的称重：判定只能靠自述，正是最容易天天变的那种记录
+        db_session.add(
+            Checkin(
+                service_case_id=case.id,
+                group_id=case.group_id,
+                checkin_date=today - timedelta(days=20),
+                content="打卡",
+                parsed_json={"weight": "70.0"},
+            )
+        )
+        await db_session.flush()
+        await scan_plateaus(db_session)
+        await db_session.refresh(case)
+        assert case.plateau_status == STATUS_PLATEAU
+        assert case.id in await self._pending_ids(db_session)
+
+        case.plateau_followed_up_at = datetime.now(timezone.utc)
+        await db_session.flush()
+
+        for day_offset in (1, 2, 3):
+            monkeypatch.setattr(
+                plateau_detector, "_today", lambda offset=day_offset: today + timedelta(days=offset)
+            )
+            await scan_plateaus(db_session)
+            assert case.id not in await self._pending_ids(db_session), (
+                f"第 {day_offset} 天又被推回待办了"
+            )
+            assert case.id in await self._done_ids(db_session)
 
     async def test_conclusion_change_after_followup_reopens_the_item(self, db_session):
         today = datetime.now(TZ).date()

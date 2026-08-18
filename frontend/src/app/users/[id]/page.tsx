@@ -8,7 +8,7 @@ import {
   UserProfile,
   UserStateProfile,
 } from "@/lib/api";
-import { formatChinaDateTime } from "@/lib/format";
+import { daysAgoText, formatChinaDateTime } from "@/lib/format";
 import { BackIconLink } from "@/components/back-icon-link";
 import { HealthProfilePanel } from "@/components/health-profile-panel";
 import { PlateauTrendChart, regainFromLow } from "@/components/plateau-trend-chart";
@@ -180,9 +180,8 @@ const PLATEAU_BASIS_LABELS: Record<string, string> = {
 function lastWeightHint(evidence: Record<string, unknown>): string {
   const day = text(evidence.last_weight_date);
   if (!day) return "暂无体重打卡";
-  const days = typeof evidence.days_since_last_weight === "number" ? evidence.days_since_last_weight : null;
-  const freshness = days === null ? "" : days <= 0 ? "（今天）" : days === 1 ? "（昨天）" : `（${days} 天前）`;
-  return `最后一次称重 ${day}${freshness}`;
+  const freshness = daysAgoText(day);
+  return freshness ? `最后一次称重 ${day}（${freshness}）` : `最后一次称重 ${day}`;
 }
 
 function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
@@ -200,6 +199,7 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
     .map((item) => (item === "statistical" ? PLATEAU_BASIS_LABELS[status] ?? "体重实测走向" : "用户自述体重卡住"))
     .join("、");
   const declared = Array.isArray(evidence.declared_evidence) ? evidence.declared_evidence : [];
+  const saidAt = daysAgoText(text(evidence.declared_at));
   // 体重固定一位小数，否则 80.0 会显示成"80"，看着像没记全
   const firstWeight = kgText(evidence.first_weight_kg);
   const lastWeight = kgText(evidence.last_weight_kg);
@@ -276,6 +276,10 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
             </ul>
           ) : (
             <dd className="mt-1 text-sm font-semibold leading-6 text-slate-900">无</dd>
+          )}
+          {/* 六天前说的和今天说的，该问的第一句完全不同 */}
+          {declared.length > 0 && saidAt && (
+            <p className="mt-1 text-xs text-slate-500">{saidAt}说的（自述有效期一周）</p>
           )}
         </div>
       </div>

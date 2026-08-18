@@ -15,7 +15,7 @@ import { RefundReviewActions } from "./refund-review-actions";
 import { PlateauReviewActions } from "./plateau-review-actions";
 import { ReviewTabs } from "./review-tabs";
 import { CheckCircle2, Minus, RefreshCcw, TrendingUp } from "lucide-react";
-import { formatChinaShortDateTime } from "@/lib/format";
+import { daysAgoText, formatChinaShortDateTime } from "@/lib/format";
 import { PlateauTrendChart, regainFromLow } from "@/components/plateau-trend-chart";
 
 export default async function DocumentsListPage() {
@@ -156,6 +156,11 @@ function plateauDeclaredQuote(evidence?: Record<string, unknown> | null): string
   return typeof declared[0] === "string" ? declared[0] : "";
 }
 
+/** 用户是什么时候说这句话的（原始时间戳，「几天前」由页面现算，不入库） */
+function plateauDeclaredAt(evidence?: Record<string, unknown> | null): string {
+  return typeof evidence?.declared_at === "string" ? evidence.declared_at : "";
+}
+
 /** 分区里的空状态：待办清空是好事（绿勾），已处理为空只是还没发生过（灰字）。 */
 function TabEmpty({ text, tone = "ok" }: { text: string; tone?: "ok" | "muted" }) {
   if (tone === "muted") {
@@ -186,6 +191,7 @@ function PlateauFollowupGroup({
     const rebound = item.plateau_status === "rebound";
     const note = plateauNote(item.plateau_evidence);
     const quote = plateauDeclaredQuote(item.plateau_evidence);
+    const said = daysAgoText(plateauDeclaredAt(item.plateau_evidence));
     const regain = regainFromLow(item.plateau_evidence);
     return (
       <div
@@ -228,7 +234,10 @@ function PlateauFollowupGroup({
             )}
             {quote && (
               <p className="text-break text-sm leading-relaxed text-slate-700">
-                <span className="font-bold text-slate-400">客户说：</span>
+                {/* 这句话是今天说的还是六天前说的，决定运营开口第一句问什么 */}
+                <span className="font-bold text-slate-400">
+                  客户说{said && `（${said}）`}：
+                </span>
                 {quote}
               </p>
             )}
@@ -287,12 +296,13 @@ function PlateauFollowupGroup({
             },
             {
               key: "done",
-              label: "已跟进",
+              label: "已跟进（仍在平台期）",
               count: doneCases.length,
               content: (
                 <div className="space-y-2.5">
                   <p className="text-xs leading-5 text-slate-500">
-                    结论再变一次（离开平台期又回来、平台期转成反弹）会自动回到待跟进。
+                    这些人还卡着，只是已经有人找过了——标记只防同事重复跟进，不代表问题解决。
+                    体重真的动了才会自动消失；情况升级（掉头回涨、转成反弹）会回到待跟进。
                   </p>
                   {doneCases.length ? doneRows : <TabEmpty text="还没有标记过已跟进的人。" tone="muted" />}
                 </div>
