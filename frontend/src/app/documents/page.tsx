@@ -251,10 +251,7 @@ function PlateauFollowupGroup({
     <section id="plateau-followups" className="panel overflow-hidden scroll-mt-6">
       <div className="panel-header">
         <h2 className="panel-title">体重状态跟进</h2>
-        <p className="panel-subtitle">
-          每天中午扫出的平台期与体重反弹。平台期建议调整方案，反弹更该尽快介入。跟进后点「标记已跟进」，这条会移到「已跟进」页签；
-          之后如果结论又变了（离开平台期又回来、平台期转成反弹），会自动回到待跟进。
-        </p>
+        <p className="panel-subtitle">每天中午扫出的平台期与体重反弹，平台期建议调方案，反弹要尽快介入。</p>
       </div>
       <div className="panel-body">
         <ReviewTabs
@@ -273,10 +270,13 @@ function PlateauFollowupGroup({
               key: "done",
               label: "已跟进",
               count: doneCases.length,
-              content: doneCases.length ? (
-                <div className="space-y-2.5">{doneRows}</div>
-              ) : (
-                <TabEmpty text="还没有标记过已跟进的人。" tone="muted" />
+              content: (
+                <div className="space-y-2.5">
+                  <p className="text-xs leading-5 text-slate-500">
+                    结论再变一次（离开平台期又回来、平台期转成反弹）会自动回到待跟进。
+                  </p>
+                  {doneCases.length ? doneRows : <TabEmpty text="还没有标记过已跟进的人。" tone="muted" />}
+                </div>
               ),
             },
           ]}
@@ -342,10 +342,7 @@ function RefundReviewGroup({
     <section id="refund-reviews" className="panel overflow-hidden scroll-mt-6">
       <div className="panel-header">
         <h2 className="panel-title">退款审核</h2>
-        <p className="panel-subtitle">
-          AI 从群聊识别到客户已发起/申请退款，等待运营核实。确认后将停止打卡提醒、阶段报告等产品类主动推送，群内 AI 聊天仍保留。
-          标为「不是退款」的只清掉候选标记、不留处理记录，所以「已确认退款」只列真正确认过的。
-        </p>
+        <p className="panel-subtitle">AI 识别到客户已发起退款、等运营核实；确认后停止主动推送，群内 AI 聊天保留。</p>
       </div>
       <div className="panel-body">
         <ReviewTabs
@@ -364,10 +361,13 @@ function RefundReviewGroup({
               key: "refunded",
               label: "已确认退款",
               count: refundedCases.length,
-              content: refundedCases.length ? (
-                <div className="space-y-2.5">{refundedRows}</div>
-              ) : (
-                <TabEmpty text="还没有确认过退款的服务单。" tone="muted" />
+              content: (
+                <div className="space-y-2.5">
+                  <p className="text-xs leading-5 text-slate-500">
+                    标为「不是退款」的只清掉候选标记、不留处理记录，所以这里只列真正确认过退款的。
+                  </p>
+                  {refundedCases.length ? refundedRows : <TabEmpty text="还没有确认过退款的服务单。" tone="muted" />}
+                </div>
               ),
             },
           ]}
