@@ -137,6 +137,23 @@ def plateau_followup_pending_condition():
     )
 
 
+def plateau_followup_done_condition():
+    """「已跟进」列表的口径：当前仍是平台期或反弹，且跟进记录不比结论旧。
+
+    与 `plateau_followup_pending_condition()` 互补且不重叠——同一批人只会出现在其中一边，
+    运营点完「标记已跟进」能在这里找到刚处理过的那条（想撤销也从这里撤）。
+    """
+
+    return and_(
+        ServiceCase.plateau_status.in_((STATUS_PLATEAU, STATUS_REBOUND)),
+        ServiceCase.plateau_followed_up_at.is_not(None),
+        or_(
+            ServiceCase.plateau_updated_at.is_(None),
+            ServiceCase.plateau_followed_up_at >= ServiceCase.plateau_updated_at,
+        ),
+    )
+
+
 async def scan_plateaus(session: AsyncSession) -> ScanStats:
     """扫一遍所有未软删除服务单，把平台期状态写入 service_cases 的三个字段。
 
@@ -273,6 +290,8 @@ def _evaluate_plateau(
     attention: str | None = None
     delta_kg: float | None = None
     trend_kg: float | None = None
+    trend_start_kg: float | None = None
+    trend_end_kg: float | None = None
     spread_kg: float | None = None
     first_weight: float | None = None
     last_weight: float | None = None
@@ -281,7 +300,7 @@ def _evaluate_plateau(
         first_weight = in_window[0][1]
         last_weight = in_window[-1][1]
         delta_kg = round(last_weight - first_weight, 2)
-        trend_kg = _trend_delta_kg(in_window)
+        trend_kg, trend_start_kg, trend_end_kg = _fit_trend_line(in_window)
         values = [value for _, value in in_window]
         spread_kg = round(max(values) - min(values), 2)
         span = f"{window_start.isoformat()}~{anchor_day.isoformat()}"
@@ -343,7 +362,14 @@ def _evaluate_plateau(
         "last_weight_kg": last_weight,
         "delta_kg": delta_kg,
         "trend_kg": trend_kg,
+        "trend_start_kg": trend_start_kg,
+        "trend_end_kg": trend_end_kg,
         "spread_kg": spread_kg,
+        # 窗口内每一次称重，供详情页画折线：运营要看得见"怎么走成这个结论的"，
+        # 只给一个结果数字没法核对。数据不足时也给（哪怕只有两点），能看出缺在哪。
+        "points": [
+            {"date": day.isoformat(), "kg": value} for day, value in in_window
+        ],
         "declared_evidence": (
             [latest_declaration.evidence_text] if latest_declaration is not None else []
         ),
@@ -394,12 +420,15 @@ def _signed_kg(value: float) -> str:
     return f"{value:+}" if value else f"{value}"
 
 
-def _trend_delta_kg(in_window: list[tuple[date, float]]) -> float:
-    """这一周体重的走向：最小二乘趋势线从首次称重走到末次称重抬升/下降了多少公斤。
+def _fit_trend_line(in_window: list[tuple[date, float]]) -> tuple[float, float, float]:
+    """这一周体重的走向：最小二乘趋势线。
 
-    比首尾两点相减稳：全部称重都参与，单次异常读数（穿衣称、前一晚吃咸了）不会独自
-    翻转结论；横轴用真实日期，所以隔天称、漏一天都不需要补点。点少时它自然退化成接近
-    首尾差——真正扛事的是「窗口内至少 4 天有体重」那道门槛。
+    返回（变化量, 线的起点公斤数, 线的终点公斤数）。变化量是趋势线从首次称重走到末次
+    称重抬升/下降了多少公斤，比首尾两点相减稳：全部称重都参与，单次异常读数（穿衣称、
+    前一晚吃咸了）不会独自翻转结论；横轴用真实日期，所以隔天称、漏一天都不需要补点。
+    点少时它自然退化成接近首尾差——真正扛事的是「窗口内至少 4 天有体重」那道门槛。
+
+    两端的公斤数只用于详情页把这条线画出来（前端不复算判定规则），判定仍只看变化量。
     """
 
     days = [(day - in_window[0][0]).days for day, _ in in_window]
@@ -411,9 +440,13 @@ def _trend_delta_kg(in_window: list[tuple[date, float]]) -> float:
     )
     variance = sum((day - mean_day) ** 2 for day in days)
     if variance <= 0:  # 同一天的记录不可能出现（每天最多一条），兜底不除零
-        return 0.0
-    trend = round(covariance / variance * (days[-1] - days[0]), 2)
-    return 0.0 if trend == 0 else trend  # 抹掉 -0.0，页面上「趋势 -0.0 kg」很怪
+        flat = round(mean_value, 2)
+        return 0.0, flat, flat
+    slope = covariance / variance
+    trend = round(slope * (days[-1] - days[0]), 2)
+    fit = lambda day: round(mean_value + slope * (day - mean_day), 2)  # noqa: E731
+    # 抹掉 -0.0，页面上「趋势 -0.0 kg」很怪
+    return (0.0 if trend == 0 else trend), fit(days[0]), fit(days[-1])
 
 
 def _usable_weights(

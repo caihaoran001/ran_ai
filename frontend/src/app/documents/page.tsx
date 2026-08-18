@@ -14,6 +14,7 @@ import { ReviewConsoleLiveRefresh } from "./review-console-live-refresh";
 import { RefundReviewActions } from "./refund-review-actions";
 import { PlateauReviewActions } from "./plateau-review-actions";
 import { CheckCircle2, Minus, RefreshCcw, TrendingUp } from "lucide-react";
+import { formatChinaShortDateTime } from "@/lib/format";
 
 export default async function DocumentsListPage() {
   // 首屏只取"审核要用"的轻量数据。知识库两块（FAQ 231 条 ≈170KB、已通过案例 226 条 ≈568KB）
@@ -22,7 +23,9 @@ export default async function DocumentsListPage() {
     policy,
     aiReplyEnabled,
     refundPendingCases,
+    refundedCases,
     plateauFollowupCases,
+    plateauFollowupDoneCases,
     pendingDocumentGroups,
     pendingKnowledgeDrafts,
     knowledgeIndexStats,
@@ -32,7 +35,9 @@ export default async function DocumentsListPage() {
       "/settings/ai-reply-enabled",
     ).catch(() => ({ enabled: true, auto_disabled_reason: null, auto_disabled_at: null })),
     api<ServiceCase[]>("/service-cases?filter=refund_pending").catch(() => []),
+    api<ServiceCase[]>("/service-cases?filter=refunded&limit=20").catch(() => []),
     api<ServiceCase[]>("/service-cases?filter=plateau_followup").catch(() => []),
+    api<ServiceCase[]>("/service-cases?filter=plateau_followup_done").catch(() => []),
     api<DashboardCasePendingDocuments[]>("/dashboard/pending-documents").catch(() => []),
     api<KnowledgeDraft[]>("/knowledge-drafts?status=pending").catch(() => []),
     api<KnowledgeIndexStats>("/knowledge-base/index/stats").catch(() => ({
@@ -68,8 +73,8 @@ export default async function DocumentsListPage() {
             </p>
           </div>
           <div className="grid grid-cols-2 divide-x divide-y divide-slate-800 sm:grid-cols-4 sm:divide-y-0">
-            <ReviewMetric label="退款确认" value={refundPendingCases.length} tone="risk" />
             <ReviewMetric label="体重状态跟进" value={plateauFollowupCases.length} tone="risk" />
+            <ReviewMetric label="退款确认" value={refundPendingCases.length} tone="risk" />
             <ReviewMetric label="文件待审核" value={pendingDocumentCount} tone="review" />
             <ReviewMetric label="知识候选" value={pendingKnowledgeDrafts.length} tone="info" />
           </div>
@@ -89,11 +94,11 @@ export default async function DocumentsListPage() {
       {/* 1. 交付文件控制台（首屏用服务端已取的同一份数据直出，避免再空转一次骨架） */}
       <DocumentSearchList initialPendingGroups={pendingDocumentGroups} />
 
-      {/* 2. 退款审核 */}
-      <RefundReviewGroup cases={refundPendingCases} />
+      {/* 2. 体重状态跟进（平台期/反弹） */}
+      <PlateauFollowupGroup cases={plateauFollowupCases} doneCases={plateauFollowupDoneCases} />
 
-      {/* 3. 体重状态跟进（平台期/反弹） */}
-      <PlateauFollowupGroup cases={plateauFollowupCases} />
+      {/* 3. 退款审核 */}
+      <RefundReviewGroup cases={refundPendingCases} refundedCases={refundedCases} />
 
       {/* 4. 参考问答库 (FAQ) 进化工作台（FAQ 库内容按需加载） */}
       <FAQEvolutionCenter
@@ -149,7 +154,37 @@ function plateauDeclaredQuote(evidence?: Record<string, unknown> | null): string
   return typeof declared[0] === "string" ? declared[0] : "";
 }
 
-function PlateauFollowupGroup({ cases }: { cases: ServiceCase[] }) {
+/** 已处理列表统一折叠：默认收起不跟待办抢注意力，但运营点完之后能回来查。 */
+function HandledDisclosure({
+  label,
+  count,
+  emptyHint,
+  children,
+}: {
+  label: string;
+  count: number;
+  emptyHint: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50/60">
+      <summary className="cursor-pointer px-4 py-3 text-xs font-bold text-slate-600 hover:text-slate-900 sm:px-5">
+        {label}（{count}）
+      </summary>
+      <div className="border-t border-slate-200 px-4 py-3 sm:px-5">
+        {count > 0 ? <div className="space-y-2.5">{children}</div> : <p className="text-xs text-slate-500">{emptyHint}</p>}
+      </div>
+    </details>
+  );
+}
+
+function PlateauFollowupGroup({
+  cases,
+  doneCases,
+}: {
+  cases: ServiceCase[];
+  doneCases: ServiceCase[];
+}) {
   return (
     <section id="plateau-followups" className="panel overflow-hidden scroll-mt-6">
       <div className="panel-header">
@@ -160,8 +195,8 @@ function PlateauFollowupGroup({ cases }: { cases: ServiceCase[] }) {
           </span>
         </div>
         <p className="panel-subtitle">
-          每天中午扫出的平台期与体重反弹。平台期建议调整方案，反弹更该尽快介入。跟进后点「标记已跟进」即从这里消失；
-          之后如果结论又变了（离开平台期又回来、平台期转成反弹），会自动重新出现。
+          每天中午扫出的平台期与体重反弹。平台期建议调整方案，反弹更该尽快介入。跟进后点「标记已跟进」，这条会收进下面的「已跟进」；
+          之后如果结论又变了（离开平台期又回来、平台期转成反弹），会自动重新回到待跟进。点进人名可以看这一周的体重走向图。
         </p>
       </div>
       <div className="panel-body">
@@ -215,12 +250,54 @@ function PlateauFollowupGroup({ cases }: { cases: ServiceCase[] }) {
             <p className="text-sm font-bold">暂无待跟进的平台期或反弹</p>
           </div>
         )}
+        <HandledDisclosure
+          label="已跟进"
+          count={doneCases.length}
+          emptyHint="还没有标记过已跟进的人。"
+        >
+          {doneCases.map((item) => {
+            const rebound = item.plateau_status === "rebound";
+            return (
+              <div
+                key={item.id}
+                className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+                    <span className={`font-semibold ${rebound ? "text-rose-700" : "text-violet-700"}`}>
+                      {rebound ? "体重反弹" : "平台期"}
+                    </span>
+                    <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
+                      {item.case_no}
+                    </Link>
+                    {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
+                    <span className="text-slate-400">
+                      · 跟进于 {formatChinaShortDateTime(item.plateau_followed_up_at)}
+                    </span>
+                  </div>
+                  {plateauNote(item.plateau_evidence) && (
+                    <p className="text-break mt-1 text-xs leading-5 text-slate-500">
+                      {plateauNote(item.plateau_evidence)}
+                    </p>
+                  )}
+                </div>
+                <PlateauReviewActions caseId={item.id} variant="undo" />
+              </div>
+            );
+          })}
+        </HandledDisclosure>
       </div>
     </section>
   );
 }
 
-function RefundReviewGroup({ cases }: { cases: ServiceCase[] }) {
+function RefundReviewGroup({
+  cases,
+  refundedCases,
+}: {
+  cases: ServiceCase[];
+  refundedCases: ServiceCase[];
+}) {
   return (
     <section id="refund-reviews" className="panel overflow-hidden scroll-mt-6">
       <div className="panel-header">
@@ -230,7 +307,7 @@ function RefundReviewGroup({ cases }: { cases: ServiceCase[] }) {
             {cases.length} 单待确认
           </span>
         </div>
-        <p className="panel-subtitle">AI 从群聊识别到客户已发起/申请退款，等待运营核实。确认后将停止打卡提醒、阶段报告等产品类主动推送，群内 AI 聊天仍保留。</p>
+        <p className="panel-subtitle">AI 从群聊识别到客户已发起/申请退款，等待运营核实。确认后将停止打卡提醒、阶段报告等产品类主动推送，群内 AI 聊天仍保留。标为「不是退款」的只清掉候选标记、不留处理记录，所以下面只列已确认退款的。</p>
       </div>
       <div className="panel-body">
         {cases.length > 0 ? (
@@ -269,6 +346,25 @@ function RefundReviewGroup({ cases }: { cases: ServiceCase[] }) {
             <p className="text-sm font-bold">暂无待审核退款</p>
           </div>
         )}
+        <HandledDisclosure
+          label="已确认退款（最近 20 单）"
+          count={refundedCases.length}
+          emptyHint="还没有确认过退款的服务单。"
+        >
+          {refundedCases.map((item) => (
+            <div
+              key={item.id}
+              className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-500"
+            >
+              <span className="font-semibold text-rose-700">已退款</span>
+              <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
+                {item.case_no}
+              </Link>
+              {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
+              {item.group_name && <span className="text-break text-slate-400">· {item.group_name}</span>}
+            </div>
+          ))}
+        </HandledDisclosure>
       </div>
     </section>
   );

@@ -12,7 +12,14 @@ import { API_BASE } from "@/lib/api";
  * （离开平台期又回来、平台期转成反弹），这条会自动重新回到待跟进，红点也跟着回来。
  * 逻辑与 refund-review-actions.tsx 一致。
  */
-export function PlateauReviewActions({ caseId }: { caseId: number }) {
+export function PlateauReviewActions({
+  caseId,
+  variant = "mark",
+}: {
+  caseId: number;
+  /** mark=标记已跟进（待办列表）；undo=撤销跟进（已跟进列表里点错了能退回来） */
+  variant?: "mark" | "undo";
+}) {
   const [busy, setBusy] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -22,13 +29,15 @@ export function PlateauReviewActions({ caseId }: { caseId: number }) {
     if (!pending) setBusy(false);
   }, [pending]);
 
+  const undo = variant === "undo";
+
   async function markFollowedUp() {
     setBusy(true);
     try {
       const res = await fetch(`${API_BASE}/service-cases/${caseId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ plateau_followed_up: true }),
+        body: JSON.stringify({ plateau_followed_up: !undo }),
       });
       if (!res.ok) {
         alert("操作失败：" + (await res.text()));
@@ -49,7 +58,7 @@ export function PlateauReviewActions({ caseId }: { caseId: number }) {
       className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
     >
       {pending && <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
-      {pending ? "处理中…" : "标记已跟进"}
+      {pending ? "处理中…" : undo ? "撤销跟进" : "标记已跟进"}
     </button>
   );
 }

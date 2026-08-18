@@ -29,6 +29,7 @@ from app.services.plateau_detector import (
     ScanStats,
     WeightOutcomeSignal,
     _evaluate_plateau,
+    plateau_followup_done_condition,
     plateau_followup_pending_condition,
     scan_plateaus,
 )
@@ -452,6 +453,15 @@ class TestFollowupQueue:
         )
         return set(rows)
 
+    async def _done_ids(self, db_session) -> set[int]:
+        rows = await db_session.scalars(
+            select(ServiceCase.id).where(
+                ServiceCase.deleted_at.is_(None),
+                plateau_followup_done_condition(),
+            )
+        )
+        return set(rows)
+
     async def test_plateau_case_enters_queue_and_clears_after_followup(self, db_session):
         today = datetime.now(TZ).date()
         case = await _make_case(db_session)
@@ -470,6 +480,8 @@ class TestFollowupQueue:
         # 结论没变 → 再扫一遍也不该重新占用红点
         await scan_plateaus(db_session)
         assert case.id not in await self._pending_ids(db_session)
+        # 但要能在「已跟进」列表里找回来（运营点完之后要能回查、能撤销）
+        assert case.id in await self._done_ids(db_session)
 
     async def test_conclusion_change_after_followup_reopens_the_item(self, db_session):
         today = datetime.now(TZ).date()
@@ -498,6 +510,7 @@ class TestFollowupQueue:
         await db_session.refresh(case)
         assert case.plateau_status == STATUS_REBOUND
         assert case.id in await self._pending_ids(db_session)
+        assert case.id not in await self._done_ids(db_session)  # 两个列表互斥
 
     async def test_normal_case_never_enters_queue(self, db_session):
         today = datetime.now(TZ).date()
@@ -518,6 +531,43 @@ class TestFollowupQueue:
         await db_session.refresh(case)
         assert case.plateau_status == STATUS_NORMAL
         assert case.id not in await self._pending_ids(db_session)
+        assert case.id not in await self._done_ids(db_session)
+
+
+class TestTrendChartEvidence:
+    """详情页要画出走向，判定证据里必须带上窗口内每次称重和那条趋势线的两端。"""
+
+    def test_evidence_carries_weigh_ins_and_fitted_line(self):
+        rows = [
+            _checkin(date(2026, 8, 11), "70.0"),
+            _checkin(date(2026, 8, 13), "70.2"),
+            _checkin(date(2026, 8, 15), "69.9"),
+            _checkin(date(2026, 8, 17), "70.1"),
+        ]
+        result = _evaluate(rows)
+
+        assert result.status == STATUS_PLATEAU
+        assert [point["date"] for point in result.evidence["points"]] == [
+            "2026-08-11",
+            "2026-08-13",
+            "2026-08-15",
+            "2026-08-17",
+        ]
+        assert [point["kg"] for point in result.evidence["points"]] == [70.0, 70.2, 69.9, 70.1]
+        # 线的两端之差就是判定用的趋势值：页面画的线和结论说的话必须是同一条
+        # （两端各自四舍五入到 0.01，允许一分钱级别的误差，肉眼看不出来）
+        start = result.evidence["trend_start_kg"]
+        end = result.evidence["trend_end_kg"]
+        assert abs((end - start) - result.evidence["trend_kg"]) <= 0.02
+
+    def test_points_present_even_when_data_is_too_thin(self):
+        """只称过两次也要给点：运营看图才知道缺的是哪几天。"""
+        rows = [_checkin(date(2026, 8, 13), "70.0"), _checkin(date(2026, 8, 15), "70.1")]
+        result = _evaluate(rows)
+
+        assert result.status == STATUS_INSUFFICIENT_DATA
+        assert len(result.evidence["points"]) == 2
+        assert result.evidence["trend_start_kg"] is None
 
 
 class TestPlateauScheduling:
