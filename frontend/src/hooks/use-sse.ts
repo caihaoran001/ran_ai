@@ -58,7 +58,10 @@ function openSharedSource() {
 }
 
 export function useSSE() {
-  const [state, setState] = useState<ReviewEventState>(sharedState);
+  // 首帧必须用固定初始值，不能读上面那个共享变量：外层框架（侧边栏）先挂载并建连，
+  // 会把共享状态改成"已连上"，而页面正文的服务端 HTML 还写着"连接中"，正文晚一步
+  // 在浏览器接手时两边就对不上（hydration 报错）。真实状态由下面挂载后那次补发填上。
+  const [state, setState] = useState<ReviewEventState>(initialState);
 
   useEffect(() => {
     listeners.add(setState);

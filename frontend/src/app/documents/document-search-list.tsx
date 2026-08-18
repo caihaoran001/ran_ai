@@ -56,7 +56,7 @@ export function DocumentSearchList({
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "reviewed">("pending");
   const [refreshing, setRefreshing] = useState(false);
-  const { pendingDocuments: pendingDocumentCount } = useSSE();
+  const { pendingDocuments: pendingDocumentCount, connected } = useSSE();
   const lastPendingDocuments = useRef<number | null>(null);
   const pendingListRef = useRef<HTMLDivElement | null>(null);
   const scrollRestored = useRef(false);
@@ -160,6 +160,9 @@ export function DocumentSearchList({
   }, [fetchPendingDocuments]);
 
   useEffect(() => {
+    // 等连上再记基线：首帧一律按"未连接"渲染（见 hooks/use-sse.ts 的说明），
+    // 不等的话基线会记成 0，紧接着采纳真实条数就被当成"有变化"，白跑一次拉取。
+    if (!connected) return;
     if (lastPendingDocuments.current === null) {
       lastPendingDocuments.current = pendingDocumentCount;
       return;
@@ -168,7 +171,7 @@ export function DocumentSearchList({
       lastPendingDocuments.current = pendingDocumentCount;
       fetchPendingDocuments();
     }
-  }, [fetchPendingDocuments, pendingDocumentCount]);
+  }, [connected, fetchPendingDocuments, pendingDocumentCount]);
 
   useEffect(() => {
     if ((statusFilter === "all" || statusFilter === "reviewed") && !historyLoaded) {

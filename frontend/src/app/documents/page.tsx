@@ -15,6 +15,7 @@ import { RefundReviewActions } from "./refund-review-actions";
 import { PlateauReviewActions } from "./plateau-review-actions";
 import { CheckCircle2, Minus, RefreshCcw, TrendingUp } from "lucide-react";
 import { formatChinaShortDateTime } from "@/lib/format";
+import { PlateauTrendChart } from "@/components/plateau-trend-chart";
 
 export default async function DocumentsListPage() {
   // 首屏只取"审核要用"的轻量数据。知识库两块（FAQ 231 条 ≈170KB、已通过案例 226 条 ≈568KB）
@@ -196,7 +197,7 @@ function PlateauFollowupGroup({
         </div>
         <p className="panel-subtitle">
           每天中午扫出的平台期与体重反弹。平台期建议调整方案，反弹更该尽快介入。跟进后点「标记已跟进」，这条会收进下面的「已跟进」；
-          之后如果结论又变了（离开平台期又回来、平台期转成反弹），会自动重新回到待跟进。点进人名可以看这一周的体重走向图。
+          之后如果结论又变了（离开平台期又回来、平台期转成反弹），会自动重新回到待跟进。下面小图里灰线是每天实际称重、虚线是判定用的趋势线。
         </p>
       </div>
       <div className="panel-body">
@@ -209,37 +210,44 @@ function PlateauFollowupGroup({
               return (
                 <div
                   key={item.id}
-                  className={`flex flex-col gap-3 rounded-xl border bg-white px-4 py-4 transition-colors sm:flex-row sm:items-start sm:justify-between sm:px-5 ${
+                  className={`space-y-3 rounded-xl border bg-white px-4 py-4 transition-colors sm:px-5 ${
                     rebound ? "border-rose-200 hover:bg-rose-50/30" : "border-violet-200 hover:bg-violet-50/30"
                   }`}
                 >
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-semibold ${
-                          rebound
-                            ? "border-rose-300 bg-rose-100 text-rose-700"
-                            : "border-violet-300 bg-violet-100 text-violet-700"
-                        }`}
-                      >
-                        {rebound ? <TrendingUp className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
-                        {rebound ? "体重反弹" : "平台期"}
-                      </span>
-                      <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
-                        {item.case_no}
-                      </Link>
-                      {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
-                      {item.group_id && <span className="text-slate-400">· {item.group_id}</span>}
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-semibold ${
+                            rebound
+                              ? "border-rose-300 bg-rose-100 text-rose-700"
+                              : "border-violet-300 bg-violet-100 text-violet-700"
+                          }`}
+                        >
+                          {rebound ? <TrendingUp className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
+                          {rebound ? "体重反弹" : "平台期"}
+                        </span>
+                        <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
+                          {item.case_no}
+                        </Link>
+                        {item.user?.name && <span className="font-semibold text-slate-600">· {item.user.name}</span>}
+                        {item.group_id && <span className="text-slate-400">· {item.group_id}</span>}
+                      </div>
+                      {note && <p className="text-break text-sm leading-relaxed text-slate-700">{note}</p>}
+                      {quote && (
+                        <p className="text-break text-sm leading-relaxed text-slate-700">
+                          <span className="font-bold text-slate-400">客户说：</span>
+                          {quote}
+                        </p>
+                      )}
                     </div>
-                    {note && <p className="text-break text-sm leading-relaxed text-slate-700">{note}</p>}
-                    {quote && (
-                      <p className="text-break text-sm leading-relaxed text-slate-700">
-                        <span className="font-bold text-slate-400">客户说：</span>
-                        {quote}
-                      </p>
-                    )}
+                    <PlateauReviewActions caseId={item.id} />
                   </div>
-                  <PlateauReviewActions caseId={item.id} />
+                  <PlateauTrendChart
+                    evidence={item.plateau_evidence}
+                    status={item.plateau_status}
+                    compact
+                  />
                 </div>
               );
             })}

@@ -11,6 +11,7 @@ import {
 import { formatChinaDateTime } from "@/lib/format";
 import { BackIconLink } from "@/components/back-icon-link";
 import { HealthProfilePanel } from "@/components/health-profile-panel";
+import { PlateauTrendChart } from "@/components/plateau-trend-chart";
 import { UserRecordDetails } from "./user-record-details";
 
 export default async function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -742,123 +743,6 @@ function text(value: unknown) {
 
 /** 数字字段的显示：text() 只认字符串，判定证据里的体重/趋势都是数字，用它渲染。 */
 /** 体重/变化量的显示：固定一位小数，正数带 + 号，让"涨了"和"掉了"一眼可辨。 */
-type PlateauPoint = { date: string; kg: number };
-
-function plateauPoints(evidence: Record<string, unknown>): PlateauPoint[] {
-  const raw = Array.isArray(evidence.points) ? evidence.points : [];
-  return raw.flatMap((item) => {
-    const point = recordValue(item);
-    const date = text(point.date);
-    return date && typeof point.kg === "number" ? [{ date, kg: point.kg }] : [];
-  });
-}
-
-const PLATEAU_LINE_COLOR: Record<string, string> = {
-  plateau: "#7c3aed",
-  rebound: "#e11d48",
-  normal: "#0891b2",
-  insufficient_data: "#94a3b8",
-};
-
-/**
- * 判定窗口内每一次称重的折线 + 后端算出的那条趋势线（虚线）。
- *
- * 纵轴最少铺开 2 公斤（正好是"算波动"的门槛）：否则 70.0/70.2 这种没动的一周会被
- * 自动缩放放大成剧烈锯齿，看着像大起大落，运营会得出跟结论相反的印象。
- * 横轴按真实日期排，漏称的那天会自然留出空档。
- */
-function PlateauTrendChart({
-  evidence,
-  status,
-}: {
-  evidence: Record<string, unknown>;
-  status: string;
-}) {
-  const points = plateauPoints(evidence);
-  if (points.length < 2) return null;
-
-  const width = 640;
-  const height = 168;
-  const left = 44;
-  const right = 16;
-  const top = 16;
-  const bottom = 30;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
-
-  const days = points.map((point) => Date.parse(`${point.date}T00:00:00+08:00`));
-  const firstDay = days[0];
-  const lastDay = days[days.length - 1];
-  const spanMs = Math.max(lastDay - firstDay, 1);
-  const trendStart = typeof evidence.trend_start_kg === "number" ? evidence.trend_start_kg : null;
-  const trendEnd = typeof evidence.trend_end_kg === "number" ? evidence.trend_end_kg : null;
-
-  const values = points.map((point) => point.kg);
-  if (trendStart !== null) values.push(trendStart);
-  if (trendEnd !== null) values.push(trendEnd);
-  const dataMin = Math.min(...values);
-  const dataMax = Math.max(...values);
-  const middle = (dataMin + dataMax) / 2;
-  const span = Math.max(dataMax - dataMin + 0.6, 2);
-  const low = middle - span / 2;
-  const x = (index: number) => left + (plotWidth * (days[index] - firstDay)) / spanMs;
-  const y = (value: number) => top + plotHeight * (1 - (value - low) / span);
-  const color = PLATEAU_LINE_COLOR[status] ?? PLATEAU_LINE_COLOR.normal;
-  const label = points.map((point) => `${point.date} ${point.kg.toFixed(1)}公斤`).join("，");
-  const dayLabel = (date: string) => date.slice(5).replace("-", "/");
-
-  return (
-    <div className="border-t border-slate-200 px-3 py-4 sm:px-5">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" className="h-auto w-full" aria-label={`窗口内称重：${label}`}>
-        {[low + span, middle, low].map((tick, index) => (
-          <g key={index}>
-            <line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} stroke="#e2e8f0" strokeWidth="1" />
-            <text x={left - 8} y={y(tick) + 4} textAnchor="end" fontSize="11" fill="#94a3b8">
-              {tick.toFixed(1)}
-            </text>
-          </g>
-        ))}
-        {trendStart !== null && trendEnd !== null && (
-          <line
-            x1={x(0)}
-            y1={y(trendStart)}
-            x2={x(points.length - 1)}
-            y2={y(trendEnd)}
-            stroke={color}
-            strokeWidth="2.5"
-            strokeDasharray="7 5"
-            strokeLinecap="round"
-          />
-        )}
-        <polyline
-          points={points.map((point, index) => `${x(index)},${y(point.kg)}`).join(" ")}
-          fill="none"
-          stroke="#94a3b8"
-          strokeWidth="2"
-          strokeLinejoin="round"
-        />
-        {points.map((point, index) => (
-          <g key={point.date}>
-            <circle cx={x(index)} cy={y(point.kg)} r="4.5" fill="white" stroke="#64748b" strokeWidth="2.5" />
-            {(points.length <= 7 || index === 0 || index === points.length - 1) && (
-              <text x={x(index)} y={height - 9} textAnchor="middle" fontSize="11" fill="#64748b">
-                {dayLabel(point.date)}
-              </text>
-            )}
-          </g>
-        ))}
-      </svg>
-      <p className="mt-1 px-1 text-xs text-slate-500">
-        灰线是每天实际称重，
-        <span className="font-semibold" style={{ color }}>
-          虚线
-        </span>
-        是判定用的趋势线；纵轴至少铺开 2 公斤，所以真没动的一周看起来就是平的。
-      </p>
-    </div>
-  );
-}
-
 function kgText(value: unknown, options?: { sign?: boolean }): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "";
   const body = Math.abs(value).toFixed(1);
