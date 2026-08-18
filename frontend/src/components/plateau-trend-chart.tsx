@@ -41,8 +41,9 @@ function trendMeaning(trend: number, status: string, attention: string): string 
  * - 不画纵轴刻度：运营要的是"那天多少斤"，不是坐标，所以数值直接写在点上。
  * - 数值和日期用 HTML 而不是 SVG 文字，SVG 只画两条线。SVG 里的字号会跟着图一起缩放，
  *   手机上整块缩到四成、字只剩 5px 根本看不清，桌面宽屏又会被放大到跟正文打架。
- * - 纵轴最少铺开 2 公斤（正好是"算波动"的门槛）：否则 70.0/70.2 这种没动的一周会被自动
- *   缩放放大成剧烈锯齿，看着像大起大落，运营会得出跟结论相反的印象。
+ * - 纵轴贴着数据缩放（只兜一个 0.6 公斤的下限防止除零和噪点被放到满屏）。曾经固定铺开
+ *   2 公斤，怕把没动的一周画成锯齿吓到运营，结果所有图都成了直线，等于什么也没画。
+ *   现在每个点都标着公斤数、图例又写明这一周总幅度，量级读得到，形状才是图该干的事。
  */
 export function PlateauTrendChart({
   evidence,
@@ -67,8 +68,9 @@ export function PlateauTrendChart({
   const values = points.map((point) => point.kg);
   if (trendStart !== null) values.push(trendStart);
   if (trendEnd !== null) values.push(trendEnd);
+  const spread = Math.max(...values) - Math.min(...values);
   const middle = (Math.min(...values) + Math.max(...values)) / 2;
-  const span = Math.max(Math.max(...values) - Math.min(...values) + 0.6, 2);
+  const span = Math.max(spread * 1.4, 0.6);
   const low = middle - span / 2;
   // 两侧留 6% 空白，最边上的数值才不会被面板边缘切掉
   const x = (index: number) => 6 + (88 * (days[index] - days[0])) / spanMs;
@@ -79,7 +81,7 @@ export function PlateauTrendChart({
 
   return (
     <div className={compact ? "" : "border-t border-slate-200 px-4 py-4 sm:px-5"}>
-      <div className="relative h-[72px] w-full" role="img" aria-label={`窗口内称重：${description}`}>
+      <div className="relative h-[84px] w-full" role="img" aria-label={`窗口内称重：${description}`}>
         {points.map((point, index) => (
           <span
             key={`value-${point.date}`}
@@ -90,7 +92,7 @@ export function PlateauTrendChart({
           </span>
         ))}
 
-        <div className="absolute inset-x-0 top-[18px] h-[34px]">
+        <div className="absolute inset-x-0 top-[18px] h-[46px]">
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full" aria-hidden="true">
             {trendStart !== null && trendEnd !== null && (
               <line
@@ -139,6 +141,7 @@ export function PlateauTrendChart({
           <span className="inline-block h-0 w-4 border-t-[1.5px] border-slate-300" />
           每天实际称重
         </span>
+        <span className="text-slate-400">这一周最高最低相差 {spread.toFixed(1)} 公斤（纵向已按这个幅度放大）</span>
         {trend !== null && (
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-0 w-4 border-t-2 border-dashed" style={{ borderColor: color }} />
