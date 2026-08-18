@@ -60,6 +60,10 @@ REBOUND_MIN_TREND_KG = 1.0
 MAX_SPREAD_KG = 2.0
 # 窗口内至少 4 天有有效体重，才够代表这一周。
 MIN_WEIGHT_DAYS_IN_WINDOW = 4
+# 从这一周最低点起回涨多少才提醒「方向可能转了」。日常喝水吃饭的浮动就有三两到一斤，
+# 门槛压在它之上。这个数没有真实数据可校准（线上靠数据判定的样本还是个位数），先按
+# 半公斤跑，看运营认为误报几次再调。
+REGAIN_MIN_KG = 0.5
 # 允许连续空缺的天数上限：连续 3 天没有体重就不作数。
 # 落在窗口里 → 这次判定不成立；落在判定之后 → 已有结论作废。
 MAX_GAP_DAYS = 2
@@ -297,6 +301,7 @@ def _evaluate_plateau(
     spread_kg: float | None = None
     first_weight: float | None = None
     last_weight: float | None = None
+    regain: dict | None = None
 
     if sufficient:
         first_weight = in_window[0][1]
@@ -315,6 +320,12 @@ def _evaluate_plateau(
             if user_declared:
                 basis.append("user_declared")
             note = f"{span} 共 {weight_days} 天有体重，趋势 {_signed_kg(trend_kg)} kg"
+            # 整周看是平的，但最低点之后已经连着回涨：状态仍是平台期（几次称重不足以
+            # 改判反弹），另挂一个标记让前端单独醒目提示，否则运营会当成「只是停住」。
+            # 提示语不并进 note：note 讲这一周的数据，掉头由前端那条红字讲，避免两处重复。
+            regain = _regain_from_low(in_window)
+            if regain is not None:
+                attention = "regain"
         elif abs(trend_kg) <= PLATEAU_MAX_DELTA_KG:
             # 趋势是平的但一周里大起大落：这是波动，不是卡住。
             status = STATUS_NORMAL
@@ -385,6 +396,9 @@ def _evaluate_plateau(
         "declared_superseded_by": declared_superseded_by,
         "post_declared_delta_kg": post_declared_delta_kg,
         "declaration_conflicts_data": conflicts_data,
+        # 触底回涨的细节（最低点是哪天、几天涨了多少），供前端单独醒目提示；
+        # 没掉头时为 None，前端据此决定要不要显示那行红字。
+        "regain_from_low": regain,
         "attention": attention,
         "note": note,
     }
@@ -429,6 +443,42 @@ def _data_shortfall_note(
         f"近 {PLATEAU_WINDOW_DAYS} 天内出现连续 {internal_gap} 天没有体重"
         f"（超过 {MAX_GAP_DAYS} 天）"
     )
+
+
+def _regain_from_low(in_window: list[tuple[date, float]]) -> dict | None:
+    """从这一周的最低点起，是不是已经连着往回涨了。
+
+    整周拉一条趋势线会把「前半程掉、后半程涨」抵消成一条平线，判成平台期，可方向其实
+    已经反了：真实案例一周 65.4→64.3→65.1，趋势 -0.13 判平台期，运营照「帮你调方案」
+    去谈，实际该先问最近几天发生了什么。
+
+    从最低点往后算而不是固定看最后几天：有人四天才涨回来，有人两天就涨回来，写死天数
+    会把还在正常下降的那几天也算进去，把幅度冲淡。
+
+    最低点之后至少要有两次称重才算数——单独一天的虚高（前一晚吃咸、经期水肿）不是掉头。
+    这一条由「最低点不能落在末尾两个位置」保证，因此倒数第二次称重必然已经高于最低点。
+    """
+
+    if len(in_window) < 3:
+        return None
+    low_kg = min(value for _, value in in_window)
+    # 并列取最晚那次：关心的是最近这一次掉头，不是一周前那次。
+    low_index = max(
+        index for index, (_, value) in enumerate(in_window) if value == low_kg
+    )
+    if low_index >= len(in_window) - 2:
+        return None
+    low_day = in_window[low_index][0]
+    last_day, last_kg = in_window[-1]
+    rise_kg = round(last_kg - low_kg, 2)
+    if rise_kg < REGAIN_MIN_KG:
+        return None
+    return {
+        "low_date": low_day.isoformat(),
+        "low_kg": low_kg,
+        "rise_kg": rise_kg,
+        "days": (last_day - low_day).days,
+    }
 
 
 def _signed_kg(value: float) -> str:

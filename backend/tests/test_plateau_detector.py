@@ -127,6 +127,75 @@ class TestWeightDataDecides:
         assert result.evidence["attention"] == "swing"
         assert "属波动而非平台期" in result.evidence["note"]
 
+    def test_dip_then_climb_back_is_flagged_as_turning(self):
+        """线上真实案例：前三天掉 1.1kg、后两天涨回 0.8kg，趋势被抵消成 -0.13。
+
+        整周确实"没动"，但方向已经反了。状态仍是平台期（几次称重不足以改判反弹），
+        必须额外把掉头说出来——否则运营当成"只是停住"，去谈调方案而不是先问原因。
+        """
+
+        rows = _daily(
+            date(2026, 8, 11), ["65.4", "64.7", "64.3", "64.4", "64.3", "64.8", "65.1"]
+        )
+        result = _evaluate(rows, baseline_kg=66.0)
+        assert result.status == STATUS_PLATEAU
+        assert result.evidence["trend_kg"] == -0.15  # 一条直线看不出来
+        assert result.evidence["attention"] == "regain"
+        # 最低点 64.3 在 8/13 和 8/15 并列，取最晚那次：算的是最近这轮掉头
+        assert result.evidence["regain_from_low"] == {
+            "low_date": "2026-08-15",
+            "low_kg": 64.3,
+            "rise_kg": 0.8,
+            "days": 2,
+        }
+        # 提示语只出现在前端那条红字里：note 讲这一周的数据，两处重复会让卡片啰嗦
+        assert "回涨" not in result.evidence["note"]
+
+    def test_turning_point_length_follows_the_data_not_a_fixed_window(self):
+        """四天前掉头就报四天，两天前掉头就报两天（对照上一个用例）。
+
+        写死"看最后四天"两头不讨好：两天就涨回来的人会被前面还在正常下降的日子冲淡
+        幅度，四天前掉头的人又会被截断。
+        """
+
+        rows = _daily(date(2026, 8, 11), ["65.0", "64.6", "64.2", "64.4", "64.6", "64.8", "65.0"])
+        result = _evaluate(rows, baseline_kg=66.0)
+        assert result.status == STATUS_PLATEAU
+        assert result.evidence["regain_from_low"]["low_date"] == "2026-08-13"
+        assert result.evidence["regain_from_low"]["days"] == 4
+        assert result.evidence["regain_from_low"]["rise_kg"] == 0.8
+
+    def test_single_high_last_reading_is_not_a_turn(self):
+        """只有最后一天虚高（前一晚吃咸）不算掉头：最低点后面得有两次称重。"""
+
+        rows = _daily(date(2026, 8, 11), ["64.5", "64.4", "64.3", "64.3", "64.4", "64.2", "64.9"])
+        result = _evaluate(rows, baseline_kg=65.0)
+        assert result.status == STATUS_PLATEAU
+        assert result.evidence["regain_from_low"] is None
+        assert result.evidence["attention"] is None
+        assert "回涨" not in result.evidence["note"]
+
+    def test_flat_week_ending_at_its_low_is_not_a_turn(self):
+        """真平台期：最低点就是最后一次称重，后面没得涨，安静判平台期。"""
+
+        rows = [
+            _checkin(date(2026, 8, 12), "77.5"),
+            _checkin(date(2026, 8, 13), "77.2"),
+            _checkin(date(2026, 8, 16), "77.5"),
+            _checkin(date(2026, 8, 17), "77.2"),
+        ]
+        result = _evaluate(rows, baseline_kg=78.0)
+        assert result.status == STATUS_PLATEAU
+        assert result.evidence["regain_from_low"] is None
+
+    def test_small_bounce_below_daily_noise_is_ignored(self):
+        """触底后只回涨 0.3kg——喝水吃饭的日常浮动，不惊动运营。"""
+
+        rows = _daily(date(2026, 8, 11), ["64.6", "64.5", "64.4", "64.3", "64.2", "64.4", "64.5"])
+        result = _evaluate(rows, baseline_kg=65.0)
+        assert result.status == STATUS_PLATEAU
+        assert result.evidence["regain_from_low"] is None
+
     def test_steady_gain_is_rebound(self):
         rows = _daily(
             date(2026, 8, 11), ["78.0", "78.3", "78.6", "79.0", "79.2", "79.5", "79.8"]

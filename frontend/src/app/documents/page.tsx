@@ -16,7 +16,7 @@ import { PlateauReviewActions } from "./plateau-review-actions";
 import { ReviewTabs } from "./review-tabs";
 import { CheckCircle2, Minus, RefreshCcw, TrendingUp } from "lucide-react";
 import { formatChinaShortDateTime } from "@/lib/format";
-import { PlateauTrendChart } from "@/components/plateau-trend-chart";
+import { PlateauTrendChart, regainFromLow } from "@/components/plateau-trend-chart";
 
 export default async function DocumentsListPage() {
   // 首屏只取"审核要用"的轻量数据。知识库两块（FAQ 231 条 ≈170KB、已通过案例 226 条 ≈568KB）
@@ -176,10 +176,17 @@ function PlateauFollowupGroup({
   cases: ServiceCase[];
   doneCases: ServiceCase[];
 }) {
-  const pendingRows = cases.map((item) => {
+  // 已经掉头往回涨的排最前：这类看着是"平台期"，实际方向反了，晚跟进一天代价更大。
+  const ordered = [...cases].sort(
+    (a, b) =>
+      Number(regainFromLow(b.plateau_evidence) !== null) -
+      Number(regainFromLow(a.plateau_evidence) !== null),
+  );
+  const pendingRows = ordered.map((item) => {
     const rebound = item.plateau_status === "rebound";
     const note = plateauNote(item.plateau_evidence);
     const quote = plateauDeclaredQuote(item.plateau_evidence);
+    const regain = regainFromLow(item.plateau_evidence);
     return (
       <div
         key={item.id}
@@ -200,6 +207,12 @@ function PlateauFollowupGroup({
                 {rebound ? <TrendingUp className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
                 {rebound ? "体重反弹" : "平台期"}
               </span>
+              {regain && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">
+                  <TrendingUp className="h-3.5 w-3.5" />
+                  已掉头回涨
+                </span>
+              )}
               <Link className="text-break font-bold text-cyan-700 hover:underline" href={`/cases/${item.id}`}>
                 {item.case_no}
               </Link>
@@ -207,6 +220,12 @@ function PlateauFollowupGroup({
               {item.group_id && <span className="text-slate-400">· {item.group_id}</span>}
             </div>
             {note && <p className="text-break text-sm leading-relaxed text-slate-700">{note}</p>}
+            {regain && (
+              <p className="text-break rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium leading-relaxed text-rose-800">
+                {regain.low_date} 触底 {regain.low_kg.toFixed(1)} kg 后，{regain.days} 天回涨{" "}
+                {regain.rise_kg.toFixed(1)} kg——先问最近几天发生了什么，别直接按平台期调方案。
+              </p>
+            )}
             {quote && (
               <p className="text-break text-sm leading-relaxed text-slate-700">
                 <span className="font-bold text-slate-400">客户说：</span>

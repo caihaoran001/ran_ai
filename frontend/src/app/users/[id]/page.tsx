@@ -11,7 +11,7 @@ import {
 import { formatChinaDateTime } from "@/lib/format";
 import { BackIconLink } from "@/components/back-icon-link";
 import { HealthProfilePanel } from "@/components/health-profile-panel";
-import { PlateauTrendChart } from "@/components/plateau-trend-chart";
+import { PlateauTrendChart, regainFromLow } from "@/components/plateau-trend-chart";
 import { UserRecordDetails } from "./user-record-details";
 
 export default async function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -190,6 +190,7 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
   const evidence = recordValue(serviceCase.plateau_evidence);
   const conflicts = evidence.declaration_conflicts_data === true;
   const attention = text(evidence.attention);
+  const regain = regainFromLow(evidence);
   // 判成"正常"时通常不占版面，但两种情况要露出来：自述与数据不符（多半是期望落差），
   // 以及后端标了 attention 的波动/轻微上浮——否则这些人既不进名单、详情页也看不到。
   if (!status || (status === "normal" && !conflicts && !attention)) return null;
@@ -223,6 +224,12 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
         <p className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm font-medium text-amber-800 sm:px-6">
           这一周体重大起大落（最高最低相差 {numberText(evidence.spread_kg)} kg），不是卡住而是波动，
           建议先问饮食和执行的稳定性，别按平台期调方案。
+        </p>
+      )}
+      {regain && (
+        <p className="border-t border-rose-200 bg-rose-50 px-5 py-3 text-sm font-medium text-rose-800 sm:px-6">
+          整周看几乎没动，但 {regain.low_date} 触底后 {regain.days} 天已回涨 {numberText(regain.rise_kg)} kg，
+          方向可能在转。先问最近几天发生了什么（应酬、停用产品、经期），别直接按平台期调方案。
         </p>
       )}
       {attention === "slight_gain" && (

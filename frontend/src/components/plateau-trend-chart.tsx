@@ -17,13 +17,30 @@ function plateauPoints(evidence: Record<string, unknown>): PlateauPoint[] {
   });
 }
 
+export type PlateauRegain = { low_date: string; low_kg: number; rise_kg: number; days: number };
+
+/**
+ * 触底回涨的细节：最低点是哪天、之后几天回涨了多少。判定全在后端，前端只负责显示。
+ *
+ * 平台期这一屏所有读证据的地方都放在本模块，控制台和用户详情页共用同一套解析。
+ */
+export function regainFromLow(evidence?: Record<string, unknown> | null): PlateauRegain | null {
+  const raw = evidence?.regain_from_low;
+  if (!raw || typeof raw !== "object") return null;
+  const item = raw as Record<string, unknown>;
+  if (typeof item.low_date !== "string" || typeof item.low_kg !== "number") return null;
+  if (typeof item.rise_kg !== "number" || typeof item.days !== "number") return null;
+  return { low_date: item.low_date, low_kg: item.low_kg, rise_kg: item.rise_kg, days: item.days };
+}
+
 /**
  * 趋势线代表什么，用一句人话说出来——只看一条斜线运营不知道该得出什么结论。
  *
- * 波动那类要单独说：净变化确实接近 0，但写"几乎没动"会跟上面"大起大落"的提示条自相矛盾。
+ * 波动和触底回涨都要单独说：净变化确实接近 0，但写"几乎没动"会跟上面那条提示自相矛盾。
  */
 function trendMeaning(trend: number, status: string, attention: string): string {
   if (attention === "swing") return "上下波动，一周下来等于没变";
+  if (attention === "regain") return "整周看没动，但已经掉头往回涨";
   if (status === "rebound") return "在明显往上走";
   if (status === "plateau") return "几乎没动";
   if (trend <= -0.5) return "在稳定往下走";
