@@ -67,6 +67,8 @@ export type ServiceCase = {
   plateau_status?: string;
   plateau_evidence?: Record<string, unknown> | null;
   plateau_updated_at?: string | null;
+  /** 运营在审核控制台标记「已跟进」的时间；结论之后再变一次即重新待跟进 */
+  plateau_followed_up_at?: string | null;
   user?: { id: number; name: string; phone?: string | null; wecom_user_id?: string | null } | null;
   created_at: string;
   updated_at: string;

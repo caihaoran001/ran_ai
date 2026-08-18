@@ -23,6 +23,7 @@ from app.schemas.service_case import (
 )
 from app.services.agent.context_builder import build_agent_memory_context
 from app.services.checkin_completion import complete_checkin_day_count
+from app.services.plateau_detector import plateau_followup_pending_condition
 from app.services.service_case_queries import (
     active_service_case_condition,
     get_active_service_case,
@@ -223,6 +224,12 @@ async def update_service_case(
         service_case.risk_level = "normal"
         service_case.risk_flags = None
         service_case.intervention_reasons = None
+    if "plateau_followed_up" in data:
+        # 标记只记时间，不动判定结论；判定之后再变一次，这条标记自然过期回到待办。
+        followed_up = data.pop("plateau_followed_up")
+        service_case.plateau_followed_up_at = (
+            datetime.now(timezone.utc) if followed_up else None
+        )
     for key, value in data.items():
         setattr(service_case, key, value)
     await session.commit()
@@ -287,6 +294,8 @@ def _apply_service_case_filter(statement, metric: str | None):
         return statement.where(ServiceCase.plateau_status == "plateau")
     if metric == "rebound":
         return statement.where(ServiceCase.plateau_status == "rebound")
+    if metric == "plateau_followup":
+        return statement.where(plateau_followup_pending_condition())
     if metric == "in_service":
         return statement.where(ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
     if metric == "renewal_followup":

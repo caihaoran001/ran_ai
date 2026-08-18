@@ -28,6 +28,8 @@ class ServiceCaseUpdate(BaseModel):
     auto_send_documents: bool | None = None
     ai_auto_reply_enabled: bool | None = None
     refund_pending_confirmation: bool | None = None  # 运营驳回退款候选(置 False)时用
+    # 体重状态（平台期/反弹）跟进标记：True=记为已跟进(写当前时间)，False=撤销跟进。
+    plateau_followed_up: bool | None = None
     reset_risk: bool | None = None  # 人工解除高风险标记
 
 
@@ -62,6 +64,7 @@ class ServiceCaseRead(Timestamped):
     plateau_status: str = "normal"
     plateau_evidence: dict | None = None
     plateau_updated_at: datetime | None = None
+    plateau_followed_up_at: datetime | None = None
     deleted_at: datetime | None = None
     user: UserRead | None = None
 

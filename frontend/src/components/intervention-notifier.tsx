@@ -3,7 +3,7 @@
 import { useSSE } from "@/hooks/use-sse";
 
 export function InterventionBadge() {
-  // pendingReviewCount(=pending_total) 只含待审核文件、知识草稿和已退款待确认。
+  // pendingReviewCount(=pending_total) 只含待审核文件、知识草稿、已退款待确认和体重状态待跟进。
   const { pendingReviewCount } = useSSE();
   const count = pendingReviewCount;
 

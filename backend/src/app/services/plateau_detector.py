@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -115,6 +115,26 @@ def _now_utc() -> datetime:
 
 def _today() -> date:
     return _now_utc().astimezone(_tz()).date()
+
+
+def plateau_followup_pending_condition():
+    """审核控制台「体重状态跟进」待办的唯一口径：当前是平台期或反弹，且还没跟进过，
+    或者跟进之后结论又变过一次（离开平台期又回来、平台期转成反弹等）。
+
+    计数（侧边栏红点）与列表必须共用这一个条件，否则会出现「列表 3 条、红点不算这 3 条」。
+    结论一直没变就保持已处理，红点因此能归零——不然运营很快学会无视整个红点。
+    """
+
+    return and_(
+        ServiceCase.plateau_status.in_((STATUS_PLATEAU, STATUS_REBOUND)),
+        or_(
+            ServiceCase.plateau_followed_up_at.is_(None),
+            and_(
+                ServiceCase.plateau_updated_at.is_not(None),
+                ServiceCase.plateau_followed_up_at < ServiceCase.plateau_updated_at,
+            ),
+        ),
+    )
 
 
 async def scan_plateaus(session: AsyncSession) -> ScanStats:

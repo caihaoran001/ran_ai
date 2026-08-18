@@ -11,7 +11,7 @@ export function ReviewConsoleLiveRefresh() {
 
   useEffect(() => {
     if (!connected) return;
-    // pendingReviewCount(=pending_total) 已含待审核文件/知识草稿/已退款待确认，
+    // pendingReviewCount(=pending_total) 已含待审核文件/知识草稿/已退款待确认/体重状态待跟进，
     // 任一变化即刷新控制台；AI 回复待审核不再参与。
     const signature = `${pendingReviewCount}`;
     if (lastSignature.current === null) {

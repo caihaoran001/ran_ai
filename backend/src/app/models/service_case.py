@@ -123,6 +123,10 @@ class ServiceCase(TimestampMixin, Base):
     )
     plateau_evidence: Mapped[dict | None] = mapped_column(JSON)
     plateau_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 运营在审核控制台标记「已跟进」的时间。待办判据是它与 plateau_updated_at 的先后：
+    # 结论之后又变过一次（比如离开平台期又回来、或从平台期转成反弹）就重新待跟进，
+    # 结论一直没变则保持已处理，红点能归零。
+    plateau_followed_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User | None] = relationship(back_populates="service_cases")

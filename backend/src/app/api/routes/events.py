@@ -11,6 +11,7 @@ from app.db.session import SessionLocal
 from app.models.knowledge_draft import KnowledgeDraft
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, UserDocument
+from app.services.plateau_detector import plateau_followup_pending_condition
 from app.services.service_case_queries import active_service_case_condition
 
 router = APIRouter()
@@ -49,13 +50,24 @@ async def _review_counts() -> dict[str, int]:
                 ServiceCase.status != ServiceCaseStatus.REFUNDED,
             )
         ) or 0
+        # 体重状态跟进：平台期/反弹且尚未跟进（或跟进后结论又变过）。与控制台列表同口径，
+        # 运营点「已跟进」即减一；结论一直没变就不再重复占红点。
+        plateau_followup = await session.scalar(
+            select(func.count(ServiceCase.id)).where(
+                active_service_case_condition(),
+                plateau_followup_pending_condition(),
+            )
+        ) or 0
     # pending_total 驱动审核控制台侧边栏红点：只统计控制台里真正待处理的项——
-    # 待审核文件、待审核知识草稿、已退款待确认。
+    # 待审核文件、待审核知识草稿、已退款待确认、体重状态待跟进。
     return {
         "pending_knowledge_drafts": pending_knowledge_drafts,
         "pending_documents": pending_documents,
         "refund_pending": refund_pending,
-        "pending_total": pending_knowledge_drafts + pending_documents + refund_pending,
+        "plateau_followup": plateau_followup,
+        "pending_total": (
+            pending_knowledge_drafts + pending_documents + refund_pending + plateau_followup
+        ),
     }
 
 

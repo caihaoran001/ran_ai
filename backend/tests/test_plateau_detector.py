@@ -12,6 +12,8 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
+
 from app.core.config import Settings
 from app.models.checkin import Checkin
 from app.models.outcome import OutcomeEvent
@@ -27,6 +29,7 @@ from app.services.plateau_detector import (
     ScanStats,
     WeightOutcomeSignal,
     _evaluate_plateau,
+    plateau_followup_pending_condition,
     scan_plateaus,
 )
 from app.services.reminder_service import ReminderService
@@ -435,6 +438,86 @@ class TestScanPlateaus:
         await db_session.refresh(deleted_case)
         assert deleted_case.plateau_status == STATUS_NORMAL
         assert deleted_case.plateau_evidence is None
+
+
+class TestFollowupQueue:
+    """审核控制台的「体重状态跟进」待办：标记后清零，结论再变一次重新出现。"""
+
+    async def _pending_ids(self, db_session) -> set[int]:
+        rows = await db_session.scalars(
+            select(ServiceCase.id).where(
+                ServiceCase.deleted_at.is_(None),
+                plateau_followup_pending_condition(),
+            )
+        )
+        return set(rows)
+
+    async def test_plateau_case_enters_queue_and_clears_after_followup(self, db_session):
+        today = datetime.now(TZ).date()
+        case = await _make_case(db_session)
+        _add_flat_week(db_session, case, today)
+        await db_session.flush()
+        await scan_plateaus(db_session)
+        await db_session.refresh(case)
+        assert case.plateau_status == STATUS_PLATEAU
+        assert case.id in await self._pending_ids(db_session)
+
+        # 运营点「标记已跟进」
+        case.plateau_followed_up_at = datetime.now(timezone.utc)
+        await db_session.flush()
+        assert case.id not in await self._pending_ids(db_session)
+
+        # 结论没变 → 再扫一遍也不该重新占用红点
+        await scan_plateaus(db_session)
+        assert case.id not in await self._pending_ids(db_session)
+
+    async def test_conclusion_change_after_followup_reopens_the_item(self, db_session):
+        today = datetime.now(TZ).date()
+        case = await _make_case(db_session)
+        _add_flat_week(db_session, case, today)
+        await db_session.flush()
+        await scan_plateaus(db_session)
+        await db_session.refresh(case)
+        # 跟进发生在这次判定之后
+        case.plateau_followed_up_at = datetime.now(timezone.utc)
+        await db_session.flush()
+        assert case.id not in await self._pending_ids(db_session)
+
+        # 之后体重掉下来又反弹：结论从平台期变成反弹，判定时间刷新 → 重新待跟进
+        for offset, weight in ((2, "70.6"), (1, "71.2"), (0, "71.8")):
+            existing = await db_session.scalar(
+                select(Checkin).where(
+                    Checkin.service_case_id == case.id,
+                    Checkin.checkin_date == today - timedelta(days=offset),
+                )
+            )
+            existing.parsed_json = {"weight": weight}
+        await db_session.flush()
+        await scan_plateaus(db_session)
+
+        await db_session.refresh(case)
+        assert case.plateau_status == STATUS_REBOUND
+        assert case.id in await self._pending_ids(db_session)
+
+    async def test_normal_case_never_enters_queue(self, db_session):
+        today = datetime.now(TZ).date()
+        case = await _make_case(db_session)
+        for offset, weight in enumerate(["70.0", "69.8", "69.5", "69.2", "68.6"]):
+            db_session.add(
+                Checkin(
+                    service_case_id=case.id,
+                    group_id=case.group_id,
+                    checkin_date=today - timedelta(days=4 - offset),
+                    content="打卡",
+                    parsed_json={"weight": weight},
+                )
+            )
+        await db_session.flush()
+        await scan_plateaus(db_session)
+
+        await db_session.refresh(case)
+        assert case.plateau_status == STATUS_NORMAL
+        assert case.id not in await self._pending_ids(db_session)
 
 
 class TestPlateauScheduling:
