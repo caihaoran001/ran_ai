@@ -344,6 +344,14 @@ function ServiceCaseItem({
             平台期
           </span>
         )}
+        {serviceCase.plateau_status === "rebound" && (
+          <span
+            className="status-pill border-rose-200 bg-rose-50 text-rose-700"
+            title={plateauBasisTitle(serviceCase.plateau_evidence)}
+          >
+            体重反弹
+          </span>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-500 sm:shrink-0 sm:justify-end">
         <span className="hidden max-w-52 truncate lg:inline">
@@ -384,13 +392,9 @@ function OpeningIndicator() {
 }
 
 function plateauBasisTitle(evidence?: Record<string, unknown> | null): string {
-  const basis = Array.isArray(evidence?.basis) ? evidence.basis : [];
   const note = typeof evidence?.note === "string" ? evidence.note : "";
-  if (basis.length > 0) {
-    const reason = basis
-      .map((item) => (item === "statistical" ? "体重实测无变化" : "用户自述体重卡住"))
-      .join("、");
-    return note ? `依据：${reason}（${note}）` : `依据：${reason}`;
-  }
-  return note || "最后一次称重往前一周体重无变化，或用户自述体重卡住";
+  const declaredOnly =
+    Array.isArray(evidence?.basis) && evidence.basis.length === 1 && evidence.basis[0] === "user_declared";
+  if (note) return declaredOnly ? `依据：用户自述体重卡住（${note}）` : `依据：${note}`;
+  return "最后一次称重往前一周的体重走向，或体重数据不足时用户自述卡住";
 }

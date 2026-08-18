@@ -23,6 +23,7 @@ from app.services.plateau_detector import (
     STATUS_INSUFFICIENT_DATA,
     STATUS_NORMAL,
     STATUS_PLATEAU,
+    STATUS_REBOUND,
     ScanStats,
     WeightOutcomeSignal,
     _evaluate_plateau,
@@ -106,6 +107,50 @@ class TestWeightDataDecides:
         result = _evaluate(rows)
         assert result.status == STATUS_NORMAL
         assert result.evidence["delta_kg"] == -1.5
+
+    def test_swing_within_flat_week_is_not_plateau(self):
+        """首尾持平但一周里掉 4 斤又涨回来——是波动不是卡住。"""
+        rows = [
+            _checkin(date(2026, 8, 11), "80.0"),
+            _checkin(date(2026, 8, 13), "77.8"),
+            _checkin(date(2026, 8, 15), "78.2"),
+            _checkin(date(2026, 8, 17), "80.0"),
+        ]
+        result = _evaluate(rows, baseline_kg=80.0)
+        assert result.status == STATUS_NORMAL
+        assert result.evidence["delta_kg"] == 0.0  # 首尾相减看不出来
+        assert result.evidence["spread_kg"] == 2.2
+        assert "属波动而非平台期" in result.evidence["note"]
+
+    def test_steady_gain_is_rebound(self):
+        rows = _daily(
+            date(2026, 8, 11), ["78.0", "78.3", "78.6", "79.0", "79.2", "79.5", "79.8"]
+        )
+        result = _evaluate(rows, baseline_kg=78.0)
+        assert result.status == STATUS_REBOUND
+        assert result.evidence["trend_kg"] == 1.8
+
+    def test_single_high_reading_does_not_trigger_rebound(self):
+        """六天稳在 80.0、最后一天 81.2：趋势只抬了 0.77，一天涨 1.2kg 不可能是长肉。"""
+        rows = _daily(
+            date(2026, 8, 11), ["80.0", "80.1", "80.0", "79.9", "80.0", "80.1", "81.2"]
+        )
+        result = _evaluate(rows, baseline_kg=80.0)
+        assert result.status == STATUS_NORMAL
+        assert result.evidence["delta_kg"] == 1.2  # 首尾相减会误报反弹
+        assert result.evidence["trend_kg"] == 0.77
+
+    def test_rebound_with_declaration_records_conflict(self):
+        rows = _daily(
+            date(2026, 8, 11), ["78.0", "78.3", "78.6", "79.0", "79.2", "79.5", "79.8"]
+        )
+        result = _evaluate(
+            rows,
+            baseline_kg=78.0,
+            signals=[_signal(date(2026, 8, 17), "unchanged", "体重卡住了")],
+        )
+        assert result.status == STATUS_REBOUND
+        assert result.evidence["declaration_conflicts_data"] is True
 
     def test_implausible_jump_is_dropped_without_breaking_judgment(self):
         rows = _daily(date(2026, 8, 11), ["70.0", "70.1", "76.5", "70.0", "70.2", "70.1", "70.0"])

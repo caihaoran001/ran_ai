@@ -164,8 +164,15 @@ function OperationFact({
 
 const PLATEAU_STATUS_META: Record<string, { label: string; pill: string }> = {
   plateau: { label: "平台期", pill: "border-violet-200 bg-violet-50 text-violet-700" },
+  rebound: { label: "体重反弹", pill: "border-rose-200 bg-rose-50 text-rose-700" },
   insufficient_data: { label: "打卡数据不足", pill: "pill-neutral" },
   normal: { label: "正常", pill: "pill-ok" },
+};
+
+const PLATEAU_BASIS_LABELS: Record<string, string> = {
+  plateau: "体重实测无变化",
+  rebound: "体重实测上涨",
+  normal: "体重实测在变化",
 };
 
 /** 最后一次称重距今多久——判定窗口锚在它上面，运营开口前需要知道证据截止到哪天。 */
@@ -186,12 +193,13 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
   const meta = PLATEAU_STATUS_META[status] ?? { label: "待判定", pill: "pill-neutral" };
   const basis = Array.isArray(evidence.basis) ? evidence.basis : [];
   const basisText = basis
-    .map((item) => (item === "statistical" ? "体重实测无变化" : "用户自述体重卡住"))
+    .map((item) => (item === "statistical" ? PLATEAU_BASIS_LABELS[status] ?? "体重实测走向" : "用户自述体重卡住"))
     .join("、");
   const declared = Array.isArray(evidence.declared_evidence) ? evidence.declared_evidence : [];
   const firstWeight = text(evidence.first_weight_kg);
   const lastWeight = text(evidence.last_weight_kg);
   const delta = typeof evidence.delta_kg === "number" ? String(evidence.delta_kg) : "";
+  const trend = typeof evidence.trend_kg === "number" ? evidence.trend_kg : null;
   const windowStart = text(evidence.window_start);
   const windowEnd = text(evidence.window_end);
   const note = text(evidence.note);
@@ -200,9 +208,9 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
     <section className="panel overflow-hidden" aria-labelledby="plateau-heading">
       <div className="panel-header-clean flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 id="plateau-heading" className="panel-title">平台期识别</h2>
+          <h2 id="plateau-heading" className="panel-title">体重状态</h2>
           <p className="panel-subtitle">
-            以最后一次称重往前一周判断：体重没动静，或体重数据不足时用户自述卡住。
+            以最后一次称重往前一周的体重走向判断；体重数据不足时才看用户是否自述卡住。
           </p>
         </div>
         <span className={`status-pill ${meta.pill}`}>{meta.label}</span>
@@ -223,6 +231,11 @@ function PlateauPanel({ serviceCase }: { serviceCase: ServiceCase }) {
           <dd className="text-break mt-1 text-sm font-semibold leading-6 text-slate-900">
             {firstWeight && lastWeight && delta ? `${firstWeight} → ${lastWeight} kg（${delta} kg）` : "—"}
           </dd>
+          {trend !== null && (
+            <p className="text-break mt-1 text-xs text-slate-500">
+              这一周趋势 {trend > 0 ? `+${trend}` : trend} kg（判定用这个数，不是首尾相减）
+            </p>
+          )}
           <p className="text-break mt-1 text-xs text-slate-500">
             {windowStart && windowEnd ? `判定窗口 ${windowStart} ~ ${windowEnd}` : "无判定窗口"}
           </p>

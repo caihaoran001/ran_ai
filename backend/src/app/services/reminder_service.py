@@ -228,9 +228,10 @@ class ReminderService:
             stats = await scan_plateaus(session)
         if stats.scanned:
             logger.info(
-                "Plateau scan scanned=%d plateau=%d insufficient=%d declared=%d changed=%d",
+                "Plateau scan scanned=%d plateau=%d rebound=%d insufficient=%d declared=%d changed=%d",
                 stats.scanned,
                 stats.plateau,
+                stats.rebound,
                 stats.insufficient,
                 stats.declared,
                 stats.changed,

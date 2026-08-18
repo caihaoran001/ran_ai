@@ -118,6 +118,7 @@ const SERVICE_CASE_FILTER_LABELS: Record<string, string> = {
   new_today: "今日新增用户",
   risk: "风险用户",
   plateau: "平台期用户",
+  rebound: "体重反弹用户",
   unfollowed: "未跟进（2-7天）",
   renewal_followup: "续购跟进窗口",
   renewal_intent: "明确续购意向",

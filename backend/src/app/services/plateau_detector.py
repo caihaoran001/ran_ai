@@ -7,8 +7,10 @@
 1. **窗口锚在最后一次有效称重**（``PLATEAU_WINDOW_DAYS`` 天，含当天），不跟着日历滑动。
    判定只在有新体重时才可能产生新结论——时间往前走只能让旧结论失效，不能凭空造出新结论。
 2. **数据够不够**：窗口内至少 ``MIN_WEIGHT_DAYS_IN_WINDOW`` 天有有效体重，且任何位置
-   不出现连续超过 ``MAX_GAP_DAYS`` 天没有体重。够 → 由首尾差值下结论，
-   ``PLATEAU_MAX_DELTA_KG`` 以内算没动静。
+   不出现连续超过 ``MAX_GAP_DAYS`` 天没有体重。够 → 用最小二乘趋势线算这一周的变化量
+   下结论（不是首尾两点相减，单次异常读数不该独自翻转结论）：
+   ``PLATEAU_MAX_DELTA_KG`` 以内算没动静、涨过 ``REBOUND_MIN_TREND_KG`` 算体重反弹；
+   趋势平但窗口内最高最低差超过 ``MAX_SPREAD_KG`` 的是波动，也不算平台期。
 3. **数据不够/没有/已过期** → 才轮到用户自述。档案官已按既有抽取链路把「体重没动/平台期」
    上报为 ``outcome_events(field_key='weight_change', event_type='unchanged')``，这里直接读该
    事件（最近 7 天内）作为自述信号，不做关键词硬编码；更新的改善/达成/变差事件，或自述之后
@@ -48,8 +50,14 @@ logger = logging.getLogger(__name__)
 
 # 观察窗口：客户说「一星期」，取最后一次称重往前 7 个自然日（含当天）。
 PLATEAU_WINDOW_DAYS = 7
-# 窗口内首尾体重差 ≤0.5kg 视为「没动静」（正常日波动范围内）。
+# 一周变化 ≤0.5kg 视为「没动静」（正常日波动范围内）。
 PLATEAU_MAX_DELTA_KG = 0.5
+# 一周涨 ≥1.0kg 判为体重反弹。0.5~1.0 之间留缓冲不惊动运营：晨起空腹的正常波动就有半公斤
+# 上下，经期水肿能到一两公斤，门槛压太低会让名单被噪声淹掉。
+REBOUND_MIN_TREND_KG = 1.0
+# 窗口内最高最低差 >2.0kg 说明是波动不是「卡住」，不判平台期（趋势线对 U 形摆动是平的，
+# 只看趋势会把一周掉 4 斤又涨回来的人算成平台期）。
+MAX_SPREAD_KG = 2.0
 # 窗口内至少 4 天有有效体重，才够代表这一周。
 MIN_WEIGHT_DAYS_IN_WINDOW = 4
 # 允许连续空缺的天数上限：连续 3 天没有体重就不作数。
@@ -66,6 +74,7 @@ _MIN_WEIGHT_DELTA_ALLOWANCE_KG = 2.5
 # 状态值
 STATUS_NORMAL = "normal"
 STATUS_PLATEAU = "plateau"
+STATUS_REBOUND = "rebound"
 STATUS_INSUFFICIENT_DATA = "insufficient_data"
 
 # 这些成效方向明确说明“体重仍未变化”的旧自述已经不是最新结论。
@@ -86,6 +95,7 @@ class ScanStats:
     insufficient: int
     declared: int
     changed: int = 0
+    rebound: int = 0
 
 
 @dataclass(frozen=True)
@@ -162,6 +172,7 @@ async def scan_plateaus(session: AsyncSession) -> ScanStats:
 
     now = _now_utc()
     plateau_count = insufficient_count = declared_count = changed_count = 0
+    rebound_count = 0
     for case in cases:
         result = _evaluate_plateau(
             checkins_by_case.get(case.id, []),
@@ -178,6 +189,8 @@ async def scan_plateaus(session: AsyncSession) -> ScanStats:
             changed_count += 1
         if result.status == STATUS_PLATEAU:
             plateau_count += 1
+        elif result.status == STATUS_REBOUND:
+            rebound_count += 1
         elif result.status == STATUS_INSUFFICIENT_DATA:
             insufficient_count += 1
         if result.evidence and result.evidence.get("user_declared"):
@@ -190,6 +203,7 @@ async def scan_plateaus(session: AsyncSession) -> ScanStats:
         insufficient=insufficient_count,
         declared=declared_count,
         changed=changed_count,
+        rebound=rebound_count,
     )
 
 
@@ -235,6 +249,8 @@ def _evaluate_plateau(
     basis: list[str] = []
     conflicts_data = False
     delta_kg: float | None = None
+    trend_kg: float | None = None
+    spread_kg: float | None = None
     first_weight: float | None = None
     last_weight: float | None = None
 
@@ -242,24 +258,30 @@ def _evaluate_plateau(
         first_weight = in_window[0][1]
         last_weight = in_window[-1][1]
         delta_kg = round(last_weight - first_weight, 2)
-        if abs(delta_kg) <= PLATEAU_MAX_DELTA_KG:
+        trend_kg = _trend_delta_kg(in_window)
+        values = [value for _, value in in_window]
+        spread_kg = round(max(values) - min(values), 2)
+        span = f"{window_start.isoformat()}~{anchor_day.isoformat()}"
+        basis.append("statistical")
+        if trend_kg >= REBOUND_MIN_TREND_KG:
+            status = STATUS_REBOUND
+            note = f"{span} 共 {weight_days} 天有体重，趋势 +{trend_kg} kg"
+        elif abs(trend_kg) <= PLATEAU_MAX_DELTA_KG and spread_kg <= MAX_SPREAD_KG:
             status = STATUS_PLATEAU
-            basis.append("statistical")
             if user_declared:
                 basis.append("user_declared")
-            note = (
-                f"{window_start.isoformat()}~{anchor_day.isoformat()} 共 {weight_days} 天有体重，"
-                f"首尾相差 {delta_kg} kg"
-            )
-        else:
-            # 数据够就以数据为准：自述压不过实测。冲突只记录，不改变结论。
+            note = f"{span} 共 {weight_days} 天有体重，趋势 {trend_kg:+} kg"
+        elif abs(trend_kg) <= PLATEAU_MAX_DELTA_KG:
+            # 趋势是平的但一周里大起大落：这是波动，不是卡住。
             status = STATUS_NORMAL
-            conflicts_data = user_declared
-            note = (
-                f"{window_start.isoformat()}~{anchor_day.isoformat()} 体重变化 {delta_kg} kg"
-            )
-            if conflicts_data:
-                note += "，与用户自述「体重卡住」不符"
+            note = f"{span} 趋势 {trend_kg:+} kg，但最高最低相差 {spread_kg} kg，属波动而非平台期"
+        else:
+            status = STATUS_NORMAL
+            note = f"{span} 趋势 {trend_kg:+} kg"
+        # 数据够就以数据为准：自述压不过实测。冲突只记录，不改变结论。
+        if status != STATUS_PLATEAU and user_declared:
+            conflicts_data = True
+            note += "，与用户自述「体重卡住」不符"
     elif user_declared:
         status = STATUS_PLATEAU
         basis.append("user_declared")
@@ -293,6 +315,8 @@ def _evaluate_plateau(
         "first_weight_kg": first_weight,
         "last_weight_kg": last_weight,
         "delta_kg": delta_kg,
+        "trend_kg": trend_kg,
+        "spread_kg": spread_kg,
         "declared_evidence": (
             [latest_declaration.evidence_text] if latest_declaration is not None else []
         ),
@@ -335,6 +359,27 @@ def _data_shortfall_note(
         f"近 {PLATEAU_WINDOW_DAYS} 天内出现连续 {max_gap_days} 天没有体重"
         f"（超过 {MAX_GAP_DAYS} 天）"
     )
+
+
+def _trend_delta_kg(in_window: list[tuple[date, float]]) -> float:
+    """这一周体重的走向：最小二乘趋势线从首次称重走到末次称重抬升/下降了多少公斤。
+
+    比首尾两点相减稳：全部称重都参与，单次异常读数（穿衣称、前一晚吃咸了）不会独自
+    翻转结论；横轴用真实日期，所以隔天称、漏一天都不需要补点。点少时它自然退化成接近
+    首尾差——真正扛事的是「窗口内至少 4 天有体重」那道门槛。
+    """
+
+    days = [(day - in_window[0][0]).days for day, _ in in_window]
+    values = [value for _, value in in_window]
+    mean_day = sum(days) / len(days)
+    mean_value = sum(values) / len(values)
+    covariance = sum(
+        (day - mean_day) * (value - mean_value) for day, value in zip(days, values)
+    )
+    variance = sum((day - mean_day) ** 2 for day in days)
+    if variance <= 0:  # 同一天的记录不可能出现（每天最多一条），兜底不除零
+        return 0.0
+    return round(covariance / variance * (days[-1] - days[0]), 2)
 
 
 def _usable_weights(
