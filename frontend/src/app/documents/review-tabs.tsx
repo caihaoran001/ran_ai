@@ -22,7 +22,7 @@ export function ReviewTabs({ tabs }: { tabs: ReviewTab[] }) {
 
   return (
     <div>
-      <div className="inline-flex flex-wrap gap-1 rounded-lg bg-slate-100 p-1" role="tablist">
+      <div className="inline-flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1" role="tablist">
         {tabs.map((tab) => {
           const selected = tab.key === active;
           return (
@@ -34,12 +34,18 @@ export function ReviewTabs({ tabs }: { tabs: ReviewTab[] }) {
               aria-selected={selected}
               aria-controls={`${groupId}-${tab.key}-panel`}
               onClick={() => setActive(tab.key)}
-              className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
-                selected ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              className={`rounded-lg px-4 py-2 text-sm font-bold transition-colors ${
+                selected ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:bg-white/60 hover:text-slate-900"
               }`}
             >
               {tab.label}
-              <span className={`ml-1.5 tabular ${selected ? "text-cyan-700" : "text-slate-400"}`}>{tab.count}</span>
+              <span
+                className={`ml-2 rounded-md px-1.5 py-0.5 text-xs tabular ${
+                  selected ? "bg-cyan-50 text-cyan-700" : "bg-slate-200/70 text-slate-500"
+                }`}
+              >
+                {tab.count}
+              </span>
             </button>
           );
         })}
