@@ -1,24 +1,29 @@
-"""平台期检测：7 天体重无动静，或用户主动说体重卡住。
+"""平台期检测：以最后一次称重为锚往前看一周，数据够就让数据说话。
 
 客户口径：平台期 = **一星期体重没动静**，或**用户主动说类似「体重卡住了」**。
 
-实现分成两个信号源：
+判定顺序（先数据后自述，证据强度写进 evidence）：
 
-1. **统计主判据**（确定性计算，不调模型）：最近 7 天窗口内，有效体重记录的
-   首尾差值 ≤ ``PLATEAU_MAX_DELTA_KG``（0.5kg，处于正常日波动范围内）→ 平台期。
-   复用 ``body_change_stats`` 的入营基线锚定与跳变剔除思路，避免把「这周只称了两次
-   而且一次写错单位」的用户误判成平台期。
-2. **用户自述旁证**：档案官已经按既有抽取链路把「体重没动/平台期」上报为
-   ``outcome_events(field_key='weight_change', event_type='unchanged')`` 的结构化事件，
-   这里直接读该事件（最近 7 天内）作为「用户主动说体重卡住」的信号，不做关键词硬编码；
-   更新的改善/达成/变差事件，或自述之后超过 0.5kg 的新称重变化，会解除更早的自述，
-   避免用户已经掉秤或反弹后仍被旧话误标为平台期。
+1. **窗口锚在最后一次有效称重**（``PLATEAU_WINDOW_DAYS`` 天，含当天），不跟着日历滑动。
+   判定只在有新体重时才可能产生新结论——时间往前走只能让旧结论失效，不能凭空造出新结论。
+2. **数据够不够**：窗口内至少 ``MIN_WEIGHT_DAYS_IN_WINDOW`` 天有有效体重，且任何位置
+   不出现连续超过 ``MAX_GAP_DAYS`` 天没有体重。够 → 由首尾差值下结论，
+   ``PLATEAU_MAX_DELTA_KG`` 以内算没动静。
+3. **数据不够/没有/已过期** → 才轮到用户自述。档案官已按既有抽取链路把「体重没动/平台期」
+   上报为 ``outcome_events(field_key='weight_change', event_type='unchanged')``，这里直接读该
+   事件（最近 7 天内）作为自述信号，不做关键词硬编码；更新的改善/达成/变差事件，或自述之后
+   超过阈值的新称重变化，会解除更早的自述。
+4. **结论存活期**：最后一次有效称重距今超过 ``MAX_GAP_DAYS`` 天（= 连续三天没体重）→
+   结论作废回 ``insufficient_data``；这时既不知道现在什么情况，就不该继续挂着旧标签。
 
-数据不足（窗口内有效体重记录 < 2 条、也没有用户自述）→ 标记 ``insufficient_data``，
-不误报平台期——运营看到的列表应该只有「真平台期」，没数据的人需要先解决打卡问题。
+数据充足、却显示体重在明显变化，而用户仍自述卡住时：结论以数据为准（``normal``，不进名单），
+但 evidence 标记 ``declaration_conflicts_data`` 并保留原话——这类人多半是期望落差
+（实际掉秤了自己觉得没动），运营从详情页能看到，值得单独沟通。
 
 结果写入 ``service_cases`` 的三个字段（``plateau_status`` / ``plateau_evidence`` /
-``plateau_updated_at``），由调度器天闸周期扫描，纯 DB 派生、不占消息热路径。
+``plateau_updated_at``），由调度器每天定点扫描，纯 DB 派生、不占消息热路径；
+**结论没有变化就不写库**，避免每次扫描刷新全部服务单的 ``updated_at``（后台多处按它排序、
+「生成中卡住」补跑也用它当判据）。
 """
 
 from __future__ import annotations
@@ -41,15 +46,19 @@ from app.services.service_case_queries import active_service_case_condition
 
 logger = logging.getLogger(__name__)
 
-# 观察窗口：客户说「一星期」，取最近 7 个自然日（含今天）。
+# 观察窗口：客户说「一星期」，取最后一次称重往前 7 个自然日（含当天）。
 PLATEAU_WINDOW_DAYS = 7
 # 窗口内首尾体重差 ≤0.5kg 视为「没动静」（正常日波动范围内）。
 PLATEAU_MAX_DELTA_KG = 0.5
-# 窗口内至少 2 条有效体重记录才能下统计结论。
-MIN_VALID_WEIGHT_ROWS = 2
-# 首尾两次有效打卡必须隔满一周（至少 6 个自然日），才足以支撑「一星期没动静」的结论；
-# 否则（如连着两天打卡）只是称了两次，不能说明体重卡了一周。
-PLATEAU_MIN_SPAN_DAYS = 6
+# 窗口内至少 4 天有有效体重，才够代表这一周。
+MIN_WEIGHT_DAYS_IN_WINDOW = 4
+# 允许连续空缺的天数上限：连续 3 天没有体重就不作数。
+# 落在窗口里 → 这次判定不成立；落在判定之后 → 已有结论作废。
+MAX_GAP_DAYS = 2
+# 用户自述的有效期（天）。
+DECLARATION_WINDOW_DAYS = 7
+# 打卡回溯上限：判定只用一周，多读的部分是给单位跳变剔除当锚点用的。
+CHECKIN_LOOKBACK_DAYS = 40
 # 相邻跳变剔除：复用 body_change_stats 的口径（日内波动 + 可能真实变化的和）。
 _MAX_WEIGHT_DELTA_PER_DAY = 0.5
 _MIN_WEIGHT_DELTA_ALLOWANCE_KG = 2.5
@@ -76,6 +85,7 @@ class ScanStats:
     plateau: int
     insufficient: int
     declared: int
+    changed: int = 0
 
 
 @dataclass(frozen=True)
@@ -93,6 +103,10 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _today() -> date:
+    return _now_utc().astimezone(_tz()).date()
+
+
 async def scan_plateaus(session: AsyncSession) -> ScanStats:
     """扫一遍所有未软删除服务单，把平台期状态写入 service_cases 的三个字段。
 
@@ -105,29 +119,34 @@ async def scan_plateaus(session: AsyncSession) -> ScanStats:
         )
     )
     if not cases:
-        return ScanStats(scanned=0, plateau=0, insufficient=0, declared=0)
+        return ScanStats(scanned=0, plateau=0, insufficient=0, declared=0, changed=0)
     case_ids = [case.id for case in cases]
 
+    today = _today()
     baselines = await load_intake_baselines(session, case_ids)
     checkins_by_case: dict[int, list[Checkin]] = {}
     for checkin in await session.scalars(
         select(Checkin)
-        .where(Checkin.service_case_id.in_(case_ids), Checkin.deleted_at.is_(None))
+        .where(
+            Checkin.service_case_id.in_(case_ids),
+            Checkin.deleted_at.is_(None),
+            Checkin.checkin_date >= today - timedelta(days=CHECKIN_LOOKBACK_DAYS),
+        )
         .order_by(Checkin.checkin_date.asc(), Checkin.created_at.asc())
     ):
         checkins_by_case.setdefault(checkin.service_case_id, []).append(checkin)
 
-    # 最近 7 天体重成效事件：unchanged 可触发平台期，更新的 improved/completed/worsened
+    # 最近 7 天体重成效事件：unchanged 可作为自述，更新的 improved/completed/worsened
     # 会解除更早的 unchanged，避免旧自述长期压过后续真实结果。
     outcome_signals_by_case: dict[int, list[WeightOutcomeSignal]] = {}
-    window_start = _now_utc() - timedelta(days=PLATEAU_WINDOW_DAYS)
+    declaration_start = _now_utc() - timedelta(days=DECLARATION_WINDOW_DAYS)
     for event in await session.scalars(
         select(OutcomeEvent)
         .where(
             OutcomeEvent.service_case_id.in_(case_ids),
             OutcomeEvent.field_key == "weight_change",
             OutcomeEvent.event_type.in_(_WEIGHT_OUTCOME_EVENT_TYPES),
-            OutcomeEvent.occurred_at >= window_start,
+            OutcomeEvent.occurred_at >= declaration_start,
         )
         .order_by(OutcomeEvent.occurred_at.asc(), OutcomeEvent.id.asc())
     ):
@@ -141,20 +160,22 @@ async def scan_plateaus(session: AsyncSession) -> ScanStats:
                 )
             )
 
-    window_start_date = _window_start()
-    window_end_date = _window_end()
-    plateau_count = insufficient_count = declared_count = 0
+    now = _now_utc()
+    plateau_count = insufficient_count = declared_count = changed_count = 0
     for case in cases:
         result = _evaluate_plateau(
             checkins_by_case.get(case.id, []),
             baseline_kg=baselines.get(case.id, (None, None))[0],
             outcome_signals=outcome_signals_by_case.get(case.id, []),
-            window_start=window_start_date,
-            window_end=window_end_date,
+            today=today,
         )
-        case.plateau_status = result.status
-        case.plateau_evidence = result.evidence
-        case.plateau_updated_at = _now_utc()
+        # 结论没变就不碰这一行：service_cases.updated_at 是后台列表排序和
+        # 「生成中卡住超时补跑」的判据，不该被每天的派生计算刷掉。
+        if case.plateau_status != result.status or case.plateau_evidence != result.evidence:
+            case.plateau_status = result.status
+            case.plateau_evidence = result.evidence
+            case.plateau_updated_at = now
+            changed_count += 1
         if result.status == STATUS_PLATEAU:
             plateau_count += 1
         elif result.status == STATUS_INSUFFICIENT_DATA:
@@ -168,6 +189,7 @@ async def scan_plateaus(session: AsyncSession) -> ScanStats:
         plateau=plateau_count,
         insufficient=insufficient_count,
         declared=declared_count,
+        changed=changed_count,
     )
 
 
@@ -176,25 +198,32 @@ def _evaluate_plateau(
     *,
     baseline_kg: float | None,
     outcome_signals: list[WeightOutcomeSignal],
-    window_start: date,
-    window_end: date,
+    today: date,
 ) -> PlateauResult:
     """单个服务单的平台期判定（纯函数，便于单测）。"""
 
-    usable: list[tuple[date, float]] = []
-    for row in checkin_rows:
-        payload = row.parsed_json or {}
-        raw = payload.get("weight")
-        if raw in (None, ""):
-            continue
-        parsed = parse_weight_kg(raw, baseline_kg=baseline_kg)
-        if parsed.ok and parsed.value is not None:
-            usable.append((row.checkin_date, parsed.value))
-    usable = _drop_implausible_jumps(usable)
+    usable = _drop_implausible_jumps(_usable_weights(checkin_rows, baseline_kg))
+    anchor_day = usable[-1][0] if usable else None
+    days_since_last = (today - anchor_day).days if anchor_day is not None else None
 
-    in_window = [
-        (day, value) for day, value in usable if window_start <= day <= window_end
-    ]
+    window_start: date | None = None
+    in_window: list[tuple[date, float]] = []
+    if anchor_day is not None:
+        window_start = anchor_day - timedelta(days=PLATEAU_WINDOW_DAYS - 1)
+        in_window = [
+            (day, value) for day, value in usable if window_start <= day <= anchor_day
+        ]
+    weight_days = len({day for day, _ in in_window})
+    max_gap_days = _max_gap_days(in_window, window_start)
+
+    # 最后一次称重距今超过容忍天数 → 数据描述的已经不是「现在」，结论作废。
+    expired = days_since_last is not None and days_since_last > MAX_GAP_DAYS
+    sufficient = (
+        not expired
+        and weight_days >= MIN_WEIGHT_DAYS_IN_WINDOW
+        and max_gap_days is not None
+        and max_gap_days <= MAX_GAP_DAYS
+    )
 
     (
         user_declared,
@@ -202,62 +231,65 @@ def _evaluate_plateau(
         declared_superseded_by,
         post_declared_delta_kg,
     ) = _resolve_user_declaration(outcome_signals, in_window)
-    declaration_was_superseded = declared_superseded_by is not None
 
-    span_days = 0
-    if len(in_window) >= MIN_VALID_WEIGHT_ROWS:
-        first_day = in_window[0][0]
-        last_day = in_window[-1][0]
-        span_days = (last_day - first_day).days
-
-    if (
-        not user_declared
-        and not declaration_was_superseded
-        and (
-            len(in_window) < MIN_VALID_WEIGHT_ROWS or span_days < PLATEAU_MIN_SPAN_DAYS
-        )
-    ):
-        note = (
-            "窗口内有效体重记录不足，无法判定平台期"
-            if len(in_window) < MIN_VALID_WEIGHT_ROWS
-            else "窗口内两次打卡未隔满一周，不足以说明体重卡了一周"
-        )
-        return PlateauResult(
-            STATUS_INSUFFICIENT_DATA,
-            {
-                "basis": [],
-                "user_declared": False,
-                "window_start": window_start.isoformat(),
-                "window_end": window_end.isoformat(),
-                "valid_weight_rows": len(in_window),
-                "declared_evidence": [],
-                "declared_at": None,
-                "declared_superseded_by": None,
-                "post_declared_delta_kg": None,
-                "note": note,
-            },
-        )
-
+    basis: list[str] = []
+    conflicts_data = False
     delta_kg: float | None = None
     first_weight: float | None = None
     last_weight: float | None = None
-    if len(in_window) >= MIN_VALID_WEIGHT_ROWS and span_days >= PLATEAU_MIN_SPAN_DAYS:
-        first_day, first_weight = in_window[0]
-        last_day, last_weight = in_window[-1]
-        delta_kg = round(last_weight - first_weight, 2)
 
-    basis: list[str] = []
-    if delta_kg is not None and abs(delta_kg) <= PLATEAU_MAX_DELTA_KG:
-        basis.append("statistical")
-    if user_declared:
+    if sufficient:
+        first_weight = in_window[0][1]
+        last_weight = in_window[-1][1]
+        delta_kg = round(last_weight - first_weight, 2)
+        if abs(delta_kg) <= PLATEAU_MAX_DELTA_KG:
+            status = STATUS_PLATEAU
+            basis.append("statistical")
+            if user_declared:
+                basis.append("user_declared")
+            note = (
+                f"{window_start.isoformat()}~{anchor_day.isoformat()} 共 {weight_days} 天有体重，"
+                f"首尾相差 {delta_kg} kg"
+            )
+        else:
+            # 数据够就以数据为准：自述压不过实测。冲突只记录，不改变结论。
+            status = STATUS_NORMAL
+            conflicts_data = user_declared
+            note = (
+                f"{window_start.isoformat()}~{anchor_day.isoformat()} 体重变化 {delta_kg} kg"
+            )
+            if conflicts_data:
+                note += "，与用户自述「体重卡住」不符"
+    elif user_declared:
+        status = STATUS_PLATEAU
         basis.append("user_declared")
+        note = "用户口述平台期；" + _data_shortfall_note(
+            anchor_day=anchor_day,
+            days_since_last=days_since_last,
+            weight_days=weight_days,
+            max_gap_days=max_gap_days,
+            expired=expired,
+        )
+    else:
+        status = STATUS_INSUFFICIENT_DATA
+        note = _data_shortfall_note(
+            anchor_day=anchor_day,
+            days_since_last=days_since_last,
+            weight_days=weight_days,
+            max_gap_days=max_gap_days,
+            expired=expired,
+        )
 
     evidence: dict = {
         "basis": basis,
         "user_declared": user_declared,
-        "window_start": window_start.isoformat(),
-        "window_end": window_end.isoformat(),
-        "valid_weight_rows": len(in_window),
+        "data_sufficient": sufficient,
+        "window_start": window_start.isoformat() if window_start else None,
+        "window_end": anchor_day.isoformat() if anchor_day else None,
+        "last_weight_date": anchor_day.isoformat() if anchor_day else None,
+        "days_since_last_weight": days_since_last,
+        "valid_weight_rows": weight_days,
+        "max_gap_days": max_gap_days,
         "first_weight_kg": first_weight,
         "last_weight_kg": last_weight,
         "delta_kg": delta_kg,
@@ -271,8 +303,73 @@ def _evaluate_plateau(
         ),
         "declared_superseded_by": declared_superseded_by,
         "post_declared_delta_kg": post_declared_delta_kg,
+        "declaration_conflicts_data": conflicts_data,
+        "note": note,
     }
-    return PlateauResult(STATUS_PLATEAU if basis else STATUS_NORMAL, evidence)
+    return PlateauResult(status, evidence)
+
+
+def _data_shortfall_note(
+    *,
+    anchor_day: date | None,
+    days_since_last: int | None,
+    weight_days: int,
+    max_gap_days: int | None,
+    expired: bool,
+) -> str:
+    """说清楚这次为什么不能用体重数据下结论，供运营在详情页核对。"""
+
+    if anchor_day is None:
+        return "无有效体重打卡数据"
+    if expired:
+        return (
+            f"最后一次有效体重打卡 {anchor_day.isoformat()}，距今 {days_since_last} 天，"
+            "已连续三天没有体重"
+        )
+    if weight_days < MIN_WEIGHT_DAYS_IN_WINDOW:
+        return (
+            f"近 {PLATEAU_WINDOW_DAYS} 天仅 {weight_days} 天有有效体重"
+            f"（需至少 {MIN_WEIGHT_DAYS_IN_WINDOW} 天）"
+        )
+    return (
+        f"近 {PLATEAU_WINDOW_DAYS} 天内出现连续 {max_gap_days} 天没有体重"
+        f"（超过 {MAX_GAP_DAYS} 天）"
+    )
+
+
+def _usable_weights(
+    checkin_rows: list[Checkin],
+    baseline_kg: float | None,
+) -> list[tuple[date, float]]:
+    usable: list[tuple[date, float]] = []
+    for row in checkin_rows:
+        payload = row.parsed_json or {}
+        raw = payload.get("weight")
+        if raw in (None, ""):
+            continue
+        parsed = parse_weight_kg(raw, baseline_kg=baseline_kg)
+        if parsed.ok and parsed.value is not None:
+            usable.append((row.checkin_date, parsed.value))
+    usable.sort(key=lambda item: item[0])
+    return usable
+
+
+def _max_gap_days(
+    in_window: list[tuple[date, float]],
+    window_start: date | None,
+) -> int | None:
+    """窗口内最长的「连续几天没有体重」。
+
+    窗口末尾就是最后一次称重当天，所以只需要看开头那段和中间各段。
+    """
+
+    if not in_window or window_start is None:
+        return None
+    days = sorted({day for day, _ in in_window})
+    gap = (days[0] - window_start).days
+    for previous, current in zip(days, days[1:]):
+        gap = max(gap, (current - previous).days - 1)
+    return gap
 
 
 def _resolve_user_declaration(
@@ -356,14 +453,6 @@ def _aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
-
-
-def _window_start() -> date:
-    return _now_utc().astimezone(_tz()).date() - timedelta(days=PLATEAU_WINDOW_DAYS - 1)
-
-
-def _window_end() -> date:
-    return _now_utc().astimezone(_tz()).date()
 
 
 def _drop_implausible_jumps(
