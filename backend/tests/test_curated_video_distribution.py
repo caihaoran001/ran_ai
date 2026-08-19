@@ -5,7 +5,8 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import func, select
+import pytest_asyncio
+from sqlalchemy import delete, func, select
 
 from app.models.curated_video import (
     CuratedVideoDailyRun,
@@ -131,6 +132,28 @@ class CrashBeforeRequestChannel(RecordingChannel):
         feed: dict[str, str],
     ) -> ChannelSendResult:
         raise asyncio.CancelledError()
+
+
+@pytest_asyncio.fixture(autouse=True, loop_scope="session")
+async def clean_curated_video_tables(db_session):
+    """开跑前把视频推送这几张表清空，用例不再受开发机上的历史数据影响。
+
+    这里的用例把日期钉死在 2026-08-12，而"每天一批推送"这件事一天只允许一条记录。
+    本机跑着开发环境的话，它每天中午都会往同一个库里真记一条，跑测试时就会撞上：
+    代码看到"这天已经有批次了"直接返回旧那条，断言读到的是历史结果而不是本次行为，
+    于是一批用例莫名变红（本机曾攒下 8/12–8/19 共 8 条）。
+
+    删除只发生在测试自己的事务里，跑完随事务回滚，开发库里的数据不会真掉。
+    """
+    for model in (
+        CuratedVideoDelivery,
+        CuratedVideoDailyRun,
+        CuratedVideoItem,
+        CuratedVideoSourceCursor,
+    ):
+        await db_session.execute(delete(model))
+    await db_session.flush()
+    yield
 
 
 @pytest.mark.asyncio
