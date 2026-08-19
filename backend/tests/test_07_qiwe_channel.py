@@ -3719,6 +3719,14 @@ def test_qiwe_transfer_text_is_recovered_from_raw_payload():
             "邀请 1 人加入群聊",
         ),
         (2118, {"changedMemberId": 1688857375621674}, "YIn3fzASSS2kroC", "更新了群成员信息"),
+        # quit_ 开头才是真退群：抽查 12 个当事人，全部已不在群里；随机串那类 12 个全都还在
+        (
+            2118,
+            {"changedMemberId": 7881302607052485},
+            "quit_associate_chatroom_1507592563_t1787009737_r1395306896",
+            "退出了群聊",
+        ),
+        (1005, {}, "quit_associate_chatroom_x", "退出了群聊"),
     ],
 )
 def test_qiwe_group_system_notices_are_readable(msg_type, msg_data, identifier, expected):

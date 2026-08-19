@@ -89,14 +89,8 @@ def describe_non_text(item: dict[str, Any]) -> NonTextMessage:
         return _group_renamed(msg_data, item)
     if msg_type == 1002:
         return _members_joined(msg_data, item, identifier)
-    if msg_type == 2118:
-        # 不要改写成「退出了群聊」。拿 24 个群的当前成员表和"群里出现过的人"对过账（132 人）：
-        # 真正已离开的 4 个人确实都有这条事件，但反过来，有这条事件的 30 人里只有 4 个离开了，
-        # 其余 26 个（绝大多数挂在建群那个运营号名下）今天仍在群里。它只说明群成员关系发生了变动，
-        # 不等于退群，语义查不实就别替它下结论。真要做退群/流失识别，得定期比对群成员表，不能靠这条。
-        return NonTextMessage(TYPE_SYSTEM_NOTICE, "更新了群成员信息")
-    if msg_type == 1005:
-        return NonTextMessage(TYPE_SYSTEM_NOTICE, "变更了群成员")
+    if msg_type in (2118, 1005):
+        return _member_changed(identifier)
     if msg_type == 1011:
         # 风控拦截那种 1011 走 inbox.qiwe_spam_block_notice，不会到这里。
         text = _decode_base64_text(msg_data.get("base64RawData") or item.get("base64RawData"))
@@ -199,6 +193,23 @@ def _members_joined(msg_data: dict[str, Any], item: dict[str, Any], identifier: 
         TYPE_SYSTEM_NOTICE,
         f"邀请 {count} 人加入群聊" if count else "邀请成员加入群聊",
     )
+
+
+def _member_changed(identifier: str) -> NonTextMessage:
+    """群成员变动通知。**只有 `quit_` 开头的那种才是真的退群**，别把两类混为一谈。
+
+    企微这类通知的正文是空的，msgData 只有一个成员 id，两类报文其余字段完全一样，
+    唯一的区别在 msgUniqueIdentifier。拿群成员表逐个对过账：
+
+    - `quit_associate_chatroom_*`（全库 29 条）：抽 12 个当事人查当前群成员表，12 个全部
+      已不在群里 → 退群/被移出，是真流失信号。
+    - 随机串（全库 474 条）：抽 12 个，12 个今天全都还在群里；且能查到建群记录的样本里
+      41/43 当事人就是建群的那个人，111 次与「邀请 N 人加入群聊」同时发生，114/200 落在
+      建群 10 分钟内 → 是群主侧的成员变动通知，人没走，不能当退群用。
+    """
+    if identifier.lower().startswith("quit"):
+        return NonTextMessage(TYPE_SYSTEM_NOTICE, "退出了群聊")
+    return NonTextMessage(TYPE_SYSTEM_NOTICE, "更新了群成员信息")
 
 
 def _unknown(msg_type: Any, msg_data: dict[str, Any], item: dict[str, Any]) -> NonTextMessage:
