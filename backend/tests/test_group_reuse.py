@@ -158,6 +158,40 @@ async def test_staff_talking_in_an_emptied_group_does_not_open_a_new_case(
 
 
 @pytest.mark.asyncio
+async def test_staff_asking_for_the_questionnaire_opens_the_next_period(
+    db_session, mock_message_channel
+):
+    """把新客户拉进老群后，班主任说「发送本群专属问卷」——这一刻就该开新一期。
+
+    今早线上翻车的就是这一步：发出去的还是上一位客户那份链接，点开是别人填的答案。
+    """
+    group_id = "G-REUSE-9"
+    old_case = await _setup_group_with_customer(db_session, group_id)
+    engine = RanrenAIEngine(mock_message_channel)
+
+    await engine.handle_message(
+        _quit_notice(group_id, member_id=CUSTOMER_WECOM_ID, message_id="quit-9")
+    )
+    await engine.handle_message(
+        _text(
+            group_id,
+            user_id=STAFF_WECOM_ID,
+            name="班主任",
+            text="发送本群专属问卷",
+            message_id="cmd-9",
+        )
+    )
+
+    new_case = await db_session.scalar(
+        select(ServiceCase)
+        .where(ServiceCase.group_id == group_id, ServiceCase.member_left_at.is_(None))
+        .order_by(ServiceCase.id.desc())
+    )
+    assert new_case is not None and new_case.id != old_case.id
+    assert new_case.questionnaire_token != old_case.questionnaire_token
+
+
+@pytest.mark.asyncio
 async def test_customer_returning_resumes_the_original_case(db_session, mock_message_channel):
     """误退又回来：接回原单，服务不中断，不新开一期。"""
     group_id = "G-REUSE-4"
@@ -252,6 +286,68 @@ async def test_membership_reconciliation_marks_and_restores(db_session, mock_mes
     await service.check_group_membership_once()
     await db_session.refresh(case)
     assert case.member_left_at is None
+
+
+@pytest.mark.asyncio
+async def test_group_name_is_frozen_after_the_customer_left(db_session, mock_message_channel):
+    """老群改名交给下一位客户后，上一期的群名要停在换人那一刻，不能跟着改。"""
+    from app.services.reminder_service import ReminderService
+
+    group_id = "G-REUSE-10"
+    case = await _setup_group_with_customer(db_session, group_id)
+    case.group_name = "老客户-高燃人生-0801"
+    await db_session.commit()
+
+    async def fake_batch_get_room_names(room_ids):
+        return {rid: "心23-高燃人生-0819" for rid in room_ids}
+
+    mock_message_channel.batch_get_room_names = fake_batch_get_room_names
+    service = ReminderService()
+
+    await service.check_room_names_once()
+    await db_session.refresh(case)
+    assert case.group_name == "心23-高燃人生-0819", "客户还在群里时，改名照常同步"
+
+    case.member_left_at = func.now()
+    await db_session.commit()
+    case.group_name = "老客户-高燃人生-0801"
+    await db_session.commit()
+
+    service._last_room_name_full_refresh = None
+    await service.check_room_names_once()
+    await db_session.refresh(case)
+    assert case.group_name == "老客户-高燃人生-0801", (
+        "客户已退群的那一期，群名必须冻结，否则历史记录看起来像换了个人"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reminders_from_the_previous_customer_are_cancelled(
+    db_session, mock_message_channel
+):
+    """上一位客户设的定时提醒不能发进换了人的群里。"""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.agent_reminder_task import AgentReminderTask, AgentReminderTaskStatus
+    from app.services.reminder_service import ReminderService
+
+    group_id = "G-REUSE-11"
+    case = await _setup_group_with_customer(db_session, group_id)
+    case.member_left_at = func.now()
+    task = AgentReminderTask(
+        service_case_id=case.id,
+        group_id=group_id,
+        remind_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        status=AgentReminderTaskStatus.PENDING,
+        content="记得喝水",
+    )
+    db_session.add(task)
+    await db_session.commit()
+
+    await ReminderService().check_agent_reminder_tasks_once()
+    await db_session.refresh(task)
+    assert task.status == AgentReminderTaskStatus.CANCELLED
+    assert task.error == "customer left the group"
 
 
 @pytest.mark.asyncio

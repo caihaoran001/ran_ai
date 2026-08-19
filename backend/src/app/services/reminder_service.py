@@ -165,8 +165,10 @@ class ReminderService:
                         await self.check_stuck_document_generation_once()
                         await self.check_retry_degraded_reports_once()
                         await self.check_unsent_channel_messages_once()
-                        await self.check_room_names_once()
+                        # 先对成员名单、再刷群名：换人时先让旧单让位，
+                        # 免得旧单的群名被刷成新客户的群名。
                         await self.check_group_membership_once()
+                        await self.check_room_names_once()
                         await self.check_image_cache_cleanup_once()
                         await sweep_interrupted_agent_runs()
                         await self.check_plateau_once()
@@ -566,6 +568,12 @@ class ReminderService:
                 if service_case is None:
                     task.status = AgentReminderTaskStatus.FAILED
                     task.error = "service case not found or deleted"
+                    continue
+                if service_case.member_left_at is not None:
+                    # 客户已经退群：他当初设的提醒不能再发——群位可能已经换成新客户了，
+                    # 发出去就是把上一位客户的私事念给别人听。整条序列到此为止。
+                    task.status = AgentReminderTaskStatus.CANCELLED
+                    task.error = "customer left the group"
                     continue
                 # 「过点即弃」：提醒是时点绑定的，过点太久（退下期间到点 / 重启补跑积压）迟发反而
                 # 内容过期、突然炸群打断当前对话，不如不发。丢弃这一次，但把循环序列顺延到下一次，
@@ -1316,6 +1324,10 @@ class ReminderService:
         - 距上次全量刷新 >=24h：刷新所有 active 案例的群名(同步运营改名)；
         - 否则只补 group_name 为空(IS NULL)的案例(新案例回填，每轮都跑，几十秒内补上)；
         - 取得到名字才写真名；取不到(机器人已退/群解散)把 None 标记成 ""，避免补空分支每轮重复重试(全量刷新仍会重试)。
+
+        **客户已退群的服务单群名就地冻结，不再跟着刷新**：老群会被运营改名后交给下一位客户
+        (「新5 235 235-高燃人生-0801」→「心23-…」)，若继续同步，上一位客户那张单的群名
+        会变成新客户的群名，历史记录看起来就像换了个人。冻结在换人那一刻，才对得上当时的事实。
         """
         channel = get_current_channel()
         if channel is None or not hasattr(channel, "batch_get_room_names"):
@@ -1326,7 +1338,7 @@ class ReminderService:
             or (now - self._last_room_name_full_refresh).total_seconds() >= 24 * 3600
         )
         async with SessionLocal() as session:
-            statement = select_active_service_cases()
+            statement = select_present_service_cases()
             if not full_refresh:
                 statement = statement.where(ServiceCase.group_name.is_(None))
             cases = list(await session.scalars(statement))

@@ -701,6 +701,12 @@ async def deliver_pending_shipment_notices(
             )
             if service_case is None:
                 continue
+            if service_case.member_left_at is not None:
+                # 人已经退群了，这条「奖励已寄出」发进去只会打扰群里现在的新客户。
+                # 记成 skipped 终态，运营在后台看得到，不再每轮重试。
+                shipment.notification_status = "skipped_member_left"
+                await session.commit()
+                continue
             content = "你的打卡奖励已寄出，请留意查收～"
             message = await _begin_notice_send(
                 session,
@@ -745,6 +751,9 @@ async def check_checkin_rewards_once(
             await session.scalars(
                 select(ServiceCase).where(
                     ServiceCase.deleted_at.is_(None),
+                    # 客户已退群的服务单不再结算奖励、也不往群里发奖励通知：
+                    # 群位可能已经换成新客户了。
+                    ServiceCase.member_left_at.is_(None),
                     (
                         (ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
                         | (
