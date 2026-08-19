@@ -132,13 +132,13 @@ async def test_staff_leaving_does_not_free_the_group(db_session, mock_message_ch
 
 
 @pytest.mark.asyncio
-async def test_staff_talking_in_an_emptied_group_is_held_until_the_next_period(
+async def test_staff_talking_in_an_emptied_group_opens_the_next_period(
     db_session, mock_message_channel
 ):
-    """客户走后群里只剩班主任聊天：不凭空多出空单，消息也不算进已封存的上一期。
+    """客户走后班主任先在群里说话：这就算新一期开张（判定与全新群一致，任何人说话都建单）。
 
-    这些话照常入库、暂时无主；等新一期开起来时一并认领过去，所以班主任在新客户
-    开口前的铺垫既不会污染上一位客户的档案，也不会丢。
+    上一期已经在客户离开那一刻封存，不能再吸收新对话；而班主任在新客户开口前的铺垫
+    要落在新一期里，运营回看这一期能从第一句看起。
     """
     group_id = "G-REUSE-3"
     old_case = await _setup_group_with_customer(db_session, group_id)
@@ -151,30 +151,32 @@ async def test_staff_talking_in_an_emptied_group_is_held_until_the_next_period(
         _text(group_id, user_id=STAFF_WECOM_ID, name="班主任", text="这个群留着", message_id="staff-3")
     )
 
-    case_count = await db_session.scalar(
-        select(func.count()).select_from(ServiceCase).where(ServiceCase.group_id == group_id)
-    )
-    assert case_count == 1
-    staff_message = await db_session.scalar(
-        select(Message).where(Message.wecom_message_id == "staff-3")
-    )
-    assert staff_message is not None
-    assert staff_message.service_case_id is None, "封存的上一期不该继续吸收新对话"
-
-    # 新客户开口 → 开新一期，并把班主任那句铺垫认领过来
-    await engine.handle_message(
-        _text(group_id, user_id="customer-new-3", name="新客户", text="你好", message_id="new-3")
-    )
     new_case = await db_session.scalar(
         select(ServiceCase)
         .where(ServiceCase.group_id == group_id, ServiceCase.member_left_at.is_(None))
         .order_by(ServiceCase.id.desc())
     )
-    assert new_case is not None and new_case.id != old_case.id
-    await db_session.refresh(staff_message)
-    assert staff_message.service_case_id == new_case.id, (
-        "客户开口前班主任的铺垫要归入新一期，别让新一期的记录从客户第一句话才开始"
+    assert new_case is not None and new_case.id != old_case.id, "任何人说话都该开新一期"
+    assert new_case.questionnaire_token != old_case.questionnaire_token
+
+    staff_message = await db_session.scalar(
+        select(Message).where(Message.wecom_message_id == "staff-3")
     )
+    assert staff_message is not None
+    assert staff_message.service_case_id == new_case.id, "封存的上一期不该继续吸收新对话"
+
+    # 随后新客户开口：接着用同一期，不会再多开一张
+    await engine.handle_message(
+        _text(group_id, user_id="customer-new-3", name="新客户", text="你好", message_id="new-3")
+    )
+    case_count = await db_session.scalar(
+        select(func.count()).select_from(ServiceCase).where(ServiceCase.group_id == group_id)
+    )
+    assert case_count == 2
+    customer_message = await db_session.scalar(
+        select(Message).where(Message.wecom_message_id == "new-3")
+    )
+    assert customer_message is not None and customer_message.service_case_id == new_case.id
 
 
 @pytest.mark.asyncio
@@ -209,6 +211,65 @@ async def test_staff_asking_for_the_questionnaire_opens_the_next_period(
     )
     assert new_case is not None and new_case.id != old_case.id
     assert new_case.questionnaire_token != old_case.questionnaire_token
+
+
+@pytest.mark.asyncio
+async def test_new_period_binds_to_the_customer_who_speaks_first(
+    db_session, mock_message_channel
+):
+    """复用老群最常见的顺序：客户退群 → 班主任拉新人进来 → 新客户开口。
+
+    进群通知就把新一期开起来（任何人说话都建单），这一期先挂在占位客户上；
+    新客户第一次开口时这张单认到她名下——后面她要是退群，才对得上号让位。
+    """
+    group_id = "G-REUSE-17"
+    old_case = await _setup_group_with_customer(db_session, group_id)
+    engine = RanrenAIEngine(mock_message_channel)
+
+    await engine.handle_message(
+        _quit_notice(group_id, member_id=CUSTOMER_WECOM_ID, message_id="quit-17")
+    )
+    await engine.handle_message(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="邀请 新同学 进群",
+            user_id=STAFF_WECOM_ID,
+            user_name="班主任",
+            message_type="system_notice",
+            message_id="join-17",
+            media_card={"kind": "member_join", "member_ids": "customer-new-17"},
+            raw_payload={"userId": "bot-1", "msgData": {}},
+        )
+    )
+    new_case = await db_session.scalar(
+        select(ServiceCase)
+        .where(ServiceCase.group_id == group_id, ServiceCase.member_left_at.is_(None))
+        .order_by(ServiceCase.id.desc())
+    )
+    assert new_case is not None and new_case.id != old_case.id
+
+    await engine.handle_message(
+        _text(
+            group_id,
+            user_id="customer-new-17",
+            name="新同学",
+            text="老师我来了",
+            message_id="hello-17",
+        )
+    )
+    new_owner = await db_session.get(User, new_case.user_id)
+    await db_session.refresh(new_owner)
+    assert new_owner.wecom_user_id == "customer-new-17", "新一期要认到真正的新客户名下"
+    assert new_owner.name == "新同学"
+
+    # 新客户后来自己退群，也能对上号让位给再下一位
+    await engine.handle_message(
+        _quit_notice(group_id, member_id="customer-new-17", message_id="quit-17b")
+    )
+    await db_session.refresh(new_case)
+    assert new_case.member_left_at is not None
 
 
 @pytest.mark.asyncio
@@ -423,7 +484,7 @@ async def test_each_period_sees_only_its_own_chat_history(db_session, admin_clie
         [
             _msg("第1天打卡", t0 + timedelta(days=1), old_case.id),
             _msg("退出了群聊", left_at, old_case.id),
-            # 客户走了、新一期还没开起来时班主任的铺垫（当时无主，开新一期时被认领）
+            # 客户走了之后、新客户开口之前班主任的铺垫（归新一期，时间早于新单建单时刻）
             _msg("马上安排新同学", left_at + timedelta(days=1), new_case.id),
             _msg("我到了", left_at + timedelta(days=2, hours=1), new_case.id),
         ]

@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings, get_settings
@@ -415,24 +415,16 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 await session.commit()
 
     async def _resolve_emptied_group(
-        self,
-        session,
-        message: ChannelMessage,
-        *,
-        is_staff: bool,
-        open_new_period: bool = False,
+        self, session, message: ChannelMessage
     ) -> tuple[str, ServiceCase | None]:
         """客户已退群、群位空着时，这条消息该怎么处理。返回 (处理方式, 服务单)。
 
         - `"fresh"`：这个群没有上一期（全新的群），按原有规则处理。
         - `"resumed"`：原客户自己回来了（本人发言，或被重新邀请进群）。撤掉退群标记接回原单，
           服务天数、聊天、打卡、文件全部延续，误退不会切断档案。
-        - `"new_period"`：该开新一期了——陌生的非员工开口，或班主任说「发送本群专属问卷」
-          （那正是把新客户拉进老群的那一刻，发出去的必须是全新的空白问卷）。
-        - `"hold"`：群空着，只有员工在里面说话。**不开新一期，消息也不再算进上一期**：
-          上一期已经在客户离开那一刻封存，再往里塞就变成旧客户档案里混进别人时期的对话。
-          这些消息照常入库、暂时不归属任何一期，等新一期开起来时一并认领过去
-          （见 `_claim_orphan_messages`），所以班主任在新客户开口前的铺垫不会丢。
+        - `"new_period"`：该开新一期了。判定与全新群完全一致：群里**任何人**说话都算新一期
+          开张（班主任的铺垫、@机器人发问卷都算），不必等新客户自己开口。两条路径同一条规则，
+          好处是客户离开之后的每一条对话都立刻有归属，运营回看这一期能从第一句铺垫看起。
         """
         left_case = await self._latest_left_case(session, message.chat_id)
         if left_case is None:
@@ -450,39 +442,7 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             )
             return "resumed", left_case
 
-        if open_new_period or not is_staff:
-            return "new_period", None
-        return "hold", None
-
-    async def _claim_orphan_messages(
-        self, session, service_case: ServiceCase, *, since: datetime | None
-    ) -> int:
-        """新一期开张时，认领上一位客户离开之后这个群里还没归属的消息。
-
-        这段消息通常是班主任在新客户开口前的铺垫（打招呼、发资料、改群名），
-        属于新一期而不是上一期。不认领的话新一期的聊天记录会从客户第一句话才开始，
-        运营看不到前情。
-        """
-        if since is None:
-            return 0
-        result = await session.execute(
-            update(Message)
-            .where(
-                Message.group_id == service_case.group_id,
-                Message.service_case_id.is_(None),
-                Message.created_at >= since,
-            )
-            .values(service_case_id=service_case.id)
-        )
-        claimed = int(result.rowcount or 0)
-        if claimed:
-            logger.info(
-                "RanrenAI new period claimed %d orphan messages chat_id=%s service_case_id=%s",
-                claimed,
-                service_case.group_id,
-                service_case.id,
-            )
-        return claimed
+        return "new_period", None
 
     @staticmethod
     def _member_ids_in_message(message: ChannelMessage) -> set[str]:
