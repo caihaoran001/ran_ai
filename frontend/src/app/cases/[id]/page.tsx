@@ -27,6 +27,7 @@ import {
   HeartHandshake,
   Link as LinkIcon,
   LoaderCircle,
+  LogOut,
   MessageCircle,
   PencilLine,
   RefreshCcw,
@@ -130,6 +131,13 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <CaseGroupType caseId={serviceCase.id} groupType={serviceCase.group_type ?? "legacy"} />
+              {serviceCase.member_left_at && (
+                <span className="status-pill border-amber-200 bg-amber-50 text-amber-700">
+                  <LogOut className="h-3.5 w-3.5" />
+                  已退群
+                  <span className="opacity-80">· {formatDateTime(serviceCase.member_left_at)}</span>
+                </span>
+              )}
               {serviceCase.risk_level === "high" && (structuredHealthHeadline || highRiskFlag) && (
                 <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
                   <AlertTriangle className="h-3.5 w-3.5" />

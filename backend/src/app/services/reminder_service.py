@@ -34,6 +34,7 @@ from app.models.reminder import (
     ReminderEventType,
 )
 from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.user import User
 from app.models.user_document import DocumentType, UserDocument
 from app.services.agent import (
     generate_churn_recall_reply,
@@ -63,7 +64,9 @@ from app.services.service_case_queries import (
     effective_service_day,
     get_active_service_case,
     last_user_inbound_subquery,
+    member_present_condition,
     select_active_service_cases,
+    select_present_service_cases,
     service_continuation_active,
     service_phase_end_at,
     service_settlement_ended,
@@ -104,6 +107,7 @@ class ReminderService:
         self._task: asyncio.Task | None = None
         self._stopped = asyncio.Event()
         self._last_room_name_full_refresh: datetime | None = None
+        self._last_group_membership_check: datetime | None = None
         self._last_image_cache_cleanup: datetime | None = None
         self._last_population_insight_check_date: date | None = None
         self._last_balance_check_at: float | None = None  # clock.monotonic()，余额检查间隔闸
@@ -162,6 +166,7 @@ class ReminderService:
                         await self.check_retry_degraded_reports_once()
                         await self.check_unsent_channel_messages_once()
                         await self.check_room_names_once()
+                        await self.check_group_membership_once()
                         await self.check_image_cache_cleanup_once()
                         await sweep_interrupted_agent_runs()
                         await self.check_plateau_once()
@@ -362,7 +367,7 @@ class ReminderService:
         async with SessionLocal() as session:
             service_cases = list(
                 await session.scalars(
-                    select_active_service_cases(
+                    select_present_service_cases(
                         ServiceCase.status.in_(
                             (*PRE_SERVICE_STATUSES, ServiceCaseStatus.IN_SERVICE)
                         ),
@@ -414,7 +419,7 @@ class ReminderService:
             settlement_cutoff = now.astimezone(timezone.utc) - SERVICE_CASE_SETTLEMENT_GRACE
             service_cases = list(
                 await session.scalars(
-                    select_active_service_cases(
+                    select_present_service_cases(
                         or_(
                             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
                             and_(
@@ -739,6 +744,8 @@ class ReminderService:
                         )
                         .where(
                             active_service_case_condition(),
+                            # 客户已经退群了就别再喊了，那是对着空群说话。
+                            member_present_condition(),
                             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
                             # 群里说过「退下」的服务单不主动发消息。
                             ServiceCase.ai_auto_reply_enabled.is_(True),
@@ -1351,6 +1358,76 @@ class ReminderService:
                 full_refresh,
             )
 
+    async def check_group_membership_once(self, now: datetime | None = None) -> None:
+        """跟企微对一遍群成员名单，补上漏掉的「客户已退群」，也接回悄悄回来的人。
+
+        退群通知本身已经能实时把单子让位，但通知会漏：进程重启那几秒的回调、
+        6 月那批没有回调留存的老群、以及人被重新拉回群时不一定有通知。这道对账兜底，
+        每 6 小时跑一次（和取群名同一个接口，成本就是每 50 个群一次调用）。
+
+        安全边界：只处理**真的取到成员名单**的群，接口异常或机器人已被移出的群一律跳过——
+        否则一次抖动就会被读成"全员退群"，把还在服务中的客户批量归档。
+        """
+        channel = get_current_channel()
+        if channel is None or not hasattr(channel, "batch_get_room_members"):
+            return
+        now = now or datetime.now(ZoneInfo(self.settings.reminder_timezone))
+        last = self._last_group_membership_check
+        if last is not None and (now - last).total_seconds() < 6 * 3600:
+            return
+        self._last_group_membership_check = now
+
+        async with SessionLocal() as session:
+            rows = list(
+                await session.execute(
+                    select(ServiceCase, User.wecom_user_id)
+                    .join(User, User.id == ServiceCase.user_id)
+                    .where(
+                        active_service_case_condition(),
+                        ServiceCase.group_id != "",
+                        User.wecom_user_id.is_not(None),
+                        User.wecom_user_id != "",
+                    )
+                )
+            )
+            if not rows:
+                return
+            members_by_room = await channel.batch_get_room_members(
+                [case.group_id for case, _ in rows]
+            )
+            if not members_by_room:
+                return
+            # 一个群里已经有在场的单时，就不再把上一期接回来了（新客户正在服务，群不能抢回去）。
+            present_groups = {
+                case.group_id for case, _ in rows if case.member_left_at is None
+            }
+            left_count = returned_count = 0
+            for case, owner_wecom_id in rows:
+                members = members_by_room.get(str(case.group_id))
+                if not members:
+                    continue
+                in_group = str(owner_wecom_id) in members
+                if case.member_left_at is None and not in_group:
+                    case.member_left_at = datetime.now(timezone.utc)
+                    session.add(case)
+                    left_count += 1
+                elif (
+                    case.member_left_at is not None
+                    and in_group
+                    and case.group_id not in present_groups
+                ):
+                    case.member_left_at = None
+                    session.add(case)
+                    present_groups.add(case.group_id)
+                    returned_count += 1
+            if left_count or returned_count:
+                await session.commit()
+                logger.info(
+                    "Group membership reconciled: %d customers left, %d returned",
+                    left_count,
+                    returned_count,
+                )
+
     async def _resolve_stage_report_time(self, now: datetime) -> tuple[int, int]:
         """阶段报告生成的 (hour, minute)，来自运营规则配置；带 5 分钟 TTL 缓存。
 
@@ -1380,7 +1457,7 @@ class ReminderService:
         async with SessionLocal() as session:
             service_cases = list(
                 await session.scalars(
-                    select_active_service_cases(
+                    select_present_service_cases(
                         ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
                         ServiceCase.started_at.is_not(None),
                     )

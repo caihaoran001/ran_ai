@@ -100,7 +100,7 @@ def describe_non_text(item: dict[str, Any]) -> NonTextMessage:
     if msg_type == 1002:
         return _members_joined(msg_data, item, identifier)
     if msg_type in (2118, 1005):
-        return _member_changed(identifier)
+        return _member_changed(msg_data, identifier)
     if msg_type == 1011:
         # 风控拦截那种 1011 走 inbox.qiwe_spam_block_notice，不会到这里。
         text = _decode_base64_text(msg_data.get("base64RawData") or item.get("base64RawData"))
@@ -214,7 +214,7 @@ def _members_joined(msg_data: dict[str, Any], item: dict[str, Any], identifier: 
     )
 
 
-def _member_changed(identifier: str) -> NonTextMessage:
+def _member_changed(msg_data: dict[str, Any], identifier: str) -> NonTextMessage:
     """群成员变动通知。**只有 `quit_` 开头的那种才是真的退群**，别把两类混为一谈。
 
     企微这类通知的正文是空的，msgData 只有一个成员 id，两类报文其余字段完全一样，
@@ -230,7 +230,12 @@ def _member_changed(identifier: str) -> NonTextMessage:
     因此标成 member_sync，后台聊天记录直接不显示；数据仍然入库，日后查得到。
     """
     if identifier.lower().startswith("quit"):
-        return NonTextMessage(TYPE_SYSTEM_NOTICE, "退出了群聊", card={"kind": CARD_MEMBER_QUIT})
+        # 带上退群那个人的成员 id：服务单要拿它和本单客户对号，确认是客户本人走了才让位。
+        card = {"kind": CARD_MEMBER_QUIT}
+        member_id = str(msg_data.get("changedMemberId") or "").strip()
+        if member_id:
+            card["member_ids"] = member_id
+        return NonTextMessage(TYPE_SYSTEM_NOTICE, "退出了群聊", card=card)
     return NonTextMessage(
         TYPE_SYSTEM_NOTICE,
         "更新了群成员信息",

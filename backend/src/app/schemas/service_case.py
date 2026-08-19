@@ -45,6 +45,8 @@ class ServiceCaseRead(Timestamped):
     started_at: datetime | None
     service_plan_start_date: date | None = None
     ended_at: datetime | None
+    # 非空 = 这张单的客户已经退群（后台显示「已退群」标签，群位已让给下一位客户）
+    member_left_at: datetime | None = None
     service_continued_at: datetime | None = None
     content_generated_at: datetime | None
     questionnaire_to_llm_output_ms: int | None

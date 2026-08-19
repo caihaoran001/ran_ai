@@ -136,8 +136,26 @@ def active_service_case_condition():
     return ServiceCase.deleted_at.is_(None)
 
 
+def member_present_condition():
+    """客户还在群里。
+
+    客户本人退群后这张单只是留档：群位让给下一位客户，后台照常查得到，
+    但一切会打扰群里的自动动作（打卡提醒、沉默跟进、阶段报告、视频推送、
+    打卡追问）都必须停下来——人都走了，再发就是对着空群喊，还会把新客户
+    的群刷屏。凡是「会往群里发东西」的周期任务都要带上这个条件。
+    """
+    return ServiceCase.member_left_at.is_(None)
+
+
 def select_active_service_cases(*conditions: Any):
     return select(ServiceCase).where(active_service_case_condition(), *conditions)
+
+
+def select_present_service_cases(*conditions: Any):
+    """未删除、且客户还在群里的服务单。"""
+    return select(ServiceCase).where(
+        active_service_case_condition(), member_present_condition(), *conditions
+    )
 
 
 def select_service_cases(*conditions: Any):

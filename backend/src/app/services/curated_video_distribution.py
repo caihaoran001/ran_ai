@@ -280,6 +280,8 @@ class CuratedVideoDistributionService:
             base = select(ServiceCase).where(
                 ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
                 ServiceCase.deleted_at.is_(None),
+                # 客户已经退群的服务单不推视频：群位在等下一位客户，别刷屏。
+                ServiceCase.member_left_at.is_(None),
                 ServiceCase.user_id.is_not(None),
                 ServiceCase.group_id != "",
                 ServiceCase.group_id != self.settings.curated_video_source_group_id.strip(),

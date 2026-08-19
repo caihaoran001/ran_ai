@@ -44,11 +44,13 @@ class ServiceCaseGroupType(str, enum.Enum):
 class ServiceCase(TimestampMixin, Base):
     __tablename__ = "service_cases"
     __table_args__ = (
+        # 一个群同时只能有一张「客户在场」的服务单。客户退群后这张单让位，
+        # 新客户进来可以在同一个群开新一期，旧单原样留在库里不必删。
         Index(
             "ux_service_cases_group_id_active",
             "group_id",
             unique=True,
-            postgresql_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL AND member_left_at IS NULL"),
         ),
     )
 
@@ -83,6 +85,13 @@ class ServiceCase(TimestampMixin, Base):
     # 用户在问卷选的「计划开始日期」：服务计时起点(打卡/阶段报告/看板服务天数都跟它)；空则回退 started_at
     service_plan_start_date: Mapped[date | None] = mapped_column(Date)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 客户本人退群的时间；非空 = 这张单的客户已经不在群里了（后台显示「已退群」标签）。
+    #
+    # 这是「一个群先后服务多位客户」的让位标记，与服务状态是两回事：人走了不代表退款或完结，
+    # 该退款还是完结由运营判断。系统据此停掉这个群里的一切自动动作（打卡提醒、追问、
+    # 阶段报告、视频推送），并把群位让给下一位客户；同一个人回到同一个群且尚未开新一期时，
+    # 这个标记会被撤掉、原单接着服务。
+    member_left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 28 天阶段完结后在原服务单上恢复续服的最近时间。状态为 IN_SERVICE 且此字段非空时，
     # 原 28 天截止不再自动结束；服务天数仍沿用原起点连续计算。
     service_continued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

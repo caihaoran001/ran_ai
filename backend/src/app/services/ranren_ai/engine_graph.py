@@ -50,7 +50,7 @@ from app.services.qiwe_service.member_names import (
     parse_member_ids,
     resolve_member_join_text,
 )
-from app.services.qiwe_service.non_text import CARD_MEMBER_JOIN
+from app.services.qiwe_service.non_text import CARD_MEMBER_JOIN, CARD_MEMBER_QUIT
 # 通过 engine 模块引用 SessionLocal / analyze_message_insight / generate_agent_reply /
 # get_ai_reply_enabled / AgentDataUnavailableError：测试把补丁打在 engine 模块上
 # （conftest 全局 + 个别用例 per-test），经此引用才能命中，行为与旧 handle_message 一致。
@@ -456,6 +456,15 @@ class EngineGraph:
             sender_type = MessageSenderType.STAFF if is_staff else MessageSenderType.USER
 
             service_case = await engine._latest_active_case(session, message.chat_id)
+            if service_case is None:
+                # 上一位客户已退群、群位空着：原客户回来接回原单，只剩员工说话则挂回上一期，
+                # 陌生新面孔开口才往下走开新一期。
+                service_case = await engine._case_for_emptied_group(
+                    session,
+                    message,
+                    is_staff=is_staff,
+                    open_new_period=should_send_questionnaire,
+                )
             if not service_case and (
                 message.chat_type == "group" or should_send_questionnaire
             ):
@@ -610,6 +619,12 @@ class EngineGraph:
             session.add(db_inbound)
             await session.flush()
             inbound_id = db_inbound.id
+            if (
+                service_case is not None
+                and (message.media_card or {}).get("kind") == CARD_MEMBER_QUIT
+            ):
+                # 客户本人退群：这条通知先留在本期记录里，随后这张单让出群位。
+                await engine._mark_member_left(session, service_case, message)
             await self._link_inbound_events(
                 session,
                 message=message,
@@ -936,6 +951,8 @@ class EngineGraph:
             service_case_id = state.get("service_case_id")
             if service_case_id:
                 async with engine_mod.SessionLocal() as session:
+                    # 取这个群当前在场的那一期：上一位客户已退群的旧单查不到，
+                    # 不会把问卷发成别人填过的那一份。
                     service_case = await self.engine._latest_active_case(
                         session,
                         message.chat_id,

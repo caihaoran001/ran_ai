@@ -41,7 +41,10 @@ from app.services.content_policy import get_ai_reply_enabled
 from app.services.qiwe_service.non_text import TYPE_SYSTEM_NOTICE
 from app.services.short_link import get_or_create_short_link
 from app.services.message_insight_service import analyze_message_insight, merge_case_insight
-from app.services.service_case_queries import select_active_service_cases
+from app.services.service_case_queries import (
+    select_active_service_cases,
+    select_present_service_cases,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -410,6 +413,85 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             if service_case:
                 service_case.last_handoff_at = datetime.now(timezone.utc)
                 await session.commit()
+
+    async def _case_for_emptied_group(
+        self,
+        session,
+        message: ChannelMessage,
+        *,
+        is_staff: bool,
+        open_new_period: bool = False,
+    ) -> ServiceCase | None:
+        """客户已退群、群位空着时，这条消息该归到哪张单。
+
+        四种情形：
+        - **原客户自己回来了**（本人发言，或被重新邀请进群）：撤掉退群标记接回原单，
+          服务天数、聊天、打卡、文件全部延续，误退不会切断档案。
+        - **班主任说「发送本群专属问卷」**：这正是把新客户拉进老群的那一刻，
+          返回 None 直接开新一期，发出去的才是全新的空白问卷。
+        - **群里只剩员工在闲聊**：不开新一期（新一期要等真正的新客户开口），
+          消息挂回上一期留痕，避免每来一句班主任的话就凭空多出一张空单。
+        - **陌生的非员工开口**：返回 None，由调用方开新一期。
+
+        没有上一期（全新的群）时返回 None，行为与从前一致。
+        """
+        left_case = await self._latest_left_case(session, message.chat_id)
+        if left_case is None:
+            return None
+
+        owner_wecom_id = str(getattr(left_case.user, "wecom_user_id", "") or "")
+        if owner_wecom_id and owner_wecom_id in self._member_ids_in_message(message):
+            left_case.member_left_at = None
+            session.add(left_case)
+            await session.flush()
+            logger.info(
+                "RanrenAI resumed case after member returned chat_id=%s service_case_id=%s",
+                message.chat_id,
+                left_case.id,
+            )
+            return left_case
+
+        if open_new_period:
+            return None
+        return left_case if is_staff else None
+
+    @staticmethod
+    def _member_ids_in_message(message: ChannelMessage) -> set[str]:
+        """这条消息牵涉到哪些群成员：发言人本人，加上进退群通知里点名的那些。"""
+        ids = {str(message.user_id or "")}
+        card = message.media_card or {}
+        for part in str(card.get("member_ids") or "").split(","):
+            part = part.strip()
+            if part:
+                ids.add(part)
+        ids.discard("")
+        return ids
+
+    async def _mark_member_left(
+        self, session, service_case: ServiceCase, message: ChannelMessage
+    ) -> bool:
+        """收到退群通知：确认走的是本单客户本人，才打「已退群」标记让出群位。
+
+        严格对号（退群者与本单绑定的客户是同一个企微号）在生产数据上是零误判：
+        48 条退群事件里 33 条对得上、0 条对错，剩下的全是员工批量退群，本来就不该触发。
+        对不上号一律不动，宁可漏也不能把正在服务的客户档案切断。
+        """
+        if service_case.member_left_at is not None:
+            return False
+        owner_wecom_id = await session.scalar(
+            select(User.wecom_user_id).where(User.id == service_case.user_id)
+        )
+        owner_wecom_id = str(owner_wecom_id or "")
+        if not owner_wecom_id or owner_wecom_id not in self._member_ids_in_message(message):
+            return False
+        service_case.member_left_at = datetime.now(timezone.utc)
+        session.add(service_case)
+        logger.info(
+            "RanrenAI customer left group chat_id=%s service_case_id=%s",
+            message.chat_id,
+            service_case.id,
+        )
+        return True
 
     async def _create_case_for_message(
         self, session, message: ChannelMessage, is_staff: bool = False
@@ -959,9 +1041,26 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         return False
 
     async def _latest_active_case(self, session, group_id: str) -> ServiceCase | None:
+        """这个群当前「在场」的服务单：客户还在群里的那张。
+
+        客户本人退群后这张单让位（见 ServiceCase.member_left_at），此处就查不到了，
+        群位空出来给下一位客户；上一期由 `_latest_left_case` 单独取。
+        """
         return await session.scalar(
-            select_active_service_cases(ServiceCase.group_id == group_id)
+            select_present_service_cases(ServiceCase.group_id == group_id)
             .order_by(ServiceCase.created_at.desc())
+            .limit(1)
+        )
+
+    async def _latest_left_case(self, session, group_id: str) -> ServiceCase | None:
+        """这个群最近一张「客户已退群」的服务单（上一期），连客户一起取出来。"""
+        return await session.scalar(
+            select_active_service_cases(
+                ServiceCase.group_id == group_id,
+                ServiceCase.member_left_at.is_not(None),
+            )
+            .options(selectinload(ServiceCase.user))
+            .order_by(ServiceCase.member_left_at.desc())
             .limit(1)
         )
 
