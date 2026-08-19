@@ -30,7 +30,8 @@ import {
   CaseCostDrawer,
   ScenarioCost,
   CaseCost,
-  scenarioLabel,
+  scenarioMeta,
+  isLegacyScenario,
 } from "./cost-detail-modal";
 import { OutcomeDetailModal, OutcomeDetail } from "./outcome-detail-modal";
 
@@ -1235,6 +1236,64 @@ function ToolPanel({
   );
 }
 
+function ScenarioRow({
+  item,
+  share,
+  onSelect,
+  nested = false,
+}: {
+  item: ScenarioCost;
+  share: number;
+  onSelect: (sc: ScenarioCost) => void;
+  nested?: boolean;
+}) {
+  const meta = scenarioMeta(item.scenario);
+  const average = item.calls ? item.estimated_cost_yuan / item.calls : 0;
+  return (
+    <div
+      onClick={() => onSelect(item)}
+      className={`cursor-pointer py-4 transition-colors group ${
+        nested ? "pl-8 pr-5 sm:pl-10 sm:pr-6 hover:bg-white" : "px-5 sm:px-6 hover:bg-cyan-50/50"
+      }`}
+    >
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_repeat(3,minmax(7rem,auto))] lg:items-center">
+        <div className="max-w-[60ch]">
+          <div
+            className={`font-semibold flex items-center gap-1.5 ${
+              nested ? "text-slate-700 group-hover:text-cyan-900" : "text-slate-900 group-hover:text-cyan-900"
+            }`}
+          >
+            {meta.label}
+            <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-cyan-600" />
+          </div>
+          {meta.legacy && (
+            <div className="mt-1 text-xs text-slate-500">
+              {meta.retiredOn ? `${meta.retiredOn} 起已废弃` : "已废弃"}
+              {meta.replacedBy ? ` · 之后的花费记在「${meta.replacedBy}」里` : ""}
+            </div>
+          )}
+        </div>
+        <SmallDatum label="调用次数" value={`${formatNumber(item.calls)} 次`} />
+        <SmallDatum label="合计花费" value={formatCost(item.estimated_cost_yuan)} />
+        <SmallDatum label="平均每次" value={formatCost(average)} />
+      </div>
+      <div className="mt-3 flex items-center gap-3">
+        <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className={`h-full rounded-full transition-all ${
+              nested ? "bg-slate-400" : "bg-cyan-600 group-hover:bg-cyan-500"
+            }`}
+            style={{ width: `${Math.max(2, share)}%` }}
+          />
+        </div>
+        <span className="tabular w-16 text-right text-xs font-bold text-slate-700">
+          占 {share.toFixed(1)}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function ScenarioCosts({
   scenarios,
   totalCost,
@@ -1244,6 +1303,21 @@ function ScenarioCosts({
   totalCost: number;
   onSelectScenario: (sc: ScenarioCost) => void;
 }) {
+  // 已废弃的旧实现收进一组，避免长时间范围里 5 行废弃功能压住在跑的功能；
+  // 明细不删，展开仍能逐项看，页面合计才对得上顶部的总花费。
+  const [legacyOpen, setLegacyOpen] = useState(false);
+  const active = scenarios.filter((item) => !isLegacyScenario(item.scenario));
+  const legacy = scenarios.filter((item) => isLegacyScenario(item.scenario));
+  const legacyCost = legacy.reduce((sum, item) => sum + item.estimated_cost_yuan, 0);
+  const legacyCalls = legacy.reduce((sum, item) => sum + item.calls, 0);
+  const legacyShare = totalCost ? (legacyCost / totalCost) * 100 : 0;
+  const successors = Array.from(
+    new Set(legacy.map((item) => scenarioMeta(item.scenario).replacedBy).filter(Boolean)),
+  ) as string[];
+
+  const shareOf = (item: ScenarioCost) =>
+    totalCost ? (item.estimated_cost_yuan / totalCost) * 100 : 0;
+
   return (
     <section className="panel overflow-hidden">
       <div className="panel-header-clean">
@@ -1252,40 +1326,75 @@ function ScenarioCosts({
       </div>
       {scenarios.length ? (
         <div className="divide-y divide-slate-100">
-          {scenarios.map((item) => {
-            const average = item.calls ? item.estimated_cost_yuan / item.calls : 0;
-            const share = totalCost ? (item.estimated_cost_yuan / totalCost) * 100 : 0;
-            return (
-              <div
-                key={item.scenario}
-                onClick={() => onSelectScenario(item)}
-                className="px-5 py-4 sm:px-6 cursor-pointer hover:bg-cyan-50/50 transition-colors group"
+          {active.map((item) => (
+            <ScenarioRow
+              key={item.scenario}
+              item={item}
+              share={shareOf(item)}
+              onSelect={onSelectScenario}
+            />
+          ))}
+
+          {legacy.length > 0 && (
+            <div className="bg-slate-50/60">
+              <button
+                type="button"
+                onClick={() => setLegacyOpen((open) => !open)}
+                aria-expanded={legacyOpen}
+                className="w-full px-5 py-4 text-left transition-colors hover:bg-slate-100/70 sm:px-6"
               >
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_repeat(3,minmax(7rem,auto))] lg:items-center">
                   <div className="max-w-[60ch]">
-                    <div className="font-semibold text-slate-900 group-hover:text-cyan-900 flex items-center gap-1.5">
-                      {scenarioLabel(item.scenario)}
-                      <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-cyan-600" />
+                    <div className="flex items-center gap-2 font-semibold text-slate-700">
+                      {legacyOpen ? (
+                        <ChevronDown className="h-4 w-4 text-slate-400" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-slate-400" />
+                      )}
+                      历史功能（已废弃）
+                      <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-xs font-bold text-slate-600">
+                        {legacy.length} 项
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs leading-5 text-slate-500">
+                      这些旧做法已经停用、不再产生新花费
+                      {successors.length
+                        ? `，同样的活儿现在记在「${successors.join("」「")}」里`
+                        : ""}
+                      。保留在这里，是为了让明细加起来对得上上面的总花费。点开看是哪几项。
                     </div>
                   </div>
-                  <SmallDatum label="调用次数" value={`${formatNumber(item.calls)} 次`} />
-                  <SmallDatum label="合计花费" value={formatCost(item.estimated_cost_yuan)} />
-                  <SmallDatum label="平均每次" value={formatCost(average)} />
+                  <SmallDatum label="调用次数" value={`${formatNumber(legacyCalls)} 次`} />
+                  <SmallDatum label="合计花费" value={formatCost(legacyCost)} />
+                  <SmallDatum label="是否还在跑" value="已停用" />
                 </div>
                 <div className="mt-3 flex items-center gap-3">
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200">
                     <div
-                      className="h-full rounded-full bg-cyan-600 group-hover:bg-cyan-500 transition-all"
-                      style={{ width: `${Math.max(2, share)}%` }}
+                      className="h-full rounded-full bg-slate-400 transition-all"
+                      style={{ width: `${Math.max(2, legacyShare)}%` }}
                     />
                   </div>
-                  <span className="tabular w-16 text-right text-xs font-bold text-slate-700">
-                    占 {share.toFixed(1)}%
+                  <span className="tabular w-16 text-right text-xs font-bold text-slate-600">
+                    占 {legacyShare.toFixed(1)}%
                   </span>
                 </div>
-              </div>
-            );
-          })}
+              </button>
+              {legacyOpen && (
+                <div className="divide-y divide-slate-100 border-t border-slate-200">
+                  {legacy.map((item) => (
+                    <ScenarioRow
+                      key={item.scenario}
+                      item={item}
+                      share={shareOf(item)}
+                      onSelect={onSelectScenario}
+                      nested
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="px-6 py-10 text-center text-sm text-slate-600">

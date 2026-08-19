@@ -26,7 +26,17 @@ export type CaseCost = {
   scenarios: ScenarioCost[];
 };
 
-const SCENARIO_META: Record<string, { label: string; description: string }> = {
+// legacy 的场景是已废弃的旧实现，线上不再产生新花费，只在长时间范围里留有历史账。
+// 列表里会收进「历史功能（已废弃）」一组，明细仍逐项保留，保证合计对得上总花费。
+type ScenarioMeta = {
+  label: string;
+  description: string;
+  legacy?: boolean;
+  replacedBy?: string;
+  retiredOn?: string;
+};
+
+const SCENARIO_META: Record<string, ScenarioMeta> = {
   reply_agent: {
     label: "群内回复",
     description: "AI 读群里的消息、判断要不要回、去查资料，然后给用户回复。",
@@ -88,28 +98,50 @@ const SCENARIO_META: Record<string, { label: string; description: string }> = {
     description: "后台定期发一条极短的测试请求，确认大模型通道还连得上。",
   },
   diag: {
-    label: "系统自检（旧版）",
-    description: "早期的大模型连通性自检，现已由「系统自检」取代，这里只剩历史花费。",
+    label: "系统自检（已废弃）",
+    description: "早期的大模型连通性自检，已废弃，改由「系统自检」承担；这里只剩当时花掉的钱。",
+    legacy: true,
+    replacedBy: "系统自检",
+    retiredOn: "2026-06-24",
   },
   ai_reply: {
-    label: "群内回复（旧版）",
-    description: "早期版本的群内回复，现已由「群内回复」取代，这里只剩历史花费。",
+    label: "群内回复（已废弃）",
+    description: "早期版本的群内回复，已废弃，改由现在的「群内回复」承担；这里只剩当时花掉的钱。",
+    legacy: true,
+    replacedBy: "群内回复",
+    retiredOn: "2026-07-08",
   },
   intervention_risk: {
-    label: "风险识别（旧版）",
-    description: "早期单独跑的一次风险判断，现已并进「消息理解与风险识别」，这里只剩历史花费。",
+    label: "风险识别（已废弃）",
+    description:
+      "早期每条消息单独跑一次风险判断，已废弃，现在和听懂用户在说什么合成一次调用；这部分花费改记在「消息理解与风险识别」里。",
+    legacy: true,
+    replacedBy: "消息理解与风险识别",
+    retiredOn: "2026-07-31",
   },
   outcome_extract: {
-    label: "成效提取（旧版）",
-    description: "早期逐条实时提取服务成效，现已并进「整理档案」，这里只剩历史花费。",
+    label: "成效提取（已废弃）",
+    description:
+      "早期逐条实时提取服务成效，已废弃，现在改成隔一段时间成批整理；这部分花费改记在「整理档案」里。",
+    legacy: true,
+    replacedBy: "整理档案",
+    retiredOn: "2026-07-10",
   },
   profile_refresh: {
-    label: "用户画像更新（旧版）",
-    description: "早期单独更新用户画像，现已并进「整理档案」，这里只剩历史花费。",
+    label: "用户画像更新（已废弃）",
+    description:
+      "早期单独更新用户画像，已废弃，现在随档案一起整理；这部分花费改记在「整理档案」里。",
+    legacy: true,
+    replacedBy: "整理档案",
+    retiredOn: "2026-07-14",
   },
   checkin_followup: {
-    label: "打卡追问（旧版）",
-    description: "早期单独跑的打卡追问，现在这部分花费记在「定时提醒」里，这里只剩历史花费。",
+    label: "打卡追问（已废弃）",
+    description:
+      "早期单独跑的打卡追问，已废弃，现在由提醒流程一并生成；这部分花费改记在「定时提醒」里。",
+    legacy: true,
+    replacedBy: "定时提醒",
+    retiredOn: "2026-07-24",
   },
   generic: {
     label: "其它 AI 调用",
@@ -117,17 +149,17 @@ const SCENARIO_META: Record<string, { label: string; description: string }> = {
   },
 };
 
-const UNKNOWN_SCENARIO_META = {
+const UNKNOWN_SCENARIO_META: ScenarioMeta = {
   label: "其它 AI 功能",
   description: "AI 的一项功能。",
 };
 
-export function scenarioMeta(scenario: string) {
+export function scenarioMeta(scenario: string): ScenarioMeta {
   return SCENARIO_META[scenario] ?? UNKNOWN_SCENARIO_META;
 }
 
-export function scenarioLabel(scenario: string) {
-  return scenarioMeta(scenario).label;
+export function isLegacyScenario(scenario: string) {
+  return scenarioMeta(scenario).legacy === true;
 }
 
 export function ScenarioCostModal({
