@@ -23,11 +23,29 @@ const TOOL_LABELS: Record<string, string> = {
   list_group_files: "列出群文件",
   read_group_file: "读取群文件",
   search_knowledge_base: "检索知识库",
+  search_success_case: "查找优秀案例",
+  skill: "调取话术方法",
+  read_skill_file: "读取话术材料",
   create_group_reminder: "创建群提醒",
   list_group_reminders: "查看群提醒",
   cancel_group_reminder: "取消群提醒",
-  web_search_lifestyle: "生活方式联网检索",
+  web_search_lifestyle: "上网查资料",
+  record_checkin: "代记一次打卡",
+  get_checkin_checklist: "查看打卡项目",
+  set_checkin_checklist: "调整打卡项目",
+  restore_default_checkin_checklist: "恢复默认打卡项目",
+  get_checkin_followup_preferences: "查看追问偏好",
+  update_checkin_followup_preferences: "调整追问偏好",
+  get_checkin_reward_status: "查看打卡奖励进度",
+  manage_reward_shipping: "处理奖励寄送",
+  continue_service: "延长服务期",
+  end_continued_service: "结束延长服务",
+  set_service_start_date: "调整服务开始日期",
 };
+
+export function toolLabel(name: string) {
+  return TOOL_LABELS[name] ?? "其它小工具";
+}
 
 const TOOL_DESCRIPTIONS: Record<string, string> = {
   get_service_progress: "看这位用户的服务进行到第几天、还剩多少天。",
@@ -38,10 +56,24 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   list_group_files: "看群共享文件夹里有哪些文件。",
   read_group_file: "读取某个群文件的内容。",
   search_knowledge_base: "从知识库里找出对应的标准答复和建议。",
+  search_success_case: "用户想放弃或受挫时，找一个情况相近、做成了的真实案例来鼓励她。",
+  skill: "遇到特定场景时，调出对应的应对方法和话术要点。",
+  read_skill_file: "打开话术方法里引用的附件，看更细的说明。",
   create_group_reminder: "给用户设置定时关怀、打卡提醒等。",
   list_group_reminders: "看这个群已经设置了哪些定时提醒。",
   cancel_group_reminder: "取消一个还没发出的定时提醒。",
   web_search_lifestyle: "上网查生活方式、食材营养等最新资料。",
+  record_checkin: "用户在群里直接报了数据时，替她记一条打卡。",
+  get_checkin_checklist: "看这位用户当前每天要打哪几项。",
+  set_checkin_checklist: "按用户情况增减她每天要打的项目。",
+  restore_default_checkin_checklist: "把打卡项目恢复成默认的那几项。",
+  get_checkin_followup_preferences: "看这位用户设置了哪些不用再追问的项目。",
+  update_checkin_followup_preferences: "用户说某项不用再问了，就在这里关掉。",
+  get_checkin_reward_status: "看用户的打卡奖励攒到哪一步、有没有达标。",
+  manage_reward_shipping: "登记奖励的收货信息、推进寄送。",
+  continue_service: "28 天结束后继续服务这位用户时，延长服务期。",
+  end_continued_service: "结束之前延长出来的服务期。",
+  set_service_start_date: "开营日期有出入时，更正服务的开始日期。",
 };
 
 // 工具报错原因 → 一句人话，未知的一律归为「其它错误」。
@@ -79,7 +111,7 @@ export function ToolDetailModal({
 
   if (!tool) return null;
 
-  const label = TOOL_LABELS[tool.name] || tool.name;
+  const label = toolLabel(tool.name);
   const desc = TOOL_DESCRIPTIONS[tool.name] || "AI 回复时会用到的一个小工具。";
   const successRate = tool.success_rate != null ? tool.success_rate : 0;
 

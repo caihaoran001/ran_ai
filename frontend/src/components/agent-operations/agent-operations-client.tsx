@@ -24,8 +24,14 @@ import {
 } from "lucide-react";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { RunDetailDrawer, RunDetailData } from "./run-detail-drawer";
-import { ToolDetailModal, ToolStat } from "./tool-detail-modal";
-import { ScenarioCostModal, CaseCostDrawer, ScenarioCost, CaseCost } from "./cost-detail-modal";
+import { ToolDetailModal, ToolStat, toolLabel } from "./tool-detail-modal";
+import {
+  ScenarioCostModal,
+  CaseCostDrawer,
+  ScenarioCost,
+  CaseCost,
+  scenarioLabel,
+} from "./cost-detail-modal";
 import { OutcomeDetailModal, OutcomeDetail } from "./outcome-detail-modal";
 
 type OutcomeCount = { key: string; count: number };
@@ -235,20 +241,6 @@ const TONE_STYLES: Record<
   risk: { icon: "bg-rose-50 text-rose-700", bar: "bg-rose-500", text: "text-rose-700" },
 };
 
-const TOOL_LABELS: Record<string, string> = {
-  get_service_progress: "查看服务进度",
-  get_recent_checkins: "查看近期打卡",
-  get_weight_trend: "查看体重趋势",
-  list_delivery_documents: "列出交付文件",
-  read_delivery_document: "读取交付文件",
-  list_group_files: "列出群文件",
-  read_group_file: "读取群文件",
-  search_knowledge_base: "检索知识库",
-  create_group_reminder: "创建群提醒",
-  list_group_reminders: "查看群提醒",
-  cancel_group_reminder: "取消群提醒",
-  web_search_lifestyle: "上网查资料",
-};
 
 const OUTPUT_LABELS: Record<string, string> = {
   checkin_days: "打卡记录",
@@ -1200,7 +1192,7 @@ function ToolPanel({
                   >
                     <td>
                       <div className="font-semibold text-slate-900 group-hover:text-cyan-900">
-                        {TOOL_LABELS[tool.name] ?? tool.name}
+                        {toolLabel(tool.name)}
                       </div>
                     </td>
                     <td className="tabular font-semibold text-slate-800">{tool.calls} 次</td>
@@ -1272,7 +1264,7 @@ function ScenarioCosts({
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_repeat(3,minmax(7rem,auto))] lg:items-center">
                   <div className="max-w-[60ch]">
                     <div className="font-semibold text-slate-900 group-hover:text-cyan-900 flex items-center gap-1.5">
-                      {SCENARIO_LABELS[item.scenario] ?? item.scenario}
+                      {scenarioLabel(item.scenario)}
                       <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-cyan-600" />
                     </div>
                   </div>
@@ -1405,15 +1397,6 @@ function ArchivistBatchLedger({
     </section>
   );
 }
-
-const SCENARIO_LABELS: Record<string, string> = {
-  reply_agent: "群内回复",
-  agent_reminder: "定时提醒",
-  archivist_extract: "整理档案",
-  qwen_vl_translate: "看图识别",
-  intervention_risk: "风险识别",
-  intake_doc: "入营建档与文档",
-};
 
 function AgentTypeBadge({ type }: { type: string }) {
   const isArchivist = type === "archivist";

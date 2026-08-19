@@ -33,7 +33,7 @@ const SCENARIO_META: Record<string, { label: string; description: string }> = {
   },
   agent_reminder: {
     label: "定时提醒",
-    description: "到点后，AI 根据用户最近的进度和打卡，组织一条群提醒发出去。",
+    description: "到点后，AI 根据用户最近的进度和打卡，组织一条群提醒发出去（含现在的打卡追问）。",
   },
   archivist_extract: {
     label: "整理档案",
@@ -43,15 +43,92 @@ const SCENARIO_META: Record<string, { label: string; description: string }> = {
     label: "看图识别",
     description: "识别用户发的餐食照片、体测报告、产品包装等图片，读出里面的文字信息。",
   },
-  intervention_risk: {
-    label: "风险识别",
-    description: "判断用户的消息里有没有健康风险、退款意向，需不需要转给人工。",
+  message_insight: {
+    label: "消息理解与风险识别",
+    description: "每条用户消息先过一遍：听懂在说什么，同时看有没有健康风险、退费意向这类要转人工的信号。",
+  },
+  checkin_extract: {
+    label: "打卡整理",
+    description: "把用户提交的打卡内容整理成体重、饮食、运动等结构化记录。",
   },
   intake_doc: {
     label: "入营建档与文档",
     description: "根据入营表单和建档信息，生成这位用户专属的初始交付文档。",
   },
+  intake_safety_factors: {
+    label: "入营风险排查",
+    description: "读入营问卷里的疾病、用药、过敏等信息，挑出后续要避开的风险点。",
+  },
+  stage_report: {
+    label: "阶段报告",
+    description: "服务过程中按阶段小结这位用户的进展，生成给她看的阶段报告。",
+  },
+  graduation_report: {
+    label: "结营报告",
+    description: "28 天服务结束时汇总全程数据和变化，生成结营报告。",
+  },
+  churn_recall: {
+    label: "沉默用户唤回",
+    description: "用户长时间不说话、不打卡时，AI 组织一条唤回消息把人拉回来。",
+  },
+  knowledge_dedupe: {
+    label: "知识库查重",
+    description: "新知识入库前先比对已有条目，避免重复内容堆在知识库里。",
+  },
+  knowledge_evolution_case: {
+    label: "优秀案例沉淀",
+    description: "把服务得好的真实案例整理成可复用的案例素材，供 AI 后续引用。",
+  },
+  population_insight: {
+    label: "全员画像洞察",
+    description: "把所有在服用户的画像汇到一起，看整体人群特征和共性问题。",
+  },
+  diagnostics_probe: {
+    label: "系统自检",
+    description: "后台定期发一条极短的测试请求，确认大模型通道还连得上。",
+  },
+  diag: {
+    label: "系统自检（旧版）",
+    description: "早期的大模型连通性自检，现已由「系统自检」取代，这里只剩历史花费。",
+  },
+  ai_reply: {
+    label: "群内回复（旧版）",
+    description: "早期版本的群内回复，现已由「群内回复」取代，这里只剩历史花费。",
+  },
+  intervention_risk: {
+    label: "风险识别（旧版）",
+    description: "早期单独跑的一次风险判断，现已并进「消息理解与风险识别」，这里只剩历史花费。",
+  },
+  outcome_extract: {
+    label: "成效提取（旧版）",
+    description: "早期逐条实时提取服务成效，现已并进「整理档案」，这里只剩历史花费。",
+  },
+  profile_refresh: {
+    label: "用户画像更新（旧版）",
+    description: "早期单独更新用户画像，现已并进「整理档案」，这里只剩历史花费。",
+  },
+  checkin_followup: {
+    label: "打卡追问（旧版）",
+    description: "早期单独跑的打卡追问，现在这部分花费记在「定时提醒」里，这里只剩历史花费。",
+  },
+  generic: {
+    label: "其它 AI 调用",
+    description: "没有归到具体功能的零散调用。",
+  },
 };
+
+const UNKNOWN_SCENARIO_META = {
+  label: "其它 AI 功能",
+  description: "AI 的一项功能。",
+};
+
+export function scenarioMeta(scenario: string) {
+  return SCENARIO_META[scenario] ?? UNKNOWN_SCENARIO_META;
+}
+
+export function scenarioLabel(scenario: string) {
+  return scenarioMeta(scenario).label;
+}
 
 export function ScenarioCostModal({
   scenario,
@@ -78,10 +155,7 @@ export function ScenarioCostModal({
 
   if (!scenario) return null;
 
-  const meta = SCENARIO_META[scenario.scenario] || {
-    label: "其它功能",
-    description: "AI 的一项功能。",
-  };
+  const meta = scenarioMeta(scenario.scenario);
   const share = totalCost ? (scenario.estimated_cost_yuan / totalCost) * 100 : 0;
   const avgCost = scenario.calls ? scenario.estimated_cost_yuan / scenario.calls : 0;
 
@@ -254,7 +328,7 @@ export function CaseCostDrawer({
             </h4>
             <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white overflow-hidden">
               {caseCost.scenarios.map((sc) => {
-                const meta = SCENARIO_META[sc.scenario] || { label: sc.scenario };
+                const meta = scenarioMeta(sc.scenario);
                 const scenarioShare = caseCost.estimated_cost_yuan
                   ? (sc.estimated_cost_yuan / caseCost.estimated_cost_yuan) * 100
                   : 0;
