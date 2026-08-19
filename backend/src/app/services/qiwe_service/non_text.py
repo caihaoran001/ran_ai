@@ -90,8 +90,10 @@ def describe_non_text(item: dict[str, Any]) -> NonTextMessage:
     if msg_type == 1002:
         return _members_joined(msg_data, item, identifier)
     if msg_type == 2118:
-        # 线上反查过：事件当事人事后仍在群里，所以不是退群；触发者都是员工号且都是"自己改自己"。
-        # 具体是改群昵称还是别的没查实，就不写死。
+        # 不要改写成「退出了群聊」。拿 24 个群的当前成员表和"群里出现过的人"对过账（132 人）：
+        # 真正已离开的 4 个人确实都有这条事件，但反过来，有这条事件的 30 人里只有 4 个离开了，
+        # 其余 26 个（绝大多数挂在建群那个运营号名下）今天仍在群里。它只说明群成员关系发生了变动，
+        # 不等于退群，语义查不实就别替它下结论。真要做退群/流失识别，得定期比对群成员表，不能靠这条。
         return NonTextMessage(TYPE_SYSTEM_NOTICE, "更新了群成员信息")
     if msg_type == 1005:
         return NonTextMessage(TYPE_SYSTEM_NOTICE, "变更了群成员")
