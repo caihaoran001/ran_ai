@@ -353,62 +353,6 @@ async def test_invite_notice_keeps_the_case_when_the_customer_is_still_there(
 
 
 @pytest.mark.asyncio
-async def test_new_period_in_a_reused_group_asks_staff_to_clear_group_files(
-    db_session, mock_message_channel
-):
-    """老群换人开新一期时提醒清群文件；从没发过交付文件的群不啰嗦。"""
-    from app.models.message import MessagePurpose, MessageSenderType, MessageStatus
-
-    group_id = "G-REUSE-14"
-    old_case = await _setup_group_with_customer(db_session, group_id)
-    db_session.add(
-        Message(
-            service_case_id=old_case.id,
-            group_id=group_id,
-            direction=MessageDirection.OUTBOUND,
-            sender_type=MessageSenderType.BOT,
-            message_type="document",
-            purpose=MessagePurpose.DOCUMENT_DELIVERY,
-            status=MessageStatus.SENT,
-            content="已发送文件：个人能量重启诊断报告.docx",
-        )
-    )
-    old_case.member_left_at = func.now()
-    await db_session.commit()
-
-    engine = RanrenAIEngine(mock_message_channel)
-    await engine.handle_message(
-        _text(group_id, user_id="customer-new-14", name="新客户", text="你好", message_id="new-14")
-    )
-
-    notices = list(
-        await db_session.scalars(
-            select(Message).where(
-                Message.group_id == group_id,
-                Message.direction == MessageDirection.OUTBOUND,
-                Message.content == RanrenAIEngine.GROUP_REUSE_CLEANUP_NOTICE,
-            )
-        )
-    )
-    assert len(notices) == 1, "复用的老群要提醒一次清理群文件"
-
-    # 全新的群（从没发过交付文件）不该收到这句提醒
-    fresh_group = "G-REUSE-15"
-    await engine.handle_message(
-        _text(fresh_group, user_id="customer-fresh", name="新客户", text="在吗", message_id="fresh-15")
-    )
-    fresh_notices = await db_session.scalar(
-        select(func.count())
-        .select_from(Message)
-        .where(
-            Message.group_id == fresh_group,
-            Message.content == RanrenAIEngine.GROUP_REUSE_CLEANUP_NOTICE,
-        )
-    )
-    assert fresh_notices == 0
-
-
-@pytest.mark.asyncio
 async def test_group_name_is_frozen_after_the_customer_left(db_session, mock_message_channel):
     """老群改名交给下一位客户后，上一期的群名要停在换人那一刻，不能跟着改。"""
     from app.services.reminder_service import ReminderService

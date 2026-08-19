@@ -538,42 +538,6 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         )
         return True
 
-    async def _group_has_delivered_documents(self, session, group_id: str) -> bool:
-        """这个群以前有没有被发过交付文件（判断要不要提醒清理群文件）。"""
-        return bool(
-            await session.scalar(
-                select(Message.id)
-                .where(
-                    Message.group_id == group_id,
-                    Message.direction == MessageDirection.OUTBOUND,
-                    Message.purpose == MessagePurpose.DOCUMENT_DELIVERY,
-                )
-                .limit(1)
-            )
-        )
-
-    GROUP_REUSE_CLEANUP_NOTICE = (
-        "提醒一下：本群此前服务过其他客户，群文件里可能还留着上一位客户的交付文件，"
-        "麻烦先清理掉再开始，避免把别人的健康报告露给新同学。"
-    )
-
-    async def _reply_group_reuse_cleanup_notice(
-        self, message: ChannelMessage, *, service_case_id: int, trigger_id: int | None
-    ) -> None:
-        """老群换人开新一期时，提醒班主任清理群文件。
-
-        机器人以前发进群的交付文件存在企微那边，本系统没有任何接口能删除，只能靠人工。
-        """
-        await self._send_and_record(
-            message=message,
-            service_case_id=service_case_id,
-            content=self.GROUP_REUSE_CLEANUP_NOTICE,
-            send=lambda: self.channel.send_text(
-                message.chat_id, self.GROUP_REUSE_CLEANUP_NOTICE
-            ),
-            trigger_id=trigger_id,
-        )
-
     async def _create_case_for_message(
         self, session, message: ChannelMessage, is_staff: bool = False
     ) -> ServiceCase:
