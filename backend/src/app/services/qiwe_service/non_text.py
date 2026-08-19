@@ -60,8 +60,18 @@ class NonTextMessage:
     message_type: str
     content: str
     media: MediaHint | None = None
-    # 卡片消息的结构化字段（标题/描述/原链接），供后台聊天记录还原成一张卡片。
+    # 附加结构化信息，统一带 `kind` 键：
+    # link/miniprogram 带标题、描述、原链接，供后台聊天记录还原成一张卡片；
+    # 群成员类通知带 member_join / member_quit / member_sync，供后台补人名或直接隐藏。
     card: dict[str, str] | None = None
+
+
+# card["kind"] 的取值
+CARD_LINK = "link"
+CARD_MINIPROGRAM = "miniprogram"
+CARD_MEMBER_JOIN = "member_join"
+CARD_MEMBER_QUIT = "member_quit"
+CARD_MEMBER_SYNC = "member_sync"
 
 
 def describe_non_text(item: dict[str, Any]) -> NonTextMessage:
@@ -135,7 +145,12 @@ def _link(msg_data: dict[str, Any]) -> NonTextMessage:
     title = _clip(msg_data.get("title"), _MAX_TITLE_CHARS)
     desc = _clip(msg_data.get("desc"), _MAX_DESC_CHARS)
     head = f"[链接] {title}" if title else "[链接]"
-    card = {"title": title, "desc": desc, "url": _clean_url(msg_data.get("linkUrl"))}
+    card = {
+        "kind": CARD_LINK,
+        "title": title,
+        "desc": desc,
+        "url": _clean_url(msg_data.get("linkUrl")),
+    }
     return NonTextMessage(
         TYPE_LINK,
         "\n".join(part for part in (head, desc) if part),
@@ -153,7 +168,7 @@ def _miniprogram(msg_data: dict[str, Any]) -> NonTextMessage:
     label = " · ".join(parts)
     head = f"[小程序] {label}" if label else "[小程序]"
     body = desc if desc and desc != title else ""
-    card = {"title": label, "desc": body, "url": ""}
+    card = {"kind": CARD_MINIPROGRAM, "title": label, "desc": body, "url": ""}
     return NonTextMessage(
         TYPE_MINIPROGRAM,
         "\n".join(part for part in (head, body) if part),
@@ -189,9 +204,13 @@ def _members_joined(msg_data: dict[str, Any], item: dict[str, Any], identifier: 
             TYPE_SYSTEM_NOTICE,
             f"创建了群聊（{count} 人）" if count else "创建了群聊",
         )
+    # 成员 id 带出去，让有数据库会话的一侧换成姓名（见 qiwe_service/member_names.py）；
+    # 换不到姓名时保留这句人数版本，不至于显示成一串 id。
+    card = {"kind": CARD_MEMBER_JOIN, "member_ids": ",".join(members)} if members else None
     return NonTextMessage(
         TYPE_SYSTEM_NOTICE,
         f"邀请 {count} 人加入群聊" if count else "邀请成员加入群聊",
+        card=card,
     )
 
 
@@ -206,10 +225,17 @@ def _member_changed(identifier: str) -> NonTextMessage:
     - 随机串（全库 474 条）：抽 12 个，12 个今天全都还在群里；且能查到建群记录的样本里
       41/43 当事人就是建群的那个人，111 次与「邀请 N 人加入群聊」同时发生，114/200 落在
       建群 10 分钟内 → 是群主侧的成员变动通知，人没走，不能当退群用。
+
+    后一类对运营没有任何可读含义（既不是进群也不是退群，正文里连改了什么都没有），
+    因此标成 member_sync，后台聊天记录直接不显示；数据仍然入库，日后查得到。
     """
     if identifier.lower().startswith("quit"):
-        return NonTextMessage(TYPE_SYSTEM_NOTICE, "退出了群聊")
-    return NonTextMessage(TYPE_SYSTEM_NOTICE, "更新了群成员信息")
+        return NonTextMessage(TYPE_SYSTEM_NOTICE, "退出了群聊", card={"kind": CARD_MEMBER_QUIT})
+    return NonTextMessage(
+        TYPE_SYSTEM_NOTICE,
+        "更新了群成员信息",
+        card={"kind": CARD_MEMBER_SYNC},
+    )
 
 
 def _unknown(msg_type: Any, msg_data: dict[str, Any], item: dict[str, Any]) -> NonTextMessage:

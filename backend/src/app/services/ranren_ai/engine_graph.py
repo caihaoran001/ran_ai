@@ -46,6 +46,11 @@ from app.services.agent_observability import (
     ensure_agent_run,
 )
 from app.services.channels.base import ChannelMessage
+from app.services.qiwe_service.member_names import (
+    parse_member_ids,
+    resolve_member_join_text,
+)
+from app.services.qiwe_service.non_text import CARD_MEMBER_JOIN
 # 通过 engine 模块引用 SessionLocal / analyze_message_insight / generate_agent_reply /
 # get_ai_reply_enabled / AgentDataUnavailableError：测试把补丁打在 engine 模块上
 # （conftest 全局 + 个别用例 per-test），经此引用才能命中，行为与旧 handle_message 一致。
@@ -528,6 +533,18 @@ class EngineGraph:
 
             purpose = MessagePurpose.CHAT
 
+            content_text = message.text
+            if (message.media_card or {}).get("kind") == CARD_MEMBER_JOIN:
+                # 企微入群通知只给成员 id，姓名要从我们自己的聊天记录里换；
+                # 换不到就保留「邀请 N 人加入群聊」，不显示一串 id。
+                named = await resolve_member_join_text(
+                    session,
+                    group_id=message.chat_id,
+                    member_ids=parse_member_ids(message.media_card),
+                )
+                if named:
+                    content_text = named
+
             meta = {
                 "sender_id": message.user_id,
                 "sender_name": message.user_name,
@@ -585,7 +602,7 @@ class EngineGraph:
                 direction=MessageDirection.INBOUND,
                 sender_type=sender_type,
                 message_type=message.message_type,
-                content=message.text,
+                content=content_text,
                 purpose=purpose,
                 status=MessageStatus.RECEIVED,
                 analysis_json=analysis,

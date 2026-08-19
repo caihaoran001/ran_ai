@@ -3665,6 +3665,7 @@ def test_qiwe_link_card_keeps_title_and_body():
     assert message.message_type == "link"
     assert message.text == "[链接] 2026/08/19 唐心的身体数据\n当前体重65.15kg，目标体重60.0kg。"
     assert message.media_card == {
+        "kind": "link",
         "title": "2026/08/19 唐心的身体数据",
         "desc": "当前体重65.15kg，目标体重60.0kg。",
         "url": "https://uniquehealth.lefuenergy.com/openapi/s/TXmUexgvGy",
@@ -3734,6 +3735,65 @@ def test_qiwe_group_system_notices_are_readable(msg_type, msg_data, identifier, 
     assert message is not None
     assert message.message_type == "system_notice"
     assert message.text == expected
+
+
+def test_qiwe_member_notices_carry_kind_for_display():
+    """三类群成员通知要能被下游区分：入群带成员 id 去换姓名，无意义的那类后台不显示。"""
+    joined = _channel_message_from_qiwe(
+        _non_text_payload(
+            1002,
+            {"changedMemberList": "Nzg4MTI5OTYzMjk5OTE2Njs3MDAw"},
+            "AddOpenIMChatRoomByInvite_u1",
+        )
+    )
+    assert joined is not None
+    assert joined.media_card == {"kind": "member_join", "member_ids": "7881299632999166,7000"}
+
+    quit_notice = _channel_message_from_qiwe(
+        _non_text_payload(2118, {}, "quit_associate_chatroom_x")
+    )
+    assert quit_notice is not None
+    assert quit_notice.media_card == {"kind": "member_quit"}
+
+    sync_notice = _channel_message_from_qiwe(_non_text_payload(2118, {}, "YIn3fzASSS2kroC"))
+    assert sync_notice is not None
+    assert sync_notice.media_card == {"kind": "member_sync"}
+
+
+@pytest.mark.asyncio
+async def test_member_join_text_uses_names_from_our_own_chat_history(db_session):
+    """入群通知只给成员 id，姓名从我们自己的聊天记录里换回来。"""
+    from app.services.qiwe_service.member_names import parse_member_ids, resolve_member_join_text
+
+    for sender_id, sender_name in (("9001", "婉柠"), ("9002", "阿May")):
+        db_session.add(
+            Message(
+                group_id="G-JOIN",
+                direction=MessageDirection.INBOUND,
+                sender_type=MessageSenderType.USER,
+                message_type="text",
+                content="到了",
+                status=MessageStatus.RECEIVED,
+                analysis_json={"_qiwe_meta": {"sender_id": sender_id, "sender_name": sender_name}},
+            )
+        )
+    await db_session.commit()
+
+    card = {"kind": "member_join", "member_ids": "9001,9002"}
+    text = await resolve_member_join_text(
+        db_session, group_id="G-JOIN", member_ids=parse_member_ids(card)
+    )
+    assert text == "邀请 婉柠、阿May 进群"
+
+    # 一个都查不到就退回人数写法（返回空串，由调用方保留原文）
+    unknown = await resolve_member_join_text(db_session, group_id="G-JOIN", member_ids=["7777"])
+    assert unknown == ""
+
+    # 只认出一部分时如实写「等 N 人」，不假装全查到了
+    partial = await resolve_member_join_text(
+        db_session, group_id="G-JOIN", member_ids=["9001", "7777"]
+    )
+    assert partial == "邀请 婉柠 等 2 人进群"
 
 
 def test_qiwe_unmapped_type_falls_back_to_placeholder():

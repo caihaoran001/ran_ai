@@ -39,7 +39,7 @@ function ChatImage({
   );
 }
 
-type MediaCard = { title?: string; desc?: string; url?: string };
+type MediaCard = { kind?: string; title?: string; desc?: string; url?: string };
 
 function analysisOf(msg: Message): Record<string, unknown> {
   return msg.analysis_json && typeof msg.analysis_json === "object"
@@ -217,7 +217,9 @@ export function ChatMessages({
     );
   }
 
-  const displayMessages = allMessages;
+  // 企微那条「更新了群成员信息」既不是进群也不是退群，正文里连改了什么都没有，
+  // 对运营没有任何可读含义，直接不显示（记录仍在库里，日后要查还查得到）。
+  const displayMessages = allMessages.filter((msg) => mediaCardOf(msg)?.kind !== "member_sync");
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">
