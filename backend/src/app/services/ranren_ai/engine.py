@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings, get_settings
@@ -414,30 +414,29 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 service_case.last_handoff_at = datetime.now(timezone.utc)
                 await session.commit()
 
-    async def _case_for_emptied_group(
+    async def _resolve_emptied_group(
         self,
         session,
         message: ChannelMessage,
         *,
         is_staff: bool,
         open_new_period: bool = False,
-    ) -> ServiceCase | None:
-        """客户已退群、群位空着时，这条消息该归到哪张单。
+    ) -> tuple[str, ServiceCase | None]:
+        """客户已退群、群位空着时，这条消息该怎么处理。返回 (处理方式, 服务单)。
 
-        四种情形：
-        - **原客户自己回来了**（本人发言，或被重新邀请进群）：撤掉退群标记接回原单，
+        - `"fresh"`：这个群没有上一期（全新的群），按原有规则处理。
+        - `"resumed"`：原客户自己回来了（本人发言，或被重新邀请进群）。撤掉退群标记接回原单，
           服务天数、聊天、打卡、文件全部延续，误退不会切断档案。
-        - **班主任说「发送本群专属问卷」**：这正是把新客户拉进老群的那一刻，
-          返回 None 直接开新一期，发出去的才是全新的空白问卷。
-        - **群里只剩员工在闲聊**：不开新一期（新一期要等真正的新客户开口），
-          消息挂回上一期留痕，避免每来一句班主任的话就凭空多出一张空单。
-        - **陌生的非员工开口**：返回 None，由调用方开新一期。
-
-        没有上一期（全新的群）时返回 None，行为与从前一致。
+        - `"new_period"`：该开新一期了——陌生的非员工开口，或班主任说「发送本群专属问卷」
+          （那正是把新客户拉进老群的那一刻，发出去的必须是全新的空白问卷）。
+        - `"hold"`：群空着，只有员工在里面说话。**不开新一期，消息也不再算进上一期**：
+          上一期已经在客户离开那一刻封存，再往里塞就变成旧客户档案里混进别人时期的对话。
+          这些消息照常入库、暂时不归属任何一期，等新一期开起来时一并认领过去
+          （见 `_claim_orphan_messages`），所以班主任在新客户开口前的铺垫不会丢。
         """
         left_case = await self._latest_left_case(session, message.chat_id)
         if left_case is None:
-            return None
+            return "fresh", None
 
         owner_wecom_id = str(getattr(left_case.user, "wecom_user_id", "") or "")
         if owner_wecom_id and owner_wecom_id in self._member_ids_in_message(message):
@@ -449,11 +448,41 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 message.chat_id,
                 left_case.id,
             )
-            return left_case
+            return "resumed", left_case
 
-        if open_new_period:
-            return None
-        return left_case if is_staff else None
+        if open_new_period or not is_staff:
+            return "new_period", None
+        return "hold", None
+
+    async def _claim_orphan_messages(
+        self, session, service_case: ServiceCase, *, since: datetime | None
+    ) -> int:
+        """新一期开张时，认领上一位客户离开之后这个群里还没归属的消息。
+
+        这段消息通常是班主任在新客户开口前的铺垫（打招呼、发资料、改群名），
+        属于新一期而不是上一期。不认领的话新一期的聊天记录会从客户第一句话才开始，
+        运营看不到前情。
+        """
+        if since is None:
+            return 0
+        result = await session.execute(
+            update(Message)
+            .where(
+                Message.group_id == service_case.group_id,
+                Message.service_case_id.is_(None),
+                Message.created_at >= since,
+            )
+            .values(service_case_id=service_case.id)
+        )
+        claimed = int(result.rowcount or 0)
+        if claimed:
+            logger.info(
+                "RanrenAI new period claimed %d orphan messages chat_id=%s service_case_id=%s",
+                claimed,
+                service_case.group_id,
+                service_case.id,
+            )
+        return claimed
 
     @staticmethod
     def _member_ids_in_message(message: ChannelMessage) -> set[str]:
@@ -503,7 +532,9 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             return False
         if not members or owner_wecom_id in members:
             return False
-        service_case.member_left_at = datetime.now(timezone.utc)
+        # 用数据库时钟：消息的 created_at 也是数据库给的，两个时间必须同源，
+        # 否则「本期区间」的边界会因应用与数据库的时钟差而错位。
+        service_case.member_left_at = func.now()
         session.add(service_case)
         logger.info(
             "RanrenAI customer already gone, freeing group on join chat_id=%s service_case_id=%s",
@@ -529,7 +560,8 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         owner_wecom_id = str(owner_wecom_id or "")
         if not owner_wecom_id or owner_wecom_id not in self._member_ids_in_message(message):
             return False
-        service_case.member_left_at = datetime.now(timezone.utc)
+        # 同上：用数据库时钟，和消息 created_at 同源
+        service_case.member_left_at = func.now()
         session.add(service_case)
         logger.info(
             "RanrenAI customer left group chat_id=%s service_case_id=%s",

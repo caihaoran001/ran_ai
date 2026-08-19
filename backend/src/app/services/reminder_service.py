@@ -1420,7 +1420,8 @@ class ReminderService:
                     continue
                 in_group = str(owner_wecom_id) in members
                 if case.member_left_at is None and not in_group:
-                    case.member_left_at = datetime.now(timezone.utc)
+                    # 用数据库时钟，和消息 created_at 同源（本期聊天记录按这个时间切界）
+                    case.member_left_at = func.now()
                     session.add(case)
                     left_count += 1
                 elif (

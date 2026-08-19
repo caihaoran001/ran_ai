@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from pathlib import Path
-from sqlalchemy import not_, select
+from sqlalchemy import func, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,6 +15,7 @@ from app.models.message import (
     MessageSenderType,
     MessageStatus,
 )
+from app.models.service_case import ServiceCase
 from app.schemas.message import MessageRead, MessageSend
 from app.services.channels import send_channel_text
 from app.services.service_case_queries import get_active_service_case, get_service_case
@@ -32,11 +33,33 @@ async def list_case_messages(
     service_case = await get_service_case(session, service_case_id)
     if not service_case:
         raise HTTPException(status_code=404, detail="service case not found")
+    # 一个群可以先后服务多位客户，所以聊天记录必须是一个「本期」闭区间，首尾相接、
+    # 一条不重不漏：
+    #   起点 = 上一位客户离开的时刻（没有上一期就是本单建单时刻）——这样班主任在
+    #          新客户开口前的铺垫也算本期，不会从客户第一句话才开始；
+    #   终点 = 本期客户离开的时刻（人还在就没有上界）——否则已存档的单会一路显示
+    #          到未来，把下一位客户的对话混进上一位客户的档案里。
+    window_start = service_case.created_at
+    previous_period_ended_at = await session.scalar(
+        select(func.max(ServiceCase.member_left_at)).where(
+            ServiceCase.group_id == service_case.group_id,
+            ServiceCase.id != service_case.id,
+            ServiceCase.member_left_at.is_not(None),
+            ServiceCase.member_left_at <= service_case.created_at,
+        )
+    )
+    if previous_period_ended_at is not None:
+        window_start = previous_period_ended_at
     statement = (
         select(Message)
         .where(
             Message.group_id == service_case.group_id,
-            Message.created_at >= service_case.created_at,
+            Message.created_at >= window_start,
+            *(
+                [Message.created_at <= service_case.member_left_at]
+                if service_case.member_left_at is not None
+                else []
+            ),
             not_(
                 (Message.direction == MessageDirection.OUTBOUND)
                 & (Message.purpose == MessagePurpose.REMINDER)

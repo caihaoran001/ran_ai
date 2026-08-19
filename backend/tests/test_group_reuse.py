@@ -132,10 +132,14 @@ async def test_staff_leaving_does_not_free_the_group(db_session, mock_message_ch
 
 
 @pytest.mark.asyncio
-async def test_staff_talking_in_an_emptied_group_does_not_open_a_new_case(
+async def test_staff_talking_in_an_emptied_group_is_held_until_the_next_period(
     db_session, mock_message_channel
 ):
-    """客户走后群里只剩班主任聊天：不能凭空多出一张空单，消息挂回上一期留痕。"""
+    """客户走后群里只剩班主任聊天：不凭空多出空单，消息也不算进已封存的上一期。
+
+    这些话照常入库、暂时无主；等新一期开起来时一并认领过去，所以班主任在新客户
+    开口前的铺垫既不会污染上一位客户的档案，也不会丢。
+    """
     group_id = "G-REUSE-3"
     old_case = await _setup_group_with_customer(db_session, group_id)
     engine = RanrenAIEngine(mock_message_channel)
@@ -154,7 +158,23 @@ async def test_staff_talking_in_an_emptied_group_does_not_open_a_new_case(
     staff_message = await db_session.scalar(
         select(Message).where(Message.wecom_message_id == "staff-3")
     )
-    assert staff_message is not None and staff_message.service_case_id == old_case.id
+    assert staff_message is not None
+    assert staff_message.service_case_id is None, "封存的上一期不该继续吸收新对话"
+
+    # 新客户开口 → 开新一期，并把班主任那句铺垫认领过来
+    await engine.handle_message(
+        _text(group_id, user_id="customer-new-3", name="新客户", text="你好", message_id="new-3")
+    )
+    new_case = await db_session.scalar(
+        select(ServiceCase)
+        .where(ServiceCase.group_id == group_id, ServiceCase.member_left_at.is_(None))
+        .order_by(ServiceCase.id.desc())
+    )
+    assert new_case is not None and new_case.id != old_case.id
+    await db_session.refresh(staff_message)
+    assert staff_message.service_case_id == new_case.id, (
+        "客户开口前班主任的铺垫要归入新一期，别让新一期的记录从客户第一句话才开始"
+    )
 
 
 @pytest.mark.asyncio
@@ -350,6 +370,82 @@ async def test_invite_notice_keeps_the_case_when_the_customer_is_still_there(
     )
     await db_session.refresh(case)
     assert case.member_left_at is None
+
+
+@pytest.mark.asyncio
+async def test_each_period_sees_only_its_own_chat_history(db_session, admin_client):
+    """每一期的聊天记录是首尾相接的闭区间：上一期看不到后来的对话，新一期能看到前情。
+
+    这条是真出过问题的：聊天记录按「群 + 从建单起」查且没有上界，客户走后群里
+    再聊的每一句都会显示在她那张单里（生产上小刺猬那个群一次混进 66 条）。
+    这里用显式时间点铺数据，因为同一个测试事务里 now() 取到的是同一个值，
+    拿不出真实的时间差。
+    """
+    from datetime import datetime, timedelta, timezone as _tz
+
+    from app.models.message import MessagePurpose, MessageSenderType, MessageStatus
+
+    group_id = "G-REUSE-16"
+    t0 = datetime(2026, 8, 1, 10, 0, tzinfo=_tz.utc)
+    left_at = t0 + timedelta(days=20)
+
+    old_case = await _setup_group_with_customer(db_session, group_id)
+    old_case.created_at = t0
+    old_case.member_left_at = left_at
+    new_user = User(name="新客户", wecom_user_id="customer-new-16")
+    db_session.add(new_user)
+    await db_session.flush()
+    new_case = ServiceCase(
+        case_no="REUSE-16-B",
+        user_id=new_user.id,
+        group_id=group_id,
+        questionnaire_token="token-16-b",
+        status=ServiceCaseStatus.CREATED,
+        created_at=left_at + timedelta(days=2),
+    )
+    db_session.add(new_case)
+
+    def _msg(content: str, at: datetime, case_id: int | None) -> Message:
+        return Message(
+            service_case_id=case_id,
+            group_id=group_id,
+            direction=MessageDirection.INBOUND,
+            sender_type=MessageSenderType.USER,
+            message_type="text",
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.RECEIVED,
+            content=content,
+            created_at=at,
+        )
+
+    await db_session.flush()
+    db_session.add_all(
+        [
+            _msg("第1天打卡", t0 + timedelta(days=1), old_case.id),
+            _msg("退出了群聊", left_at, old_case.id),
+            # 客户走了、新一期还没开起来时班主任的铺垫（当时无主，开新一期时被认领）
+            _msg("马上安排新同学", left_at + timedelta(days=1), new_case.id),
+            _msg("我到了", left_at + timedelta(days=2, hours=1), new_case.id),
+        ]
+    )
+    await db_session.commit()
+
+    old_texts = [
+        row["content"]
+        for row in (await admin_client.get(f"/service-cases/{old_case.id}/messages")).json()
+    ]
+    assert "第1天打卡" in old_texts
+    assert "退出了群聊" in old_texts, "退群那条通知属于上一期，是这个群换人的凭据"
+    assert "马上安排新同学" not in old_texts, "上一期到客户离开为止，不该看到后来的对话"
+    assert "我到了" not in old_texts
+
+    new_texts = [
+        row["content"]
+        for row in (await admin_client.get(f"/service-cases/{new_case.id}/messages")).json()
+    ]
+    assert "我到了" in new_texts
+    assert "马上安排新同学" in new_texts, "客户开口前班主任的铺垫属于新一期"
+    assert "第1天打卡" not in new_texts, "上一位客户的打卡不能出现在新一期"
 
 
 @pytest.mark.asyncio

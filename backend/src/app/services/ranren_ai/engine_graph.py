@@ -456,19 +456,31 @@ class EngineGraph:
             sender_type = MessageSenderType.STAFF if is_staff else MessageSenderType.USER
 
             service_case = await engine._latest_active_case(session, message.chat_id)
+            emptied_mode = "fresh"
+            previous_period_ended_at: datetime | None = None
             if service_case is None:
-                # 上一位客户已退群、群位空着：原客户回来接回原单，只剩员工说话则挂回上一期，
-                # 陌生新面孔开口才往下走开新一期。
-                service_case = await engine._case_for_emptied_group(
+                # 上一位客户已退群、群位空着：原客户回来接回原单；只剩员工说话则先按住
+                # （消息暂不归属任何一期）；陌生新面孔开口或班主任要问卷才开新一期。
+                previous_period = await engine._latest_left_case(session, message.chat_id)
+                previous_period_ended_at = getattr(previous_period, "member_left_at", None)
+                emptied_mode, service_case = await engine._resolve_emptied_group(
                     session,
                     message,
                     is_staff=is_staff,
                     open_new_period=should_send_questionnaire,
                 )
-            if not service_case and (
-                message.chat_type == "group" or should_send_questionnaire
+            if (
+                not service_case
+                and emptied_mode != "hold"
+                and (message.chat_type == "group" or should_send_questionnaire)
             ):
                 service_case = await engine._create_case_for_message(session, message, is_staff=is_staff)
+                if emptied_mode == "new_period":
+                    # 把上一位客户离开之后班主任的铺垫一并收进新一期，
+                    # 别让新一期的聊天记录从客户第一句话才开始。
+                    await engine._claim_orphan_messages(
+                        session, service_case, since=previous_period_ended_at
+                    )
 
             if service_case:
                 service_case_id = service_case.id
