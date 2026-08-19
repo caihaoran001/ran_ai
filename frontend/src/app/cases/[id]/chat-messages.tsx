@@ -4,14 +4,24 @@ import { useEffect, useRef, useState } from "react";
 import { Message } from "@/lib/api";
 import { formatChinaDateTime } from "@/lib/format";
 
-function ChatImage({ messageId, alt }: { messageId: number; alt: string }) {
+function ChatImage({
+  messageId,
+  alt,
+  maxHeightClass = "max-h-60",
+  fallbackText = "图片已过期或无法加载",
+}: {
+  messageId: number;
+  alt: string;
+  maxHeightClass?: string;
+  fallbackText?: string;
+}) {
   const [failed, setFailed] = useState(false);
   const url = `/api/backend/messages/${messageId}/image`;
   if (failed) {
     // 图片缓存被清理(超过保留期)或暂时取不到时的兜底，避免破图图标
     return (
       <div className="max-w-full rounded border border-slate-200 bg-slate-50 px-3 py-4 text-center text-xs text-slate-400 sm:max-w-sm">
-        图片已过期或无法加载
+        {fallbackText}
       </div>
     );
   }
@@ -21,12 +31,119 @@ function ChatImage({ messageId, alt }: { messageId: number; alt: string }) {
       <img
         src={url}
         alt={alt}
-        className="max-h-60 max-w-full object-contain cursor-zoom-in rounded hover:opacity-90 transition-opacity"
+        className={`${maxHeightClass} max-w-full object-contain cursor-zoom-in rounded hover:opacity-90 transition-opacity`}
         onClick={() => window.open(url, "_blank")}
         onError={() => setFailed(true)}
       />
     </div>
   );
+}
+
+type MediaCard = { title?: string; desc?: string; url?: string };
+
+function analysisOf(msg: Message): Record<string, unknown> {
+  return msg.analysis_json && typeof msg.analysis_json === "object"
+    ? (msg.analysis_json as Record<string, unknown>)
+    : {};
+}
+
+// 表情原图/视频封面走的是和图片消息同一套缓存与接口，有没有下到图看 image_info 在不在
+function hasStoredImage(msg: Message): boolean {
+  const info = analysisOf(msg).image_info;
+  return !!info && typeof info === "object";
+}
+
+function mediaCardOf(msg: Message): MediaCard | null {
+  const meta = analysisOf(msg)._qiwe_meta;
+  if (!meta || typeof meta !== "object") return null;
+  const card = (meta as Record<string, unknown>).media_card;
+  return card && typeof card === "object" ? (card as MediaCard) : null;
+}
+
+/** 链接分享/小程序：还原成一张卡片，标题描述分开，原链接可点开 */
+function CardMessage({ msg, badge }: { msg: Message; badge: string }) {
+  const card = mediaCardOf(msg);
+  if (!card) {
+    return <div className="text-break whitespace-pre-wrap">{msg.content}</div>;
+  }
+  return (
+    <div className="mt-1 max-w-full rounded border border-slate-200 bg-white/70 p-2 sm:max-w-sm">
+      <div className="text-[10px] font-medium text-slate-400">{badge}</div>
+      {card.title && <div className="mt-0.5 text-break font-medium">{card.title}</div>}
+      {card.desc && <div className="mt-0.5 text-break whitespace-pre-wrap text-xs text-slate-600">{card.desc}</div>}
+      {card.url && (
+        <a
+          href={card.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 block truncate text-xs text-blue-600 hover:underline"
+        >
+          {card.url}
+        </a>
+      )}
+    </div>
+  );
+}
+
+function MessageBody({ msg }: { msg: Message }) {
+  switch (msg.message_type) {
+    case "image":
+      return (
+        <div className="mt-2 space-y-2">
+          <ChatImage messageId={msg.id} alt={msg.content || "用户上传的图片"} />
+          {msg.content && msg.content !== "[图片]" && (
+            <p className="rounded border border-slate-200 bg-slate-50/50 p-2 text-xs italic text-slate-600">
+              AI描述: {msg.content}
+            </p>
+          )}
+        </div>
+      );
+    case "sticker":
+      // 表情不进多模态识别，只把原图显示出来
+      return hasStoredImage(msg) ? (
+        <div className="mt-1">
+          <ChatImage
+            messageId={msg.id}
+            alt="动画表情"
+            maxHeightClass="max-h-28"
+            fallbackText="表情已过期"
+          />
+        </div>
+      ) : (
+        <div className="text-break whitespace-pre-wrap">{msg.content}</div>
+      );
+    case "video":
+      // 只下封面，视频本体不落盘
+      return (
+        <div className="mt-1 space-y-1">
+          {hasStoredImage(msg) && (
+            <ChatImage
+              messageId={msg.id}
+              alt="视频封面"
+              maxHeightClass="max-h-48"
+              fallbackText="视频封面已过期"
+            />
+          )}
+          <div className="text-xs text-slate-500">
+            {msg.content}
+            {hasStoredImage(msg) ? " · 仅封面" : ""}
+          </div>
+        </div>
+      );
+    case "link":
+      return <CardMessage msg={msg} badge="链接分享" />;
+    case "miniprogram":
+      return <CardMessage msg={msg} badge="小程序" />;
+    case "transfer":
+      return (
+        <div className="flex items-center gap-1.5">
+          <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-700">转账</span>
+          <span className="text-break">{msg.content.replace(/^\[转账\]/, "")}</span>
+        </div>
+      );
+    default:
+      return <div className="text-break whitespace-pre-wrap">{msg.content}</div>;
+  }
 }
 
 export function ChatMessages({
@@ -123,7 +240,18 @@ export function ChatMessages({
             </button>
           </div>
         )}
-        {displayMessages.map((msg) => (
+        {displayMessages.map((msg) =>
+          msg.message_type === "system_notice" ? (
+            // 进退群/撤回/置顶/改群名这类群系统通知：像微信那样一行灰字居中，不占气泡
+            <div key={msg.id} className="flex justify-center">
+              <div className="flex max-w-[92%] flex-wrap items-center justify-center gap-x-2 text-[11px] text-slate-400">
+                <span className="text-break">
+                  {msg.display_sender_name || userName || ""} {msg.content}
+                </span>
+                <span>{formatTime(msg.display_at ?? msg.created_at)}</span>
+              </div>
+            </div>
+          ) : (
           <div
             key={msg.id}
             className={`flex ${msg.direction === "outbound" ? "justify-end" : "justify-start"}`}
@@ -176,18 +304,7 @@ export function ChatMessages({
                     </span>
                   )}
               </div>
-              {msg.message_type === "image" ? (
-                <div className="mt-2 space-y-2">
-                  <ChatImage messageId={msg.id} alt={msg.content || "用户上传的图片"} />
-                  {msg.content && msg.content !== "[图片]" && (
-                    <p className="rounded border border-slate-200 bg-slate-50/50 p-2 text-xs italic text-slate-600">
-                      AI描述: {msg.content}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="text-break whitespace-pre-wrap">{msg.content}</div>
-              )}
+              <MessageBody msg={msg} />
               {msg.status === "failed" &&
                 (msg.error?.includes("驳回") ? (
                   <div className="mt-1 text-xs text-slate-400">已驳回 · 未发送</div>
@@ -218,7 +335,8 @@ export function ChatMessages({
               )}
             </div>
           </div>
-        ))}
+          ),
+        )}
       </div>
     </section>
   );
