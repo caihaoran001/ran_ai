@@ -32,6 +32,7 @@ from app.services.service_case_queries import (
     active_service_case_condition,
     get_active_service_case,
     get_service_case as get_service_case_any,
+    intake_submitted_between_condition,
     last_user_inbound_subquery,
     select_active_service_cases,
 )
@@ -288,10 +289,9 @@ def _apply_service_case_filter(statement, metric: str | None):
     today_end = today_start + timedelta(days=1)
 
     if metric == "new_today":
-        return statement.where(
-            ServiceCase.created_at >= today_start,
-            ServiceCase.created_at < today_end,
-        )
+        # 与看板「今日新增用户」同一个口径：今天交了入营问卷的才算新客户，
+        # 否则点开卡片看到的名单会比数字多出一堆还没有客户的空群。
+        return statement.where(intake_submitted_between_condition(today_start, today_end))
     if metric == "risk":
         return statement.where(ServiceCase.risk_level == "high")
     if metric == "plateau":

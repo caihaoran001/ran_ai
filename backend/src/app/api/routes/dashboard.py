@@ -90,6 +90,7 @@ from app.services.ai_service.balance import fetch_deepseek_balance
 from app.services.service_case_queries import (
     active_service_case_condition,
     effective_start_at,
+    intake_submitted_between_condition,
     last_user_inbound_subquery,
 )
 
@@ -230,11 +231,12 @@ async def dashboard_summary(
         .select_from(doc_subq)
         .where(doc_subq.c.status.in_([DocumentStatus.DRAFT, DocumentStatus.REVIEWING]))
     ) or 0
+    # 数的是「今天交了入营问卷」的服务单，不是「今天建了单」：建单只代表群里有人说话，
+    # 老群复用时班主任先铺垫就会开一张单，那时候新客户还没进来（详见 intake_submitted_between_condition）。
     new_users_today = await session.scalar(
         select(func.count(ServiceCase.id)).where(
             _stats_case_condition(),
-            ServiceCase.created_at >= today_start,
-            ServiceCase.created_at < today_end,
+            intake_submitted_between_condition(today_start, today_end),
         )
     )
     risk_users = await session.scalar(

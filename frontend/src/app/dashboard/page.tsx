@@ -184,7 +184,7 @@ export default async function DashboardPage() {
         <StatCard label="今日用户消息" value={summary.messages_today} icon={MessageCircle} color="cyan" href="/dashboard/today-messages" description={<>今天收到的用户入站消息数。今日社群双向消息共 <span className="font-bold text-cyan-900">{summary.messages_today + (summary.messages_outbound_today ?? 0)}</span> 条。</>} />
         <StatCard label="今日有打卡" value={summary.checkins_today} icon={CheckCircle2} color="yellow" href="/dashboard/today-checkins" description={`今天有打卡记录 ${summary.checkins_today} 条，其中完整打卡 ${summary.complete_checkins_today} 条；点击按服务单查看。`} />
         <StatCard label="待审核文件" value={summary.pending_documents} icon={FileText} color="orange" href="/dashboard/pending-documents" description="当前有效最新文档中，草稿或待审核的文件数；点击查看具体服务单和文件。" />
-        <StatCard label="今日新增用户" value={summary.new_users_today} icon={Plus} color="blue" href="/users?filter=new_today" description="今天新创建且未删除的服务单。" />
+        <StatCard label="今日新增用户" value={summary.new_users_today} icon={Plus} color="blue" href="/users?filter=new_today" description="今天提交入营问卷的服务单。群里有人说话就会自动建单（老群换人也会），但客户真正进来的凭据是交问卷，所以按问卷算。" />
       </DashboardMetricSection>
 
       <DashboardMetricSection title="服务规模与生命周期" description="用于安排续购、未跟进和流失处理优先级。">

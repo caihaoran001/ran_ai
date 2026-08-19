@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.message import Message, MessageDirection, MessageSenderType
+from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 
 SERVICE_CASE_WINDOW_DAYS = 28
@@ -145,6 +146,29 @@ def member_present_condition():
     的群刷屏。凡是「会往群里发东西」的周期任务都要带上这个条件。
     """
     return ServiceCase.member_left_at.is_(None)
+
+
+def intake_submitted_between_condition(start: datetime, end: datetime):
+    """这张单的入营问卷是在 [start, end) 之间交的 —— 看板「今日新增用户」的口径。
+
+    不能用「今天建了单」来数新客户：建单只代表群里有人说了话。一个群可以先后服务
+    多位客户，班主任在空出来的老群里说一句「这个群先留着」就会开一张新单，
+    那时候一个新客户都还没进来。客户真正开始服务的凭据是交了入营问卷
+    （交完才生成画像和交付文件），所以按问卷提交时间数。
+
+    也不能用「建单在今天且交过问卷」：班主任昨天先把群铺好、客户今天才填问卷的话，
+    这个客户在哪一天都数不到。
+    """
+    return (
+        select(QuestionnaireSubmission.id)
+        .where(
+            QuestionnaireSubmission.service_case_id == ServiceCase.id,
+            QuestionnaireSubmission.template_key == "intake",
+            QuestionnaireSubmission.created_at >= start,
+            QuestionnaireSubmission.created_at < end,
+        )
+        .exists()
+    )
 
 
 def select_active_service_cases(*conditions: Any):
