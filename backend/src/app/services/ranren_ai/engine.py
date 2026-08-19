@@ -467,6 +467,51 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         ids.discard("")
         return ids
 
+    async def _recheck_membership_on_join(
+        self, session, service_case: ServiceCase, message: ChannelMessage
+    ) -> bool:
+        """有人被拉进群时，当场核对本单客户是否还在群里。
+
+        复用老群的动作就是「改个群名、把新客户拉进来」，所以这条进群通知比新客户开口更早，
+        是把群位让出去的最佳时机。若不在这里查，万一上一位客户的退群通知恰好丢了
+        （重启那几秒的回调、老群没有回调留存），新客户头几个小时说的话会记进上一位客户的
+        档案，要等最长 6 小时的兜底对账才纠正。
+
+        只查这一个群、一次调用。取不到名单（接口异常、机器人已被移出）一律按兵不动。
+        """
+        if service_case.member_left_at is not None:
+            return False
+        channel = self.channel
+        if channel is None or not hasattr(channel, "batch_get_room_members"):
+            return False
+        owner_wecom_id = await session.scalar(
+            select(User.wecom_user_id).where(User.id == service_case.user_id)
+        )
+        owner_wecom_id = str(owner_wecom_id or "")
+        if not owner_wecom_id:
+            return False
+        try:
+            members = (await channel.batch_get_room_members([message.chat_id])).get(
+                str(message.chat_id)
+            )
+        except Exception as exc:  # noqa: BLE001 — 查不到就等兜底对账，绝不因此改动服务单
+            logger.warning(
+                "RanrenAI membership recheck on join failed chat_id=%s err=%s",
+                message.chat_id,
+                exc,
+            )
+            return False
+        if not members or owner_wecom_id in members:
+            return False
+        service_case.member_left_at = datetime.now(timezone.utc)
+        session.add(service_case)
+        logger.info(
+            "RanrenAI customer already gone, freeing group on join chat_id=%s service_case_id=%s",
+            message.chat_id,
+            service_case.id,
+        )
+        return True
+
     async def _mark_member_left(
         self, session, service_case: ServiceCase, message: ChannelMessage
     ) -> bool:
@@ -492,6 +537,42 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             service_case.id,
         )
         return True
+
+    async def _group_has_delivered_documents(self, session, group_id: str) -> bool:
+        """这个群以前有没有被发过交付文件（判断要不要提醒清理群文件）。"""
+        return bool(
+            await session.scalar(
+                select(Message.id)
+                .where(
+                    Message.group_id == group_id,
+                    Message.direction == MessageDirection.OUTBOUND,
+                    Message.purpose == MessagePurpose.DOCUMENT_DELIVERY,
+                )
+                .limit(1)
+            )
+        )
+
+    GROUP_REUSE_CLEANUP_NOTICE = (
+        "提醒一下：本群此前服务过其他客户，群文件里可能还留着上一位客户的交付文件，"
+        "麻烦先清理掉再开始，避免把别人的健康报告露给新同学。"
+    )
+
+    async def _reply_group_reuse_cleanup_notice(
+        self, message: ChannelMessage, *, service_case_id: int, trigger_id: int | None
+    ) -> None:
+        """老群换人开新一期时，提醒班主任清理群文件。
+
+        机器人以前发进群的交付文件存在企微那边，本系统没有任何接口能删除，只能靠人工。
+        """
+        await self._send_and_record(
+            message=message,
+            service_case_id=service_case_id,
+            content=self.GROUP_REUSE_CLEANUP_NOTICE,
+            send=lambda: self.channel.send_text(
+                message.chat_id, self.GROUP_REUSE_CLEANUP_NOTICE
+            ),
+            trigger_id=trigger_id,
+        )
 
     async def _create_case_for_message(
         self, session, message: ChannelMessage, is_staff: bool = False

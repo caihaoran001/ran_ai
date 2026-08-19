@@ -101,6 +101,8 @@ class EngineState(TypedDict, total=False):
     service_case_introduced: bool
     should_send_introduction: bool
     service_case_silenced: bool
+    # 老群换人开了新一期，且这个群以前发过交付文件：收尾时提醒班主任清理群文件
+    group_reuse_cleanup_notice: bool
     resume_takeover_receipt: bool
     analysis: dict | None
     inbound_id: int | None
@@ -465,9 +467,15 @@ class EngineGraph:
                     is_staff=is_staff,
                     open_new_period=should_send_questionnaire,
                 )
+            group_reuse_cleanup_notice = False
             if not service_case and (
                 message.chat_type == "group" or should_send_questionnaire
             ):
+                # 这个群以前发过交付文件，说明是复用的老群：开新一期时提醒班主任清群文件
+                # （机器人发进企微的文件我们这边删不掉，只能靠人工）。
+                group_reuse_cleanup_notice = await engine._group_has_delivered_documents(
+                    session, message.chat_id
+                )
                 service_case = await engine._create_case_for_message(session, message, is_staff=is_staff)
 
             if service_case:
@@ -619,12 +627,14 @@ class EngineGraph:
             session.add(db_inbound)
             await session.flush()
             inbound_id = db_inbound.id
-            if (
-                service_case is not None
-                and (message.media_card or {}).get("kind") == CARD_MEMBER_QUIT
-            ):
+            card_kind = (message.media_card or {}).get("kind")
+            if service_case is not None and card_kind == CARD_MEMBER_QUIT:
                 # 客户本人退群：这条通知先留在本期记录里，随后这张单让出群位。
                 await engine._mark_member_left(session, service_case, message)
+            elif service_case is not None and card_kind == CARD_MEMBER_JOIN:
+                # 有人被拉进群：这正是复用老群的那一刻，当场核一下上一位客户是否已经走了，
+                # 别等最长 6 小时的兜底对账（那期间新客户的话会记错档案）。
+                await engine._recheck_membership_on_join(session, service_case, message)
             await self._link_inbound_events(
                 session,
                 message=message,
@@ -651,6 +661,7 @@ class EngineGraph:
             "trigger_id": inbound_id,
             "recent_user_messages": recent_user_messages,
             "purpose": purpose,
+            "group_reuse_cleanup_notice": group_reuse_cleanup_notice,
         }
 
     async def _link_inbound_events(
@@ -1738,6 +1749,20 @@ class EngineGraph:
         A process interruption never reaches this node, so its inbound row stays
         processing/retryable and startup recovery may safely wake the same thread.
         """
+        if state.get("group_reuse_cleanup_notice") and state.get("service_case_id"):
+            # 老群换人开了新一期：提醒班主任清理群文件。放在收尾节点是因为开新一期这件事
+            # 可能由任何一条分支引发（新客户开口、班主任要问卷），只有这里每条路径都会经过。
+            try:
+                await self.engine._reply_group_reuse_cleanup_notice(
+                    state["message"],
+                    service_case_id=state["service_case_id"],
+                    trigger_id=state.get("inbound_id"),
+                )
+            except Exception:
+                logger.exception(
+                    "RanrenAI group reuse cleanup notice failed chat_id=%s",
+                    state["message"].chat_id,
+                )
         if state.get("_skip_finalization"):
             return {}
         inbound_id = (

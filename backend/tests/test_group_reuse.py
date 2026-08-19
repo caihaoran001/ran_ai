@@ -289,6 +289,126 @@ async def test_membership_reconciliation_marks_and_restores(db_session, mock_mes
 
 
 @pytest.mark.asyncio
+async def test_invite_notice_frees_the_group_when_the_quit_notice_was_lost(
+    db_session, mock_message_channel
+):
+    """退群通知丢了也不怕：拉新人进群那一刻当场核对，发现原客户已走就立即让位。"""
+    group_id = "G-REUSE-12"
+    old_case = await _setup_group_with_customer(db_session, group_id)
+    engine = RanrenAIEngine(mock_message_channel)
+
+    async def fake_batch_get_room_members(room_ids):
+        # 名单里只剩班主任和新来的人，原客户早就不在了（那条退群通知没收到）
+        return {rid: {STAFF_WECOM_ID, "customer-new-12"} for rid in room_ids}
+
+    mock_message_channel.batch_get_room_members = fake_batch_get_room_members
+
+    join_notice = ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text="邀请 新同学 进群",
+        user_id=STAFF_WECOM_ID,
+        user_name="班主任",
+        message_type="system_notice",
+        message_id="join-12",
+        media_card={"kind": "member_join", "member_ids": "customer-new-12"},
+        raw_payload={"userId": "bot-1", "msgData": {}},
+    )
+    await engine.handle_message(join_notice)
+    await db_session.refresh(old_case)
+    assert old_case.member_left_at is not None, "进群那一刻就该发现原客户已经走了"
+
+
+@pytest.mark.asyncio
+async def test_invite_notice_keeps_the_case_when_the_customer_is_still_there(
+    db_session, mock_message_channel
+):
+    """客户还在群里（只是又拉了个家属进来）：绝不能因为一条进群通知就让位。"""
+    group_id = "G-REUSE-13"
+    case = await _setup_group_with_customer(db_session, group_id)
+    engine = RanrenAIEngine(mock_message_channel)
+
+    async def fake_batch_get_room_members(room_ids):
+        return {rid: {STAFF_WECOM_ID, CUSTOMER_WECOM_ID, "family-13"} for rid in room_ids}
+
+    mock_message_channel.batch_get_room_members = fake_batch_get_room_members
+
+    await engine.handle_message(
+        ChannelMessage(
+            channel="qiwe",
+            chat_id=group_id,
+            chat_type="group",
+            text="邀请 家属 进群",
+            user_id=STAFF_WECOM_ID,
+            user_name="班主任",
+            message_type="system_notice",
+            message_id="join-13",
+            media_card={"kind": "member_join", "member_ids": "family-13"},
+            raw_payload={"userId": "bot-1", "msgData": {}},
+        )
+    )
+    await db_session.refresh(case)
+    assert case.member_left_at is None
+
+
+@pytest.mark.asyncio
+async def test_new_period_in_a_reused_group_asks_staff_to_clear_group_files(
+    db_session, mock_message_channel
+):
+    """老群换人开新一期时提醒清群文件；从没发过交付文件的群不啰嗦。"""
+    from app.models.message import MessagePurpose, MessageSenderType, MessageStatus
+
+    group_id = "G-REUSE-14"
+    old_case = await _setup_group_with_customer(db_session, group_id)
+    db_session.add(
+        Message(
+            service_case_id=old_case.id,
+            group_id=group_id,
+            direction=MessageDirection.OUTBOUND,
+            sender_type=MessageSenderType.BOT,
+            message_type="document",
+            purpose=MessagePurpose.DOCUMENT_DELIVERY,
+            status=MessageStatus.SENT,
+            content="已发送文件：个人能量重启诊断报告.docx",
+        )
+    )
+    old_case.member_left_at = func.now()
+    await db_session.commit()
+
+    engine = RanrenAIEngine(mock_message_channel)
+    await engine.handle_message(
+        _text(group_id, user_id="customer-new-14", name="新客户", text="你好", message_id="new-14")
+    )
+
+    notices = list(
+        await db_session.scalars(
+            select(Message).where(
+                Message.group_id == group_id,
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.content == RanrenAIEngine.GROUP_REUSE_CLEANUP_NOTICE,
+            )
+        )
+    )
+    assert len(notices) == 1, "复用的老群要提醒一次清理群文件"
+
+    # 全新的群（从没发过交付文件）不该收到这句提醒
+    fresh_group = "G-REUSE-15"
+    await engine.handle_message(
+        _text(fresh_group, user_id="customer-fresh", name="新客户", text="在吗", message_id="fresh-15")
+    )
+    fresh_notices = await db_session.scalar(
+        select(func.count())
+        .select_from(Message)
+        .where(
+            Message.group_id == fresh_group,
+            Message.content == RanrenAIEngine.GROUP_REUSE_CLEANUP_NOTICE,
+        )
+    )
+    assert fresh_notices == 0
+
+
+@pytest.mark.asyncio
 async def test_group_name_is_frozen_after_the_customer_left(db_session, mock_message_channel):
     """老群改名交给下一位客户后，上一期的群名要停在换人那一刻，不能跟着改。"""
     from app.services.reminder_service import ReminderService
