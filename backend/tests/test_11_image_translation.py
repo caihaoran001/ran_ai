@@ -146,3 +146,179 @@ async def test_translate_image_times_out(monkeypatch) -> None:
     assert usage_records[-1]["scenario"] == "qwen_vl_translate"
     assert usage_records[-1]["error_type"] == "TimeoutError"
     assert usage_records[-1]["success"] is False
+
+
+# --- 表情原图 / 视频封面：只下载存盘，不进多模态识别 ---
+
+
+class _SingleShotClient:
+    """一次性返回固定内容的假媒体网关。"""
+
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+        self.calls: list[str] = []
+
+    async def get(self, url: str, headers: dict | None = None) -> _FakeResp:
+        self.calls.append(url)
+        return _FakeResp(200, self.content, {})
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+def _patch_media_client(monkeypatch, content: bytes) -> _SingleShotClient:
+    from types import SimpleNamespace as _NS
+    import app.services.ranren_ai.engine as engine_mod
+
+    client = _SingleShotClient(content)
+    monkeypatch.setattr(engine_mod, "httpx", _NS(AsyncClient=lambda *a, **kw: client))
+    return client
+
+
+async def _make_inbound_message(db_session, message_type: str, content: str):
+    from app.models.message import (
+        Message,
+        MessageDirection,
+        MessagePurpose,
+        MessageSenderType,
+        MessageStatus,
+    )
+
+    message = Message(
+        group_id="10926518308089720",
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type=message_type,
+        content=content,
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    return message
+
+
+def _sticker_channel_message(url: str = "https://wework.qpic.cn/wwpic3az/wwwx_abc/0"):
+    from app.services.channels.base import ChannelMessage
+
+    return ChannelMessage(
+        channel="qiwe",
+        chat_id="10926518308089720",
+        chat_type="group",
+        text="[动画表情]",
+        message_type="sticker",
+        raw_payload={"cmd": 15000, "msgType": 104, "msgData": {"fileHttpUrl": url, "fileAesKey": ""}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_sticker_thumbnail_is_downloaded_without_vision_model(db_session, monkeypatch, tmp_path):
+    from app.services.ranren_ai.attachments import InboundAttachmentProcessor
+
+    png = b"\x89PNG\r\n\x1a\n" + b"sticker-bytes"
+    client = _patch_media_client(monkeypatch, png)
+    monkeypatch.chdir(tmp_path)
+
+    message = await _make_inbound_message(db_session, "sticker", "[动画表情]")
+    await InboundAttachmentProcessor()._process_inbound_thumbnail(message.id, _sticker_channel_message())
+    await db_session.refresh(message)
+
+    info = (message.analysis_json or {}).get("image_info")
+    assert info is not None, "表情原图应当存盘并写入 image_info"
+    assert info["content_type"] == "image/png"
+    assert info["thumbnail_kind"] == "sticker"
+    assert (tmp_path / ".wecom_cache/images" / info["filename"]).read_bytes() == png
+    assert len(client.calls) == 1
+    # 正文保持"[动画表情]"，没有任何视觉识别产生的描述
+    assert message.content == "[动画表情]"
+
+
+@pytest.mark.asyncio
+async def test_video_cover_falls_back_to_aes_decryption(db_session, monkeypatch, tmp_path):
+    """视频封面走媒体网关，拿到的是密文；按魔数认不出就用 aes key 解一次。"""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    from app.services.channels.base import ChannelMessage
+    from app.services.ranren_ai.attachments import InboundAttachmentProcessor
+
+    plain = b"\xff\xd8\xff" + b"cover" * 3 + b"\xff\xd9"
+    key_hex = "0123456789abcdef0123456789abcdef"
+    padded = plain + bytes([16 - len(plain) % 16]) * (16 - len(plain) % 16)
+    encryptor = Cipher(algorithms.AES(bytes.fromhex(key_hex)), modes.ECB()).encryptor()
+    encrypted = encryptor.update(padded) + encryptor.finalize()
+
+    _patch_media_client(monkeypatch, encrypted)
+    monkeypatch.chdir(tmp_path)
+
+    channel_message = ChannelMessage(
+        channel="qiwe",
+        chat_id="10926518308089720",
+        chat_type="group",
+        text="[视频] 时长 40 秒",
+        message_type="video",
+        raw_payload={
+            "cmd": 15000,
+            "msgType": 103,
+            "msgData": {
+                "coverImageHttpUrl": "https://imunion.weixin.qq.com/cgi-bin/mmae-bin/tpdownloadmedia?param=v1_x",
+                "duration": 40,
+                "fileAesKey": key_hex,
+                "fileAuthKey": "v1_auth",
+            },
+        },
+    )
+    message = await _make_inbound_message(db_session, "video", "[视频] 时长 40 秒")
+    await InboundAttachmentProcessor()._process_inbound_thumbnail(message.id, channel_message)
+    await db_session.refresh(message)
+
+    info = (message.analysis_json or {}).get("image_info")
+    assert info is not None
+    assert info["content_type"] == "image/jpeg"
+    assert (tmp_path / ".wecom_cache/images" / info["filename"]).read_bytes() == plain
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_download_failure_leaves_text_placeholder(db_session, monkeypatch, tmp_path):
+    """下不到图/链接过期时只留文字占位，不能影响消息本身入库。"""
+    from app.services.ranren_ai.attachments import InboundAttachmentProcessor
+
+    _patch_media_client(monkeypatch, b"not-an-image-at-all")
+    monkeypatch.chdir(tmp_path)
+
+    message = await _make_inbound_message(db_session, "sticker", "[动画表情]")
+    await InboundAttachmentProcessor()._process_inbound_thumbnail(message.id, _sticker_channel_message())
+    await db_session.refresh(message)
+
+    assert (message.analysis_json or {}).get("image_info") is None
+    assert message.content == "[动画表情]"
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_download_rejects_non_wecom_host(db_session, monkeypatch, tmp_path):
+    """链接来自外部回调，非企微/微信图床域名一律不下载(SSRF 防护)。"""
+    from app.services.ranren_ai.attachments import InboundAttachmentProcessor
+
+    client = _patch_media_client(monkeypatch, b"\x89PNG\r\n\x1a\nx")
+    monkeypatch.chdir(tmp_path)
+
+    message = await _make_inbound_message(db_session, "sticker", "[动画表情]")
+    await InboundAttachmentProcessor()._process_inbound_thumbnail(
+        message.id, _sticker_channel_message("http://169.254.169.254/latest/meta-data/")
+    )
+    await db_session.refresh(message)
+
+    assert (message.analysis_json or {}).get("image_info") is None
+    assert client.calls == []
+
+
+def test_detect_image_extension_only_accepts_real_images() -> None:
+    from app.services.ranren_ai.attachments import _detect_image_extension
+
+    assert _detect_image_extension(b"\xff\xd8\xffrest") == ".jpg"
+    assert _detect_image_extension(b"\x89PNG\r\n\x1a\n") == ".png"
+    assert _detect_image_extension(b"GIF89a") == ".gif"
+    assert _detect_image_extension(b"RIFF1234WEBP") == ".webp"
+    assert _detect_image_extension(b"encrypted-garbage") is None

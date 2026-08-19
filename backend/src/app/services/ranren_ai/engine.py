@@ -38,6 +38,7 @@ from app.services.ranren_ai.attachments import (
     _strip_image_placeholders,
 )
 from app.services.content_policy import get_ai_reply_enabled
+from app.services.qiwe_service.non_text import TYPE_SYSTEM_NOTICE
 from app.services.short_link import get_or_create_short_link
 from app.services.message_insight_service import analyze_message_insight, merge_case_insight
 from app.services.service_case_queries import select_active_service_cases
@@ -208,6 +209,10 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             await self._process_inbound_file(inbound_id, message, service_case_id)
             file_processed = True
             return analysis, image_analysis_content, file_processed, non_text_stored_only
+
+        if message.message_type in ("sticker", "video"):
+            # 表情原图/视频封面下载存盘，让后台聊天记录能看到图；不调视觉模型、不触发 AI 回复。
+            await self._process_inbound_thumbnail(inbound_id, message)
 
         if message.message_type != "text":
             # 其他非文本消息（语音/表情等）仍直接入库留痕，不触发 AI 回复
@@ -971,6 +976,8 @@ class RanrenAIEngine(InboundAttachmentProcessor):
     ) -> list[str]:
         conditions = [
             Message.service_case_id == service_case_id,
+            # 进退群/撤回/置顶/改群名这类群系统通知不是对话，喂给模型只会白占上下文。
+            Message.message_type != TYPE_SYSTEM_NOTICE,
             or_(
                 and_(
                     Message.direction == MessageDirection.INBOUND,

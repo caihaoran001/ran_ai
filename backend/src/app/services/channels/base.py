@@ -27,6 +27,9 @@ class ChannelMessage:
     # 本轮正文里含有由语音转写来的内容。转写文本按用户原话处理，但语音识别对数字最
     # 容易出错，故一路带到落库与模型上下文，让回复方在数字对不上时主动确认。
     voice_transcript: bool = False
+    # 链接卡片/小程序等卡片消息的结构化字段(标题/描述/原链接)，只用于后台聊天记录还原展示；
+    # 正文里已有可读摘要，模型上下文不额外读它。
+    media_card: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)

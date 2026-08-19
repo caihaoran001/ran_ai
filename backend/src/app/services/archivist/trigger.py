@@ -33,6 +33,7 @@ from app.services.agent_observability import (
 )
 from app.services.archivist.graph import get_or_create_progress, run_archivist
 from app.services.archivist.errors import classify_archivist_failure
+from app.services.qiwe_service.non_text import TYPE_SYSTEM_NOTICE
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,7 @@ async def _candidate_case_ids(session: AsyncSession) -> list[int]:
             ServiceCase.deleted_at.is_(None),
             Message.service_case_id.is_not(None),
             Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
+            Message.message_type != TYPE_SYSTEM_NOTICE,
             Message.id > func.coalesce(ArchivistProgress.last_archived_message_id, 0),
         )
         .group_by(Message.service_case_id)
@@ -147,6 +149,7 @@ async def _evaluate(
             .where(
                 Message.service_case_id == service_case_id,
                 Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
+                Message.message_type != TYPE_SYSTEM_NOTICE,
                 Message.id > watermark,
             )
             .order_by(Message.id.asc())
@@ -385,6 +388,7 @@ async def _quarantine_oldest_message(
             Message.service_case_id == service_case_id,
             Message.id > watermark,
             Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
+            Message.message_type != TYPE_SYSTEM_NOTICE,
             Message.purpose == MessagePurpose.CHAT,
         )
         .order_by(Message.id.asc())

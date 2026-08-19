@@ -19,6 +19,7 @@ from app.services.qiwe_service.inbox import (
     process_qiwe_spam_block_event,
     qiwe_spam_block_notice,
 )
+from app.services.qiwe_service.non_text import describe_non_text
 from app.services.qiwe_service.voice import (
     VOICE_TRANSCRIPT_FIELD,
     transcribe_and_dispatch,
@@ -232,6 +233,7 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
     content = str(msg_data.get("content") or "").strip()
     quoted = _quoted_message_from_msg_data(msg_data)
     voice_transcript = False
+    media_card: dict[str, str] | None = None
     if is_text:
         if not content:
             return None
@@ -259,8 +261,12 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
             title = str(msg_data.get("channelName") or "").strip()
             content = f"[视频号] {title}" if title else "[视频号]"
         else:
-            message_type = "non_text"
-            content = content or "[表情/图片等非文本消息]"
+            # 表情/视频/链接卡片/转账/群系统通知等：翻译成人看得懂的一行字，
+            # 别再一律落成没有信息量的占位符（解析规则见 qiwe_service/non_text.py）。
+            described = describe_non_text(item)
+            message_type = described.message_type
+            content = described.content
+            media_card = described.card
 
     bot_user_id = _as_str(item.get("userId"))
     sender_id = _as_str(item.get("senderId") or msg_data.get("sender_id"))
@@ -287,6 +293,7 @@ def _channel_message_from_qiwe(item: dict[str, Any]) -> ChannelMessage | None:
         timestamp=_timestamp(item.get("timestamp")),
         segments=[(content, [quoted] if quoted else [])],
         voice_transcript=voice_transcript,
+        media_card=media_card,
     )
 
 

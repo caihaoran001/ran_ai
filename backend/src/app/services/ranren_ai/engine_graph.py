@@ -534,6 +534,9 @@ class EngineGraph:
                 "sender_type": sender_type.value,
                 "timestamp": int(message.timestamp.timestamp()),
             }
+            if message.media_card:
+                # 链接/小程序卡片的标题、描述、原链接：后台聊天记录据此还原成一张卡片。
+                meta["media_card"] = message.media_card
             if message.voice_transcript:
                 # 正文是语音转来的：后台聊天记录据此标注来源，回复方据此对数字保持警惕。
                 meta["voice_transcript"] = True

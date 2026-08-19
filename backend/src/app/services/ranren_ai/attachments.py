@@ -16,6 +16,7 @@ from app.db.session import SessionLocal
 from app.models.message import Message
 from app.services.ai_service import AIService
 from app.services.channels.base import ChannelMessage
+from app.services.qiwe_service.non_text import describe_non_text
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -197,6 +198,31 @@ async def _download_media_bytes(client: Any, url: str, headers: dict[str, str], 
     if len(data) != total:
         raise ValueError(f"inbound media size mismatch: got {len(data)} bytes, expected {total}")
     return bytes(data)
+
+
+def _detect_image_extension(data: bytes) -> str | None:
+    """按魔数判断这段字节是不是图片，是则返回扩展名，不是返回 None。
+
+    与图片消息那条链路不同：那里默认落 .jpg 即可（一定是图片），这里要拿它来判断
+    "拿到的到底是原图还是加密串"，所以必须严格，不能默认。
+    """
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data.startswith(b"GIF8"):
+        return ".gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return ".webp"
+    return None
+
+
+_IMAGE_MIME_BY_EXT = {
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 
 
 def _file_extension(filename: str) -> str:
@@ -446,6 +472,94 @@ class InboundAttachmentProcessor:
             logger.exception("Failed to persist embedded image descriptions for message_id=%s", message_id)
         message.text = user_text
         return image_prompt
+
+    async def _process_inbound_thumbnail(self, message_id: int, message: ChannelMessage) -> None:
+        """把动画表情原图 / 视频封面下载存盘，让后台聊天记录能真的显示出来。
+
+        与图片消息的区别：**不调用视觉模型**，只下载。这类消息本身信息量低（一张表情、
+        一帧封面），花钱识别不划算；运营看一眼图就够了。
+
+        下载失败、链接过期、拿到的不是图片，一律只记日志——消息正文已经是"[动画表情]"
+        这样的可读占位，少一张图不影响记录完整性。
+        """
+        async with self._attachment_session_local()() as session:
+            existing = await session.get(Message, message_id)
+            # 中断重跑时消息可能已经带着图了，别再下一次、多存一份文件。
+            if existing and isinstance((existing.analysis_json or {}).get("image_info"), dict):
+                return
+
+        hint = None
+        for item in _raw_payload_items(message.raw_payload):
+            described = describe_non_text(item)
+            if described.media and described.media.url:
+                hint = described.media
+                break
+        if hint is None:
+            return
+
+        try:
+            # SSRF 防护：链接来自外部回调，只允许企微/微信媒体域名（与图片同一白名单）。
+            if not _is_allowed_image_host(hint.url):
+                raise ValueError(f"inbound thumbnail host not allowed: {hint.url}")
+
+            headers = {
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.38(0x1800262c)"
+            }
+            if hint.auth_key:
+                headers["authkey"] = hint.auth_key.replace("\n", "").replace("\r", "").strip()
+
+            async with self._attachment_http_client_cls()(timeout=30.0, follow_redirects=True) as client:
+                raw_bytes = await _download_media_bytes(
+                    client, hint.url, headers, max_bytes=_MAX_INBOUND_IMAGE_BYTES
+                )
+
+            # 表情走的是图床直链、本来就是原图；视频封面走媒体网关、可能是加密串。
+            # 先按原样验魔数，不是图片再用 aes key 解一次，两条路都兜住。
+            image_bytes = raw_bytes
+            ext = _detect_image_extension(image_bytes)
+            if ext is None and hint.aes_key:
+                image_bytes = _decrypt_image_bytes(raw_bytes, hint.aes_key)
+                ext = _detect_image_extension(image_bytes)
+            if ext is None:
+                raise ValueError("downloaded thumbnail is not a recognizable image")
+
+            cache_dir = Path(".wecom_cache/images")
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"thumb_{uuid.uuid4().hex[:16]}{ext}"
+            file_path = cache_dir / filename
+            file_path.write_bytes(image_bytes)
+
+            # 复用图片消息那套 image_info 结构：/api/messages/{id}/image 与 60 天清理直接生效。
+            image_info = {
+                "local_path": str(file_path.resolve()),
+                "filename": filename,
+                "file_size": len(image_bytes),
+                "content_type": _IMAGE_MIME_BY_EXT.get(ext, "image/jpeg"),
+                "thumbnail_kind": hint.kind,
+            }
+            async with self._attachment_session_local()() as session:
+                db_msg = await session.get(Message, message_id)
+                if db_msg:
+                    analysis = dict(db_msg.analysis_json or {})
+                    analysis["image_info"] = image_info
+                    db_msg.analysis_json = analysis
+                    session.add(db_msg)
+                    await session.commit()
+            logger.info(
+                "Saved inbound thumbnail message_id=%s kind=%s path=%s bytes=%d",
+                message_id,
+                hint.kind,
+                file_path,
+                len(image_bytes),
+            )
+        except Exception:
+            logger.warning(
+                "Skip inbound thumbnail message_id=%s kind=%s url=%s",
+                message_id,
+                hint.kind,
+                hint.url[:120],
+                exc_info=True,
+            )
 
     async def _process_inbound_file(
         self, message_id: int, message: ChannelMessage, service_case_id: int | None

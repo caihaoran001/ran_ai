@@ -16,6 +16,7 @@ from app.services.content_policy import (
     remember_qiwe_group_nicknames,
 )
 from app.services.qiwe_service.aggregator import QiWeMessageAggregator, _merge_messages
+from app.services.qiwe_service.non_text import describe_non_text
 from app.services.ranren_ai.engine import (
     GROUP_AI_INTRO_FOLLOWUP,
     GROUP_AI_INTRODUCTION,
@@ -3584,3 +3585,151 @@ def test_current_query_body_has_no_voice_marker():
     """单段渲染（无 segments 的通道/测试消息）同样不带语音来源标注。"""
     body = _current_query_body({}, "我今早体重62.5")
     assert body == "用户：我今早体重62.5"
+
+
+# --- 非文本消息还原（表情/视频/链接卡片/转账/群系统通知） ---
+# 样本结构取自生产真实回调；此前这些全被落成一句"[表情/图片等非文本消息]"。
+
+def _non_text_payload(msg_type: int, msg_data: dict, identifier: str = "unique-non-text-1") -> dict:
+    return {
+        "cmd": 15000,
+        "msgType": msg_type,
+        "userId": "bot-user",
+        "fromRoomId": 10926518308089720,
+        "senderId": 7881300658070689,
+        "senderName": "用户A",
+        "timestamp": 1779951380,
+        "msgUniqueIdentifier": identifier,
+        "msgData": msg_data,
+    }
+
+
+def test_qiwe_sticker_event_keeps_download_hint():
+    message = _channel_message_from_qiwe(
+        _non_text_payload(
+            104,
+            {
+                "fileAesKey": "",
+                "fileHttpUrl": "https://wework.qpic.cn/wwpic3az/wwwx_8c1cb/0",
+                "filename": "动画表情",
+                "height": 240,
+                "width": 240,
+            },
+        )
+    )
+    assert message is not None
+    assert message.message_type == "sticker"
+    assert message.text == "[动画表情]"
+    # 表情不进聚合窗口、不触发回复，行为与改动前一致
+    assert _bypass_aggregator(message) is True
+
+    described = describe_non_text(_non_text_payload(104, {"fileHttpUrl": "https://wework.qpic.cn/x/0"}))
+    assert described.media is not None
+    assert described.media.kind == "sticker"
+
+
+def test_qiwe_video_event_reports_duration_and_cover():
+    payload = _non_text_payload(
+        103,
+        {
+            "coverImageHttpUrl": "https://imunion.weixin.qq.com/cgi-bin/mmae-bin/tpdownloadmedia?param=v1_x",
+            "duration": 40,
+            "fileAesKey": "392bf5103e5047572251a7b46659cd57",
+            "fileAuthKey": "v1_530d",
+        },
+    )
+    message = _channel_message_from_qiwe(payload)
+    assert message is not None
+    assert message.message_type == "video"
+    assert message.text == "[视频] 时长 40 秒"
+
+    described = describe_non_text(payload)
+    assert described.media is not None
+    assert described.media.kind == "video_cover"
+    assert described.media.auth_key == "v1_530d"
+
+
+def test_qiwe_link_card_keeps_title_and_body():
+    """体重秤分享就是这类卡片：正文里带着当前体重和目标体重，运营和模型都该看得到。"""
+    message = _channel_message_from_qiwe(
+        _non_text_payload(
+            13,
+            {
+                "title": "2026/08/19 唐心的身体数据",
+                "desc": "当前体重65.15kg，目标体重60.0kg。",
+                "linkUrl": "https://uniquehealth.lefuenergy.com/openapi/s/TXmUexgvGy",
+            },
+        )
+    )
+    assert message is not None
+    assert message.message_type == "link"
+    assert message.text == "[链接] 2026/08/19 唐心的身体数据\n当前体重65.15kg，目标体重60.0kg。"
+    assert message.media_card == {
+        "title": "2026/08/19 唐心的身体数据",
+        "desc": "当前体重65.15kg，目标体重60.0kg。",
+        "url": "https://uniquehealth.lefuenergy.com/openapi/s/TXmUexgvGy",
+    }
+
+
+def test_qiwe_miniprogram_card_dedupes_repeated_name():
+    message = _channel_message_from_qiwe(
+        _non_text_payload(78, {"appName": "腾讯文档", "title": "腾讯文档", "desc": "登记表"})
+    )
+    assert message is not None
+    assert message.message_type == "miniprogram"
+    assert message.text == "[小程序] 腾讯文档\n登记表"
+
+
+def test_qiwe_transfer_text_is_recovered_from_raw_payload():
+    """转账文案藏在 protobuf 裸包里，抽不到时只显示 [转账]，不编金额。"""
+    request = describe_non_text(
+        _non_text_payload(
+            590,
+            {
+                "base64RawData": (
+                    "Ch8xMDAwMDUwMDAxMjAyNjA4MTUwNTI1NzUxMTM3NjA4EAEYASD3u7P4hoCADijeq7vrhICADjCk0NKN"
+                    "gYDAAzik0NKNgYDAA0ABSAJQqJ+Yw9PTthNY/NYCYgBoAHACogYRW+i9rOi0pl3or7fmlLbmrL6qBhdb"
+                    "6L2s6LSmXeS9oOaXoOmcgOaOpeaUtg=="
+                )
+            },
+        )
+    )
+    assert request.message_type == "transfer"
+    assert request.content == "[转账]请收款"
+
+    unreadable = describe_non_text(_non_text_payload(591, {"base64RawData": "AAEC"}))
+    assert unreadable.content == "[转账]"
+
+
+@pytest.mark.parametrize(
+    ("msg_type", "msg_data", "identifier", "expected"),
+    [
+        (2063, {"revokeUserId": 1}, "UEn0sJt9TkyHEhx", "撤回了一条消息"),
+        (1052, {"base64RawData": "572u6aG25LqG5LiA5p2h5raI5oGv"}, "toproommsg_x", "置顶了一条消息"),
+        (
+            1001,
+            {"changedMemberList": "VklQ56S65L6L55So5oi3LemrmOeHg+S6uueUny0wODEz"},
+            "mod_associatechatroom_topic_1",
+            "把群名改为「VIP示例用户-高燃人生-0813」",
+        ),
+        (
+            1002,
+            {"changedMemberList": "Nzg4MTI5OTYzMjk5OTE2Ng=="},
+            "AddOpenIMChatRoomByInvite_u1",
+            "邀请 1 人加入群聊",
+        ),
+        (2118, {"changedMemberId": 1688857375621674}, "YIn3fzASSS2kroC", "更新了群成员信息"),
+    ],
+)
+def test_qiwe_group_system_notices_are_readable(msg_type, msg_data, identifier, expected):
+    message = _channel_message_from_qiwe(_non_text_payload(msg_type, msg_data, identifier))
+    assert message is not None
+    assert message.message_type == "system_notice"
+    assert message.text == expected
+
+
+def test_qiwe_unmapped_type_falls_back_to_placeholder():
+    message = _channel_message_from_qiwe(_non_text_payload(9999, {}))
+    assert message is not None
+    assert message.message_type == "non_text"
+    assert message.text == "[其他类型消息]"

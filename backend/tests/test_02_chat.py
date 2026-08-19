@@ -928,6 +928,39 @@ async def test_recent_chat_history_excludes_unsent_system_reminder(
 
 
 @pytest.mark.asyncio
+async def test_recent_chat_history_drops_group_system_notices(
+    db_session, mock_message_channel, cai_haoran_answers
+):
+    """进退群/撤回/置顶这类群系统通知不是对话，不该占模型上下文；表情等仍保留。"""
+    case_id, group_id = await _setup_case_with_intake(db_session, cai_haoran_answers)
+    for message_type, content in (
+        ("system_notice", "撤回了一条消息"),
+        ("system_notice", "邀请 1 人加入群聊"),
+        ("sticker", "[动画表情]"),
+    ):
+        db_session.add(
+            Message(
+                service_case_id=case_id,
+                group_id=group_id,
+                direction=MessageDirection.INBOUND,
+                sender_type=MessageSenderType.USER,
+                message_type=message_type,
+                content=content,
+                purpose=MessagePurpose.CHAT,
+                status=MessageStatus.RECEIVED,
+            )
+        )
+    await db_session.flush()
+
+    engine = RanrenAIEngine(mock_message_channel)
+    lines = await engine._recent_user_messages(db_session, case_id)
+
+    assert not any("撤回了一条消息" in line for line in lines)
+    assert not any("加入群聊" in line for line in lines)
+    assert any("[动画表情]" in line for line in lines)
+
+
+@pytest.mark.asyncio
 async def test_recent_chat_history_keeps_latest_twenty_with_length_guard(
     db_session, mock_message_channel, cai_haoran_answers
 ):

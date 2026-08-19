@@ -42,6 +42,7 @@ from app.services.knowledge_evolution import (
     create_draft_candidate,
     create_qa_drafts_from_archivist,
 )
+from app.services.qiwe_service.non_text import TYPE_SYSTEM_NOTICE
 from app.services.outcome_engine import POSITIVE_EVENT_TYPES, apply_archived_outcome
 
 logger = logging.getLogger(__name__)
@@ -259,6 +260,8 @@ class ArchivistPipeline:
                 Message.service_case_id == self.service_case.id,
                 Message.id > watermark,
                 Message.sender_type.in_([MessageSenderType.USER, MessageSenderType.STAFF]),
+                # 进退群/撤回/置顶这类群系统通知不是对话内容，不参与归档抽取。
+                Message.message_type != TYPE_SYSTEM_NOTICE,
                 Message.purpose == MessagePurpose.CHAT,
             )
             .order_by(Message.id.asc())
@@ -280,6 +283,7 @@ class ArchivistPipeline:
                         Message.sender_type.in_(
                             [MessageSenderType.USER, MessageSenderType.STAFF, MessageSenderType.BOT]
                         ),
+                        Message.message_type != TYPE_SYSTEM_NOTICE,
                         Message.purpose == MessagePurpose.CHAT,
                     )
                     .order_by(Message.id.asc())
