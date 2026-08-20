@@ -214,7 +214,7 @@ export function PopulationInsightPanel({
 
       {insight && insight.generated_at && (
         <div className="flex flex-col gap-1 border-t border-slate-200 bg-slate-50/60 px-5 py-3 text-xs leading-5 text-slate-600 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:px-6">
-          <span>基于 {insight.included_users} 位用户，{insight.profiled_users} 位有入营画像（覆盖 {coverage(insight)}%）</span>
+          <span>基于 {insight.included_users} 张服务单（不含已退款），{insight.profiled_users} 张有入营画像 · 覆盖 {coverage(insight)}%</span>
           <span>模型读取 {insight.model_input_users} 份匿名精简画像</span>
           <span>{formatDateTime(insight.generated_at)} 生成</span>
           {insight.refresh_reason && <span>{REFRESH_REASON_LABELS[insight.refresh_reason] ?? insight.refresh_reason}</span>}

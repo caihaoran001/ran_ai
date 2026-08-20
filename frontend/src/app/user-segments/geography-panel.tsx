@@ -183,7 +183,7 @@ export function GeographyPanel({ geography }: { geography: PopulationGeography }
           </div>
           <span className="status-pill pill-neutral shrink-0 self-start">
             {isCityLevel
-              ? `${denominator} 位用户`
+              ? `${denominator} 张服务单`
               : `已匹配 ${geography.total}${geography.unknown > 0 ? ` · 未采集 ${geography.unknown}` : " · 已完整"}`}
           </span>
         </div>
