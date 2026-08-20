@@ -145,3 +145,53 @@ async def test_dashboard_summary_counts_new_groups_only(admin_client, db_session
     # 新增 1 个新群 + 1 个老群：总数只 +1（老群不入统计）
     assert summary["service_cases_total"] == before["service_cases_total"] + 1
     assert summary["service_cases_in_service"] == before["service_cases_in_service"] + 1
+
+async def test_intake_questionnaire_promotes_legacy_group(db_session):
+    """老群里有人交了入营问卷 → 周期对账把它改成新群，看板不再把这位客户排除在外。
+
+    运营复用老群接新客户时最容易漏改群类型；这里按「交过入营问卷」这个事实自动补，
+    也顺带补上历史遗漏（2026-08-13—08-17 那批被留在老群的客户）。
+    """
+    from app.models.questionnaire import QuestionnaireSubmission
+    from app.services.reminder_service import ReminderService
+
+    legacy_with_intake = await _raw_case(db_session, name="老群里的新客户")
+    legacy_without = await _raw_case(db_session, name="没人填过问卷的老群")
+    db_session.add(
+        QuestionnaireSubmission(
+            service_case_id=legacy_with_intake.id,
+            template_key="intake",
+            answers_json={"name": "老群里的新客户"},
+        )
+    )
+    await db_session.flush()
+
+    await ReminderService().check_group_type_from_intake_once()
+
+    await db_session.refresh(legacy_with_intake)
+    await db_session.refresh(legacy_without)
+    assert legacy_with_intake.group_type == ServiceCaseGroupType.NEW_GROUP.value
+    assert legacy_without.group_type == ServiceCaseGroupType.LEGACY.value, (
+        "没人交过问卷的老群不能被顺手改掉"
+    )
+
+
+async def test_checkin_questionnaire_does_not_promote_legacy_group(db_session):
+    """只有入营问卷算数：打卡问卷不代表这个群走了本系统的入营流程。"""
+    from app.models.questionnaire import QuestionnaireSubmission
+    from app.services.reminder_service import ReminderService
+
+    case = await _raw_case(db_session, name="只交过打卡问卷的老群")
+    db_session.add(
+        QuestionnaireSubmission(
+            service_case_id=case.id,
+            template_key="personalized_checkin",
+            answers_json={"weight": "60"},
+        )
+    )
+    await db_session.flush()
+
+    await ReminderService().check_group_type_from_intake_once()
+
+    await db_session.refresh(case)
+    assert case.group_type == ServiceCaseGroupType.LEGACY.value
