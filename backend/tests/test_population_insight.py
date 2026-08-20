@@ -20,6 +20,7 @@ from app.services.population_insight import (
     population_insight_refresh_reason,
     refresh_population_insight,
 )
+from app.services.population_scope import select_population_service_cases
 from app.services.reminder_service import ReminderService
 
 
@@ -139,6 +140,48 @@ async def test_population_insight_refresh_uses_one_anonymized_model_call_and_per
     assert response.generated_by_model == "document-model-test"
     assert response.profiled_users >= 2
     assert response.model_input_users >= 2
+
+
+@pytest.mark.asyncio
+async def test_population_insight_excludes_refunded_cases(db_session):
+    """共同洞察分析的是「当前该服务谁」，已退款的单必须排除（与画像/看板的含退款口径区分开）。"""
+
+    in_service_a = await _add_profiled_case(
+        db_session,
+        name="在服甲",
+        phone="13700000005",
+        customer_type="疾病管理型",
+    )
+    in_service_b = await _add_profiled_case(
+        db_session,
+        name="在服乙",
+        phone="13700000006",
+        customer_type="健康投资型",
+    )
+    refunded = await _add_profiled_case(
+        db_session,
+        name="退款丙",
+        phone="13700000007",
+        customer_type="健康投资型",
+    )
+    refunded.status = ServiceCaseStatus.REFUNDED
+    await db_session.flush()
+
+    insight_cases = await select_population_service_cases(db_session, exclude_refunded=True)
+    insight_case_ids = {c.id for c in insight_cases}
+    assert refunded.id not in insight_case_ids
+    assert in_service_a.id in insight_case_ids
+    assert in_service_b.id in insight_case_ids
+
+    ai = CapturingInsightAI()
+    result = await refresh_population_insight(db_session, force=True, ai_service=ai)
+
+    assert result.ran is True
+    prompt = ai.calls[0]["user_prompt"]
+    payload = json.loads(prompt.split("\n", 1)[1])
+    assert payload["sample"]["included_users"] == len(insight_case_ids)
+    assert "退款丙" not in prompt
+    assert "13700000007" not in prompt
 
 
 @pytest.mark.asyncio

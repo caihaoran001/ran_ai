@@ -4,22 +4,30 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.service_case import ServiceCase
+from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.service_case_queries import stats_scope_condition
 
 
-async def select_population_service_cases(session: AsyncSession) -> list[ServiceCase]:
-    """群体画像/共同洞察的统计范围：与数据看板完全同一口径。
+async def select_population_service_cases(
+    session: AsyncSession, *, exclude_refunded: bool = False
+) -> list[ServiceCase]:
+    """画像/下钻/共同洞察的服务单范围。
 
-    直接复用 `stats_scope_condition()`——未删除的新群服务单，按「单」计数，
-    已退款照常计入。画像这边刻意不再自己去重到人、也不剔除已退款：两个页面的
-    分母必须能对上，否则运营看到看板 179、画像 157 会以为哪边算错了。
+    默认与数据看板完全同一口径：直接复用 `stats_scope_condition()`——未删除的新群
+    服务单，按「单」计数，已退款照常计入。画像与下钻保持默认，这样两个页面的分母
+    必须能对上，否则运营看到看板 179、画像 157 会以为哪边算错了。
+
+    共同洞察语义不同：它分析的是「当前该服务谁」，已退款的人已不是服务对象，所以
+    调用方传 `exclude_refunded=True`，在统一口径之上再剔除已退款单。
     """
 
+    conditions = [stats_scope_condition()]
+    if exclude_refunded:
+        conditions.append(ServiceCase.status != ServiceCaseStatus.REFUNDED)
     return list(
         await session.scalars(
             select(ServiceCase)
-            .where(stats_scope_condition())
+            .where(*conditions)
             .options(selectinload(ServiceCase.user))
             .order_by(ServiceCase.created_at.desc(), ServiceCase.id.desc())
         )

@@ -101,8 +101,9 @@ router = APIRouter()
 def _stats_case_condition():
     """看板统计口径 = 全站统一口径（见 stats_scope_condition 的三条约定）。
 
-    看板、群体画像、共同洞察、成效趋势共用同一个条件，任何一处要改口径都必须
-    改到那一个函数上，别在本文件里另开分支。
+    看板、群体画像、下钻、成效趋势共用同一个条件，任何一处要改口径都必须
+    改到那一个函数上，别在本文件里另开分支。共同洞察在统一口径上剔除已退款，
+    见 population_scope.select_population_service_cases。
     """
     return stats_scope_condition()
 

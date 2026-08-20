@@ -145,7 +145,7 @@ async def refresh_population_insight(
         generating.failure_reason = "Generation lease expired before completion"
         await session.flush()
 
-    service_cases = await select_population_service_cases(session)
+    service_cases = await select_population_service_cases(session, exclude_refunded=True)
     current_case_ids = sorted(service_case.id for service_case in service_cases)
     latest_ready = await _latest_snapshot(session, status="ready")
     reason = "manual" if force else population_insight_refresh_reason(
@@ -389,7 +389,7 @@ def _population_insight_user_prompt(
         str(item.get("customer_type") or "未分型") for item in all_prompt_profiles
     )
     payload = {
-        "scope": "每位未删除用户的最新未删除服务单；最新服务单已退款则排除",
+        "scope": "未删除的新群服务单，按单计数；已退款的单不纳入（洞察分析的是当前该服务谁）；同一人多期服务各算一张",
         "sample": {
             "included_users": included_users,
             "profiled_users": profiled_users,

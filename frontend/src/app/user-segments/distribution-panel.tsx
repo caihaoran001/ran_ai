@@ -240,7 +240,7 @@ export function MembersDrawer({
             <p className="text-xs font-semibold text-slate-400">{distLabel}</p>
             <h3 id="population-members-drawer-title" className="text-break text-lg font-bold text-slate-900">{bucketLabel}</h3>
             <p id="population-members-drawer-status" className="mt-0.5 text-sm text-slate-500" aria-live="polite">
-              {loading ? "加载中…" : `共 ${members.length} 位用户`}
+              {loading ? "加载中…" : `共 ${members.length} 张服务单`}
             </p>
           </div>
           <button
@@ -274,7 +274,7 @@ export function MembersDrawer({
               </button>
             </div>
           ) : members.length === 0 ? (
-            <div className="empty-state">该分桶下暂无用户</div>
+            <div className="empty-state">该分桶下暂无服务单</div>
           ) : (
             <ul className="space-y-2">
               {members.map((sc) => (
