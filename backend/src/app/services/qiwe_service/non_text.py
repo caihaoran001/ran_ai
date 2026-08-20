@@ -72,6 +72,7 @@ CARD_MINIPROGRAM = "miniprogram"
 CARD_MEMBER_JOIN = "member_join"
 CARD_MEMBER_QUIT = "member_quit"
 CARD_MEMBER_SYNC = "member_sync"
+CARD_ROOM_RENAMED = "room_renamed"
 
 
 def describe_non_text(item: dict[str, Any]) -> NonTextMessage:
@@ -191,7 +192,13 @@ def _group_renamed(msg_data: dict[str, Any], item: dict[str, Any]) -> NonTextMes
         msg_data.get("changedMemberList") or msg_data.get("base64RawData") or item.get("base64RawData")
     )
     name = _clip(name, _MAX_TITLE_CHARS)
-    return NonTextMessage(TYPE_SYSTEM_NOTICE, f"把群名改为「{name}」" if name else "修改了群名")
+    # 带上 card 是为了让引擎能认出「群被改名了」并当场去企微核一次新群名——正文那句话是给人看的，
+    # 解析出来的名字可能被截断或缺字，不能直接拿去写库(见 engine._refresh_group_name_on_rename)。
+    return NonTextMessage(
+        TYPE_SYSTEM_NOTICE,
+        f"把群名改为「{name}」" if name else "修改了群名",
+        card={"kind": CARD_ROOM_RENAMED, "title": name},
+    )
 
 
 def _members_joined(msg_data: dict[str, Any], item: dict[str, Any], identifier: str) -> NonTextMessage:

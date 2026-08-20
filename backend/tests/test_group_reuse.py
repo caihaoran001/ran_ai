@@ -713,3 +713,133 @@ async def test_reconciliation_ignores_staff_ids_when_looking_for_the_customer(
     for case in cases:
         await db_session.refresh(case)
         assert case.member_left_at is not None, "客户确实都不在群里了，必须照常标记退群"
+
+
+def _rename_notice(group_id: str, *, title: str, message_id: str) -> ChannelMessage:
+    return ChannelMessage(
+        channel="qiwe",
+        chat_id=group_id,
+        chat_type="group",
+        text=f"把群名改为「{title}」",
+        user_id=STAFF_WECOM_ID,
+        user_name="班主任",
+        message_type="system_notice",
+        message_id=message_id,
+        media_card={"kind": "room_renamed", "title": title},
+        raw_payload={"userId": "bot-1", "msgData": {}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_rename_notice_refreshes_group_name_at_once(db_session, mock_message_channel):
+    """运营改了群名 → 后台立刻跟上，不用等 24 小时那道全量刷新。"""
+    group_id = "G-RENAME-1"
+    case = await _setup_group_with_customer(db_session, group_id)
+    case.group_name = "新5-高燃人生-0801"
+    await db_session.flush()
+
+    calls: list[list[str]] = []
+
+    async def fake_batch_get_room_names(room_ids):
+        calls.append(list(room_ids))
+        # 回查拿到的才是权威值：通知里那个名字被截断成了「心5 235」
+        return {rid: "心5 235 235-高燃人生-0801" for rid in room_ids}
+
+    mock_message_channel.batch_get_room_names = fake_batch_get_room_names
+    await RanrenAIEngine(mock_message_channel).handle_message(
+        _rename_notice(group_id, title="心5 235", message_id="rename-1")
+    )
+
+    await db_session.refresh(case)
+    assert calls == [[group_id]], "只回查这一个群，一次调用"
+    assert case.group_name == "心5 235 235-高燃人生-0801"
+
+
+@pytest.mark.asyncio
+async def test_rename_notice_does_not_thaw_a_departed_customers_group_name(
+    db_session, mock_message_channel
+):
+    """客户已退群那张单的群名就地冻结：老群改名交给下一位客户，跟着改会让历史记录换个人。"""
+    group_id = "G-RENAME-2"
+    case = await _setup_group_with_customer(db_session, group_id)
+    case.group_name = "周玲-高燃人生-0730"
+    await db_session.flush()
+
+    await RanrenAIEngine(mock_message_channel).handle_message(
+        _quit_notice(group_id, member_id=CUSTOMER_WECOM_ID, message_id="rename-quit")
+    )
+    await db_session.refresh(case)
+    assert case.member_left_at is not None
+
+    async def fake_batch_get_room_names(room_ids):
+        return {rid: "糖心-高燃人生-0813" for rid in room_ids}
+
+    mock_message_channel.batch_get_room_names = fake_batch_get_room_names
+    await RanrenAIEngine(mock_message_channel).handle_message(
+        _rename_notice(group_id, title="糖心-高燃人生-0813", message_id="rename-2")
+    )
+
+    await db_session.refresh(case)
+    assert case.group_name == "周玲-高燃人生-0730", "上一位客户那一期的群名不能被改成新客户的"
+
+
+@pytest.mark.asyncio
+async def test_rename_refresh_retries_when_the_gateway_hiccups(
+    db_session, mock_message_channel, monkeypatch
+):
+    """企微网关抖一下不算数：重试拿到名字照样写进去。"""
+    from app.services.ranren_ai import engine as engine_mod
+
+    monkeypatch.setattr(engine_mod, "_ROOM_NAME_REFRESH_BACKOFF_SECONDS", (0.0, 0.0))
+    group_id = "G-RENAME-3"
+    case = await _setup_group_with_customer(db_session, group_id)
+    case.group_name = "旧名-高燃人生-0801"
+    await db_session.flush()
+
+    attempts = {"n": 0}
+
+    async def flaky_batch_get_room_names(room_ids):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("gateway timeout")
+        if attempts["n"] == 2:
+            return {}  # 接口通了但没返回名字
+        return {rid: "心7-高燃人生-0820" for rid in room_ids}
+
+    mock_message_channel.batch_get_room_names = flaky_batch_get_room_names
+    await RanrenAIEngine(mock_message_channel).handle_message(
+        _rename_notice(group_id, title="心7-高燃人生-0820", message_id="rename-3")
+    )
+
+    await db_session.refresh(case)
+    assert attempts["n"] == 3
+    assert case.group_name == "心7-高燃人生-0820"
+
+
+@pytest.mark.asyncio
+async def test_rename_refresh_keeps_the_old_name_when_every_attempt_fails(
+    db_session, mock_message_channel, monkeypatch
+):
+    """重试完还是取不到：保留旧名字，绝不写空，剩下的交给 24 小时全量刷新。"""
+    from app.services.ranren_ai import engine as engine_mod
+
+    monkeypatch.setattr(engine_mod, "_ROOM_NAME_REFRESH_BACKOFF_SECONDS", (0.0, 0.0))
+    group_id = "G-RENAME-4"
+    case = await _setup_group_with_customer(db_session, group_id)
+    case.group_name = "旧名-高燃人生-0801"
+    await db_session.flush()
+
+    attempts = {"n": 0}
+
+    async def always_failing(room_ids):
+        attempts["n"] += 1
+        raise RuntimeError("gateway down")
+
+    mock_message_channel.batch_get_room_names = always_failing
+    await RanrenAIEngine(mock_message_channel).handle_message(
+        _rename_notice(group_id, title="心8-高燃人生-0820", message_id="rename-4")
+    )
+
+    await db_session.refresh(case)
+    assert attempts["n"] == 3, "三次都要试满"
+    assert case.group_name == "旧名-高燃人生-0801"

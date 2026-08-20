@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from html import escape
 import httpx
 import logging
@@ -58,6 +59,10 @@ _OUTBOUND_REQUEST_STARTED_STATUSES = (
 )
 PLACEHOLDER_USER_NAME = "待识别用户"
 _PLACEHOLDER_USER_NAMES = frozenset({PLACEHOLDER_USER_NAME, "待填写问卷用户"})
+# 改名后回查群名的重试：企微网关偶发抖动，第一次取不到就等一下再试。
+# 改名通知不触发 AI 回复，等这几秒不影响任何人；全部失败也只是退回 24 小时全量刷新。
+_ROOM_NAME_REFRESH_ATTEMPTS = 3
+_ROOM_NAME_REFRESH_BACKOFF_SECONDS = (1.0, 3.0)
 GROUP_AI_INTRODUCTION = (
     "你好呀，我是燃人助教～我会和你的营养师一起，随时陪着你。我能帮你：\n\n"
     "· 答疑解惑：饮食、作息、运动的问题随时问；\n"
@@ -527,6 +532,71 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             "RanrenAI customer left group chat_id=%s service_case_id=%s",
             message.chat_id,
             service_case.id,
+        )
+        return True
+
+    async def _refresh_group_name_on_rename(
+        self, session, service_case_id: int, chat_id: str
+    ) -> bool:
+        """收到改名通知：当场跟企微核一次这个群现在叫什么，写回这张单。
+
+        为什么不直接用通知里那个名字：它是从企微原始数据里解出来的，我们还按长度截断过，
+        遇到超长群名或特殊符号可能不完整。反查一次拿到的才是权威值，改名本身很罕见
+        （生产 30 天约 40 次），多这一次调用可以忽略。
+
+        为什么还要留 `check_room_names_once` 那道 24 小时全量刷新：改名事件会漏——后端重启
+        那几秒的回调、机器人被拉进群之前就改过的名字、机器人不在群时的改名，都不会有通知。
+        事件负责快，全量刷新负责不漏，两者都要。
+
+        本方法在入站消息提交之后单独开事务跑：重试要等待，不能占着入站那条事务的连接；
+        失败也绝不能把已入库的消息回滚掉。取不到名字一律保留旧值，绝不写空。
+        """
+        channel = self.channel
+        if channel is None or not hasattr(channel, "batch_get_room_names"):
+            return False
+        name = ""
+        for attempt in range(_ROOM_NAME_REFRESH_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(_ROOM_NAME_REFRESH_BACKOFF_SECONDS[attempt - 1])
+            try:
+                name = (await channel.batch_get_room_names([chat_id])).get(str(chat_id), "")
+            except Exception as exc:  # noqa: BLE001 — 取不到就等全量刷新兜底，不影响消息入库
+                logger.warning(
+                    "RanrenAI room name refresh attempt %d failed chat_id=%s err=%s",
+                    attempt + 1,
+                    chat_id,
+                    exc,
+                )
+                name = ""
+            if name:
+                break
+        if not name:
+            logger.warning(
+                "RanrenAI room name refresh gave up after %d attempts, keeping old name "
+                "chat_id=%s service_case_id=%s",
+                _ROOM_NAME_REFRESH_ATTEMPTS,
+                chat_id,
+                service_case_id,
+            )
+            return False
+        service_case = await session.get(ServiceCase, service_case_id)
+        # 客户已退群的单群名就地冻结：老群会被改名交给下一位客户，跟着改会让上一位客户的
+        # 历史记录看起来换了个人（与 check_room_names_once 同一条规则）。
+        if (
+            service_case is None
+            or service_case.deleted_at is not None
+            or service_case.member_left_at is not None
+            or service_case.group_name == name
+        ):
+            return False
+        service_case.group_name = name
+        session.add(service_case)
+        await session.commit()
+        logger.info(
+            "RanrenAI room renamed, group name refreshed chat_id=%s service_case_id=%s name=%s",
+            chat_id,
+            service_case_id,
+            name,
         )
         return True
 

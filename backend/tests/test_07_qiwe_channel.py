@@ -3760,6 +3760,22 @@ def test_qiwe_member_notices_carry_kind_for_display():
     assert sync_notice.media_card == {"kind": "member_sync"}
 
 
+def test_qiwe_rename_notice_carries_kind_so_group_name_can_refresh_at_once():
+    """改名通知要能被下游认出来：认出来才会当场回查群名，不用等 24 小时全量刷新。"""
+    renamed = _channel_message_from_qiwe(
+        _non_text_payload(
+            1001,
+            {"changedMemberList": "VklQ56S65L6L55So5oi3LemrmOeHg+S6uueUny0wODEz"},
+            "mod_associatechatroom_topic_1",
+        )
+    )
+    assert renamed is not None
+    assert renamed.media_card == {
+        "kind": "room_renamed",
+        "title": "VIP示例用户-高燃人生-0813",
+    }
+
+
 @pytest.mark.asyncio
 async def test_member_join_text_uses_names_from_our_own_chat_history(db_session):
     """入群通知只给成员 id，姓名从我们自己的聊天记录里换回来。"""

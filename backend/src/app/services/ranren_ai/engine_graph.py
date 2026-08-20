@@ -50,7 +50,11 @@ from app.services.qiwe_service.member_names import (
     parse_member_ids,
     resolve_member_join_text,
 )
-from app.services.qiwe_service.non_text import CARD_MEMBER_JOIN, CARD_MEMBER_QUIT
+from app.services.qiwe_service.non_text import (
+    CARD_MEMBER_JOIN,
+    CARD_MEMBER_QUIT,
+    CARD_ROOM_RENAMED,
+)
 # 通过 engine 模块引用 SessionLocal / analyze_message_insight / generate_agent_reply /
 # get_ai_reply_enabled / AgentDataUnavailableError：测试把补丁打在 engine 模块上
 # （conftest 全局 + 个别用例 per-test），经此引用才能命中，行为与旧 handle_message 一致。
@@ -641,6 +645,13 @@ class EngineGraph:
                 inbound_id, service_case_id, should_send_questionnaire,
                 (time.monotonic() - started_at) * 1000,
             )
+            if service_case_id is not None and card_kind == CARD_ROOM_RENAMED:
+                # 群被改名：当场把新群名同步到这张单，别等 24 小时那道全量刷新。
+                # 放在 commit 之后单独开事务：回查带重试要等待，不能占着入站事务的连接，
+                # 失败也不能牵连已经入库的这条消息。改名通知不触发回复，等这几秒无人感知。
+                await engine._refresh_group_name_on_rename(
+                    session, service_case_id, message.chat_id
+                )
 
         return {
             "is_staff": is_staff,
