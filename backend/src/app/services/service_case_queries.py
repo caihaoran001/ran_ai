@@ -148,23 +148,6 @@ def member_present_condition():
     return ServiceCase.member_left_at.is_(None)
 
 
-def _intake_submission_exists(*extra: Any):
-    return (
-        select(QuestionnaireSubmission.id)
-        .where(
-            QuestionnaireSubmission.service_case_id == ServiceCase.id,
-            QuestionnaireSubmission.template_key == "intake",
-            *extra,
-        )
-        .exists()
-    )
-
-
-def intake_submitted_condition():
-    """这张单交过入营问卷 —— 客户真的走过本系统流程的凭据。"""
-    return _intake_submission_exists()
-
-
 def intake_submitted_between_condition(start: datetime, end: datetime):
     """这张单的入营问卷是在 [start, end) 之间交的 —— 看板「今日新增用户」的口径。
 
@@ -176,9 +159,15 @@ def intake_submitted_between_condition(start: datetime, end: datetime):
     也不能用「建单在今天且交过问卷」：班主任昨天先把群铺好、客户今天才填问卷的话，
     这个客户在哪一天都数不到。
     """
-    return _intake_submission_exists(
-        QuestionnaireSubmission.created_at >= start,
-        QuestionnaireSubmission.created_at < end,
+    return (
+        select(QuestionnaireSubmission.id)
+        .where(
+            QuestionnaireSubmission.service_case_id == ServiceCase.id,
+            QuestionnaireSubmission.template_key == "intake",
+            QuestionnaireSubmission.created_at >= start,
+            QuestionnaireSubmission.created_at < end,
+        )
+        .exists()
     )
 
 

@@ -21,7 +21,7 @@ from app.models.message import (
     MessageStatus,
 )
 from app.models.questionnaire import QuestionnaireSubmission
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 from app.models.user import User
 from app.services.checkin_checklists import get_effective_daily_checklist
 from app.services.intake_generation import (
@@ -137,10 +137,13 @@ async def submit_questionnaire(
     if template == "intake":
         pending_status = ServiceCaseStatus.GENERATING
         service_case.status = pending_status
-        # 这里**故意不**写「提交入营问卷即置 new_group」：本函数跑在常驻 ingress 上，
-        # 而部署脚本刻意不重建它，判定放这里会随时静默失效（8/13–8/17 就整整失效四天）。
-        # 该升级改由 scheduler 的 check_group_type_from_intake_once 按事实周期对账完成，
-        # 跑在每次部署都会重建的 backend 里（见 ServiceCase.group_type 注释）。
+        # 老群标记只对「接入本系统之前就存在、从没走过本流程的历史群」有效：客户在这个群里
+        # 交了入营问卷，它就已经在走新流程，看板和群体画像不该再排除它。运营复用老群接新
+        # 客户时最容易漏改群类型（改群名、拉人都做了，就这一步忘了）。
+        # 注意：本函数跑在常驻 ingress 上，改这一段后部署必须单独重建 ingress，否则线上跑的
+        # 仍是旧代码且不报错——8/13–8/17 正是漏了这一步，整整四天填过问卷的客户全被留在老群。
+        if service_case.group_type == ServiceCaseGroupType.LEGACY.value:
+            service_case.group_type = ServiceCaseGroupType.NEW_GROUP.value
         await _sync_user_from_answers(session, service_case, fields, payload.answers)
         set_pre_service_status_or_activate(
             service_case,

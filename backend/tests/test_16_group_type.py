@@ -58,15 +58,14 @@ async def test_new_case_defaults_to_new_group(db_session):
     assert case.group_type == ServiceCaseGroupType.NEW_GROUP.value
 
 
-async def test_intake_submit_does_not_touch_group_type(
+async def test_intake_submit_promotes_legacy_group(
     admin_client, create_case, db_session, mock_ai, cai_haoran_answers
 ):
-    """提交入营问卷不再改群类型——封存的老群单子交完问卷仍是 legacy。
+    """提交入营问卷当场把老群改成新群（2026-08-20 起）。
 
-    这是静态化的直接后果，也是刻意的：判定放在问卷提交里就等于放在 ingress 里，而部署脚本
-    刻意不重建 ingress，那一步会随时静默失效（8/13–8/17 就失效了四天）。标记过时的代价已
-    被压到只影响看板统计——待办队列不按群类型过滤，交付文件不会再从审核控制台消失
-    （见 test_review_queue_shows_all_groups.py）。
+    老群标记只对「接入本系统之前就存在、从没走过本流程的历史群」有效。运营复用老群接
+    新客户时改群名、拉人都会做，就这一步最容易忘，漏了这位客户整个不进看板和群体画像。
+    注意这段判定跑在常驻 ingress 上，改它之后部署必须单独重建 ingress。
     """
     resp = await create_case({
         "group_id": f"test-gt-intake-{uuid4().hex[:8]}",
@@ -83,7 +82,7 @@ async def test_intake_submit_does_not_touch_group_type(
 
     case = await db_session.get(ServiceCase, case_id)
     await db_session.refresh(case)
-    assert case.group_type == ServiceCaseGroupType.LEGACY.value
+    assert case.group_type == ServiceCaseGroupType.NEW_GROUP.value
 
 
 async def test_case_list_filters_by_group_type(admin_client, db_session):
@@ -146,52 +145,16 @@ async def test_dashboard_summary_counts_new_groups_only(admin_client, db_session
     assert summary["service_cases_total"] == before["service_cases_total"] + 1
     assert summary["service_cases_in_service"] == before["service_cases_in_service"] + 1
 
-async def test_intake_questionnaire_promotes_legacy_group(db_session):
-    """老群里有人交了入营问卷 → 周期对账把它改成新群，看板不再把这位客户排除在外。
 
-    运营复用老群接新客户时最容易漏改群类型；这里按「交过入营问卷」这个事实自动补，
-    也顺带补上历史遗漏（2026-08-13—08-17 那批被留在老群的客户）。
-    """
-    from app.models.questionnaire import QuestionnaireSubmission
-    from app.services.reminder_service import ReminderService
-
-    legacy_with_intake = await _raw_case(db_session, name="老群里的新客户")
-    legacy_without = await _raw_case(db_session, name="没人填过问卷的老群")
-    db_session.add(
-        QuestionnaireSubmission(
-            service_case_id=legacy_with_intake.id,
-            template_key="intake",
-            answers_json={"name": "老群里的新客户"},
-        )
-    )
-    await db_session.flush()
-
-    await ReminderService().check_group_type_from_intake_once()
-
-    await db_session.refresh(legacy_with_intake)
-    await db_session.refresh(legacy_without)
-    assert legacy_with_intake.group_type == ServiceCaseGroupType.NEW_GROUP.value
-    assert legacy_without.group_type == ServiceCaseGroupType.LEGACY.value, (
-        "没人交过问卷的老群不能被顺手改掉"
-    )
-
-
-async def test_checkin_questionnaire_does_not_promote_legacy_group(db_session):
+async def test_checkin_questionnaire_does_not_promote_legacy_group(public_client, db_session):
     """只有入营问卷算数：打卡问卷不代表这个群走了本系统的入营流程。"""
-    from app.models.questionnaire import QuestionnaireSubmission
-    from app.services.reminder_service import ReminderService
+    case = await _raw_case(db_session, name="只交打卡问卷的老群")
 
-    case = await _raw_case(db_session, name="只交过打卡问卷的老群")
-    db_session.add(
-        QuestionnaireSubmission(
-            service_case_id=case.id,
-            template_key="personalized_checkin",
-            answers_json={"weight": "60"},
-        )
+    resp = await public_client.post(
+        f"/questionnaires/{case.questionnaire_token}/submit?template=personalized_checkin",
+        json={"answers": {"weight": "60"}},
     )
-    await db_session.flush()
-
-    await ReminderService().check_group_type_from_intake_once()
+    assert resp.status_code == 201, resp.text
 
     await db_session.refresh(case)
     assert case.group_type == ServiceCaseGroupType.LEGACY.value

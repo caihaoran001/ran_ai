@@ -66,11 +66,11 @@ class ServiceCase(TimestampMixin, Base):
     # 封存的历史集合（当时库里 179 张单，全部停在 CREATED、没交过入营问卷）。
     # 老群若日后确实又新建了服务单（机器人被拉进老群），由运营在后台手动改回 legacy。
     #
-    # 2026-08-20 补一条自动升级：**交过入营问卷的单子一律算 new_group**，由 scheduler 的
-    # check_group_type_from_intake_once 周期对账改过来（运营复用老群接新客户时最容易漏这一步）。
-    # 刻意不写在问卷提交接口里：那个接口跑在部署不重建的 ingress 上，判定放那里会静默失效
-    # ——8/13–8/17 就整整失效四天，期间填过问卷的客户全被留在 legacy，交付文件在审核控制台
-    # 整个不可见。按事实推导 + 幂等对账，漏了下一轮自己补，不需要人工回填。
+    # 2026-08-20 补回一条自动升级：**提交入营问卷时 legacy → new_group**（写在
+    # questionnaires.py 的 intake 分支）。理由是运营复用老群接新客户时最容易漏改群类型，
+    # 漏了这位客户就整个不进看板和群体画像。
+    # 这段代码跑在常驻 ingress 上，**改它之后部署必须单独重建 ingress**：8/13–8/17 正是漏了
+    # 这一步，线上跑着旧代码、不报错、测试全绿，四天里填过问卷的客户全被留在 legacy。
     group_type: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

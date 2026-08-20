@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, func, or_, select, text, update
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -33,7 +33,7 @@ from app.models.reminder import (
     ReminderEvent,
     ReminderEventType,
 )
-from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.user_document import DocumentType, UserDocument
 from app.services.agent import (
@@ -63,7 +63,6 @@ from app.services.service_case_queries import (
     checkin_day,
     effective_service_day,
     get_active_service_case,
-    intake_submitted_condition,
     last_user_inbound_subquery,
     member_present_condition,
     select_active_service_cases,
@@ -163,7 +162,6 @@ class ReminderService:
                         if self.settings.outcome_snapshots_enabled:
                             await self.check_outcome_snapshots_once()
                         await self.check_pending_intake_generation_once()
-                        await self.check_group_type_from_intake_once()
                         await self.check_stuck_document_generation_once()
                         await self.check_retry_degraded_reports_once()
                         await self.check_unsent_channel_messages_once()
@@ -1137,36 +1135,6 @@ class ReminderService:
             )
         )
         return cases, content_failed_ids
-
-    async def check_group_type_from_intake_once(self) -> None:
-        """交过入营问卷的服务单一律算新客户群，标着老群的自动改过来。
-
-        「老群」本来只是给一批接入本系统之前就存在、从没走过本系统流程的历史群留的标记；
-        一旦客户在这个群里交了入营问卷，它就已经在走新流程了，看板和群体画像不该再把它
-        排除在外。运营复用老群接新客户时最容易漏这一步（改群名、拉人都做了，群类型忘了改）。
-
-        为什么做成周期对账、而不是在问卷提交那一刻改：提交接口跑在常驻 ingress 上，
-        而部署刻意不重建它，判定放那里会静默失效——2026-08-13 到 08-17 就整整失效四天，
-        期间填过问卷的客户全被留在老群。这里只按「交过问卷」这个事实推导、幂等，
-        以后再漏也会被下一轮自己补上，不需要人工回填。
-        """
-        async with SessionLocal() as session:
-            result = await session.execute(
-                update(ServiceCase)
-                .where(
-                    ServiceCase.deleted_at.is_(None),
-                    ServiceCase.group_type == ServiceCaseGroupType.LEGACY.value,
-                    intake_submitted_condition(),
-                )
-                .values(group_type=ServiceCaseGroupType.NEW_GROUP.value)
-            )
-            promoted = int(result.rowcount or 0)
-            if promoted:
-                await session.commit()
-                logger.info(
-                    "Group type promoted to new_group by intake questionnaire count=%s",
-                    promoted,
-                )
 
     async def check_stuck_document_generation_once(self) -> None:
         """补跑没有入营交付文件的服务单（后台任务被中断，或"待生成"信号根本没落下）。"""
