@@ -268,7 +268,7 @@ export default async function UserSegmentsPage() {
             <DistributionGroupPanel
               id="body-profile"
               title="基础与体型"
-              description="年龄、BMI、体脂率和腰高比集中查看；体脂率和腰围可能尚未填报。"
+              description="性别、年龄、BMI、体脂率和腰高比集中查看；体脂率和腰围可能尚未填报。"
               distributions={bodyDistributions}
             />
           )}
