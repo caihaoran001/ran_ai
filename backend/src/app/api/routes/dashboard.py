@@ -792,9 +792,9 @@ async def _compute_case_portrait_labels(
             "diet_pattern": _single_questionnaire_portrait_label(
                 fields, answers, "diet_pattern", "长期饮食模式"
             ),
-            "gender": _single_questionnaire_portrait_label(
-                fields, answers, "gender", "您的性别"
-            ),
+            # 性别复用确定性入营事实（与处方单/阶段报告的称呼同源），不另按题目标题匹配：
+            # 问卷题目在后台改名后两边必须同进同退，否则会出现文件称呼正常、画像却全员未采集且不报错。
+            "gender": _category_label(facts.get("gender")),
             "sleep_problem": _questionnaire_portrait_labels(
                 fields, answers, "sleep_problem", "常见的睡眠问题"
             ),

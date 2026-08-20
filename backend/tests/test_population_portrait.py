@@ -22,6 +22,7 @@ from app.models.user import User
 from app.models.user_state_profile import UserStateProfile
 from app.services.china_regions import match_city
 from app.services.intake_facts import CUSTOM_ANSWER_LABEL, structured_answer_values
+from app.services.questionnaire_template import get_active_questionnaire_fields
 
 
 async def _create_portrait_case(
@@ -666,3 +667,27 @@ async def test_population_portrait_gender_distribution_counts_and_drills_down(
     assert members.status_code == 200
     assert female_1.id in {item["id"] for item in members.json()}
     assert no_answers_case.id not in {item["id"] for item in members.json()}
+
+
+@pytest.mark.asyncio
+async def test_population_portrait_gender_survives_questionnaire_title_rename(
+    db_session,
+    cai_haoran_answers,
+):
+    """题目在后台改名后画像仍要读到性别：文件称呼与画像必须同进同退，不能一边正常一边全员未采集。"""
+
+    _, female_case = await _create_portrait_case(
+        db_session,
+        intake_answers={**cai_haoran_answers, "RADIO1774103553031mn0fg6ix": "女"},
+    )
+    fields = await get_active_questionnaire_fields(db_session, "intake")
+    renamed = []
+    for field in fields:
+        if str(field.get("key") or field.get("id")) == "RADIO1774103553031mn0fg6ix":
+            field = {**field, "title": "性别（必填）", "label": "性别（必填）"}
+        renamed.append(field)
+
+    _, labels_by_case = await _compute_case_portrait_labels(
+        db_session, questionnaire_fields=renamed
+    )
+    assert labels_by_case[female_case.id]["gender"] == "女"
