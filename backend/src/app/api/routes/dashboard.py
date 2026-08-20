@@ -17,7 +17,7 @@ from app.models.checkin import Checkin
 from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.outcome import OutcomeEvent, OutcomeSnapshot
 from app.models.reminder import CHURN_RECALL_RULE_ID, ReminderEvent
-from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.models.user import User
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.user_document import ACTIVE_DOCUMENT_TYPES, DocumentStatus, DocumentType, UserDocument
@@ -92,20 +92,19 @@ from app.services.service_case_queries import (
     effective_start_at,
     intake_submitted_between_condition,
     last_user_inbound_subquery,
+    stats_scope_condition,
 )
 
 router = APIRouter()
 
 
 def _stats_case_condition():
-    """看板统计口径：只统计已通过本系统入营问卷的新群；老群不进统计避免稀释。
+    """看板统计口径 = 全站统一口径（见 stats_scope_condition 的三条约定）。
 
-    服务/聊天链路保持全量（老群照常被服务），仅看板与群体画像默认只看新群。
+    看板、群体画像、共同洞察、成效趋势共用同一个条件，任何一处要改口径都必须
+    改到那一个函数上，别在本文件里另开分支。
     """
-    return and_(
-        active_service_case_condition(),
-        ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
-    )
+    return stats_scope_condition()
 
 
 @router.get("/deepseek-balance", response_model=AIBalanceSummary)
@@ -598,9 +597,10 @@ _DIMENSION_BY_KEY = {dim["key"]: dim for dim in _PORTRAIT_DIMENSIONS}
 async def dashboard_population_portrait(
     session: AsyncSession = Depends(get_session),
 ) -> PopulationPortrait:
-    """群体画像：未删除、未退款用户的量化区间分布 + 省→市地域层级。
+    """群体画像：统计口径内服务单的量化区间分布 + 省→市地域层级。
 
-    每个用户只取最新未删除服务单；若该服务单已确认退款，则该用户不纳入。
+    纳入范围与数据看板完全一致（见 stats_scope_condition）：未删除的新群服务单，
+    按「单」计数，已退款照常计入，老群不进统计。
     数据来源：AI 画像(customer_type/减重带，可缺失) + 最新入营问卷(诉求/饮食/睡眠/城市/身体指标)
     + 服务单结构化健康标签 + 档案官从群聊投影的稳定习惯。没有 AI 画像不会排除用户，只会令对应维度进入『未采集』。
     每个分布都返回有效样本与『未采集』计数，绝不静默丢弃缺失。分桶逻辑与下钻端点共用同一套 case 标签。
@@ -699,9 +699,9 @@ async def _compute_case_portrait_labels(
 ) -> tuple[int, dict[int, dict[str, str | list[str]]]]:
     """逐服务单算出各画像维度的分桶标签（画像端点与下钻端点共用，保证一致）。
 
-    统计未软删除用户，每个用户只取最新未删除服务单；最新服务单已确认退款则排除。
+    纳入范围就是全站统计口径（未删除的新群服务单，按单计数，含已退款），与看板同源。
     AI 画像不是入选条件：各维度按问卷、健康标签和画像的实际可用情况独立计数。
-    返回 (total_users, {case_id: {dimension_key: bucket_label}})；缺失统一归一为 UNKNOWN_LABEL。
+    返回 (纳入服务单数, {case_id: {dimension_key: bucket_label}})；缺失统一归一为 UNKNOWN_LABEL。
     """
     latest_cases = await select_population_service_cases(session)
     risk_by_case = {service_case.id: service_case.risk_level for service_case in latest_cases}

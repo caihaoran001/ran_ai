@@ -4,42 +4,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
-from app.models.user import User
-from app.services.service_case_queries import active_service_case_condition
+from app.models.service_case import ServiceCase
+from app.services.service_case_queries import stats_scope_condition
 
 
 async def select_population_service_cases(session: AsyncSession) -> list[ServiceCase]:
-    """返回群体画像/共同洞察共用的用户范围。
+    """群体画像/共同洞察的统计范围：与数据看板完全同一口径。
 
-    每位未删除用户先取最新未删除服务单，再判断是否已退款；
-    最新服务单已退款时不回退到更旧的服务单。
+    直接复用 `stats_scope_condition()`——未删除的新群服务单，按「单」计数，
+    已退款照常计入。画像这边刻意不再自己去重到人、也不剔除已退款：两个页面的
+    分母必须能对上，否则运营看到看板 179、画像 157 会以为哪边算错了。
     """
 
-    all_cases = list(
+    return list(
         await session.scalars(
             select(ServiceCase)
-            .join(User, ServiceCase.user_id == User.id)
-            .where(
-                active_service_case_condition(),
-                ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
-                User.deleted_at.is_(None),
-            )
+            .where(stats_scope_condition())
             .options(selectinload(ServiceCase.user))
-            .order_by(
-                ServiceCase.user_id,
-                ServiceCase.created_at.desc(),
-                ServiceCase.id.desc(),
-            )
+            .order_by(ServiceCase.created_at.desc(), ServiceCase.id.desc())
         )
     )
-    selected: list[ServiceCase] = []
-    seen_user_ids: set[int] = set()
-    for service_case in all_cases:
-        if service_case.user_id in seen_user_ids:
-            continue
-        seen_user_ids.add(service_case.user_id)
-        if service_case.status == ServiceCaseStatus.REFUNDED:
-            continue
-        selected.append(service_case)
-    return selected

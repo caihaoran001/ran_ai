@@ -189,7 +189,7 @@ export default async function DashboardPage() {
 
       <DashboardMetricSection title="服务规模与生命周期" description="用于安排续购、未跟进和流失处理优先级。">
         <StatCard label="服务中" value={summary.service_cases_in_service} icon={UserCheck} color="green" href="/users?filter=in_service" description="状态为服务中的服务单。" />
-        <StatCard label="服务单总数" value={summary.service_cases_total} icon={ClipboardList} color="blue" href="/users" description="当前未删除服务单总数。" />
+        <StatCard label="服务单总数" value={summary.service_cases_total} icon={ClipboardList} color="blue" href="/users" description="当前未删除服务单总数：只含走过入营问卷的新群，已退款的单也计入；老群不进统计。群体画像同一口径。" />
         <StatCard label="风险用户" value={summary.risk_users} icon={AlertTriangle} color="red" href="/dashboard/risk-users" description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险，需要人工关注。" />
         <StatCard label="未跟进（2-7天）" value={summary.unfollowed_users} icon={Clock3} color="yellow" href="/dashboard/unfollowed" description="服务中，且用户本人已 2-7 天没有发言的服务单（班主任发言不计）；点击查看闲置天数。" />
         <StatCard label="流失用户" value={summary.lost_users} icon={TrendingDown} color="orange" href="/dashboard/lost" description="服务中，且用户本人已超过 7 天没有发言的服务单（班主任发言不计）；点击查看闲置天数。" />

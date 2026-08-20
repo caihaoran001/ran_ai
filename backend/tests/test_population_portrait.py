@@ -35,6 +35,7 @@ async def _create_portrait_case(
     refund_pending_confirmation: bool = False,
     health_profile: dict | None = None,
     intake_answers: dict | None = None,
+    group_type: str = ServiceCaseGroupType.NEW_GROUP.value,
 ) -> tuple[User, ServiceCase]:
     tag = uuid4().hex[:10]
     if user is None:
@@ -51,7 +52,7 @@ async def _create_portrait_case(
         deleted_at=deleted_at,
         refund_pending_confirmation=refund_pending_confirmation,
         health_profile=health_profile,
-        group_type=ServiceCaseGroupType.NEW_GROUP.value,
+        group_type=group_type,
     )
     db_session.add(service_case)
     await db_session.flush()
@@ -558,67 +559,55 @@ async def test_population_portrait_includes_user_without_ai_profile(
 
 
 @pytest.mark.asyncio
-async def test_population_portrait_uses_latest_non_deleted_case_per_user_and_excludes_refund(
+async def test_population_portrait_counts_every_new_group_case_including_refunded(
     db_session,
 ):
+    """画像口径必须与数据看板逐字一致：按服务单计数、含已退款、老群与已删除单不计。"""
+
     baseline_total, _ = await _compute_case_portrait_labels(db_session)
     now = datetime.now(timezone.utc)
 
-    # 同一用户多期服务只取最新一张。
-    user_latest, old_case = await _create_portrait_case(
+    # 同一用户多期服务按单计数，两张都算。
+    user_repeat, first_case = await _create_portrait_case(
         db_session,
         created_at=now - timedelta(days=20),
         status=ServiceCaseStatus.COMPLETED,
     )
-    _, latest_case = await _create_portrait_case(
+    _, second_case = await _create_portrait_case(
         db_session,
-        user=user_latest,
+        user=user_repeat,
         created_at=now - timedelta(days=10),
     )
 
-    # 必须先取最新再判断退款：最新已退款时，不得回退到旧的未退款服务单。
-    user_refunded, old_non_refunded = await _create_portrait_case(
+    # 已退款照常计入：人确实被服务过，不抹掉历史。
+    _, refunded = await _create_portrait_case(
         db_session,
-        created_at=now - timedelta(days=20),
-    )
-    _, latest_refunded = await _create_portrait_case(
-        db_session,
-        user=user_refunded,
-        created_at=now - timedelta(days=10),
         status=ServiceCaseStatus.REFUNDED,
     )
-
-    # 退款待确认尚未成为退款状态，仍然纳入。
     _, refund_pending = await _create_portrait_case(
         db_session,
         refund_pending_confirmation=True,
     )
-
-    # 阶段已完结但未退款仍然纳入。
     _, completed = await _create_portrait_case(
         db_session,
         status=ServiceCaseStatus.COMPLETED,
     )
 
-    deleted_at = now - timedelta(days=1)
-    deleted_user = User(name="已删除画像用户", deleted_at=deleted_at)
-    db_session.add(deleted_user)
-    await db_session.flush()
-    _, deleted_user_case = await _create_portrait_case(db_session, user=deleted_user)
-    _, deleted_case = await _create_portrait_case(db_session, deleted_at=deleted_at)
+    # 老群没走过入营问卷，不进统计。
+    _, legacy_case = await _create_portrait_case(
+        db_session,
+        group_type=ServiceCaseGroupType.LEGACY.value,
+    )
+    # 软删除的单不算。
+    _, deleted_case = await _create_portrait_case(
+        db_session, deleted_at=now - timedelta(days=1)
+    )
 
     total, labels_by_case = await _compute_case_portrait_labels(db_session)
-    assert total == baseline_total + 3
-    assert latest_case.id in labels_by_case
-    assert refund_pending.id in labels_by_case
-    assert completed.id in labels_by_case
-    for excluded in (
-        old_case,
-        old_non_refunded,
-        latest_refunded,
-        deleted_user_case,
-        deleted_case,
-    ):
+    assert total == baseline_total + 5
+    for included in (first_case, second_case, refunded, refund_pending, completed):
+        assert included.id in labels_by_case
+    for excluded in (legacy_case, deleted_case):
         assert excluded.id not in labels_by_case
 
 

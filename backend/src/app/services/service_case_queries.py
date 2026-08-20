@@ -4,13 +4,13 @@ from datetime import date as _date, datetime, time as _time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.questionnaire import QuestionnaireSubmission
-from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.models.service_case import ServiceCase, ServiceCaseGroupType, ServiceCaseStatus
 
 SERVICE_CASE_WINDOW_DAYS = 28
 # 第 28 天结束后保留次日的补问和归档/奖励结算。
@@ -135,6 +135,27 @@ def last_user_inbound_subquery():
 
 def active_service_case_condition():
     return ServiceCase.deleted_at.is_(None)
+
+
+def stats_scope_condition():
+    """全站统计的唯一口径：未删除的新群服务单，按「单」计数。
+
+    看板、群体画像、共同洞察、成效趋势必须共用这一个条件，才能保证同一时刻
+    各页面的分母对得上（曾经画像自己去重到人、还剔掉已退款，导致看板 179、
+    画像 157，运营对不上账）。三条约定：
+
+    - 老群不进统计：没走过本系统入营问卷，进来只会稀释成效；服务与聊天照常。
+    - 已退款照常计入：人确实被服务过，退款只是结局之一，不抹掉历史。
+    - 按服务单计数，不按人去重：同一个人二次入营算两张单。
+
+    软删除的单不算；用户被删时其名下的单会一并软删（删单时若无其它在用单也会
+    删掉用户），所以这里不需要再单独过滤已删除用户。
+    """
+
+    return and_(
+        active_service_case_condition(),
+        ServiceCase.group_type == ServiceCaseGroupType.NEW_GROUP.value,
+    )
 
 
 def member_present_condition():

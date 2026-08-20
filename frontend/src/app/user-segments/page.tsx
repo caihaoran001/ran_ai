@@ -74,7 +74,7 @@ function PortraitHeader({ totalUsers, snapshotTime }: { totalUsers?: number; sna
             <h1 className="page-heading">群体画像</h1>
             <p className="page-subtitle">
               {typeof totalUsers === "number"
-                ? `基于 ${totalUsers} 位未删除、未退款用户实时聚合，先看服务重点，再下钻到具体用户。`
+                ? `基于 ${totalUsers} 张服务单实时聚合（与数据看板同口径，含已退款），先看服务重点，再下钻到具体用户。`
                 : "从客户结构、健康资料、基础体型和地域分布理解当前服务人群。"}
             </p>
           </div>
@@ -103,7 +103,7 @@ function PortraitSummary({ portrait }: { portrait: PopulationPortrait }) {
       label: "主力人群",
       value: customer?.label ?? "客户分型待补",
       meta: customer
-        ? `${customer.count} 人 · 占全部用户 ${percentage(customer.count, portrait.total_users)}%`
+        ? `${customer.count} 人 · 占全部 ${percentage(customer.count, portrait.total_users)}%`
         : "暂无可用的客户分型",
       href: "#service-strategy",
       icon: UsersRound,
@@ -121,7 +121,7 @@ function PortraitSummary({ portrait }: { portrait: PopulationPortrait }) {
       label: hasGap ? "首要数据缺口" : "资料完整度",
       value: hasGap && largestGap ? `${largestGap.label}待补` : "主要维度已采集",
       meta: hasGap && largestGap
-        ? `${largestGap.unknown} 人未采集 · 占全部用户 ${percentage(largestGap.unknown, portrait.total_users)}%`
+        ? `${largestGap.unknown} 人未采集 · 占全部 ${percentage(largestGap.unknown, portrait.total_users)}%`
         : "当前维度没有未采集用户",
       href: largestGap ? sectionForDistribution(largestGap.key) : "#body-profile",
       icon: ClipboardCheck,
@@ -135,7 +135,7 @@ function PortraitSummary({ portrait }: { portrait: PopulationPortrait }) {
           <h2 id="portrait-summary-title" className="panel-title">运营快照</h2>
           <p className="panel-subtitle">先看最值得注意的三件事，点击即可跳到对应证据。</p>
         </div>
-        <span className="status-pill pill-info shrink-0 self-start">{portrait.total_users} 位用户</span>
+        <span className="status-pill pill-info shrink-0 self-start">{portrait.total_users} 张服务单</span>
       </div>
       <div className="divide-y divide-slate-200 sm:grid sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         {items.map((item) => {
@@ -181,7 +181,7 @@ export default async function UserSegmentsPage() {
           <div>
             <p className="font-bold text-slate-900">群体画像加载失败</p>
             <p className="mt-1 max-w-xl leading-6 text-slate-600">
-              这次没有拿到统计数据，页面不会用“0 位用户”代替真实结果。请重新加载；如果仍失败，再检查后端服务。
+              这次没有拿到统计数据，页面不会用“0 张服务单”代替真实结果。请重新加载；如果仍失败，再检查后端服务。
             </p>
           </div>
           <RetryButton />
@@ -209,8 +209,8 @@ export default async function UserSegmentsPage() {
         <div className="empty-state">
           <UsersRound className="h-7 w-7 text-slate-400" aria-hidden="true" />
           <div>
-            <p className="font-bold text-slate-900">当前统计范围内暂无用户</p>
-            <p className="mt-1 leading-6 text-slate-600">新用户建档且最新服务单未退款后，会自动进入这里。</p>
+            <p className="font-bold text-slate-900">当前统计范围内暂无服务单</p>
+            <p className="mt-1 leading-6 text-slate-600">新客户在新群建档后会自动进入这里。</p>
           </div>
         </div>
       ) : (
@@ -284,7 +284,7 @@ export default async function UserSegmentsPage() {
             <div className="grid gap-4 border-t border-slate-200 px-5 py-4 text-sm leading-6 text-slate-600 sm:grid-cols-2 sm:px-6">
               <div>
                 <p className="font-bold text-slate-800">纳入范围</p>
-                <p>每位用户只取最新未删除服务单；最新服务单已确认退款则不纳入。</p>
+                <p>与数据看板同一口径：只统计走过入营问卷的新群，按服务单计数，已退款的单也照常计入；老群不进统计。</p>
               </div>
               <div>
                 <p className="font-bold text-slate-800">数据来源</p>
@@ -292,7 +292,7 @@ export default async function UserSegmentsPage() {
               </div>
               <div>
                 <p className="font-bold text-slate-800">比例口径</p>
-                <p>普通分布均以全部纳入用户为分母；地域下钻到城市后改为显示该省内部占比。</p>
+                <p>普通分布均以全部纳入服务单为分母；地域下钻到城市后改为显示该省内部占比。</p>
               </div>
               <div>
                 <p className="font-bold text-slate-800">多选与缺失</p>
