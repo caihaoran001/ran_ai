@@ -553,6 +553,12 @@ _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
         "numeric": False,
     },
     {
+        "key": "gender",
+        "label": "性别分布",
+        "description": "入营问卷填报的性别。",
+        "numeric": False,
+    },
+    {
         "key": "age",
         "label": "年龄段",
         "description": "入营问卷填报年龄。",
@@ -785,6 +791,9 @@ async def _compute_case_portrait_labels(
             ),
             "diet_pattern": _single_questionnaire_portrait_label(
                 fields, answers, "diet_pattern", "长期饮食模式"
+            ),
+            "gender": _single_questionnaire_portrait_label(
+                fields, answers, "gender", "您的性别"
             ),
             "sleep_problem": _questionnaire_portrait_labels(
                 fields, answers, "sleep_problem", "常见的睡眠问题"

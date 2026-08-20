@@ -312,6 +312,7 @@ async def test_population_portrait_endpoint_shape(admin_client):
         "pending_condition",
         "allergy_category",
         "weight_loss_band",
+        "gender",
         "age",
         "bmi",
         "bodyfat",
@@ -627,3 +628,41 @@ async def test_population_portrait_members_accepts_city_and_province_keys(admin_
             "/dashboard/population-portrait/members", params={"key": key, "bucket": bucket}
         )
         assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_population_portrait_gender_distribution_counts_and_drills_down(
+    admin_client,
+    db_session,
+    cai_haoran_answers,
+):
+    male_answers = dict(cai_haoran_answers)
+    female_answers = dict(cai_haoran_answers)
+    female_answers["RADIO1774103553031mn0fg6ix"] = "女"
+    _, male_case = await _create_portrait_case(db_session, intake_answers=male_answers)
+    _, female_1 = await _create_portrait_case(db_session, intake_answers=female_answers)
+    _, female_2 = await _create_portrait_case(db_session, intake_answers=female_answers)
+    _, no_answers_case = await _create_portrait_case(db_session)
+
+    _, labels_by_case = await _compute_case_portrait_labels(db_session)
+    assert labels_by_case[male_case.id]["gender"] == "男"
+    assert labels_by_case[female_1.id]["gender"] == "女"
+    assert labels_by_case[no_answers_case.id]["gender"] == UNKNOWN_LABEL
+
+    portrait = await admin_client.get("/dashboard/population-portrait")
+    assert portrait.status_code == 200
+    dist = next(
+        item for item in portrait.json()["distributions"] if item["key"] == "gender"
+    )
+    buckets = {item["label"]: item["count"] for item in dist["buckets"]}
+    assert buckets["女"] >= 2
+    assert buckets["男"] >= 1
+    assert dist["unknown"] >= 1
+
+    members = await admin_client.get(
+        "/dashboard/population-portrait/members",
+        params={"key": "gender", "bucket": "女"},
+    )
+    assert members.status_code == 200
+    assert female_1.id in {item["id"] for item in members.json()}
+    assert no_answers_case.id not in {item["id"] for item in members.json()}
