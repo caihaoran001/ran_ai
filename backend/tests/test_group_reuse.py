@@ -670,3 +670,46 @@ async def test_reconciliation_does_not_cut_off_a_case_bound_to_the_wrong_person(
 
     await db_session.refresh(case)
     assert case.member_left_at is None, "客户本人还在群里，绝不能标成已退群"
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_ignores_staff_ids_when_looking_for_the_customer(
+    db_session, mock_message_channel
+):
+    """旁证只认客户本人：早期班主任的发言有一部分以「用户」身份入库，不能拿他当证据。
+
+    员工在每个群里都在，把他当成"客户还在"就等于全体免标——上线首轮就把两张真的
+    已退群的单子又接了回来。这里让同一个员工出现在多个群，确认对账仍能正确标记退群。
+    """
+    from app.models.message import MessagePurpose, MessageSenderType, MessageStatus
+    from app.services.reminder_service import ReminderService
+
+    cases = []
+    for index in range(5):
+        case = await _setup_group_with_customer(db_session, f"G-REUSE-19-{index}")
+        db_session.add(
+            Message(
+                service_case_id=case.id,
+                group_id=case.group_id,
+                direction=MessageDirection.INBOUND,
+                sender_type=MessageSenderType.USER,  # 当年还没把他识别成员工
+                message_type="text",
+                purpose=MessagePurpose.CHAT,
+                status=MessageStatus.RECEIVED,
+                content="我先把资料发群里",
+                analysis_json={"_qiwe_meta": {"sender_id": STAFF_WECOM_ID}},
+            )
+        )
+        cases.append(case)
+    await db_session.flush()
+
+    async def fake_batch_get_room_members(room_ids):
+        # 每个群里都只剩班主任，客户都已经走了
+        return {rid: {STAFF_WECOM_ID} for rid in room_ids if rid.startswith("G-REUSE-19")}
+
+    mock_message_channel.batch_get_room_members = fake_batch_get_room_members
+    await ReminderService().check_group_membership_once()
+
+    for case in cases:
+        await db_session.refresh(case)
+        assert case.member_left_at is not None, "客户确实都不在群里了，必须照常标记退群"

@@ -1371,7 +1371,7 @@ class ReminderService:
             )
 
     async def _first_customer_speaker_ids(
-        self, session, case_ids: list[int]
+        self, session, case_ids: list[int], *, exclude_ids: set[str]
     ) -> dict[int, str]:
         """每张单的客户本人**最早一次真实发言**用的企微 id，给成员名单对账做旁证。
 
@@ -1382,6 +1382,10 @@ class ReminderService:
 
         取**最早**而不是最近的一条：老群换人时，新客户的发言可能还挂在上一期名下
         （换人是后来才被发现的），拿最近发言当旁证会让上一期永远让不出群位。
+
+        `exclude_ids` 必须传入员工/机器人账号：早期的班主任发言有一部分以「用户」身份
+        入库（当时识别规则里还没有他），而员工在每个群里都在，拿他当旁证等于全体免标——
+        上线首轮就把两张真的已退群的单子又接了回来。
         """
         if not case_ids:
             return {}
@@ -1397,11 +1401,27 @@ class ReminderService:
                    AND sender_type = 'USER'
                    AND message_type <> 'system_notice'
                    AND analysis_json->'_qiwe_meta'->>'sender_id' IS NOT NULL
+                   AND NOT (analysis_json->'_qiwe_meta'->>'sender_id' = ANY(:exclude_ids))
                  ORDER BY service_case_id, id ASC
                 """
-            ).bindparams(case_ids=case_ids)
+            ).bindparams(case_ids=case_ids, exclude_ids=sorted(exclude_ids) or [""])
         )
         return {row.service_case_id: str(row.sender_id) for row in rows}
+
+    @staticmethod
+    def _staff_like_member_ids(
+        members_by_room: dict[str, set[str]], *, min_rooms: int = 5
+    ) -> set[str]:
+        """在很多群里同时出现的成员 = 员工或机器人账号，不能拿来当某位客户的身份证据。
+
+        直接按成员名单统计，不依赖识别规则配置：规则是后来才补全的，早期入库的班主任
+        发言仍带着「用户」身份，只靠规则会漏。
+        """
+        seen: dict[str, int] = {}
+        for members in members_by_room.values():
+            for member in members:
+                seen[member] = seen.get(member, 0) + 1
+        return {member for member, count in seen.items() if count >= min_rooms}
 
     async def check_group_membership_once(self, now: datetime | None = None) -> None:
         """跟企微对一遍群成员名单，补上漏掉的「客户已退群」，也接回悄悄回来的人。
@@ -1446,8 +1466,11 @@ class ReminderService:
             present_groups = {
                 case.group_id for case, _ in rows if case.member_left_at is None
             }
+            staff_like_ids = self._staff_like_member_ids(members_by_room)
             speaker_ids = await self._first_customer_speaker_ids(
-                session, [case.id for case, _ in rows]
+                session,
+                [case.id for case, _ in rows],
+                exclude_ids=staff_like_ids,
             )
             left_count = returned_count = 0
             for case, owner_wecom_id in rows:
