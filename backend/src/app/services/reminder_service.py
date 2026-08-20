@@ -1370,6 +1370,39 @@ class ReminderService:
                 full_refresh,
             )
 
+    async def _first_customer_speaker_ids(
+        self, session, case_ids: list[int]
+    ) -> dict[int, str]:
+        """每张单的客户本人**最早一次真实发言**用的企微 id，给成员名单对账做旁证。
+
+        服务单上绑的客户 id 有可能是错的：建单那一刻第一个非员工发言者就会被认成客户，
+        而进退群通知也算非员工发言。生产上 #285 建单当下收到的第一条正是某人的退群通知，
+        于是这张单被绑到了一个刚走的人身上，真客户从头到尾用另一个 id 说话——对账只看
+        绑定 id 就会把她读成「已退群」，把还在服务中的人一刀切断。
+
+        取**最早**而不是最近的一条：老群换人时，新客户的发言可能还挂在上一期名下
+        （换人是后来才被发现的），拿最近发言当旁证会让上一期永远让不出群位。
+        """
+        if not case_ids:
+            return {}
+        rows = await session.execute(
+            text(
+                """
+                SELECT DISTINCT ON (service_case_id)
+                       service_case_id,
+                       analysis_json->'_qiwe_meta'->>'sender_id' AS sender_id
+                  FROM messages
+                 WHERE service_case_id = ANY(:case_ids)
+                   AND direction = 'INBOUND'
+                   AND sender_type = 'USER'
+                   AND message_type <> 'system_notice'
+                   AND analysis_json->'_qiwe_meta'->>'sender_id' IS NOT NULL
+                 ORDER BY service_case_id, id ASC
+                """
+            ).bindparams(case_ids=case_ids)
+        )
+        return {row.service_case_id: str(row.sender_id) for row in rows}
+
     async def check_group_membership_once(self, now: datetime | None = None) -> None:
         """跟企微对一遍群成员名单，补上漏掉的「客户已退群」，也接回悄悄回来的人。
 
@@ -1413,12 +1446,27 @@ class ReminderService:
             present_groups = {
                 case.group_id for case, _ in rows if case.member_left_at is None
             }
+            speaker_ids = await self._first_customer_speaker_ids(
+                session, [case.id for case, _ in rows]
+            )
             left_count = returned_count = 0
             for case, owner_wecom_id in rows:
                 members = members_by_room.get(str(case.group_id))
                 if not members:
                     continue
+                first_speaker = speaker_ids.get(case.id) or ""
                 in_group = str(owner_wecom_id) in members
+                if not in_group and first_speaker and first_speaker in members:
+                    # 绑定的 id 不在群里，但这张单的客户本人一直在用另一个 id 说话——
+                    # 说明当初绑错了人，不是客户走了。宁可不标，也不能切断在服务的人。
+                    in_group = True
+                    logger.warning(
+                        "Service case bound to the wrong WeCom id, skipping departure mark "
+                        "service_case_id=%s bound=%s actual_speaker=%s",
+                        case.id,
+                        owner_wecom_id,
+                        first_speaker,
+                    )
                 if case.member_left_at is None and not in_group:
                     # 用数据库时钟，和消息 created_at 同源（本期聊天记录按这个时间切界）
                     case.member_left_at = func.now()

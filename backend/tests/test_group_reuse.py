@@ -613,3 +613,60 @@ async def test_inbound_direction_is_unchanged_for_notices(db_session, mock_messa
     assert notice is not None
     assert notice.direction == MessageDirection.INBOUND
     assert notice.content == "退出了群聊"
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_does_not_cut_off_a_case_bound_to_the_wrong_person(
+    db_session, mock_message_channel
+):
+    """服务单绑错了人时，兜底对账不能把还在群里的客户读成「已退群」。
+
+    真实事故：建单那一刻收到的第一条是某人的退群通知，通知也算非员工发言，于是这张单
+    被绑到了刚走的那个人身上；真客户从头到尾用另一个 id 打卡。对账只看绑定 id，就把
+    一位服务到第 20 天、当天还在打卡的客户标成退群，打卡提醒、追问、阶段报告全停了。
+    """
+    from app.models.message import MessagePurpose, MessageSenderType, MessageStatus
+    from app.services.reminder_service import ReminderService
+
+    group_id = "G-REUSE-18"
+    case = await _setup_group_with_customer(db_session, group_id)  # 绑的是 CUSTOMER_WECOM_ID
+    real_customer_id = "customer-real-18"
+
+    # 绑定的那个 id 只留下一条退群通知；真客户一直在正常说话
+    db_session.add_all(
+        [
+            Message(
+                service_case_id=case.id,
+                group_id=group_id,
+                direction=MessageDirection.INBOUND,
+                sender_type=MessageSenderType.USER,
+                message_type="system_notice",
+                purpose=MessagePurpose.CHAT,
+                status=MessageStatus.RECEIVED,
+                content="退出了群聊",
+                analysis_json={"_qiwe_meta": {"sender_id": CUSTOMER_WECOM_ID}},
+            ),
+            Message(
+                service_case_id=case.id,
+                group_id=group_id,
+                direction=MessageDirection.INBOUND,
+                sender_type=MessageSenderType.USER,
+                message_type="text",
+                purpose=MessagePurpose.CHAT,
+                status=MessageStatus.RECEIVED,
+                content="今日体重57.4",
+                analysis_json={"_qiwe_meta": {"sender_id": real_customer_id}},
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    async def fake_batch_get_room_members(room_ids):
+        # 群里是真客户和班主任，绑错的那个 id 早就不在了
+        return {rid: {STAFF_WECOM_ID, real_customer_id} for rid in room_ids}
+
+    mock_message_channel.batch_get_room_members = fake_batch_get_room_members
+    await ReminderService().check_group_membership_once()
+
+    await db_session.refresh(case)
+    assert case.member_left_at is None, "客户本人还在群里，绝不能标成已退群"

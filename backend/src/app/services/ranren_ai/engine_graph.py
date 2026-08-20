@@ -495,7 +495,16 @@ class EngineGraph:
                     resume_takeover_receipt = was_silenced
                 service_case_silenced = not bool(getattr(service_case, "ai_auto_reply_enabled", True))
 
-                if not is_staff and message.channel == "qiwe" and message.user_id:
+                # 进退群通知也是「非员工发言」，但绝不能拿它认客户：生产上 #285 建单那一刻
+                # 收到的第一条就是某人的退群通知，于是这张单被绑到了一个刚走的人身上，真客户
+                # 从头到尾用另一个 id 说话，最后被成员名单对账误判成「客户已退群」，
+                # 服务中的人被一刀切断（打卡提醒、追问、阶段报告全停）。只认真实发言。
+                if (
+                    not is_staff
+                    and message.channel == "qiwe"
+                    and message.user_id
+                    and message.message_type != "system_notice"
+                ):
                     case_user = None
                     if hasattr(session, "get"):
                         case_user = await session.get(User, service_case.user_id)
