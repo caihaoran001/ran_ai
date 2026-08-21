@@ -119,6 +119,8 @@ export default async function UsersPage({
 
 const SERVICE_CASE_FILTER_LABELS: Record<string, string> = {
   in_service: "服务中",
+  graduated: "毕业",
+  ended_early: "提前结束",
   new_today: "今日新增用户",
   risk: "风险用户",
   plateau: "平台期用户",
@@ -135,6 +137,8 @@ const SERVICE_CASE_FILTER_LABELS: Record<string, string> = {
 const SERVICE_CASE_FILTER_TABS = [
   { key: "", label: "全部" },
   { key: "in_service", label: SERVICE_CASE_FILTER_LABELS.in_service },
+  { key: "graduated", label: SERVICE_CASE_FILTER_LABELS.graduated },
+  { key: "ended_early", label: SERVICE_CASE_FILTER_LABELS.ended_early },
   { key: "new_today", label: SERVICE_CASE_FILTER_LABELS.new_today },
   { key: "risk", label: SERVICE_CASE_FILTER_LABELS.risk },
   { key: "plateau", label: SERVICE_CASE_FILTER_LABELS.plateau },

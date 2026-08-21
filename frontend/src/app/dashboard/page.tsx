@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Clock3,
   FileText,
+  GraduationCap,
   HeartHandshake,
   LifeBuoy,
   LogOut,
@@ -22,6 +23,7 @@ import {
   TrendingDown,
   TrendingUp,
   UserCheck,
+  UserX,
 } from "lucide-react";
 
 type Summary = {
@@ -44,6 +46,9 @@ type Summary = {
   refund_intent_users?: number;
   refund_pending_users?: number;
   service_cases_member_left: number;
+  service_cases_graduated: number;
+  service_cases_ended_early: number;
+  ended_early_avg_service_day: number | null;
   lost_users: number;
   emotional_users_today?: number;
   outcome_summary?: OutcomeSummary;
@@ -113,6 +118,9 @@ export default async function DashboardPage() {
     refund_intent_users: 0,
     refund_pending_users: 0,
     service_cases_member_left: 0,
+    service_cases_graduated: 0,
+    service_cases_ended_early: 0,
+    ended_early_avg_service_day: null,
     lost_users: 0,
     emotional_users_today: 0,
     outcome_summary: {
@@ -132,6 +140,10 @@ export default async function DashboardPage() {
     },
   }));
   const renewalFollowupUsers = summary.renewal_followup_users ?? summary.repurchase_soon_users;
+  const graduatedCases = summary.service_cases_graduated ?? 0;
+  const endedEarlyCases = summary.service_cases_ended_early ?? 0;
+  const totalEndedCases = graduatedCases + endedEarlyCases;
+  const endedEarlyRatio = totalEndedCases === 0 ? 0 : Math.round((endedEarlyCases / totalEndedCases) * 100);
   const caseHealth = await api<CaseHealthItem[]>("/dashboard/case-health").catch(() => [] as CaseHealthItem[]);
 
   return (
@@ -193,6 +205,15 @@ export default async function DashboardPage() {
       <DashboardMetricSection title="服务规模与生命周期" description="用于安排续购、未跟进和流失处理优先级。">
         <StatCard label="服务中" value={summary.service_cases_in_service} icon={UserCheck} color="green" href="/users?filter=in_service" description="状态为服务中的服务单。" />
         <StatCard label="已退群" value={summary.service_cases_member_left} icon={LogOut} color="orange" href="/users?filter=member_left" description="客户本人已退群、系统已自动完结的服务单；误退的客户回群后会自动恢复。" />
+        <StatCard label="毕业" value={graduatedCases} icon={GraduationCap} color="blue" href="/users?filter=graduated" description="服满 28 天自然到期的完结单。" />
+        <StatCard
+          label="提前结束"
+          value={endedEarlyCases}
+          icon={UserX}
+          color="red"
+          href="/users?filter=ended_early"
+          description={`未到 28 天就终了的完结单（含退款），占完结单 ${endedEarlyRatio}%${summary.ended_early_avg_service_day != null ? `，平均服务到第 ${summary.ended_early_avg_service_day} 天` : ""}。`}
+        />
         <StatCard label="服务单总数" value={summary.service_cases_total} icon={ClipboardList} color="blue" href="/users" description="当前未删除服务单总数：只含走过入营问卷的新群，已退款的单也计入；老群不进统计。群体画像同一口径。" />
         <StatCard label="风险用户" value={summary.risk_users} icon={AlertTriangle} color="red" href="/dashboard/risk-users" description="服务单命中过孕哺期、慢病、胸痛心悸、严重失眠、医疗承诺等风险，需要人工关注。" />
         <StatCard label="未跟进（2-7天）" value={summary.unfollowed_users} icon={Clock3} color="yellow" href="/dashboard/unfollowed" description="服务中，且用户本人已 2-7 天没有发言的服务单（班主任发言不计）；点击查看闲置天数。" />
