@@ -365,7 +365,7 @@ async def dashboard_summary(
     return DashboardSummary(
         service_cases_total=total or 0,
         service_cases_in_service=in_service or 0,
-    service_cases_member_left=member_left or 0,
+        service_cases_member_left=member_left or 0,
         checkins_today=checkins_today or 0,
         complete_checkins_today=complete_checkins_today,
         messages_today=messages_today or 0,
