@@ -138,6 +138,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                   <span className="opacity-80">· {formatDateTime(serviceCase.member_left_at)}</span>
                 </span>
               )}
+              {serviceCase.member_left_at && (
+                <p className="w-full text-xs text-slate-500">
+                  客户已于 {formatDateTime(serviceCase.member_left_at)} 离开，本单服务已终止；如系误判，客户回群后会自动恢复。
+                </p>
+              )}
               {serviceCase.risk_level === "high" && (structuredHealthHeadline || highRiskFlag) && (
                 <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">
                   <AlertTriangle className="h-3.5 w-3.5" />

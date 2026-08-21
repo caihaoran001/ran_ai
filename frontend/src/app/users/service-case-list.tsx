@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link, { useLinkStatus } from "next/link";
 import { api, ServiceCase, User } from "@/lib/api";
 import { formatChinaShortDateTime } from "@/lib/format";
 import { DeleteServiceCaseButton } from "./user-actions";
-import { ArrowRight, Clock, LoaderCircle, MessageSquare, Phone } from "lucide-react";
+import { ArrowRight, Clock, LoaderCircle, MessageSquare, Phone, LogOut } from "lucide-react";
 import { GroupTypeBadge } from "@/components/group-type-badge";
 import { SERVICE_CASE_PAGE_SIZE } from "./list-constants";
 
@@ -287,6 +287,7 @@ function ServiceCaseItem({
   onOpen?: () => void;
 }) {
   const continued = serviceCase.status === "in_service" && Boolean(serviceCase.service_continued_at);
+  const memberLeftDay = useMemo(() => computeMemberLeftDay(serviceCase), [serviceCase]);
   const statusColors: Record<string, string> = {
     created: "border-slate-200 bg-slate-50 text-slate-600",
     questionnaire_submitted: "border-amber-200 bg-amber-50 text-amber-700",
@@ -354,6 +355,19 @@ function ServiceCaseItem({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-500 sm:shrink-0 sm:justify-end">
+        {serviceCase.member_left_at && (
+          <span className="inline-flex items-center gap-1 text-amber-700" title={`离开时第 ${memberLeftDay ?? "—"} 天`}>
+            <LogOut className="h-3.5 w-3.5" />
+            {formatChinaShortDateTime(serviceCase.member_left_at)}
+            {memberLeftDay != null && ` · 第 ${memberLeftDay} 天`}
+          </span>
+        )}
+        {serviceCase.checkin_count != null && (
+          <span>打卡 {serviceCase.checkin_count} 次</span>
+        )}
+        {serviceCase.refund_intent_flags && serviceCase.refund_intent_flags.length > 0 && (
+          <span className="status-pill border-rose-200 bg-rose-50 text-rose-700">退款话术</span>
+        )}
         <span className="hidden max-w-52 truncate lg:inline">
           群: {serviceCase.group_name || serviceCase.group_id}
         </span>
@@ -397,4 +411,26 @@ function plateauBasisTitle(evidence?: Record<string, unknown> | null): string {
     Array.isArray(evidence?.basis) && evidence.basis.length === 1 && evidence.basis[0] === "user_declared";
   if (note) return declaredOnly ? `依据：用户自述体重卡住（${note}）` : `依据：${note}`;
   return "最后一次称重往前一周的体重走向，或体重数据不足时用户自述卡住";
+}
+
+function computeMemberLeftDay(serviceCase: ServiceCase): number | null {
+  if (!serviceCase.member_left_at) return null;
+  const startDate = serviceCase.service_plan_start_date ?? serviceCase.started_at;
+  if (!startDate) return null;
+  const leftKey = dateKey(new Date(serviceCase.member_left_at));
+  const startKey = dateKey(new Date(startDate));
+  const diff = Date.parse(`${leftKey}T00:00:00Z`) - Date.parse(`${startKey}T00:00:00Z`);
+  if (!Number.isFinite(diff)) return null;
+  return Math.floor(diff / 86_400_000) + 1;
+}
+
+function dateKey(date: Date) {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
 }

@@ -68,6 +68,9 @@ export default async function UsersPage({
           「正常用户」显示<span className="font-semibold text-slate-700">全部</span>用户；「活跃用户」只显示<span className="font-semibold text-slate-700">近 24 小时内有发言</span>的用户，便于优先处理今天在聊的客户，页面加载也更快。
         </p>
         {!showDeleted && !showActive && (
+          <ServiceCaseFilterTabs current={dashboardFilter} keep={{ deleted, active, q, group }} />
+        )}
+        {!showDeleted && !showActive && (
           <GroupTypeTabs
             current={activeGroup}
             keep={{ deleted, active, filter, q }}
@@ -115,24 +118,85 @@ export default async function UsersPage({
 }
 
 const SERVICE_CASE_FILTER_LABELS: Record<string, string> = {
+  in_service: "服务中",
   new_today: "今日新增用户",
   risk: "风险用户",
   plateau: "平台期用户",
-  rebound: "体重反弹用户",
+  rebound: "体重反弹",
   unfollowed: "未跟进（2-7天）",
-  renewal_followup: "续购跟进窗口",
+  lost: "流失用户",
   renewal_intent: "明确续购意向",
   refund_intent: "退款/退出意向",
-  lost: "流失用户",
-  in_service: "服务中",
-  messaged_today: "今日有消息",
+  refund_pending: "已退款待确认",
+  member_left: "已退群",
+  empty_group: "空群",
 };
+
+const SERVICE_CASE_FILTER_TABS = [
+  { key: "", label: "全部" },
+  { key: "in_service", label: SERVICE_CASE_FILTER_LABELS.in_service },
+  { key: "new_today", label: SERVICE_CASE_FILTER_LABELS.new_today },
+  { key: "risk", label: SERVICE_CASE_FILTER_LABELS.risk },
+  { key: "plateau", label: SERVICE_CASE_FILTER_LABELS.plateau },
+  { key: "rebound", label: SERVICE_CASE_FILTER_LABELS.rebound },
+  { key: "unfollowed", label: SERVICE_CASE_FILTER_LABELS.unfollowed },
+  { key: "lost", label: SERVICE_CASE_FILTER_LABELS.lost },
+  { key: "renewal_intent", label: SERVICE_CASE_FILTER_LABELS.renewal_intent },
+  { key: "refund_intent", label: SERVICE_CASE_FILTER_LABELS.refund_intent },
+  { key: "refund_pending", label: SERVICE_CASE_FILTER_LABELS.refund_pending },
+  { key: "member_left", label: SERVICE_CASE_FILTER_LABELS.member_left },
+  { key: "empty_group", label: SERVICE_CASE_FILTER_LABELS.empty_group },
+] as const;
 
 const GROUP_TABS = [
   { key: "", label: "全部" },
   { key: "new_group", label: "新群" },
   { key: "legacy", label: "老群" },
 ] as const;
+
+function ServiceCaseFilterTabs({
+  current,
+  keep,
+}: {
+  current?: string;
+  keep: { deleted?: string; active?: string; q?: string; group?: string };
+}) {
+  const hrefFor = (filter: string) => {
+    const params = new URLSearchParams();
+    if (keep.deleted === "1") params.set("deleted", "1");
+    if (keep.active === "1") params.set("active", "1");
+    if (keep.q) params.set("q", keep.q);
+    if (keep.group) params.set("group", keep.group);
+    if (filter) params.set("filter", filter);
+    const qs = params.toString();
+    return `/users${qs ? `?${qs}` : ""}`;
+  };
+  return (
+    <nav
+      aria-label="服务单筛选"
+      className="mt-3 flex flex-wrap items-center gap-1 self-start rounded-lg border border-slate-200 bg-slate-50 p-1 text-sm"
+    >
+      {SERVICE_CASE_FILTER_TABS.map((tab) => {
+        const active = (current ?? "") === tab.key;
+        return (
+          <Link
+            key={tab.key || "all"}
+            href={hrefFor(tab.key)}
+            prefetch={false}
+            aria-current={active ? "page" : undefined}
+            className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+              active
+                ? "bg-white text-slate-950 shadow-sm"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            {tab.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
 
 function GroupTypeTabs({
   current,
