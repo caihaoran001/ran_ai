@@ -39,6 +39,10 @@ from app.services.ranren_ai.attachments import (
     _strip_image_placeholders,
 )
 from app.services.content_policy import get_ai_reply_enabled
+from app.services.service_case_activation import (
+    close_case_on_member_left,
+    restore_case_on_member_return,
+)
 from app.services.qiwe_service.non_text import TYPE_SYSTEM_NOTICE
 from app.services.short_link import get_or_create_short_link
 from app.services.message_insight_service import analyze_message_insight, merge_case_insight
@@ -438,12 +442,18 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         owner_wecom_id = str(getattr(left_case.user, "wecom_user_id", "") or "")
         if owner_wecom_id and owner_wecom_id in self._member_ids_in_message(message):
             left_case.member_left_at = None
+            restored = restore_case_on_member_return(
+                left_case,
+                now=datetime.now(timezone.utc),
+                tz=ZoneInfo(get_settings().reminder_timezone),
+            )
             session.add(left_case)
             await session.flush()
             logger.info(
-                "RanrenAI resumed case after member returned chat_id=%s service_case_id=%s",
+                "RanrenAI resumed case after member returned chat_id=%s service_case_id=%s status_restored=%s",
                 message.chat_id,
                 left_case.id,
+                restored,
             )
             return "resumed", left_case
 
@@ -500,11 +510,17 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         # 用数据库时钟：消息的 created_at 也是数据库给的，两个时间必须同源，
         # 否则「本期区间」的边界会因应用与数据库的时钟差而错位。
         service_case.member_left_at = func.now()
+        auto_closed = close_case_on_member_left(
+            service_case,
+            now=datetime.now(timezone.utc),
+            tz=ZoneInfo(get_settings().reminder_timezone),
+        )
         session.add(service_case)
         logger.info(
-            "RanrenAI customer already gone, freeing group on join chat_id=%s service_case_id=%s",
+            "RanrenAI customer already gone, freeing group on join chat_id=%s service_case_id=%s auto_closed=%s",
             message.chat_id,
             service_case.id,
+            auto_closed,
         )
         return True
 
@@ -527,11 +543,17 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             return False
         # 同上：用数据库时钟，和消息 created_at 同源
         service_case.member_left_at = func.now()
+        auto_closed = close_case_on_member_left(
+            service_case,
+            now=datetime.now(timezone.utc),
+            tz=ZoneInfo(get_settings().reminder_timezone),
+        )
         session.add(service_case)
         logger.info(
-            "RanrenAI customer left group chat_id=%s service_case_id=%s",
+            "RanrenAI customer left group chat_id=%s service_case_id=%s auto_closed=%s",
             message.chat_id,
             service_case.id,
+            auto_closed,
         )
         return True
 

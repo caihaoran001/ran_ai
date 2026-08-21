@@ -25,7 +25,13 @@ CUSTOMER_WECOM_ID = "customer-old-1"
 STAFF_WECOM_ID = "staff-班主任"
 
 
-async def _setup_group_with_customer(db_session, group_id: str) -> ServiceCase:
+async def _setup_group_with_customer(
+    db_session,
+    group_id: str,
+    *,
+    status: ServiceCaseStatus = ServiceCaseStatus.IN_SERVICE,
+    plan_start_date=None,
+) -> ServiceCase:
     await set_qiwei_staff_senders(
         [{"type": "equals", "pattern": STAFF_WECOM_ID}], session=db_session
     )
@@ -37,7 +43,8 @@ async def _setup_group_with_customer(db_session, group_id: str) -> ServiceCase:
         user_id=user.id,
         group_id=group_id,
         questionnaire_token=f"token-{group_id}",
-        status=ServiceCaseStatus.IN_SERVICE,
+        status=status,
+        service_plan_start_date=plan_start_date,
         ai_auto_reply_enabled=False,  # 静音，测的是归属不是回复
     )
     db_session.add(service_case)
@@ -843,3 +850,164 @@ async def test_rename_refresh_keeps_the_old_name_when_every_attempt_fails(
     await db_session.refresh(case)
     assert attempts["n"] == 3, "三次都要试满"
     assert case.group_name == "旧名-高燃人生-0801"
+
+
+# ---------------------------------------------------------------------------
+# 客户退群自动收口 / 接回自动恢复（不再靠运营逐个人工判断）
+# ---------------------------------------------------------------------------
+
+
+def _last_audit_action(case: ServiceCase) -> str | None:
+    events = case.service_lifecycle_events or []
+    return events[-1]["action"] if events else None
+
+
+@pytest.mark.asyncio
+async def test_customer_quit_closes_the_case_immediately(db_session, mock_message_channel):
+    """服务中的客户退群 → 当场完结：状态、结束时间、审计一次到位，不等人工。"""
+    group_id = "G-AUTOCLOSE-1"
+    case = await _setup_group_with_customer(db_session, group_id)
+    engine = RanrenAIEngine(mock_message_channel)
+
+    await engine.handle_message(
+        _quit_notice(group_id, member_id=CUSTOMER_WECOM_ID, message_id="quit-ac-1")
+    )
+    await db_session.refresh(case)
+    assert case.member_left_at is not None
+    assert case.status == ServiceCaseStatus.COMPLETED
+    assert case.ended_at is not None
+    assert _last_audit_action(case) == "auto_closed_member_left"
+
+
+@pytest.mark.asyncio
+async def test_quit_does_not_close_pre_service_or_refunded_cases(
+    db_session, mock_message_channel
+):
+    """空群（刚建单）和已退款的单子不收口：前者没有服务可结，后者不覆盖人工结论。"""
+    engine = RanrenAIEngine(mock_message_channel)
+
+    created_case = await _setup_group_with_customer(
+        db_session, "G-AUTOCLOSE-2", status=ServiceCaseStatus.CREATED
+    )
+    refunded_case = await _setup_group_with_customer(
+        db_session, "G-AUTOCLOSE-3", status=ServiceCaseStatus.REFUNDED
+    )
+
+    await engine.handle_message(
+        _quit_notice("G-AUTOCLOSE-2", member_id=CUSTOMER_WECOM_ID, message_id="quit-ac-2")
+    )
+    await engine.handle_message(
+        _quit_notice("G-AUTOCLOSE-3", member_id=CUSTOMER_WECOM_ID, message_id="quit-ac-3")
+    )
+
+    await db_session.refresh(created_case)
+    await db_session.refresh(refunded_case)
+    assert created_case.member_left_at is not None
+    assert created_case.status == ServiceCaseStatus.CREATED, "空群单保持原状，别虚增完成率"
+    assert refunded_case.status == ServiceCaseStatus.REFUNDED, "退款是人工结论，不能被改成完结"
+    assert refunded_case.ended_at is None
+
+
+@pytest.mark.asyncio
+async def test_returning_customer_restores_service_status(db_session, mock_message_channel):
+    """误退的人回来：撤标记之外，还要把状态恢复成服务中、清掉结束时间。"""
+    group_id = "G-AUTOCLOSE-4"
+    case = await _setup_group_with_customer(db_session, group_id)
+    engine = RanrenAIEngine(mock_message_channel)
+
+    await engine.handle_message(
+        _quit_notice(group_id, member_id=CUSTOMER_WECOM_ID, message_id="quit-ac-4")
+    )
+    await db_session.refresh(case)
+    assert case.status == ServiceCaseStatus.COMPLETED
+
+    await engine.handle_message(
+        _text(group_id, user_id=CUSTOMER_WECOM_ID, name="老客户", text="我回来了", message_id="back-ac-4")
+    )
+    await db_session.refresh(case)
+    assert case.member_left_at is None
+    assert case.status == ServiceCaseStatus.IN_SERVICE, "28 天没走完，接回就要接着服务"
+    assert case.ended_at is None
+    assert _last_audit_action(case) == "auto_reopened_member_return"
+
+
+@pytest.mark.asyncio
+async def test_graduated_case_is_not_reopened_when_customer_returns(
+    db_session, mock_message_channel
+):
+    """正常毕业的单子人再回来也不复活：要续服走群内 @机器人 的续服通道。"""
+    group_id = "G-AUTOCLOSE-5"
+    case = await _setup_group_with_customer(db_session, group_id)
+    case.status = ServiceCaseStatus.COMPLETED
+    await db_session.commit()
+    engine = RanrenAIEngine(mock_message_channel)
+
+    await engine.handle_message(
+        _quit_notice(group_id, member_id=CUSTOMER_WECOM_ID, message_id="quit-ac-5")
+    )
+    await db_session.refresh(case)
+    assert case.status == ServiceCaseStatus.COMPLETED
+
+    await engine.handle_message(
+        _text(group_id, user_id=CUSTOMER_WECOM_ID, name="老客户", text="回来看看", message_id="back-ac-5")
+    )
+    await db_session.refresh(case)
+    assert case.member_left_at is None, "接回照常撤掉退群标记"
+    assert case.status == ServiceCaseStatus.COMPLETED, "毕业的单子不能因为回群就复活"
+
+
+@pytest.mark.asyncio
+async def test_window_finished_case_stays_closed_when_customer_returns(
+    db_session, mock_message_channel
+):
+    """因退群收口后 28 天也走完了人才回来：保持完结，不再恢复服务。"""
+    from datetime import date, timedelta
+
+    group_id = "G-AUTOCLOSE-6"
+    long_past = date.today() - timedelta(days=40)
+    case = await _setup_group_with_customer(db_session, group_id, plan_start_date=long_past)
+    engine = RanrenAIEngine(mock_message_channel)
+
+    await engine.handle_message(
+        _quit_notice(group_id, member_id=CUSTOMER_WECOM_ID, message_id="quit-ac-6")
+    )
+    await db_session.refresh(case)
+    assert case.status == ServiceCaseStatus.COMPLETED
+
+    await engine.handle_message(
+        _text(group_id, user_id=CUSTOMER_WECOM_ID, name="老客户", text="我又来了", message_id="back-ac-6")
+    )
+    await db_session.refresh(case)
+    assert case.member_left_at is None
+    assert case.status == ServiceCaseStatus.COMPLETED, "服务期已经过了，回来也不再恢复"
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_self_heals_stale_in_service_cases(
+    db_session, mock_message_channel
+):
+    """存量自愈：上线前已打退群标记、状态还挂在服务中的单子，对账顺手结掉。"""
+    from sqlalchemy import func as sa_func
+
+    from app.services.reminder_service import ReminderService
+
+    group_id = "G-AUTOCLOSE-7"
+    case = await _setup_group_with_customer(db_session, group_id)
+    # 模拟新规则上线前的遗留状态：人有退群标记，但状态没结
+    case.member_left_at = sa_func.now()
+    await db_session.commit()
+
+    members: dict[str, set[str]] = {group_id: {STAFF_WECOM_ID}}
+
+    async def fake_batch_get_room_members(room_ids):
+        return {rid: members[rid] for rid in room_ids if rid in members}
+
+    mock_message_channel.batch_get_room_members = fake_batch_get_room_members
+    service = ReminderService()
+    service._last_group_membership_check = None
+
+    await service.check_group_membership_once()
+    await db_session.refresh(case)
+    assert case.member_left_at is not None
+    assert case.status == ServiceCaseStatus.COMPLETED, "遗留的服务中+已退群必须被对账收口"
+    assert case.ended_at is not None

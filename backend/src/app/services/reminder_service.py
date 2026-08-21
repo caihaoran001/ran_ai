@@ -76,6 +76,8 @@ from app.services.service_case_activation import (
     PRE_SERVICE_STATUSES,
     activate_service_case_if_due,
     align_active_service_start_with_plan,
+    close_case_on_member_left,
+    restore_case_on_member_return,
     set_pre_service_status_or_activate,
 )
 
@@ -1475,7 +1477,8 @@ class ReminderService:
                 [case.id for case, _ in rows],
                 exclude_ids=staff_like_ids,
             )
-            left_count = returned_count = 0
+            left_count = returned_count = healed_count = 0
+            tz = ZoneInfo(self.settings.reminder_timezone)
             for case, owner_wecom_id in rows:
                 members = members_by_room.get(str(case.group_id))
                 if not members:
@@ -1496,6 +1499,7 @@ class ReminderService:
                 if case.member_left_at is None and not in_group:
                     # 用数据库时钟，和消息 created_at 同源（本期聊天记录按这个时间切界）
                     case.member_left_at = func.now()
+                    close_case_on_member_left(case, now=now, tz=tz)
                     session.add(case)
                     left_count += 1
                 elif (
@@ -1504,15 +1508,23 @@ class ReminderService:
                     and case.group_id not in present_groups
                 ):
                     case.member_left_at = None
+                    restore_case_on_member_return(case, now=now, tz=tz)
                     session.add(case)
                     present_groups.add(case.group_id)
                     returned_count += 1
-            if left_count or returned_count:
+                elif case.member_left_at is not None and not in_group:
+                    # 存量自愈：自动收口上线前已打退群标记、状态还挂在服务中的单子，
+                    # 每轮对账顺手结掉，直到清零；取不到名单的群在上面已跳过。
+                    if close_case_on_member_left(case, now=now, tz=tz):
+                        session.add(case)
+                        healed_count += 1
+            if left_count or returned_count or healed_count:
                 await session.commit()
                 logger.info(
-                    "Group membership reconciled: %d customers left, %d returned",
+                    "Group membership reconciled: %d customers left, %d returned, %d stale cases closed",
                     left_count,
                     returned_count,
+                    healed_count,
                 )
 
     async def _resolve_stage_report_time(self, now: datetime) -> tuple[int, int]:

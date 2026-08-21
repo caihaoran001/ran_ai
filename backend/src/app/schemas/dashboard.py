@@ -364,6 +364,7 @@ class PopulationInsightResponse(BaseModel):
 class DashboardSummary(BaseModel):
     service_cases_total: int
     service_cases_in_service: int
+    service_cases_member_left: int = 0
     checkins_today: int
     complete_checkins_today: int = 0
     messages_today: int

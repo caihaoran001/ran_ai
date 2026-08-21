@@ -92,6 +92,7 @@ from app.services.service_case_queries import (
     effective_start_at,
     intake_submitted_between_condition,
     last_user_inbound_subquery,
+    member_present_condition,
     stats_scope_condition,
 )
 
@@ -166,6 +167,15 @@ async def dashboard_summary(
         select(func.count(ServiceCase.id)).where(
             _stats_case_condition(),
             ServiceCase.status == ServiceCaseStatus.IN_SERVICE,
+            # 兜底条件：自动收口之后「服务中」不应再有已离群的单子，这里按
+            # 「人还在群里」的口径再挡一道，防历史脏数据混进在服人数。
+            member_present_condition(),
+        )
+    )
+    member_left = await session.scalar(
+        select(func.count(ServiceCase.id)).where(
+            _stats_case_condition(),
+            ServiceCase.member_left_at.is_not(None),
         )
     )
     today_start, today_end = _today_bounds()
@@ -355,6 +365,7 @@ async def dashboard_summary(
     return DashboardSummary(
         service_cases_total=total or 0,
         service_cases_in_service=in_service or 0,
+    service_cases_member_left=member_left or 0,
         checkins_today=checkins_today or 0,
         complete_checkins_today=complete_checkins_today,
         messages_today=messages_today or 0,
