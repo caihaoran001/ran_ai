@@ -59,11 +59,17 @@ class TestSplitTerminalOutcomes:
         assert not graduated and len(early) == 1
         assert avg == 20.0  # 7/1 起算，7/20 结束 = 第 20 天
 
-    def test_refunded_always_early_even_after_day_28(self):
+    def test_refunded_follows_the_same_time_rule(self):
+        # 退款不一票归边：服满后退款算毕业，中途退款算提前结束
         graduated, early, _ = split_terminal_outcomes(
-            [_row(status=ServiceCaseStatus.REFUNDED, ended=_utc(2026, 8, 5))], TZ
+            [
+                _row(status=ServiceCaseStatus.REFUNDED, ended=_utc(2026, 8, 5)),
+                _row(status=ServiceCaseStatus.REFUNDED, ended=_utc(2026, 7, 20, 10, 0)),
+            ],
+            TZ,
         )
-        assert not graduated and len(early) == 1
+        assert len(graduated) == 1 and len(early) == 1
+        assert early[0].ended_at == _utc(2026, 7, 20, 10, 0)
 
     def test_completed_without_any_timestamp_falls_back_to_graduated(self):
         graduated, early, _ = split_terminal_outcomes([_row()], TZ)
@@ -142,8 +148,9 @@ async def test_graduated_and_ended_early_filters_match_python_split(
 
     grad_ids = {item["id"] for item in grad_resp.json()}
     early_ids = {item["id"] for item in early_resp.json()}
-    assert g1.id in grad_ids and e1.id not in grad_ids
-    assert e1.id in early_ids and e2.id in early_ids and g1.id not in early_ids
+    # e2 是无结束时间的退款单：证据不足不冤枉成提前结束，落毕业桶
+    assert g1.id in grad_ids and e1.id not in grad_ids and e2.id in grad_ids
+    assert e1.id in early_ids and g1.id not in early_ids and e2.id not in early_ids
 
     # 与纯函数互证：同批单喂给 split_terminal_outcomes，分桶必须一致
     rows = (
@@ -158,7 +165,7 @@ async def test_graduated_and_ended_early_filters_match_python_split(
         )
     ).all()
     graduated, early, _ = split_terminal_outcomes(rows, TZ)
-    assert len(graduated) == 1 and len(early) == 2
+    assert len(graduated) == 2 and len(early) == 1
 
 
 @pytest.mark.asyncio

@@ -236,13 +236,16 @@ async def get_service_case(
 def split_terminal_outcomes(
     service_cases: Any, tz: ZoneInfo
 ) -> tuple[list[Any], list[Any], float | None]:
-    """终态单二分：毕业（服满 28 天自然到期）/ 提前结束（其余，含退款）。
+    """终态单二分：毕业（服务满 28 天）/ 提前结束（未满 28 天就终了）。
 
-    判据与列表筛选 graduated / ended_early 的 SQL 表达式严格同构：
+    判据与列表筛选 graduated / ended_early 的 SQL 表达式严格同构，且对退款
+    一视同仁——只看结束日期早不早于第 28 天。生产教训：退款单里有一批是
+    服务 40-70 天后才退的老单子，若「退款一律归提前结束」会把均值拉到
+    荒唐的第 38 天；退款属性由既有退款指标承载，本函数只回答「服务满了没」。
     - 结束时刻取「离群时间优先、否则结束时间」——自动收口单两列同源，
       存量自愈单只有离群时间才是真实离开时刻（结束时间是补结时刻）；
-    - 毕业 = 非退款 且（算不出第 28 天边界 或 无结束时刻 或 结束日期 ≥ 第 28 天日期）；
-    - 提前结束 = 退款，或已完结但结束日期早于第 28 天。
+    - 毕业 = 算不出第 28 天边界 或 无结束时刻 或 结束日期 ≥ 第 28 天日期；
+    - 提前结束 = 结束日期早于第 28 天。
     平均结束天数只统计能算出正天数的提前结束单，从未开服的不拖均值。
     入参支持 ORM 对象或只含 service_plan_start_date / started_at /
     member_left_at / ended_at / status 五列的查询行；非终态状态一律落毕业桶，
@@ -259,7 +262,7 @@ def split_terminal_outcomes(
             if end_moment.tzinfo is None:
                 end_moment = end_moment.replace(tzinfo=ZoneInfo("UTC"))
             ended_date = end_moment.astimezone(tz).date()
-        if case.status == ServiceCaseStatus.REFUNDED or (
+        if (
             phase_end is not None and ended_date is not None and ended_date < phase_end
         ):
             ended_early.append(case)

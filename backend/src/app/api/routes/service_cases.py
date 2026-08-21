@@ -365,9 +365,9 @@ def _apply_service_case_filter(statement, metric: str | None):
         return statement.where(last_message_subq.c.last_at.is_(None))
     if metric in {"graduated", "ended_early"}:
         # 完成率拆分：与 service_case_queries.split_terminal_outcomes 同一判据的 SQL 版。
-        # 第 1 天 = 计划开始日（回退开始文件发送当日，上海时区）；毕业 = 结束日期落在
-        # 第 28 天或之后；提前结束 = 退款，或已完结但结束日期早于第 28 天。结束时刻
-        # 取「离群时间优先、否则结束时间」——存量自愈单的结束时间是补结时刻不可信。
+        # 只看结束日期早不早于第 28 天，退款不一票归边（服满后退款的老单子算毕业）。
+        # 第 1 天 = 计划开始日（回退开始文件发送当日，上海时区）；结束时刻取
+        # 「离群时间优先、否则结束时间」——存量自愈单的结束时间是补结时刻不可信。
         _tz_literal = text("'Asia/Shanghai'")
         first_day = func.coalesce(
             ServiceCase.service_plan_start_date,
@@ -381,21 +381,19 @@ def _apply_service_case_filter(statement, metric: str | None):
             Date,
         )
         end_lag_days = ended_date - first_day
+        terminal = ServiceCase.status.in_(
+            [ServiceCaseStatus.COMPLETED, ServiceCaseStatus.REFUNDED]
+        )
         if metric == "graduated":
             return statement.where(
-                ServiceCase.status == ServiceCaseStatus.COMPLETED,
+                terminal,
                 or_(first_day.is_(None), ended_date.is_(None), end_lag_days >= 27),
             )
         return statement.where(
-            or_(
-                ServiceCase.status == ServiceCaseStatus.REFUNDED,
-                and_(
-                    ServiceCase.status == ServiceCaseStatus.COMPLETED,
-                    first_day.is_not(None),
-                    ended_date.is_not(None),
-                    end_lag_days < 27,
-                ),
-            )
+            terminal,
+            first_day.is_not(None),
+            ended_date.is_not(None),
+            end_lag_days < 27,
         )
     if metric in {"unfollowed", "lost"}:
         # 只看「用户本人」的发言：班主任在群里跟进不代表用户还活着。
