@@ -699,6 +699,11 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "get_checkin_reward_status" in AGENT_SYSTEM_PROMPT
     assert "get_recent_checkins" in AGENT_SYSTEM_PROMPT
     assert "奖励规则正在讨论中，确认后会另行通知" in AGENT_SYSTEM_PROMPT
+    assert "最短工具路径" in AGENT_SYSTEM_PROMPT
+    assert "已有明确编号时，直接读/取消" in AGENT_SYSTEM_PROMPT
+    assert "缺用户必填信息时只问缺项并停止" in AGENT_SYSTEM_PROMPT
+    assert "不把内置原则写成用户事实" in AGENT_SYSTEM_PROMPT
+    assert "明确沿用已存地址并立即发货就直接申请" in AGENT_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio
