@@ -102,7 +102,7 @@ class AgentEvalSuite(StrictModel):
 
 
 def default_agent_eval_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "agent_eval_cases.v2.json"
+    return Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "agent_eval_cases.v3.json"
 
 
 def load_agent_eval_suite(path: Path | None = None) -> AgentEvalSuite:

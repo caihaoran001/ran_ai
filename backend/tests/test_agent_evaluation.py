@@ -19,6 +19,7 @@ from app.schemas.agent_evaluation import (
     AgentEvaluationMetrics,
     AgentEvaluationRunDetail,
     AgentEvaluationSummary,
+    AgentExpectedStringArgument,
     AgentExpectedToolCall,
     AgentFrameworkMetric,
     AgentJudgePolicy,
@@ -148,8 +149,8 @@ def _write_json(path, payload) -> None:
 def test_fixed_agent_suite_has_balanced_cases_and_repeats() -> None:
     suite = load_agent_eval_suite()
 
-    assert suite.suite_id == "agent-task-core-v2"
-    assert suite.version == 2
+    assert suite.suite_id == "agent-task-core-v3"
+    assert suite.version == 3
     assert len(suite.cases) == 30
     assert suite.repeat_count == 2
     assert sum(case.origin == "production_derived" for case in suite.cases) == 15
@@ -286,7 +287,83 @@ def test_deterministic_assessment_allows_only_named_auxiliary_tools() -> None:
     assert {item.code for item in rejected_failures} == {"additional_tools"}
 
 
-def test_v2_sandbox_results_match_runtime_tool_contracts() -> None:
+def test_argument_accuracy_is_independent_from_call_count() -> None:
+    expected = AgentCaseExpected(
+        response_mode="reply",
+        required_tools=[
+            AgentExpectedToolCall(
+                name="get_recent_checkins",
+                args_subset={"days": 7},
+                max_calls=1,
+            )
+        ],
+    )
+    _, checks, failures = assess_agent_case(
+        expected=expected,
+        response="最近运动打卡最容易漏。",
+        tool_calls=[
+            AgentToolCallEvidence(
+                name="get_recent_checkins",
+                args={"days": 7},
+                result={"most_missing": "运动"},
+                ok=True,
+            ),
+            AgentToolCallEvidence(
+                name="get_recent_checkins",
+                args={"date_from": "2026-08-19", "date_to": "2026-08-20"},
+                result={"most_missing": "运动"},
+                ok=True,
+            ),
+        ],
+    )
+    by_code = {item.code: item for item in checks}
+    assert by_code["required_tool_get_recent_checkins"].passed is False
+    assert by_code["tool_args_get_recent_checkins"].passed is True
+    assert {item.code for item in failures} == {
+        "required_tool_get_recent_checkins"
+    }
+
+
+def test_string_argument_rules_accept_paraphrase_and_reject_invented_fact() -> None:
+    expected = AgentCaseExpected(
+        response_mode="reply",
+        required_tools=[
+            AgentExpectedToolCall(
+                name="search_success_case",
+                string_args={
+                    "query": AgentExpectedStringArgument(
+                        required_literals=["体重", "瘦不下来"],
+                        required_any_groups=[
+                            ["一周", "7天"],
+                            ["没有变化", "没动", "不变"],
+                        ],
+                        forbidden_literals=["低碳", "饮食"],
+                    )
+                },
+            )
+        ],
+    )
+
+    def argument_check(query: str):
+        _, checks, _ = assess_agent_case(
+            expected=expected,
+            response="先别给自己下结论。",
+            tool_calls=[
+                AgentToolCallEvidence(
+                    name="search_success_case",
+                    args={"query": query},
+                    result="相似案例",
+                    ok=True,
+                )
+            ],
+        )
+        return {item.code: item for item in checks}["tool_args_search_success_case"]
+
+    assert argument_check("连续7天体重没动，担心自己瘦不下来").passed is True
+    assert argument_check("低碳饮食一周体重没动，担心瘦不下来").passed is False
+
+
+def test_v3_sandbox_results_match_runtime_tool_contracts() -> None:
     suite = load_agent_eval_suite()
     by_id = {case.case_id: case for case in suite.cases}
 

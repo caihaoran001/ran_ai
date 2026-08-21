@@ -130,9 +130,29 @@ class AgentEvaluationHistoryMessage(StrictModel):
     content: str = Field(min_length=1, max_length=4000)
 
 
+class AgentExpectedStringArgument(StrictModel):
+    required_literals: list[str] = Field(default_factory=list)
+    required_any_groups: list[list[str]] = Field(default_factory=list)
+    forbidden_literals: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_rules(self) -> "AgentExpectedStringArgument":
+        values = [
+            *self.required_literals,
+            *self.forbidden_literals,
+            *(item for group in self.required_any_groups for item in group),
+        ]
+        if any(not item for item in values):
+            raise ValueError("string argument literals must not be empty")
+        if any(not group for group in self.required_any_groups):
+            raise ValueError("required_any_groups must not contain empty groups")
+        return self
+
+
 class AgentExpectedToolCall(StrictModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_]{1,119}$")
     args_subset: dict[str, Any] = Field(default_factory=dict)
+    string_args: dict[str, AgentExpectedStringArgument] = Field(default_factory=dict)
     min_calls: int = Field(default=1, ge=1, le=10)
     max_calls: int = Field(default=1, ge=1, le=10)
 
@@ -140,6 +160,12 @@ class AgentExpectedToolCall(StrictModel):
     def validate_call_bounds(self) -> "AgentExpectedToolCall":
         if self.min_calls > self.max_calls:
             raise ValueError("min_calls must be less than or equal to max_calls")
+        overlap = set(self.args_subset) & set(self.string_args)
+        if overlap:
+            raise ValueError(
+                "args_subset and string_args must not define the same argument: "
+                f"{sorted(overlap)}"
+            )
         return self
 
 

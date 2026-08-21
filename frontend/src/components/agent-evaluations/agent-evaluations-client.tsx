@@ -116,6 +116,11 @@ export type AgentEvaluationSummary = {
 type ExpectedToolCall = {
   name: string;
   args_subset: Record<string, unknown>;
+  string_args: Record<string, {
+    required_literals: string[];
+    required_any_groups: string[][];
+    forbidden_literals: string[];
+  }>;
   min_calls: number;
   max_calls: number;
 };
@@ -498,6 +503,12 @@ function EvidenceDetail({
                 <div key={tool.name} className="mt-2 border-l-2 border-cyan-300 pl-3">
                   <code className="font-bold text-cyan-800">{tool.name}</code>
                   <JsonEvidence value={tool.args_subset} />
+                  {Object.keys(tool.string_args).length > 0 && (
+                    <>
+                      <p className="mt-2 text-[11px] font-bold text-slate-500">文本参数规则</p>
+                      <JsonEvidence value={tool.string_args} />
+                    </>
+                  )}
                 </div>
               )) : <p className="mt-1 text-slate-400">本题不应依赖工具。</p>}
             </div>

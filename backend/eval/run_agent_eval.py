@@ -516,7 +516,7 @@ def parse_args() -> argparse.Namespace:
         default=Path(
             os.getenv(
                 "AGENT_EVALUATION_DATASET_PATH",
-                "/app/tests/fixtures/agent_eval_cases.v2.json",
+                "/app/tests/fixtures/agent_eval_cases.v3.json",
             )
         ),
     )

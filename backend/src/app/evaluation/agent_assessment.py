@@ -7,6 +7,7 @@ from app.schemas.agent_evaluation import (
     AgentCaseActual,
     AgentCaseExpected,
     AgentDeterministicCheck,
+    AgentExpectedToolCall,
     AgentFailureReason,
     AgentToolCallEvidence,
 )
@@ -88,8 +89,8 @@ def assess_agent_case(
             ),
             severity="critical",
         )
-        args_ok = count_ok and any(
-            _contains_subset(item.args, required.args_subset) for item in matching
+        args_ok = bool(matching) and any(
+            _tool_args_match(item.args, required) for item in matching
         )
         add(
             f"tool_args_{required.name}",
@@ -98,7 +99,11 @@ def assess_agent_case(
             (
                 f"{required.name} 的关键参数符合预期"
                 if args_ok
-                else f"{required.name} 没有一次调用包含预期参数 {required.args_subset}"
+                else (
+                    f"{required.name} 没有一次调用符合预期参数："
+                    f"固定字段 {required.args_subset}，文本规则 "
+                    f"{required.string_args}"
+                )
             ),
             severity="critical",
         )
@@ -169,3 +174,24 @@ def _contains_subset(actual: Any, expected: Any) -> bool:
             for actual_item, expected_item in zip(actual, expected, strict=True)
         )
     return actual == expected
+
+
+def _tool_args_match(
+    actual: dict[str, Any], expected: AgentExpectedToolCall
+) -> bool:
+    if not _contains_subset(actual, expected.args_subset):
+        return False
+    for name, rule in expected.string_args.items():
+        value = actual.get(name)
+        if not isinstance(value, str):
+            return False
+        if any(item not in value for item in rule.required_literals):
+            return False
+        if any(
+            not any(item in value for item in group)
+            for group in rule.required_any_groups
+        ):
+            return False
+        if any(item in value for item in rule.forbidden_literals):
+            return False
+    return True
