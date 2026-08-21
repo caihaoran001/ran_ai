@@ -60,6 +60,7 @@ npm run test:e2e     # Playwright
 - **成效 / 结构化抽取（档案官）**：**不在消息路径实时跑**。`archivist/` 在 scheduler 里周期扫描（DB 派生 + 行锁，去抖 ~3min）；每批未归档 delta 只调用一次 tool-calling 模型（非 LangGraph/ReAct），同一响应上报打卡/画像/成效/状态/FAQ/用户小结/优秀案例素材小结/案例候选，随后与水位线在同一事务确定性落库。历史只传结构化事实和滚动小结，不重复传已归档聊天原文；`outcome_engine.py` 退为其调用的抽取工具，`user_state_profile.py` 投影 JSONB 画像。
 - **Agent 运行观测**：回复轮次、Agent 定时提醒与档案官批次统一写 `agent_runs`；裸 `ChatOpenAI` 的每次模型调用补写 `ai_usage_logs.agent_run_id`，回复 ReAct 工具调用写 `agent_tool_calls`。观测账本用独立事务尽力保留成本和失败终态，不参与业务判断；后台 `/agent-operations` 只展示启用后的当前数据，不回填或伪造历史运行。
 - **风控**：LLM 识别风险（非关键词），高风险强制人工审核；策略见 `content_policy.py`。
+- **退群收口**：「服务中」与「客户在场」是绑定不变量——`member_left_at` 非空的服务单状态必然已完结（2026-08-21 起）。服务单的状态收口/接回恢复只能走 `service_case_activation.py` 的 `close_case_on_member_left` / `restore_case_on_member_return`（实时退群通知、进群核查、6h 对账自愈三处都挂它），严禁在别处直接赋值 `status`/`ended_at` 绕开生命周期审计判据，否则接回恢复会失灵、看板在服人数会失真。
 
 **鉴权（跨栈安全红线）**：后端 `/api/*` 需 `X-Admin-API-Key`（`BACKEND_ADMIN_API_KEY`），`/health` 与公开问卷（token）例外。该 key **只**存在于 Next 服务端 ↔ FastAPI 之间，**严禁**暴露到 `NEXT_PUBLIC_*` 或浏览器；前端同源代理后端 API。
 
