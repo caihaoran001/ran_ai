@@ -1011,3 +1011,44 @@ async def test_reconciliation_self_heals_stale_in_service_cases(
     assert case.member_left_at is not None
     assert case.status == ServiceCaseStatus.COMPLETED, "遗留的服务中+已退群必须被对账收口"
     assert case.ended_at is not None
+
+
+@pytest.mark.asyncio
+async def test_self_healed_case_records_the_day_the_customer_actually_left(
+    db_session, mock_message_channel
+):
+    """存量自愈的审计天数按客户真正离开那天算，不是按补结这一刻。
+
+    上线前遗留的单子可能是好几天前走的人，按补结时刻记会平白多出几天，
+    运营回看「走到第几天」就对不上。
+    """
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    from app.services.reminder_service import ReminderService
+
+    tz = ZoneInfo("Asia/Shanghai")
+    today = datetime.now(tz).date()
+    group_id = "G-AUTOCLOSE-8"
+    case = await _setup_group_with_customer(
+        db_session, group_id, plan_start_date=today - timedelta(days=9)
+    )
+    # 人是 4 天前走的（服务第 6 天），今天才补结
+    case.member_left_at = datetime.now(timezone.utc) - timedelta(days=4)
+    await db_session.commit()
+
+    members: dict[str, set[str]] = {group_id: {STAFF_WECOM_ID}}
+
+    async def fake_batch_get_room_members(room_ids):
+        return {rid: members[rid] for rid in room_ids if rid in members}
+
+    mock_message_channel.batch_get_room_members = fake_batch_get_room_members
+    service = ReminderService()
+    service._last_group_membership_check = None
+
+    await service.check_group_membership_once()
+    await db_session.refresh(case)
+    assert case.status == ServiceCaseStatus.COMPLETED
+    events = case.service_lifecycle_events or []
+    assert events[-1]["action"] == "auto_closed_member_left"
+    assert events[-1]["service_day"] == 6, "应记离开当天的第 6 天，而不是补结当天的第 10 天"

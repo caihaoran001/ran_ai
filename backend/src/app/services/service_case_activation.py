@@ -154,13 +154,22 @@ def close_case_on_member_left(
     """
     if service_case.status != ServiceCaseStatus.IN_SERVICE:
         return False
+    left_at = service_case.member_left_at
+    # 退群当场收口时 member_left_at 还是待求值的数据库时钟，此刻就是离开时刻；
+    # 存量自愈补结的单子早就带着真实离开时间，天数要按那天算，不是按补结这一刻。
+    if isinstance(left_at, datetime):
+        if left_at.tzinfo is None:
+            left_at = left_at.replace(tzinfo=timezone.utc)
+        left_local = left_at.astimezone(tz)
+    else:
+        left_local = now
     service_case.status = ServiceCaseStatus.COMPLETED
     service_case.ended_at = func.now()
     _append_auto_lifecycle_event(
         service_case,
         action=AUTO_CLOSED_MEMBER_LEFT_ACTION,
         occurred_at=now,
-        details={"service_day": max(effective_service_day(service_case, now, tz), 0)},
+        details={"service_day": max(effective_service_day(service_case, left_local, tz), 0)},
     )
     return True
 

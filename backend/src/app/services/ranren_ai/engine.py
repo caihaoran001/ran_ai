@@ -90,6 +90,16 @@ GROUP_AI_INTRO_FOLLOWUP = (
 # Unified and concise risk replies are imported from content_policy.py
 
 
+def _service_day_clock() -> tuple[datetime, ZoneInfo]:
+    """服务天数与 28 天窗口一律按运营时区的自然日判定，必须给本地时间。
+
+    传 UTC 会让北京时间 0-8 点这一段算成前一天：退群审计少记一天，
+    接回时的窗口判断也会多宽松一天。
+    """
+    tz = ZoneInfo(get_settings().reminder_timezone)
+    return datetime.now(tz), tz
+
+
 def _group_bot_control_command(message: ChannelMessage) -> str | None:
     """群内@机器人控制：@机器人说“退下”静默；@机器人说“回来”解除静默。"""
     if message.chat_type != "group" or message.message_type != "text":
@@ -442,11 +452,8 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         owner_wecom_id = str(getattr(left_case.user, "wecom_user_id", "") or "")
         if owner_wecom_id and owner_wecom_id in self._member_ids_in_message(message):
             left_case.member_left_at = None
-            restored = restore_case_on_member_return(
-                left_case,
-                now=datetime.now(timezone.utc),
-                tz=ZoneInfo(get_settings().reminder_timezone),
-            )
+            now, tz = _service_day_clock()
+            restored = restore_case_on_member_return(left_case, now=now, tz=tz)
             session.add(left_case)
             await session.flush()
             logger.info(
@@ -510,11 +517,8 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         # 用数据库时钟：消息的 created_at 也是数据库给的，两个时间必须同源，
         # 否则「本期区间」的边界会因应用与数据库的时钟差而错位。
         service_case.member_left_at = func.now()
-        auto_closed = close_case_on_member_left(
-            service_case,
-            now=datetime.now(timezone.utc),
-            tz=ZoneInfo(get_settings().reminder_timezone),
-        )
+        now, tz = _service_day_clock()
+        auto_closed = close_case_on_member_left(service_case, now=now, tz=tz)
         session.add(service_case)
         logger.info(
             "RanrenAI customer already gone, freeing group on join chat_id=%s service_case_id=%s auto_closed=%s",
@@ -543,11 +547,8 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             return False
         # 同上：用数据库时钟，和消息 created_at 同源
         service_case.member_left_at = func.now()
-        auto_closed = close_case_on_member_left(
-            service_case,
-            now=datetime.now(timezone.utc),
-            tz=ZoneInfo(get_settings().reminder_timezone),
-        )
+        now, tz = _service_day_clock()
+        auto_closed = close_case_on_member_left(service_case, now=now, tz=tz)
         session.add(service_case)
         logger.info(
             "RanrenAI customer left group chat_id=%s service_case_id=%s auto_closed=%s",

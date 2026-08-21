@@ -415,11 +415,18 @@ function plateauBasisTitle(evidence?: Record<string, unknown> | null): string {
 
 function computeMemberLeftDay(serviceCase: ServiceCase): number | null {
   if (!serviceCase.member_left_at) return null;
-  const startDate = serviceCase.service_plan_start_date ?? serviceCase.started_at;
-  if (!startDate) return null;
+  // 与后端同一口径：填了计划开始日就是第 1 天；老单子没填的，发文件的次日算第 1 天。
+  let firstDayKey: string;
+  if (serviceCase.service_plan_start_date) {
+    firstDayKey = dateKey(new Date(serviceCase.service_plan_start_date));
+  } else if (serviceCase.started_at) {
+    const started = new Date(serviceCase.started_at);
+    firstDayKey = dateKey(new Date(started.getTime() + 86_400_000));
+  } else {
+    return null;
+  }
   const leftKey = dateKey(new Date(serviceCase.member_left_at));
-  const startKey = dateKey(new Date(startDate));
-  const diff = Date.parse(`${leftKey}T00:00:00Z`) - Date.parse(`${startKey}T00:00:00Z`);
+  const diff = Date.parse(`${leftKey}T00:00:00Z`) - Date.parse(`${firstDayKey}T00:00:00Z`);
   if (!Number.isFinite(diff)) return null;
   return Math.floor(diff / 86_400_000) + 1;
 }
