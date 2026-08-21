@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
@@ -227,6 +227,66 @@ class RagEvaluationMetrics(StrictModel):
     answer_relevancy: RagMetricValue
 
 
+class RagEvaluationModelCall(StrictModel):
+    component: Literal["intent", "answer", "ragas_judge", "embedding"]
+    stage_key: str | None = Field(
+        default=None,
+        pattern=r"^[a-z][a-z0-9_]{1,119}$",
+    )
+    call_index: int = Field(ge=1)
+    attempts: int = Field(default=1, ge=1)
+    model: str = Field(min_length=1, max_length=120)
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    prompt_cache_hit_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_yuan: float | None = Field(default=None, ge=0)
+    elapsed_ms: int = Field(default=0, ge=0)
+    success: bool
+    error_type: str | None = Field(default=None, max_length=120)
+
+
+class RagEvaluationUsageTotals(StrictModel):
+    call_count: int = Field(default=0, ge=0)
+    request_count: int = Field(default=0, ge=0)
+    successful_calls: int = Field(default=0, ge=0)
+    failed_calls: int = Field(default=0, ge=0)
+    usage_reported_calls: int = Field(default=0, ge=0)
+    costed_calls: int = Field(default=0, ge=0)
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    prompt_cache_hit_tokens: int = Field(default=0, ge=0)
+    known_estimated_cost_yuan: float = Field(default=0, ge=0)
+    estimated_cost_yuan: float | None = Field(default=0, ge=0)
+    complete: bool = True
+
+
+class RagEvaluationUsageSummary(StrictModel):
+    tracking_available: bool = False
+    currency: Literal["CNY"] = "CNY"
+    is_estimate: Literal[True] = True
+    intent: RagEvaluationUsageTotals = Field(
+        default_factory=RagEvaluationUsageTotals
+    )
+    answer: RagEvaluationUsageTotals = Field(
+        default_factory=RagEvaluationUsageTotals
+    )
+    ragas_judge: RagEvaluationUsageTotals = Field(
+        default_factory=RagEvaluationUsageTotals
+    )
+    embedding: RagEvaluationUsageTotals = Field(
+        default_factory=RagEvaluationUsageTotals
+    )
+    total: RagEvaluationUsageTotals = Field(
+        default_factory=RagEvaluationUsageTotals
+    )
+
+
+class RagEvaluationCaseUsage(RagEvaluationUsageSummary):
+    calls: list[RagEvaluationModelCall] = Field(default_factory=list)
+
+
 class AnswerRelevancyPolicy(StrictModel):
     status: Literal[
         "enforced",
@@ -284,8 +344,17 @@ class RagEvaluationSummary(StrictModel):
     )
     faithfulness_policy: FaithfulnessPolicy = Field(default_factory=FaithfulnessPolicy)
     critical_fact_errors: int = Field(default=0, ge=0)
+    usage: RagEvaluationUsageSummary = Field(
+        default_factory=RagEvaluationUsageSummary
+    )
     estimated_cost_yuan: float | None = Field(default=None, ge=0)
     error: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def clear_untracked_legacy_cost(self) -> RagEvaluationSummary:
+        if not self.usage.tracking_available:
+            self.estimated_cost_yuan = None
+        return self
 
 
 class RagHistoryMessage(StrictModel):
@@ -369,6 +438,7 @@ class RagEvaluationCaseResult(StrictModel):
     scores: RagCaseScores
     metric_evidence: RagMetricEvidence = Field(default_factory=RagMetricEvidence)
     failure_reasons: list[RagFailureReason] = Field(default_factory=list)
+    usage: RagEvaluationCaseUsage = Field(default_factory=RagEvaluationCaseUsage)
     elapsed_ms: int | None = Field(default=None, ge=0)
 
 

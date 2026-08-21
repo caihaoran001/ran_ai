@@ -14,6 +14,11 @@ from app.schemas.rag_evaluation import (
     RagMetricValue,
 )
 
+if __package__:
+    from .rag_costs import summarize_case_usage
+else:
+    from rag_costs import summarize_case_usage
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -92,6 +97,10 @@ def aggregate_summary(
         skipped=sum(case.status == "skipped" for case in cases),
         errors=sum(case.status == "error" for case in cases),
     )
+    usage = summarize_case_usage(
+        cases,
+        tracking_available=base.usage.tracking_available,
+    )
     now = utc_now()
     return base.model_copy(
         update={
@@ -121,6 +130,8 @@ def aggregate_summary(
                 for case in cases
                 for reason in case.failure_reasons
             ),
+            "usage": usage,
+            "estimated_cost_yuan": usage.total.estimated_cost_yuan,
             "error": error,
         }
     )

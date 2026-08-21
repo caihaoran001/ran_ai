@@ -10,33 +10,34 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal, engine
-from app.evaluation.rag_cases import RagEvalCase, load_rag_eval_suite
 from app.evaluation.answer_relevancy_calibration import (
     resolve_answer_relevancy_policy,
 )
 from app.evaluation.faithfulness_calibration import resolve_faithfulness_policy
+from app.evaluation.rag_cases import RagEvalCase, load_rag_eval_suite
 from app.schemas.rag_evaluation import (
     AnswerRelevancyCalibrationReport,
     AnswerRelevancyPolicy,
     FaithfulnessCalibrationReport,
     FaithfulnessPolicy,
+    RagAnswerRelevancyJudgement,
+    RagBinaryJudgement,
     RagCaseActual,
     RagCaseExpected,
     RagCaseOrigin,
     RagCaseScores,
-    RagAnswerRelevancyJudgement,
-    RagBinaryJudgement,
     RagContextPrecisionJudgement,
     RagEvaluationCaseResult,
     RagEvaluationCounts,
     RagEvaluationMetrics,
     RagEvaluationRunDetail,
     RagEvaluationSummary,
+    RagEvaluationUsageSummary,
     RagFailureReason,
     RagHistoryMessage,
     RagKnowledgeHit,
-    RagMetricValue,
     RagMetricEvidence,
+    RagMetricValue,
     RagRewriteExpected,
 )
 from app.services.agent.graph import RanrenAgentGraph
@@ -48,7 +49,11 @@ if __package__:
         IntentResult,
         evaluate_intent,
         format_history,
-        install_in_memory_usage_collector,
+    )
+    from .rag_costs import (
+        RagEvaluationCostLedger,
+        install_rag_usage_collectors,
+        usage_from_calls,
     )
     from .ragas_eval import RagasScorer
     from .read_only import install_read_only_guards
@@ -58,7 +63,11 @@ else:
         IntentResult,
         evaluate_intent,
         format_history,
-        install_in_memory_usage_collector,
+    )
+    from rag_costs import (
+        RagEvaluationCostLedger,
+        install_rag_usage_collectors,
+        usage_from_calls,
     )
     from ragas_eval import RagasScorer
     from read_only import install_read_only_guards
@@ -144,6 +153,7 @@ def _base_summary(
         metrics=_empty_metrics(),
         answer_relevancy_policy=answer_relevancy_policy,
         faithfulness_policy=faithfulness_policy,
+        usage=RagEvaluationUsageSummary(tracking_available=True),
     )
 
 
@@ -298,6 +308,7 @@ def _base_case(case: RagEvalCase, *, status: str) -> RagEvaluationCaseResult:
             decision_source="unavailable",
         ),
         scores=RagCaseScores(),
+        usage=usage_from_calls([]),
     )
 
 
@@ -310,12 +321,14 @@ async def _evaluate_real_case(
     answer_relevancy_threshold: float | None,
     faithfulness_enforced: bool,
     faithfulness_threshold: float | None,
+    cost_ledger: RagEvaluationCostLedger,
 ) -> RagEvaluationCaseResult:
     started = time.monotonic()
     result = _base_case(case, status="passed")
     reasons: list[RagFailureReason] = []
     try:
-        intent = await evaluate_intent(case)
+        with cost_ledger.stage("intent_rewrite"):
+            intent = await evaluate_intent(case)
         result.actual.retrieval_decision = intent.decision
         result.actual.decision_source = intent.decision_source
         result.actual.knowledge_query = intent.knowledge_query
@@ -331,23 +344,24 @@ async def _evaluate_real_case(
         raw_hits = []
         rewritten_hits = []
         if case.rewrite.decision == "retrieve":
-            async with SessionLocal() as session:
-                raw = await retrieve_indexed_knowledge_result(
-                    session,
-                    case.user_query,
-                    settings=settings,
-                    exclude_source_types={"case"},
-                )
-                actual = (
-                    await retrieve_indexed_knowledge_result(
+            with cost_ledger.stage("knowledge_retrieval"):
+                async with SessionLocal() as session:
+                    raw = await retrieve_indexed_knowledge_result(
                         session,
-                        intent.knowledge_query or case.user_query,
+                        case.user_query,
                         settings=settings,
                         exclude_source_types={"case"},
                     )
-                    if intent.decision == "retrieve"
-                    else None
-                )
+                    actual = (
+                        await retrieve_indexed_knowledge_result(
+                            session,
+                            intent.knowledge_query or case.user_query,
+                            settings=settings,
+                            exclude_source_types={"case"},
+                        )
+                        if intent.decision == "retrieve"
+                        else None
+                    )
             raw_hits = raw.hits
             rewritten_hits = actual.hits if actual is not None else []
             result.actual.raw_query_hits = [_knowledge_hit(hit) for hit in raw_hits]
@@ -355,7 +369,8 @@ async def _evaluate_real_case(
                 _knowledge_hit(hit) for hit in rewritten_hits
             ]
 
-        response = await _agent_reply(case, intent, settings)
+        with cost_ledger.stage("answer_generation"):
+            response = await _agent_reply(case, intent, settings)
         result.actual.response = response
         reference = _reference(case)
 
@@ -592,10 +607,6 @@ async def async_main(args: argparse.Namespace) -> int:
     dataset_id = suite.suite_id
     dataset_version = suite.version
     cases = suite.cases
-    if not args.mock:
-        install_read_only_guards(engine)
-        install_in_memory_usage_collector()
-
     settings = get_settings()
     answer_relevancy_policy = _load_answer_relevancy_policy(
         mock=args.mock,
@@ -618,26 +629,33 @@ async def async_main(args: argparse.Namespace) -> int:
         faithfulness_policy=faithfulness_policy,
     )
     atomic_write_json(run_dir / "status.json", base.model_dump(mode="json"))
+    results: list[RagEvaluationCaseResult] = []
+    restore_usage_collectors = None
     try:
         if args.mock:
             results = _mock_cases(cases)
         else:
             if not settings.ai_api_key or not settings.embedding_api_key:
                 raise RuntimeError("真实评测要求 AI_API_KEY 和 EMBEDDING_API_KEY")
-            scorer = RagasScorer(settings)
-            results = []
+            install_read_only_guards(engine)
+            cost_ledger = RagEvaluationCostLedger(settings)
+            restore_usage_collectors = install_rag_usage_collectors(cost_ledger)
+            scorer = RagasScorer(settings, cost_ledger=cost_ledger)
             for case in cases:
-                results.append(
-                    await _evaluate_real_case(
-                        case,
-                        scorer=scorer,
-                        settings=settings,
-                        answer_relevancy_enforced=(answer_relevancy_policy.enforced),
-                        answer_relevancy_threshold=answer_relevancy_policy.threshold,
-                        faithfulness_enforced=faithfulness_policy.enforced,
-                        faithfulness_threshold=faithfulness_policy.threshold,
-                    )
+                cost_ledger.begin_case(case.case_id)
+                result = await _evaluate_real_case(
+                    case,
+                    scorer=scorer,
+                    settings=settings,
+                    answer_relevancy_enforced=(answer_relevancy_policy.enforced),
+                    answer_relevancy_threshold=answer_relevancy_policy.threshold,
+                    faithfulness_enforced=faithfulness_policy.enforced,
+                    faithfulness_threshold=faithfulness_policy.threshold,
+                    cost_ledger=cost_ledger,
                 )
+                result.usage = cost_ledger.case_usage(case.case_id)
+                cost_ledger.end_case(case.case_id)
+                results.append(result)
                 running = aggregate_summary(base=base, cases=results, status="running")
                 running.finished_at = None
                 running.counts.total = len(cases)
@@ -653,13 +671,16 @@ async def async_main(args: argparse.Namespace) -> int:
     except Exception as exc:
         failed = aggregate_summary(
             base=base,
-            cases=[],
+            cases=results,
             status="failed",
             error=f"{type(exc).__name__}: {exc}"[:2000],
         )
         failed.counts.total = len(cases)
         atomic_write_json(run_dir / "status.json", failed.model_dump(mode="json"))
         raise
+    finally:
+        if restore_usage_collectors is not None:
+            restore_usage_collectors()
 
 
 def parse_args() -> argparse.Namespace:

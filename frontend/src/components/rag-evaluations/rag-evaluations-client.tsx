@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleDashed,
   Clock3,
+  Coins,
   Database,
   FileSearch,
   Gauge,
@@ -26,6 +27,53 @@ type MetricValue = {
   numerator?: number | null;
   denominator?: number | null;
 };
+
+type RagCostComponent = "intent" | "answer" | "ragas_judge" | "embedding";
+
+type RagUsageTotals = {
+  call_count: number;
+  request_count: number;
+  successful_calls: number;
+  failed_calls: number;
+  usage_reported_calls: number;
+  costed_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_cache_hit_tokens: number;
+  known_estimated_cost_yuan: number;
+  estimated_cost_yuan?: number | null;
+  complete: boolean;
+};
+
+type RagModelCall = {
+  component: RagCostComponent;
+  stage_key?: string | null;
+  call_index: number;
+  attempts: number;
+  model: string;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  total_tokens?: number | null;
+  prompt_cache_hit_tokens?: number | null;
+  estimated_cost_yuan?: number | null;
+  elapsed_ms: number;
+  success: boolean;
+  error_type?: string | null;
+};
+
+type RagUsageSummary = {
+  tracking_available: boolean;
+  currency: "CNY";
+  is_estimate: true;
+  intent: RagUsageTotals;
+  answer: RagUsageTotals;
+  ragas_judge: RagUsageTotals;
+  embedding: RagUsageTotals;
+  total: RagUsageTotals;
+};
+
+type RagCaseUsage = RagUsageSummary & { calls: RagModelCall[] };
 
 type RagMetricPolicy = {
   status: "enforced" | "calibration_failed" | "not_calibrated" | "mock" | "legacy";
@@ -68,6 +116,7 @@ export type RagEvaluationSummary = {
   answer_relevancy_policy: RagMetricPolicy;
   faithfulness_policy: RagMetricPolicy;
   critical_fact_errors: number;
+  usage?: RagUsageSummary;
   estimated_cost_yuan?: number | null;
   error?: string | null;
 };
@@ -150,6 +199,7 @@ type EvaluationCase = {
   };
   metric_evidence?: MetricEvidence;
   failure_reasons: FailureReason[];
+  usage?: RagCaseUsage;
   elapsed_ms?: number | null;
 };
 
@@ -294,6 +344,26 @@ const RESPONSE_MODE_LABELS: Record<NonNullable<EvaluationCase["expected"]["respo
   use_runtime_data: "使用实时能力",
   support: "接住情绪",
 };
+const COST_COMPONENTS: Array<{
+  key: RagCostComponent;
+  label: string;
+  hint: string;
+}> = [
+  { key: "intent", label: "意图与改写", hint: "判断是否检索并补全问题" },
+  { key: "answer", label: "回复生成", hint: "Agent 生成最终回复" },
+  { key: "ragas_judge", label: "RAGAS 判官", hint: "事实、精确、忠实、相关" },
+  { key: "embedding", label: "Embedding", hint: "召回与相关性向量计算" },
+];
+const COST_STAGE_LABELS: Record<string, string> = {
+  intent_rewrite: "意图与改写",
+  knowledge_retrieval: "知识召回",
+  answer_generation: "回复生成",
+  context_recall: "事实召回率",
+  raw_context_recall: "原问题召回对照",
+  context_precision: "召回精确率",
+  faithfulness: "回复忠实度",
+  answer_relevancy: "回复相关性",
+};
 
 type CaseFilter =
   | "all"
@@ -306,6 +376,146 @@ type CaseFilter =
 
 function percent(value?: number | null) {
   return value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatTokens(value: number) {
+  return new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function formatYuan(value?: number | null) {
+  if (value == null) return "—";
+  if (value === 0) return "¥0.0000";
+  return `¥${value < 0.01 ? value.toFixed(4) : value.toFixed(2)}`;
+}
+
+function costDisplay(totals: RagUsageTotals) {
+  return totals.complete
+    ? formatYuan(totals.estimated_cost_yuan)
+    : `${formatYuan(totals.known_estimated_cost_yuan)}+`;
+}
+
+function RagCostPanel({ usage }: { usage?: RagUsageSummary }) {
+  if (!usage?.tracking_available) {
+    return (
+      <section className="panel overflow-hidden" aria-label="API 费用">
+        <div className="panel-header-clean">
+          <div className="flex items-center gap-2">
+            <Coins className="h-5 w-5 text-slate-500" />
+            <h2 className="panel-title">API 费用</h2>
+            <span className="status-pill pill-neutral">历史未记录</span>
+          </div>
+          <p className="panel-subtitle">该批次生成时尚未采集逐次用量，不会把未知费用显示为 0 元。</p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel overflow-hidden" aria-label="API 费用">
+      <div className="panel-header-clean">
+        <div className="toolbar-row">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Coins className="h-5 w-5 text-cyan-700" />
+              <h2 className="panel-title">API 费用</h2>
+              <span className={`status-pill ${usage.total.complete ? "pill-ok" : "pill-warn"}`}>
+                {usage.total.complete ? "记账完整" : "费用不完整"}
+              </span>
+            </div>
+            <p className="panel-subtitle">把本批次的付费请求拆成四类，可继续下钻到每道题的每次调用。</p>
+          </div>
+          <div className="shrink-0 text-left sm:text-right">
+            <p className="text-[11px] font-bold text-slate-500">本批次预估费用</p>
+            <p className="mt-1 text-2xl font-black tabular-nums text-slate-950">{costDisplay(usage.total)}</p>
+            <p className="mt-0.5 text-[11px] text-slate-400">{usage.total.request_count} 次请求 · {formatTokens(usage.total.total_tokens)} tokens</p>
+          </div>
+        </div>
+      </div>
+      <div className="grid border-t border-slate-100 sm:grid-cols-2 lg:grid-cols-4">
+        {COST_COMPONENTS.map((component, index) => {
+          const totals = usage[component.key];
+          return (
+            <article key={component.key} className={`relative px-5 py-4 ${index ? "border-t border-slate-100 sm:border-l sm:border-t-0" : ""}`}>
+              <div className="flex items-center justify-between gap-3">
+                <span className="flex h-6 min-w-6 items-center justify-center rounded-md bg-slate-900 px-1 text-[10px] font-black text-white">{index + 1}</span>
+                <span className={`text-[10px] font-extrabold ${totals.complete ? "text-emerald-700" : "text-amber-700"}`}>
+                  {totals.complete ? "完整" : "有未知项"}
+                </span>
+              </div>
+              <h3 className="mt-3 text-sm font-extrabold text-slate-900">{component.label}</h3>
+              <p className="mt-1 min-h-8 text-[11px] leading-4 text-slate-400">{component.hint}</p>
+              <p className="mt-3 text-xl font-black tabular-nums text-slate-950">{costDisplay(totals)}</p>
+              <p className="mt-1 text-[11px] tabular-nums text-slate-500">{totals.request_count} 次 · {formatTokens(totals.total_tokens)} tokens</p>
+            </article>
+          );
+        })}
+      </div>
+      {!usage.total.complete && (
+        <p className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-xs leading-5 text-amber-800">
+          “+”表示已知费用下限；某些请求没有返回 token、单价未配置，或发生了无法逐次定价的重试，因此不伪造精确总价。
+        </p>
+      )}
+    </section>
+  );
+}
+
+function CaseCostDetail({ usage }: { usage?: RagCaseUsage }) {
+  if (!usage?.tracking_available) {
+    return (
+      <section className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/60 px-4 py-3" aria-label="本题 API 费用">
+        <p className="text-xs font-bold text-slate-600">本题 API 费用</p>
+        <p className="mt-1 text-xs text-slate-500">历史报告未保存调用用量，费用未知。</p>
+      </section>
+    );
+  }
+  return (
+    <section className="mt-4 border-t border-slate-200 pt-4" aria-label="本题 API 费用">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-extrabold text-slate-700">本题 API 费用</p>
+          <p className="mt-1 text-[11px] text-slate-500">{usage.total.request_count} 次请求 · {formatTokens(usage.total.total_tokens)} tokens</p>
+        </div>
+        <p className="text-lg font-black tabular-nums text-slate-950">{costDisplay(usage.total)}</p>
+      </div>
+      {usage.calls.length ? (
+        <details className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <summary className="cursor-pointer px-4 py-3 text-xs font-extrabold text-slate-700">查看 {usage.calls.length} 条调用记录</summary>
+          <div className="overflow-x-auto border-t border-slate-100">
+            <table className="min-w-[840px] w-full text-left text-[11px]">
+              <thead className="bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 font-bold">环节</th>
+                  <th className="px-3 py-2 font-bold">模型</th>
+                  <th className="px-3 py-2 text-right font-bold">输入/输出 token</th>
+                  <th className="px-3 py-2 text-right font-bold">重试</th>
+                  <th className="px-3 py-2 text-right font-bold">耗时</th>
+                  <th className="px-3 py-2 text-right font-bold">预估费用</th>
+                  <th className="px-3 py-2 text-right font-bold">状态</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-600">
+                {usage.calls.map((call) => (
+                  <tr key={call.call_index} className={call.success ? "" : "bg-amber-50/60"}>
+                    <td className="px-3 py-2.5 font-semibold text-slate-800">{COST_STAGE_LABELS[call.stage_key || ""] || COST_COMPONENTS.find((item) => item.key === call.component)?.label}</td>
+                    <td className="max-w-52 truncate px-3 py-2.5" title={call.model}>{call.model}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{call.prompt_tokens ?? "—"} / {call.completion_tokens ?? (call.component === "embedding" ? 0 : "—")}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{call.attempts > 1 ? `${call.attempts} 次` : "—"}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{call.elapsed_ms}ms</td>
+                    <td className="px-3 py-2.5 text-right font-bold tabular-nums text-slate-900">{formatYuan(call.estimated_cost_yuan)}</td>
+                    <td className={`px-3 py-2.5 text-right font-bold ${call.success ? "text-emerald-700" : "text-amber-700"}`}>
+                      {call.success ? "成功" : `失败·${call.error_type || "未知错误"}`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ) : (
+        <p className="mt-3 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-500">本题没有发起付费 API 请求。</p>
+      )}
+    </section>
+  );
 }
 
 function MetricLine({
@@ -704,6 +914,8 @@ function EvidenceDetail({
           </div>
         </section>
       </div>
+
+      <CaseCostDetail usage={item.usage} />
 
       <MetricEvidencePanel
         evidence={item.metric_evidence}
@@ -1201,6 +1413,8 @@ export function RagEvaluationsClient({
           这份旧报告没有记录运行类型，页面不会根据模型名称猜测它是模拟还是真实评测。
         </div>
       )}
+
+      {summary && <RagCostPanel usage={summary.usage} />}
 
       <MetricCalibrationPanel
         answerRelevancy={initialCalibration}

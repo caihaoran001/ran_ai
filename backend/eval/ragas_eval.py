@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import os
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.config import Settings
 from openai import AsyncOpenAI
 
-from app.core.config import Settings
+if __package__:
+    from .rag_costs import instrument_openai_client
+else:
+    from rag_costs import instrument_openai_client
 
 
 DEFAULT_RAG_EVAL_JUDGE_MAX_TOKENS = 50_000
@@ -80,6 +85,7 @@ class RagasScorer:
         settings: Settings,
         *,
         include_answer_relevancy: bool = True,
+        cost_ledger: Any | None = None,
     ):
         from ragas.llms import llm_factory
         from ragas.metrics.collections import (
@@ -89,11 +95,19 @@ class RagasScorer:
             Faithfulness,
         )
 
+        self._cost_ledger = cost_ledger
         judge_client = AsyncOpenAI(
             api_key=settings.ai_api_key,
             base_url=settings.ai_base_url,
             timeout=settings.ai_timeout_seconds,
         )
+        if cost_ledger is not None:
+            instrument_openai_client(
+                judge_client,
+                cost_ledger,
+                chat_component="ragas_judge",
+            )
+        self._judge_client = judge_client
         llm = _create_ragas_llm(
             llm_factory,
             model=settings.ai_model,
@@ -111,6 +125,13 @@ class RagasScorer:
                 base_url=settings.embedding_base_url,
                 timeout=settings.ai_timeout_seconds,
             )
+            if cost_ledger is not None:
+                instrument_openai_client(
+                    embedding_client,
+                    cost_ledger,
+                    embedding_component="embedding",
+                )
+            self._embedding_client = embedding_client
             embeddings = embedding_factory(
                 "openai",
                 model=settings.embedding_model,
@@ -120,6 +141,10 @@ class RagasScorer:
                 llm=llm,
                 embeddings=embeddings,
             )
+
+    def _cost_stage(self, stage_key: str):
+        ledger = getattr(self, "_cost_ledger", None)
+        return ledger.stage(stage_key) if ledger is not None else nullcontext()
 
     @staticmethod
     def _value(result: Any) -> float:
@@ -135,34 +160,39 @@ class RagasScorer:
         retrieved_contexts: list[str],
         raw_contexts: list[str],
     ) -> RagasScores:
-        recall, recall_details = await self.score_context_recall_with_details(
-            user_input=user_input,
-            retrieved_contexts=retrieved_contexts,
-            reference=reference,
-        )
-        raw_recall, raw_recall_details = await self.score_context_recall_with_details(
-            user_input=user_input,
-            retrieved_contexts=raw_contexts,
-            reference=reference,
-        )
-        precision, precision_details = await self.score_context_precision_with_details(
-            user_input=user_input,
-            retrieved_contexts=retrieved_contexts,
-            reference=reference,
-        )
-        faithfulness, faithfulness_details = await self.score_faithfulness_with_details(
-            user_input=user_input,
-            response=response,
-            retrieved_contexts=retrieved_contexts,
-        )
-        (
-            relevancy,
-            relevancy_details,
-            all_noncommittal,
-        ) = await self.score_answer_relevancy_with_details(
-            user_input=user_input,
-            response=response,
-        )
+        with self._cost_stage("context_recall"):
+            recall, recall_details = await self.score_context_recall_with_details(
+                user_input=user_input,
+                retrieved_contexts=retrieved_contexts,
+                reference=reference,
+            )
+        with self._cost_stage("raw_context_recall"):
+            raw_recall, raw_recall_details = await self.score_context_recall_with_details(
+                user_input=user_input,
+                retrieved_contexts=raw_contexts,
+                reference=reference,
+            )
+        with self._cost_stage("context_precision"):
+            precision, precision_details = await self.score_context_precision_with_details(
+                user_input=user_input,
+                retrieved_contexts=retrieved_contexts,
+                reference=reference,
+            )
+        with self._cost_stage("faithfulness"):
+            faithfulness, faithfulness_details = await self.score_faithfulness_with_details(
+                user_input=user_input,
+                response=response,
+                retrieved_contexts=retrieved_contexts,
+            )
+        with self._cost_stage("answer_relevancy"):
+            (
+                relevancy,
+                relevancy_details,
+                all_noncommittal,
+            ) = await self.score_answer_relevancy_with_details(
+                user_input=user_input,
+                response=response,
+            )
         return RagasScores(
             context_recall=recall,
             context_precision=precision,

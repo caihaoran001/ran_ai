@@ -190,6 +190,12 @@ class Settings(BaseSettings):
     )
     embedding_api_key: str = Field(default="", validation_alias="EMBEDDING_API_KEY")
     embedding_model: str = Field(default="text-embedding-v4", validation_alias="EMBEDDING_MODEL")
+    # DashScope text-embedding-v4 北京地域标准实时请求单价，元/百万 token。
+    # <=0 表示未配置：评测仍记 token，但费用标记为不完整，不伪造 0 元。
+    embedding_cost_per_1m_tokens: float = Field(
+        default=0.5,
+        validation_alias="EMBEDDING_COST_PER_1M_TOKENS",
+    )
 
     qiwei_enabled: bool = Field(default=False, validation_alias="QIWEI_ENABLED")
     qiwei_token: str = Field(default="", validation_alias="QIWEI_TOKEN")

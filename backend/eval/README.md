@@ -33,6 +33,8 @@ docker compose -f docker-compose.agent-eval.yml run \
 
 评测只在 ECS 上连接生产 RDS，进程启动后同时启用 PostgreSQL 只读会话和 SQL 写入拦截；意图模型原有的用量日志写入会改为进程内收集。不会调用消息渠道，也不会创建提醒或修改服务单。
 
+每次正式 RAG 评测会在报告内记录完整的 API 费用账本：意图/问题改写、Agent 回复生成、RAGAS 判断官和 Embedding 分开统计，并保留每道题的实际模型、Token、缓存命中、重试次数、耗时和人民币估算。LLM 复用线上单价与高峰倍率；`text-embedding-v4` 默认按 DashScope 北京地域标准实时请求 0.5 元/百万输入 Token 计算，可用 `EMBEDDING_COST_PER_1M_TOKENS` 覆盖。只要任一请求缺 usage、缺单价或重试无法逐次定价，单题和整批都标记“费用不完整”，仅显示已知下限，不冒充 0 元或精确总价。Mock 为 0 次、0 元；历史报告明确显示“未记录”。
+
 正式题库固定为 `tests/fixtures/rag_eval_cases.v2.json`：25 条依据生产 FAQ 改写，25 条来自一次性筛选并脱敏的生产聊天。v2 为两道省略问法补齐了能确定所指对象的前文；每次运行只读取这个文件，不会重新抽 FAQ、聊天或自动替换题目。
 
 ## 首次安装或依赖版本变化

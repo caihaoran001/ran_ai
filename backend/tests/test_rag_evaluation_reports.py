@@ -399,6 +399,10 @@ async def test_legacy_report_without_run_mode_remains_readable(admin_client, tmp
         "threshold": None,
         "reason": "该历史批次未记录校准状态，生成时仍按原规则参与判定",
     }
+    assert response.json()["summary"]["usage"]["tracking_available"] is False
+    assert response.json()["summary"]["estimated_cost_yuan"] is None
+    assert response.json()["cases"][0]["usage"]["tracking_available"] is False
+    assert response.json()["summary"]["usage"]["total"]["call_count"] == 0
     assert response.json()["cases"][0]["origin"] == {
         "kind": "unknown",
         "reference_id": "legacy-report",
