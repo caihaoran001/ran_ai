@@ -12,7 +12,11 @@ from typing import Any
 from app.core.config import get_settings
 from app.db.session import engine
 from app.evaluation.agent_assessment import assess_agent_case
-from app.evaluation.agent_cases import AgentEvalCase, AgentToolStub, load_agent_eval_suite
+from app.evaluation.agent_cases import (
+    AgentEvalCase,
+    AgentToolStub,
+    load_agent_eval_suite,
+)
 from app.schemas.agent_evaluation import (
     AgentEvaluationCaseResult,
     AgentEvaluationCounts,
@@ -27,7 +31,7 @@ from app.services.agent.graph import RanrenAgentGraph
 from app.services.agent.state import AgentRunContext
 
 if __package__:
-    from .agent_judge import AgentQualityJudge, mock_judge_result
+    from .agent_judge import AgentQualityJudge
     from .agent_reporting import (
         aggregate_agent_summary,
         empty_metrics,
@@ -37,7 +41,7 @@ if __package__:
     from .read_only import install_read_only_guards
     from .reporting import atomic_write_json
 else:
-    from agent_judge import AgentQualityJudge, mock_judge_result
+    from agent_judge import AgentQualityJudge
     from agent_reporting import (
         aggregate_agent_summary,
         empty_metrics,
@@ -50,9 +54,11 @@ else:
 
 class SandboxTool:
     def __init__(self, stub: AgentToolStub | None):
-        self._results = list(stub.results) if stub is not None else [
-            {"ok": False, "error": "AGENT_EVAL_TOOL_NOT_CONFIGURED"}
-        ]
+        self._results = (
+            list(stub.results)
+            if stub is not None
+            else [{"ok": False, "error": "AGENT_EVAL_TOOL_NOT_CONFIGURED"}]
+        )
         self.records: list[dict[str, Any]] = []
 
     async def ainvoke(self, args: dict[str, Any]) -> Any:
@@ -102,7 +108,9 @@ class IsolatedAgentGraph(RanrenAgentGraph):
     async def _resolve_bot_nickname(self) -> str:
         return "燃人AI"
 
-    def tool_evidence(self, traces: list[dict[str, Any]]) -> list[AgentToolCallEvidence]:
+    def tool_evidence(
+        self, traces: list[dict[str, Any]]
+    ) -> list[AgentToolCallEvidence]:
         offsets: dict[str, int] = defaultdict(int)
         output: list[AgentToolCallEvidence] = []
         for trace in traces:
@@ -170,19 +178,27 @@ def _mock_response(case: AgentEvalCase) -> str:
     return "已经按你刚才说的处理好了。"
 
 
-def _result_from_evidence(
+async def _result_from_evidence(
     *,
     case: AgentEvalCase,
     round_index: int,
     response: str,
     tool_calls: list[AgentToolCallEvidence],
-    judge: AgentJudgeResult,
+    judge: AgentQualityJudge,
+    mock_failure: bool,
     elapsed_ms: int,
 ) -> AgentEvaluationCaseResult:
     actual, checks, failures = assess_agent_case(
         expected=case.expected,
         response=response,
         tool_calls=tool_calls,
+    )
+    judged = await judge.judge(
+        history=[item.model_dump() for item in case.history],
+        user_query=case.user_query,
+        expected=case.expected,
+        actual=actual,
+        mock_failure=mock_failure,
     )
     deterministic_passed = all(check.passed for check in checks)
     return AgentEvaluationCaseResult(
@@ -198,24 +214,29 @@ def _result_from_evidence(
         expected=case.expected,
         actual=actual,
         deterministic_checks=checks,
-        judge=judge,
+        judge=judged,
         failure_reasons=failures,
         elapsed_ms=elapsed_ms,
     )
 
 
-def _mock_results(cases: list[AgentEvalCase], repeat_count: int) -> list[AgentEvaluationCaseResult]:
+async def _mock_results(
+    cases: list[AgentEvalCase],
+    repeat_count: int,
+    judge: AgentQualityJudge,
+) -> list[AgentEvaluationCaseResult]:
     results = []
     for round_index in range(1, repeat_count + 1):
         for case in cases:
             failed = case.case_id == "agent-checklist-no-mention"
             results.append(
-                _result_from_evidence(
+                await _result_from_evidence(
                     case=case,
                     round_index=round_index,
                     response=_mock_response(case),
                     tool_calls=_mock_tool_calls(case),
-                    judge=mock_judge_result(failed=failed),
+                    judge=judge,
+                    mock_failure=failed,
                     elapsed_ms=24,
                 )
             )
@@ -299,7 +320,12 @@ async def _real_result(
             expected=case.expected,
             actual={"response_mode": "unavailable", "response": None, "tool_calls": []},
             deterministic_checks=[],
-            judge={"status": "skipped", "passed": None, "dimensions": [], "error": None},
+            judge={
+                "status": "skipped",
+                "passed": None,
+                "dimensions": [],
+                "error": None,
+            },
             failure_reasons=[
                 AgentFailureReason(
                     stage="runtime",
@@ -312,7 +338,14 @@ async def _real_result(
         )
 
 
-def _base_summary(*, run_id: str, suite, mock: bool, settings) -> AgentEvaluationSummary:
+def _base_summary(
+    *,
+    run_id: str,
+    suite,
+    mock: bool,
+    settings,
+    judge: AgentQualityJudge,
+) -> AgentEvaluationSummary:
     now = utc_now()
     judge_model = (
         "mock-judge"
@@ -334,6 +367,8 @@ def _base_summary(*, run_id: str, suite, mock: bool, settings) -> AgentEvaluatio
         dataset_version=suite.version,
         repeat_count=suite.repeat_count,
         model="mock-model" if mock else settings.ai_model,
+        evaluation_framework="deepeval",
+        evaluation_framework_version=judge.framework_version,
         judge_policy=AgentJudgePolicy(
             status="mock" if mock else "observational",
             enforced=False,
@@ -341,7 +376,7 @@ def _base_summary(*, run_id: str, suite, mock: bool, settings) -> AgentEvaluatio
             reason=(
                 "模拟判断只验收数据链路，不能代表真实质量"
                 if mock
-                else "判断官尚未用固定中文正反样本完成校准；结论展示但暂不作为发布硬门槛"
+                else "DeepEval 语义指标尚未用固定中文正反样本完成校准；结论展示但暂不作为发布硬门槛"
             ),
         ),
         counts=AgentEvaluationCounts(
@@ -357,7 +392,9 @@ def _base_summary(*, run_id: str, suite, mock: bool, settings) -> AgentEvaluatio
 
 async def async_main(args: argparse.Namespace) -> int:
     reports_root = args.reports_root.resolve()
-    run_id = args.run_id or datetime.now(timezone.utc).strftime("agent-eval-%Y%m%dT%H%M%SZ")
+    run_id = args.run_id or datetime.now(timezone.utc).strftime(
+        "agent-eval-%Y%m%dT%H%M%SZ"
+    )
     run_dir = reports_root / run_id
     if run_dir.exists():
         raise RuntimeError(f"run directory already exists: {run_dir}")
@@ -367,16 +404,21 @@ async def async_main(args: argparse.Namespace) -> int:
         if not settings.ai_api_key:
             raise RuntimeError("真实 Agent 评测要求 AI_API_KEY")
         install_read_only_guards(engine)
-    base = _base_summary(run_id=run_id, suite=suite, mock=args.mock, settings=settings)
+    judge = AgentQualityJudge(settings, mock=args.mock)
+    base = _base_summary(
+        run_id=run_id,
+        suite=suite,
+        mock=args.mock,
+        settings=settings,
+        judge=judge,
+    )
     total = len(suite.cases) * suite.repeat_count
     atomic_write_json(run_dir / "status.json", base.model_dump(mode="json"))
-    judge = None
     results: list[AgentEvaluationCaseResult] = []
     try:
         if args.mock:
-            results = _mock_results(suite.cases, suite.repeat_count)
+            results = await _mock_results(suite.cases, suite.repeat_count, judge)
         else:
-            judge = AgentQualityJudge(settings)
             for round_index in range(1, suite.repeat_count + 1):
                 for case in suite.cases:
                     results.append(
@@ -393,7 +435,9 @@ async def async_main(args: argparse.Namespace) -> int:
                         total=total,
                         status="running",
                     )
-                    atomic_write_json(run_dir / "status.json", running.model_dump(mode="json"))
+                    atomic_write_json(
+                        run_dir / "status.json", running.model_dump(mode="json")
+                    )
         summary = aggregate_agent_summary(base=base, cases=results, total=total)
         report = AgentEvaluationRunDetail(summary=summary, cases=results)
         write_agent_report(run_dir, report)
@@ -410,15 +454,16 @@ async def async_main(args: argparse.Namespace) -> int:
         atomic_write_json(run_dir / "status.json", failed.model_dump(mode="json"))
         raise
     finally:
-        if judge is not None:
-            await judge.close()
+        await judge.close()
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the isolated reply Agent task evaluation"
     )
-    parser.add_argument("--mock", action="store_true", help="No database or model calls")
+    parser.add_argument(
+        "--mock", action="store_true", help="No database or model calls"
+    )
     parser.add_argument("--run-id")
     parser.add_argument(
         "--reports-root",

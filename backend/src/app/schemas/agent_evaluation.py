@@ -57,6 +57,12 @@ class AgentEvaluationSummary(StrictModel):
     dataset_version: int = Field(ge=1)
     repeat_count: int = Field(ge=1, le=10)
     model: str = Field(min_length=1, max_length=120)
+    evaluation_framework: Literal["legacy_custom", "deepeval"] = "legacy_custom"
+    evaluation_framework_version: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=40,
+    )
     judge_policy: AgentJudgePolicy
     counts: AgentEvaluationCounts
     metrics: AgentEvaluationMetrics
@@ -129,10 +135,21 @@ class AgentJudgeDimension(StrictModel):
     evidence: str | None = Field(default=None, max_length=2000)
 
 
+class AgentFrameworkMetric(StrictModel):
+    key: str = Field(pattern=r"^[a-z][a-z0-9_]{1,119}$")
+    label: str = Field(min_length=1, max_length=200)
+    kind: Literal["deterministic", "llm"]
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    passed: bool | None = None
+    reason: str | None = Field(default=None, max_length=4000)
+
+
 class AgentJudgeResult(StrictModel):
     status: Literal["mock", "completed", "skipped", "error"]
     passed: bool | None = None
     dimensions: list[AgentJudgeDimension] = Field(default_factory=list)
+    framework_metrics: list[AgentFrameworkMetric] = Field(default_factory=list)
     error: str | None = Field(default=None, max_length=2000)
 
 

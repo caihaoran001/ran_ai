@@ -46,6 +46,8 @@ export type AgentEvaluationSummary = {
   dataset_version: number;
   repeat_count: number;
   model: string;
+  evaluation_framework?: "legacy_custom" | "deepeval";
+  evaluation_framework_version?: string | null;
   judge_policy: AgentJudgePolicy;
   counts: {
     total: number;
@@ -113,10 +115,21 @@ type JudgeDimension = {
   evidence?: string | null;
 };
 
+type FrameworkMetric = {
+  key: string;
+  label: string;
+  kind: "deterministic" | "llm";
+  score?: number | null;
+  threshold?: number | null;
+  passed?: boolean | null;
+  reason?: string | null;
+};
+
 type JudgeResult = {
   status: "mock" | "completed" | "skipped" | "error";
   passed?: boolean | null;
   dimensions: JudgeDimension[];
+  framework_metrics?: FrameworkMetric[];
   error?: string | null;
 };
 
@@ -187,6 +200,13 @@ const JUDGE_LABELS: Record<JudgeDimension["key"], string> = {
 };
 
 const ROLE_LABELS = { user: "用户", staff: "工作人员", assistant: "AI助教" };
+
+function frameworkLabel(summary: AgentEvaluationSummary) {
+  if (summary.evaluation_framework === "deepeval") {
+    return `DeepEval${summary.evaluation_framework_version ? ` ${summary.evaluation_framework_version}` : ""}`;
+  }
+  return "历史自研判断";
+}
 
 function percent(value?: number | null) {
   return value == null ? "—" : `${(value * 100).toFixed(1)}%`;
@@ -369,7 +389,9 @@ function EvidenceDetail({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Gauge className="h-4 w-4 text-cyan-700" />
-            <h3 className="text-sm font-extrabold text-slate-950">LLM 判断官</h3>
+            <h3 className="text-sm font-extrabold text-slate-950">
+              {item.judge.framework_metrics?.length ? "DeepEval 判断官" : "LLM 判断官"}
+            </h3>
             {judgeObservational && <span className="status-pill pill-neutral">仅观察</span>}
           </div>
           {item.judge.error && (
@@ -393,6 +415,31 @@ function EvidenceDetail({
               </div>
             )) : <p className="py-3 text-xs text-slate-400">本轮没有判断官结果。</p>}
           </div>
+          {Boolean(item.judge.framework_metrics?.length) && (
+            <div className="mt-4 rounded-xl border border-slate-200 bg-white px-3 py-3">
+              <p className="text-[11px] font-extrabold tracking-wide text-slate-500">DeepEval 原始指标</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {item.judge.framework_metrics?.map((metric) => (
+                  <div key={metric.key} className="min-w-0 rounded-lg bg-slate-50 px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-bold text-slate-800">{metric.label}</p>
+                        <p className="mt-0.5 text-[10px] text-slate-400">
+                          {metric.kind === "deterministic" ? "确定性指标" : "LLM 指标"}
+                        </p>
+                      </div>
+                      <span className={`status-pill ${metric.passed === true ? "pill-ok" : metric.passed === false ? "pill-risk" : "pill-neutral"}`}>
+                        {percent(metric.score)}
+                      </span>
+                    </div>
+                    {metric.key === "tool_correctness" && metric.reason && (
+                      <p className="mt-2 text-[10px] leading-4 text-slate-500">{metric.reason}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -533,6 +580,7 @@ export function AgentEvaluationsClient({
             <span>每题 {summary.repeat_count} 轮</span>
             <span>Agent {summary.model}</span>
             <span>判断官 {summary.judge_policy.model}</span>
+            <span>框架 {frameworkLabel(summary)}</span>
             <span>代码 {summary.git_sha.slice(0, 10)}</span>
             <span>{summary.counts.completed}/{summary.counts.total} 次已完成</span>
           </div>
@@ -543,7 +591,12 @@ export function AgentEvaluationsClient({
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <div className="flex items-start gap-2">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
-            <p className="leading-6"><span className="font-bold">当前是 Mock 链路验收。</span>工具调用、回复和判断官结果均为模拟，只证明失败规则和展示链路有效。</p>
+            <p className="leading-6">
+              <span className="font-bold">当前是 Mock 链路验收。</span>
+              {summary.evaluation_framework === "deepeval"
+                ? "回复和语义判断结果为模拟；DeepEval 工具指标与代码硬规则真实执行，只证明失败规则和展示链路有效。"
+                : "工具调用、回复和判断官结果均为模拟，只证明失败规则和展示链路有效。"}
+            </p>
           </div>
         </div>
       )}
@@ -608,7 +661,9 @@ export function AgentEvaluationsClient({
               <div className="px-5 pt-4 sm:px-6">
                 <div className="flex flex-wrap items-center gap-2">
                   <Gauge className="h-4 w-4 text-slate-500" />
-                  <h3 className="text-sm font-extrabold text-slate-900">LLM 判断官</h3>
+                  <h3 className="text-sm font-extrabold text-slate-900">
+                    {summary.evaluation_framework === "deepeval" ? "DeepEval 语义指标" : "LLM 判断官"}
+                  </h3>
                   {!summary.judge_policy.enforced && <span className="status-pill pill-neutral">仅观察</span>}
                 </div>
                 <p className="mt-1 text-xs leading-5 text-slate-500">{summary.judge_policy.reason}</p>

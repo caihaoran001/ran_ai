@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
+from importlib.util import find_spec
 
 import pytest
 
@@ -17,6 +19,7 @@ from app.schemas.agent_evaluation import (
     AgentEvaluationRunDetail,
     AgentEvaluationSummary,
     AgentExpectedToolCall,
+    AgentFrameworkMetric,
     AgentJudgePolicy,
     AgentJudgeResult,
     AgentRateMetric,
@@ -57,6 +60,8 @@ def _summary(run_id: str, *, status: str = "completed", minute: int = 0):
         dataset_version=1,
         repeat_count=2,
         model="mock-model",
+        evaluation_framework="deepeval",
+        evaluation_framework_version="4.1.5",
         judge_policy=AgentJudgePolicy(
             status="mock",
             enforced=False,
@@ -112,7 +117,21 @@ def _report(run_id: str) -> AgentEvaluationRunDetail:
         expected=expected,
         actual=actual,
         deterministic_checks=checks,
-        judge=AgentJudgeResult(status="mock", passed=True),
+        judge=AgentJudgeResult(
+            status="mock",
+            passed=True,
+            framework_metrics=[
+                AgentFrameworkMetric(
+                    key="tool_correctness",
+                    label="工具调用精确匹配",
+                    kind="deterministic",
+                    score=1,
+                    threshold=1,
+                    passed=True,
+                    reason="工具名称完全一致",
+                )
+            ],
+        ),
         failure_reasons=failures,
         elapsed_ms=20,
     )
@@ -136,7 +155,7 @@ def test_fixed_agent_suite_has_balanced_cases_and_repeats() -> None:
 
 
 @pytest.mark.asyncio
-async def test_isolated_graph_keeps_current_schemas_but_replaces_every_execution() -> None:
+async def test_isolated_graph_replaces_every_tool_execution() -> None:
     suite = load_agent_eval_suite()
     settings = get_settings().model_copy(
         update={"ai_api_key": "agent-eval-test-key", "web_search_enabled": False}
@@ -208,6 +227,58 @@ def test_deterministic_assessment_rejects_wrong_args_and_forbidden_write() -> No
 
 
 @pytest.mark.asyncio
+async def test_deepeval_adapter_records_framework_version_and_tool_metric() -> None:
+    if find_spec("deepeval") is None:
+        pytest.skip("DeepEval is installed only in the dedicated evaluation image")
+    from eval.agent_judge import AgentQualityJudge
+
+    expected = AgentCaseExpected(
+        response_mode="reply",
+        required_tools=[
+            AgentExpectedToolCall(name="get_service_progress", args_subset={})
+        ],
+        forbidden_tools=["set_checkin_checklist"],
+        required_facts=["说明当前服务天数"],
+    )
+    actual, _, _ = assess_agent_case(
+        expected=expected,
+        response="现在是服务第12天。",
+        tool_calls=[
+            AgentToolCallEvidence(
+                name="get_service_progress",
+                args={},
+                result={"service_day": 12},
+                ok=True,
+            ),
+            AgentToolCallEvidence(
+                name="set_checkin_checklist",
+                args={"questions": ["喝水"]},
+                result={"ok": False},
+                ok=False,
+            ),
+        ],
+    )
+    judge = AgentQualityJudge(get_settings(), mock=True)
+    try:
+        result = await judge.judge(
+            history=[],
+            user_query="现在第几天？",
+            expected=expected,
+            actual=actual,
+        )
+    finally:
+        await judge.close()
+
+    framework = {item.key: item for item in result.framework_metrics}
+    assert judge.framework_version == "4.1.5"
+    assert framework["tool_correctness"].passed is False
+    assert framework["tool_correctness"].kind == "deterministic"
+    assert framework["task_completion"].kind == "llm"
+    assert os.environ["DEEPEVAL_TELEMETRY_OPT_OUT"] == "1"
+    assert os.environ["DEEPEVAL_FILE_SYSTEM"] == "READ_ONLY"
+
+
+@pytest.mark.asyncio
 async def test_agent_evaluation_api_lists_status_and_returns_evidence(
     admin_client, tmp_path
 ) -> None:
@@ -220,7 +291,9 @@ async def test_agent_evaluation_api_lists_status_and_returns_evidence(
     )
     _write_json(
         tmp_path / "agent-eval-running" / "status.json",
-        _summary("agent-eval-running", status="running", minute=1).model_dump(mode="json"),
+        _summary("agent-eval-running", status="running", minute=1).model_dump(
+            mode="json"
+        ),
     )
 
     listing = await admin_client.get("/agent-evaluations")
@@ -232,9 +305,12 @@ async def test_agent_evaluation_api_lists_status_and_returns_evidence(
         "agent-eval-completed",
     ]
     assert detail.status_code == 200
+    assert detail.json()["summary"]["evaluation_framework"] == "deepeval"
+    assert detail.json()["summary"]["evaluation_framework_version"] == "4.1.5"
     case = detail.json()["cases"][0]
     assert case["actual"]["tool_calls"][0]["result"] == {"service_day": 12}
     assert case["deterministic_checks"][0]["code"] == "response_mode"
+    assert case["judge"]["framework_metrics"][0]["key"] == "tool_correctness"
 
 
 @pytest.mark.asyncio

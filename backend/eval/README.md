@@ -6,7 +6,9 @@ RAG 与回复 Agent 使用两套固定题库和报告目录。两类结果统一
 
 Agent v1 固定题库为 `tests/fixtures/agent_eval_cases.v1.json`：30 题，其中 15 题由线上高频任务脱敏抽象，15 题覆盖写操作授权、信息不足澄清、时间指代和不回复边界；每题固定运行两轮，共 60 次。
 
-真实模式会让当前回复 Agent 看到生产同款工具定义，但所有工具执行都在隔离层返回题目预置结果。它不会连接生产数据库、发送企微消息、创建真实提醒或修改任何业务数据；写操作只保留“模型打算怎么调用”的证据。每题先由代码硬检查工具选择、关键参数、禁止动作和明确事实，再由独立 LLM 判断官评价任务完成、证据忠实、澄清合理和表达质量。判断官完成固定中文正反样本校准前只展示诊断，不参与发布硬门槛。
+真实模式会让当前回复 Agent 看到生产同款工具定义，但所有工具执行都在隔离层返回题目预置结果。它不会连接生产数据库、发送企微消息、创建真实提醒或修改任何业务数据；写操作只保留“模型打算怎么调用”的证据。每题先由代码硬检查工具选择、关键参数、禁止动作和明确事实，再由 `DeepEval==4.1.5` 执行工具调用精确匹配、任务完成、证据忠实、澄清合理和表达质量五项指标。日期、对象、关键参数和越权动作仍由业务硬规则判定，不能被通用框架的高分抵消。DeepEval 语义指标完成固定中文正反样本校准前只展示诊断，不参与发布硬门槛。
+
+评测容器强制关闭 DeepEval 匿名遥测、Confident AI 上传、自动打开浏览器、隐式 `.env` 和旧式 key 文件读取；指标直接调用项目现有的 OpenAI 兼容模型地址，不需要 Confident AI 账号或密钥。报告明确记录 DeepEval 版本和每项框架原始分数，旧自研判断官报告继续兼容读取。
 
 无费用 Mock 会完整生成 60 次执行和一条故意注入的未授权写操作，用来证明失败规则、API 和前端证据链有效：
 
@@ -23,7 +25,7 @@ docker compose -f docker-compose.agent-eval.yml run \
   --name ran_ai-agent-eval-real --no-deps agent-eval
 ```
 
-每批最多 60 ×（5 次 Agent 模型调用 + 1 次判断官调用）= 360 次模型调用，实际调用数取决于每题工具循环是否提前结束。报告写入 `diagnostics/agent-evaluations/<run_id>/`；每题保存前序对话、预期、工具参数、固定返回、最终回复、代码检查和判断官理由。
+每批最多 60 ×（5 次 Agent 模型调用 + 5 次 DeepEval 判断调用）= 600 次模型调用：Task Completion 使用两次模型调用，另外三个语义指标各一次；工具精确匹配不调用模型。实际调用数取决于每题工具循环是否提前结束。报告写入 `diagnostics/agent-evaluations/<run_id>/`；每题保存前序对话、预期、工具参数、固定返回、最终回复、代码检查、DeepEval 原始指标和判断理由。
 
 下面各节为 RAG 评测说明。
 
@@ -38,7 +40,7 @@ docker compose -f docker-compose.eval.yml build rag-eval
 docker compose -f docker-compose.eval.yml up --no-deps rag-eval
 ```
 
-`ragas==0.4.3` 已固化在 `ran-ai-rag-eval:local` 镜像中。评测结束后容器是 `Exited`，不会常驻，但镜像和依赖仍在。
+`ragas==0.4.3` 与 `deepeval==4.1.5` 已固化在共享的 `ran-ai-rag-eval:local` 评测镜像中：RAG 当前继续使用 RAGAS，Agent 使用 DeepEval。评测结束后容器是 `Exited`，不会常驻，但镜像和依赖仍在。
 
 RAGAS 判官的最大输出默认是 50,000 tokens，由 `RAG_EVAL_JUDGE_MAX_TOKENS` 控制。它只放宽离线判官生成结构化评分的上限，不改变线上回复长度，也不会固定消耗 50,000 tokens；计费仍以实际生成量为准。
 
