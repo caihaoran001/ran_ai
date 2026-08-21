@@ -241,6 +241,7 @@ def _expected_description(expected: AgentCaseExpected) -> str:
             item.model_dump(mode="json") for item in expected.required_tools
         ],
         "禁止调用的工具": expected.forbidden_tools,
+        "允许但不强制调用的辅助工具": expected.allowed_additional_tools,
         "必须准确出现的内容": expected.required_literals,
         "禁止出现的内容": expected.forbidden_literals,
         "必须表达的业务事实": expected.required_facts,
@@ -372,16 +373,21 @@ class AgentQualityJudge:
             metric=metric,
         )
 
-    def _tool_metric(self):
+    def _tool_metric(self, expected: AgentCaseExpected):
+        exact_match = not (
+            expected.allow_additional_tools or expected.allowed_additional_tools
+        )
         metric = self._api["ToolCorrectnessMetric"](
             model=self._model,
             threshold=1,
             strict_mode=True,
-            should_exact_match=True,
+            should_exact_match=exact_match,
             include_reason=True,
         )
         metric._ran_ai_key = "tool_correctness"
-        metric._ran_ai_label = "工具调用精确匹配"
+        metric._ran_ai_label = (
+            "工具调用精确匹配" if exact_match else "必需工具匹配"
+        )
         metric._ran_ai_kind = "deterministic"
         return metric
 
@@ -494,7 +500,9 @@ class AgentQualityJudge:
             expected=expected,
             actual=actual,
         )
-        framework_metrics = [await self._measure(self._tool_metric(), test_case)]
+        framework_metrics = [
+            await self._measure(self._tool_metric(expected), test_case)
+        ]
         if self._mock:
             framework_metrics.extend(self._mock_semantic_metrics(failed=mock_failure))
             status = "mock"

@@ -114,13 +114,26 @@ def assess_agent_case(
 
     unexpected = []
     if not expected.allow_additional_tools:
-        permitted = required_names | set(expected.forbidden_tools)
+        permitted = (
+            required_names
+            | set(expected.forbidden_tools)
+            | set(expected.allowed_additional_tools)
+        )
         unexpected = sorted({name for name in actual_names if name not in permitted})
+    used_allowed = sorted(set(actual_names) & set(expected.allowed_additional_tools))
     add(
         "additional_tools",
         "额外工具",
         not unexpected,
-        "没有计划外工具调用" if not unexpected else f"调用了计划外工具：{', '.join(unexpected)}",
+        (
+            f"只调用了题目明确允许的辅助工具：{', '.join(used_allowed)}"
+            if used_allowed and not unexpected
+            else (
+                "没有计划外工具调用"
+                if not unexpected
+                else f"调用了计划外工具：{', '.join(unexpected)}"
+            )
+        ),
         severity="warning",
     )
 

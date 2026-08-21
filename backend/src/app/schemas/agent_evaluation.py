@@ -147,6 +147,7 @@ class AgentCaseExpected(StrictModel):
     response_mode: Literal["reply", "clarify", "no_reply"]
     required_tools: list[AgentExpectedToolCall] = Field(default_factory=list)
     forbidden_tools: list[str] = Field(default_factory=list)
+    allowed_additional_tools: list[str] = Field(default_factory=list)
     allow_additional_tools: bool = False
     required_literals: list[str] = Field(default_factory=list)
     forbidden_literals: list[str] = Field(default_factory=list)

@@ -124,6 +124,7 @@ type ExpectedResult = {
   response_mode: "reply" | "clarify" | "no_reply";
   required_tools: ExpectedToolCall[];
   forbidden_tools: string[];
+  allowed_additional_tools: string[];
   allow_additional_tools: boolean;
   required_literals: string[];
   forbidden_literals: string[];
@@ -502,6 +503,9 @@ function EvidenceDetail({
             </div>
             {item.expected.forbidden_tools.length > 0 && (
               <p><span className="font-extrabold text-slate-800">禁止调用：</span>{item.expected.forbidden_tools.join("、")}</p>
+            )}
+            {item.expected.allowed_additional_tools.length > 0 && (
+              <p><span className="font-extrabold text-slate-800">可选辅助：</span>{item.expected.allowed_additional_tools.join("、")}</p>
             )}
             {item.expected.required_facts.length > 0 && (
               <div>

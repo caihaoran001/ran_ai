@@ -60,9 +60,22 @@ class AgentEvalCase(StrictModel):
         if len(stub_names) != len(set(stub_names)):
             raise ValueError("tool_stubs contains duplicate tool names")
         required_names = {item.name for item in self.expected.required_tools}
-        missing = required_names - set(stub_names)
+        allowed_names = set(self.expected.allowed_additional_tools)
+        forbidden_names = set(self.expected.forbidden_tools)
+        if len(allowed_names) != len(self.expected.allowed_additional_tools):
+            raise ValueError("allowed_additional_tools contains duplicate tool names")
+        overlap = allowed_names & (required_names | forbidden_names)
+        if overlap:
+            raise ValueError(
+                "allowed_additional_tools must not repeat required or forbidden tools: "
+                f"{sorted(overlap)}"
+            )
+        missing = (required_names | allowed_names) - set(stub_names)
         if missing:
-            raise ValueError(f"required tools have no sandbox result: {sorted(missing)}")
+            raise ValueError(
+                "required or allowed tools have no sandbox result: "
+                f"{sorted(missing)}"
+            )
         return self
 
 
@@ -89,7 +102,7 @@ class AgentEvalSuite(StrictModel):
 
 
 def default_agent_eval_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "agent_eval_cases.v1.json"
+    return Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "agent_eval_cases.v2.json"
 
 
 def load_agent_eval_suite(path: Path | None = None) -> AgentEvalSuite:

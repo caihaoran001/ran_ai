@@ -148,6 +148,8 @@ def _write_json(path, payload) -> None:
 def test_fixed_agent_suite_has_balanced_cases_and_repeats() -> None:
     suite = load_agent_eval_suite()
 
+    assert suite.suite_id == "agent-task-core-v2"
+    assert suite.version == 2
     assert len(suite.cases) == 30
     assert suite.repeat_count == 2
     assert sum(case.origin == "production_derived" for case in suite.cases) == 15
@@ -171,6 +173,7 @@ async def test_isolated_graph_replaces_every_tool_execution() -> None:
         for name in (
             [item.name for item in case.expected.required_tools]
             + case.expected.forbidden_tools
+            + case.expected.allowed_additional_tools
             + [item.name for item in case.tool_stubs]
         )
     }
@@ -226,6 +229,75 @@ def test_deterministic_assessment_rejects_wrong_args_and_forbidden_write() -> No
         "tool_args_get_recent_checkins",
         "forbidden_tools",
     }
+
+
+def test_deterministic_assessment_allows_only_named_auxiliary_tools() -> None:
+    expected = AgentCaseExpected(
+        response_mode="reply",
+        required_tools=[
+            AgentExpectedToolCall(name="get_weight_trend", args_subset={"days": 7})
+        ],
+        allowed_additional_tools=["skill", "read_skill_file"],
+    )
+    _, allowed_checks, allowed_failures = assess_agent_case(
+        expected=expected,
+        response="近七天体重下降0.8公斤。",
+        tool_calls=[
+            AgentToolCallEvidence(
+                name="skill",
+                args={"name": "checkin_analysis"},
+                result="体重趋势分析规则",
+                ok=True,
+            ),
+            AgentToolCallEvidence(
+                name="get_weight_trend",
+                args={"days": 7},
+                result={"change_kg": -0.8},
+                ok=True,
+            ),
+        ],
+    )
+    allowed_by_code = {item.code: item for item in allowed_checks}
+    assert allowed_by_code["additional_tools"].passed is True
+    assert "明确允许" in allowed_by_code["additional_tools"].message
+    assert allowed_failures == []
+
+    _, rejected_checks, rejected_failures = assess_agent_case(
+        expected=expected,
+        response="近七天体重下降0.8公斤。",
+        tool_calls=[
+            AgentToolCallEvidence(
+                name="get_weight_trend",
+                args={"days": 7},
+                result={"change_kg": -0.8},
+                ok=True,
+            ),
+            AgentToolCallEvidence(
+                name="get_service_progress",
+                args={},
+                result={"service_day": 12},
+                ok=True,
+            ),
+        ],
+    )
+    rejected_by_code = {item.code: item for item in rejected_checks}
+    assert rejected_by_code["additional_tools"].passed is False
+    assert "get_service_progress" in rejected_by_code["additional_tools"].message
+    assert {item.code for item in rejected_failures} == {"additional_tools"}
+
+
+def test_v2_sandbox_results_match_runtime_tool_contracts() -> None:
+    suite = load_agent_eval_suite()
+    by_id = {case.case_id: case for case in suite.cases}
+
+    restore = by_id["agent-restore-checklist"].tool_stubs[0].results[0]
+    assert restore["restored"] is True
+    assert len(restore["questions"]) == 5
+
+    continuation = by_id["agent-continue-service"].tool_stubs[0].results[0]
+    assert continuation["continued"] is True
+    assert continuation["service_day"] == 31
+    assert continuation["service_day_text"] == "第 31 天"
 
 
 @pytest.mark.asyncio
