@@ -32,7 +32,7 @@ services:
       AGENT_EVAL_JUDGE_MAX_TOKENS: ${AGENT_EVAL_JUDGE_MAX_TOKENS:-4000}
       AGENT_EVAL_GIT_SHA: ${AGENT_EVAL_GIT_SHA:-unknown}
       AGENT_EVALUATION_REPORTS_PATH: /app/diagnostics/agent-evaluations
-      AGENT_EVALUATION_DATASET_PATH: /app/tests/fixtures/agent_eval_cases.v1.json
+      AGENT_EVALUATION_DATASET_PATH: /app/tests/fixtures/agent_eval_cases.v3.json
       DEEPEVAL_TELEMETRY_OPT_OUT: "1"
       DEEPEVAL_DISABLE_DOTENV: "1"
       DEEPEVAL_DISABLE_LEGACY_KEYFILE: "1"
