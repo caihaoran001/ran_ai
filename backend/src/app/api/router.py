@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.routes import (
+    agent_evaluations,
     agent_operations,
     checkins,
     checkin_rewards,
@@ -25,6 +26,11 @@ from app.api.routes import (
 )
 
 api_router = APIRouter()
+api_router.include_router(
+    agent_evaluations.router,
+    prefix="/agent-evaluations",
+    tags=["agent-evaluations"],
+)
 api_router.include_router(
     agent_operations.router,
     prefix="/agent-operations",

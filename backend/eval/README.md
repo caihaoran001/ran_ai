@@ -1,5 +1,32 @@
 # RAG 与 Agent 评测
 
+RAG 与回复 Agent 使用两套固定题库和报告目录。两类结果统一展示在后台“回复质量”页面，但运行时彼此独立。
+
+## 回复 Agent 任务质量
+
+Agent v1 固定题库为 `tests/fixtures/agent_eval_cases.v1.json`：30 题，其中 15 题由线上高频任务脱敏抽象，15 题覆盖写操作授权、信息不足澄清、时间指代和不回复边界；每题固定运行两轮，共 60 次。
+
+真实模式会让当前回复 Agent 看到生产同款工具定义，但所有工具执行都在隔离层返回题目预置结果。它不会连接生产数据库、发送企微消息、创建真实提醒或修改任何业务数据；写操作只保留“模型打算怎么调用”的证据。每题先由代码硬检查工具选择、关键参数、禁止动作和明确事实，再由独立 LLM 判断官评价任务完成、证据忠实、澄清合理和表达质量。判断官完成固定中文正反样本校准前只展示诊断，不参与发布硬门槛。
+
+无费用 Mock 会完整生成 60 次执行和一条故意注入的未授权写操作，用来证明失败规则、API 和前端证据链有效：
+
+```bash
+docker compose -f docker-compose.agent-eval.yml build agent-eval
+docker compose -f docker-compose.agent-eval.yml run \
+  --name ran_ai-agent-eval-mock --no-deps agent-eval --mock
+```
+
+真实评测会产生费用，必须得到当次明确授权后再运行：
+
+```bash
+docker compose -f docker-compose.agent-eval.yml run \
+  --name ran_ai-agent-eval-real --no-deps agent-eval
+```
+
+每批最多 60 ×（5 次 Agent 模型调用 + 1 次判断官调用）= 360 次模型调用，实际调用数取决于每题工具循环是否提前结束。报告写入 `diagnostics/agent-evaluations/<run_id>/`；每题保存前序对话、预期、工具参数、固定返回、最终回复、代码检查和判断官理由。
+
+下面各节为 RAG 评测说明。
+
 评测只在 ECS 上连接生产 RDS，进程启动后同时启用 PostgreSQL 只读会话和 SQL 写入拦截；意图模型原有的用量日志写入会改为进程内收集。不会调用消息渠道，也不会创建提醒或修改服务单。
 
 正式题库固定为 `tests/fixtures/rag_eval_cases.v2.json`：25 条依据生产 FAQ 改写，25 条来自一次性筛选并脱敏的生产聊天。v2 为两道省略问法补齐了能确定所指对象的前文；每次运行只读取这个文件，不会重新抽 FAQ、聊天或自动替换题目。

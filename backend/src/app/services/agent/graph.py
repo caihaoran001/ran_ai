@@ -183,7 +183,7 @@ class RanrenAgentGraph:
                     query_speaker=query_speaker,
                     recent_messages=recent_messages,
                     skill_catalog=self.skill_registry.catalog_text(),
-                    current_time_context=_current_time_context(),
+                    current_time_context=self._current_time_context(),
                     memory_context=memory_context,
                     knowledge_context=knowledge_context,
                     bot_nickname=bot_nickname,
@@ -235,6 +235,10 @@ class RanrenAgentGraph:
             knowledge_hit_count=knowledge_hit_count,
             knowledge_hits=knowledge_hits,
         )
+
+    def _current_time_context(self) -> str:
+        """Runtime clock hook; isolated evaluation overrides it with a fixed clock."""
+        return _current_time_context()
 
     async def _build_memory_context(self) -> str:
         try:
