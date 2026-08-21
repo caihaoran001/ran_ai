@@ -148,10 +148,18 @@ def _mock_tool_calls(case: AgentEvalCase) -> list[AgentToolCallEvidence]:
     calls = []
     for expected in case.expected.required_tools:
         result = stubs[expected.name].results[0]
+        args = dict(expected.args_subset)
+        for name, rule in expected.string_args.items():
+            args[name] = " ".join(
+                [
+                    *rule.required_literals,
+                    *(group[0] for group in rule.required_any_groups),
+                ]
+            )
         calls.append(
             AgentToolCallEvidence(
                 name=expected.name,
-                args=expected.args_subset,
+                args=args,
                 result=result,
                 ok=not isinstance(result, dict) or result.get("ok") is not False,
                 elapsed_ms=12,

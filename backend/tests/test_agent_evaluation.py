@@ -29,7 +29,7 @@ from app.schemas.agent_evaluation import (
 )
 from app.services.agent_evaluation_reports import AgentEvaluationReportStore
 from eval.agent_costs import AgentEvaluationCostLedger, install_agent_usage_collector
-from eval.run_agent_eval import IsolatedAgentGraph, SandboxTool
+from eval.run_agent_eval import IsolatedAgentGraph, SandboxTool, _mock_tool_calls
 
 
 def _metrics() -> AgentEvaluationMetrics:
@@ -375,6 +375,18 @@ def test_v3_sandbox_results_match_runtime_tool_contracts() -> None:
     assert continuation["continued"] is True
     assert continuation["service_day"] == 31
     assert continuation["service_day_text"] == "第 31 天"
+
+    success_case = by_id["agent-success-case"]
+    mock_calls = _mock_tool_calls(success_case)
+    _, checks, failures = assess_agent_case(
+        expected=success_case.expected,
+        response="相似案例说明短期体重不动不等于瘦不下来。",
+        tool_calls=mock_calls,
+    )
+    assert {item.code: item.passed for item in checks}[
+        "tool_args_search_success_case"
+    ] is True
+    assert failures == []
 
 
 @pytest.mark.asyncio
