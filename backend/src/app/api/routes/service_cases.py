@@ -5,7 +5,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import Date, and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -363,6 +363,40 @@ def _apply_service_case_filter(statement, metric: str | None):
             last_message_subq, last_message_subq.c.service_case_id == ServiceCase.id
         )
         return statement.where(last_message_subq.c.last_at.is_(None))
+    if metric in {"graduated", "ended_early"}:
+        # 完成率拆分：与 service_case_queries.split_terminal_outcomes 同一判据的 SQL 版。
+        # 第 1 天 = 计划开始日（回退开始文件发送当日，上海时区）；毕业 = 结束日期落在
+        # 第 28 天或之后；提前结束 = 退款，或已完结但结束日期早于第 28 天。结束时刻
+        # 取「离群时间优先、否则结束时间」——存量自愈单的结束时间是补结时刻不可信。
+        _tz_literal = text("'Asia/Shanghai'")
+        first_day = func.coalesce(
+            ServiceCase.service_plan_start_date,
+            func.cast(func.timezone(_tz_literal, ServiceCase.started_at), Date) + text("1"),
+        )
+        ended_date = func.cast(
+            func.timezone(
+                _tz_literal,
+                func.coalesce(ServiceCase.member_left_at, ServiceCase.ended_at),
+            ),
+            Date,
+        )
+        end_lag_days = ended_date - first_day
+        if metric == "graduated":
+            return statement.where(
+                ServiceCase.status == ServiceCaseStatus.COMPLETED,
+                or_(first_day.is_(None), ended_date.is_(None), end_lag_days >= 27),
+            )
+        return statement.where(
+            or_(
+                ServiceCase.status == ServiceCaseStatus.REFUNDED,
+                and_(
+                    ServiceCase.status == ServiceCaseStatus.COMPLETED,
+                    first_day.is_not(None),
+                    ended_date.is_not(None),
+                    end_lag_days < 27,
+                ),
+            )
+        )
     if metric in {"unfollowed", "lost"}:
         # 只看「用户本人」的发言：班主任在群里跟进不代表用户还活着。
         last_message_subq = last_user_inbound_subquery()

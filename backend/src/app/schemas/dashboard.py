@@ -367,6 +367,10 @@ class DashboardSummary(BaseModel):
     service_cases_total: int
     service_cases_in_service: int
     service_cases_member_left: int = 0
+    # 完成率拆分：毕业=服满28天自然到期；提前结束=未到28天就终了（含退款）
+    service_cases_graduated: int = 0
+    service_cases_ended_early: int = 0
+    ended_early_avg_service_day: float | None = None
     checkins_today: int
     complete_checkins_today: int = 0
     messages_today: int

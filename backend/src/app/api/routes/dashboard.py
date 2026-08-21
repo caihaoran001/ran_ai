@@ -93,6 +93,7 @@ from app.services.service_case_queries import (
     intake_submitted_between_condition,
     last_user_inbound_subquery,
     member_present_condition,
+    split_terminal_outcomes,
     stats_scope_condition,
 )
 
@@ -177,6 +178,25 @@ async def dashboard_summary(
             _stats_case_condition(),
             ServiceCase.member_left_at.is_not(None),
         )
+    )
+    terminal_rows = (
+        await session.execute(
+            select(
+                ServiceCase.service_plan_start_date,
+                ServiceCase.started_at,
+                ServiceCase.member_left_at,
+                ServiceCase.ended_at,
+                ServiceCase.status,
+            ).where(
+                _stats_case_condition(),
+                ServiceCase.status.in_(
+                    [ServiceCaseStatus.COMPLETED, ServiceCaseStatus.REFUNDED]
+                ),
+            )
+        )
+    ).all()
+    graduated_cases, ended_early_cases, avg_end_day = split_terminal_outcomes(
+        terminal_rows, ZoneInfo("Asia/Shanghai")
     )
     today_start, today_end = _today_bounds()
     today = today_start.astimezone(ZoneInfo("Asia/Shanghai")).date()
@@ -366,6 +386,9 @@ async def dashboard_summary(
         service_cases_total=total or 0,
         service_cases_in_service=in_service or 0,
         service_cases_member_left=member_left or 0,
+        service_cases_graduated=len(graduated_cases),
+        service_cases_ended_early=len(ended_early_cases),
+        ended_early_avg_service_day=avg_end_day,
         checkins_today=checkins_today or 0,
         complete_checkins_today=complete_checkins_today,
         messages_today=messages_today or 0,
