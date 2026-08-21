@@ -35,6 +35,9 @@ class DocumentStatus(str, enum.Enum):
     APPROVED = "approved"
     SENT = "sent"
     ARCHIVED = "archived"  # 人工审核后决定不发送，归档留痕（前端显示「未发送」）
+    # 被更新版本系统自动替代的旧稿，非人工决定。重新生成交付文件时，
+    # 旧版「草稿/待审核」文件会被自动翻成该状态；已发送/归档文件不被动。
+    SUPERSEDED = "superseded"
 
 
 class UserDocument(TimestampMixin, Base):

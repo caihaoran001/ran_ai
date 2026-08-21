@@ -211,6 +211,8 @@ class DashboardPendingDocument(BaseModel):
     # 内部运营状态：需人工复核的入营文件不会自动发送，后台必须醒目标记。
     manual_review_required: bool = False
     manual_review_reasons: list[str] = Field(default_factory=list)
+    # 文件生成时 LLM 不可用、退化为兜底内容（如降级阶段报告），运营需识别后重试/复核。
+    degraded: bool = False
 
 
 class DashboardCasePendingDocuments(BaseModel):

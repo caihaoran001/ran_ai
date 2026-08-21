@@ -154,6 +154,9 @@ async def generate_profile_and_documents(
         intake_facts=intake_facts,
     )
     internal_review = _internal_review_metadata(package["profile_json"])
+    # 重新生成交付文件时，同服务单同类型、仍处于「草稿/待审核」的旧版文件被系统自动替代
+    # （非人工决定）。这与新文档在同一事务里落库；已发送/归档/已替代的文件一律不碰。
+    await _supersede_pending_delivery_documents(session, service_case.id)
     documents: list[UserDocument] = []
     for document_type, title in DOCUMENT_DEFINITIONS.items():
         fields_payload = package["document_payloads"].get(document_type.value) or {}
@@ -399,6 +402,29 @@ async def rewrite_document_file(session: AsyncSession, document: UserDocument) -
     await session.commit()
     await session.refresh(document)
     return document
+
+
+async def _supersede_pending_delivery_documents(
+    session: AsyncSession, service_case_id: int
+) -> None:
+    """把同服务单尚未定稿的旧交付文件标记为「已替代」（自动，非人工决定）。
+
+    只碰 document_type 属于交付文件定义（排除阶段报告）、status 仍为草稿/待审核的旧稿；
+    已发送/已归档/已替代的文件是终态，绝不改动。改动随调用方的事务一起提交。
+    """
+    delivery_types = list(DOCUMENT_DEFINITIONS.keys())
+    superseded = list(
+        await session.scalars(
+            select(UserDocument)
+            .where(
+                UserDocument.service_case_id == service_case_id,
+                UserDocument.document_type.in_(delivery_types),
+                UserDocument.status.in_([DocumentStatus.DRAFT, DocumentStatus.REVIEWING]),
+            )
+        )
+    )
+    for document in superseded:
+        document.status = DocumentStatus.SUPERSEDED
 
 
 def _internal_review_metadata(profile_json: object) -> dict[str, object]:

@@ -1517,6 +1517,11 @@ async def dashboard_pending_documents(
         )
         internal_review = internal_review if isinstance(internal_review, dict) else {}
         reasons = internal_review.get("reasons")
+        degraded = (
+            bool(document.content_json.get("degraded"))
+            if isinstance(document.content_json, dict)
+            else False
+        )
         item.documents.append(
             DashboardPendingDocument(
                 document_id=document.id,
@@ -1531,6 +1536,7 @@ async def dashboard_pending_documents(
                 ]
                 if isinstance(reasons, list)
                 else [],
+                degraded=degraded,
             )
         )
     return list(grouped.values())
