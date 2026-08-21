@@ -13,6 +13,89 @@ import sys
 import time
 import subprocess
 import os
+import hashlib
+
+ECS_HOST = '43.98.170.61'
+ECS_USER = 'root'
+ECS_PASSWORD = 'ranAI3621715280'
+UPLOAD_CHUNK = 4 * 1024 * 1024
+UPLOAD_ATTEMPTS = 8
+
+
+def connect_ecs():
+    """带 keepalive 的连接：长时间跑 build 时主连接不至于被静默掐断。"""
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(ECS_HOST, username=ECS_USER, password=ECS_PASSWORD, timeout=20)
+    transport = client.get_transport()
+    if transport is not None:
+        transport.set_keepalive(15)
+    return client
+
+
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def remote_sha256(client, remote_path):
+    _, stdout, _ = client.exec_command(f'sha256sum {remote_path}', timeout=600)
+    out = stdout.read().decode('utf-8', 'replace').split()
+    return out[0] if out else ''
+
+
+def remote_size(client, remote_path):
+    _, stdout, _ = client.exec_command(f'stat -c %s {remote_path} 2>/dev/null || echo 0', timeout=60)
+    try:
+        return int(stdout.read().decode().strip() or 0)
+    except ValueError:
+        return 0
+
+
+def upload_resumable(local_path, remote_path, total):
+    """分块上传；断了就按远端已有大小续传。返回 True 表示远端大小已与本地一致。"""
+    for attempt in range(1, UPLOAD_ATTEMPTS + 1):
+        client = connect_ecs()
+        try:
+            offset = remote_size(client, remote_path)
+            if offset > total:
+                print(f"  Remote bigger than local ({offset}>{total}); stale archive, removing")
+                client.exec_command(f'rm -f {remote_path}')[1].channel.recv_exit_status()
+                offset = 0
+            if offset == total:
+                return True
+            print(f"  Attempt {attempt}: resuming at {offset/1e6:.1f}MB of {total/1e6:.1f}MB")
+            sftp = client.open_sftp()
+            sftp.get_channel().settimeout(120)
+            with open(local_path, 'rb') as src, sftp.open(remote_path, 'ab' if offset else 'wb') as dst:
+                dst.set_pipelined(True)
+                src.seek(offset)
+                sent = offset
+                last = time.time()
+                while True:
+                    block = src.read(UPLOAD_CHUNK)
+                    if not block:
+                        break
+                    dst.write(block)
+                    sent += len(block)
+                    if time.time() - last > 3:
+                        print(f"    {sent/1e6:.1f}/{total/1e6:.1f}MB ({sent*100/total:.0f}%)", end='\r')
+                        last = time.time()
+            sftp.close()
+            print(f"    {total/1e6:.1f}/{total/1e6:.1f}MB (100%)")
+            if remote_size(client, remote_path) == total:
+                return True
+            print("  Size mismatch after write; will resume")
+        except Exception as exc:
+            print(f"  Upload interrupted ({type(exc).__name__}: {exc}); will resume")
+            time.sleep(3)
+        finally:
+            client.close()
+    return False
+
 
 def run_local_command(cmd, cwd=None):
     print(f"🏃 Running local command: {cmd}")
@@ -80,28 +163,34 @@ def main():
     
     # 3. SSH Connect to Aliyun ECS
     print("\n🔗 Step 3: Connecting to Aliyun ECS...")
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        client.connect('43.98.170.61', username='root', password='ranAI3621715280', timeout=10)
+        client = connect_ecs()
     except Exception as e:
         print(f"❌ Failed to connect to ECS: {e}")
         sys.exit(1)
     print("  ✅ Connected!")
 
-    # 4. Upload Archive
-    print("\n📤 Step 4: Uploading archive...")
-    sftp = client.open_sftp()
-    
-    local_path = archive_path
+    # 4. Upload Archive（分块续传 + 解压前校验）
+    #    这台 ECS 上一次性 sftp.put ~80MB 会静默断流：远端只落一半、不抛错，
+    #    脚本会一直干等，而半截包一旦解压就用残缺代码覆盖了线上（已踩两次）。
+    #    所以改成按块写、断了按远端已有大小续传，并且 sha256 不一致就中止。
+    print("\n📤 Step 4: Uploading archive (resumable, verified)...")
     remote_path = '/root/ran_ai_deploy.tar.gz'
-    
-    def progress_callback(transferred, total):
-        print(f"  Uploaded {transferred}/{total} bytes ({(transferred/total)*100:.1f}%)", end='\r')
-        
-    sftp.put(local_path, remote_path, callback=progress_callback)
-    print("\n  ✅ Upload finished!")
-    sftp.close()
+    local_digest = sha256_of(archive_path)
+    total_bytes = os.path.getsize(archive_path)
+    print(f"  Local {total_bytes/1e6:.1f}MB sha256={local_digest[:16]}…")
+    client.close()  # 上传期间用独立连接，避免主连接长时间空转被掐断
+    if not upload_resumable(archive_path, remote_path, total_bytes):
+        print("❌ Upload failed after retries; remote partial archive left unextracted.")
+        sys.exit(1)
+    client = connect_ecs()
+    remote_digest = remote_sha256(client, remote_path)
+    print(f"  Remote sha256={remote_digest[:16]}…")
+    if remote_digest != local_digest:
+        print("❌ Archive checksum mismatch — refusing to extract (production code untouched).")
+        client.close()
+        sys.exit(1)
+    print("  ✅ Upload verified!")
 
     # 5. Extract and Clear Diagnostics History
     print("\n📂 Step 5: Extracting files and clearing diagnostics history on remote ECS...")

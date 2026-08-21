@@ -158,11 +158,13 @@ async def test_population_insight_excludes_refunded_cases(db_session):
         phone="13700000006",
         customer_type="健康投资型",
     )
+    # 分型串刻意取得独一无二：姓名/手机号本来就会被匿名化抹掉，拿它们断言等于没断言，
+    # 只有这种会原样进提示词的字段才能证明退款单真的没被喂给模型。
     refunded = await _add_profiled_case(
         db_session,
         name="退款丙",
         phone="13700000007",
-        customer_type="健康投资型",
+        customer_type="仅退款样本分型",
     )
     refunded.status = ServiceCaseStatus.REFUNDED
     await db_session.flush()
@@ -180,8 +182,9 @@ async def test_population_insight_excludes_refunded_cases(db_session):
     prompt = ai.calls[0]["user_prompt"]
     payload = json.loads(prompt.split("\n", 1)[1])
     assert payload["sample"]["included_users"] == len(insight_case_ids)
-    assert "退款丙" not in prompt
-    assert "13700000007" not in prompt
+    assert "仅退款样本分型" not in prompt
+    assert "疾病管理型" in prompt
+    assert "健康投资型" in prompt
 
 
 @pytest.mark.asyncio
