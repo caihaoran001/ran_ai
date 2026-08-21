@@ -22,6 +22,7 @@ from app.schemas.agent_evaluation import (
     AgentEvaluationCounts,
     AgentEvaluationRunDetail,
     AgentEvaluationSummary,
+    AgentEvaluationUsageSummary,
     AgentFailureReason,
     AgentJudgePolicy,
     AgentJudgeResult,
@@ -31,6 +32,7 @@ from app.services.agent.graph import RanrenAgentGraph
 from app.services.agent.state import AgentRunContext
 
 if __package__:
+    from .agent_costs import AgentEvaluationCostLedger, install_agent_usage_collector
     from .agent_judge import AgentQualityJudge
     from .agent_reporting import (
         aggregate_agent_summary,
@@ -41,6 +43,7 @@ if __package__:
     from .read_only import install_read_only_guards
     from .reporting import atomic_write_json
 else:
+    from agent_costs import AgentEvaluationCostLedger, install_agent_usage_collector
     from agent_judge import AgentQualityJudge
     from agent_reporting import (
         aggregate_agent_summary,
@@ -185,6 +188,7 @@ async def _result_from_evidence(
     response: str,
     tool_calls: list[AgentToolCallEvidence],
     judge: AgentQualityJudge,
+    cost_ledger: AgentEvaluationCostLedger,
     mock_failure: bool,
     elapsed_ms: int,
 ) -> AgentEvaluationCaseResult:
@@ -216,6 +220,7 @@ async def _result_from_evidence(
         deterministic_checks=checks,
         judge=judged,
         failure_reasons=failures,
+        usage=cost_ledger.case_usage(case.case_id, round_index),
         elapsed_ms=elapsed_ms,
     )
 
@@ -224,22 +229,27 @@ async def _mock_results(
     cases: list[AgentEvalCase],
     repeat_count: int,
     judge: AgentQualityJudge,
+    cost_ledger: AgentEvaluationCostLedger,
 ) -> list[AgentEvaluationCaseResult]:
     results = []
     for round_index in range(1, repeat_count + 1):
         for case in cases:
             failed = case.case_id == "agent-checklist-no-mention"
-            results.append(
-                await _result_from_evidence(
+            cost_ledger.begin_case(case.case_id, round_index)
+            try:
+                result = await _result_from_evidence(
                     case=case,
                     round_index=round_index,
                     response=_mock_response(case),
                     tool_calls=_mock_tool_calls(case),
                     judge=judge,
+                    cost_ledger=cost_ledger,
                     mock_failure=failed,
                     elapsed_ms=24,
                 )
-            )
+                results.append(result)
+            finally:
+                cost_ledger.end_case(case.case_id, round_index)
     return results
 
 
@@ -249,8 +259,10 @@ async def _real_result(
     round_index: int,
     settings,
     judge: AgentQualityJudge,
+    cost_ledger: AgentEvaluationCostLedger,
 ) -> AgentEvaluationCaseResult:
     started = time.monotonic()
+    cost_ledger.begin_case(case.case_id, round_index)
     try:
         graph = IsolatedAgentGraph(case=case, settings=settings)
         reply = await graph.run(
@@ -304,6 +316,7 @@ async def _real_result(
             deterministic_checks=checks,
             judge=judged,
             failure_reasons=failures,
+            usage=cost_ledger.case_usage(case.case_id, round_index),
             elapsed_ms=int((time.monotonic() - started) * 1000),
         )
     except Exception as exc:
@@ -334,8 +347,11 @@ async def _real_result(
                     severity="critical",
                 )
             ],
+            usage=cost_ledger.case_usage(case.case_id, round_index),
             elapsed_ms=int((time.monotonic() - started) * 1000),
         )
+    finally:
+        cost_ledger.end_case(case.case_id, round_index)
 
 
 def _base_summary(
@@ -387,6 +403,8 @@ def _base_summary(
             errors=0,
         ),
         metrics=empty_metrics(),
+        usage=AgentEvaluationUsageSummary(tracking_available=True),
+        estimated_cost_yuan=0,
     )
 
 
@@ -404,7 +422,17 @@ async def async_main(args: argparse.Namespace) -> int:
         if not settings.ai_api_key:
             raise RuntimeError("真实 Agent 评测要求 AI_API_KEY")
         install_read_only_guards(engine)
-    judge = AgentQualityJudge(settings, mock=args.mock)
+    cost_ledger = AgentEvaluationCostLedger(settings)
+    judge = AgentQualityJudge(
+        settings,
+        mock=args.mock,
+        cost_ledger=cost_ledger,
+    )
+    restore_usage_collector = (
+        (lambda: None)
+        if args.mock
+        else install_agent_usage_collector(cost_ledger)
+    )
     base = _base_summary(
         run_id=run_id,
         suite=suite,
@@ -417,7 +445,12 @@ async def async_main(args: argparse.Namespace) -> int:
     results: list[AgentEvaluationCaseResult] = []
     try:
         if args.mock:
-            results = await _mock_results(suite.cases, suite.repeat_count, judge)
+            results = await _mock_results(
+                suite.cases,
+                suite.repeat_count,
+                judge,
+                cost_ledger,
+            )
         else:
             for round_index in range(1, suite.repeat_count + 1):
                 for case in suite.cases:
@@ -427,6 +460,7 @@ async def async_main(args: argparse.Namespace) -> int:
                             round_index=round_index,
                             settings=settings,
                             judge=judge,
+                            cost_ledger=cost_ledger,
                         )
                     )
                     running = aggregate_agent_summary(
@@ -454,6 +488,7 @@ async def async_main(args: argparse.Namespace) -> int:
         atomic_write_json(run_dir / "status.json", failed.model_dump(mode="json"))
         raise
     finally:
+        restore_usage_collector()
         await judge.close()
 
 

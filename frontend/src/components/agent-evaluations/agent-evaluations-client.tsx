@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleDashed,
   Clock3,
+  Coins,
   FileCheck2,
   Gauge,
   LoaderCircle,
@@ -31,6 +32,45 @@ type AgentJudgePolicy = {
   enforced: boolean;
   model: string;
   reason: string;
+};
+
+type EvaluationUsageTotals = {
+  call_count: number;
+  successful_calls: number;
+  failed_calls: number;
+  usage_reported_calls: number;
+  costed_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_cache_hit_tokens: number;
+  known_estimated_cost_yuan: number;
+  estimated_cost_yuan?: number | null;
+  complete: boolean;
+};
+
+type EvaluationModelCall = {
+  component: "agent" | "judge";
+  metric_key?: string | null;
+  call_index: number;
+  model: string;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  total_tokens?: number | null;
+  prompt_cache_hit_tokens?: number | null;
+  estimated_cost_yuan?: number | null;
+  elapsed_ms: number;
+  success: boolean;
+  error_type?: string | null;
+};
+
+type EvaluationUsage = {
+  tracking_available: boolean;
+  currency: "CNY";
+  is_estimate: true;
+  agent: EvaluationUsageTotals;
+  judge: EvaluationUsageTotals;
+  total: EvaluationUsageTotals;
 };
 
 export type AgentEvaluationSummary = {
@@ -68,6 +108,7 @@ export type AgentEvaluationSummary = {
     judge_clarification_rate: RateMetric;
     judge_expression_rate: RateMetric;
   };
+  usage?: EvaluationUsage;
   estimated_cost_yuan?: number | null;
   error?: string | null;
 };
@@ -159,6 +200,7 @@ type AgentEvaluationCase = {
   deterministic_checks: DeterministicCheck[];
   judge: JudgeResult;
   failure_reasons: FailureReason[];
+  usage?: EvaluationUsage & { calls: EvaluationModelCall[] };
   elapsed_ms?: number | null;
 };
 
@@ -201,6 +243,14 @@ const JUDGE_LABELS: Record<JudgeDimension["key"], string> = {
 
 const ROLE_LABELS = { user: "用户", staff: "工作人员", assistant: "AI助教" };
 
+const COST_METRIC_LABELS: Record<string, string> = {
+  tool_correctness: "工具调用精确匹配",
+  task_completion: "任务完成",
+  groundedness: "证据忠实",
+  clarification: "澄清合理",
+  expression: "表达质量",
+};
+
 function frameworkLabel(summary: AgentEvaluationSummary) {
   if (summary.evaluation_framework === "deepeval") {
     return `DeepEval${summary.evaluation_framework_version ? ` ${summary.evaluation_framework_version}` : ""}`;
@@ -210,6 +260,140 @@ function frameworkLabel(summary: AgentEvaluationSummary) {
 
 function percent(value?: number | null) {
   return value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatTokens(value: number) {
+  return new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function formatYuan(value?: number | null) {
+  if (value == null) return "—";
+  const digits = value === 0 ? 4 : value < 0.01 ? 6 : 4;
+  return `¥${value.toFixed(digits)}`;
+}
+
+function UsageCostCard({
+  label,
+  hint,
+  usage,
+  accent = false,
+}: {
+  label: string;
+  hint: string;
+  usage: EvaluationUsageTotals;
+  accent?: boolean;
+}) {
+  return (
+    <div className={`min-w-0 px-5 py-4 sm:px-6 ${accent ? "bg-cyan-50/60" : ""}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-extrabold text-slate-600">{label}</p>
+          <p className="mt-1 text-[11px] leading-5 text-slate-400">{hint}</p>
+        </div>
+        {!usage.complete && <span className="status-pill pill-warn">不完整</span>}
+      </div>
+      <p className={`mt-3 text-2xl font-black tabular-nums ${accent ? "text-cyan-900" : "text-slate-950"}`}>
+        {usage.complete
+          ? formatYuan(usage.estimated_cost_yuan)
+          : `已知 ${formatYuan(usage.known_estimated_cost_yuan)}`}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] tabular-nums text-slate-500">
+        <span>{usage.call_count} 次调用</span>
+        <span>{formatTokens(usage.total_tokens)} Token</span>
+        {usage.prompt_cache_hit_tokens > 0 && (
+          <span>{formatTokens(usage.prompt_cache_hit_tokens)} 缓存命中</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EvaluationCostPanel({ usage }: { usage?: EvaluationUsage }) {
+  if (!usage?.tracking_available) {
+    return (
+      <section className="panel px-5 py-5 sm:px-6">
+        <div className="flex items-start gap-3">
+          <Coins className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
+          <div>
+            <h2 className="panel-title">评测费用</h2>
+            <p className="panel-subtitle">这是历史报告，当时还没有记录逐次模型调用和 Token。</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section className="panel overflow-hidden">
+      <div className="panel-header-clean">
+        <div className="flex items-center gap-2">
+          <Coins className="h-5 w-5 text-cyan-700" />
+          <h2 className="panel-title">评测费用</h2>
+        </div>
+        <p className="panel-subtitle">
+          按每次 API 返回的 Token 和运行时人民币单价估算；缺少 usage 的调用不会被冒充为完整总价。
+        </p>
+      </div>
+      <div className="grid divide-y divide-slate-100 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <UsageCostCard label="Agent 生成" hint="完成题目时的思考与回复调用" usage={usage.agent} />
+        <UsageCostCard label="DeepEval 判断" hint="工具与语义指标的判断官调用" usage={usage.judge} />
+        <UsageCostCard label="本批合计" hint="生成成本与判断成本之和" usage={usage.total} accent />
+      </div>
+    </section>
+  );
+}
+
+function CaseUsageDetail({ usage }: { usage?: AgentEvaluationCase["usage"] }) {
+  if (!usage?.tracking_available) return null;
+  return (
+    <section className="mt-5 border-t border-slate-200 pt-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Coins className="h-4 w-4 text-cyan-700" />
+          <h3 className="text-sm font-extrabold text-slate-950">模型调用与费用</h3>
+        </div>
+        <span className={`status-pill ${usage.total.complete ? "pill-neutral" : "pill-warn"}`}>
+          {usage.total.complete ? "账本完整" : `${usage.total.costed_calls}/${usage.total.call_count} 次可计费`}
+        </span>
+      </div>
+      <div className="mt-3 grid overflow-hidden rounded-xl border border-slate-200 bg-white sm:grid-cols-3 sm:divide-x sm:divide-slate-100">
+        <UsageCostCard label="Agent" hint="生成回复" usage={usage.agent} />
+        <UsageCostCard label="判断官" hint="DeepEval 指标" usage={usage.judge} />
+        <UsageCostCard label="本题合计" hint="全部模型调用" usage={usage.total} accent />
+      </div>
+      {usage.calls.length ? (
+        <div className="mt-3 divide-y divide-slate-200 border-y border-slate-200">
+          {usage.calls.map((call) => (
+            <div key={call.call_index} className="flex min-w-0 flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`status-pill ${call.component === "agent" ? "pill-info" : "pill-neutral"}`}>
+                    {call.component === "agent" ? "Agent" : "判断官"} #{call.call_index}
+                  </span>
+                  {call.metric_key && (
+                    <span className="text-xs font-bold text-slate-700">
+                      {COST_METRIC_LABELS[call.metric_key] ?? call.metric_key}
+                    </span>
+                  )}
+                  {!call.success && <span className="status-pill pill-risk">调用失败</span>}
+                </div>
+                <p className="mt-1 truncate text-[11px] text-slate-400">{call.model} · {call.elapsed_ms}ms</p>
+              </div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] tabular-nums text-slate-500 sm:justify-end">
+                <span>输入 {formatTokens(call.prompt_tokens ?? 0)}</span>
+                <span>输出 {formatTokens(call.completion_tokens ?? 0)}</span>
+                {Boolean(call.prompt_cache_hit_tokens) && <span>缓存 {formatTokens(call.prompt_cache_hit_tokens ?? 0)}</span>}
+                <span className="font-extrabold text-slate-800">
+                  {call.estimated_cost_yuan == null ? "费用未知" : formatYuan(call.estimated_cost_yuan)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs leading-5 text-slate-400">Mock 模式不调用模型，本题没有 API 费用。</p>
+      )}
+    </section>
+  );
 }
 
 function JsonEvidence({ value }: { value: unknown }) {
@@ -364,6 +548,8 @@ function EvidenceDetail({
           </div>
         </div>
       </section>
+
+      <CaseUsageDetail usage={item.usage} />
 
       <section className="mt-5 grid min-w-0 gap-5 border-t border-slate-200 pt-5 lg:grid-cols-2">
         <div className="min-w-0">
@@ -642,6 +828,8 @@ export function AgentEvaluationsClient({
         </div>
       ) : summary ? (
         <>
+          <EvaluationCostPanel usage={summary.usage} />
+
           <section className="panel overflow-hidden">
             <div className="panel-header-clean">
               <div className="flex items-center gap-2">

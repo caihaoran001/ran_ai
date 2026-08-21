@@ -44,6 +44,58 @@ class AgentJudgePolicy(StrictModel):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+class AgentEvaluationModelCall(StrictModel):
+    component: Literal["agent", "judge"]
+    metric_key: str | None = Field(
+        default=None,
+        pattern=r"^[a-z][a-z0-9_]{1,119}$",
+    )
+    call_index: int = Field(ge=1)
+    model: str = Field(min_length=1, max_length=120)
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    prompt_cache_hit_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_yuan: float | None = Field(default=None, ge=0)
+    elapsed_ms: int = Field(default=0, ge=0)
+    success: bool
+    error_type: str | None = Field(default=None, max_length=120)
+
+
+class AgentEvaluationUsageTotals(StrictModel):
+    call_count: int = Field(default=0, ge=0)
+    successful_calls: int = Field(default=0, ge=0)
+    failed_calls: int = Field(default=0, ge=0)
+    usage_reported_calls: int = Field(default=0, ge=0)
+    costed_calls: int = Field(default=0, ge=0)
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    prompt_cache_hit_tokens: int = Field(default=0, ge=0)
+    known_estimated_cost_yuan: float = Field(default=0, ge=0)
+    estimated_cost_yuan: float | None = Field(default=0, ge=0)
+    complete: bool = True
+
+
+class AgentEvaluationUsageSummary(StrictModel):
+    tracking_available: bool = False
+    currency: Literal["CNY"] = "CNY"
+    is_estimate: Literal[True] = True
+    agent: AgentEvaluationUsageTotals = Field(
+        default_factory=AgentEvaluationUsageTotals
+    )
+    judge: AgentEvaluationUsageTotals = Field(
+        default_factory=AgentEvaluationUsageTotals
+    )
+    total: AgentEvaluationUsageTotals = Field(
+        default_factory=AgentEvaluationUsageTotals
+    )
+
+
+class AgentEvaluationCaseUsage(AgentEvaluationUsageSummary):
+    calls: list[AgentEvaluationModelCall] = Field(default_factory=list)
+
+
 class AgentEvaluationSummary(StrictModel):
     schema_version: Literal[1] = 1
     run_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
@@ -66,6 +118,9 @@ class AgentEvaluationSummary(StrictModel):
     judge_policy: AgentJudgePolicy
     counts: AgentEvaluationCounts
     metrics: AgentEvaluationMetrics
+    usage: AgentEvaluationUsageSummary = Field(
+        default_factory=AgentEvaluationUsageSummary
+    )
     estimated_cost_yuan: float | None = Field(default=None, ge=0)
     error: str | None = Field(default=None, max_length=2000)
 
@@ -175,6 +230,9 @@ class AgentEvaluationCaseResult(StrictModel):
     deterministic_checks: list[AgentDeterministicCheck] = Field(default_factory=list)
     judge: AgentJudgeResult
     failure_reasons: list[AgentFailureReason] = Field(default_factory=list)
+    usage: AgentEvaluationCaseUsage = Field(
+        default_factory=AgentEvaluationCaseUsage
+    )
     elapsed_ms: int | None = Field(default=None, ge=0)
 
 

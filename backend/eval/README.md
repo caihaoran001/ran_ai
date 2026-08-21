@@ -10,6 +10,8 @@ Agent v1 固定题库为 `tests/fixtures/agent_eval_cases.v1.json`：30 题，�
 
 评测容器强制关闭 DeepEval 匿名遥测、Confident AI 上传、自动打开浏览器、隐式 `.env` 和旧式 key 文件读取；指标直接调用项目现有的 OpenAI 兼容模型地址，不需要 Confident AI 账号或密钥。报告明确记录 DeepEval 版本和每项框架原始分数，旧自研判断官报告继续兼容读取。
 
+每次真实评测还会把模型费用写入独立报告账本：Agent 生成与 DeepEval 判断官分开统计调用次数、输入/输出/缓存 Token、耗时和人民币估算费用，判断官调用会关联到具体指标。计价复用线上统一的人民币 Token 单价和高峰倍率，并优先使用 API 响应中的实际模型名。只要有一次调用没有返回完整 usage，该题和整批总价都会标记为“不完整”，同时保留可核对的已知费用，不用部分费用冒充完整成本。Mock 不调用模型，账本为 0 次、0 元。
+
 无费用 Mock 会完整生成 60 次执行和一条故意注入的未授权写操作，用来证明失败规则、API 和前端证据链有效：
 
 ```bash
@@ -25,7 +27,7 @@ docker compose -f docker-compose.agent-eval.yml run \
   --name ran_ai-agent-eval-real --no-deps agent-eval
 ```
 
-每批最多 60 ×（5 次 Agent 模型调用 + 5 次 DeepEval 判断调用）= 600 次模型调用：Task Completion 使用两次模型调用，另外三个语义指标各一次；工具精确匹配不调用模型。实际调用数取决于每题工具循环是否提前结束。报告写入 `diagnostics/agent-evaluations/<run_id>/`；每题保存前序对话、预期、工具参数、固定返回、最终回复、代码检查、DeepEval 原始指标和判断理由。
+每批最多 60 ×（5 次 Agent 模型调用 + 5 次 DeepEval 判断调用）= 600 次模型调用：Task Completion 使用两次模型调用，另外三个语义指标各一次；工具精确匹配不调用模型。实际调用数取决于每题工具循环是否提前结束。报告写入 `diagnostics/agent-evaluations/<run_id>/`；每题保存前序对话、预期、工具参数、固定返回、最终回复、代码检查、DeepEval 原始指标、判断理由和逐次 API 成本账本。
 
 下面各节为 RAG 评测说明。
 

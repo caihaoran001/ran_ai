@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from importlib.util import find_spec
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +27,7 @@ from app.schemas.agent_evaluation import (
     AgentToolCallEvidence,
 )
 from app.services.agent_evaluation_reports import AgentEvaluationReportStore
+from eval.agent_costs import AgentEvaluationCostLedger, install_agent_usage_collector
 from eval.run_agent_eval import IsolatedAgentGraph, SandboxTool
 
 
@@ -227,6 +229,94 @@ def test_deterministic_assessment_rejects_wrong_args_and_forbidden_write() -> No
 
 
 @pytest.mark.asyncio
+async def test_evaluation_cost_ledger_separates_agent_judge_and_marks_gaps() -> None:
+    settings = get_settings().model_copy(
+        update={
+            "ai_prompt_cost_per_1m_tokens": 2.0,
+            "ai_completion_cost_per_1m_tokens": 8.0,
+            "ai_prompt_cache_hit_cost_per_1m_tokens": 0.5,
+            "ai_premium_models": "",
+            "ai_peak_price_multiplier": 1.0,
+        }
+    )
+    ledger = AgentEvaluationCostLedger(settings)
+    ledger.begin_case("agent-service-progress", 1)
+    await ledger.record_agent_model_usage(
+        model="requested-agent-model",
+        scenario="reply_agent",
+        elapsed_ms=120,
+        response=SimpleNamespace(
+            usage_metadata={
+                "input_tokens": 1000,
+                "output_tokens": 100,
+                "total_tokens": 1100,
+                "input_token_details": {"cache_read": 200},
+            },
+            response_metadata={"model_name": "actual-agent-model"},
+        ),
+        success=True,
+    )
+    ledger.record_judge_model_usage(
+        model="requested-judge-model",
+        response=SimpleNamespace(
+            model="actual-judge-model",
+            usage=SimpleNamespace(
+                prompt_tokens=2000,
+                completion_tokens=200,
+                total_tokens=2200,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=0),
+            ),
+        ),
+        elapsed_ms=80,
+        success=True,
+        error_type=None,
+        metric_key="groundedness",
+    )
+
+    complete = ledger.case_usage("agent-service-progress", 1)
+    assert complete.agent.call_count == 1
+    assert complete.agent.estimated_cost_yuan == 0.0025
+    assert complete.judge.call_count == 1
+    assert complete.judge.estimated_cost_yuan == 0.0056
+    assert complete.total.estimated_cost_yuan == 0.0081
+    assert complete.total.prompt_cache_hit_tokens == 200
+    assert complete.calls[1].metric_key == "groundedness"
+    assert complete.calls[0].model == "actual-agent-model"
+
+    ledger.record_judge_model_usage(
+        model="requested-judge-model",
+        response=None,
+        elapsed_ms=31,
+        success=False,
+        error_type="APITimeoutError",
+        metric_key="expression",
+    )
+    incomplete = ledger.case_usage("agent-service-progress", 1)
+    ledger.end_case("agent-service-progress", 1)
+
+    assert incomplete.total.call_count == 3
+    assert incomplete.total.usage_reported_calls == 2
+    assert incomplete.total.costed_calls == 2
+    assert incomplete.total.complete is False
+    assert incomplete.total.known_estimated_cost_yuan == 0.0081
+    assert incomplete.total.estimated_cost_yuan is None
+    assert incomplete.calls[-1].error_type == "APITimeoutError"
+
+
+def test_agent_usage_collector_is_scoped_and_restorable() -> None:
+    import app.services.agent.graph as graph_module
+
+    ledger = AgentEvaluationCostLedger(get_settings())
+    original = graph_module.record_model_usage
+    restore = install_agent_usage_collector(ledger)
+    try:
+        assert graph_module.record_model_usage == ledger.record_agent_model_usage
+    finally:
+        restore()
+    assert graph_module.record_model_usage is original
+
+
+@pytest.mark.asyncio
 async def test_deepeval_adapter_records_framework_version_and_tool_metric() -> None:
     if find_spec("deepeval") is None:
         pytest.skip("DeepEval is installed only in the dedicated evaluation image")
@@ -279,6 +369,78 @@ async def test_deepeval_adapter_records_framework_version_and_tool_metric() -> N
 
 
 @pytest.mark.asyncio
+async def test_deepeval_openai_adapter_records_judge_usage(monkeypatch) -> None:
+    if find_spec("deepeval") is None:
+        pytest.skip("DeepEval is installed only in the dedicated evaluation image")
+    import eval.agent_judge as judge_module
+
+    response = SimpleNamespace(
+        model="actual-judge-model",
+        usage=SimpleNamespace(
+            prompt_tokens=500,
+            completion_tokens=50,
+            total_tokens=550,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=100),
+        ),
+        choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))],
+    )
+
+    class SyncClient:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=lambda **_kwargs: response)
+            )
+
+        def close(self) -> None:
+            return None
+
+    class AsyncCompletions:
+        async def create(self, **_kwargs):
+            return response
+
+    class AsyncClient:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=AsyncCompletions())
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(judge_module, "OpenAI", SyncClient)
+    monkeypatch.setattr(judge_module, "AsyncOpenAI", AsyncClient)
+    settings = get_settings().model_copy(
+        update={
+            "ai_api_key": "agent-eval-test-key",
+            "ai_prompt_cost_per_1m_tokens": 2.0,
+            "ai_completion_cost_per_1m_tokens": 8.0,
+            "ai_prompt_cache_hit_cost_per_1m_tokens": 0.5,
+            "ai_premium_models": "",
+            "ai_peak_price_multiplier": 1.0,
+        }
+    )
+    ledger = AgentEvaluationCostLedger(settings)
+    ledger.begin_case("agent-service-progress", 1)
+    judge = judge_module.AgentQualityJudge(
+        settings,
+        mock=False,
+        cost_ledger=ledger,
+    )
+    try:
+        judge._model._ran_ai_metric_key = "task_completion"
+        assert await judge._model.a_generate("test prompt") == '{"ok": true}'
+    finally:
+        await judge.close()
+        ledger.end_case("agent-service-progress", 1)
+
+    usage = ledger.case_usage("agent-service-progress", 1)
+    assert usage.judge.call_count == 1
+    assert usage.judge.total_tokens == 550
+    assert usage.judge.prompt_cache_hit_tokens == 100
+    assert usage.judge.estimated_cost_yuan == 0.00125
+    assert usage.calls[0].metric_key == "task_completion"
+    assert usage.calls[0].model == "actual-judge-model"
+
+
+@pytest.mark.asyncio
 async def test_agent_evaluation_api_lists_status_and_returns_evidence(
     admin_client, tmp_path
 ) -> None:
@@ -307,10 +469,12 @@ async def test_agent_evaluation_api_lists_status_and_returns_evidence(
     assert detail.status_code == 200
     assert detail.json()["summary"]["evaluation_framework"] == "deepeval"
     assert detail.json()["summary"]["evaluation_framework_version"] == "4.1.5"
+    assert detail.json()["summary"]["usage"]["tracking_available"] is False
     case = detail.json()["cases"][0]
     assert case["actual"]["tool_calls"][0]["result"] == {"service_day": 12}
     assert case["deterministic_checks"][0]["code"] == "response_mode"
     assert case["judge"]["framework_metrics"][0]["key"] == "tool_correctness"
+    assert case["usage"]["tracking_available"] is False
 
 
 @pytest.mark.asyncio

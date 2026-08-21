@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openai import AsyncOpenAI, OpenAI
 
@@ -15,6 +16,12 @@ from app.schemas.agent_evaluation import (
     AgentJudgeDimension,
     AgentJudgeResult,
 )
+
+if TYPE_CHECKING:
+    if __package__:
+        from .agent_costs import AgentEvaluationCostLedger
+    else:
+        from agent_costs import AgentEvaluationCostLedger
 
 
 JUDGE_DIMENSIONS = (
@@ -92,12 +99,15 @@ def _make_deepeval_model(
     model_name: str,
     mock: bool,
     api: dict[str, Any],
+    cost_ledger: AgentEvaluationCostLedger | None,
 ):
     base_class = api["DeepEvalBaseLLM"]
 
     if mock:
 
         class MockJudgeModel(base_class):
+            _ran_ai_metric_key: str | None = None
+
             def load_model(self):
                 return None
 
@@ -128,6 +138,7 @@ def _make_deepeval_model(
                 timeout=settings.ai_timeout_seconds,
             )
             self._max_tokens = _judge_max_tokens()
+            self._ran_ai_metric_key: str | None = None
             super().__init__(model=model_name)
 
         def load_model(self):
@@ -148,21 +159,65 @@ def _make_deepeval_model(
             ]
 
         def generate(self, prompt: str, **_kwargs) -> str:
-            response = self._sync_client.chat.completions.create(
-                model=model_name,
-                temperature=0,
-                max_tokens=self._max_tokens,
-                messages=self._messages(prompt),
-            )
+            started = time.monotonic()
+            try:
+                response = self._sync_client.chat.completions.create(
+                    model=model_name,
+                    temperature=0,
+                    max_tokens=self._max_tokens,
+                    messages=self._messages(prompt),
+                )
+            except Exception as exc:
+                if cost_ledger is not None:
+                    cost_ledger.record_judge_model_usage(
+                        model=model_name,
+                        response=None,
+                        elapsed_ms=int((time.monotonic() - started) * 1000),
+                        success=False,
+                        error_type=type(exc).__name__,
+                        metric_key=self._ran_ai_metric_key,
+                    )
+                raise
+            if cost_ledger is not None:
+                cost_ledger.record_judge_model_usage(
+                    model=model_name,
+                    response=response,
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                    success=True,
+                    error_type=None,
+                    metric_key=self._ran_ai_metric_key,
+                )
             return response.choices[0].message.content or ""
 
         async def a_generate(self, prompt: str, **_kwargs) -> str:
-            response = await self._async_client.chat.completions.create(
-                model=model_name,
-                temperature=0,
-                max_tokens=self._max_tokens,
-                messages=self._messages(prompt),
-            )
+            started = time.monotonic()
+            try:
+                response = await self._async_client.chat.completions.create(
+                    model=model_name,
+                    temperature=0,
+                    max_tokens=self._max_tokens,
+                    messages=self._messages(prompt),
+                )
+            except Exception as exc:
+                if cost_ledger is not None:
+                    cost_ledger.record_judge_model_usage(
+                        model=model_name,
+                        response=None,
+                        elapsed_ms=int((time.monotonic() - started) * 1000),
+                        success=False,
+                        error_type=type(exc).__name__,
+                        metric_key=self._ran_ai_metric_key,
+                    )
+                raise
+            if cost_ledger is not None:
+                cost_ledger.record_judge_model_usage(
+                    model=model_name,
+                    response=response,
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                    success=True,
+                    error_type=None,
+                    metric_key=self._ran_ai_metric_key,
+                )
             return response.choices[0].message.content or ""
 
         def get_model_name(self) -> str:
@@ -220,7 +275,13 @@ def _metric_result(
 
 
 class AgentQualityJudge:
-    def __init__(self, settings: Settings, *, mock: bool = False):
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        mock: bool = False,
+        cost_ledger: AgentEvaluationCostLedger | None = None,
+    ):
         self.model = (
             "mock-judge"
             if mock
@@ -234,6 +295,7 @@ class AgentQualityJudge:
             model_name=self.model,
             mock=mock,
             api=self._api,
+            cost_ledger=cost_ledger,
         )
 
     async def close(self) -> None:
@@ -294,11 +356,15 @@ class AgentQualityJudge:
         )
 
     async def _measure(self, metric, test_case) -> AgentFrameworkMetric:
-        await metric.a_measure(
-            test_case,
-            _show_indicator=False,
-            _log_metric_to_confident=False,
-        )
+        self._model._ran_ai_metric_key = metric._ran_ai_key
+        try:
+            await metric.a_measure(
+                test_case,
+                _show_indicator=False,
+                _log_metric_to_confident=False,
+            )
+        finally:
+            self._model._ran_ai_metric_key = None
         return _metric_result(
             key=metric._ran_ai_key,
             label=metric._ran_ai_label,

@@ -11,8 +11,10 @@ from app.schemas.agent_evaluation import (
 )
 
 if __package__:
+    from .agent_costs import summarize_case_usage
     from .reporting import atomic_write_json
 else:
+    from agent_costs import summarize_case_usage
     from reporting import atomic_write_json
 
 
@@ -94,6 +96,10 @@ def aggregate_agent_summary(
             if dimension.passed is not None:
                 dimension_results[dimension.key].append(dimension.passed is True)
     now = utc_now()
+    usage = summarize_case_usage(
+        cases,
+        tracking_available=base.usage.tracking_available,
+    )
     counts = AgentEvaluationCounts(
         total=total,
         completed=len(cases),
@@ -133,6 +139,8 @@ def aggregate_agent_summary(
                     len(dimension_results["expression"]),
                 ),
             ),
+            "usage": usage,
+            "estimated_cost_yuan": usage.total.estimated_cost_yuan,
             "error": error,
         }
     )
