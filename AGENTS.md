@@ -76,6 +76,7 @@ npm run test:e2e     # Playwright
 - **FAQ 与 Chunk 同步**：审核通过/人工维护的 FAQ 必须保存到 `knowledge_faqs` 并同步至 `knowledge_chunks`，严禁只追加到 Markdown 文件。
 - **打卡解析原则**：打卡结构化完全以问卷/表单提交的结构化字段为主，不再新增 `#打卡` 文本正则解析。
 - **提示词来源**：系统提示词完全以 `backend/src/app/services/document_service.py` 内部定义的为准，原 `手动版提示词.md` 仅为参考，不得参与运行时 LLM 呼叫。
+- **数据库枚举按大写成员名落库**：SQLAlchemy Enum 默认存成员名（如 `REVIEWING`），API 序列化才是小写 value；新增枚举值的 Alembic 迁移必须 `ADD VALUE '大写名'`，写小写等于白加且测试测不出（生产已因此留下 `archived`/`ARCHIVED` 双值残留，2026-08-21 加 SUPERSEDED 时又踩一次）。
 
 ## DEBUGGING & DIAGNOSTICS (调试与排查指南)
 - **查看实时运行日志**：在排查消息收发、大模型调用、企微回调等问题时，**必须**在项目根目录运行 `docker logs -f --tail 100 ran-ai-backend` 查看最新日志。
