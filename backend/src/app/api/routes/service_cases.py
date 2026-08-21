@@ -58,6 +58,27 @@ def _search_service_cases(statement, filter: str | None, q: str | None, group_ty
     return statement
 
 
+async def _member_left_reads(
+    session: AsyncSession, cases: list[ServiceCase]
+) -> list[ServiceCaseRead]:
+    """「已退群」名单的响应模型：补上打卡次数（一次分组聚合，避免逐行查）。"""
+    counts_rows = await session.execute(
+        select(Checkin.service_case_id, func.count(Checkin.id))
+        .where(
+            Checkin.service_case_id.in_([case.id for case in cases]),
+            Checkin.deleted_at.is_(None),
+        )
+        .group_by(Checkin.service_case_id)
+    )
+    counts: dict[int, int] = {case_id: total for case_id, total in counts_rows}
+    reads = []
+    for case in cases:
+        read = ServiceCaseRead.model_validate(case)
+        read.checkin_count = counts.get(case.id, 0)
+        reads.append(read)
+    return reads
+
+
 @router.get("", response_model=list[ServiceCaseRead])
 async def list_service_cases(
     filter: str | None = None,
@@ -66,12 +87,17 @@ async def list_service_cases(
     limit: int | None = Query(default=None, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
-) -> list[ServiceCase]:
+) -> list[ServiceCase] | list[ServiceCaseRead]:
     """支持分页：用户管理一次全量渲染近三百条时首屏要 5 秒，后台默认只取第一页。"""
     statement = (
         select_active_service_cases()
         .options(selectinload(ServiceCase.user))
-        .order_by(ServiceCase.created_at.desc())
+        # 已退群名单按离开时间倒序：最近走的排最前，运营优先核对新鲜案例。
+        .order_by(
+            ServiceCase.member_left_at.desc()
+            if filter == "member_left"
+            else ServiceCase.created_at.desc()
+        )
     )
     statement = _search_service_cases(statement, filter, q, group_type)
     if limit is not None:
@@ -79,6 +105,8 @@ async def list_service_cases(
     elif offset:
         statement = statement.offset(offset)
     cases = list(await session.scalars(statement))
+    if filter == "member_left" and cases:
+        return await _member_left_reads(session, cases)
     return cases
 
 
@@ -325,6 +353,16 @@ def _apply_service_case_filter(statement, metric: str | None):
         )
     if metric == "refunded":
         return statement.where(ServiceCase.status == ServiceCaseStatus.REFUNDED)
+    if metric == "member_left":
+        # 已退群名单：含自动收口的完结单与之后被确认退款的单——运营关心的是「人走了」这个事实。
+        return statement.where(ServiceCase.member_left_at.is_not(None))
+    if metric == "empty_group":
+        # 空群：从来没有客户本人发过言的服务单（可复用的群位）。
+        last_message_subq = last_user_inbound_subquery()
+        statement = statement.outerjoin(
+            last_message_subq, last_message_subq.c.service_case_id == ServiceCase.id
+        )
+        return statement.where(last_message_subq.c.last_at.is_(None))
     if metric in {"unfollowed", "lost"}:
         # 只看「用户本人」的发言：班主任在群里跟进不代表用户还活着。
         last_message_subq = last_user_inbound_subquery()
