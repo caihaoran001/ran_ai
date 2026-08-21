@@ -372,6 +372,7 @@ function StatusBadge({ status, continued = false }: { status: string; continued?
     sent: { label: "已发送", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
     draft: { label: "草稿", className: "border-slate-200 bg-slate-50 text-slate-600" },
     archived: { label: "已归档·未发送", className: "border-slate-200 bg-slate-100 text-slate-500" },
+    superseded: { label: "已替代", className: "border-slate-200 bg-slate-100 text-slate-500" },
   };
 
   const config = continued

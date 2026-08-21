@@ -212,6 +212,14 @@ export type User = {
   updated_at: string;
 };
 
+export type DocumentStatus =
+  | "draft"
+  | "reviewing"
+  | "approved"
+  | "sent"
+  | "archived"
+  | "superseded";
+
 export type UserDocument = {
   id: number;
   service_case_id: number;
@@ -220,7 +228,7 @@ export type UserDocument = {
   content_md: string;
   content_json?: DocumentContentJson | null;
   file_path?: string | null;
-  status: string;
+  status: DocumentStatus | string;
   reviewed_at?: string | null;
   sent_at?: string | null;
 };
@@ -239,12 +247,14 @@ export type DashboardPendingDocument = {
   document_id: number;
   document_type: string;
   title: string;
-  status: string;
+  status: DocumentStatus | string;
   created_at: string;
   updated_at: string;
   /** 内部运营状态：需人工复核的入营文件不会自动发送，必须运营检查后手动确认发送。 */
   manual_review_required?: boolean;
   manual_review_reasons?: string[];
+  /** 模型故障时系统兜底生成的占位稿，之后会自动重做替换。 */
+  degraded?: boolean;
 };
 
 export type DashboardCasePendingDocuments = {
@@ -283,6 +293,8 @@ export type DocumentContentJson = {
   stage?: string;
   blocks: DocumentContentBlock[];
   internal_review?: DocumentInternalReview;
+  /** 模型故障时系统兜底生成的占位稿，之后会自动重做替换。 */
+  degraded?: boolean;
 };
 
 export type Checkin = {

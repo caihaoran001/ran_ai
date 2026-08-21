@@ -35,6 +35,8 @@ type ReviewDocument = {
   /** 内部运营状态：需人工复核的入营文件不会自动发送，必须运营检查后手动确认发送。 */
   manual_review_required?: boolean;
   manual_review_reasons?: string[];
+  /** 模型故障时系统兜底生成的占位稿，之后会自动重做替换。 */
+  degraded?: boolean;
 };
 
 /** 返回审核控制台时用来还原滚动位置（页面 + 卡片区两层）。 */
@@ -146,7 +148,7 @@ export function DocumentSearchList({
           user_phone: sc?.user?.phone || "无手机号",
         };
       });
-      setHistoryDocuments(mapped.filter((doc) => doc.status === "approved" || doc.status === "sent" || doc.status === "archived"));
+      setHistoryDocuments(mapped.filter((doc) => doc.status === "approved" || doc.status === "sent" || doc.status === "archived" || doc.status === "superseded"));
       setHistoryLoaded(true);
     } catch (err) {
       console.error("Failed to fetch document history:", err);
@@ -193,6 +195,7 @@ export function DocumentSearchList({
     sent: { label: "已发送", className: "bg-cyan-50 text-cyan-800 border-cyan-200/90" },
     draft: { label: "草稿", className: "bg-slate-100 text-slate-600 border-slate-200" },
     archived: { label: "未发送", className: "bg-slate-100 text-slate-500 border-slate-300" },
+    superseded: { label: "已替代", className: "bg-slate-100 text-slate-600 border-slate-300" },
   };
 
   // Client-side fuzzy search and status filter
@@ -251,7 +254,7 @@ export function DocumentSearchList({
   }
 
   const pendingDocs = filteredDocuments.filter((doc) => doc.status === "reviewing" || doc.status === "draft");
-  const reviewedDocs = filteredDocuments.filter((doc) => doc.status === "approved" || doc.status === "sent" || doc.status === "archived");
+  const reviewedDocs = filteredDocuments.filter((doc) => doc.status === "approved" || doc.status === "sent" || doc.status === "archived" || doc.status === "superseded");
   const visibleDocuments = statusFilter === "pending"
     ? pendingDocuments
     : statusFilter === "reviewed"
@@ -479,6 +482,7 @@ function flattenPendingDocuments(items: DashboardCasePendingDocuments[]): Review
       user_phone: item.case.user_phone || "无手机号",
       manual_review_required: doc.manual_review_required,
       manual_review_reasons: doc.manual_review_reasons,
+      degraded: doc.degraded,
     })),
   );
 }
@@ -549,6 +553,11 @@ function DocumentCard({
             <span className={`rounded-md border px-2.5 py-1 text-xs font-bold ${status.className}`}>
               {status.label}
             </span>
+            {doc.degraded && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-bold text-amber-800">
+                模型故障临时稿
+              </span>
+            )}
             {doc.manual_review_required && (
               <span className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-rose-100 px-2 py-1 text-xs font-bold text-rose-800">
                 <ShieldAlert className="h-3.5 w-3.5" />

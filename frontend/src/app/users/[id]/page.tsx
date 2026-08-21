@@ -571,6 +571,7 @@ function serviceStageText(serviceCase: User["service_cases"][number]) {
     in_service: "服务中",
     completed: "阶段已完结",
     refunded: "已退款",
+    superseded: "已替代",
   };
   const status = labels[serviceCase.status] || serviceCase.status;
   if (serviceCase.status === "in_service" && serviceCase.service_continued_at) {

@@ -91,6 +91,7 @@ const STATUS_LABELS: Record<string, string> = {
   approved: "已审核",
   sent: "已发送",
   archived: "未发送",
+  superseded: "已替代",
 };
 
 export function DetailHeader({

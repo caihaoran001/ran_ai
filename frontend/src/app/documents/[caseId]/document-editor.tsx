@@ -95,10 +95,22 @@ export function DocumentEditor({ document }: { document: UserDocument }) {
   const manualReviewRequired = Boolean(internalReview?.manual_review_required);
   const manualReviewReasons = internalReview?.reasons ?? [];
 
+  const isDegraded = contentJson?.degraded === true;
+
   return (
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      {isDegraded && (
+        <div className="rounded-t-xl border-b border-amber-200 bg-amber-50 px-6 py-4">
+          <p className="flex items-center gap-2 text-sm font-bold text-amber-900">
+            模型故障临时稿
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-amber-800">
+            本报告由系统兜底生成，建议类内容为通用话术。模型恢复后系统会自动用真实内容重做替换（最多重试 5 次），也可直接驳回。
+          </p>
+        </div>
+      )}
       {manualReviewRequired && (
-        <div className="rounded-t-xl border-b border-rose-200 bg-rose-50 px-6 py-4">
+        <div className={`border-b border-rose-200 bg-rose-50 px-6 py-4 ${isDegraded ? "" : "rounded-t-xl"}`}>
           <p className="text-sm font-bold text-rose-900">需人工复核，请检查个案方案后发送</p>
           <p className="mt-1 text-xs leading-relaxed text-rose-800">
             系统已阻止这份入营文件自动发送。请确认安全边界、产品排班与目标设定无误（必要时直接在下方编辑），再点击「确认发送」。
