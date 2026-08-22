@@ -382,8 +382,8 @@ async def run_faithfulness_calibration(judge: DeepSeekJudge, on_progress) -> dic
         selection_runs=selection_runs,
         validation_runs=validation_runs,
     )
-    positives_all = [pos for _, pos, _ in scored]
-    negatives_all = [neg for _, _, neg in scored]
+    positives_all = [pos for _, _, pos, _ in scored]
+    negatives_all = [neg for _, _, _, neg in scored]
     overall = None
     if two_stage.selected_threshold is not None:
         assessment = assess_faithfulness_calibration(
@@ -473,8 +473,8 @@ async def run_answer_relevancy_calibration(judge: DeepSeekJudge, on_progress) ->
         selection_runs=selection_runs,
         validation_runs=validation_runs,
     )
-    positives_all = [pos for _, pos, _ in scored]
-    negatives_all = [neg for _, _, neg in scored]
+    positives_all = [pos for _, _, pos, _ in scored]
+    negatives_all = [neg for _, _, _, neg in scored]
     overall = None
     if two_stage.selected_threshold is not None:
         assessment = assess_answer_relevancy_calibration(
@@ -713,6 +713,7 @@ async def async_main(args: argparse.Namespace) -> int:
         exit_code = 1
 
     state["stage"] = "done"
+    state["status"] = final_status
     payload = dict(state)
     payload["finished_at"] = utc_now().isoformat()
     payload["budget"].update(ledger.snapshot())
