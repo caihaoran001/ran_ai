@@ -98,13 +98,14 @@ def usage_from_calls(
 ) -> RagEvaluationCaseUsage:
     by_component = {
         component: [item for item in calls if item.component == component]
-        for component in ("intent", "answer", "ragas_judge", "embedding")
+        for component in ("intent", "answer", "ragas_judge", "judge", "embedding")
     }
     return RagEvaluationCaseUsage(
         tracking_available=tracking_available,
         intent=_totals(by_component["intent"]),
         answer=_totals(by_component["answer"]),
         ragas_judge=_totals(by_component["ragas_judge"]),
+        judge=_totals(by_component["judge"]),
         embedding=_totals(by_component["embedding"]),
         total=_totals(calls),
         calls=calls,
@@ -123,6 +124,7 @@ def summarize_case_usage(
         intent=usage.intent,
         answer=usage.answer,
         ragas_judge=usage.ragas_judge,
+        judge=usage.judge,
         embedding=usage.embedding,
         total=usage.total,
     )
@@ -304,7 +306,12 @@ class RagEvaluationCostLedger:
             attempts=1,
             success=success,
             error_type=error_type,
-            scenario="ragas_judge" if component == "ragas_judge" else "embedding",
+            scenario=(
+            "embedding"
+            if component == "embedding"
+            else "ragas_judge" if component == "ragas_judge"
+            else "judge"
+        ),
         )
 
 

@@ -28,7 +28,7 @@ type MetricValue = {
   denominator?: number | null;
 };
 
-type RagCostComponent = "intent" | "answer" | "ragas_judge" | "embedding";
+type RagCostComponent = "intent" | "answer" | "ragas_judge" | "judge" | "embedding";
 
 type RagUsageTotals = {
   call_count: number;
@@ -69,6 +69,7 @@ type RagUsageSummary = {
   intent: RagUsageTotals;
   answer: RagUsageTotals;
   ragas_judge: RagUsageTotals;
+  judge?: RagUsageTotals;
   embedding: RagUsageTotals;
   total: RagUsageTotals;
 };
@@ -97,6 +98,8 @@ export type RagEvaluationSummary = {
   model: string;
   embedding_model: string;
   ragas_version: string;
+  evaluation_framework?: "ragas" | "deepeval";
+  framework_version?: string;
   counts: {
     total: number;
     completed: number;
@@ -157,7 +160,7 @@ type MetricEvidence = {
 };
 
 type FailureReason = {
-  stage: "decision" | "rewrite" | "retrieval" | "answer" | "ragas" | "runtime";
+  stage: "decision" | "rewrite" | "retrieval" | "answer" | "ragas" | "deepeval" | "runtime";
   code: string;
   message: string;
   severity: "info" | "warning" | "critical";
@@ -232,6 +235,8 @@ type MetricCalibrationReport = {
   git_sha: string;
   model: string;
   ragas_version: string;
+  evaluation_framework?: "ragas" | "deepeval";
+  framework_version?: string;
   threshold?: number | null;
   base_pair_count: number;
   completed_pair_count: number;
@@ -321,7 +326,8 @@ const STAGE_LABELS: Record<FailureReason["stage"], string> = {
   rewrite: "问题改写",
   retrieval: "知识召回",
   answer: "最终回复",
-  ragas: "RAGAS",
+  ragas: "RAGAS（历史）",
+  deepeval: "DeepEval",
   runtime: "运行环境",
 };
 
@@ -351,7 +357,8 @@ const COST_COMPONENTS: Array<{
 }> = [
   { key: "intent", label: "意图与改写", hint: "判断是否检索并补全问题" },
   { key: "answer", label: "回复生成", hint: "Agent 生成最终回复" },
-  { key: "ragas_judge", label: "RAGAS 判官", hint: "事实、精确、忠实、相关" },
+  { key: "ragas_judge", label: "RAGAS 判官（历史）", hint: "历史报告的事实、精确、忠实、相关判定" },
+  { key: "judge", label: "评测判官（DeepEval）", hint: "召回、精确、忠实、相关与回答正确完整度" },
   { key: "embedding", label: "Embedding", hint: "召回与相关性向量计算" },
 ];
 const COST_STAGE_LABELS: Record<string, string> = {
@@ -433,7 +440,20 @@ function RagCostPanel({ usage }: { usage?: RagUsageSummary }) {
       </div>
       <div className="grid border-t border-slate-100 sm:grid-cols-2 lg:grid-cols-4">
         {COST_COMPONENTS.map((component, index) => {
-          const totals = usage[component.key];
+          const totals: RagUsageTotals = usage[component.key] ?? {
+            call_count: 0,
+            request_count: 0,
+            successful_calls: 0,
+            failed_calls: 0,
+            usage_reported_calls: 0,
+            costed_calls: 0,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            prompt_cache_hit_tokens: 0,
+            known_estimated_cost_yuan: 0,
+            complete: true,
+          };
           return (
             <article key={component.key} className={`relative px-5 py-4 ${index ? "border-t border-slate-100 sm:border-l sm:border-t-0" : ""}`}>
               <div className="flex items-center justify-between gap-3">
@@ -673,22 +693,22 @@ function MetricEvidencePanel({
   );
   if (!hasEvidence || !evidence) {
     const emptyMessage = retrievalDecision === "skip"
-      ? "本条按预期跳过了知识检索，因此不运行 RAGAS 四项知识问答指标。"
+      ? "本条按预期跳过了知识检索，因此不运行四项知识问答指标。"
       : hasMetricScore
         ? "这份历史报告只保存了最终分数；新批次会显示每条事实、召回内容和回复陈述的判断依据。"
-        : "本条没有完成 RAGAS 评分，因此没有可展示的判官证据。";
+        : "本条没有完成判官评分，因此没有可展示的判官证据。";
     return (
-      <section className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/60 px-4 py-3" aria-label="RAGAS 判断明细">
-        <p className="text-xs font-bold text-slate-600">RAGAS 判断明细</p>
+      <section className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/60 px-4 py-3" aria-label="判官判断明细">
+        <p className="text-xs font-bold text-slate-600">判官判断明细</p>
         <p className="mt-1 text-xs leading-5 text-slate-500">{emptyMessage}</p>
       </section>
     );
   }
 
   return (
-    <section className="mt-4 border-t border-slate-200 pt-4" aria-label="RAGAS 判断明细">
+    <section className="mt-4 border-t border-slate-200 pt-4" aria-label="判官判断明细">
       <div className="mb-3">
-        <p className="text-xs font-extrabold text-slate-700">RAGAS 怎么得出这些分数</p>
+        <p className="text-xs font-extrabold text-slate-700">评测判官怎么得出这些分数</p>
         <p className="mt-1 text-[11px] leading-5 text-slate-500">直接展示本轮判官的拆分结果和理由，不再只给一个最终数字。</p>
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
@@ -1208,7 +1228,7 @@ function MetricCalibrationPanel({
   faithfulness: FaithfulnessCalibrationReport | null;
 }) {
   return (
-    <section className="panel overflow-hidden" aria-label="RAGAS 指标校准">
+    <section className="panel overflow-hidden" aria-label="指标校准">
       <div className="panel-header-clean">
         <div className="flex items-center gap-2">
           <Gauge className="h-5 w-5 text-cyan-700" />
@@ -1389,7 +1409,7 @@ export function RagEvaluationsClient({
             <span>数据集 {summary.dataset_id} v{summary.dataset_version}</span>
             <span>运行类型 {RUN_MODE_LABELS[summary.run_mode]}</span>
             <span>模型 {summary.model}</span>
-            <span>RAGAS {summary.ragas_version}</span>
+            <span>评测判官 {summary.evaluation_framework === "deepeval" ? `DeepEval ${summary.framework_version || ""}` : `RAGAS ${summary.ragas_version}`}</span>
             <span>代码 {summary.git_sha.slice(0, 10)}</span>
             <span>{summary.counts.completed}/{summary.counts.total} 条已完成</span>
           </div>
@@ -1494,7 +1514,7 @@ export function RagEvaluationsClient({
               <div className="panel-header-clean">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-5 w-5 text-cyan-700" />
-                  <h2 className="panel-title">RAGAS 四项{isMockRun ? "（模拟）" : ""}</h2>
+                  <h2 className="panel-title">四项知识问答指标{isMockRun ? "（模拟）" : ""}</h2>
                 </div>
                 <p className="panel-subtitle">
                   {summary.answer_relevancy_policy.enforced && summary.faithfulness_policy.enforced
@@ -1547,7 +1567,8 @@ export function RagEvaluationsClient({
                     ["rewrite", "问题改写异常"],
                     ["retrieval", "知识召回异常"],
                     ["answer", "最终回复异常"],
-                    ["ragas", "RAGAS 未达标"],
+                    ["ragas", "RAGAS 未达标（历史）"],
+                    ["deepeval", "DeepEval 未达标"],
                   ] as const).map(([key, label]) => (
                     <button
                       key={key}

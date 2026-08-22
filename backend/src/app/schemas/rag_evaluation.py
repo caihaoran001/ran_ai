@@ -228,7 +228,7 @@ class RagEvaluationMetrics(StrictModel):
 
 
 class RagEvaluationModelCall(StrictModel):
-    component: Literal["intent", "answer", "ragas_judge", "embedding"]
+    component: Literal["intent", "answer", "ragas_judge", "judge", "embedding"]
     stage_key: str | None = Field(
         default=None,
         pattern=r"^[a-z][a-z0-9_]{1,119}$",
@@ -273,6 +273,9 @@ class RagEvaluationUsageSummary(StrictModel):
         default_factory=RagEvaluationUsageTotals
     )
     ragas_judge: RagEvaluationUsageTotals = Field(
+        default_factory=RagEvaluationUsageTotals
+    )
+    judge: RagEvaluationUsageTotals = Field(
         default_factory=RagEvaluationUsageTotals
     )
     embedding: RagEvaluationUsageTotals = Field(
@@ -337,6 +340,8 @@ class RagEvaluationSummary(StrictModel):
     model: str = Field(min_length=1, max_length=120)
     embedding_model: str = Field(min_length=1, max_length=120)
     ragas_version: str = Field(min_length=1, max_length=40)
+    evaluation_framework: Literal["ragas", "deepeval"] = "ragas"
+    framework_version: str = Field(default="", max_length=40)
     counts: RagEvaluationCounts
     metrics: RagEvaluationMetrics
     answer_relevancy_policy: AnswerRelevancyPolicy = Field(
@@ -371,7 +376,7 @@ class RagKnowledgeHit(StrictModel):
 
 
 class RagFailureReason(StrictModel):
-    stage: Literal["decision", "rewrite", "retrieval", "answer", "ragas", "runtime"]
+    stage: Literal["decision", "rewrite", "retrieval", "answer", "ragas", "deepeval", "runtime"]
     code: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
     message: str = Field(min_length=1, max_length=2000)
     severity: Literal["info", "warning", "critical"] = "warning"
@@ -423,6 +428,8 @@ class RagCaseScores(StrictModel):
     context_precision: float | None = Field(default=None, ge=0.0, le=1.0)
     faithfulness: float | None = Field(default=None, ge=0.0, le=1.0)
     answer_relevancy: float | None = Field(default=None, ge=0.0, le=1.0)
+    answer_correctness: float | None = None
+    answer_correctness_reason: str | None = None
 
 
 class RagEvaluationCaseResult(StrictModel):

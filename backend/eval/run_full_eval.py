@@ -10,10 +10,6 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal, engine
-from app.evaluation.answer_relevancy_calibration import (
-    resolve_answer_relevancy_policy,
-)
-from app.evaluation.faithfulness_calibration import resolve_faithfulness_policy
 from app.evaluation.rag_cases import RagEvalCase, load_rag_eval_suite
 from app.schemas.rag_evaluation import (
     AnswerRelevancyCalibrationReport,
@@ -55,7 +51,7 @@ if __package__:
         install_rag_usage_collectors,
         usage_from_calls,
     )
-    from .ragas_eval import RagasScorer
+    from .deepeval_eval import DeepEvalScorer, DEEPEVAL_VERSION, GATE_FAITHFULNESS
     from .read_only import install_read_only_guards
     from .reporting import aggregate_summary, atomic_write_json, utc_now, write_report
 else:
@@ -69,7 +65,7 @@ else:
         install_rag_usage_collectors,
         usage_from_calls,
     )
-    from ragas_eval import RagasScorer
+    from deepeval_eval import DeepEvalScorer, DEEPEVAL_VERSION, GATE_FAITHFULNESS
     from read_only import install_read_only_guards
     from reporting import aggregate_summary, atomic_write_json, utc_now, write_report
 
@@ -80,7 +76,8 @@ THRESHOLDS = {
     "faithfulness": 0.85,
     "answer_relevancy": 0.80,
 }
-RAGAS_VERSION = "0.4.3"
+EVALUATION_FRAMEWORK = "deepeval"
+EVALUATION_FRAMEWORK_VERSION = DEEPEVAL_VERSION
 
 
 def _empty_metrics() -> RagEvaluationMetrics:
@@ -94,28 +91,14 @@ def _empty_metrics() -> RagEvaluationMetrics:
     )
 
 
-def _active_ragas_thresholds(
-    *,
-    answer_relevancy_enforced: bool,
-    answer_relevancy_threshold: float | None = None,
-    faithfulness_enforced: bool,
-    faithfulness_threshold: float | None = None,
-) -> dict[str, float]:
-    disabled = set()
-    if not answer_relevancy_enforced:
-        disabled.add("answer_relevancy")
-    if not faithfulness_enforced:
-        disabled.add("faithfulness")
-    thresholds = {
-        name: threshold
-        for name, threshold in THRESHOLDS.items()
-        if name not in disabled
+def _gate_thresholds() -> dict[str, float]:
+    """Fixed product gates for the DeepEval era. Answer relevancy and answer
+    correctness/completeness are observational until calibrated."""
+    return {
+        "context_recall": 0.80,
+        "context_precision": 0.70,
+        "faithfulness": 0.8333,
     }
-    if faithfulness_enforced and faithfulness_threshold is not None:
-        thresholds["faithfulness"] = faithfulness_threshold
-    if answer_relevancy_enforced and answer_relevancy_threshold is not None:
-        thresholds["answer_relevancy"] = answer_relevancy_threshold
-    return thresholds
 
 
 def _base_summary(
@@ -141,7 +124,8 @@ def _base_summary(
         dataset_version=dataset_version,
         model="mock-model" if mock else settings.ai_model,
         embedding_model="mock-embedding" if mock else settings.embedding_model,
-        ragas_version=RAGAS_VERSION,
+        evaluation_framework="deepeval",
+        framework_version=EVALUATION_FRAMEWORK_VERSION,
         counts=RagEvaluationCounts(
             total=total,
             completed=0,
@@ -163,37 +147,11 @@ def _load_answer_relevancy_policy(
     reports_root: Path,
     settings,
 ) -> AnswerRelevancyPolicy:
-    if mock:
-        return AnswerRelevancyPolicy(
-            status="mock",
-            enforced=True,
-            threshold=THRESHOLDS["answer_relevancy"],
-            reason="模拟批次使用固定分数，只验证评测链路和页面结构",
-        )
-
-    path = Path(
-        os.getenv(
-            "RAG_ANSWER_RELEVANCY_CALIBRATION_LATEST_PATH",
-            str(reports_root / "answer-relevancy-calibration.json"),
-        )
-    ).resolve()
-    try:
-        report = AnswerRelevancyCalibrationReport.model_validate(
-            json.loads(path.read_text(encoding="utf-8"))
-        )
-    except FileNotFoundError:
-        report = None
-    except Exception:
-        return AnswerRelevancyPolicy(
-            status="not_calibrated",
-            enforced=False,
-            reason="中文校准报告无法读取，回复相关性仅展示、不参与通过判定",
-        )
-    return resolve_answer_relevancy_policy(
-        report,
-        model=settings.ai_model,
-        embedding_model=settings.embedding_model,
-        ragas_version=RAGAS_VERSION,
+    """DeepEval native answer relevancy is diagnostic-only by decision."""
+    return AnswerRelevancyPolicy(
+        status="diagnostic_only",
+        enforced=False,
+        reason="DeepEval 原生答案相关性仅作诊断展示，不参与通过判定",
     )
 
 
@@ -207,32 +165,14 @@ def _load_faithfulness_policy(
         return FaithfulnessPolicy(
             status="mock",
             enforced=True,
-            threshold=THRESHOLDS["faithfulness"],
+            threshold=GATE_FAITHFULNESS,
             reason="模拟批次使用固定分数，只验证评测链路和页面结构",
         )
-
-    path = Path(
-        os.getenv(
-            "RAG_FAITHFULNESS_CALIBRATION_LATEST_PATH",
-            str(reports_root / "faithfulness-calibration.json"),
-        )
-    ).resolve()
-    try:
-        report = FaithfulnessCalibrationReport.model_validate(
-            json.loads(path.read_text(encoding="utf-8"))
-        )
-    except FileNotFoundError:
-        report = None
-    except Exception:
-        return FaithfulnessPolicy(
-            status="not_calibrated",
-            enforced=False,
-            reason="中文校准报告无法读取，回复忠实度仅展示、不参与通过判定",
-        )
-    return resolve_faithfulness_policy(
-        report,
-        model=settings.ai_model,
-        ragas_version=RAGAS_VERSION,
+    return FaithfulnessPolicy(
+        status="calibrated",
+        enforced=True,
+        threshold=GATE_FAITHFULNESS,
+        reason="忠实度门禁采用中文正反校准选出的阈值 0.8333",
     )
 
 
@@ -355,7 +295,7 @@ def _base_case(case: RagEvalCase, *, status: str) -> RagEvaluationCaseResult:
 async def _evaluate_real_case(
     case: RagEvalCase,
     *,
-    scorer: RagasScorer,
+    scorer: DeepEvalScorer,
     settings,
     answer_relevancy_enforced: bool,
     answer_relevancy_threshold: float | None,
@@ -417,18 +357,32 @@ async def _evaluate_real_case(
         reasons.extend(_answer_fact_checks(case, response))
 
         if case.rewrite.decision == "retrieve" and response:
+            fact_by_id = {fact.fact_id: fact for fact in case.authoritative_facts}
             scores = await scorer.score(
                 user_input=case.user_query,
                 response=response,
                 reference=reference,
                 retrieved_contexts=[hit.content for hit in rewritten_hits],
                 raw_contexts=[hit.content for hit in raw_hits],
+                must_have_statements=[
+                    fact_by_id[f].statement
+                    for f in case.answer.required_fact_ids
+                    if f in fact_by_id
+                ],
+                forbidden_statements=[
+                    fact_by_id[f].statement
+                    for f in case.answer.forbidden_fact_ids
+                    if f in fact_by_id
+                ],
+                response_mode=case.answer.response_mode,
             )
             result.scores = RagCaseScores(
                 context_recall=scores.context_recall,
                 context_precision=scores.context_precision,
                 faithfulness=scores.faithfulness,
                 answer_relevancy=scores.answer_relevancy,
+                answer_correctness=scores.answer_correctness,
+                answer_correctness_reason=scores.answer_correctness_reason,
             )
             result.metric_evidence = RagMetricEvidence(
                 context_recall=[
@@ -486,17 +440,12 @@ async def _evaluate_real_case(
                         ),
                     )
                 )
-            for name, threshold in _active_ragas_thresholds(
-                answer_relevancy_enforced=answer_relevancy_enforced,
-                answer_relevancy_threshold=answer_relevancy_threshold,
-                faithfulness_enforced=faithfulness_enforced,
-                faithfulness_threshold=faithfulness_threshold,
-            ).items():
+            for name, threshold in _gate_thresholds().items():
                 value = getattr(scores, name)
                 if value < threshold:
                     reasons.append(
                         RagFailureReason(
-                            stage="ragas",
+                            stage="deepeval",
                             code=f"{name}_below_threshold",
                             message=f"{name}={value:.2f}，低于基线{threshold:.2f}",
                         )
@@ -630,7 +579,7 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
         ]
         failure.failure_reasons = [
             RagFailureReason(
-                stage="ragas",
+                stage="deepeval",
                 code="faithfulness_below_threshold",
                 message="faithfulness=0.42，低于基线0.85",
             ),
@@ -682,7 +631,7 @@ async def async_main(args: argparse.Namespace) -> int:
             install_read_only_guards(engine)
             cost_ledger = RagEvaluationCostLedger(settings)
             restore_usage_collectors = install_rag_usage_collectors(cost_ledger)
-            scorer = RagasScorer(settings, cost_ledger=cost_ledger)
+            scorer = DeepEvalScorer(settings, cost_ledger=cost_ledger)
             for case in cases:
                 cost_ledger.begin_case(case.case_id)
                 result = await _evaluate_real_case(
