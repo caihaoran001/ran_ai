@@ -333,7 +333,9 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     assert "不是空腹血糖" in prompt
     assert "空腹血糖142mg/dL" in prompt
     assert "语义仍有歧义时保持无风险" in prompt
-    assert "纯上报、确认和闲聊输出 JSON null" in prompt
+    assert "疑似产品不良反应或可能与产品使用相关的身体问题才输出不超过300字的独立查询" in prompt
+    assert "与产品无关的通用健康、饮食、运动问题" in prompt
+    assert "一律输出 JSON null" in prompt
     assert "不得回答、不得新增事实、不得把工作人员的话改成用户事实" in prompt
     assert "产品规则优先 current_state/habits/warnings" in prompt
     assert "复盘历程才用 case_summary" in prompt
