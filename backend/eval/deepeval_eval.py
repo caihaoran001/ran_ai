@@ -172,9 +172,7 @@ class _DeepEvalJudgeBridge(DeepEvalBaseLLM):
         raw = await self._judge.complete(prompt)
         if schema is None:
             return raw
-        from deepeval.metrics.utils import trimAndLoadJson
-
-        return trimAndLoadJson(raw, self)
+        return schema.model_validate(_parse_json_dict(raw))
 
     def generate(self, prompt: str, *args, schema=None, **kwargs):
         raise RuntimeError("sync generation is not used; metrics run async")

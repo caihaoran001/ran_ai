@@ -127,6 +127,46 @@ def test_gate_thresholds_are_fixed_by_product_decision():
     assert "answer_relevancy" not in gates
 
 
+@pytest.mark.asyncio
+async def test_deepeval_judge_bridge_returns_requested_schema_instance():
+    from deepeval.metrics import ContextualRecallMetric
+    from deepeval.metrics.contextual_recall.schema import Verdicts
+    from deepeval.test_case import LLMTestCase
+    from eval.deepeval_eval import _DeepEvalJudgeBridge
+
+    class _Judge:
+        model_name = "offline-judge"
+
+        async def complete(self, prompt: str) -> str:
+            if '"verdicts"' in prompt:
+                return '{"verdicts":[{"verdict":"yes","reason":"supported"}]}'
+            return '{"reason":"supported"}'
+
+    bridge = _DeepEvalJudgeBridge(_Judge())
+
+    result = await bridge.a_generate('return {"verdicts": []}', schema=Verdicts)
+
+    assert isinstance(result, Verdicts)
+    assert result.verdicts[0].verdict == "yes"
+    assert result.verdicts[0].reason == "supported"
+
+    metric = ContextualRecallMetric(
+        model=bridge,
+        include_reason=True,
+        async_mode=True,
+    )
+    await metric.a_measure(
+        LLMTestCase(
+            input="用户问题",
+            actual_output="实际回复",
+            expected_output="必须事实",
+            retrieval_context=["必须事实"],
+        )
+    )
+    assert metric.score == 1.0
+    assert metric.reason == "supported"
+
+
 def test_real_faithfulness_policy_uses_valid_enforced_status(tmp_path):
     policy = _load_faithfulness_policy(
         mock=False,
