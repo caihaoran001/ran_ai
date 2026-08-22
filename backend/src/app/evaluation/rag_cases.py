@@ -77,6 +77,7 @@ class RagAnswerExpectation(StrictModel):
         "support",
     ]
     required_fact_ids: list[str] = Field(default_factory=list)
+    forbidden_fact_ids: list[str] = Field(default_factory=list)
 
 
 class RagEvalCase(StrictModel):
@@ -98,7 +99,7 @@ class RagEvalCase(StrictModel):
             raise ValueError("authoritative_facts contains duplicate fact_id")
         referenced = set(self.retrieval.required_fact_ids) | set(
             self.answer.required_fact_ids
-        )
+        ) | set(self.answer.forbidden_fact_ids)
         unknown = referenced - set(fact_ids)
         if unknown:
             raise ValueError(f"expectations reference unknown facts: {sorted(unknown)}")

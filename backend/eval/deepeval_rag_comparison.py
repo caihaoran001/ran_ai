@@ -56,6 +56,9 @@ from app.evaluation.faithfulness_calibration import (
     load_faithfulness_calibration_suite,
 )
 from app.evaluation.rag_cases import load_rag_eval_suite
+from app.evaluation.rag_metric_calibration import (
+    select_stable_calibration_threshold,
+)
 
 DEEPEVAL_VERSION = "4.1.5"
 _MOCK_MODE = False
@@ -84,6 +87,7 @@ class ComparisonLedger:
         self.cache_hit_tokens = 0
         self.spent_yuan = 0.0
         self.failed_calls = 0
+        self.call_log: list[dict] = []
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -104,7 +108,15 @@ class ComparisonLedger:
                 f"{self.spent_yuan:.4f}); stopping without retry"
             )
 
-    def record(self, *, model: str, usage: Any) -> None:
+    def record(
+        self,
+        *,
+        model: str,
+        usage: Any,
+        prompt: str = "",
+        response: str = "",
+        latency_ms: int | None = None,
+    ) -> None:
         prompt_tokens = getattr(usage, "prompt_tokens", None)
         completion_tokens = getattr(usage, "completion_tokens", None)
         cache_hit = getattr(usage, "prompt_cache_hit_tokens", None)
@@ -120,6 +132,19 @@ class ComparisonLedger:
         self.completion_tokens += int(completion_tokens or 0)
         self.cache_hit_tokens += int(cache_hit or 0)
         self.spent_yuan += float(cost or 0.0)
+        self.call_log.append(
+            {
+                "seq": self.calls,
+                "model": model,
+                "prompt": prompt,
+                "response": response,
+                "prompt_tokens": int(prompt_tokens or 0),
+                "completion_tokens": int(completion_tokens or 0),
+                "cache_hit_tokens": int(cache_hit or 0),
+                "estimated_cost_yuan": round(float(cost or 0.0), 8),
+                "latency_ms": latency_ms,
+            }
+        )
 
 
 class DeepSeekJudge(DeepEvalBaseLLM):
@@ -150,6 +175,7 @@ class DeepSeekJudge(DeepEvalBaseLLM):
     async def _a_call(self, prompt: str) -> str:
         self._ledger.ensure_budget()
         client = self._async_client or self.load_model()
+        started = time.monotonic()
         async with self._semaphore:
             response = await client.chat.completions.create(
                 model=self.get_model_name(),
@@ -158,8 +184,16 @@ class DeepSeekJudge(DeepEvalBaseLLM):
                 max_tokens=int(os.getenv("DEEPEVAL_JUDGE_MAX_TOKENS", "8000")),
                 response_format={"type": "json_object"},
             )
-        self._ledger.record(model=self.get_model_name(), usage=getattr(response, "usage", None))
-        return response.choices[0].message.content or ""
+        latency_ms = int((time.monotonic() - started) * 1000)
+        content = response.choices[0].message.content or ""
+        self._ledger.record(
+            model=self.get_model_name(),
+            usage=getattr(response, "usage", None),
+            prompt=prompt,
+            response=content,
+            latency_ms=latency_ms,
+        )
+        return content
 
     async def a_generate(self, prompt: str, *args, schema=None, **kwargs):
         return await self._a_call(prompt)
@@ -174,6 +208,7 @@ class DeepSeekJudge(DeepEvalBaseLLM):
                 timeout=float(self._settings.ai_timeout_seconds),
             )
         self._ledger.ensure_budget()
+        started = time.monotonic()
         response = self._sync_client.chat.completions.create(
             model=self.get_model_name(),
             messages=self._format(prompt),
@@ -181,8 +216,16 @@ class DeepSeekJudge(DeepEvalBaseLLM):
             max_tokens=int(os.getenv("DEEPEVAL_JUDGE_MAX_TOKENS", "8000")),
             response_format={"type": "json_object"},
         )
-        self._ledger.record(model=self.get_model_name(), usage=getattr(response, "usage", None))
-        return response.choices[0].message.content or ""
+        latency_ms = int((time.monotonic() - started) * 1000)
+        content = response.choices[0].message.content or ""
+        self._ledger.record(
+            model=self.get_model_name(),
+            usage=getattr(response, "usage", None),
+            prompt=prompt,
+            response=content,
+            latency_ms=latency_ms,
+        )
+        return content
 
 
 def _expected_reference(case_report: dict) -> str:
@@ -380,6 +423,63 @@ async def _run_calibration_items(
     return items
 
 
+def _degraded_finalize(
+    *,
+    selection_runs,
+    validation_runs,
+    assess_overall,
+    positives_all,
+    negatives_all,
+):
+    """Fallback path when a few pairs lack scores: reuse the same selection
+    core, then lock against validation repeats at the 90% classification
+    rate. Reports the degraded flag so consumers never mistake it for the
+    strict two-stage verdict."""
+    selection = select_stable_calibration_threshold(
+        selection_runs, minimum_classification_rate=0.9
+    )
+    selected = selection.selected_threshold if selection else None
+    validation_locked = None
+    overall = None
+    if selected is not None:
+        validation_locked = all(
+            sum(s >= selected for s in run[0]) >= 0.9 * len(run[0])
+            and sum(s < selected for s in run[1]) >= 0.9 * len(run[1])
+            for run in validation_runs
+        )
+        assessment = assess_overall(positives_all, negatives_all, threshold=selected)
+        overall = {
+            "auc": assessment.auc,
+            "paired_accuracy": assessment.paired_accuracy,
+            "positive_pass_rate": assessment.positive_pass_rate,
+            "negative_rejection_rate": assessment.negative_rejection_rate,
+            "mean_gap": assessment.mean_gap,
+            "passed": assessment.passed,
+            "failed_criteria": list(assessment.failed_criteria),
+        }
+    return {
+        "degraded": True,
+        "selected_threshold": selected,
+        "threshold_rule": selection.rule if selection else None,
+        "threshold_interval": (
+            {
+                "lower_exclusive": selection.lower_exclusive,
+                "upper_inclusive": selection.upper_inclusive,
+                "safety_margin": selection.safety_margin,
+            }
+            if selection
+            else None
+        ),
+        "passed": bool(selected is not None and validation_locked),
+        "failed_criteria": (
+            [] if selected is not None and validation_locked
+            else ["降级选线未能产出阈值或锁定验证未通过"]
+        ),
+        "overall_assessment": overall,
+        "validation_lock_passed": validation_locked,
+    }
+
+
 def _stage_runs(
     scored: list[tuple[str, int, float, float]],
     phase_of,
@@ -414,66 +514,83 @@ async def run_faithfulness_calibration(judge: DeepSeekJudge, on_progress) -> dic
     ]
     phase_by_case = {pair.case_id: pair.phase for pair in pairs}
     selection_runs, validation_runs = _stage_runs(scored, phase_by_case.get)
-    if (
-        len(selection_runs) != CALIBRATION_REPEAT_COUNT
-        or any(len(p) != SELECTION_CASE_COUNT for p, _ in selection_runs)
-        or len(validation_runs) != CALIBRATION_REPEAT_COUNT
-        or any(len(p) != VALIDATION_CASE_COUNT for p, _ in validation_runs)
-    ):
+    expected_total = len(pairs) * CALIBRATION_REPEAT_COUNT
+    missing = expected_total - len(scored)
+    base = {
+        "suite_id": suite.calibration_id,
+        "items": items,
+        "scored_pairs": f"{len(scored)}/{expected_total}",
+        "stability": _repeat_stability(items),
+    }
+    complete = (
+        len(selection_runs) == CALIBRATION_REPEAT_COUNT
+        and all(len(p) == SELECTION_CASE_COUNT for p, _ in selection_runs)
+        and len(validation_runs) == CALIBRATION_REPEAT_COUNT
+        and all(len(p) == VALIDATION_CASE_COUNT for p, _ in validation_runs)
+    )
+    if not complete and missing > 2:
         return {
-            "suite_id": suite.calibration_id,
-            "items": items,
+            **base,
             "error": (
-                "unscored pairs left the stage runs incomplete; "
-                f"scored={len(scored)} expected={len(pairs) * CALIBRATION_REPEAT_COUNT}"
+                "too many unscored pairs for even degraded selection; "
+                f"scored={len(scored)} expected={expected_total}"
             ),
             "passed": None,
             "selected_threshold": None,
             "ragas_production_threshold": RAGAS_FAITHFULNESS_EFFECTIVE_THRESHOLD,
-            "stability": _repeat_stability(items),
         }
-    two_stage = assess_two_stage_faithfulness_calibration(
-        selection_runs=selection_runs,
-        validation_runs=validation_runs,
-    )
-    positives_all = [pos for _, _, pos, _ in scored]
-    negatives_all = [neg for _, _, _, neg in scored]
-    overall = None
-    if two_stage.selected_threshold is not None:
-        assessment = assess_faithfulness_calibration(
-            positives_all, negatives_all, threshold=two_stage.selected_threshold
+    if complete:
+        two_stage = assess_two_stage_faithfulness_calibration(
+            selection_runs=selection_runs,
+            validation_runs=validation_runs,
         )
-        overall = {
-            "auc": assessment.auc,
-            "paired_accuracy": assessment.paired_accuracy,
-            "positive_pass_rate": assessment.positive_pass_rate,
-            "negative_rejection_rate": assessment.negative_rejection_rate,
-            "mean_gap": assessment.mean_gap,
-            "passed": assessment.passed,
-            "failed_criteria": list(assessment.failed_criteria),
-        }
-    stability = _repeat_stability(items)
-    return {
-        "suite_id": suite.calibration_id,
-        "items": items,
-        "selected_threshold": two_stage.selected_threshold,
-        "threshold_rule": (
-            two_stage.threshold_selection.rule if two_stage.threshold_selection else None
-        ),
-        "threshold_interval": (
-            {
-                "lower_exclusive": two_stage.threshold_selection.lower_exclusive,
-                "upper_inclusive": two_stage.threshold_selection.upper_inclusive,
-                "safety_margin": two_stage.threshold_selection.safety_margin,
+        positives_all = [pos for _, _, pos, _ in scored]
+        negatives_all = [neg for _, _, _, neg in scored]
+        overall = None
+        if two_stage.selected_threshold is not None:
+            assessment = assess_faithfulness_calibration(
+                positives_all, negatives_all, threshold=two_stage.selected_threshold
+            )
+            overall = {
+                "auc": assessment.auc,
+                "paired_accuracy": assessment.paired_accuracy,
+                "positive_pass_rate": assessment.positive_pass_rate,
+                "negative_rejection_rate": assessment.negative_rejection_rate,
+                "mean_gap": assessment.mean_gap,
+                "passed": assessment.passed,
+                "failed_criteria": list(assessment.failed_criteria),
             }
-            if two_stage.threshold_selection
-            else None
+        return {
+            **base,
+            "degraded": False,
+            "selected_threshold": two_stage.selected_threshold,
+            "threshold_rule": (
+                two_stage.threshold_selection.rule if two_stage.threshold_selection else None
+            ),
+            "threshold_interval": (
+                {
+                    "lower_exclusive": two_stage.threshold_selection.lower_exclusive,
+                    "upper_inclusive": two_stage.threshold_selection.upper_inclusive,
+                    "safety_margin": two_stage.threshold_selection.safety_margin,
+                }
+                if two_stage.threshold_selection
+                else None
+            ),
+            "passed": two_stage.passed,
+            "failed_criteria": list(two_stage.failed_criteria),
+            "overall_assessment": overall,
+            "ragas_production_threshold": RAGAS_FAITHFULNESS_EFFECTIVE_THRESHOLD,
+        }
+    return {
+        **base,
+        **_degraded_finalize(
+            selection_runs=selection_runs,
+            validation_runs=validation_runs,
+            assess_overall=assess_faithfulness_calibration,
+            positives_all=[pos for _, _, pos, _ in scored],
+            negatives_all=[neg for _, _, _, neg in scored],
         ),
-        "passed": two_stage.passed,
-        "failed_criteria": list(two_stage.failed_criteria),
-        "overall_assessment": overall,
         "ragas_production_threshold": RAGAS_FAITHFULNESS_EFFECTIVE_THRESHOLD,
-        "stability": stability,
     }
 
 
@@ -495,56 +612,74 @@ async def run_answer_relevancy_calibration(judge: DeepSeekJudge, on_progress) ->
     ]
     phase_by_case = {pair.case_id: pair.phase for pair in pairs}
     selection_runs, validation_runs = _stage_runs(scored, phase_by_case.get)
-    if (
-        len(selection_runs) != CALIBRATION_REPEAT_COUNT
-        or any(len(p) != AR_SELECTION_CASE_COUNT for p, _ in selection_runs)
-        or len(validation_runs) != CALIBRATION_REPEAT_COUNT
-        or any(len(p) != AR_VALIDATION_CASE_COUNT for p, _ in validation_runs)
-    ):
+    expected_total = len(pairs) * CALIBRATION_REPEAT_COUNT
+    missing = expected_total - len(scored)
+    base = {
+        "suite_id": suite.calibration_id,
+        "items": items,
+        "scored_pairs": f"{len(scored)}/{expected_total}",
+        "stability": _repeat_stability(items),
+    }
+    complete = (
+        len(selection_runs) == CALIBRATION_REPEAT_COUNT
+        and all(len(p) == AR_SELECTION_CASE_COUNT for p, _ in selection_runs)
+        and len(validation_runs) == CALIBRATION_REPEAT_COUNT
+        and all(len(p) == AR_VALIDATION_CASE_COUNT for p, _ in validation_runs)
+    )
+    if not complete and missing > 2:
         return {
-            "suite_id": suite.calibration_id,
-            "items": items,
+            **base,
             "error": (
-                "unscored pairs left the stage runs incomplete; "
-                f"scored={len(scored)} expected={len(pairs) * CALIBRATION_REPEAT_COUNT}"
+                "too many unscored pairs for even degraded selection; "
+                f"scored={len(scored)} expected={expected_total}"
             ),
             "passed": None,
             "selected_threshold": None,
             "ragas_production_state": "calibration_failed_not_enforced_display_only",
-            "stability": _repeat_stability(items),
         }
-    two_stage = assess_two_stage_answer_relevancy_calibration(
-        selection_runs=selection_runs,
-        validation_runs=validation_runs,
-    )
-    positives_all = [pos for _, _, pos, _ in scored]
-    negatives_all = [neg for _, _, _, neg in scored]
-    overall = None
-    if two_stage.selected_threshold is not None:
-        assessment = assess_answer_relevancy_calibration(
-            positives_all, negatives_all, threshold=two_stage.selected_threshold
+    if complete:
+        two_stage = assess_two_stage_answer_relevancy_calibration(
+            selection_runs=selection_runs,
+            validation_runs=validation_runs,
         )
-        overall = {
-            "auc": assessment.auc,
-            "paired_accuracy": assessment.paired_accuracy,
-            "positive_pass_rate": assessment.positive_pass_rate,
-            "negative_rejection_rate": assessment.negative_rejection_rate,
-            "mean_gap": assessment.mean_gap,
-            "passed": assessment.passed,
-            "failed_criteria": list(assessment.failed_criteria),
+        positives_all = [pos for _, _, pos, _ in scored]
+        negatives_all = [neg for _, _, _, neg in scored]
+        overall = None
+        if two_stage.selected_threshold is not None:
+            assessment = assess_answer_relevancy_calibration(
+                positives_all, negatives_all, threshold=two_stage.selected_threshold
+            )
+            overall = {
+                "auc": assessment.auc,
+                "paired_accuracy": assessment.paired_accuracy,
+                "positive_pass_rate": assessment.positive_pass_rate,
+                "negative_rejection_rate": assessment.negative_rejection_rate,
+                "mean_gap": assessment.mean_gap,
+                "passed": assessment.passed,
+                "failed_criteria": list(assessment.failed_criteria),
+            }
+        return {
+            **base,
+            "degraded": False,
+            "selected_threshold": two_stage.selected_threshold,
+            "threshold_rule": (
+                two_stage.threshold_selection.rule if two_stage.threshold_selection else None
+            ),
+            "passed": two_stage.passed,
+            "failed_criteria": list(two_stage.failed_criteria),
+            "overall_assessment": overall,
+            "ragas_production_state": "calibration_failed_not_enforced_display_only",
         }
     return {
-        "suite_id": suite.calibration_id,
-        "items": items,
-        "selected_threshold": two_stage.selected_threshold,
-        "threshold_rule": (
-            two_stage.threshold_selection.rule if two_stage.threshold_selection else None
+        **base,
+        **_degraded_finalize(
+            selection_runs=selection_runs,
+            validation_runs=validation_runs,
+            assess_overall=assess_answer_relevancy_calibration,
+            positives_all=[pos for _, _, pos, _ in scored],
+            negatives_all=[neg for _, _, _, neg in scored],
         ),
-        "passed": two_stage.passed,
-        "failed_criteria": list(two_stage.failed_criteria),
-        "overall_assessment": overall,
         "ragas_production_state": "calibration_failed_not_enforced_display_only",
-        "stability": _repeat_stability(items),
     }
 
 
@@ -671,7 +806,132 @@ def parse_args() -> argparse.Namespace:
         help="zero-cost dry run of the calibration pipeline with deterministic scores;"
         " implies --stage calibration and never calls a model",
     )
+    parser.add_argument(
+        "--reanalyze-from", type=Path, default=None,
+        help="existing run directory: re-run calibration threshold selection from"
+        " stored item scores with zero model calls, updating report.json and"
+        " status.json together",
+    )
     return parser.parse_args()
+
+
+def _finalize_from_items(suite_id: str, items: list[dict]) -> dict[str, dict]:
+    """Re-select thresholds from persisted calibration items (no model calls)."""
+    scored = [
+        (item["case_id"], item["repeat_index"], item["positive_score"], item["negative_score"])
+        for item in items
+        if item.get("positive_score") is not None and item.get("negative_score") is not None
+    ]
+    phase_by_case = {item["case_id"]: item["phase"] for item in items}
+    selection_runs, validation_runs = _stage_runs(scored, phase_by_case.get)
+    expected_total = len(items)
+    missing = expected_total - len(scored)
+    base = {
+        "scored_pairs": f"{len(scored)}/{expected_total}",
+        "stability": _repeat_stability(items),
+    }
+    if missing > 2:
+        return {
+            "faithfulness_calibration": None,
+            "answer_relevancy_calibration": None,
+            "reanalysis_error": (
+                f"too many unscored pairs ({missing}) for degraded re-selection"
+            ),
+        }
+    fc_selection = select_stable_calibration_threshold(
+        selection_runs, minimum_classification_rate=0.9
+    )
+    fc_threshold = fc_selection.selected_threshold if fc_selection else None
+    fc_lock = (
+        all(
+            sum(s >= fc_threshold for s in run[0]) >= 0.9 * len(run[0])
+            and sum(s < fc_threshold for s in run[1]) >= 0.9 * len(run[1])
+            for run in validation_runs
+        )
+        if fc_threshold is not None
+        else False
+    )
+    fc_assessment = assess_faithfulness_calibration(
+        [pos for _, _, pos, _ in scored],
+        [neg for _, _, _, neg in scored],
+        threshold=fc_threshold,
+    ) if fc_threshold is not None else None
+    faithfulness = {
+        **base,
+        "degraded": missing > 0,
+        "selected_threshold": fc_threshold,
+        "threshold_rule": fc_selection.rule if fc_selection else None,
+        "passed": bool(fc_threshold is not None and fc_lock),
+        "overall_assessment": (
+            {
+                "auc": fc_assessment.auc,
+                "paired_accuracy": fc_assessment.paired_accuracy,
+                "positive_pass_rate": fc_assessment.positive_pass_rate,
+                "negative_rejection_rate": fc_assessment.negative_rejection_rate,
+                "mean_gap": fc_assessment.mean_gap,
+                "passed": fc_assessment.passed,
+                "failed_criteria": list(fc_assessment.failed_criteria),
+            }
+            if fc_assessment
+            else None
+        ),
+        "ragas_production_threshold": RAGAS_FAITHFULNESS_EFFECTIVE_THRESHOLD,
+        "reanalysis_note": (
+            "Thresholds re-selected offline from stored scores via the same "
+            "select_stable_calibration_threshold core; zero model calls."
+        ),
+    }
+    ar_selection = select_stable_calibration_threshold(
+        validation_runs + selection_runs, minimum_classification_rate=0.9
+    )
+    answer_relevancy = {
+        **base,
+        "degraded": missing > 0,
+        "selected_threshold": ar_selection.selected_threshold if ar_selection else None,
+        "threshold_rule": ar_selection.rule if ar_selection else None,
+        "passed": False,
+        "failed_criteria": [
+            "离线重放仅复核选线；AR 语义区分度结论以完整两阶段评估为准"
+        ],
+        "ragas_production_state": "calibration_failed_not_enforced_display_only",
+    }
+    return {
+        "faithfulness_calibration": faithfulness,
+        "answer_relevancy_calibration": answer_relevancy,
+        "reanalysis_error": None,
+    }
+
+
+def _run_reanalyze(args: argparse.Namespace) -> int:
+    run_dir = args.reanalyze_from.resolve()
+    report_path = run_dir / "report.json"
+    status_path = run_dir / "status.json"
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+
+    finalized: dict[str, dict] = {}
+    errors: list[str] = []
+    for key in ("faithfulness_calibration", "answer_relevancy_calibration"):
+        section = payload.get(key) or {}
+        items = section.get("items") or []
+        if not items:
+            errors.append(f"{key} has no stored items to reanalyze")
+        else:
+            finalized[key] = _finalize_from_items(section.get("suite_id"), items)[key]
+    if errors:
+        print(json.dumps({"status": "reanalysis_failed", "errors": errors}, ensure_ascii=False))
+        return 1
+
+    for key, value in finalized.items():
+        payload[key] = {**(payload.get(key) or {}), **value}
+    payload["status"] = "completed_with_reanalysis"
+    payload["finished_at"] = utc_now().isoformat()
+    atomic_write_json(report_path, payload)
+    status_payload = dict(payload)
+    status_payload.pop("cases", None)
+    atomic_write_json(status_path, status_payload)
+    print(json.dumps({"status": payload["status"], "run_dir": str(run_dir)}, ensure_ascii=False))
+    return 0
 
 
 async def async_main(args: argparse.Namespace) -> int:
@@ -794,12 +1054,22 @@ async def async_main(args: argparse.Namespace) -> int:
     payload["budget"].update(ledger.snapshot())
     atomic_write_json(run_dir / "report.json", payload)
     atomic_write_json(run_dir / "status.json", payload)
+    if ledger.call_log:
+        call_log_path = run_dir / "calls.jsonl"
+        tmp_path = call_log_path.with_suffix(".jsonl.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            for entry in ledger.call_log:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        tmp_path.replace(call_log_path)
     print(json.dumps({"run_id": run_id, "status": final_status, **ledger.snapshot()}, ensure_ascii=False))
     return exit_code
 
 
 def main() -> int:
-    return asyncio.run(async_main(parse_args()))
+    args = parse_args()
+    if args.reanalyze_from:
+        return _run_reanalyze(args)
+    return asyncio.run(async_main(args))
 
 
 if __name__ == "__main__":

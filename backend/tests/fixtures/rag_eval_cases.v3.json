@@ -542,9 +542,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f11"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -588,9 +586,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f12"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -634,9 +630,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f13"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -687,9 +681,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f14"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -732,9 +724,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f15"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -778,9 +768,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f16"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -824,9 +812,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f17"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -872,9 +858,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f18"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -920,9 +904,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f19"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -967,9 +949,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f20"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -1014,9 +994,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f21"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -1061,9 +1039,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f22"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -1108,9 +1084,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f23"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -1207,9 +1181,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "faq-f25"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -1448,9 +1420,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "chat-r04"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -1494,9 +1464,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "chat-r05"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -1542,9 +1510,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "chat-r06"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -1589,9 +1555,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "chat-r07"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",
@@ -1742,9 +1706,7 @@
         ]
       },
       "retrieval": {
-        "required_fact_ids": [
-          "chat-r10"
-        ]
+        "required_fact_ids": []
       },
       "answer": {
         "response_mode": "answer",

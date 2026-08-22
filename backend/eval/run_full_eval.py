@@ -254,6 +254,46 @@ def _reference(case: RagEvalCase) -> str:
     return "\n".join(statements)
 
 
+def _answer_fact_checks(case: RagEvalCase, response: str | None) -> list[RagFailureReason]:
+    """Deterministic answer-correctness checks for every case, including skip
+    cases whose replies never go through RAGAS scoring."""
+    reasons: list[RagFailureReason] = []
+    if not response:
+        reasons.append(
+            RagFailureReason(
+                stage="answer",
+                code="empty_response",
+                message=(
+                    f"本题需要回复（response_mode={case.answer.response_mode}），"
+                    "但 Agent 没有产出最终回复"
+                ),
+            )
+        )
+        return reasons
+    fact_by_id = {fact.fact_id: fact for fact in case.authoritative_facts}
+    for fact_id in case.answer.required_fact_ids:
+        statement = fact_by_id[fact_id].statement
+        if statement not in response:
+            reasons.append(
+                RagFailureReason(
+                    stage="answer",
+                    code="missing_required_fact",
+                    message=f"回复缺少必须事实[{fact_id}]：{statement[:80]}",
+                )
+            )
+    for fact_id in case.answer.forbidden_fact_ids:
+        statement = fact_by_id[fact_id].statement
+        if statement in response:
+            reasons.append(
+                RagFailureReason(
+                    stage="answer",
+                    code="forbidden_fact_present",
+                    message=f"回复出现禁止事实[{fact_id}]：{statement[:80]}",
+                )
+            )
+    return reasons
+
+
 async def _agent_reply(case: RagEvalCase, intent: IntentResult, settings) -> str | None:
     if case.answer.response_mode == "use_runtime_data":
         return None
@@ -373,6 +413,8 @@ async def _evaluate_real_case(
             response = await _agent_reply(case, intent, settings)
         result.actual.response = response
         reference = _reference(case)
+
+        reasons.extend(_answer_fact_checks(case, response))
 
         if case.rewrite.decision == "retrieve" and response:
             scores = await scorer.score(

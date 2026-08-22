@@ -66,10 +66,10 @@ def test_unregistered_suite_version_is_rejected(tmp_path):
 def test_wrong_decision_counts_are_rejected(tmp_path):
     payload = json.loads((FIXTURES / "rag_eval_cases.v3.json").read_text())
     flip = next(
-        c for c in payload["cases"] if c["rewrite"]["decision"] == "skip"
+        c for c in payload["cases"] if c["rewrite"]["decision"] == "retrieve"
         and c["origin"]["kind"] == "real_chat"
     )
-    flip["rewrite"]["decision"] = "retrieve"
+    flip["rewrite"]["decision"] = "skip"
     with pytest.raises(ValueError, match="exactly 16 retrieve"):
         load_rag_eval_suite(_write_suite(tmp_path, payload))
 
