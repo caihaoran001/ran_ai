@@ -293,6 +293,7 @@ class RagEvaluationCaseUsage(RagEvaluationUsageSummary):
 class AnswerRelevancyPolicy(StrictModel):
     status: Literal[
         "enforced",
+        "diagnostic_only",
         "calibration_failed",
         "not_calibrated",
         "mock",
@@ -311,6 +312,7 @@ class AnswerRelevancyPolicy(StrictModel):
 class FaithfulnessPolicy(StrictModel):
     status: Literal[
         "enforced",
+        "diagnostic_only",
         "calibration_failed",
         "not_calibrated",
         "mock",
@@ -339,7 +341,7 @@ class RagEvaluationSummary(StrictModel):
     dataset_version: int = Field(ge=1)
     model: str = Field(min_length=1, max_length=120)
     embedding_model: str = Field(min_length=1, max_length=120)
-    ragas_version: str = Field(min_length=1, max_length=40)
+    ragas_version: str = Field(default="", max_length=40)
     evaluation_framework: Literal["ragas", "deepeval"] = "ragas"
     framework_version: str = Field(default="", max_length=40)
     counts: RagEvaluationCounts
