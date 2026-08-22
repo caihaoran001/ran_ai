@@ -339,8 +339,10 @@ async def run_faithfulness_calibration(judge: DeepSeekJudge, on_progress) -> dic
                 actual_output=pair.negative_response,
                 retrieval_context=list(pair.retrieved_contexts),
             )
-            pos_score, pos_err = await _ascore(_make_metric("faithfulness", judge), positive_tc)
-            neg_score, neg_err = await _ascore(_make_metric("faithfulness", judge), negative_tc)
+            (pos_score, pos_err), (neg_score, neg_err) = await asyncio.gather(
+                _ascore(_make_metric("faithfulness", judge), positive_tc),
+                _ascore(_make_metric("faithfulness", judge), negative_tc),
+            )
             items.append(
                 {
                     "case_id": pair.case_id,
@@ -431,8 +433,10 @@ async def run_answer_relevancy_calibration(judge: DeepSeekJudge, on_progress) ->
         for pair in pairs:
             positive_tc = LLMTestCase(input=pair.user_input, actual_output=pair.positive_response)
             negative_tc = LLMTestCase(input=pair.user_input, actual_output=pair.negative_response)
-            pos_score, pos_err = await _ascore(_make_metric("answer_relevancy", judge), positive_tc)
-            neg_score, neg_err = await _ascore(_make_metric("answer_relevancy", judge), negative_tc)
+            (pos_score, pos_err), (neg_score, neg_err) = await asyncio.gather(
+                _ascore(_make_metric("answer_relevancy", judge), positive_tc),
+                _ascore(_make_metric("answer_relevancy", judge), negative_tc),
+            )
             items.append(
                 {
                     "case_id": pair.case_id,
@@ -608,7 +612,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-report", type=Path, required=True)
     parser.add_argument("--run-id")
     parser.add_argument("--budget-yuan", type=float, default=10.0)
-    parser.add_argument("--max-concurrency", type=int, default=4)
+    parser.add_argument("--max-concurrency", type=int, default=12)
     parser.add_argument(
         "--reports-root",
         type=Path,
