@@ -58,6 +58,7 @@ from app.evaluation.faithfulness_calibration import (
 from app.evaluation.rag_cases import load_rag_eval_suite
 
 DEEPEVAL_VERSION = "4.1.5"
+_MOCK_MODE = False
 REWRITE_HARM_TOLERANCE = 0.05
 BASELINE_THRESHOLDS = {
     "context_recall": 0.80,
@@ -307,6 +308,78 @@ async def run_main_comparison(source_cases: list[dict], expected_decisions: dict
     return {"per_case": results}
 
 
+async def _run_calibration_items(
+    *,
+    judge,
+    metric_kind: str,
+    pairs,
+    needs_retrieval_context: bool,
+    mock: bool,
+    on_progress,
+) -> list[dict]:
+    """Judge every (pair, repeat, side) exactly once; bounded by the shared
+    judge semaphore; results are reassembled in deterministic suite order."""
+
+    async def one(pair, repeat_index: int, side: str):
+        key = (pair.case_id, repeat_index, side)
+        if mock:
+            return key, (0.92 if side == "positive" else 0.31), None
+        response = pair.positive_response if side == "positive" else pair.negative_response
+        contexts = getattr(pair, "retrieved_contexts", None)
+        retrieval_context = list(contexts) if needs_retrieval_context and contexts else None
+        if retrieval_context is None:
+            test_case = LLMTestCase(input=pair.user_input, actual_output=response)
+        else:
+            test_case = LLMTestCase(
+                input=pair.user_input,
+                actual_output=response,
+                retrieval_context=retrieval_context,
+            )
+        score, error = await _ascore(_make_metric(metric_kind, judge), test_case)
+        return key, score, error
+
+    total = len(pairs) * CALIBRATION_REPEAT_COUNT * 2
+    completed = 0
+
+    async def tracked(coro):
+        nonlocal completed
+        outcome = await coro
+        completed += 1
+        on_progress(completed, total)
+        return outcome
+
+    tasks = [
+        tracked(one(pair, repeat_index, side))
+        for repeat_index in range(1, CALIBRATION_REPEAT_COUNT + 1)
+        for pair in pairs
+        for side in ("positive", "negative")
+    ]
+    outcomes = await asyncio.gather(*tasks)
+
+    by_key = {key: (score, error) for key, score, error in outcomes}
+    duplicate_keys = len(outcomes) != len(by_key)
+    items: list[dict] = []
+    for repeat_index in range(1, CALIBRATION_REPEAT_COUNT + 1):
+        for pair in pairs:
+            (pos_score, pos_err) = by_key.get((pair.case_id, repeat_index, "positive"), (None, "missing"))
+            (neg_score, neg_err) = by_key.get((pair.case_id, repeat_index, "negative"), (None, "missing"))
+            errors = [e for e in (pos_err, neg_err) if e]
+            if duplicate_keys:
+                errors.append("duplicate judgement key detected")
+            items.append(
+                {
+                    "case_id": pair.case_id,
+                    "phase": pair.phase,
+                    "error_type": getattr(pair, "error_type", None),
+                    "repeat_index": repeat_index,
+                    "positive_score": pos_score,
+                    "negative_score": neg_score,
+                    "errors": errors,
+                }
+            )
+    return items
+
+
 def _stage_runs(
     scored: list[tuple[str, int, float, float]],
     phase_of,
@@ -326,35 +399,14 @@ def _stage_runs(
 async def run_faithfulness_calibration(judge: DeepSeekJudge, on_progress) -> dict:
     suite = load_faithfulness_calibration_suite(default_faithfulness_calibration_path())
     pairs = build_faithfulness_calibration_pairs(suite)
-    items: list[dict] = []
-    for repeat_index in range(1, CALIBRATION_REPEAT_COUNT + 1):
-        for pair in pairs:
-            positive_tc = LLMTestCase(
-                input=pair.user_input,
-                actual_output=pair.positive_response,
-                retrieval_context=list(pair.retrieved_contexts),
-            )
-            negative_tc = LLMTestCase(
-                input=pair.user_input,
-                actual_output=pair.negative_response,
-                retrieval_context=list(pair.retrieved_contexts),
-            )
-            (pos_score, pos_err), (neg_score, neg_err) = await asyncio.gather(
-                _ascore(_make_metric("faithfulness", judge), positive_tc),
-                _ascore(_make_metric("faithfulness", judge), negative_tc),
-            )
-            items.append(
-                {
-                    "case_id": pair.case_id,
-                    "phase": pair.phase,
-                    "error_type": getattr(pair, "error_type", None),
-                    "repeat_index": repeat_index,
-                    "positive_score": pos_score,
-                    "negative_score": neg_score,
-                    "errors": [e for e in (pos_err, neg_err) if e],
-                }
-            )
-            on_progress(len(items), len(pairs) * CALIBRATION_REPEAT_COUNT)
+    items = await _run_calibration_items(
+        judge=judge,
+        metric_kind="faithfulness",
+        pairs=pairs,
+        needs_retrieval_context=True,
+        mock=_MOCK_MODE,
+        on_progress=on_progress,
+    )
     scored = [
         (item["case_id"], item["repeat_index"], item["positive_score"], item["negative_score"])
         for item in items
@@ -428,26 +480,14 @@ async def run_faithfulness_calibration(judge: DeepSeekJudge, on_progress) -> dic
 async def run_answer_relevancy_calibration(judge: DeepSeekJudge, on_progress) -> dict:
     suite = load_answer_relevancy_calibration_suite(default_answer_relevancy_calibration_path())
     pairs = build_answer_relevancy_calibration_pairs(suite)
-    items: list[dict] = []
-    for repeat_index in range(1, CALIBRATION_REPEAT_COUNT + 1):
-        for pair in pairs:
-            positive_tc = LLMTestCase(input=pair.user_input, actual_output=pair.positive_response)
-            negative_tc = LLMTestCase(input=pair.user_input, actual_output=pair.negative_response)
-            (pos_score, pos_err), (neg_score, neg_err) = await asyncio.gather(
-                _ascore(_make_metric("answer_relevancy", judge), positive_tc),
-                _ascore(_make_metric("answer_relevancy", judge), negative_tc),
-            )
-            items.append(
-                {
-                    "case_id": pair.case_id,
-                    "phase": pair.phase,
-                    "repeat_index": repeat_index,
-                    "positive_score": pos_score,
-                    "negative_score": neg_score,
-                    "errors": [e for e in (pos_err, neg_err) if e],
-                }
-            )
-            on_progress(len(items), len(pairs) * CALIBRATION_REPEAT_COUNT)
+    items = await _run_calibration_items(
+        judge=judge,
+        metric_kind="answer_relevancy",
+        pairs=pairs,
+        needs_retrieval_context=False,
+        mock=_MOCK_MODE,
+        on_progress=on_progress,
+    )
     scored = [
         (item["case_id"], item["repeat_index"], item["positive_score"], item["negative_score"])
         for item in items
@@ -609,7 +649,10 @@ def _summarize_comparison(per_case: list[dict]) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="DeepEval vs RAGAS offline comparison")
-    parser.add_argument("--source-report", type=Path, required=True)
+    parser.add_argument(
+        "--source-report", type=Path, default=None,
+        help="completed RAGAS run report; required only for --stage full",
+    )
     parser.add_argument("--run-id")
     parser.add_argument("--budget-yuan", type=float, default=10.0)
     parser.add_argument("--max-concurrency", type=int, default=12)
@@ -619,36 +662,60 @@ def parse_args() -> argparse.Namespace:
         default=Path(os.getenv("RAG_EVALUATION_REPORTS_PATH", "/app/diagnostics/rag-evaluations")),
     )
     parser.add_argument("--dataset", type=Path, default=None)
+    parser.add_argument(
+        "--stage", choices=("full", "calibration"), default="full",
+        help="full = main comparison + both calibrations; calibration = calibrations only",
+    )
+    parser.add_argument(
+        "--mock", action="store_true",
+        help="zero-cost dry run of the calibration pipeline with deterministic scores;"
+        " implies --stage calibration and never calls a model",
+    )
     return parser.parse_args()
 
 
 async def async_main(args: argparse.Namespace) -> int:
-    source_payload = json.loads(args.source_report.read_text(encoding="utf-8"))
-    source_summary = source_payload.get("summary") or {}
-    source_cases = source_payload.get("cases") or []
-    if not source_cases:
-        raise RuntimeError("source report contains no cases")
+    global _MOCK_MODE
+    _MOCK_MODE = bool(args.mock)
+    if _MOCK_MODE:
+        args.stage = "calibration"
 
-    suite = load_rag_eval_suite(args.dataset) if args.dataset else load_rag_eval_suite()
-    expected_decisions = {case.case_id: case.rewrite.decision for case in suite.cases}
-    for case in source_cases:
-        case["_ragas_failure_reasons"] = case.get("failure_reasons") or []
+    if args.stage == "full":
+        if not args.source_report:
+            raise RuntimeError("--stage full requires --source-report")
+        source_payload = json.loads(args.source_report.read_text(encoding="utf-8"))
+        source_summary = source_payload.get("summary") or {}
+        source_cases = source_payload.get("cases") or []
+        if not source_cases:
+            raise RuntimeError("source report contains no cases")
+        suite = load_rag_eval_suite(args.dataset) if args.dataset else load_rag_eval_suite()
+        expected_decisions = {case.case_id: case.rewrite.decision for case in suite.cases}
+        for case in source_cases:
+            case["_ragas_failure_reasons"] = case.get("failure_reasons") or []
+    else:
+        source_summary = {}
+        source_cases = []
+        expected_decisions = {}
 
-    run_id = args.run_id or datetime.now(timezone.utc).strftime("deepeval-comparison-%Y%m%dT%H%M%SZ")
+    run_id = args.run_id or datetime.now(timezone.utc).strftime(
+        ("deepeval-calibration-%Y%m%dT%H%M%SZ" if args.stage == "calibration"
+         else "deepeval-comparison-%Y%m%dT%H%M%SZ")
+    )
     run_dir = args.reports_root / run_id
     if run_dir.exists():
         raise RuntimeError(f"single-run lock violated: {run_dir} already exists")
     run_dir.mkdir(parents=True)
 
     settings = get_settings()
-    if not settings.ai_api_key:
+    if not _MOCK_MODE and not settings.ai_api_key:
         raise RuntimeError("real comparison requires AI_API_KEY")
 
     started_at = utc_now()
     state: dict[str, Any] = {
         "schema_version": 1,
         "run_id": run_id,
-        "run_mode": "real",
+        "run_mode": "mock" if _MOCK_MODE else "real",
+        "stage_requested": args.stage,
         "status": "running",
         "started_at": started_at.isoformat(),
         "updated_at": started_at.isoformat(),
@@ -660,7 +727,7 @@ async def async_main(args: argparse.Namespace) -> int:
         "dataset_id": source_summary.get("dataset_id"),
         "dataset_version": source_summary.get("dataset_version"),
         "budget": {"limit_yuan": args.budget_yuan},
-        "stage": "main_comparison",
+        "stage": ("main_comparison" if args.stage == "full" else "faithfulness_calibration"),
         "progress": {"done": 0},
         "main_comparison": None,
         "faithfulness_calibration": None,
@@ -689,11 +756,15 @@ async def async_main(args: argparse.Namespace) -> int:
 
     exit_code = 0
     try:
-        main_result = await run_main_comparison(source_cases, expected_decisions, judge, main_progress)
-        main_result["summary"] = _summarize_comparison(main_result["per_case"])
-        state["main_comparison"] = main_result
-        state["stage"] = "faithfulness_calibration"
-        persist()
+        if args.stage == "full":
+            main_result = await run_main_comparison(source_cases, expected_decisions, judge, main_progress)
+            main_result["summary"] = _summarize_comparison(main_result["per_case"])
+            state["main_comparison"] = main_result
+            state["stage"] = "faithfulness_calibration"
+            persist()
+        else:
+            state["stage"] = "faithfulness_calibration"
+            persist()
 
         state["faithfulness_calibration"] = await run_faithfulness_calibration(
             judge,
