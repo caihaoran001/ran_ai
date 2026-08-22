@@ -2,20 +2,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import time
 from datetime import datetime, timezone
-import re
 from pathlib import Path
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal, engine
 from app.evaluation.rag_cases import RagEvalCase, load_rag_eval_suite
 from app.schemas.rag_evaluation import (
-    AnswerRelevancyCalibrationReport,
     AnswerRelevancyPolicy,
-    FaithfulnessCalibrationReport,
     FaithfulnessPolicy,
     RagAnswerRelevancyJudgement,
     RagBinaryJudgement,
@@ -71,12 +67,6 @@ else:
     from reporting import aggregate_summary, atomic_write_json, utc_now, write_report
 
 
-THRESHOLDS = {
-    "context_recall": 0.80,
-    "context_precision": 0.70,
-    "faithfulness": 0.85,
-    "answer_relevancy": 0.80,
-}
 EVALUATION_FRAMEWORK = "deepeval"
 EVALUATION_FRAMEWORK_VERSION = DEEPEVAL_VERSION
 
@@ -195,9 +185,11 @@ def _reference(case: RagEvalCase) -> str:
     return "\n".join(statements)
 
 
-def _answer_fact_checks(case: RagEvalCase, response: str | None) -> list[RagFailureReason]:
+def _answer_fact_checks(
+    case: RagEvalCase, response: str | None
+) -> list[RagFailureReason]:
     """Deterministic answer-correctness checks for every case, including skip
-    cases whose replies never go through RAGAS scoring."""
+    cases whose replies do not run retrieval metrics."""
     reasons: list[RagFailureReason] = []
     if not response:
         reasons.append(
@@ -211,6 +203,7 @@ def _answer_fact_checks(case: RagEvalCase, response: str | None) -> list[RagFail
             )
         )
         return reasons
+    fact_by_id = {fact.fact_id: fact for fact in case.authoritative_facts}
     for fact_id in case.answer.forbidden_fact_ids:
         statement = fact_by_id[fact_id].statement
         if statement in response:
@@ -222,6 +215,7 @@ def _answer_fact_checks(case: RagEvalCase, response: str | None) -> list[RagFail
                 )
             )
     return reasons
+
 
 async def _agent_reply(case: RagEvalCase, intent: IntentResult, settings) -> str | None:
     if case.answer.response_mode == "use_runtime_data":
@@ -445,41 +439,46 @@ async def _evaluate_real_case(
             reasons.append(
                 RagFailureReason(
                     stage="retrieval",
-                    code="missing_ragas_inputs",
+                    code="missing_metric_inputs",
                     message="缺少召回内容或最终回复，无法计算四项评测指标",
                 )
             )
-        if response:
+        if response and case.rewrite.decision != "retrieve":
             try:
                 fact_by_id = {fact.fact_id: fact for fact in case.authoritative_facts}
-                correctness_score, correctness_reason = (
-                    await scorer.score_answer_correctness_with_details(
-                        user_input=case.user_query,
-                        response=response,
-                        reference=_reference(case),
-                        must_have_statements=[
-                            fact_by_id[f].statement
-                            for f in case.answer.required_fact_ids
-                            if f in fact_by_id
-                        ],
-                        forbidden_statements=[
-                            fact_by_id[f].statement
-                            for f in case.answer.forbidden_fact_ids
-                            if f in fact_by_id
-                        ],
-                        response_mode=case.answer.response_mode,
-                    )
+                (
+                    correctness_score,
+                    correctness_reason,
+                    correctness_verbose,
+                ) = await scorer.score_answer_correctness_with_details(
+                    user_input=case.user_query,
+                    response=response,
+                    reference=_reference(case),
+                    must_have_statements=[
+                        fact_by_id[f].statement
+                        for f in case.answer.required_fact_ids
+                        if f in fact_by_id
+                    ],
+                    forbidden_statements=[
+                        fact_by_id[f].statement
+                        for f in case.answer.forbidden_fact_ids
+                        if f in fact_by_id
+                    ],
+                    response_mode=case.answer.response_mode,
                 )
                 if result.scores is None:
                     result.scores = RagCaseScores()
                 result.scores.answer_correctness = correctness_score
                 result.scores.answer_correctness_reason = correctness_reason
                 judge_reasons["answer_correctness"] = correctness_reason or ""
+                judge_reasons["answer_correctness_verbose"] = correctness_verbose
             except Exception as exc:  # noqa: BLE001 - observational metric
-                judge_reasons["answer_correctness"] = (
-                    f"{type(exc).__name__}: {exc}"[:300]
-                )
+                judge_reasons["answer_correctness"] = f"{type(exc).__name__}: {exc}"[
+                    :300
+                ]
+                judge_reasons["answer_correctness_verbose"] = ""
         result.judge_reasons = judge_reasons
+        result.scores.judge_reasons = judge_reasons
         result.failure_reasons = reasons
         result.status = "failed" if reasons else "passed"
     except Exception as exc:
@@ -651,7 +650,10 @@ async def async_main(args: argparse.Namespace) -> int:
             if not settings.ai_api_key or not settings.embedding_api_key:
                 raise RuntimeError("真实评测要求 AI_API_KEY 和 EMBEDDING_API_KEY")
             install_read_only_guards(engine)
-            cost_ledger = RagEvaluationCostLedger(settings)
+            cost_ledger = RagEvaluationCostLedger(
+                settings,
+                call_log_path=run_dir / "calls.jsonl",
+            )
             restore_usage_collectors = install_rag_usage_collectors(cost_ledger)
             scorer = DeepEvalScorer(settings, cost_ledger=cost_ledger)
             for case in cases:
@@ -716,7 +718,7 @@ def parse_args() -> argparse.Namespace:
         default=Path(
             os.getenv(
                 "RAG_EVALUATION_DATASET_PATH",
-                "/app/tests/fixtures/rag_eval_cases.v2.json",
+                "/app/tests/fixtures/rag_eval_cases.v3.json",
             )
         ),
     )

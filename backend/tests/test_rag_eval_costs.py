@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -160,9 +161,16 @@ async def test_rag_cost_is_incomplete_when_price_usage_or_retry_detail_is_missin
 
 
 @pytest.mark.asyncio
-async def test_openai_client_instrumentation_records_each_raw_request():
+async def test_openai_client_instrumentation_records_each_raw_request(tmp_path):
     response = SimpleNamespace(
         model="judge-actual",
+        choices=[
+            SimpleNamespace(
+                index=0,
+                finish_reason="stop",
+                message=SimpleNamespace(role="assistant", content='{"score": 1}'),
+            )
+        ],
         usage=SimpleNamespace(
             prompt_tokens=50,
             completion_tokens=10,
@@ -179,12 +187,16 @@ async def test_openai_client_instrumentation_records_each_raw_request():
         chat=SimpleNamespace(completions=Completions()),
         embeddings=SimpleNamespace(),
     )
-    ledger = RagEvaluationCostLedger(_settings())
+    call_log_path = tmp_path / "calls.jsonl"
+    ledger = RagEvaluationCostLedger(_settings(), call_log_path=call_log_path)
     ledger.begin_case("rag-wrapped")
     instrument_openai_client(client, ledger, chat_component="ragas_judge")
 
     with ledger.stage("context_recall"):
-        returned = await client.chat.completions.create(model="judge-configured")
+        returned = await client.chat.completions.create(
+            model="judge-configured",
+            messages=[{"role": "user", "content": "评估这条回复"}],
+        )
 
     usage = ledger.case_usage("rag-wrapped")
     ledger.end_case("rag-wrapped")
@@ -192,6 +204,12 @@ async def test_openai_client_instrumentation_records_each_raw_request():
     assert usage.ragas_judge.call_count == 1
     assert usage.calls[0].model == "judge-actual"
     assert usage.calls[0].stage_key == "context_recall"
+    evidence = json.loads(call_log_path.read_text(encoding="utf-8"))
+    assert evidence["case_id"] == "rag-wrapped"
+    assert evidence["stage_key"] == "context_recall"
+    assert evidence["request"]["messages"][0]["content"] == "评估这条回复"
+    assert evidence["response"]["choices"][0]["message"]["content"] == '{"score": 1}'
+    assert evidence["usage"]["total_tokens"] == 60
 
 
 def test_mock_rag_cases_have_tracked_zero_cost_usage():
