@@ -23,7 +23,16 @@ REQUIRED_RISK_TAGS = frozenset(
 )
 FIXED_CASE_COUNT = 50
 FIXED_ORIGIN_COUNTS = {"faq_rewrite": 25, "real_chat": 25}
-FIXED_DECISION_COUNTS = {"retrieve": 35, "skip": 15}
+# Decision quotas are per registered suite version: v2 encodes the legacy
+# retrieval gating (generic health/diet/exercise retrieve), v3 encodes the
+# product-scoped gating where only product-related questions retrieve.
+SUITE_DECISION_COUNTS = {
+    ("rag-fixed-50-v2", 2): {"retrieve": 35, "skip": 15},
+    ("rag-fixed-50-v3", 3): {"retrieve": 16, "skip": 34},
+}
+# Legacy suites force every faq_rewrite case to retrieve; product-scoped
+# suites (v3+) may mark faq cases as skip when they are not product-related.
+VERSIONS_REQUIRING_FAQ_RETRIEVAL = {("rag-fixed-50-v2", 2)}
 
 
 class StrictModel(BaseModel):
@@ -105,13 +114,6 @@ class RagEvalCase(StrictModel):
                 raise ValueError("retrieve case must declare required retrieval facts")
             if not self.answer.required_fact_ids:
                 raise ValueError("retrieve case must declare grounded answer facts")
-        elif self.retrieval.required_fact_ids:
-            raise ValueError("skip case cannot require retrieved knowledge facts")
-        elif any(
-            fact_by_id[fact_id].source_scope == "knowledge"
-            for fact_id in self.answer.required_fact_ids
-        ):
-            raise ValueError("skip case cannot require knowledge-scoped answer facts")
         return self
 
 
@@ -138,20 +140,54 @@ class RagEvalSuite(StrictModel):
             raise ValueError(
                 "suite must contain exactly 25 faq_rewrite and 25 real_chat cases"
             )
-        decision_counts = Counter(case.rewrite.decision for case in self.cases)
-        if dict(decision_counts) != FIXED_DECISION_COUNTS:
-            raise ValueError("suite must contain exactly 35 retrieve and 15 skip cases")
+        suite_key = (self.suite_id, self.version)
+        expected_counts = SUITE_DECISION_COUNTS.get(suite_key)
+        if expected_counts is None:
+            raise ValueError(
+                "suite decision quota is not registered: "
+                f"register ({self.suite_id}, {self.version}) in SUITE_DECISION_COUNTS"
+            )
         origin_refs = [
             (case.origin.kind, case.origin.reference_id) for case in self.cases
         ]
         if len(origin_refs) != len(set(origin_refs)):
             raise ValueError("suite contains duplicate origin references")
-        if any(
-            case.origin.kind == "faq_rewrite"
-            and case.rewrite.decision != "retrieve"
-            for case in self.cases
+        if (
+            suite_key in VERSIONS_REQUIRING_FAQ_RETRIEVAL
+            and any(
+                case.origin.kind == "faq_rewrite"
+                and case.rewrite.decision != "retrieve"
+                for case in self.cases
+            )
         ):
             raise ValueError("faq_rewrite cases must retrieve knowledge")
+        decision_counts = Counter(case.rewrite.decision for case in self.cases)
+        if dict(decision_counts) != expected_counts:
+            raise ValueError(
+                f"suite {self.suite_id} v{self.version} must contain exactly "
+                f"{expected_counts['retrieve']} retrieve and {expected_counts['skip']} skip cases"
+            )
+        if suite_key in VERSIONS_REQUIRING_FAQ_RETRIEVAL:
+            for case in self.cases:
+                if case.rewrite.decision != "skip":
+                    continue
+                fact_by_id = {
+                    fact.fact_id: fact for fact in case.authoritative_facts
+                }
+                if case.retrieval.required_fact_ids:
+                    raise ValueError(
+                        "legacy suites: skip case cannot require retrieved "
+                        f"knowledge facts: {case.case_id}"
+                    )
+                if any(
+                    fact_by_id[fact_id].source_scope == "knowledge"
+                    for fact_id in case.answer.required_fact_ids
+                    if fact_id in fact_by_id
+                ):
+                    raise ValueError(
+                        "legacy suites: skip case cannot require "
+                        f"knowledge-scoped answer facts: {case.case_id}"
+                    )
         return self
 
 
