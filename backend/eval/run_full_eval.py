@@ -6,6 +6,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
+import re
 from pathlib import Path
 
 from app.core.config import get_settings
@@ -212,13 +213,18 @@ def _answer_fact_checks(case: RagEvalCase, response: str | None) -> list[RagFail
         return reasons
     fact_by_id = {fact.fact_id: fact for fact in case.authoritative_facts}
     for fact_id in case.answer.required_fact_ids:
-        statement = fact_by_id[fact_id].statement
-        if statement not in response:
+        missing_tokens = _missing_numeric_tokens(
+            fact_by_id[fact_id].statement, response
+        )
+        if missing_tokens:
             reasons.append(
                 RagFailureReason(
                     stage="answer",
                     code="missing_required_fact",
-                    message=f"回复缺少必须事实[{fact_id}]：{statement[:80]}",
+                    message=(
+                        f"回复缺少必须事实[{fact_id}]的关键数值/量词："
+                        + "、".join(missing_tokens)
+                    ),
                 )
             )
     for fact_id in case.answer.forbidden_fact_ids:
@@ -232,6 +238,12 @@ def _answer_fact_checks(case: RagEvalCase, response: str | None) -> list[RagFail
                 )
             )
     return reasons
+
+def _missing_numeric_tokens(statement: str, response: str) -> list[str]:
+    """Hard-check only numbers-with-units inside a statement; wording is left
+    to the semantic correctness metric so a correct paraphrase never fails."""
+    tokens = re.findall(r"\d+(?:\.\d+)?[^\s，。、；!？?]{0,6}", statement)
+    return [token for token in tokens if token not in response]
 
 
 async def _agent_reply(case: RagEvalCase, intent: IntentResult, settings) -> str | None:

@@ -20,6 +20,8 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
+from deepeval.models import DeepEvalBaseLLM
+
 if __package__:
     from .rag_costs import instrument_openai_client
 else:
@@ -86,6 +88,16 @@ class RagScores:
     details: dict[str, list[BinaryJudgement]] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        for name, key in (
+            ("context_recall_details", "context_recall"),
+            ("raw_context_recall_details", "raw_context_recall"),
+            ("context_precision_details", "context_precision"),
+            ("faithfulness_details", "faithfulness"),
+            ("answer_relevancy_details", "answer_relevancy"),
+        ):
+            object.__setattr__(self, name, tuple(self.details.get(key, [])))
+
     def judgements(self, name: str) -> list[BinaryJudgement]:
         return self.details.get(name, [])
 
@@ -139,19 +151,20 @@ def _parse_json_dict(raw: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-class _DeepEvalJudgeBridge:
-    """Adapter exposing generate()/a_generate()/get_model_name() so DeepEval
-    metrics can drive our ledgered judge client."""
+class _DeepEvalJudgeBridge(DeepEvalBaseLLM):
+    """Ledgered judge exposed through the DeepEvalBaseLLM contract required
+    by DeepEval 4.1.5 metrics (load_model / a_generate / get_model_name)."""
 
     def __init__(self, judge: _JudgeModel):
         self._judge = judge
         self.model_name = judge.model_name
+        super().__init__(model=judge.model_name)
 
     def load_model(self):
         return self._judge
 
     def get_model_name(self) -> str:
-        return self.judge.model_name
+        return self.model_name
 
     async def a_generate(self, prompt: str, *args, schema=None, **kwargs):
         raw = await self._judge.complete(prompt)
@@ -267,10 +280,13 @@ class DeepEvalScorer:
     ) -> tuple[float, list[BinaryJudgement]]:
         if not retrieved_contexts:
             return 0.0, []
-        score, _ = await self._measure(
-            self._context_recall,
-            self._case(user_input, reference, retrieval_context=retrieved_contexts),
+        test_case = LLMTestCase(
+            input=user_input,
+            actual_output=reference,
+            retrieval_context=retrieved_contexts,
+            expected_output=reference,
         )
+        score, _ = await self._measure(self._context_recall, test_case)
         return score, []
 
     async def score_context_precision_with_details(
@@ -278,10 +294,13 @@ class DeepEvalScorer:
     ) -> tuple[float, list[ContextPrecisionJudgement]]:
         if not retrieved_contexts:
             return 0.0, []
-        score, _ = await self._measure(
-            self._context_precision,
-            self._case(user_input, reference, retrieval_context=retrieved_contexts),
+        test_case = LLMTestCase(
+            input=user_input,
+            actual_output="",
+            retrieval_context=retrieved_contexts,
+            expected_output=reference,
         )
+        score, _ = await self._measure(self._context_precision, test_case)
         return score, []
 
     async def score_faithfulness_with_details(
@@ -305,6 +324,42 @@ class DeepEvalScorer:
         )
         return score, [], None
 
+    def _correctness_metric(
+        self,
+        *,
+        user_input: str,
+        reference: str,
+        must_have_statements: list[str],
+        forbidden_statements: list[str],
+        response_mode: str,
+    ):
+        """Build a per-case GEval whose criteria carry the fact expectations;
+        the actual output stays the untouched reply so scoring is never
+        polluted by grading instructions."""
+        from deepeval.metrics import GEval
+        from deepeval.test_case import LLMTestCaseParams
+
+        criteria = _ANSWER_CORRECTNESS_CRITERIA + (
+            "\n【本题必须覆盖的事实】\n"
+            + (chr(10).join(must_have_statements) or "（无）")
+            + "\n【禁止出现的说法】\n"
+            + (chr(10).join(forbidden_statements) or "（无）")
+            + f"\n【预期回复方式】{response_mode}"
+            + f"\n【参考答案（仅用于对照，不得照抄要求）】\n{reference}"
+            + f"\n【用户原问题】{user_input}"
+        )
+        return GEval(
+            name=ANSWER_CORRECTNESS_NAME,
+            criteria=criteria,
+            evaluation_params=[
+                LLMTestCaseParams.INPUT,
+                LLMTestCaseParams.ACTUAL_OUTPUT,
+            ],
+            threshold=0.80,
+            model=self._bridge,
+            async_mode=True,
+        )
+
     async def score_answer_correctness_with_details(
         self,
         *,
@@ -315,15 +370,17 @@ class DeepEvalScorer:
         forbidden_statements: list[str],
         response_mode: str,
     ) -> tuple[float, str]:
-        if self._answer_correctness is None:
+        if self._answer_correctness is None and self._bridge is None:
             raise RuntimeError("answer correctness scorer is not initialized")
-        extra = (
-            f"\n\n【必须覆盖的事实】\n{chr(10).join(must_have_statements) or '（无）'}\n"
-            f"【禁止出现的说法】\n{chr(10).join(forbidden_statements) or '（无）'}\n"
-            f"【预期回复方式】{response_mode}\n【参考答案】\n{reference}"
+        metric = self._answer_correctness or self._correctness_metric(
+            user_input=user_input,
+            reference=reference,
+            must_have_statements=must_have_statements,
+            forbidden_statements=forbidden_statements,
+            response_mode=response_mode,
         )
-        test_case = self._case(user_input, response + extra, expected_output=reference)
-        score, reason = await self._measure(self._answer_correctness, test_case)
+        test_case = self._case(user_input, response)
+        score, reason = await self._measure(metric, test_case)
         return score, reason
 
     async def score(
