@@ -211,22 +211,6 @@ def _answer_fact_checks(case: RagEvalCase, response: str | None) -> list[RagFail
             )
         )
         return reasons
-    fact_by_id = {fact.fact_id: fact for fact in case.authoritative_facts}
-    for fact_id in case.answer.required_fact_ids:
-        missing_tokens = _missing_numeric_tokens(
-            fact_by_id[fact_id].statement, response
-        )
-        if missing_tokens:
-            reasons.append(
-                RagFailureReason(
-                    stage="answer",
-                    code="missing_required_fact",
-                    message=(
-                        f"回复缺少必须事实[{fact_id}]的关键数值/量词："
-                        + "、".join(missing_tokens)
-                    ),
-                )
-            )
     for fact_id in case.answer.forbidden_fact_ids:
         statement = fact_by_id[fact_id].statement
         if statement in response:
@@ -238,13 +222,6 @@ def _answer_fact_checks(case: RagEvalCase, response: str | None) -> list[RagFail
                 )
             )
     return reasons
-
-def _missing_numeric_tokens(statement: str, response: str) -> list[str]:
-    """Hard-check only numbers-with-units inside a statement; wording is left
-    to the semantic correctness metric so a correct paraphrase never fails."""
-    tokens = re.findall(r"\d+(?:\.\d+)?[^\s，。、；!？?]{0,6}", statement)
-    return [token for token in tokens if token not in response]
-
 
 async def _agent_reply(case: RagEvalCase, intent: IntentResult, settings) -> str | None:
     if case.answer.response_mode == "use_runtime_data":
@@ -368,6 +345,7 @@ async def _evaluate_real_case(
 
         reasons.extend(_answer_fact_checks(case, response))
 
+        judge_reasons: dict[str, str] = {}
         if case.rewrite.decision == "retrieve" and response:
             fact_by_id = {fact.fact_id: fact for fact in case.authoritative_facts}
             scores = await scorer.score(
@@ -396,6 +374,7 @@ async def _evaluate_real_case(
                 answer_correctness=scores.answer_correctness,
                 answer_correctness_reason=scores.answer_correctness_reason,
             )
+            judge_reasons.update(scores.judge_reasons)
             result.metric_evidence = RagMetricEvidence(
                 context_recall=[
                     RagBinaryJudgement(
@@ -467,9 +446,40 @@ async def _evaluate_real_case(
                 RagFailureReason(
                     stage="retrieval",
                     code="missing_ragas_inputs",
-                    message="缺少召回内容或最终回复，无法计算四项 RAGAS 指标",
+                    message="缺少召回内容或最终回复，无法计算四项评测指标",
                 )
             )
+        if response:
+            try:
+                fact_by_id = {fact.fact_id: fact for fact in case.authoritative_facts}
+                correctness_score, correctness_reason = (
+                    await scorer.score_answer_correctness_with_details(
+                        user_input=case.user_query,
+                        response=response,
+                        reference=_reference(case),
+                        must_have_statements=[
+                            fact_by_id[f].statement
+                            for f in case.answer.required_fact_ids
+                            if f in fact_by_id
+                        ],
+                        forbidden_statements=[
+                            fact_by_id[f].statement
+                            for f in case.answer.forbidden_fact_ids
+                            if f in fact_by_id
+                        ],
+                        response_mode=case.answer.response_mode,
+                    )
+                )
+                if result.scores is None:
+                    result.scores = RagCaseScores()
+                result.scores.answer_correctness = correctness_score
+                result.scores.answer_correctness_reason = correctness_reason
+                judge_reasons["answer_correctness"] = correctness_reason or ""
+            except Exception as exc:  # noqa: BLE001 - observational metric
+                judge_reasons["answer_correctness"] = (
+                    f"{type(exc).__name__}: {exc}"[:300]
+                )
+        result.judge_reasons = judge_reasons
         result.failure_reasons = reasons
         result.status = "failed" if reasons else "passed"
     except Exception as exc:

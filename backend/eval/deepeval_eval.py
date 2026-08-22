@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from deepeval.models import DeepEvalBaseLLM
+from deepeval.test_case import LLMTestCase
 
 if __package__:
     from .rag_costs import instrument_openai_client
@@ -85,6 +86,8 @@ class RagScores:
     raw_context_recall: float
     answer_correctness: float | None = None
     answer_correctness_reason: str | None = None
+    answer_relevancy_all_noncommittal: bool | None = None
+    judge_reasons: dict[str, str] = field(default_factory=dict)
     details: dict[str, list[BinaryJudgement]] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
 
@@ -211,23 +214,7 @@ class DeepEvalScorer:
         self._answer_relevancy = None
         if include_answer_relevancy:
             self._answer_relevancy = AnswerRelevancyMetric(threshold=0.80, **common)
-        self._answer_correctness = None
-        if include_answer_correctness:
-            from deepeval.metrics import GEval
-            from deepeval.test_case import LLMTestCaseParams
-
-            self._answer_correctness = GEval(
-                name=ANSWER_CORRECTNESS_NAME,
-                criteria=_ANSWER_CORRECTNESS_CRITERIA,
-                evaluation_params=[
-                    LLMTestCaseParams.INPUT,
-                    LLMTestCaseParams.ACTUAL_OUTPUT,
-                    LLMTestCaseParams.EXPECTED_OUTPUT,
-                ],
-                threshold=0.80,
-                model=bridge,
-                async_mode=True,
-            )
+        self._include_answer_correctness = include_answer_correctness
         self._bridge = bridge
 
     def _cost_stage(self, stage_key: str):
@@ -277,52 +264,52 @@ class DeepEvalScorer:
 
     async def score_context_recall_with_details(
         self, *, user_input, retrieved_contexts, reference
-    ) -> tuple[float, list[BinaryJudgement]]:
+    ) -> tuple[float, list[BinaryJudgement], str]:
         if not retrieved_contexts:
-            return 0.0, []
+            return 0.0, [], ""
         test_case = LLMTestCase(
             input=user_input,
             actual_output=reference,
             retrieval_context=retrieved_contexts,
             expected_output=reference,
         )
-        score, _ = await self._measure(self._context_recall, test_case)
-        return score, []
+        score, reason = await self._measure(self._context_recall, test_case)
+        return score, [], reason
 
     async def score_context_precision_with_details(
         self, *, user_input, retrieved_contexts, reference
-    ) -> tuple[float, list[ContextPrecisionJudgement]]:
+    ) -> tuple[float, list[ContextPrecisionJudgement], str]:
         if not retrieved_contexts:
-            return 0.0, []
+            return 0.0, [], ""
         test_case = LLMTestCase(
             input=user_input,
             actual_output="",
             retrieval_context=retrieved_contexts,
             expected_output=reference,
         )
-        score, _ = await self._measure(self._context_precision, test_case)
-        return score, []
+        score, reason = await self._measure(self._context_precision, test_case)
+        return score, [], reason
 
     async def score_faithfulness_with_details(
         self, *, user_input, response, retrieved_contexts
-    ) -> tuple[float, list[BinaryJudgement]]:
+    ) -> tuple[float, list[BinaryJudgement], str]:
         if not retrieved_contexts:
-            return 0.0, []
-        score, _ = await self._measure(
+            return 0.0, [], ""
+        score, reason = await self._measure(
             self._faithfulness,
             self._case(user_input, response, retrieval_context=retrieved_contexts),
         )
-        return score, []
+        return score, [], reason
 
     async def score_answer_relevancy_with_details(
         self, *, user_input, response
-    ) -> tuple[float, list[Any], bool | None]:
+    ) -> tuple[float, list[Any], bool | None, str]:
         if self._answer_relevancy is None:
-            raise RuntimeError("answer relevancy scorer is not initialized")
-        score, _ = await self._measure(
+            return 0.0, [], None, "diagnostic-only metric not initialized"
+        score, reason = await self._measure(
             self._answer_relevancy, self._case(user_input, response)
         )
-        return score, [], None
+        return score, [], None, reason
 
     def _correctness_metric(
         self,
@@ -370,9 +357,9 @@ class DeepEvalScorer:
         forbidden_statements: list[str],
         response_mode: str,
     ) -> tuple[float, str]:
-        if self._answer_correctness is None and self._bridge is None:
+        if not self._include_answer_correctness and self._bridge is None:
             raise RuntimeError("answer correctness scorer is not initialized")
-        metric = self._answer_correctness or self._correctness_metric(
+        metric = self._correctness_metric(
             user_input=user_input,
             reference=reference,
             must_have_statements=must_have_statements,
@@ -395,30 +382,31 @@ class DeepEvalScorer:
         forbidden_statements: list[str] | None = None,
         response_mode: str = "answer",
     ) -> RagScores:
-        recall, _ = await self.score_context_recall_with_details(
+        judge_reasons: dict[str, str] = {}
+        recall, _, judge_reasons["context_recall"] = await self.score_context_recall_with_details(
             user_input=user_input,
             retrieved_contexts=retrieved_contexts,
             reference=reference,
         )
-        raw_recall, _ = await self.score_context_recall_with_details(
+        raw_recall, _, judge_reasons["raw_context_recall"] = await self.score_context_recall_with_details(
             user_input=user_input,
             retrieved_contexts=raw_contexts,
             reference=reference,
         )
-        precision, _ = await self.score_context_precision_with_details(
+        precision, _, judge_reasons["context_precision"] = await self.score_context_precision_with_details(
             user_input=user_input,
             retrieved_contexts=retrieved_contexts,
             reference=reference,
         )
-        faithfulness, _ = await self.score_faithfulness_with_details(
+        faithfulness, _, judge_reasons["faithfulness"] = await self.score_faithfulness_with_details(
             user_input=user_input,
             response=response,
             retrieved_contexts=retrieved_contexts,
         )
         if self._answer_relevancy is None:
-            relevancy, _, all_noncommittal = 0.0, [], None
+            relevancy, _, all_noncommittal, judge_reasons["answer_relevancy"] = 0.0, [], None, "diagnostic-only metric not initialized"
         else:
-            relevancy, _, all_noncommittal = await self.score_answer_relevancy_with_details(
+            relevancy, _, all_noncommittal, judge_reasons["answer_relevancy"] = await self.score_answer_relevancy_with_details(
                 user_input=user_input,
                 response=response,
             )
@@ -436,8 +424,10 @@ class DeepEvalScorer:
                         response_mode=response_mode,
                     )
                 )
+                judge_reasons["answer_correctness"] = correctness_reason or ""
             except Exception as exc:  # noqa: BLE001 - observational metric
                 correctness_reason = f"{type(exc).__name__}: {exc}"[:300]
+                judge_reasons["answer_correctness"] = correctness_reason
         return RagScores(
             context_recall=recall,
             context_precision=precision,
@@ -446,5 +436,6 @@ class DeepEvalScorer:
             raw_context_recall=raw_recall,
             answer_correctness=correctness_score,
             answer_correctness_reason=correctness_reason,
+            judge_reasons=judge_reasons,
         )
 

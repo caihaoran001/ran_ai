@@ -193,7 +193,7 @@ class RagEvalSuite(StrictModel):
 
 
 def default_rag_eval_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "rag_eval_cases.v2.json"
+    return Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "rag_eval_cases.v3.json"
 
 
 def load_rag_eval_suite(path: Path | None = None) -> RagEvalSuite:

@@ -432,6 +432,7 @@ class RagCaseScores(StrictModel):
     answer_relevancy: float | None = Field(default=None, ge=0.0, le=1.0)
     answer_correctness: float | None = None
     answer_correctness_reason: str | None = None
+    judge_reasons: dict[str, str] = Field(default_factory=dict)
 
 
 class RagEvaluationCaseResult(StrictModel):
@@ -448,6 +449,7 @@ class RagEvaluationCaseResult(StrictModel):
     metric_evidence: RagMetricEvidence = Field(default_factory=RagMetricEvidence)
     failure_reasons: list[RagFailureReason] = Field(default_factory=list)
     usage: RagEvaluationCaseUsage = Field(default_factory=RagEvaluationCaseUsage)
+    judge_reasons: dict[str, str] = Field(default_factory=dict)
     elapsed_ms: int | None = Field(default=None, ge=0)
 
 

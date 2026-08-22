@@ -7,16 +7,16 @@ from app.evaluation.rag_cases import REQUIRED_RISK_TAGS, load_rag_eval_suite
 def test_fixed_rag_eval_suite_has_exact_contract_and_risk_coverage():
     suite = load_rag_eval_suite()
 
-    assert suite.suite_id == "rag-fixed-50-v2"
-    assert suite.version == 2
+    assert suite.suite_id == "rag-fixed-50-v3"
+    assert suite.version == 3
     assert len(suite.cases) == 50
     assert Counter(case.origin.kind for case in suite.cases) == {
         "faq_rewrite": 25,
         "real_chat": 25,
     }
     assert Counter(case.rewrite.decision for case in suite.cases) == {
-        "retrieve": 35,
-        "skip": 15,
+        "retrieve": 16,
+        "skip": 34,
     }
     assert REQUIRED_RISK_TAGS <= {
         tag for case in suite.cases for tag in case.tags
