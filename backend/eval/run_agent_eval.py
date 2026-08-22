@@ -268,6 +268,7 @@ async def _real_result(
     settings,
     judge: AgentQualityJudge,
     cost_ledger: AgentEvaluationCostLedger,
+    knowledge_query: str | None = None,
 ) -> AgentEvaluationCaseResult:
     started = time.monotonic()
     cost_ledger.begin_case(case.case_id, round_index)
@@ -277,6 +278,7 @@ async def _real_result(
             user_query=case.user_query,
             recent_messages=_history_lines(case),
             query_speaker=case.query_speaker,
+            knowledge_query=knowledge_query,
         )
         tool_calls = graph.tool_evidence(reply.tool_trace)
         actual, checks, failures = assess_agent_case(

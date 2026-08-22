@@ -1,0 +1,62 @@
+services:
+  reply-agent-eval:
+    image: ran-ai-rag-eval:local
+    build:
+      context: ./backend
+      dockerfile: eval/Dockerfile
+      args:
+        BACKEND_IMAGE: ${RAG_EVAL_BACKEND_IMAGE:-ran-ai-backend:local}
+    restart: "no"
+    entrypoint: ["/app/.venv/bin/python", "/app/eval/run_reply_agent_eval.py"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://ran_ai:ran_ai@postgres:5432/ran_ai}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-deepseek-v4-flash}
+      AI_RISK_MODEL: ${AI_RISK_MODEL:-}
+      AI_TEMPERATURE: ${AI_TEMPERATURE:-0.3}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-8000}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-300}
+      AI_MAX_CONCURRENT_REQUESTS: "1"
+      AI_PROMPT_COST_PER_1M_TOKENS: ${AI_PROMPT_COST_PER_1M_TOKENS:-1.5}
+      AI_COMPLETION_COST_PER_1M_TOKENS: ${AI_COMPLETION_COST_PER_1M_TOKENS:-4.5}
+      AI_PROMPT_CACHE_HIT_COST_PER_1M_TOKENS: ${AI_PROMPT_CACHE_HIT_COST_PER_1M_TOKENS:-0}
+      AI_PREMIUM_MODELS: ${AI_PREMIUM_MODELS:-deepseek-v4-pro}
+      AI_PREMIUM_PROMPT_COST_PER_1M_TOKENS: ${AI_PREMIUM_PROMPT_COST_PER_1M_TOKENS:-4.5}
+      AI_PREMIUM_COMPLETION_COST_PER_1M_TOKENS: ${AI_PREMIUM_COMPLETION_COST_PER_1M_TOKENS:-13.5}
+      AI_PREMIUM_PROMPT_CACHE_HIT_COST_PER_1M_TOKENS: ${AI_PREMIUM_PROMPT_CACHE_HIT_COST_PER_1M_TOKENS:-0}
+      AI_PEAK_PRICE_MULTIPLIER: ${AI_PEAK_PRICE_MULTIPLIER:-2}
+      AGENT_MAX_LLM_CALLS: ${AGENT_MAX_LLM_CALLS:-5}
+      AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-8}
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-90}
+      AGENT_TOOL_TIMEOUT_SECONDS: ${AGENT_TOOL_TIMEOUT_SECONDS:-15}
+      AGENT_EVAL_JUDGE_MODEL: ${AGENT_EVAL_JUDGE_MODEL:-}
+      AGENT_EVAL_JUDGE_MAX_TOKENS: ${AGENT_EVAL_JUDGE_MAX_TOKENS:-4000}
+      DEEPEVAL_JUDGE_MAX_TOKENS: ${DEEPEVAL_JUDGE_MAX_TOKENS:-8000}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v4}
+      EMBEDDING_COST_PER_1M_TOKENS: ${EMBEDDING_COST_PER_1M_TOKENS:-0.5}
+      FAQ_VECTOR_DISTANCE_THRESHOLD: ${FAQ_VECTOR_DISTANCE_THRESHOLD:-0.35}
+      CASE_VECTOR_DISTANCE_THRESHOLD: ${CASE_VECTOR_DISTANCE_THRESHOLD:-0.45}
+      REPLY_AGENT_EVAL_GIT_SHA: ${REPLY_AGENT_EVAL_GIT_SHA:-unknown}
+      REPLY_AGENT_EVAL_MAX_COST_YUAN: ${REPLY_AGENT_EVAL_MAX_COST_YUAN:-10}
+      REPLY_AGENT_EVALUATION_REPORTS_PATH: /app/diagnostics/reply-agent-evaluations
+      REPLY_AGENT_EVALUATION_DATASET_PATH: /app/tests/fixtures/reply_agent_eval_cases.v1.json
+      DEEPEVAL_TELEMETRY_OPT_OUT: "1"
+      DEEPEVAL_DISABLE_DOTENV: "1"
+      DEEPEVAL_DISABLE_LEGACY_KEYFILE: "1"
+      DEEPEVAL_FILE_SYSTEM: READ_ONLY
+      DEEPEVAL_NO_INSPECT_PROMPT: "1"
+      CONFIDENT_OPEN_BROWSER: "0"
+      CONFIDENT_TRACE_VERBOSE: "0"
+      CONFIDENT_TRACE_FLUSH: "0"
+      WEB_SEARCH_ENABLED: "false"
+      QIWEI_ENABLED: "false"
+      RAN_AI_RAG_EVAL_MODE: "true"
+      RAN_AI_AGENT_EVAL_MODE: "true"
+    volumes:
+      - ./backend/eval:/app/eval:ro
+      - ./backend/src:/app/src:ro
+      - ./backend/tests/fixtures:/app/tests/fixtures:ro
+      - ./diagnostics:/app/diagnostics

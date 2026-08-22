@@ -19,6 +19,7 @@ from app.api.routes import (
     questionnaire_templates,
     questionnaires,
     rag_evaluations,
+    reply_agent_evaluations,
     service_cases,
     settings,
     short_links,
@@ -40,6 +41,11 @@ api_router.include_router(
     rag_evaluations.router,
     prefix="/rag-evaluations",
     tags=["rag-evaluations"],
+)
+api_router.include_router(
+    reply_agent_evaluations.router,
+    prefix="/reply-agent-evaluations",
+    tags=["reply-agent-evaluations"],
 )
 api_router.include_router(service_cases.router, prefix="/service-cases", tags=["service-cases"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])

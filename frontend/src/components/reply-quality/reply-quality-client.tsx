@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpenCheck, Bot } from "lucide-react";
+import { Archive, BookOpenCheck, Bot } from "lucide-react";
 import {
   AgentEvaluationsClient,
   type AgentEvaluationSummary,
@@ -12,21 +12,29 @@ import {
   type FaithfulnessCalibrationReport,
   type RagEvaluationSummary,
 } from "@/components/rag-evaluations/rag-evaluations-client";
+import {
+  ReplyAgentEvaluationsClient,
+  type ReplyAgentEvaluationSummary,
+} from "@/components/reply-agent-evaluations/reply-agent-evaluations-client";
 
-type QualityTab = "rag" | "agent";
+type QualityTab = "unified" | "rag" | "agent";
 
 export function ReplyQualityClient({
+  replyAgentRuns,
   ragRuns,
   agentRuns,
   initialCalibration,
   initialFaithfulnessCalibration,
 }: {
+  replyAgentRuns: ReplyAgentEvaluationSummary[] | null;
   ragRuns: RagEvaluationSummary[] | null;
   agentRuns: AgentEvaluationSummary[] | null;
   initialCalibration: AnswerRelevancyCalibrationReport | null;
   initialFaithfulnessCalibration: FaithfulnessCalibrationReport | null;
 }) {
-  const [tab, setTab] = useState<QualityTab>(ragRuns ? "rag" : "agent");
+  const [tab, setTab] = useState<QualityTab>(
+    replyAgentRuns ? "unified" : ragRuns ? "rag" : "agent",
+  );
 
   return (
     <div className="page-stack">
@@ -37,10 +45,20 @@ export function ReplyQualityClient({
         <div className="min-w-0 px-1">
           <p className="text-sm font-extrabold text-slate-900">回复质量评测</p>
           <p className="mt-0.5 text-xs leading-5 text-slate-500">
-            知识问答检查 RAG，Agent 任务质量检查工具选择、参数和最终交付。
+            一套题库覆盖回复、知识检索、工具任务和安全边界；旧批次保留供历史对照。
           </p>
         </div>
-        <div className="segmented-control grid-cols-2" role="tablist">
+        <div className="segmented-control grid-cols-3" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "unified"}
+            onClick={() => setTab("unified")}
+            className={`segmented-item flex items-center justify-center gap-2 whitespace-nowrap px-2 text-xs sm:px-3.5 sm:text-sm ${tab === "unified" ? "segmented-item-active" : ""}`}
+          >
+            <Bot className="h-4 w-4" />
+            统一回复 Agent
+          </button>
           <button
             type="button"
             role="tab"
@@ -49,7 +67,7 @@ export function ReplyQualityClient({
             className={`segmented-item flex items-center justify-center gap-2 whitespace-nowrap px-2 text-xs sm:px-3.5 sm:text-sm ${tab === "rag" ? "segmented-item-active" : ""}`}
           >
             <BookOpenCheck className="h-4 w-4" />
-            知识问答质量
+            历史 RAG
           </button>
           <button
             type="button"
@@ -58,14 +76,20 @@ export function ReplyQualityClient({
             onClick={() => setTab("agent")}
             className={`segmented-item flex items-center justify-center gap-2 whitespace-nowrap px-2 text-xs sm:px-3.5 sm:text-sm ${tab === "agent" ? "segmented-item-active" : ""}`}
           >
-            <Bot className="h-4 w-4" />
-            Agent 任务质量
+            <Archive className="h-4 w-4" />
+            历史 Agent
           </button>
         </div>
       </nav>
 
       <div role="tabpanel">
-        {tab === "rag" ? (
+        {tab === "unified" ? (
+          replyAgentRuns ? (
+            <ReplyAgentEvaluationsClient initialRuns={replyAgentRuns} />
+          ) : (
+            <UnavailableReport kind="统一回复 Agent" />
+          )
+        ) : tab === "rag" ? (
           ragRuns ? (
             <RagEvaluationsClient
               initialRuns={ragRuns}

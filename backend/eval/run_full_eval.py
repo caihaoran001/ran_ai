@@ -160,7 +160,7 @@ def _load_faithfulness_policy(
             reason="模拟批次使用固定分数，只验证评测链路和页面结构",
         )
     return FaithfulnessPolicy(
-        status="calibrated",
+        status="enforced",
         enforced=True,
         threshold=GATE_FAITHFULNESS,
         reason="忠实度门禁采用中文正反校准选出的阈值 0.8333",

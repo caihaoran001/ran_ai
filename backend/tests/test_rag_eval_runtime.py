@@ -13,7 +13,12 @@ from eval.deepeval_eval import (
     GATE_FAITHFULNESS,
 )
 from eval.intent_eval import resolve_intent
-from eval.run_full_eval import _answer_fact_checks, _gate_thresholds, _mock_cases
+from eval.run_full_eval import (
+    _answer_fact_checks,
+    _gate_thresholds,
+    _load_faithfulness_policy,
+    _mock_cases,
+)
 
 
 def test_intent_resolution_preserves_runtime_three_state_contract():
@@ -120,6 +125,18 @@ def test_gate_thresholds_are_fixed_by_product_decision():
         "faithfulness": GATE_FAITHFULNESS,
     }
     assert "answer_relevancy" not in gates
+
+
+def test_real_faithfulness_policy_uses_valid_enforced_status(tmp_path):
+    policy = _load_faithfulness_policy(
+        mock=False,
+        reports_root=tmp_path,
+        settings=SimpleNamespace(),
+    )
+
+    assert policy.status == "enforced"
+    assert policy.enforced is True
+    assert policy.threshold == GATE_FAITHFULNESS
 
 
 @pytest.mark.asyncio
