@@ -15,6 +15,7 @@ from app.evaluation.reply_agent_cases import (
 from app.schemas.reply_agent_evaluation import ReplyAgentEvaluationRunDetail
 from app.services.reply_agent_evaluation_reports import ReplyAgentEvaluationReportStore
 from eval.build_reply_agent_suite import build_suite
+from eval.reanalyze_reply_agent_report import async_main as reanalyze_main
 from eval.run_full_eval import _mock_cases as mock_rag_cases
 from eval.run_reply_agent_eval import (
     _base_summary,
@@ -150,6 +151,23 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
         case.usage.get("total", {}).get("call_count") == 0 for case in report.cases
     )
     assert all(case.evidence for case in report.cases)
+    assert report.summary.score_source == "fresh_run"
+    assert report.summary.ruler_policy is not None
+    assert report.summary.ruler_policy.task_completion_policy_version == (
+        "task-completion-v4"
+    )
+    assert report.summary.ruler_policy.task_completion_threshold == 0.9
+    agent_metrics = [
+        metric
+        for case in report.cases
+        if case.execution_kind == "agent"
+        for metric in case.metrics
+    ]
+    assert all(
+        metric.enforced is (metric.key == "judge_task_completion")
+        for metric in agent_metrics
+        if metric.key.startswith("judge_")
+    )
 
     no_reply = next(
         case for case in report.cases if case.actual.response_mode == "no_reply"
@@ -214,6 +232,62 @@ async def test_targeted_run_rejects_unknown_or_duplicate_case_ids(tmp_path) -> N
                 case_ids="RA-008,RA-008",
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_saved_output_reanalysis_replays_80_cases_without_generation(
+    tmp_path,
+) -> None:
+    reports_root = tmp_path / "reply-agent-evaluations"
+    await async_main(
+        SimpleNamespace(
+            mock=True,
+            run_id="reply-agent-reanalysis-source",
+            reports_root=reports_root,
+            dataset=None,
+            case_ids="",
+        )
+    )
+    exit_code = await reanalyze_main(
+        SimpleNamespace(
+            source_report=(
+                reports_root
+                / "reply-agent-reanalysis-source"
+                / "report.json"
+            ),
+            run_id="reply-agent-reanalysis-mock",
+            mock=True,
+            max_cost_yuan=10,
+            reports_root=reports_root,
+            dataset=None,
+        )
+    )
+
+    assert exit_code == 0
+    report = ReplyAgentEvaluationRunDetail.model_validate_json(
+        (
+            reports_root / "reply-agent-reanalysis-mock" / "report.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert report.summary.status == "completed"
+    assert report.summary.score_source == "saved_output_reanalysis"
+    assert report.summary.source_run_id == "reply-agent-reanalysis-source"
+    assert report.summary.counts.total == 80
+    assert report.summary.counts.completed == 80
+    assert report.summary.usage.call_count == 0
+    assert report.summary.ruler_policy is not None
+    assert report.summary.ruler_policy.task_completion_threshold == 0.9
+    agent_cases = [case for case in report.cases if case.execution_kind == "agent"]
+    assert len(agent_cases) == 30
+    assert all(
+        next(
+            metric
+            for metric in case.metrics
+            if metric.key == "judge_task_completion"
+        ).enforced
+        for case in agent_cases
+    )
+    assert all(case.evidence["source_run_id"] for case in report.cases)
 
 
 def test_rewrite_harm_is_explicit_per_case_and_in_batch_summary() -> None:

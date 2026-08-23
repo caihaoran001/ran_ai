@@ -31,6 +31,7 @@ from app.schemas.reply_agent_evaluation import (
     ReplyAgentFailureReason,
     ReplyAgentMetricResult,
     ReplyAgentRateMetric,
+    ReplyAgentRulerPolicy,
     ReplyAgentUsageTotals,
 )
 from app.services.message_insight_service import analyze_message_insight
@@ -38,7 +39,12 @@ from app.services.ranren_ai.engine import _requires_health_handoff
 
 if __package__:
     from .agent_costs import AgentEvaluationCostLedger, install_agent_usage_collector
-    from .agent_judge import AgentQualityJudge
+    from .agent_judge import (
+        TASK_COMPLETION_CALIBRATION_ID,
+        TASK_COMPLETION_POLICY_VERSION,
+        TASK_COMPLETION_THRESHOLD,
+        AgentQualityJudge,
+    )
     from .deepeval_eval import (
         DEEPEVAL_VERSION,
         GATE_CONTEXT_PRECISION,
@@ -50,6 +56,7 @@ if __package__:
     from .read_only import install_read_only_guards
     from .reporting import atomic_write_json
     from .rewrite_harm import (
+        REWRITE_HARM_POLICY_VERSION,
         REWRITE_RECALL_DROP_THRESHOLD,
         assess_rewrite_harm,
     )
@@ -58,7 +65,12 @@ if __package__:
     from .run_full_eval import _evaluate_real_case, _mock_cases
 else:
     from agent_costs import AgentEvaluationCostLedger, install_agent_usage_collector
-    from agent_judge import AgentQualityJudge
+    from agent_judge import (
+        TASK_COMPLETION_CALIBRATION_ID,
+        TASK_COMPLETION_POLICY_VERSION,
+        TASK_COMPLETION_THRESHOLD,
+        AgentQualityJudge,
+    )
     from deepeval_eval import (
         DEEPEVAL_VERSION,
         GATE_CONTEXT_PRECISION,
@@ -69,7 +81,11 @@ else:
     from rag_costs import RagEvaluationCostLedger, install_rag_usage_collectors
     from read_only import install_read_only_guards
     from reporting import atomic_write_json
-    from rewrite_harm import REWRITE_RECALL_DROP_THRESHOLD, assess_rewrite_harm
+    from rewrite_harm import (
+        REWRITE_HARM_POLICY_VERSION,
+        REWRITE_RECALL_DROP_THRESHOLD,
+        assess_rewrite_harm,
+    )
     from run_agent_eval import _mock_results as mock_agent_results
     from run_agent_eval import _real_result as real_agent_result
     from run_full_eval import _evaluate_real_case, _mock_cases
@@ -134,6 +150,13 @@ def _base_summary(
         model="mock-model" if mock else settings.ai_model,
         evaluation_framework="deepeval",
         evaluation_framework_version=DEEPEVAL_VERSION,
+        ruler_policy=ReplyAgentRulerPolicy(
+            rewrite_harm_policy_version=REWRITE_HARM_POLICY_VERSION,
+            rewrite_recall_drop_threshold=REWRITE_RECALL_DROP_THRESHOLD,
+            task_completion_policy_version=TASK_COMPLETION_POLICY_VERSION,
+            task_completion_threshold=TASK_COMPLETION_THRESHOLD,
+            task_completion_calibration_id=TASK_COMPLETION_CALIBRATION_ID,
+        ),
         counts=ReplyAgentEvaluationCounts(
             total=len(suite.cases),
             completed=0,
@@ -592,6 +615,17 @@ def adapt_agent_result(
                 reason="；".join(item.message for item in behavior_checks),
             )
         )
+    task_completion = next(
+        (
+            item
+            for item in result.judge.framework_metrics
+            if item.key == "task_completion"
+        ),
+        None,
+    )
+    task_completion_failed = bool(
+        task_completion is not None and task_completion.passed is False
+    )
     for item in result.judge.framework_metrics:
         group = "MT" if item.key == "tool_correctness" else behavior_group
         metrics.append(
@@ -604,7 +638,28 @@ def adapt_agent_result(
                 threshold=item.threshold,
                 passed=item.passed,
                 reason=item.reason,
-                enforced=False,
+                enforced=item.key == "task_completion",
+            )
+        )
+    failure_reasons = [
+        ReplyAgentFailureReason(
+            stage=item.stage,
+            code=item.code,
+            message=item.message,
+            severity=item.severity,
+        )
+        for item in result.failure_reasons
+    ]
+    if task_completion_failed:
+        failure_reasons.append(
+            ReplyAgentFailureReason(
+                stage="judge",
+                code="task_completion",
+                message=(
+                    task_completion.reason
+                    or "用户可见业务结果未达到校准后阈值"
+                ),
+                severity="warning",
             )
         )
     return ReplyAgentEvaluationCaseResult(
@@ -613,7 +668,15 @@ def adapt_agent_result(
         source_case_ids=case.source_case_ids,
         execution_kind=case.execution_kind,
         tags=case.tags,
-        status=result.status,
+        status=(
+            "error"
+            if result.status == "error"
+            else (
+                "failed"
+                if result.status == "failed" or task_completion_failed
+                else "passed"
+            )
+        ),
         user_query=result.user_query,
         expected=_expected(case),
         actual=ReplyAgentActual(
@@ -623,15 +686,7 @@ def adapt_agent_result(
             tool_names=[item.name for item in result.actual.tool_calls],
         ),
         metrics=metrics,
-        failure_reasons=[
-            ReplyAgentFailureReason(
-                stage=item.stage,
-                code=item.code,
-                message=item.message,
-                severity=item.severity,
-            )
-            for item in result.failure_reasons
-        ],
+        failure_reasons=failure_reasons,
         evidence={"agent": result.model_dump(mode="json", exclude={"usage"})},
         usage=result.usage.model_dump(mode="json"),
         elapsed_ms=result.elapsed_ms,

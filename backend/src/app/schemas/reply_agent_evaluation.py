@@ -78,6 +78,14 @@ class ReplyAgentUsageTotals(StrictModel):
     complete: bool = True
 
 
+class ReplyAgentRulerPolicy(StrictModel):
+    rewrite_harm_policy_version: str = Field(min_length=1, max_length=80)
+    rewrite_recall_drop_threshold: float = Field(ge=0.0, le=1.0)
+    task_completion_policy_version: str = Field(min_length=1, max_length=80)
+    task_completion_threshold: float = Field(ge=0.0, le=1.0)
+    task_completion_calibration_id: str = Field(min_length=1, max_length=120)
+
+
 class ReplyAgentEvaluationSummary(StrictModel):
     schema_version: Literal[1] = 1
     run_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
@@ -92,6 +100,9 @@ class ReplyAgentEvaluationSummary(StrictModel):
     model: str = Field(min_length=1, max_length=120)
     evaluation_framework: Literal["deepeval"] = "deepeval"
     evaluation_framework_version: str = Field(min_length=1, max_length=40)
+    score_source: Literal["fresh_run", "saved_output_reanalysis"] = "fresh_run"
+    source_run_id: str | None = Field(default=None, max_length=120)
+    ruler_policy: ReplyAgentRulerPolicy | None = None
     counts: ReplyAgentEvaluationCounts
     coverage: ReplyAgentEvaluationCoverage
     metrics: ReplyAgentEvaluationMetrics
