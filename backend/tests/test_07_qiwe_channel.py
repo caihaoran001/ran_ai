@@ -695,15 +695,20 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "“刚刚冲的”等仍未区分候选的回答不能当作确认" in AGENT_SYSTEM_PROMPT
     assert "饮食以低碳为日常底盘" in AGENT_SYSTEM_PROMPT
     assert "低碳不是断碳" in AGENT_SYSTEM_PROMPT
-    assert "累计完整打卡天数" in AGENT_SYSTEM_PROMPT
+    assert "累计打卡天数" in AGENT_SYSTEM_PROMPT
     assert "get_checkin_reward_status" in AGENT_SYSTEM_PROMPT
     assert "get_recent_checkins" in AGENT_SYSTEM_PROMPT
     assert "奖励规则正在讨论中，确认后会另行通知" in AGENT_SYSTEM_PROMPT
-    assert "最短工具路径" in AGENT_SYSTEM_PROMPT
-    assert "已有明确编号时，直接读/取消" in AGENT_SYSTEM_PROMPT
-    assert "缺用户必填信息时只问缺项并停止" in AGENT_SYSTEM_PROMPT
-    assert "不把内置原则写成用户事实" in AGENT_SYSTEM_PROMPT
-    assert "明确沿用已存地址并立即发货就直接申请" in AGENT_SYSTEM_PROMPT
+    assert "完成当前一问所需的工具" in AGENT_SYSTEM_PROMPT
+    assert "已有明确编号就直接读/取消" in AGENT_SYSTEM_PROMPT
+    assert "写操作缺必填信息时只问缺项并停止" in AGENT_SYSTEM_PROMPT
+    assert "同参数成功后立刻回复" in AGENT_SYSTEM_PROMPT
+    assert "禁止重复调用或顺手查相邻数据" in AGENT_SYSTEM_PROMPT
+    assert "授权条件不满足时也不得调写工具试探" in AGENT_SYSTEM_PROMPT
+    assert "只给收件人而缺电话、地址时直接问这两项" in AGENT_SYSTEM_PROMPT
+    assert "单一问题只搜 1 次" in AGENT_SYSTEM_PROMPT
+    assert "直接查案例并明确不保证一定减重" in AGENT_SYSTEM_PROMPT
+    assert "涉及是否执行清单、发货、服务周期等操作" in AGENT_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio
