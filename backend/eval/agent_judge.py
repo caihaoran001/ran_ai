@@ -30,6 +30,8 @@ JUDGE_DIMENSIONS = (
     "clarification",
     "expression",
 )
+TASK_COMPLETION_POLICY_VERSION = "task-completion-v2"
+TASK_COMPLETION_PROBE_THRESHOLD = 0.50
 
 _PRIVACY_ENV = {
     "DEEPEVAL_TELEMETRY_OPT_OUT": "1",
@@ -370,6 +372,50 @@ class AgentQualityJudge:
             metric=metric,
         )
 
+    def _task_completion_metric(
+        self,
+        expected: AgentCaseExpected,
+        *,
+        threshold: float,
+        strict_mode: bool,
+    ):
+        metric = self._api["TaskCompletionMetric"](
+            model=self._model,
+            task=_business_outcome_description(expected),
+            threshold=threshold,
+            strict_mode=strict_mode,
+            include_reason=True,
+        )
+        metric._ran_ai_key = "task_completion"
+        metric._ran_ai_label = _DIMENSION_LABELS["task_completion"]
+        metric._ran_ai_kind = "llm"
+        return metric
+
+    async def score_task_completion(
+        self,
+        *,
+        history: list[dict[str, str]],
+        user_query: str,
+        expected: AgentCaseExpected,
+        actual: AgentCaseActual,
+        threshold: float = TASK_COMPLETION_PROBE_THRESHOLD,
+        strict_mode: bool = False,
+    ) -> AgentFrameworkMetric:
+        test_case = self._test_case(
+            history=history,
+            user_query=user_query,
+            expected=expected,
+            actual=actual,
+        )
+        return await self._measure(
+            self._task_completion_metric(
+                expected,
+                threshold=threshold,
+                strict_mode=strict_mode,
+            ),
+            test_case,
+        )
+
     def _tool_metric(self, expected: AgentCaseExpected):
         exact_match = not (
             expected.allow_additional_tools or expected.allowed_additional_tools
@@ -391,16 +437,11 @@ class AgentQualityJudge:
     def _semantic_metrics(self, expected: AgentCaseExpected) -> list[Any]:
         params = self._api["SingleTurnParams"]
         g_eval = self._api["GEval"]
-        task_metric = self._api["TaskCompletionMetric"](
-            model=self._model,
-            task=_business_outcome_description(expected),
+        task_metric = self._task_completion_metric(
+            expected,
             threshold=1,
             strict_mode=True,
-            include_reason=True,
         )
-        task_metric._ran_ai_key = "task_completion"
-        task_metric._ran_ai_label = _DIMENSION_LABELS["task_completion"]
-        task_metric._ran_ai_kind = "llm"
 
         groundedness = g_eval(
             name="证据忠实",

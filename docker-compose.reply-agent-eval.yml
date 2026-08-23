@@ -60,3 +60,10 @@ services:
       - ./backend/src:/app/src:ro
       - ./backend/tests/fixtures:/app/tests/fixtures:ro
       - ./diagnostics:/app/diagnostics
+
+  reply-agent-ruler-calibration:
+    extends:
+      service: reply-agent-eval
+    entrypoint: ["/app/.venv/bin/python", "/app/eval/calibrate_reply_agent_rulers.py"]
+    environment:
+      REPLY_AGENT_RULER_CALIBRATION_REPORTS_PATH: /app/diagnostics/reply-agent-evaluations/calibrations
