@@ -24,6 +24,11 @@ type RateMetric = {
   denominator: number;
 };
 
+type AverageMetric = {
+  value?: number | null;
+  denominator: number;
+};
+
 type Coverage = {
   retrieval_counts: Record<string, number>;
   execution_counts: Record<string, number>;
@@ -56,13 +61,20 @@ export type ReplyAgentEvaluationSummary = {
   metrics: {
     task_pass_rate: RateMetric;
     retrieval_decision_accuracy: RateMetric;
+    rewrite_harm_rate: RateMetric;
     context_recall_pass_rate: RateMetric;
     context_precision_pass_rate: RateMetric;
     faithfulness_pass_rate: RateMetric;
     tool_selection_accuracy: RateMetric;
     argument_accuracy: RateMetric;
     behavior_accuracy: RateMetric;
+    handoff_accuracy: RateMetric;
     answer_correctness_observed: RateMetric;
+    answer_relevancy_average: AverageMetric;
+    judge_task_completion_observed: RateMetric;
+    judge_groundedness_observed: RateMetric;
+    judge_clarification_observed: RateMetric;
+    judge_expression_observed: RateMetric;
   };
   usage: {
     call_count: number;
@@ -108,6 +120,7 @@ type ReplyAgentEvaluationCase = {
   };
   actual: {
     retrieval_decision?: "retrieve" | "skip" | null;
+    knowledge_query?: string | null;
     response_mode?: string | null;
     response?: string | null;
     tool_names: string[];
@@ -120,6 +133,18 @@ type ReplyAgentEvaluationCase = {
     message: string;
     severity: "info" | "warning" | "critical";
   }>;
+  evidence?: {
+    rag?: {
+      actual?: {
+        raw_query_hits?: Array<{ title: string; content: string }>;
+        rewritten_query_hits?: Array<{ title: string; content: string }>;
+      };
+      scores?: {
+        raw_context_recall?: number | null;
+        context_recall?: number | null;
+      };
+    };
+  };
   usage: Record<string, unknown>;
   elapsed_ms?: number | null;
 };
@@ -200,6 +225,18 @@ function MetricCard({ label, metric }: { label: string; metric: RateMetric }) {
   );
 }
 
+function AverageCard({ label, metric }: { label: string; metric: AverageMetric }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-3">
+      <p className="text-xs font-semibold leading-5 text-slate-500">{label}</p>
+      <div className="mt-1 flex items-end justify-between gap-3">
+        <p className="text-xl font-black tabular-nums text-slate-900">{percent({ ...metric, numerator: 0 })}</p>
+        <p className="text-[11px] tabular-nums text-slate-400">{metric.denominator} 题</p>
+      </div>
+    </div>
+  );
+}
+
 function CaseStatus({ status }: { status: ReplyAgentEvaluationCase["status"] }) {
   if (status === "passed") {
     return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />;
@@ -213,6 +250,12 @@ function CaseStatus({ status }: { status: ReplyAgentEvaluationCase["status"] }) 
 
 function MetricEvidence({ metric }: { metric: MetricResult }) {
   const state = metric.passed == null ? "观察" : metric.passed ? "通过" : "失败";
+  const thresholdLabel =
+    metric.threshold == null
+      ? ""
+      : metric.key === "rewrite_harm"
+        ? ` / 门槛 ≤ ${metric.threshold.toFixed(3)}`
+        : ` / 门槛 ${metric.threshold.toFixed(3)}`;
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -233,7 +276,7 @@ function MetricEvidence({ metric }: { metric: MetricResult }) {
         >
           {state}
           {metric.score != null ? ` · ${metric.score.toFixed(3)}` : ""}
-          {metric.threshold != null ? ` / 门槛 ${metric.threshold.toFixed(3)}` : ""}
+          {thresholdLabel}
         </span>
       </div>
       {metric.reason ? (
@@ -246,6 +289,12 @@ function MetricEvidence({ metric }: { metric: MetricResult }) {
 }
 
 function CaseRow({ item }: { item: ReplyAgentEvaluationCase }) {
+  const ragEvidence = item.evidence?.rag;
+  const rawHits = ragEvidence?.actual?.raw_query_hits ?? [];
+  const rewrittenHits = ragEvidence?.actual?.rewritten_query_hits ?? [];
+  const rawRecall = ragEvidence?.scores?.raw_context_recall;
+  const rewrittenRecall = ragEvidence?.scores?.context_recall;
+
   return (
     <details className="group border-b border-slate-100 last:border-b-0">
       <summary className="flex cursor-pointer list-none items-start gap-3 px-4 py-3.5 hover:bg-slate-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500">
@@ -286,6 +335,42 @@ function CaseRow({ item }: { item: ReplyAgentEvaluationCase }) {
               </dd>
             </dl>
           </div>
+          {item.expected.retrieval_decision === "retrieve" ? (
+            <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-3.5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-sky-700">改写与召回对照</p>
+              <p className="mt-2 text-xs leading-5 text-slate-700">
+                <span className="font-bold text-slate-500">实际检索词：</span>
+                {item.actual.knowledge_query || "未产生检索词"}
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {[
+                  { label: "原问题召回", score: rawRecall, hits: rawHits },
+                  { label: "改写后召回", score: rewrittenRecall, hits: rewrittenHits },
+                ].map((side) => (
+                  <div key={side.label} className="rounded-lg border border-sky-100 bg-white px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="font-bold text-slate-700">{side.label}</span>
+                      <span className="font-mono text-slate-500">
+                        {side.score == null ? "无评分" : side.score.toFixed(3)} · {side.hits.length} 条
+                      </span>
+                    </div>
+                    <div className="mt-1.5 space-y-1.5">
+                      {side.hits.length ? (
+                        side.hits.slice(0, 3).map((hit, index) => (
+                          <div key={`${hit.title}-${index}`} className="border-t border-slate-100 pt-1.5 first:border-0 first:pt-0">
+                            <p className="truncate text-[11px] font-semibold text-slate-600">{hit.title}</p>
+                            <p className="mt-0.5 line-clamp-2 text-[11px] leading-5 text-slate-400">{hit.content}</p>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-[11px] leading-5 text-slate-400">没有召回内容</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="rounded-xl border border-slate-200 bg-white p-3.5">
             <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-slate-400">最终回复</p>
             <p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-slate-700">
@@ -407,15 +492,32 @@ export function ReplyAgentEvaluationsClient({
           </div>
         </div>
 
-        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
           <MetricCard label="整题通过" metric={summary.metrics.task_pass_rate} />
           <MetricCard label="检索决策" metric={summary.metrics.retrieval_decision_accuracy} />
+          <MetricCard label="改写损伤（越低越好）" metric={summary.metrics.rewrite_harm_rate} />
           <MetricCard label="召回率门禁" metric={summary.metrics.context_recall_pass_rate} />
           <MetricCard label="精确率门禁" metric={summary.metrics.context_precision_pass_rate} />
           <MetricCard label="忠实度门禁" metric={summary.metrics.faithfulness_pass_rate} />
           <MetricCard label="工具选择" metric={summary.metrics.tool_selection_accuracy} />
           <MetricCard label="工具参数" metric={summary.metrics.argument_accuracy} />
           <MetricCard label="行为边界" metric={summary.metrics.behavior_accuracy} />
+          <MetricCard label="高风险转人工" metric={summary.metrics.handoff_accuracy} />
+        </div>
+
+        <div className="border-t border-slate-100 bg-slate-50/40 px-4 py-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="text-xs font-black text-slate-700">观察指标</p>
+            <p className="text-[11px] text-slate-400">展示问题趋势，不影响本批整题通过</p>
+          </div>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <MetricCard label="回答正确完整" metric={summary.metrics.answer_correctness_observed} />
+            <AverageCard label="答案相关平均分" metric={summary.metrics.answer_relevancy_average} />
+            <MetricCard label="Agent 任务完成" metric={summary.metrics.judge_task_completion_observed} />
+            <MetricCard label="Agent 证据忠实" metric={summary.metrics.judge_groundedness_observed} />
+            <MetricCard label="Agent 澄清合理" metric={summary.metrics.judge_clarification_observed} />
+            <MetricCard label="Agent 表达质量" metric={summary.metrics.judge_expression_observed} />
+          </div>
         </div>
 
         <div className="grid gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500 sm:grid-cols-3">

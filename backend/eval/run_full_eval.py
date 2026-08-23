@@ -361,6 +361,7 @@ async def _evaluate_real_case(
                 response_mode=case.answer.response_mode,
             )
             result.scores = RagCaseScores(
+                raw_context_recall=scores.raw_context_recall,
                 context_recall=scores.context_recall,
                 context_precision=scores.context_precision,
                 faithfulness=scores.faithfulness,
@@ -526,16 +527,21 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
         result.actual.response = (
             _reference(case) or "收到，我会按你刚才说的情况接着处理。"
         )
+        result.scores.answer_correctness = 0.95
+        result.scores.answer_correctness_reason = "模拟回复覆盖本题必须事实"
         if case.rewrite.decision == "retrieve":
             mock_hits = _mock_knowledge_hits(case)
             result.actual.raw_query_hits = list(mock_hits)
             result.actual.rewritten_query_hits = list(mock_hits)
             value = 0.88 + (index % 5) * 0.015
             result.scores = RagCaseScores(
+                raw_context_recall=min(value, 0.98),
                 context_recall=min(value, 0.98),
                 context_precision=min(value - 0.04, 0.96),
                 faithfulness=min(value + 0.03, 0.99),
                 answer_relevancy=min(value - 0.01, 0.97),
+                answer_correctness=0.95,
+                answer_correctness_reason="模拟回复覆盖本题必须事实",
             )
             facts = [hit.content for hit in mock_hits]
             result.metric_evidence = RagMetricEvidence(

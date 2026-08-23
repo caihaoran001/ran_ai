@@ -24,16 +24,40 @@ class ReplyAgentRateMetric(StrictModel):
     denominator: int = Field(default=0, ge=0)
 
 
+class ReplyAgentAverageMetric(StrictModel):
+    value: float | None = Field(default=None, ge=0.0, le=1.0)
+    denominator: int = Field(default=0, ge=0)
+
+
 class ReplyAgentEvaluationMetrics(StrictModel):
     task_pass_rate: ReplyAgentRateMetric
     retrieval_decision_accuracy: ReplyAgentRateMetric
+    rewrite_harm_rate: ReplyAgentRateMetric = Field(
+        default_factory=ReplyAgentRateMetric
+    )
     context_recall_pass_rate: ReplyAgentRateMetric
     context_precision_pass_rate: ReplyAgentRateMetric
     faithfulness_pass_rate: ReplyAgentRateMetric
     tool_selection_accuracy: ReplyAgentRateMetric
     argument_accuracy: ReplyAgentRateMetric
     behavior_accuracy: ReplyAgentRateMetric
+    handoff_accuracy: ReplyAgentRateMetric = Field(default_factory=ReplyAgentRateMetric)
     answer_correctness_observed: ReplyAgentRateMetric
+    answer_relevancy_average: ReplyAgentAverageMetric = Field(
+        default_factory=ReplyAgentAverageMetric
+    )
+    judge_task_completion_observed: ReplyAgentRateMetric = Field(
+        default_factory=ReplyAgentRateMetric
+    )
+    judge_groundedness_observed: ReplyAgentRateMetric = Field(
+        default_factory=ReplyAgentRateMetric
+    )
+    judge_clarification_observed: ReplyAgentRateMetric = Field(
+        default_factory=ReplyAgentRateMetric
+    )
+    judge_expression_observed: ReplyAgentRateMetric = Field(
+        default_factory=ReplyAgentRateMetric
+    )
 
 
 class ReplyAgentEvaluationCoverage(StrictModel):
@@ -104,6 +128,7 @@ class ReplyAgentExpected(StrictModel):
 
 class ReplyAgentActual(StrictModel):
     retrieval_decision: Literal["retrieve", "skip"] | None = None
+    knowledge_query: str | None = Field(default=None, max_length=500)
     response_mode: str | None = Field(default=None, max_length=80)
     response: str | None = Field(default=None, max_length=20000)
     tool_names: list[str] = Field(default_factory=list)

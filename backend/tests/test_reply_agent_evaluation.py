@@ -15,7 +15,13 @@ from app.evaluation.reply_agent_cases import (
 from app.schemas.reply_agent_evaluation import ReplyAgentEvaluationRunDetail
 from app.services.reply_agent_evaluation_reports import ReplyAgentEvaluationReportStore
 from eval.build_reply_agent_suite import build_suite
-from eval.run_reply_agent_eval import async_main
+from eval.run_full_eval import _mock_cases as mock_rag_cases
+from eval.run_reply_agent_eval import (
+    _base_summary,
+    adapt_rag_result,
+    aggregate_summary,
+    async_main,
+)
 from eval.run_reply_agent_eval import parse_args
 
 
@@ -112,6 +118,22 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     assert report.summary.usage.call_count == 0
     assert report.summary.usage.total_tokens == 0
     assert report.summary.usage.estimated_cost_yuan == 0
+    assert report.summary.metrics.rewrite_harm_rate.model_dump() == {
+        "value": 0.0,
+        "numerator": 0,
+        "denominator": 32,
+    }
+    assert report.summary.metrics.answer_relevancy_average.denominator == 32
+    assert report.summary.metrics.answer_correctness_observed.denominator == 47
+    assert report.summary.metrics.handoff_accuracy.model_dump() == {
+        "value": 1.0,
+        "numerator": 3,
+        "denominator": 3,
+    }
+    assert report.summary.metrics.judge_task_completion_observed.denominator == 30
+    assert report.summary.metrics.judge_groundedness_observed.denominator == 30
+    assert report.summary.metrics.judge_clarification_observed.denominator == 30
+    assert report.summary.metrics.judge_expression_observed.denominator == 30
     assert len(report.cases) == 80
     assert len({case.case_id for case in report.cases}) == 80
     assert Counter(case.execution_kind for case in report.cases) == {
@@ -139,3 +161,35 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     store = ReplyAgentEvaluationReportStore(reports_root)
     assert [item.run_id for item in store.list_runs()] == ["reply-agent-mock-test"]
     assert store.get_run("reply-agent-mock-test").summary.counts.total == 80
+
+
+def test_rewrite_harm_is_explicit_per_case_and_in_batch_summary() -> None:
+    suite = load_reply_agent_eval_suite()
+    case = next(
+        item
+        for item in suite.cases
+        if item.rag_case and item.retrieval_decision == "retrieve"
+    )
+    source_result = mock_rag_cases([case.rag_case])[0]
+    source_result.scores.raw_context_recall = 1.0
+    source_result.scores.context_recall = 0.8
+    source_result.status = "failed"
+
+    adapted = adapt_rag_result(case, source_result)
+    metric = next(item for item in adapted.metrics if item.key == "rewrite_harm")
+
+    assert metric.score == pytest.approx(0.2)
+    assert metric.threshold == 0.05
+    assert metric.passed is False
+    assert adapted.actual.knowledge_query == source_result.actual.knowledge_query
+    assert adapted.evidence["rag"]["scores"]["raw_context_recall"] == 1.0
+
+    summary = aggregate_summary(
+        base=_base_summary(run_id="rewrite-harm-test", suite=suite, mock=True),
+        cases=[adapted],
+    )
+    assert summary.metrics.rewrite_harm_rate.model_dump() == {
+        "value": 1.0,
+        "numerator": 1,
+        "denominator": 1,
+    }

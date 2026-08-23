@@ -20,6 +20,7 @@ from app.schemas.agent_evaluation import AgentEvaluationCaseResult
 from app.schemas.rag_evaluation import RagEvaluationCaseResult
 from app.schemas.reply_agent_evaluation import (
     ReplyAgentActual,
+    ReplyAgentAverageMetric,
     ReplyAgentEvaluationCaseResult,
     ReplyAgentEvaluationCounts,
     ReplyAgentEvaluationCoverage,
@@ -77,13 +78,20 @@ def _zero_metrics() -> ReplyAgentEvaluationMetrics:
     return ReplyAgentEvaluationMetrics(
         task_pass_rate=ReplyAgentRateMetric(),
         retrieval_decision_accuracy=ReplyAgentRateMetric(),
+        rewrite_harm_rate=ReplyAgentRateMetric(),
         context_recall_pass_rate=ReplyAgentRateMetric(),
         context_precision_pass_rate=ReplyAgentRateMetric(),
         faithfulness_pass_rate=ReplyAgentRateMetric(),
         tool_selection_accuracy=ReplyAgentRateMetric(),
         argument_accuracy=ReplyAgentRateMetric(),
         behavior_accuracy=ReplyAgentRateMetric(),
+        handoff_accuracy=ReplyAgentRateMetric(),
         answer_correctness_observed=ReplyAgentRateMetric(),
+        answer_relevancy_average=ReplyAgentAverageMetric(),
+        judge_task_completion_observed=ReplyAgentRateMetric(),
+        judge_groundedness_observed=ReplyAgentRateMetric(),
+        judge_clarification_observed=ReplyAgentRateMetric(),
+        judge_expression_observed=ReplyAgentRateMetric(),
     )
 
 
@@ -203,6 +211,34 @@ def _metric_rate(
     return _rate(sum(metric.passed is True for metric in matches), len(matches))
 
 
+def _metric_average(
+    cases: list[ReplyAgentEvaluationCaseResult],
+    key: str,
+) -> ReplyAgentAverageMetric:
+    values = [
+        metric.score
+        for case in cases
+        for metric in case.metrics
+        if metric.key == key and metric.score is not None
+    ]
+    return ReplyAgentAverageMetric(
+        value=(round(sum(values) / len(values), 6) if values else None),
+        denominator=len(values),
+    )
+
+
+def _rewrite_harm_rate(
+    cases: list[ReplyAgentEvaluationCaseResult],
+) -> ReplyAgentRateMetric:
+    matches = [
+        metric
+        for case in cases
+        for metric in case.metrics
+        if metric.key == "rewrite_harm" and metric.passed is not None
+    ]
+    return _rate(sum(metric.passed is False for metric in matches), len(matches))
+
+
 def _behavior_rate(
     cases: list[ReplyAgentEvaluationCaseResult],
 ) -> ReplyAgentRateMetric:
@@ -275,13 +311,20 @@ def aggregate_summary(
             len(cases),
         ),
         retrieval_decision_accuracy=_metric_rate(cases, "retrieval_decision"),
+        rewrite_harm_rate=_rewrite_harm_rate(cases),
         context_recall_pass_rate=_metric_rate(cases, "context_recall"),
         context_precision_pass_rate=_metric_rate(cases, "context_precision"),
         faithfulness_pass_rate=_metric_rate(cases, "faithfulness"),
         tool_selection_accuracy=_metric_rate(cases, "tool_selection"),
         argument_accuracy=_metric_rate(cases, "argument_accuracy"),
         behavior_accuracy=_behavior_rate(cases),
+        handoff_accuracy=_metric_rate(cases, "handoff_required"),
         answer_correctness_observed=_metric_rate(cases, "answer_correctness"),
+        answer_relevancy_average=_metric_average(cases, "answer_relevancy"),
+        judge_task_completion_observed=_metric_rate(cases, "judge_task_completion"),
+        judge_groundedness_observed=_metric_rate(cases, "judge_groundedness"),
+        judge_clarification_observed=_metric_rate(cases, "judge_clarification"),
+        judge_expression_observed=_metric_rate(cases, "judge_expression"),
     )
     summary.usage = usage
     summary.estimated_cost_yuan = usage.estimated_cost_yuan
@@ -324,6 +367,27 @@ def adapt_rag_result(
         ),
     ]
     if case.retrieval_decision == "retrieve":
+        raw_recall = result.scores.raw_context_recall
+        rewritten_recall = result.scores.context_recall
+        if raw_recall is not None and rewritten_recall is not None:
+            recall_drop = max(0.0, raw_recall - rewritten_recall)
+            rewrite_harmed = rewritten_recall + 0.05 < raw_recall
+            metrics.append(
+                _metric(
+                    key="rewrite_harm",
+                    label="查询改写损伤",
+                    group="MR",
+                    kind="deterministic",
+                    score=recall_drop,
+                    threshold=0.05,
+                    passed=not rewrite_harmed,
+                    reason=(
+                        f"原问题召回 {raw_recall:.3f} → 改写后 "
+                        f"{rewritten_recall:.3f}，下降 {recall_drop:.3f}；"
+                        "下降超过 0.05 才计为损伤"
+                    ),
+                )
+            )
         specs = (
             (
                 "context_recall",
@@ -398,6 +462,7 @@ def adapt_rag_result(
         expected=_expected(case),
         actual=ReplyAgentActual(
             retrieval_decision=result.actual.retrieval_decision,
+            knowledge_query=result.actual.knowledge_query,
             response_mode="reply" if result.actual.response else None,
             response=result.actual.response,
             tool_names=[],

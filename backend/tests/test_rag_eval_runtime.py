@@ -112,6 +112,7 @@ def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():
         "一瓶盖约等于1.5个小刻度，一大刻度等于3个小刻度，按一大刻度执行时约需两瓶盖，一瓶盖不够；量取以瓶体刻度为准。",
     ]
     assert result.actual.raw_query_hits == result.actual.rewritten_query_hits
+    assert result.scores.raw_context_recall == result.scores.context_recall
     assert [reason.code for reason in result.failure_reasons] == [
         "faithfulness_below_threshold"
     ]
@@ -333,6 +334,7 @@ async def test_real_runner_retrieve_and_skip_use_one_case_specific_correctness_m
         0.91,
         0.91,
     ]
+    assert results[0].scores.raw_context_recall == 0.91
     assert [reason.code for reason in results[2].failure_reasons] == [
         "forbidden_fact_present"
     ]

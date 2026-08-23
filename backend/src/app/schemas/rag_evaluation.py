@@ -426,6 +426,7 @@ class RagCaseActual(StrictModel):
 
 
 class RagCaseScores(StrictModel):
+    raw_context_recall: float | None = Field(default=None, ge=0.0, le=1.0)
     context_recall: float | None = Field(default=None, ge=0.0, le=1.0)
     context_precision: float | None = Field(default=None, ge=0.0, le=1.0)
     faithfulness: float | None = Field(default=None, ge=0.0, le=1.0)

@@ -26,6 +26,8 @@ docker compose -f docker-compose.reply-agent-eval.yml run \
 
 报告写入 `diagnostics/reply-agent-evaluations/<run_id>/`。后台“回复质量”默认展示统一批次，旧 RAG/Agent 批次放在历史页签继续兼容。
 
+32 道检索题会同时保留原问题与实际改写词的召回结果。若改写后的事实召回率比原问题低超过 0.05，该题标记为改写损伤并进入整题门禁；批次总览单独汇总损伤率。答案相关性、回答正确完整度以及 Agent 的任务完成、证据忠实、澄清和表达也会汇总展示，但在各自完成中文校准前不改变整题通过结果。
+
 以下两节记录旧入口，供历史报告复现。
 
 ## 回复 Agent 任务质量
