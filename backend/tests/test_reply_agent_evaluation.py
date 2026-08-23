@@ -93,6 +93,7 @@ def test_unified_cli_defaults_to_fixed_v1_and_ten_yuan_limit(monkeypatch) -> Non
 
     assert args.dataset.name == "reply_agent_eval_cases.v1.json"
     assert args.max_cost_yuan == 10
+    assert args.case_ids == ""
 
 
 @pytest.mark.asyncio
@@ -162,6 +163,57 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     store = ReplyAgentEvaluationReportStore(reports_root)
     assert [item.run_id for item in store.list_runs()] == ["reply-agent-mock-test"]
     assert store.get_run("reply-agent-mock-test").summary.counts.total == 80
+
+
+@pytest.mark.asyncio
+async def test_unified_mock_can_run_a_targeted_case_subset(tmp_path) -> None:
+    reports_root = tmp_path / "reply-agent-evaluations"
+    exit_code = await async_main(
+        SimpleNamespace(
+            mock=True,
+            run_id="reply-agent-targeted-mock-test",
+            reports_root=reports_root,
+            dataset=None,
+            case_ids="RA-008,ra-036,RA-056",
+        )
+    )
+
+    assert exit_code == 0
+    report = ReplyAgentEvaluationRunDetail.model_validate_json(
+        (
+            reports_root
+            / "reply-agent-targeted-mock-test"
+            / "report.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert report.summary.counts.total == 3
+    assert report.summary.counts.completed == 3
+    assert [case.case_id for case in report.cases] == ["RA-008", "RA-036", "RA-056"]
+
+
+@pytest.mark.asyncio
+async def test_targeted_run_rejects_unknown_or_duplicate_case_ids(tmp_path) -> None:
+    common = {
+        "mock": True,
+        "reports_root": tmp_path / "reply-agent-evaluations",
+        "dataset": None,
+    }
+    with pytest.raises(ValueError, match="unknown case_ids: RA-999"):
+        await async_main(
+            SimpleNamespace(
+                **common,
+                run_id="reply-agent-targeted-unknown",
+                case_ids="RA-001,RA-999",
+            )
+        )
+    with pytest.raises(ValueError, match="case_ids contains duplicates"):
+        await async_main(
+            SimpleNamespace(
+                **common,
+                run_id="reply-agent-targeted-duplicate",
+                case_ids="RA-008,RA-008",
+            )
+        )
 
 
 def test_rewrite_harm_is_explicit_per_case_and_in_batch_summary() -> None:

@@ -909,6 +909,22 @@ async def async_main(args: argparse.Namespace) -> int:
     if run_dir.exists():
         raise RuntimeError(f"run directory already exists: {run_dir}")
     suite = load_reply_agent_eval_suite(args.dataset)
+    case_ids = [
+        item.strip().upper()
+        for item in (getattr(args, "case_ids", None) or "").split(",")
+        if item.strip()
+    ]
+    if case_ids:
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("case_ids contains duplicates")
+        available = {case.case_id for case in suite.cases}
+        unknown = sorted(set(case_ids) - available)
+        if unknown:
+            raise ValueError(f"unknown case_ids: {', '.join(unknown)}")
+        selected = set(case_ids)
+        suite = suite.model_copy(
+            update={"cases": [case for case in suite.cases if case.case_id in selected]}
+        )
     base = _base_summary(run_id=run_id, suite=suite, mock=args.mock)
     atomic_write_json(run_dir / "status.json", base.model_dump(mode="json"))
     results: list[ReplyAgentEvaluationCaseResult] = []
@@ -960,6 +976,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--mock", action="store_true", help="No DB or model calls")
     parser.add_argument("--run-id")
+    parser.add_argument(
+        "--case-ids",
+        default="",
+        help="Comma-separated RA case ids for a targeted run; empty runs all 80",
+    )
     parser.add_argument(
         "--max-cost-yuan",
         type=float,
