@@ -159,6 +159,28 @@ def test_fixed_agent_suite_has_balanced_cases_and_repeats() -> None:
     assert any(case.expected.response_mode == "no_reply" for case in suite.cases)
 
 
+def test_task_completion_description_only_contains_user_visible_outcome() -> None:
+    from eval.agent_judge import _business_outcome_description
+
+    expected = AgentCaseExpected(
+        response_mode="reply",
+        required_tools=[
+            AgentExpectedToolCall(name="read_delivery_document", args_subset={})
+        ],
+        forbidden_tools=["set_checkin_checklist"],
+        required_literals=["96"],
+        required_facts=["第14天报告重点是睡眠稳定、午后困倦减少"],
+    )
+
+    description = _business_outcome_description(expected)
+
+    assert "第14天报告重点是睡眠稳定、午后困倦减少" in description
+    assert "96" in description
+    assert "read_delivery_document" not in description
+    assert "set_checkin_checklist" not in description
+    assert "工具选择、次数和参数由独立指标负责" in description
+
+
 @pytest.mark.asyncio
 async def test_isolated_graph_replaces_every_tool_execution() -> None:
     suite = load_agent_eval_suite()

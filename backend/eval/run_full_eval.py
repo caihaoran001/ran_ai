@@ -51,6 +51,7 @@ if __package__:
     from .deepeval_eval import DeepEvalScorer, DEEPEVAL_VERSION, GATE_FAITHFULNESS
     from .read_only import install_read_only_guards
     from .reporting import aggregate_summary, atomic_write_json, utc_now, write_report
+    from .rewrite_harm import assess_rewrite_harm
 else:
     from intent_eval import (
         IntentResult,
@@ -65,6 +66,7 @@ else:
     from deepeval_eval import DeepEvalScorer, DEEPEVAL_VERSION, GATE_FAITHFULNESS
     from read_only import install_read_only_guards
     from reporting import aggregate_summary, atomic_write_json, utc_now, write_report
+    from rewrite_harm import assess_rewrite_harm
 
 
 EVALUATION_FRAMEWORK = "deepeval"
@@ -415,15 +417,20 @@ async def _evaluate_real_case(
                     scores.answer_relevancy_all_noncommittal
                 ),
             )
-            if scores.context_recall + 0.05 < scores.raw_context_recall:
+            rewrite_assessment = assess_rewrite_harm(
+                original_query=case.user_query,
+                rewritten_query=intent.knowledge_query,
+                raw_hit_count=len(raw_hits),
+                rewritten_hit_count=len(rewritten_hits),
+                raw_recall=scores.raw_context_recall,
+                rewritten_recall=scores.context_recall,
+            )
+            if rewrite_assessment.applicable and rewrite_assessment.harmed:
                 reasons.append(
                     RagFailureReason(
                         stage="rewrite",
                         code="rewrite_harmed_retrieval",
-                        message=(
-                            "改写后的事实召回率低于原问题："
-                            f"{scores.context_recall:.2f} < {scores.raw_context_recall:.2f}"
-                        ),
+                        message=rewrite_assessment.reason,
                     )
                 )
             for name, threshold in _gate_thresholds().items():

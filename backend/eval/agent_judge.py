@@ -234,22 +234,19 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
 
 
-def _expected_description(expected: AgentCaseExpected) -> str:
+def _business_outcome_description(expected: AgentCaseExpected) -> str:
     payload = {
         "回复方式": expected.response_mode,
-        "必须调用的工具": [
-            item.model_dump(mode="json") for item in expected.required_tools
-        ],
-        "禁止调用的工具": expected.forbidden_tools,
-        "允许但不强制调用的辅助工具": expected.allowed_additional_tools,
-        "必须准确出现的内容": expected.required_literals,
-        "禁止出现的内容": expected.forbidden_literals,
+        "必须传达的精确值或标识": expected.required_literals,
+        "禁止出现的精确值或表述": expected.forbidden_literals,
         "必须表达的业务事实": expected.required_facts,
         "禁止声称的事实": expected.forbidden_claims,
         "需要澄清的信息": expected.clarification_requirement,
     }
-    return "根据当前对话和固定工具证据完成用户本轮任务。验收要求如下：\n" + _json(
-        payload
+    return (
+        "只判断用户最终得到的业务结果是否完成，不判断、也不要要求回复中提及内部工具名或工具调用过程；"
+        "工具选择、次数和参数由独立指标负责。根据当前对话和固定工具证据，验收要求如下：\n"
+        + _json(payload)
     )
 
 
@@ -396,7 +393,7 @@ class AgentQualityJudge:
         g_eval = self._api["GEval"]
         task_metric = self._api["TaskCompletionMetric"](
             model=self._model,
-            task=_expected_description(expected),
+            task=_business_outcome_description(expected),
             threshold=1,
             strict_mode=True,
             include_reason=True,

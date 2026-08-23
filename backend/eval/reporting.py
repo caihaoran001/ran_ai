@@ -16,8 +16,10 @@ from app.schemas.rag_evaluation import (
 
 if __package__:
     from .rag_costs import summarize_case_usage
+    from .rewrite_harm import assess_rewrite_harm
 else:
     from rag_costs import summarize_case_usage
+    from rewrite_harm import assess_rewrite_harm
 
 
 def utc_now() -> datetime:
@@ -56,17 +58,23 @@ def aggregate_summary(
         for case in cases
         if case.actual.retrieval_decision is not None
     ]
-    rewrite_values = [
-        1.0
-        for case in cases
-        if any(reason.code == "rewrite_harmed_retrieval" for reason in case.failure_reasons)
-    ]
-    rewrite_denominator = sum(
-        1
+    rewrite_assessments = [
+        assess_rewrite_harm(
+            original_query=case.user_query,
+            rewritten_query=case.actual.knowledge_query,
+            raw_hit_count=len(case.actual.raw_query_hits),
+            rewritten_hit_count=len(case.actual.rewritten_query_hits),
+            raw_recall=case.scores.raw_context_recall,
+            rewritten_recall=case.scores.context_recall,
+        )
         for case in cases
         if case.expected.retrieval_decision == "retrieve"
-        and case.scores.context_recall is not None
-    )
+    ]
+    rewrite_assessments = [
+        item
+        for item in rewrite_assessments
+        if item.applicable and item.signal != "missing_recall_scores"
+    ]
     metric_lists = {
         "context_recall": [
             case.scores.context_recall
@@ -114,11 +122,14 @@ def aggregate_summary(
                     numerator=int(sum(decision_values)),
                 ),
                 rewrite_harm_rate=RagMetricValue(
-                    value=(len(rewrite_values) / rewrite_denominator)
-                    if rewrite_denominator
+                    value=(
+                        sum(item.harmed for item in rewrite_assessments)
+                        / len(rewrite_assessments)
+                    )
+                    if rewrite_assessments
                     else None,
-                    numerator=len(rewrite_values),
-                    denominator=rewrite_denominator,
+                    numerator=sum(item.harmed for item in rewrite_assessments),
+                    denominator=len(rewrite_assessments),
                 ),
                 context_recall=metric(metric_lists["context_recall"]),
                 context_precision=metric(metric_lists["context_precision"]),

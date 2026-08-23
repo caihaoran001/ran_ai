@@ -49,6 +49,10 @@ if __package__:
     from .rag_costs import RagEvaluationCostLedger, install_rag_usage_collectors
     from .read_only import install_read_only_guards
     from .reporting import atomic_write_json
+    from .rewrite_harm import (
+        REWRITE_RECALL_DROP_THRESHOLD,
+        assess_rewrite_harm,
+    )
     from .run_agent_eval import _mock_results as mock_agent_results
     from .run_agent_eval import _real_result as real_agent_result
     from .run_full_eval import _evaluate_real_case, _mock_cases
@@ -65,6 +69,7 @@ else:
     from rag_costs import RagEvaluationCostLedger, install_rag_usage_collectors
     from read_only import install_read_only_guards
     from reporting import atomic_write_json
+    from rewrite_harm import REWRITE_RECALL_DROP_THRESHOLD, assess_rewrite_harm
     from run_agent_eval import _mock_results as mock_agent_results
     from run_agent_eval import _real_result as real_agent_result
     from run_full_eval import _evaluate_real_case, _mock_cases
@@ -369,23 +374,29 @@ def adapt_rag_result(
     if case.retrieval_decision == "retrieve":
         raw_recall = result.scores.raw_context_recall
         rewritten_recall = result.scores.context_recall
-        if raw_recall is not None and rewritten_recall is not None:
-            recall_drop = max(0.0, raw_recall - rewritten_recall)
-            rewrite_harmed = rewritten_recall + 0.05 < raw_recall
+        assessment = assess_rewrite_harm(
+            original_query=result.user_query,
+            rewritten_query=result.actual.knowledge_query,
+            raw_hit_count=len(result.actual.raw_query_hits),
+            rewritten_hit_count=len(result.actual.rewritten_query_hits),
+            raw_recall=raw_recall,
+            rewritten_recall=rewritten_recall,
+        )
+        if assessment.applicable:
             metrics.append(
                 _metric(
                     key="rewrite_harm",
                     label="查询改写损伤",
                     group="MR",
                     kind="deterministic",
-                    score=recall_drop,
-                    threshold=0.05,
-                    passed=not rewrite_harmed,
-                    reason=(
-                        f"原问题召回 {raw_recall:.3f} → 改写后 "
-                        f"{rewritten_recall:.3f}，下降 {recall_drop:.3f}；"
-                        "下降超过 0.05 才计为损伤"
+                    score=assessment.score,
+                    threshold=REWRITE_RECALL_DROP_THRESHOLD,
+                    passed=(
+                        None
+                        if assessment.signal == "missing_recall_scores"
+                        else not assessment.harmed
                     ),
+                    reason=assessment.reason,
                 )
             )
         specs = (

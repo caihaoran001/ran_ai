@@ -22,6 +22,7 @@ from eval.run_reply_agent_eval import (
     aggregate_summary,
     async_main,
 )
+from eval.rewrite_harm import assess_rewrite_harm
 from eval.run_reply_agent_eval import parse_args
 
 
@@ -193,3 +194,33 @@ def test_rewrite_harm_is_explicit_per_case_and_in_batch_summary() -> None:
         "numerator": 1,
         "denominator": 1,
     }
+
+
+def test_rewrite_harm_detects_hit_collapse_when_both_llm_recalls_are_zero() -> None:
+    assessment = assess_rewrite_harm(
+        original_query="喝完手有点抖，这算代谢起来了吗？",
+        rewritten_query="使用产品后手抖是否属于正常代谢反应？",
+        raw_hit_count=1,
+        rewritten_hit_count=0,
+        raw_recall=0.0,
+        rewritten_recall=0.0,
+    )
+
+    assert assessment.applicable is True
+    assert assessment.harmed is True
+    assert assessment.signal == "hit_collapse"
+    assert "语义召回尺子同时给低分" in assessment.reason
+
+
+def test_rewrite_harm_excludes_unchanged_queries_from_denominator() -> None:
+    assessment = assess_rewrite_harm(
+        original_query="晚A怎么冲泡",
+        rewritten_query=" 晚A 怎么冲泡 ",
+        raw_hit_count=1,
+        rewritten_hit_count=1,
+        raw_recall=1.0,
+        rewritten_recall=1.0,
+    )
+
+    assert assessment.applicable is False
+    assert assessment.signal == "not_rewritten"
