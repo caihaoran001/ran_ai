@@ -30,7 +30,7 @@ JUDGE_DIMENSIONS = (
     "clarification",
     "expression",
 )
-TASK_COMPLETION_POLICY_VERSION = "task-completion-v3"
+TASK_COMPLETION_POLICY_VERSION = "task-completion-v4"
 TASK_COMPLETION_PROBE_THRESHOLD = 0.50
 
 _PRIVACY_ENV = {
@@ -397,8 +397,9 @@ class AgentQualityJudge:
                 "不应澄清时不因额外追问扣任务完成分。",
                 "只评用户可见业务结果，不因内部工具名、调用次数或参数扣分；"
                 "但回复声称已完成某动作时，可用 context 核对该声称是否有证据。",
-                "完整、正确并符合回复方式给 1；不影响主要业务结果的轻微遗漏可给 0.8；"
-                "只完成部分任务给 0.3至 0.7；关键事实错误、漏掉主要结果、违反安全边界或回复方式错误给 0至 0.2。"
+                "DeepEval GEval 要求原始分数使用 0 至 10 分制：完整、正确并符合回复方式给 10 分；"
+                "不影响主要业务结果的轻微遗漏可给 8 分；只完成部分任务给 3 至 7 分；"
+                "关键事实错误、漏掉主要结果、违反安全边界或回复方式错误给 0 至 2 分。"
                 "理由必须引用 actual output 的真实内容，不得把 context 内容写成用户已看到的回复。",
             ],
             model=self._model,

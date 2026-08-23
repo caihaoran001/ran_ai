@@ -228,6 +228,8 @@ def test_task_completion_uses_user_visible_geval_not_trace_outcome() -> None:
     assert "绝不代表该信息已向用户传达" in steps
     assert "read_delivery_document" not in steps
     assert "第14天报告重点是睡眠稳定" in steps
+    assert "GEval 要求原始分数使用 0 至 10 分制" in steps
+    assert "符合回复方式给 10 分" in steps
     assert captured["threshold"] == 0.8
     assert captured["strict_mode"] is False
 
