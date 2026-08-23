@@ -68,6 +68,10 @@ class AgentReplyResult:
     # 纯观测字段，不参与任何回复判断。
     knowledge_hit_count: int | None = None
     knowledge_hits: list[dict[str, Any]] = field(default_factory=list)
+    # 改写查询零命中时可回退原问题；保留实际生效查询，避免观测把回退命中错记到改写词上。
+    knowledge_query_used: str | None = None
+    knowledge_fallback_used: bool = False
+    knowledge_primary_hit_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -173,7 +177,19 @@ class RanrenAgentGraph:
             knowledge_context,
             knowledge_hit_count,
             knowledge_hits,
-        ) = await self._build_knowledge_context(effective_knowledge_query)
+            knowledge_query_used,
+            knowledge_fallback_used,
+            knowledge_primary_hit_count,
+        ) = await self._build_knowledge_context(
+            effective_knowledge_query,
+            fallback_query=(
+                user_query
+                if knowledge_query is not None
+                and knowledge_query.strip()
+                and knowledge_query.strip() != user_query.strip()
+                else None
+            ),
+        )
         bot_nickname = await self._resolve_bot_nickname()
         initial_messages: list[BaseMessage] = [
             SystemMessage(content=AGENT_SYSTEM_PROMPT),
@@ -234,6 +250,9 @@ class RanrenAgentGraph:
             data_tool_failed=bool(result.get("data_tool_failed")),
             knowledge_hit_count=knowledge_hit_count,
             knowledge_hits=knowledge_hits,
+            knowledge_query_used=knowledge_query_used,
+            knowledge_fallback_used=knowledge_fallback_used,
+            knowledge_primary_hit_count=knowledge_primary_hit_count,
         )
 
     def _current_time_context(self) -> str:
@@ -254,21 +273,27 @@ class RanrenAgentGraph:
             return "暂无可用用户背景。"
 
     async def _build_knowledge_context(
-        self, query: str
-    ) -> tuple[str, int | None, list[dict[str, Any]]]:
+        self,
+        query: str,
+        *,
+        fallback_query: str | None = None,
+    ) -> tuple[str, int | None, list[dict[str, Any]], str | None, bool, int | None]:
         """每轮按意图识别改写后的问题预检索知识库(FAQ/markdown)注入提示词。
 
         排除 source_type='case'——优秀案例只走 search_success_case 情绪触发工具,
         不在普通问答里冒出来。改写缺失时调用方已回退原问题；检索失败/无命中一律给占位串,
         绝不因知识检索拖垮回复。
 
-        返回 (注入文本, 召回条数, 命中证据)。条数和证据只供观测:
+        改写查询零命中且原问题不同才回退原问题，防止改写删掉产品、症状或限制条件后
+        把原本能找到的答案变成零命中；有命中时不合并两侧结果，避免扩大噪声。
+
+        返回 (注入文本, 最终召回条数, 命中证据, 实际查询, 是否回退, 首查条数)。条数和证据只供观测:
         None 表示没查(空查询=意图识别判定不需要检索)
         或检索抛异常, 0 表示查了但库里没有匹配——这两种是不同的病, 不能混成一个数。
         """
         clean = (query or "").strip()
         if not clean:
-            return "暂无相关参考问答。", None, []
+            return "暂无相关参考问答。", None, [], None, False, None
         try:
             async with db_session_module.SessionLocal() as session:
                 result = await retrieve_indexed_knowledge_result(
@@ -277,14 +302,32 @@ class RanrenAgentGraph:
                     settings=self.settings,
                     exclude_source_types={"case"},
                 )
+                primary_hit_count = len(result.hits)
+                fallback_clean = (fallback_query or "").strip()
+                fallback_used = False
+                if (
+                    primary_hit_count == 0
+                    and fallback_clean
+                    and fallback_clean != clean
+                ):
+                    fallback_result = await retrieve_indexed_knowledge_result(
+                        session,
+                        fallback_clean,
+                        settings=self.settings,
+                        exclude_source_types={"case"},
+                    )
+                    if fallback_result.hits:
+                        result = fallback_result
+                        fallback_used = True
+                query_used = fallback_clean if fallback_used else clean
             return result.context or "暂无相关参考问答。", len(result.hits), [
                 hit.observation() for hit in result.hits
-            ]
+            ], query_used, fallback_used, primary_hit_count
         except Exception:
             logger.exception(
                 "Failed to build agent knowledge context service_case_id=%s", self.context.service_case_id
             )
-            return "暂无相关参考问答。", None, []
+            return "暂无相关参考问答。", None, [], clean, False, None
 
     async def _agent_node(self, state: AgentState) -> dict[str, Any]:
         llm_count = int(state.get("llm_call_count") or 0)

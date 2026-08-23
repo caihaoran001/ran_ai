@@ -57,7 +57,10 @@ type AgentKnowledgeDecision = {
   decision: string;
   original_query?: string | null;
   query?: string | null;
+  effective_query?: string | null;
   hit_count?: number | null;
+  primary_hit_count?: number | null;
+  rewrite_fallback_used?: boolean;
   skipped_product_terms?: string[];
   hits?: AgentKnowledgeHit[];
 };
@@ -777,6 +780,12 @@ function KnowledgeDecisionCard({
           <p className="break-words">
             <span className="text-slate-500">改写问题：</span>
             {knowledge.query}
+          </p>
+        )}
+        {knowledge.rewrite_fallback_used && knowledge.effective_query && (
+          <p className="break-words text-amber-700">
+            改写后命中 {knowledge.primary_hit_count ?? 0} 条，已自动退回原问题并命中{" "}
+            {knowledge.hit_count ?? 0} 条。
           </p>
         )}
       </div>

@@ -164,6 +164,9 @@ def _knowledge_observation(
     user_query: str,
     hit_count: int | None = None,
     hits: list[dict[str, Any]] | None = None,
+    query_used: str | None = None,
+    fallback_used: bool = False,
+    primary_hit_count: int | None = None,
 ) -> dict[str, Any]:
     """把本轮参考问答检索的决策压成观测记录，写进 agent_runs.metadata_json。
 
@@ -197,6 +200,13 @@ def _knowledge_observation(
             observation["skipped_product_terms"] = terms
     elif hit_count is not None:
         observation["hit_count"] = int(hit_count)
+        if primary_hit_count is not None:
+            observation["primary_hit_count"] = int(primary_hit_count)
+        if fallback_used:
+            observation["rewrite_fallback_used"] = True
+            used = (query_used or "").strip()
+            if used:
+                observation["effective_query"] = used[:300]
         if hits:
             observation["hits"] = list(hits)
     return observation
@@ -1479,6 +1489,9 @@ class EngineGraph:
                     user_query=user_query,
                     hit_count=agent_result.knowledge_hit_count,
                     hits=agent_result.knowledge_hits,
+                    query_used=agent_result.knowledge_query_used,
+                    fallback_used=agent_result.knowledge_fallback_used,
+                    primary_hit_count=agent_result.knowledge_primary_hit_count,
                 ),
             }
             info_gap = _build_agent_info_gap(

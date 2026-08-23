@@ -181,7 +181,14 @@ def _knowledge_decision(run: AgentRun) -> AgentKnowledgeDecision | None:
             if isinstance(knowledge.get("query"), str)
             else None
         ),
+        effective_query=(
+            str(knowledge["effective_query"])
+            if isinstance(knowledge.get("effective_query"), str)
+            else None
+        ),
         hit_count=_optional_int(knowledge.get("hit_count")),
+        primary_hit_count=_optional_int(knowledge.get("primary_hit_count")),
+        rewrite_fallback_used=bool(knowledge.get("rewrite_fallback_used")),
         skipped_product_terms=[
             str(term)
             for term in (knowledge.get("skipped_product_terms") or [])

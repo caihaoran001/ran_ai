@@ -131,7 +131,10 @@ class AgentKnowledgeDecision(BaseModel):
     decision: str
     original_query: str | None = None
     query: str | None = None
+    effective_query: str | None = None
     hit_count: int | None = None
+    primary_hit_count: int | None = None
+    rewrite_fallback_used: bool = False
     skipped_product_terms: list[str] = Field(default_factory=list)
     hits: list[AgentKnowledgeHit] = Field(default_factory=list)
 

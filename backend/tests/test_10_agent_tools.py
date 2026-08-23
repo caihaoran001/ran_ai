@@ -215,6 +215,29 @@ def test_knowledge_observation_records_decision_hits_and_skipped_product_terms()
     assert _reply_run_metadata({"data_unavailable": True}) == {"data_tool_failed": True}
 
 
+def test_knowledge_observation_records_rewrite_zero_hit_fallback():
+    observation = _knowledge_observation(
+        knowledge_query="改写后问题",
+        user_query="包含产品与症状的原问题",
+        hit_count=1,
+        hits=[{"chunk_id": 8}],
+        query_used="包含产品与症状的原问题",
+        fallback_used=True,
+        primary_hit_count=0,
+    )
+
+    assert observation == {
+        "decision": "searched",
+        "original_query": "包含产品与症状的原问题",
+        "query": "改写后问题",
+        "hit_count": 1,
+        "primary_hit_count": 0,
+        "rewrite_fallback_used": True,
+        "effective_query": "包含产品与症状的原问题",
+        "hits": [{"chunk_id": 8}],
+    }
+
+
 @pytest.mark.asyncio
 async def test_indexed_knowledge_result_keeps_ranked_hit_identity_and_content(
     db_session,
@@ -397,6 +420,65 @@ async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
     assert "【参考问答】\n暂无相关参考问答。" in skip_model.calls[0][1].content
     # 观测：跳过检索时召回条数必须是 None，不能是 0——"根本没查"和"查了没命中"是两种病。
     assert skip_result.knowledge_hit_count is None
+
+
+@pytest.mark.asyncio
+async def test_reference_qa_retries_original_query_only_after_rewrite_zero_hits(
+    db_session,
+    monkeypatch,
+):
+    service_case = await _case(db_session)
+    queries: list[str] = []
+
+    async def fake_retrieve(
+        session,
+        query,
+        *,
+        settings=None,
+        exclude_source_types=None,
+    ):
+        queries.append(query)
+        if query == "经期肚子不舒服":
+            return IndexedKnowledgeResult(context="", hits=[])
+        hit = IndexedKnowledgeHit(
+            rank=1,
+            chunk_id=8,
+            chunk_uid="faq:8",
+            title="午B身体反应处理",
+            source_type="faq",
+            updated_at=None,
+            content="如果怀疑与午B使用有关，应先暂停并联系班主任确认。",
+        )
+        return IndexedKnowledgeResult(
+            context=f"[知识库命中 1]\n{hit.content}",
+            hits=[hit],
+        )
+
+    monkeypatch.setattr(
+        "app.services.agent.graph.retrieve_indexed_knowledge_result",
+        fake_retrieve,
+    )
+    model = FakeToolCallingModel([AIMessage(content="先暂停午B，我帮你联系班主任确认。")])
+
+    result = await RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=service_case.id, trigger_id=125),
+        settings=get_settings(),
+        chat_model=model,
+    ).run(
+        user_query="午B喝完后经期肚子不舒服，是它导致的吗？",
+        knowledge_query="经期肚子不舒服",
+        recent_messages=[],
+    )
+
+    assert queries == [
+        "经期肚子不舒服",
+        "午B喝完后经期肚子不舒服，是它导致的吗？",
+    ]
+    assert "如果怀疑与午B使用有关" in model.calls[0][1].content
+    assert result.knowledge_hit_count == 1
+    assert result.knowledge_primary_hit_count == 0
+    assert result.knowledge_fallback_used is True
+    assert result.knowledge_query_used == "午B喝完后经期肚子不舒服，是它导致的吗？"
 
 
 def _docx_bytes(*paragraphs: str) -> bytes:
