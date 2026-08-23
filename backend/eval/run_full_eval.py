@@ -187,6 +187,18 @@ def _reference(case: RagEvalCase) -> str:
     return "\n".join(statements)
 
 
+def _retrieval_reference(case: RagEvalCase) -> str:
+    """Render retrieval truth as atomic clauses without changing answer truth."""
+    required = set(case.retrieval.required_fact_ids)
+    clauses: list[str] = []
+    for fact in case.authoritative_facts:
+        if fact.fact_id not in required:
+            continue
+        normalized = fact.statement.replace("；", "\n").replace("。", "\n")
+        clauses.extend(item.strip(" 。；") for item in normalized.splitlines() if item.strip())
+    return "\n".join(f"- {item}" for item in clauses)
+
+
 def _answer_fact_checks(
     case: RagEvalCase, response: str | None
 ) -> list[RagFailureReason]:
@@ -348,6 +360,7 @@ async def _evaluate_real_case(
                 user_input=case.user_query,
                 response=response,
                 reference=reference,
+                retrieval_reference=_retrieval_reference(case),
                 retrieved_contexts=[hit.content for hit in rewritten_hits],
                 raw_contexts=[hit.content for hit in raw_hits],
                 must_have_statements=[

@@ -401,12 +401,14 @@ class DeepEvalScorer:
         user_input: str,
         response: str,
         reference: str,
+        retrieval_reference: str | None = None,
         retrieved_contexts: list[str],
         raw_contexts: list[str],
         must_have_statements: list[str] | None = None,
         forbidden_statements: list[str] | None = None,
         response_mode: str = "answer",
     ) -> RagScores:
+        retrieval_reference = retrieval_reference or reference
         judge_reasons: dict[str, str] = {}
         (
             recall,
@@ -415,7 +417,7 @@ class DeepEvalScorer:
         ) = await self.score_context_recall_with_details(
             user_input=user_input,
             retrieved_contexts=retrieved_contexts,
-            reference=reference,
+            reference=retrieval_reference,
         )
         judge_reasons["context_recall_verbose"] = (
             self._verbose(self._context_recall) if retrieved_contexts else ""
@@ -427,7 +429,7 @@ class DeepEvalScorer:
         ) = await self.score_context_recall_with_details(
             user_input=user_input,
             retrieved_contexts=raw_contexts,
-            reference=reference,
+            reference=retrieval_reference,
             stage_key="raw_context_recall",
         )
         judge_reasons["raw_context_recall_verbose"] = (
@@ -440,7 +442,7 @@ class DeepEvalScorer:
         ) = await self.score_context_precision_with_details(
             user_input=user_input,
             retrieved_contexts=retrieved_contexts,
-            reference=reference,
+            reference=retrieval_reference,
         )
         judge_reasons["context_precision_verbose"] = (
             self._verbose(self._context_precision) if retrieved_contexts else ""

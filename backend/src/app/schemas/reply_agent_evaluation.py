@@ -79,6 +79,9 @@ class ReplyAgentUsageTotals(StrictModel):
 
 
 class ReplyAgentRulerPolicy(StrictModel):
+    retrieval_reference_policy_version: str = Field(
+        default="compound-fact-v1", min_length=1, max_length=80
+    )
     rewrite_harm_policy_version: str = Field(min_length=1, max_length=80)
     rewrite_recall_drop_threshold: float = Field(ge=0.0, le=1.0)
     task_completion_policy_version: str = Field(min_length=1, max_length=80)

@@ -118,6 +118,27 @@ def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():
     ]
 
 
+def test_retrieval_reference_splits_compound_truth_without_changing_answer_truth():
+    from eval.run_full_eval import _reference, _retrieval_reference
+
+    case = next(
+        item
+        for item in load_rag_eval_suite().cases
+        if item.case_id == "rag-faq-noon-boundary"
+    )
+
+    answer_reference = _reference(case)
+    retrieval_reference = _retrieval_reference(case)
+
+    assert answer_reference.count("\n") == 0
+    assert retrieval_reference.splitlines() == [
+        "- 午B随午餐前后饮用，尽量下午两点前完成",
+        "- 超过时间当天跳过，不要补喝，晚A照常",
+        "- 倒班时应与计划睡眠间隔至少8小时",
+    ]
+    assert "超过时间当天跳过" in answer_reference
+
+
 def test_gate_thresholds_are_fixed_by_product_decision():
     gates = _gate_thresholds()
     assert gates == {
@@ -224,10 +245,14 @@ async def test_real_runner_retrieve_and_skip_use_one_case_specific_correctness_m
     correctness_metrics: list[object] = []
     correctness_criteria: list[str] = []
     measured_stages: list[str | None] = []
+    measured_references: list[tuple[str | None, str | None]] = []
 
     async def fake_measure(self, metric, test_case):
         name = str(getattr(metric, "name", "") or type(metric).__name__)
         measured_stages.append(self._ledger._stage_key)
+        measured_references.append(
+            (self._ledger._stage_key, getattr(test_case, "expected_output", None))
+        )
         metric.verbose_logs = f"verbose-for-{name}"
         if name == ANSWER_CORRECTNESS_NAME:
             correctness_metrics.append(metric)
@@ -350,6 +375,16 @@ async def test_real_runner_retrieve_and_skip_use_one_case_specific_correctness_m
         "answer_correctness",
         "answer_correctness",
     ]
+    first_case_references = measured_references[:6]
+    atomic_reference = runner._retrieval_reference(cases[0])
+    answer_reference = runner._reference(cases[0])
+    assert [reference for _, reference in first_case_references[:3]] == [
+        atomic_reference,
+        atomic_reference,
+        atomic_reference,
+    ]
+    assert first_case_references[-1] == ("answer_correctness", None)
+    assert answer_reference in correctness_criteria[0]
     assert cases[0].user_query in correctness_criteria[0]
     assert cases[1].user_query in correctness_criteria[1]
     assert results[0].judge_reasons["faithfulness_verbose"].startswith("verbose-")
