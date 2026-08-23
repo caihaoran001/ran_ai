@@ -30,7 +30,7 @@ JUDGE_DIMENSIONS = (
     "clarification",
     "expression",
 )
-TASK_COMPLETION_POLICY_VERSION = "task-completion-v2"
+TASK_COMPLETION_POLICY_VERSION = "task-completion-v3"
 TASK_COMPLETION_PROBE_THRESHOLD = 0.50
 
 _PRIVACY_ENV = {
@@ -66,7 +66,7 @@ def _load_deepeval() -> dict[str, Any]:
     # to stay local even if the host has conflicting user-level configuration.
     os.environ.update(_PRIVACY_ENV)
     try:
-        from deepeval.metrics import GEval, TaskCompletionMetric, ToolCorrectnessMetric
+        from deepeval.metrics import GEval, ToolCorrectnessMetric
         from deepeval.models import DeepEvalBaseLLM
         from deepeval.test_case import LLMTestCase, SingleTurnParams, ToolCall
     except ImportError as exc:
@@ -75,7 +75,6 @@ def _load_deepeval() -> dict[str, Any]:
         ) from exc
     return {
         "GEval": GEval,
-        "TaskCompletionMetric": TaskCompletionMetric,
         "ToolCorrectnessMetric": ToolCorrectnessMetric,
         "DeepEvalBaseLLM": DeepEvalBaseLLM,
         "LLMTestCase": LLMTestCase,
@@ -379,12 +378,32 @@ class AgentQualityJudge:
         threshold: float,
         strict_mode: bool,
     ):
-        metric = self._api["TaskCompletionMetric"](
+        params = self._api["SingleTurnParams"]
+        metric = self._api["GEval"](
+            name="用户可见任务完成度",
+            evaluation_params=[
+                params.INPUT,
+                params.ACTUAL_OUTPUT,
+                params.EXPECTED_OUTPUT,
+                params.CONTEXT,
+            ],
+            evaluation_steps=[
+                "以下是本题验收要求：\n" + _business_outcome_description(expected),
+                "先只阅读 actual output，判断用户在最终回复里真正得到了什么；"
+                "context 中的工具返回只是核对回复真伪的证据，绝不代表该信息已向用户传达。",
+                "核对 actual output 是否语义上覆盖每条必须事实和精确值，"
+                "是否避免每条禁止事实；不做整句字面匹配。",
+                "核对回复方式：应直接回答、澄清或不回复；应澄清时只问完成任务必需的信息，"
+                "不应澄清时不因额外追问扣任务完成分。",
+                "只评用户可见业务结果，不因内部工具名、调用次数或参数扣分；"
+                "但回复声称已完成某动作时，可用 context 核对该声称是否有证据。",
+                "完整、正确并符合回复方式给 1；不影响主要业务结果的轻微遗漏可给 0.8；"
+                "只完成部分任务给 0.3至 0.7；关键事实错误、漏掉主要结果、违反安全边界或回复方式错误给 0至 0.2。"
+                "理由必须引用 actual output 的真实内容，不得把 context 内容写成用户已看到的回复。",
+            ],
             model=self._model,
-            task=_business_outcome_description(expected),
             threshold=threshold,
             strict_mode=strict_mode,
-            include_reason=True,
         )
         metric._ran_ai_key = "task_completion"
         metric._ran_ai_label = _DIMENSION_LABELS["task_completion"]

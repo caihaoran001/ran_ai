@@ -181,6 +181,57 @@ def test_task_completion_description_only_contains_user_visible_outcome() -> Non
     assert "工具选择、次数和参数由独立指标负责" in description
 
 
+def test_task_completion_uses_user_visible_geval_not_trace_outcome() -> None:
+    from eval.agent_judge import AgentQualityJudge
+
+    captured: dict = {}
+
+    class FakeGEval:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    judge = object.__new__(AgentQualityJudge)
+    judge._model = object()
+    judge._api = {
+        "GEval": FakeGEval,
+        "SingleTurnParams": SimpleNamespace(
+            INPUT="input",
+            ACTUAL_OUTPUT="actual_output",
+            EXPECTED_OUTPUT="expected_output",
+            CONTEXT="context",
+        ),
+    }
+    expected = AgentCaseExpected(
+        response_mode="reply",
+        required_tools=[
+            AgentExpectedToolCall(name="read_delivery_document", args_subset={})
+        ],
+        required_facts=["第14天报告重点是睡眠稳定"],
+    )
+
+    metric = judge._task_completion_metric(
+        expected,
+        threshold=0.8,
+        strict_mode=False,
+    )
+
+    assert isinstance(metric, FakeGEval)
+    assert captured["name"] == "用户可见任务完成度"
+    assert captured["evaluation_params"] == [
+        "input",
+        "actual_output",
+        "expected_output",
+        "context",
+    ]
+    steps = "\n".join(captured["evaluation_steps"])
+    assert "工具返回只是核对回复真伪的证据" in steps
+    assert "绝不代表该信息已向用户传达" in steps
+    assert "read_delivery_document" not in steps
+    assert "第14天报告重点是睡眠稳定" in steps
+    assert captured["threshold"] == 0.8
+    assert captured["strict_mode"] is False
+
+
 @pytest.mark.asyncio
 async def test_isolated_graph_replaces_every_tool_execution() -> None:
     suite = load_agent_eval_suite()
