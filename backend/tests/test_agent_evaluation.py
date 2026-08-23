@@ -182,7 +182,7 @@ def test_task_completion_description_only_contains_user_visible_outcome() -> Non
 
 
 def test_task_completion_uses_user_visible_geval_not_trace_outcome() -> None:
-    from eval.agent_judge import AgentQualityJudge
+    from eval.agent_judge import AgentQualityJudge, TASK_COMPLETION_THRESHOLD
 
     captured: dict = {}
 
@@ -232,6 +232,7 @@ def test_task_completion_uses_user_visible_geval_not_trace_outcome() -> None:
     assert "符合回复方式给 10 分" in steps
     assert captured["threshold"] == 0.8
     assert captured["strict_mode"] is False
+    assert TASK_COMPLETION_THRESHOLD == 0.9
 
 
 @pytest.mark.asyncio

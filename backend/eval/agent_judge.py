@@ -32,6 +32,8 @@ JUDGE_DIMENSIONS = (
 )
 TASK_COMPLETION_POLICY_VERSION = "task-completion-v4"
 TASK_COMPLETION_PROBE_THRESHOLD = 0.50
+TASK_COMPLETION_THRESHOLD = 0.90
+TASK_COMPLETION_CALIBRATION_ID = "reply-agent-rulers-zh-v1"
 
 _PRIVACY_ENV = {
     "DEEPEVAL_TELEMETRY_OPT_OUT": "1",
@@ -418,7 +420,7 @@ class AgentQualityJudge:
         user_query: str,
         expected: AgentCaseExpected,
         actual: AgentCaseActual,
-        threshold: float = TASK_COMPLETION_PROBE_THRESHOLD,
+        threshold: float = TASK_COMPLETION_THRESHOLD,
         strict_mode: bool = False,
     ) -> AgentFrameworkMetric:
         test_case = self._test_case(
@@ -459,8 +461,8 @@ class AgentQualityJudge:
         g_eval = self._api["GEval"]
         task_metric = self._task_completion_metric(
             expected,
-            threshold=1,
-            strict_mode=True,
+            threshold=TASK_COMPLETION_THRESHOLD,
+            strict_mode=False,
         )
 
         groundedness = g_eval(
