@@ -25,12 +25,20 @@ class KnowledgeFAQ(TimestampMixin, Base):
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 确认状态只用于治理与观测，不参与检索行为。确认人字段暂不引入（共享 API Key 无个人身份）。
+    last_confirmed_version: Mapped[int | None] = mapped_column(Integer)
+    last_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     versions: Mapped[list["KnowledgeFAQVersion"]] = relationship(
         back_populates="faq",
         cascade="all, delete-orphan",
         order_by="KnowledgeFAQVersion.version.desc()",
     )
+
+    @property
+    def confirmation_state(self) -> str:
+        """confirmed 仅当最后确认版本等于当前版本；否则一律待确认。"""
+        return "confirmed" if self.last_confirmed_version is not None and self.last_confirmed_version == self.version else "pending"
 
 
 class KnowledgeFAQVersion(TimestampMixin, Base):

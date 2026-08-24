@@ -13,7 +13,13 @@ from app.schemas.knowledge_faq import (
     KnowledgeFAQUpdate,
     KnowledgeFAQVersionRead,
 )
-from app.services.knowledge_faq_service import create_faq, set_faq_status, update_faq
+from app.services.knowledge_faq_service import (
+    confirm_faq,
+    create_faq,
+    set_faq_status,
+    unconfirm_faq,
+    update_faq,
+)
 
 router = APIRouter()
 
@@ -61,6 +67,22 @@ async def disable_knowledge_faq(
     session: AsyncSession = Depends(get_session),
 ) -> KnowledgeFAQ:
     return await set_faq_status(session, await _get_faq(session, faq_id), "disabled")
+
+
+@router.post("/knowledge-faqs/{faq_id}/confirm", response_model=KnowledgeFAQRead)
+async def confirm_knowledge_faq(
+    faq_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> KnowledgeFAQ:
+    return await confirm_faq(session, await _get_faq(session, faq_id))
+
+
+@router.post("/knowledge-faqs/{faq_id}/unconfirm", response_model=KnowledgeFAQRead)
+async def unconfirm_knowledge_faq(
+    faq_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> KnowledgeFAQ:
+    return await unconfirm_faq(session, await _get_faq(session, faq_id))
 
 
 @router.delete("/knowledge-faqs/{faq_id}", response_model=KnowledgeFAQRead)

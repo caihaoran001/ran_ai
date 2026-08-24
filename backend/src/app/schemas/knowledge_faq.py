@@ -33,6 +33,9 @@ class KnowledgeFAQRead(Timestamped):
     version: int
     disabled_at: datetime | None = None
     archived_at: datetime | None = None
+    confirmation_state: str
+    last_confirmed_version: int | None = None
+    last_confirmed_at: datetime | None = None
 
 
 class KnowledgeFAQCreate(BaseModel):
