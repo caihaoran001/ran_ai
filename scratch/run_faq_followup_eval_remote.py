@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
+import textwrap
 
 from local_prebuilt_deploy import connect_ecs
 
@@ -130,10 +131,15 @@ def _status(client) -> None:
         client,
         f"cat {shlex.quote(REPORT_DIR + '/report.json')} 2>/dev/null || true",
     )
+    _, calls_count, _ = _run(
+        client,
+        f"wc -l < {shlex.quote(REPORT_DIR + '/calls.jsonl')} 2>/dev/null || true",
+    )
     payload: dict[str, object] = {
         "run_id": RUN_ID,
         "container_state": state,
         "status": json.loads(status_text) if status_text else None,
+        "calls_written": int(calls_count) if calls_count.isdigit() else 0,
     }
     if report_text:
         report = json.loads(report_text)
@@ -159,16 +165,133 @@ def _status(client) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _logs(client) -> None:
+    code, output, error = _run(
+        client,
+        f"docker logs --tail 120 {shlex.quote(CONTAINER)}",
+    )
+    if code != 0:
+        raise RuntimeError(f"container logs failed: {error or output}")
+    print(output)
+
+
+def _diagnose(client) -> None:
+    program = textwrap.dedent(
+        """
+        import asyncio
+        import json
+
+        from sqlalchemy import or_, select
+
+        from app.db.session import SessionLocal
+        from app.models.knowledge_chunk import KnowledgeChunk
+        from app.models.knowledge_faq import KnowledgeFAQ
+        from app.services.knowledge_index import retrieve_indexed_knowledge_result
+
+        QUERIES = [
+            "这个如果我想先喝了产品再接着吃正餐呢",
+            "产品服用顺序：先喝产品再吃正餐是否可以？之前建议随正餐边吃边喝，想确认先喝产品再吃正餐是否可行。",
+        ]
+
+        async def run():
+            async with SessionLocal() as session:
+                retrieval = []
+                for query in QUERIES:
+                    result = await retrieve_indexed_knowledge_result(
+                        session,
+                        query,
+                        exclude_source_types={"case"},
+                    )
+                    retrieval.append({
+                        "query": query,
+                        "hits": [
+                            {
+                                "rank": hit.rank,
+                                "chunk_id": hit.chunk_id,
+                                "chunk_uid": hit.chunk_uid,
+                                "title": hit.title,
+                                "source_type": hit.source_type,
+                                "content_excerpt": hit.content[:1200],
+                            }
+                            for hit in result.hits
+                        ],
+                    })
+                chunks = list(
+                    await session.scalars(
+                        select(KnowledgeChunk)
+                        .where(
+                            KnowledgeChunk.status == "active",
+                            or_(
+                                KnowledgeChunk.content.ilike("%先喝早C%"),
+                                KnowledgeChunk.content.ilike("%蛋白粉%"),
+                                KnowledgeChunk.content.ilike("%先喝产品%"),
+                                KnowledgeChunk.content.ilike("%边吃边喝%"),
+                                KnowledgeChunk.content.ilike("%随餐饮用%"),
+                            ),
+                        )
+                        .order_by(KnowledgeChunk.id)
+                    )
+                )
+                faq_ids = [
+                    int((chunk.metadata_json or {}).get("faq_id"))
+                    for chunk in chunks
+                    if str((chunk.metadata_json or {}).get("faq_id") or "").isdigit()
+                ]
+                faqs = {
+                    faq.id: faq
+                    for faq in await session.scalars(
+                        select(KnowledgeFAQ).where(KnowledgeFAQ.id.in_(faq_ids))
+                    )
+                } if faq_ids else {}
+                matching = []
+                for chunk in chunks:
+                    faq_id = (chunk.metadata_json or {}).get("faq_id")
+                    faq = faqs.get(int(faq_id)) if str(faq_id or "").isdigit() else None
+                    matching.append({
+                        "chunk_id": chunk.id,
+                        "chunk_uid": chunk.chunk_uid,
+                        "source_type": chunk.source_type,
+                        "source_uri": chunk.source_uri,
+                        "title": chunk.title,
+                        "content_excerpt": chunk.content[:1200],
+                        "faq": {
+                            "id": faq.id,
+                            "status": faq.status,
+                            "source_type": faq.source_type,
+                            "source_id": faq.source_id,
+                            "question": faq.question,
+                            "answer": faq.answer,
+                        } if faq else None,
+                    })
+                print(json.dumps({"retrieval": retrieval, "matching_active_chunks": matching}, ensure_ascii=False))
+
+        asyncio.run(run())
+        """
+    )
+    command = (
+        "docker exec ran_ai-backend-1 uv run python -c "
+        + shlex.quote(program)
+    )
+    code, output, error = _run(client, command, timeout=300)
+    if code != 0:
+        raise RuntimeError(f"retrieval diagnosis failed: {error or output}")
+    print(json.dumps(json.loads(output), ensure_ascii=False, indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("start", "status"))
+    parser.add_argument("action", choices=("start", "status", "logs", "diagnose"))
     args = parser.parse_args()
     client = connect_ecs()
     try:
         if args.action == "start":
             _start(client)
-        else:
+        elif args.action == "status":
             _status(client)
+        elif args.action == "logs":
+            _logs(client)
+        else:
+            _diagnose(client)
     finally:
         client.close()
 

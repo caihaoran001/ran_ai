@@ -152,6 +152,10 @@ def test_product_retrieval_keyword_whitelist_covers_failure_anchors():
         "漏喝",
         "补喝",
     ]
+    assert _query_terms("先喝产品再吃正餐，还是随餐边吃边喝？") == [
+        "边吃边喝",
+        "随餐",
+    ]
     assert _query_terms("喝完手抖心慌是不是咖啡因不良反应") == [
         "不良反应",
         "咖啡因",
