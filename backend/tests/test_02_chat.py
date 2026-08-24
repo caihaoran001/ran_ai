@@ -338,6 +338,7 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     assert "一律输出 JSON null" in prompt
     assert "完整保留产品名、症状、动作、数字、时间、否定、不确定性" in prompt
     assert "是否由产品导致/是否需要补喝" in prompt
+    assert "随餐产品未区分就写明‘早C或午B’" in prompt
     assert "是否空腹、是否随餐边吃边喝" in prompt
     assert "这三种/这个/它" in prompt
     assert "补吗/补一下" in prompt and "补喝" in prompt
