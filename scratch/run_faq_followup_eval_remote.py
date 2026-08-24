@@ -13,7 +13,7 @@ from local_prebuilt_deploy import connect_ecs
 RUN_ID = "reply-agent-ra021-final-real-bfe8988-20260824T0814Z"
 CONTAINER = "ran_ai-reply-agent-ra021-final-real-bfe8988"
 CASE_IDS = "RA-021"
-DEPLOYED_SHA = "bfe898887440"
+DEPLOYED_SHA = "ced7603ef85a"
 REPORT_DIR = f"/root/ran_ai/diagnostics/reply-agent-evaluations/{RUN_ID}"
 
 
@@ -50,19 +50,29 @@ def _preflight(client) -> dict[str, str]:
             "/root/ran_ai/backend/src/app/services/agent/prompts.py"
         ),
         "rewrite_subject": (
-            "grep -n '随餐产品未区分就写明' "
+            "grep -n '只能还原对话已出现的产品名' "
             "/root/ran_ai/backend/src/app/services/ai_service/client.py"
         ),
         "retrieval_phrase": (
             "grep -n '边吃边喝' "
             "/root/ran_ai/backend/src/app/services/knowledge_base/keyword_whitelist.json"
         ),
+        "dataset_path": (
+            "cd /root/ran_ai && docker compose "
+            "-f docker-compose.reply-agent-eval.yml config "
+            "| grep 'REPLY_AGENT_EVALUATION_DATASET_PATH:.*reply_agent_eval_cases.v3.json'"
+        ),
         "eval_import_probe": (
             "cd /root/ran_ai && docker compose -f docker-compose.reply-agent-eval.yml run "
             "--rm --no-deps --entrypoint /app/.venv/bin/python reply-agent-eval "
             "-c \"from app.services.agent.prompts import AGENT_SYSTEM_PROMPT; "
+            "from app.evaluation.reply_agent_cases import load_reply_agent_eval_suite; "
             "from app.services.agent.graph import RanrenAgentGraph; "
-            "assert len(AGENT_SYSTEM_PROMPT) == 4276; print('ok')\""
+            "suite=load_reply_agent_eval_suite(); "
+            "assert len(AGENT_SYSTEM_PROMPT) == 4276; "
+            "assert (suite.suite_id, suite.version) == ('reply-agent-core-v3', 3); "
+            "assert suite.cases[20].rag_case.history[0].content.startswith('午B随餐'); "
+            "print('ok')\""
         ),
     }
     evidence: dict[str, str] = {}
@@ -299,11 +309,16 @@ def _diagnose(client) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("start", "status", "logs", "diagnose"))
+    parser.add_argument(
+        "action",
+        choices=("verify", "start", "status", "logs", "diagnose"),
+    )
     args = parser.parse_args()
     client = connect_ecs()
     try:
-        if args.action == "start":
+        if args.action == "verify":
+            print(json.dumps(_preflight(client), ensure_ascii=False, indent=2))
+        elif args.action == "start":
             _start(client)
         elif args.action == "status":
             _status(client)
