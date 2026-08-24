@@ -19,7 +19,7 @@
 
 | 你要做的 | 跑什么 | 会动什么 |
 |---|---|---|
-| **部署代码**（日常、高频） | `uv run --no-project --with paramiko python scratch/local_prebuilt_deploy.py` | 只更新代码（后端 `src`、前端 standalone）并重建/重启 `backend`、`frontend`；常驻 `ingress` 和 Caddy 不动。切换前自动执行 LangGraph checkpoint 表初始化/升级。**不碰**服务器的 `.env` 和 `docker-compose.prod.yml`（打包已排除） |
+| **部署代码**（日常、高频） | `uv run --no-project --with paramiko python scratch/local_prebuilt_deploy.py` | 只更新代码（后端 `src`、前端 standalone）并重建/重启 `backend`、`frontend`；常驻 `ingress` 和 Caddy 不动。切换前自动执行 Alembic 业务表迁移和 LangGraph checkpoint 初始化/升级。**不碰**服务器的 `.env` 和 `docker-compose.prod.yml`（打包已排除） |
 | **改 compose 结构**（少见） | `uv run --with paramiko python scratch/configure_remote_files.py` | 用仓库当前 `docker-compose.prod.yml` **整体覆盖**服务器 compose；**默认不碰 `.env`** |
 | **改 .env 密钥**（很少） | 直接在服务器上 `nano /root/ran_ai/.env` | 线上 `.env` 由人手维护、以线上为准；见下方警告 |
 
@@ -68,7 +68,7 @@
 
 生产 compose 包含：
 
-- `backend`：FastAPI 后端，启动时自动执行 Alembic migration。
+- `backend`：FastAPI 后端。标准部署会在切换容器前预执行 Alembic migration；容器启动时仍会再执行一次作为幂等安全网。
 - `ingress`：稳定常驻的轻量【入站边缘入口】，只持 DB 连接池、绝不跑 LLM/调度器/langgraph。承载两类外部入站流量：① QiWe 回调（鉴权解析后写入 RDS `inbound_events`）；② 面向 C 端用户、免 admin key 的公开入口——公开问卷展示与提交、短链跳转。日常业务部署不重启它，`backend` 频繁重启时这些外部入口不吃 502。
 - `frontend`：Next.js standalone 生产服务。C 端三处公开调用（问卷展示 GET、问卷提交 POST、短链 GET）在 SSR/route 里经 `SERVER_INGRESS_BASE_URL` **直连 `ingress:8001`**（不走 Caddy）；后台管理 `/api/*` 仍经前端代理直连 `backend`。
 - `caddy`：公网 HTTP/HTTPS 入口。
@@ -83,9 +83,9 @@ DATABASE_URL=postgresql+asyncpg://用户名:密码@RDS内网地址:5432/数据�
 
 回复 Agent 的 LangGraph checkpoint 也复用这个 RDS，只创建普通 PostgreSQL
 表，不需要新实例或额外扩展。`scratch/local_prebuilt_deploy.py` 会在新镜像构建完成、
-旧容器仍运行时执行一次 `uv run ran-ai-checkpoint-setup`；如果业务账号没有建表/建索引
-权限，部署会在切换容器前失败并保留旧版本，此时才需要 DBA 为该账号补一次目标 schema
-的 DDL 权限。
+旧容器仍运行时，先执行 `uv run alembic upgrade head`，再执行
+`uv run ran-ai-checkpoint-setup`。如果迁移、建表或建索引失败，部署会在切换容器前中止并保留
+旧版本；此时再根据错误补齐目标 schema 的 DDL 权限。
 
 Caddy 路由规则：
 
@@ -163,6 +163,7 @@ cd ran_ai
 cp .env.production.example .env
 nano .env
 docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml run --rm --no-deps backend uv run alembic upgrade head
 docker compose -f docker-compose.prod.yml run --rm --no-deps backend uv run ran-ai-checkpoint-setup
 docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps

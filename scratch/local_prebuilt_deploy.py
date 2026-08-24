@@ -215,10 +215,10 @@ def main():
             sys.exit(1)
     print("  ✅ Remote extraction and diagnostics clearing completed!")
 
-    # 6. Build the new images, initialize/upgrade LangGraph checkpoint tables
-    #    against the existing RDS, then reload containers. Running checkpoint
-    #    setup before `up -d` means a DDL/permission failure leaves the current
-    #    production containers untouched.
+    # 6. Build the new images, migrate the business schema, initialize/upgrade
+    #    LangGraph checkpoint tables against the existing RDS, then reload
+    #    containers. Running both DDL steps before `up -d` means a migration or
+    #    permission failure leaves the current production containers untouched.
     #    生产 .env 与 docker-compose.prod.yml 不在本脚本覆盖范围（打包已排除，解压不覆盖），
     #    要改生产配置请单独运行 scratch/configure_remote_files.py。
     print("\n🚀 Step 6: Rebuilding and reloading containers on ECS (Measuring Downtime)...")
@@ -230,6 +230,10 @@ def main():
         (
             "Docker Compose build (business services only)",
             "cd /root/ran_ai && docker compose -f docker-compose.prod.yml build backend frontend",
+        ),
+        (
+            "Alembic business schema migration",
+            "cd /root/ran_ai && docker compose -f docker-compose.prod.yml run --rm --no-deps backend uv run alembic upgrade head",
         ),
         (
             "LangGraph checkpoint setup",
