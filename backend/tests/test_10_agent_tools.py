@@ -140,6 +140,31 @@ def test_insight_context_keeps_latest_ten_without_shrinking_reply_history():
     assert len(reply_history) == 20
 
 
+def test_product_retrieval_keyword_whitelist_covers_failure_anchors():
+    from app.services.knowledge_base import _keyword_whitelist, _query_terms
+
+    _keyword_whitelist.cache_clear()
+    assert _query_terms("早C冰水冲泡可以吗") == ["冰水", "冲泡", "早C"]
+    assert _query_terms("午B漏喝后能用晚A替代补喝吗") == [
+        "午B",
+        "晚A",
+        "替代",
+        "漏喝",
+        "补喝",
+    ]
+    assert _query_terms("喝完手抖心慌是不是咖啡因不良反应") == [
+        "不良反应",
+        "咖啡因",
+        "心慌",
+        "手抖",
+    ]
+    assert _query_terms("两天没上厕所要不要加通便胶囊") == [
+        "没上厕所",
+        "胶囊",
+        "通便",
+    ]
+
+
 def test_knowledge_observation_records_decision_hits_and_skipped_product_terms():
     """三态决策 + 召回条数 + 跳过时的产品词探针，都要落到可观测记录里。"""
     searched = _knowledge_observation(

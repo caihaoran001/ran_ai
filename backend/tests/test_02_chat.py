@@ -338,6 +338,8 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     assert "一律输出 JSON null" in prompt
     assert "完整保留产品名、症状、动作、数字、时间、否定、不确定性" in prompt
     assert "是否由产品导致/是否需要补喝" in prompt
+    assert "这三种/这个/它" in prompt
+    assert "低碳是否停米面、为什么填问卷都返回 null" in prompt
     assert "不得回答、不得新增事实、不得把工作人员的话改成用户事实" in prompt
     assert "产品规则优先 current_state/habits/warnings" in prompt
     assert "复盘历程才用 case_summary" in prompt
