@@ -742,10 +742,12 @@ function KnowledgeFAQRow({
   const [answer, setAnswer] = useState(faq.answer);
   const [category, setCategory] = useState(faq.category || "");
   const [tags, setTags] = useState((faq.tags || []).join("、"));
-  const [busyAction, setBusyAction] = useState<"save" | "enable" | "disable" | null>(null);
+  const [busyAction, setBusyAction] = useState<"save" | "enable" | "disable" | "confirm" | "unconfirm" | null>(null);
   const [error, setError] = useState("");
   const statusLabel =
     faq.status === "active" ? "● 检索中" : faq.status === "archived" ? "已归档" : "○ 已停用";
+  const isConfirmed = faq.confirmation_state === "confirmed";
+  const hasConfirmationHistory = typeof faq.last_confirmed_version === "number";
 
   async function save() {
     setBusyAction("save");
@@ -793,6 +795,23 @@ function KnowledgeFAQRow({
     }
   }
 
+  async function setConfirmation(action: "confirm" | "unconfirm") {
+    setBusyAction(action);
+    setBusy(faq.id);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/knowledge-faqs/${faq.id}/${action}`, { method: "POST" });
+      if (!response.ok) throw new Error((await response.text()) || "操作失败");
+      router.refresh();
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? `操作失败：${err.message}` : "操作失败，请稍后再试。");
+    } finally {
+      setBusyAction(null);
+      setBusy(null);
+    }
+  }
+
   return (
     <div className={`rounded-xl border p-4 shadow-3xs transition-all duration-200 ${
       faq.status === "active" 
@@ -809,6 +828,20 @@ function KnowledgeFAQRow({
           }`}>
             {statusLabel}
           </span>
+          <span className={`rounded-full border px-2 py-0.5 text-2xs font-bold tracking-wide ${
+            isConfirmed
+              ? "border-blue-200 bg-blue-50 text-blue-700"
+              : hasConfirmationHistory
+                ? "border-amber-200 bg-amber-50 text-amber-700"
+                : "border-slate-200 bg-slate-100 text-slate-500"
+          }`}>
+            {isConfirmed ? "已确认" : "待确认"}
+          </span>
+          {!isConfirmed && hasConfirmationHistory && (
+            <span className="text-2xs text-slate-400">
+              上次确认为 v{faq.last_confirmed_version}
+            </span>
+          )}
           <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-2xs font-semibold text-slate-500 border border-slate-200/40">
             v{faq.version}
           </span>
@@ -987,6 +1020,20 @@ function KnowledgeFAQRow({
                 仅保留历史，不提供直接恢复
               </span>
             )}
+            <Button
+              type="button"
+              className="border border-slate-250 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1"
+              onClick={() => setConfirmation(isConfirmed ? "unconfirm" : "confirm")}
+              loading={busyAction === "confirm" || busyAction === "unconfirm"}
+              loadingText={isConfirmed ? "取消中…" : "确认中…"}
+            >
+              {isConfirmed ? (
+                <X className="h-3.5 w-3.5 text-slate-500" />
+              ) : (
+                <Check className="h-3.5 w-3.5 text-blue-500" />
+              )}
+              <span>{isConfirmed ? "取消确认" : "确认当前版本"}</span>
+            </Button>
           </div>
         </div>
       )}

@@ -482,6 +482,9 @@ export type KnowledgeFAQ = {
   archived_at?: string | null;
   created_at: string;
   updated_at: string;
+  confirmation_state?: "confirmed" | "pending" | string;
+  last_confirmed_version?: number | null;
+  last_confirmed_at?: string | null;
 };
 
 export type DiagnosticsSummary = {
