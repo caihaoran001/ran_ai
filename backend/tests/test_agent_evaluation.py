@@ -268,6 +268,19 @@ async def test_isolated_graph_replaces_every_tool_execution() -> None:
     }
     assert sandbox.records == [{"args": {}, "result": result}]
 
+    knowledge = await graph._build_knowledge_context(
+        "改写问题",
+        fallback_query="用户原问题",
+    )
+    assert knowledge == (
+        suite.cases[0].knowledge_context,
+        suite.cases[0].knowledge_hit_count,
+        [],
+        "改写问题",
+        False,
+        suite.cases[0].knowledge_hit_count,
+    )
+
 
 def test_deterministic_assessment_rejects_wrong_args_and_forbidden_write() -> None:
     expected = AgentCaseExpected(

@@ -100,12 +100,18 @@ class IsolatedAgentGraph(RanrenAgentGraph):
         return self._eval_case.memory_context
 
     async def _build_knowledge_context(
-        self, query: str
-    ) -> tuple[str, int | None, list[dict[str, Any]]]:
+        self,
+        query: str,
+        *,
+        fallback_query: str | None = None,
+    ) -> tuple[str, int | None, list[dict[str, Any]], str | None, bool, int | None]:
         return (
             self._eval_case.knowledge_context,
             self._eval_case.knowledge_hit_count,
             [],
+            query or None,
+            False,
+            self._eval_case.knowledge_hit_count,
         )
 
     async def _resolve_bot_nickname(self) -> str:
