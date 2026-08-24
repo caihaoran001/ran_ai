@@ -138,7 +138,14 @@ class _JudgeModel:
             )
         latency_ms = int((time.monotonic() - started) * 1000)
         del latency_ms
-        return response.choices[0].message.content or ""
+        message = response.choices[0].message
+        content = (message.content or "").strip()
+        if content:
+            return content
+        # DeepSeek 偶发把已完成的 JSON 判定只放在 reasoning_content，
+        # final content 留空。这里仅用于隔离评测判官，不会进入用户回复；
+        # 原始响应仍完整保留在 calls.jsonl，后续还会通过 schema 校验。
+        return (getattr(message, "reasoning_content", None) or "").strip()
 
 
 def _parse_json_dict(raw: str) -> dict[str, Any]:
@@ -169,10 +176,18 @@ class _DeepEvalJudgeBridge(DeepEvalBaseLLM):
         return self.model_name
 
     async def a_generate(self, prompt: str, *args, schema=None, **kwargs):
-        raw = await self._judge.complete(prompt)
         if schema is None:
-            return raw
-        return schema.model_validate(_parse_json_dict(raw))
+            return await self._judge.complete(prompt)
+        last_error: ValueError | None = None
+        for attempt in range(2):
+            raw = await self._judge.complete(prompt)
+            try:
+                return schema.model_validate(_parse_json_dict(raw))
+            except ValueError as exc:
+                last_error = exc
+                if attempt:
+                    raise
+        raise last_error or ValueError("judge emitted invalid JSON")
 
     def generate(self, prompt: str, *args, schema=None, **kwargs):
         raise RuntimeError("sync generation is not used; metrics run async")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from types import SimpleNamespace
@@ -187,6 +188,64 @@ async def test_deepeval_judge_bridge_returns_requested_schema_instance():
     )
     assert metric.score == 1.0
     assert metric.reason == "supported"
+
+
+@pytest.mark.asyncio
+async def test_deepeval_judge_bridge_retries_one_invalid_json_response():
+    from deepeval.metrics.contextual_recall.schema import Verdicts
+    from eval.deepeval_eval import _DeepEvalJudgeBridge
+
+    class _Judge:
+        model_name = "offline-judge"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, prompt: str) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                return ""
+            return '{"verdicts":[{"verdict":"yes","reason":"supported"}]}'
+
+    judge = _Judge()
+    bridge = _DeepEvalJudgeBridge(judge)
+
+    result = await bridge.a_generate("judge", schema=Verdicts)
+
+    assert judge.calls == 2
+    assert result.verdicts[0].verdict == "yes"
+
+
+@pytest.mark.asyncio
+async def test_deepeval_judge_uses_reasoning_json_only_when_final_is_empty():
+    from eval.deepeval_eval import _JudgeModel
+
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="",
+                    reasoning_content='analysis\n{"reason":"supported"}',
+                )
+            )
+        ]
+    )
+
+    class _Completions:
+        async def create(self, **kwargs):
+            return response
+
+    judge = object.__new__(_JudgeModel)
+    judge._settings = SimpleNamespace()
+    judge._semaphore = asyncio.Semaphore(1)
+    judge.model_name = "offline-judge"
+    judge._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_Completions())
+    )
+
+    raw = await judge.complete("judge")
+
+    assert raw == 'analysis\n{"reason":"supported"}'
 
 
 def test_real_faithfulness_policy_uses_valid_enforced_status(tmp_path):
