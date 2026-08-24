@@ -1,4 +1,4 @@
-"""Start or inspect the two-case real regression after FAQ cleanup fixes."""
+"""Start or inspect the final RA-021 regression after FAQ cleanup fixes."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ import textwrap
 from local_prebuilt_deploy import connect_ecs
 
 
-RUN_ID = "reply-agent-faqfollowup-real-1128319-20260824T0746Z"
-CONTAINER = "ran_ai-reply-agent-faqfollowup-real-1128319"
-CASE_IDS = "RA-021,RA-067"
-DEPLOYED_SHA = "112831942992"
+RUN_ID = "reply-agent-ra021-final-real-bfe8988-20260824T0814Z"
+CONTAINER = "ran_ai-reply-agent-ra021-final-real-bfe8988"
+CASE_IDS = "RA-021"
+DEPLOYED_SHA = "bfe898887440"
 REPORT_DIR = f"/root/ran_ai/diagnostics/reply-agent-evaluations/{RUN_ID}"
 
 
@@ -48,6 +48,14 @@ def _preflight(client) -> dict[str, str]:
         "product_rule": (
             "grep -n '用户的猜测不覆盖口径' "
             "/root/ran_ai/backend/src/app/services/agent/prompts.py"
+        ),
+        "rewrite_subject": (
+            "grep -n '随餐产品未区分就写明' "
+            "/root/ran_ai/backend/src/app/services/ai_service/client.py"
+        ),
+        "retrieval_phrase": (
+            "grep -n '边吃边喝' "
+            "/root/ran_ai/backend/src/app/services/knowledge_base/keyword_whitelist.json"
         ),
         "eval_import_probe": (
             "cd /root/ran_ai && docker compose -f docker-compose.reply-agent-eval.yml run "
