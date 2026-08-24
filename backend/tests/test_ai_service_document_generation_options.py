@@ -88,6 +88,12 @@ async def test_non_document_generation_keeps_global_budget_without_document_opti
     assert request["max_tokens"] == 1234
     assert "response_format" not in request
     assert "extra_body" not in request
+    usage_payload = service._record_usage.await_args.kwargs
+    assert usage_payload["request_payload"]["messages"] == [
+        {"role": "system", "content": "reply"},
+        {"role": "user", "content": "hello"},
+    ]
+    assert usage_payload["response_payload"] is not None
 
 
 @pytest.mark.asyncio

@@ -316,7 +316,7 @@ class RagEvaluationCostLedger:
         usage = payload.get("usage")
         response = type("UsageResponse", (), {"usage": usage})()
         prompt, completion, total, cache_hit = _openai_usage(response)
-        self._record(
+        call = self._record(
             component="intent",
             model=str(payload.get("model") or "unknown"),
             prompt_tokens=prompt,
@@ -329,11 +329,17 @@ class RagEvaluationCostLedger:
             error_type=str(payload.get("error_type") or "") or None,
             scenario=str(payload.get("scenario") or "message_insight"),
         )
+        self._append_call_evidence(
+            call=call,
+            request_payload=payload.get("request_payload"),
+            response_payload=payload.get("response_payload"),
+            error_message=str(payload.get("error_type") or "") or None,
+        )
 
     async def record_answer_model_usage(self, **payload: Any) -> None:
         response = payload.get("response")
         prompt, completion, total, cache_hit = _usage_counts(response)
-        self._record(
+        call = self._record(
             component="answer",
             model=_response_model(response) or str(payload.get("model") or "unknown"),
             prompt_tokens=prompt,
@@ -345,6 +351,12 @@ class RagEvaluationCostLedger:
             success=bool(payload.get("success")),
             error_type=str(payload.get("error_type") or "") or None,
             scenario=str(payload.get("scenario") or "reply_agent"),
+        )
+        self._append_call_evidence(
+            call=call,
+            request_payload={"messages": payload.get("request_messages") or []},
+            response_payload=response,
+            error_message=str(payload.get("error_type") or "") or None,
         )
 
     def record_openai_response(

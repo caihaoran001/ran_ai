@@ -583,6 +583,16 @@ class AIService:
         finish = None
         usage = None
         attempts = 0
+        response = None
+        request_payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
         try:
             response, attempts = await self._create_chat_completion_with_retry(
                 system_prompt=system_prompt,
@@ -646,6 +656,8 @@ class AIService:
                 error_type=None,
                 service_case_id=service_case_id,
                 message_id=message_id,
+                request_payload=request_payload,
+                response_payload=response,
             )
             used = getattr(self, "_last_successful_model_by_scenario", None)
             if used is None:
@@ -679,6 +691,8 @@ class AIService:
                 error_type=type(exc).__name__,
                 service_case_id=service_case_id,
                 message_id=message_id,
+                request_payload=request_payload,
+                response_payload=response,
             )
             raise
 
@@ -695,7 +709,12 @@ class AIService:
         error_type: str | None,
         service_case_id: int | None,
         message_id: int | None,
+        request_payload: Any = None,
+        response_payload: Any = None,
     ) -> None:
+        # 生产只记 usage，不持久化原始提示词；隔离评测会用同形 hook
+        # 接收这两个字段，把每次真实请求/响应写入 calls.jsonl。
+        del request_payload, response_payload
         prompt_tokens = getattr(usage, "prompt_tokens", None)
         completion_tokens = getattr(usage, "completion_tokens", None)
         total_tokens = getattr(usage, "total_tokens", None)
@@ -853,7 +872,7 @@ class AIService:
                 "纯数据上报、闲聊和确认均为 false。\n"
                 "- knowledge_query：只有产品规则、用量、服用或使用时间，以及疑似产品不良反应或可能与产品使用相关的身体问题才输出不超过300字的独立查询；"
                 "与产品无关的通用健康、饮食、运动问题，加上实时数据、系统操作、纯上报、确认和闲聊一律输出 JSON null。必须把‘这三种/这个/它’还原为紧邻对话已明确的具体产品；完整保留产品名、症状、动作、数字、时间、否定、不确定性，"
-                "以及‘是否由产品导致/是否需要补喝’等判断方向，"
+                "以及‘是否由产品导致/是否需要补喝’等判断方向。把产品口语动作还原成可检索原意：‘补吗/补一下’写明‘补喝’，‘拿另一款顶一下/换着喝’写明‘产品替代’，‘只能温水吗’写明‘冷水冲泡是否可用’；"
                 "不得回答、不得新增事实、不得把工作人员的话改成用户事实。低碳是否停米面、为什么填问卷都返回 null；产品背景下未排便并询问加量则保留产品、便秘和加量问题。\n"
                 "- agent_context_plan：产品规则优先 current_state/habits/warnings；实时数据用 service_case_data；"
                 "饮食和身体反馈可用 preferences/habits/current_state/warnings；复盘历程才用 case_summary；"

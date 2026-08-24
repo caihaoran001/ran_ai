@@ -223,6 +223,54 @@ def test_mock_rag_cases_have_tracked_zero_cost_usage():
     assert usage.total.complete is True
 
 
+@pytest.mark.asyncio
+async def test_rag_intent_and_answer_calls_persist_full_evidence(tmp_path):
+    call_log_path = tmp_path / "calls.jsonl"
+    ledger = RagEvaluationCostLedger(_settings(), call_log_path=call_log_path)
+    ledger.begin_case("rag-evidence")
+    usage = SimpleNamespace(
+        prompt_tokens=120,
+        completion_tokens=30,
+        total_tokens=150,
+        prompt_cache_hit_tokens=20,
+    )
+    await ledger.record_intent_model_usage(
+        model="intent-model",
+        scenario="message_insight",
+        elapsed_ms=10,
+        usage=usage,
+        attempts=1,
+        success=True,
+        request_payload={"messages": [{"role": "user", "content": "需要检索吗"}]},
+        response_payload={"choices": [{"message": {"content": "{}"}}]},
+    )
+    await ledger.record_answer_model_usage(
+        model="answer-model",
+        scenario="reply_agent",
+        elapsed_ms=20,
+        response=SimpleNamespace(
+            usage_metadata={
+                "input_tokens": 200,
+                "output_tokens": 40,
+                "total_tokens": 240,
+                "input_token_details": {"cache_read": 0},
+            },
+            response_metadata={"model_name": "answer-model"},
+            content="回复内容",
+        ),
+        request_messages=[{"role": "user", "content": "用户问题"}],
+        success=True,
+    )
+    ledger.end_case("rag-evidence")
+
+    evidence = [json.loads(line) for line in call_log_path.read_text().splitlines()]
+    assert [item["component"] for item in evidence] == ["intent", "answer"]
+    assert evidence[0]["request"]["messages"][0]["content"] == "需要检索吗"
+    assert evidence[0]["response"]["choices"][0]["message"]["content"] == "{}"
+    assert evidence[1]["request"]["messages"][0]["content"] == "用户问题"
+    assert evidence[1]["response"]["content"] == "回复内容"
+
+
 def test_rag_usage_collectors_restore_process_hooks():
     import app.services.agent.graph as graph_module
     import app.services.embedding_service as embedding_module

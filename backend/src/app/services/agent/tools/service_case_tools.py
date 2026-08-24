@@ -441,7 +441,7 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
     ) -> dict[str, Any]:
         """读取当前服务单已发送给群里的交付文档正文。
 
-        定位优先级：document_id > document_type。阶段报告一类多份，优先 list_delivery_documents 后按 id 读。
+        定位优先级：document_id > document_type。用户已给出明确 id 时直接读；没给 id 且同类可能多份时才先列表。
         """
         async with SessionLocal() as session:
             if document_id is not None:
@@ -552,8 +552,9 @@ def build_service_case_tools(*, context: AgentRunContext, settings: Settings) ->
             coroutine=read_delivery_document,
             name="read_delivery_document",
             description=(
-                "Read the Markdown body of an already-sent delivery document for THIS service case. Prefer document_id from "
-                "list_delivery_documents for exact reads. document_type is a strict UserDocument.document_type "
+                "Read the Markdown body of an already-sent delivery document for THIS service case. When the user already "
+                "provides an exact document_id, call this tool directly exactly once and NEVER list documents first. "
+                "document_type is a strict UserDocument.document_type "
                 "enum and may be used only when there is a single matching document; if multiple documents match "
                 "(especially stage_report), the tool returns candidates and asks for document_id. Unsent documents "
                 "are not readable from this group-chat tool."

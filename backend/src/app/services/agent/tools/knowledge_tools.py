@@ -16,7 +16,9 @@ class SearchSuccessCaseArgs(BaseModel):
             "A standalone, concise search query describing the user's current struggle or discouragement. "
             "Before calling, resolve references and omitted subjects from the recent conversation and remove "
             "non-essential conversational wording. Preserve product names, numbers, time, negation, and uncertainty; "
-            "never add facts, conclusions, or advice that are not present in the conversation."
+            "never add facts, conclusions, routines, or advice that are not present in the conversation. For example, "
+            "if the user only says they followed requirements for one week and their weight did not move, do not infer "
+            "low-carb eating, product use, or any other execution detail."
         ),
     )
 
@@ -45,7 +47,7 @@ def build_knowledge_tools(*, settings: Settings) -> list[BaseTool]:
                 "data lookups, or neutral chat. "
                 "Rewrite the search query at call time into a self-contained description by resolving references, "
                 "filling only context-grounded omissions, and removing non-essential conversational wording. "
-                "Never add facts that are absent from the current or recent conversation. "
+                "Never add facts or routines such as low-carb eating or product use when absent from the conversation. "
                 "Returns a coaching header plus a matched case, or a note when no "
                 "suitable case exists — in that case just comfort the user in your own words, never fabricate a case. "
                 "This tool is a behind-the-scenes source: NEVER tell the user you searched for or failed to find a "

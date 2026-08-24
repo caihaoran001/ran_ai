@@ -265,7 +265,8 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
             name="list_group_reminders",
             description=(
                 "List all pending (not-yet-sent) reminders for the current group, with their id, local time, "
-                "content and recurrence. Call this before cancel_group_reminder when the user's reference is "
+                "content and recurrence. The final user-facing reply MUST preserve every numeric task_id exactly. "
+                "Call this before cancel_group_reminder when the user's reference is "
                 "ambiguous, so you can map it to a task_id. The result may also carry an 'interrupted' list: "
                 "recurring reminders that were really set up but stopped after a send/generation failure. When "
                 "the user asks why a reminder disappeared or claims one was set, check that list before saying "
