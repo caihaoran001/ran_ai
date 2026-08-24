@@ -47,8 +47,8 @@ export type ReplyAgentEvaluationSummary = {
   updated_at: string;
   finished_at?: string | null;
   git_sha: string;
-  dataset_id: "reply-agent-core-v1";
-  dataset_version: 1;
+  dataset_id: string;
+  dataset_version: number;
   model: string;
   evaluation_framework: "deepeval";
   evaluation_framework_version: string;

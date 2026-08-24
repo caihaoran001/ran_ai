@@ -332,12 +332,38 @@ def _new_rag_case(spec: dict, source_by_id: dict[str, RagEvalCase]) -> RagEvalCa
     )
 
 
+def _v2_contract_case(case: RagEvalCase) -> RagEvalCase:
+    """Correct two v1-only contract gaps without mutating the old fixture."""
+    payload = case.model_dump(mode="json")
+    if case.case_id == "rag-faq-cold-water":
+        payload["history"] = [
+            {"role": "user", "content": "早C、午B、晚A这三种我都已经开始用了。"}
+        ]
+    elif case.case_id == "rag-faq-noon-boundary":
+        source = case.authoritative_facts[0]
+        payload["authoritative_facts"] = [
+            {
+                "fact_id": source.fact_id,
+                "statement": (
+                    "午B随午餐前后饮用，尽量下午两点前完成；"
+                    "超过时间当天跳过，不要补喝。"
+                ),
+                "provenance": source.provenance,
+                "source_scope": source.source_scope,
+                "source_ids": source.source_ids,
+            }
+        ]
+    return RagEvalCase.model_validate(payload)
+
+
 def build_suite() -> ReplyAgentEvalSuite:
     rag_suite = load_rag_eval_suite()
     agent_suite = load_agent_eval_suite()
-    rag_by_id = {case.case_id: case for case in rag_suite.cases}
+    rag_by_id = {
+        case.case_id: _v2_contract_case(case) for case in rag_suite.cases
+    }
     selected_rag = [
-        case
+        rag_by_id[case.case_id]
         for case in rag_suite.cases
         if case.rewrite.decision == "retrieve" or case.case_id in KEPT_RAG_SKIP_IDS
     ]
@@ -420,11 +446,12 @@ def build_suite() -> ReplyAgentEvalSuite:
 
     return ReplyAgentEvalSuite.model_validate(
         {
-            "suite_id": "reply-agent-core-v1",
-            "version": 1,
+            "suite_id": "reply-agent-core-v2",
+            "version": 2,
             "description": (
                 "回复 Agent 统一固定题库：80 道唯一题，32 道产品知识检索，"
-                "48 道跳过检索并覆盖工具、澄清、沉默、授权和转人工。"
+                "48 道跳过检索并覆盖工具、澄清、沉默、授权和转人工；"
+                "v2 补齐三产品指代上下文并将午B超时召回事实限定为本问所需。"
             ),
             "cases": cases,
         }
@@ -440,7 +467,7 @@ def parse_args() -> argparse.Namespace:
             Path(__file__).resolve().parents[1]
             / "tests"
             / "fixtures"
-            / "reply_agent_eval_cases.v1.json"
+            / "reply_agent_eval_cases.v2.json"
         ),
     )
     return parser.parse_args()

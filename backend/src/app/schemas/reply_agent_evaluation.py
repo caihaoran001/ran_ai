@@ -98,8 +98,8 @@ class ReplyAgentEvaluationSummary(StrictModel):
     updated_at: datetime
     finished_at: datetime | None = None
     git_sha: str = Field(min_length=7, max_length=64)
-    dataset_id: Literal["reply-agent-core-v1"]
-    dataset_version: Literal[1]
+    dataset_id: Literal["reply-agent-core-v1", "reply-agent-core-v2"]
+    dataset_version: Literal[1, 2]
     model: str = Field(min_length=1, max_length=120)
     evaluation_framework: Literal["deepeval"] = "deepeval"
     evaluation_framework_version: str = Field(min_length=1, max_length=40)

@@ -109,8 +109,8 @@ class ReplyAgentEvalCase(StrictModel):
 
 
 class ReplyAgentEvalSuite(StrictModel):
-    suite_id: Literal["reply-agent-core-v1"]
-    version: Literal[1]
+    suite_id: Literal["reply-agent-core-v1", "reply-agent-core-v2"]
+    version: Literal[1, 2]
     description: str = Field(min_length=1, max_length=1000)
     cases: list[ReplyAgentEvalCase] = Field(
         min_length=FIXED_CASE_COUNT,
@@ -119,6 +119,9 @@ class ReplyAgentEvalSuite(StrictModel):
 
     @model_validator(mode="after")
     def validate_suite_contract(self) -> "ReplyAgentEvalSuite":
+        expected_version = int(self.suite_id.rsplit("v", 1)[1])
+        if self.version != expected_version:
+            raise ValueError("suite_id and version must identify the same contract")
         case_ids = [case.case_id for case in self.cases]
         if len(case_ids) != len(set(case_ids)):
             raise ValueError("suite contains duplicate case_id")
@@ -157,7 +160,7 @@ def default_reply_agent_eval_path() -> Path:
         Path(__file__).resolve().parents[3]
         / "tests"
         / "fixtures"
-        / "reply_agent_eval_cases.v1.json"
+        / "reply_agent_eval_cases.v2.json"
     )
 
 

@@ -4,7 +4,7 @@
 
 ## 统一回复 Agent 评测
 
-固定题库为 `tests/fixtures/reply_agent_eval_cases.v1.json`，可由 `python -m eval.build_reply_agent_suite` 确定性重建。加载时强制校验 80/32/48 配额、`RA-001..RA-080` 连续编号、指标路由以及八类检索场景每类至少四题，避免后续改题时静默改变口径。
+固定题库为 `tests/fixtures/reply_agent_eval_cases.v2.json`，可由 `python -m eval.build_reply_agent_suite` 确定性重建；v1 保留用于历史报告复现。加载时强制校验 80/32/48 配额、`RA-001..RA-080` 连续编号、指标路由以及八类检索场景每类至少四题，避免后续改题时静默改变口径。
 
 统一真实入口依题路由执行三条隔离路径：知识类复用生产意图改写、只读向量检索、回复 Agent 和 DeepEval RAG 指标；工具类给 Agent 生产同款工具定义但只返回题目固定结果；高风险类只跑消息安全识别和最终转人工判断，不发送消息、不进入常规回复。所有 Agent 类题显式跳过通用知识库，避免把工具任务误算成 RAG。
 

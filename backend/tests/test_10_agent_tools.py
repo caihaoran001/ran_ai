@@ -324,6 +324,53 @@ async def test_indexed_knowledge_result_keeps_ranked_hit_identity_and_content(
     assert "[知识库命中 1]" in result.context
 
 
+@pytest.mark.asyncio
+async def test_rrf_tie_prefers_curated_text_hit_over_vector_only_hit(
+    db_session,
+    monkeypatch,
+):
+    vector_chunk = KnowledgeChunk(
+        chunk_uid="faq:vector-generic",
+        source_type="faq",
+        source_uri="knowledge_faqs/vector-generic",
+        title="泛化语义命中",
+        content="出现不适时先暂停。",
+        content_hash="c" * 64,
+        status="active",
+    )
+    text_chunk = KnowledgeChunk(
+        chunk_uid="faq:text-exact",
+        source_type="faq",
+        source_uri="knowledge_faqs/text-exact",
+        title="咖啡因手抖边界",
+        content="手抖不代表代谢启动。",
+        content_hash="d" * 64,
+        status="active",
+    )
+    db_session.add_all([vector_chunk, text_chunk])
+    await db_session.flush()
+
+    async def fake_vector(*args, **kwargs):
+        return [(vector_chunk.id, vector_chunk.content)]
+
+    async def fake_text(*args, **kwargs):
+        return [(text_chunk.id, text_chunk.content)]
+
+    monkeypatch.setattr(knowledge_index_mod, "_retrieve_by_embedding", fake_vector)
+    monkeypatch.setattr(knowledge_index_mod, "_retrieve_by_text", fake_text)
+    result = await knowledge_index_mod.retrieve_indexed_knowledge_result(
+        db_session,
+        "手抖是不是代谢启动",
+        settings=SimpleNamespace(embedding_api_key="configured", knowledge_base_top_k=2),
+        exclude_source_types={"case"},
+    )
+
+    assert [hit.chunk_id for hit in result.hits] == [
+        text_chunk.id,
+        vector_chunk.id,
+    ]
+
+
 async def _case(db_session, *, started_at=None):
     user = User(name="Agent测试用户")
     db_session.add(user)

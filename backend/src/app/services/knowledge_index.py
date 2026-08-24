@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
-import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -274,20 +272,36 @@ async def retrieve_indexed_knowledge_result(
     rrf_k = 60
     scores: dict[int, float] = {}
     contents: dict[int, str] = {}
+    vector_ranks: dict[int, int] = {}
+    text_ranks: dict[int, int] = {}
 
     for rank, (chunk_id, content) in enumerate(vec_results, start=1):
         scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rank + rrf_k)
         contents[chunk_id] = content
+        vector_ranks[chunk_id] = rank
 
     for rank, (chunk_id, content) in enumerate(text_results, start=1):
         scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rank + rrf_k)
         contents[chunk_id] = content
+        text_ranks[chunk_id] = rank
 
     if not scores:
         return IndexedKnowledgeResult(context="", hits=[])
 
-    # Sort by RRF score descending
-    ranked_ids = sorted(scores.keys(), key=lambda cid: scores[cid], reverse=True)
+    # Exact business-keyword hits are curated by the whitelist.  When a
+    # vector-only result and a text-only result receive the same RRF score,
+    # prefer the exact text hit instead of depending on insertion order (the
+    # old vector-first insertion made generic semantic matches win every tie).
+    missing_rank = len(scores) + 1
+    ranked_ids = sorted(
+        scores,
+        key=lambda cid: (
+            -scores[cid],
+            text_ranks.get(cid, missing_rank),
+            vector_ranks.get(cid, missing_rank),
+            cid,
+        ),
+    )
     top_ids = ranked_ids[:settings.knowledge_base_top_k]
     chunk_rows = list(
         await session.scalars(

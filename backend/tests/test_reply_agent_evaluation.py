@@ -31,8 +31,8 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
     suite = load_reply_agent_eval_suite()
     summary = summarize_reply_agent_eval_suite(suite)
 
-    assert suite.suite_id == "reply-agent-core-v1"
-    assert suite.version == 1
+    assert suite.suite_id == "reply-agent-core-v2"
+    assert suite.version == 2
     assert len(suite.cases) == 80
     assert summary["retrieval_counts"] == {"retrieve": 32, "skip": 48}
     assert summary["execution_counts"] == {"agent": 30, "handoff": 3, "rag": 47}
@@ -54,6 +54,16 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
         "rag-faq-constipation",
         "rag-chat-two-day-constipation",
     } <= source_ids
+    cold_water = next(case for case in suite.cases if case.case_id == "RA-003")
+    assert "早C、午B、晚A" in cold_water.rag_case.history[0].content
+    noon = next(case for case in suite.cases if case.case_id == "RA-005")
+    assert "晚A" not in noon.rag_case.authoritative_facts[0].statement
+    assert "倒班" not in noon.rag_case.authoritative_facts[0].statement
+    report_noon = next(case for case in suite.cases if case.case_id == "RA-067")
+    assert (
+        report_noon.rag_case.authoritative_facts[0].statement
+        == noon.rag_case.authoritative_facts[0].statement
+    )
 
 
 def test_generated_fixture_matches_builder_source() -> None:
@@ -85,14 +95,14 @@ def test_metric_routing_covers_retrieve_skip_tool_no_reply_and_handoff() -> None
     assert all("MB" in case.metric_groups for case in suite.cases if case.handoff)
 
 
-def test_unified_cli_defaults_to_fixed_v1_and_ten_yuan_limit(monkeypatch) -> None:
+def test_unified_cli_defaults_to_fixed_v2_and_ten_yuan_limit(monkeypatch) -> None:
     monkeypatch.delenv("REPLY_AGENT_EVALUATION_DATASET_PATH", raising=False)
     monkeypatch.delenv("REPLY_AGENT_EVAL_MAX_COST_YUAN", raising=False)
     monkeypatch.setattr(sys, "argv", ["run_reply_agent_eval.py"])
 
     args = parse_args()
 
-    assert args.dataset.name == "reply_agent_eval_cases.v1.json"
+    assert args.dataset.name == "reply_agent_eval_cases.v2.json"
     assert args.max_cost_yuan == 10
     assert args.case_ids == ""
 
