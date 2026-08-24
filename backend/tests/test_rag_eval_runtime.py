@@ -119,7 +119,7 @@ def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():
     ]
 
 
-def test_retrieval_reference_splits_compound_truth_without_changing_answer_truth():
+def test_noon_boundary_uses_current_atomic_faq_truth():
     from eval.run_full_eval import _reference, _retrieval_reference
 
     case = next(
@@ -133,11 +133,15 @@ def test_retrieval_reference_splits_compound_truth_without_changing_answer_truth
 
     assert answer_reference.count("\n") == 0
     assert retrieval_reference.splitlines() == [
-        "- 午B随午餐前后饮用，尽量下午两点前完成",
-        "- 超过时间当天跳过，不要补喝，晚A照常",
-        "- 倒班时应与计划睡眠间隔至少8小时",
+        "- 午B超过下午2点当天跳过，不要补喝",
+        "- 晚A照常按原计划进行",
     ]
-    assert "超过时间当天跳过" in answer_reference
+    assert "超过下午2点当天跳过" in answer_reference
+    assert case.origin.reference_id == "faq_2b69430ec351e003"
+    assert (
+        case.authoritative_facts[0].provenance
+        == "knowledge_faqs:faq_2b69430ec351e003:v2"
+    )
 
 
 def test_gate_thresholds_are_fixed_by_product_decision():

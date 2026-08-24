@@ -57,8 +57,14 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
     cold_water = next(case for case in suite.cases if case.case_id == "RA-003")
     assert "早C、午B、晚A" in cold_water.rag_case.history[0].content
     noon = next(case for case in suite.cases if case.case_id == "RA-005")
-    assert "晚A" not in noon.rag_case.authoritative_facts[0].statement
-    assert "倒班" not in noon.rag_case.authoritative_facts[0].statement
+    noon_fact = noon.rag_case.authoritative_facts[0]
+    assert noon_fact.statement == (
+        "午B超过下午2点当天跳过，不要补喝；"
+        "晚A照常按原计划进行。"
+    )
+    assert noon_fact.provenance == "knowledge_faqs:faq_2b69430ec351e003:v2"
+    assert noon_fact.source_ids == ["faq_2b69430ec351e003"]
+    assert "倒班" not in noon_fact.statement
     report_noon = next(case for case in suite.cases if case.case_id == "RA-067")
     assert (
         report_noon.rag_case.authoritative_facts[0].statement

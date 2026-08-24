@@ -359,7 +359,7 @@
         "title": "午B超过最晚时间是否补喝",
         "origin": {
           "kind": "faq_rewrite",
-          "reference_id": "faq_77ac790fdd064193"
+          "reference_id": "faq_2b69430ec351e003"
         },
         "tags": [
           "product_rule",
@@ -376,11 +376,11 @@
         "authoritative_facts": [
           {
             "fact_id": "faq-f05",
-            "statement": "午B随午餐前后饮用，尽量下午两点前完成；超过时间当天跳过，不要补喝。",
-            "provenance": "knowledge_faqs:faq_77ac790fdd064193:v2",
+            "statement": "午B超过下午2点当天跳过，不要补喝；晚A照常按原计划进行。",
+            "provenance": "knowledge_faqs:faq_2b69430ec351e003:v2",
             "source_scope": "knowledge",
             "source_ids": [
-              "faq_77ac790fdd064193"
+              "faq_2b69430ec351e003"
             ]
           }
         ],
@@ -5155,11 +5155,11 @@
         "authoritative_facts": [
           {
             "fact_id": "eval_report_noon_time",
-            "statement": "午B随午餐前后饮用，尽量下午两点前完成；超过时间当天跳过，不要补喝。",
-            "provenance": "knowledge_faqs:faq_77ac790fdd064193:v2",
+            "statement": "午B超过下午2点当天跳过，不要补喝；晚A照常按原计划进行。",
+            "provenance": "knowledge_faqs:faq_2b69430ec351e003:v2",
             "source_scope": "knowledge",
             "source_ids": [
-              "faq_77ac790fdd064193"
+              "faq_2b69430ec351e003"
             ]
           }
         ],

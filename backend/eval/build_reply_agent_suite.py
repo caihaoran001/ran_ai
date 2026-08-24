@@ -344,10 +344,7 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
         payload["authoritative_facts"] = [
             {
                 "fact_id": source.fact_id,
-                "statement": (
-                    "午B随午餐前后饮用，尽量下午两点前完成；"
-                    "超过时间当天跳过，不要补喝。"
-                ),
+                "statement": source.statement,
                 "provenance": source.provenance,
                 "source_scope": source.source_scope,
                 "source_ids": source.source_ids,
