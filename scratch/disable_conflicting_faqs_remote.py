@@ -19,11 +19,23 @@ from local_prebuilt_deploy import connect_ecs
 # an ID is reused, edited, or no longer refers to the reviewed candidate.
 TARGETS: dict[int, int] = {
     112: 149,
+    113: 147,
+    125: 132,
+    129: 126,
+    147: 184,
     162: 173,
+    183: 214,
     186: 208,
     252: 297,
+    254: 304,
+    255: 302,
     263: 333,
+    265: 317,
+    273: 340,
     275: 338,
+    278: 330,
+    282: 326,
+    283: 325,
     286: 324,
     303: 370,
     306: 369,
@@ -31,7 +43,14 @@ TARGETS: dict[int, int] = {
 }
 
 
-def _remote_code(*, apply: bool) -> str:
+def _remote_code(
+    *,
+    apply: bool,
+    verify_retrieval: bool,
+    audit_active: bool,
+    audit_min_id: int,
+    audit_max_id: int,
+) -> str:
     return textwrap.dedent(
         f"""
         import asyncio
@@ -43,9 +62,21 @@ def _remote_code(*, apply: bool) -> str:
         from app.models.knowledge_chunk import KnowledgeChunk
         from app.models.knowledge_faq import KnowledgeFAQ
         from app.services.knowledge_faq_service import set_faq_status
+        from app.services.knowledge_index import retrieve_indexed_knowledge_result
 
         TARGETS = {TARGETS!r}
         APPLY = {apply!r}
+        VERIFY_RETRIEVAL = {verify_retrieval!r}
+        AUDIT_ACTIVE = {audit_active!r}
+        AUDIT_MIN_ID = {audit_min_id!r}
+        AUDIT_MAX_ID = {audit_max_id!r}
+        RETRIEVAL_CASES = [
+            ("午B下午三点还能补喝吗", {{130, 189}}),
+            ("早C午B晚A可以空腹喝吗，能先喝再吃饭吗", {{53, 225}}),
+            ("瓶盖、一大刻度和三小刻度怎么换算", {{141}}),
+            ("喝午B后心慌手抖怎么办", {{3}}),
+            ("喝午B后腹泻怎么办", {{96}}),
+        ]
 
 
         async def run():
@@ -153,6 +184,70 @@ def _remote_code(*, apply: bool) -> str:
                     final_chunk = {{faq_id: chunks_by_faq[faq_id].status for faq_id in TARGETS}}
                     mode = "preview"
 
+                retrieval_checks = []
+                if VERIFY_RETRIEVAL:
+                    disabled_chunk_uids = {{f"faq:{{faq_id}}" for faq_id in TARGETS}}
+                    for query, expected_any in RETRIEVAL_CASES:
+                        result = await retrieve_indexed_knowledge_result(
+                            session,
+                            query,
+                            exclude_source_types={{"case"}},
+                        )
+                        hit_faq_ids = [
+                            int(hit.chunk_uid.split(":", 1)[1])
+                            for hit in result.hits
+                            if hit.chunk_uid.startswith("faq:")
+                            and hit.chunk_uid.split(":", 1)[1].isdigit()
+                        ]
+                        leaked = [
+                            hit.chunk_uid
+                            for hit in result.hits
+                            if hit.chunk_uid in disabled_chunk_uids
+                        ]
+                        retrieval_checks.append(
+                            {{
+                                "query": query,
+                                "expected_any": sorted(expected_any),
+                                "matched_expected": sorted(expected_any.intersection(hit_faq_ids)),
+                                "disabled_hits": leaked,
+                                "hits": [
+                                    {{
+                                        "rank": hit.rank,
+                                        "chunk_uid": hit.chunk_uid,
+                                        "title": hit.title,
+                                        "content_excerpt": hit.content[:800],
+                                    }}
+                                    for hit in result.hits
+                                ],
+                            }}
+                        )
+
+                active_draft_faqs = []
+                if AUDIT_ACTIVE:
+                    active_faqs = list(
+                        await session.scalars(
+                            select(KnowledgeFAQ)
+                            .where(
+                                KnowledgeFAQ.status == "active",
+                                KnowledgeFAQ.source_type == "knowledge_draft",
+                                KnowledgeFAQ.category == "产品使用",
+                                KnowledgeFAQ.id >= AUDIT_MIN_ID,
+                                KnowledgeFAQ.id <= AUDIT_MAX_ID,
+                            )
+                            .order_by(KnowledgeFAQ.id)
+                        )
+                    )
+                    active_draft_faqs = [
+                        {{
+                            "faq_id": faq.id,
+                            "draft_id": faq.source_id,
+                            "category": faq.category,
+                            "question": faq.question,
+                            "answer": faq.answer,
+                        }}
+                        for faq in active_faqs
+                    ]
+
                 print(
                     json.dumps(
                         {{
@@ -161,7 +256,9 @@ def _remote_code(*, apply: bool) -> str:
                             "changed": changed,
                             "faq_statuses": final_faq,
                             "chunk_statuses": final_chunk,
-                            "rows": rows,
+                            "rows": [] if AUDIT_ACTIVE else rows,
+                            "retrieval_checks": retrieval_checks,
+                            "active_draft_faqs": active_draft_faqs,
                         }},
                         ensure_ascii=False,
                     )
@@ -176,13 +273,25 @@ def _remote_code(*, apply: bool) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--verify-retrieval", action="store_true")
+    parser.add_argument("--audit-active", action="store_true")
+    parser.add_argument("--audit-min-id", type=int, default=1)
+    parser.add_argument("--audit-max-id", type=int, default=10_000)
     args = parser.parse_args()
 
     client = connect_ecs()
     try:
         command = "docker exec -i ran_ai-backend-1 uv run python -"
         stdin, stdout, stderr = client.exec_command(command, timeout=300)
-        stdin.write(_remote_code(apply=args.apply))
+        stdin.write(
+            _remote_code(
+                apply=args.apply,
+                verify_retrieval=args.verify_retrieval,
+                audit_active=args.audit_active,
+                audit_min_id=args.audit_min_id,
+                audit_max_id=args.audit_max_id,
+            )
+        )
         stdin.channel.shutdown_write()
         output = stdout.read().decode("utf-8", "replace").strip()
         error = stderr.read().decode("utf-8", "replace").strip()
