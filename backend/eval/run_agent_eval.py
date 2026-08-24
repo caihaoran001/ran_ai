@@ -438,7 +438,10 @@ async def async_main(args: argparse.Namespace) -> int:
         if not settings.ai_api_key:
             raise RuntimeError("真实 Agent 评测要求 AI_API_KEY")
         install_read_only_guards(engine)
-    cost_ledger = AgentEvaluationCostLedger(settings)
+    cost_ledger = AgentEvaluationCostLedger(
+        settings,
+        call_log_path=run_dir / "calls.jsonl",
+    )
     judge = AgentQualityJudge(
         settings,
         mock=args.mock,

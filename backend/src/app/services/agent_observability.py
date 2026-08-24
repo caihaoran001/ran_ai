@@ -118,6 +118,7 @@ async def record_model_usage(
     response: Any = None,
     success: bool,
     error_type: str | None = None,
+    request_messages: Any = None,
     settings: Settings | None = None,
 ) -> None:
     """记录一次逻辑模型调用，并累加到所属 AgentRun。"""

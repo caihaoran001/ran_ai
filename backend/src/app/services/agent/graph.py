@@ -338,8 +338,9 @@ class RanrenAgentGraph:
             }
         started_at = time.monotonic()
         scenario = _USAGE_SCENARIOS.get(self.context.run_kind, "reply_agent")
+        request_messages = state.get("messages") or []
         try:
-            response = await self.model.ainvoke(state.get("messages") or [])
+            response = await self.model.ainvoke(request_messages)
         except Exception as exc:
             await record_model_usage(
                 agent_run_id=self.context.agent_run_id,
@@ -350,6 +351,7 @@ class RanrenAgentGraph:
                 elapsed_ms=int((time.monotonic() - started_at) * 1000),
                 success=False,
                 error_type=type(exc).__name__,
+                request_messages=request_messages,
                 settings=self.settings,
             )
             raise
@@ -362,6 +364,7 @@ class RanrenAgentGraph:
             elapsed_ms=int((time.monotonic() - started_at) * 1000),
             response=response,
             success=True,
+            request_messages=request_messages,
             settings=self.settings,
         )
         return {"messages": [response], "llm_call_count": llm_count + 1}

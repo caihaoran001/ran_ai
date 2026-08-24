@@ -479,7 +479,9 @@ def test_v3_sandbox_results_match_runtime_tool_contracts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_evaluation_cost_ledger_separates_agent_judge_and_marks_gaps() -> None:
+async def test_evaluation_cost_ledger_separates_agent_judge_and_marks_gaps(
+    tmp_path,
+) -> None:
     settings = get_settings().model_copy(
         update={
             "ai_prompt_cost_per_1m_tokens": 2.0,
@@ -489,7 +491,8 @@ async def test_evaluation_cost_ledger_separates_agent_judge_and_marks_gaps() -> 
             "ai_peak_price_multiplier": 1.0,
         }
     )
-    ledger = AgentEvaluationCostLedger(settings)
+    call_log_path = tmp_path / "calls.jsonl"
+    ledger = AgentEvaluationCostLedger(settings, call_log_path=call_log_path)
     ledger.begin_case("agent-service-progress", 1)
     await ledger.record_agent_model_usage(
         model="requested-agent-model",
@@ -504,6 +507,7 @@ async def test_evaluation_cost_ledger_separates_agent_judge_and_marks_gaps() -> 
             },
             response_metadata={"model_name": "actual-agent-model"},
         ),
+        request_messages=[{"role": "user", "content": "现在第几天？"}],
         success=True,
     )
     ledger.record_judge_model_usage(
@@ -521,6 +525,7 @@ async def test_evaluation_cost_ledger_separates_agent_judge_and_marks_gaps() -> 
         success=True,
         error_type=None,
         metric_key="groundedness",
+        request_payload={"messages": [{"role": "user", "content": "judge"}]},
     )
 
     complete = ledger.case_usage("agent-service-progress", 1)
@@ -551,6 +556,15 @@ async def test_evaluation_cost_ledger_separates_agent_judge_and_marks_gaps() -> 
     assert incomplete.total.known_estimated_cost_yuan == 0.0081
     assert incomplete.total.estimated_cost_yuan is None
     assert incomplete.calls[-1].error_type == "APITimeoutError"
+    call_evidence = [
+        json.loads(line)
+        for line in call_log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(call_evidence) == 3
+    assert call_evidence[0]["request"][0]["content"] == "现在第几天？"
+    assert call_evidence[1]["stage_key"] == "groundedness"
+    assert call_evidence[1]["response"]["model"] == "actual-judge-model"
+    assert call_evidence[2]["error_message"] == "APITimeoutError"
 
 
 def test_agent_usage_collector_is_scoped_and_restorable() -> None:
@@ -616,6 +630,39 @@ async def test_deepeval_adapter_records_framework_version_and_tool_metric() -> N
     assert framework["task_completion"].kind == "llm"
     assert os.environ["DEEPEVAL_TELEMETRY_OPT_OUT"] == "1"
     assert os.environ["DEEPEVAL_FILE_SYSTEM"] == "READ_ONLY"
+
+
+@pytest.mark.asyncio
+async def test_deepeval_metric_retries_one_invalid_json_response() -> None:
+    if find_spec("deepeval") is None:
+        pytest.skip("DeepEval is installed only in the dedicated evaluation image")
+    from eval.agent_judge import AgentQualityJudge
+
+    class FlakyMetric:
+        _ran_ai_key = "task_completion"
+        _ran_ai_label = "任务完成"
+        _ran_ai_kind = "llm"
+        score = 1.0
+        threshold = 0.9
+        success = True
+        reason = "第二次返回合法 JSON"
+        attempts = 0
+
+        async def a_measure(self, *_args, **_kwargs) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise ValueError("Evaluation LLM outputted an invalid JSON")
+
+    judge = AgentQualityJudge(get_settings(), mock=True)
+    metric = FlakyMetric()
+    try:
+        result = await judge._measure(metric, object())
+    finally:
+        await judge.close()
+
+    assert metric.attempts == 2
+    assert result.passed is True
+    assert result.reason == "第二次返回合法 JSON"
 
 
 @pytest.mark.asyncio

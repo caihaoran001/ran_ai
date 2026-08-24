@@ -34,6 +34,7 @@ TASK_COMPLETION_POLICY_VERSION = "task-completion-v4"
 TASK_COMPLETION_PROBE_THRESHOLD = 0.50
 TASK_COMPLETION_THRESHOLD = 0.90
 TASK_COMPLETION_CALIBRATION_ID = "reply-agent-rulers-zh-v1"
+JUDGE_PARSE_MAX_ATTEMPTS = 2
 
 _PRIVACY_ENV = {
     "DEEPEVAL_TELEMETRY_OPT_OUT": "1",
@@ -179,6 +180,7 @@ def _make_deepeval_model(
                         success=False,
                         error_type=type(exc).__name__,
                         metric_key=self._ran_ai_metric_key,
+                        request_payload={"messages": self._messages(prompt)},
                     )
                 raise
             if cost_ledger is not None:
@@ -189,6 +191,7 @@ def _make_deepeval_model(
                     success=True,
                     error_type=None,
                     metric_key=self._ran_ai_metric_key,
+                    request_payload={"messages": self._messages(prompt)},
                 )
             return response.choices[0].message.content or ""
 
@@ -210,6 +213,7 @@ def _make_deepeval_model(
                         success=False,
                         error_type=type(exc).__name__,
                         metric_key=self._ran_ai_metric_key,
+                        request_payload={"messages": self._messages(prompt)},
                     )
                 raise
             if cost_ledger is not None:
@@ -220,6 +224,7 @@ def _make_deepeval_model(
                     success=True,
                     error_type=None,
                     metric_key=self._ran_ai_metric_key,
+                    request_payload={"messages": self._messages(prompt)},
                 )
             return response.choices[0].message.content or ""
 
@@ -357,15 +362,21 @@ class AgentQualityJudge:
         )
 
     async def _measure(self, metric, test_case) -> AgentFrameworkMetric:
-        self._model._ran_ai_metric_key = metric._ran_ai_key
-        try:
-            await metric.a_measure(
-                test_case,
-                _show_indicator=False,
-                _log_metric_to_confident=False,
-            )
-        finally:
-            self._model._ran_ai_metric_key = None
+        for attempt in range(1, JUDGE_PARSE_MAX_ATTEMPTS + 1):
+            self._model._ran_ai_metric_key = metric._ran_ai_key
+            try:
+                await metric.a_measure(
+                    test_case,
+                    _show_indicator=False,
+                    _log_metric_to_confident=False,
+                )
+                break
+            except ValueError as exc:
+                retryable = "invalid json" in str(exc).lower()
+                if not retryable or attempt >= JUDGE_PARSE_MAX_ATTEMPTS:
+                    raise
+            finally:
+                self._model._ran_ai_metric_key = None
         return _metric_result(
             key=metric._ran_ai_key,
             label=metric._ran_ai_label,

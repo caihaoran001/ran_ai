@@ -926,7 +926,11 @@ async def _real_cases_for_suite(
     finally:
         restore_rag()
 
-    agent_ledger = AgentEvaluationCostLedger(settings)
+    agent_ledger = AgentEvaluationCostLedger(
+        settings,
+        call_log_path=run_dir / "calls.jsonl",
+        reset_call_log=False,
+    )
     judge = AgentQualityJudge(settings, mock=False, cost_ledger=agent_ledger)
     restore_agent = install_agent_usage_collector(agent_ledger)
     try:

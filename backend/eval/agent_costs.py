@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import threading
 from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from app.core.config import Settings
@@ -13,6 +17,11 @@ from app.schemas.agent_evaluation import (
 )
 from app.services.ai_service.client import _estimated_cost_yuan
 from app.services.agent_observability import _response_model, _usage_counts
+
+if __package__:
+    from .rag_costs import _jsonable
+else:
+    from rag_costs import _jsonable
 
 
 CaseKey = tuple[str, int]
@@ -109,10 +118,22 @@ def summarize_case_usage(
 class AgentEvaluationCostLedger:
     """In-memory API ledger for the sequential, isolated Agent evaluator."""
 
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        call_log_path: Path | None = None,
+        reset_call_log: bool = True,
+    ):
         self._settings = settings
         self._calls: dict[CaseKey, list[AgentEvaluationModelCall]] = defaultdict(list)
         self._active_key: CaseKey | None = None
+        self._call_log_path = call_log_path
+        self._call_log_lock = threading.Lock()
+        if self._call_log_path is not None:
+            self._call_log_path.parent.mkdir(parents=True, exist_ok=True)
+            if reset_call_log or not self._call_log_path.exists():
+                self._call_log_path.write_text("", encoding="utf-8")
 
     def begin_case(self, case_id: str, round_index: int) -> None:
         if self._active_key is not None:
@@ -144,7 +165,7 @@ class AgentEvaluationCostLedger:
         error_type: str | None,
         metric_key: str | None,
         scenario: str,
-    ) -> None:
+    ) -> AgentEvaluationModelCall:
         if self._active_key is None:
             raise RuntimeError("评测成本账本没有活动题目")
         cost = None
@@ -158,28 +179,57 @@ class AgentEvaluationCostLedger:
                 prompt_cache_hit_tokens=prompt_cache_hit_tokens,
             )
         calls = self._calls[self._active_key]
-        calls.append(
-            AgentEvaluationModelCall(
-                component=component,
-                metric_key=metric_key,
-                call_index=len(calls) + 1,
-                model=(model or "unknown")[:120],
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                prompt_cache_hit_tokens=prompt_cache_hit_tokens,
-                estimated_cost_yuan=cost,
-                elapsed_ms=max(0, int(elapsed_ms)),
-                success=success,
-                error_type=(error_type or "")[:120] or None,
-            )
+        call = AgentEvaluationModelCall(
+            component=component,
+            metric_key=metric_key,
+            call_index=len(calls) + 1,
+            model=(model or "unknown")[:120],
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            prompt_cache_hit_tokens=prompt_cache_hit_tokens,
+            estimated_cost_yuan=cost,
+            elapsed_ms=max(0, int(elapsed_ms)),
+            success=success,
+            error_type=(error_type or "")[:120] or None,
         )
+        calls.append(call)
+        return call
+
+    def _append_call_evidence(
+        self,
+        *,
+        call: AgentEvaluationModelCall,
+        request_payload: Any,
+        response_payload: Any,
+        error_message: str | None,
+    ) -> None:
+        if self._call_log_path is None:
+            return
+        case_id, round_index = self._active_key or (None, None)
+        payload = {
+            "schema_version": 1,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "case_id": case_id,
+            "round_index": round_index,
+            "component": call.component,
+            "stage_key": call.metric_key,
+            "call_index": call.call_index,
+            "request": _jsonable(request_payload),
+            "response": _jsonable(response_payload),
+            "usage": call.model_dump(mode="json"),
+            "error_message": error_message,
+        }
+        line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        with self._call_log_lock:
+            with self._call_log_path.open("a", encoding="utf-8") as stream:
+                stream.write(line + "\n")
 
     async def record_agent_model_usage(self, **payload: Any) -> None:
         response = payload.get("response")
         prompt, completion, total, cache_hit = _usage_counts(response)
         actual_model = _response_model(response) or str(payload.get("model") or "unknown")
-        self._record(
+        call = self._record(
             component="agent",
             model=actual_model,
             prompt_tokens=prompt,
@@ -192,6 +242,14 @@ class AgentEvaluationCostLedger:
             metric_key=None,
             scenario=str(payload.get("scenario") or "reply_agent"),
         )
+        self._append_call_evidence(
+            call=call,
+            request_payload=payload.get("request_messages"),
+            response_payload=response,
+            error_message=(
+                str(payload["error_type"]) if payload.get("error_type") else None
+            ),
+        )
 
     def record_judge_model_usage(
         self,
@@ -202,10 +260,11 @@ class AgentEvaluationCostLedger:
         success: bool,
         error_type: str | None,
         metric_key: str | None,
+        request_payload: Any = None,
     ) -> None:
         prompt, completion, total, cache_hit = _openai_usage(response)
         actual_model = str(getattr(response, "model", None) or model or "unknown")
-        self._record(
+        call = self._record(
             component="judge",
             model=actual_model,
             prompt_tokens=prompt,
@@ -217,6 +276,12 @@ class AgentEvaluationCostLedger:
             error_type=error_type,
             metric_key=metric_key,
             scenario="agent_eval_judge",
+        )
+        self._append_call_evidence(
+            call=call,
+            request_payload=request_payload,
+            response_payload=response,
+            error_message=error_type,
         )
 
 
