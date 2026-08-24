@@ -111,20 +111,68 @@ def _status(client) -> None:
             "summary": report.get("summary"),
             "cost_summary": report.get("cost_summary"),
             "errors": report.get("errors"),
+            "cases": [
+                {
+                    "case_id": item.get("case_id"),
+                    "title": item.get("title"),
+                    "status": item.get("status"),
+                    "knowledge_query": (item.get("actual") or {}).get("knowledge_query"),
+                    "response": (item.get("actual") or {}).get("response"),
+                    "failure_reasons": item.get("failure_reasons"),
+                    "nonpassing_metrics": [
+                        {
+                            "key": metric.get("key"),
+                            "score": metric.get("score"),
+                            "passed": metric.get("passed"),
+                            "enforced": metric.get("enforced"),
+                            "reason": metric.get("reason"),
+                        }
+                        for metric in item.get("metrics") or []
+                        if metric.get("passed") is False
+                    ],
+                }
+                for item in report.get("cases") or []
+            ],
         }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _evidence(client) -> None:
+    source_case_id = "rag-eval-retrieval-report-noon-time"
+    program = f'''import json
+from pathlib import Path
+
+rows = []
+for line in Path({str(REPORT_DIR + "/calls.jsonl")!r}).read_text(encoding="utf-8").splitlines():
+    item = json.loads(line)
+    if item.get("case_id") == {source_case_id!r} and item.get("component") == "answer":
+        rows.append({{
+            "stage_key": item.get("stage_key"),
+            "request": item.get("request"),
+            "response": item.get("response"),
+            "usage": item.get("usage"),
+            "error_message": item.get("error_message"),
+        }})
+print(json.dumps(rows, ensure_ascii=False))
+'''
+    code, output, error = _run(client, f"python3 -c {shlex.quote(program)}")
+    if code != 0:
+        raise RuntimeError(f"evidence read failed: {error or output}")
+    print(json.dumps(json.loads(output), ensure_ascii=False, indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("start", "status"))
+    parser.add_argument("action", choices=("start", "status", "evidence"))
     args = parser.parse_args()
     client = connect_ecs()
     try:
         if args.action == "start":
             _start(client)
-        else:
+        elif args.action == "status":
             _status(client)
+        else:
+            _evidence(client)
     finally:
         client.close()
 

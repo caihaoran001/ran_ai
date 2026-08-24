@@ -495,6 +495,82 @@ async def test_reference_qa_uses_knowledge_query_and_falls_back_to_user_query(
 
 
 @pytest.mark.asyncio
+async def test_agent_retries_empty_final_content_once(db_session, monkeypatch):
+    service_case = await _case(db_session)
+    model = FakeToolCallingModel(
+        [
+            AIMessage(content=""),
+            AIMessage(content="三点已超过时间，今天跳过午B，不要补喝。"),
+        ]
+    )
+    usage_records = []
+
+    async def fake_record_model_usage(**payload):
+        usage_records.append(payload)
+
+    monkeypatch.setattr(
+        "app.services.agent.graph.record_model_usage",
+        fake_record_model_usage,
+    )
+
+    result = await RanrenAgentGraph(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=125,
+            agent_run_id=999,
+        ),
+        settings=get_settings(),
+        chat_model=model,
+    ).run(
+        user_query="今天水喝够2升了，不过午B拖到三点还能补吗？",
+        knowledge_query="",
+        recent_messages=[],
+    )
+
+    assert result.reply == "三点已超过时间，今天跳过午B，不要补喝。"
+    assert len(model.calls) == 2
+    assert [item["success"] for item in usage_records] == [False, True]
+    assert usage_records[0]["error_type"] == "EmptyAgentReply"
+    assert usage_records[1]["error_type"] is None
+
+
+@pytest.mark.asyncio
+async def test_agent_stops_after_one_empty_final_retry(db_session, monkeypatch):
+    service_case = await _case(db_session)
+    model = FakeToolCallingModel(
+        [AIMessage(content=""), AIMessage(content=""), AIMessage(content="不应调用")]
+    )
+    usage_records = []
+
+    async def fake_record_model_usage(**payload):
+        usage_records.append(payload)
+
+    monkeypatch.setattr(
+        "app.services.agent.graph.record_model_usage",
+        fake_record_model_usage,
+    )
+
+    with pytest.raises(RuntimeError, match="Agent returned empty reply"):
+        await RanrenAgentGraph(
+            context=AgentRunContext(
+                service_case_id=service_case.id,
+                trigger_id=126,
+                agent_run_id=1000,
+            ),
+            settings=get_settings(),
+            chat_model=model,
+        ).run(
+            user_query="午B拖到三点还能补吗？",
+            knowledge_query="",
+            recent_messages=[],
+        )
+
+    assert len(model.calls) == 2
+    assert [item["success"] for item in usage_records] == [False, False]
+    assert {item["error_type"] for item in usage_records} == {"EmptyAgentReply"}
+
+
+@pytest.mark.asyncio
 async def test_reference_qa_retries_original_query_only_after_rewrite_zero_hits(
     db_session,
     monkeypatch,

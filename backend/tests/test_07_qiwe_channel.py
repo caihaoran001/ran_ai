@@ -715,6 +715,9 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "最终回复只用工具返回事实" in AGENT_SYSTEM_PROMPT
     assert "涉及是否执行清单、发货、服务周期等操作" in AGENT_SYSTEM_PROMPT
     assert "即使未 @、不执行或授权不足也要明确回复，不能静默" in AGENT_SYSTEM_PROMPT
+    assert "用户的猜测不覆盖口径" in AGENT_SYSTEM_PROMPT
+    assert "不把“边吃边喝”放宽成“先喝再吃也算”" in AGENT_SYSTEM_PROMPT
+    assert "一句话只要夹带问题或请求，即使前半句是上报，也必须回答" in AGENT_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio

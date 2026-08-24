@@ -331,17 +331,38 @@ class RanrenAgentGraph:
 
     async def _agent_node(self, state: AgentState) -> dict[str, Any]:
         llm_count = int(state.get("llm_call_count") or 0)
-        if llm_count >= max(1, self.settings.agent_max_llm_calls):
+        max_llm_calls = max(1, self.settings.agent_max_llm_calls)
+        if llm_count >= max_llm_calls:
             return {
                 "messages": [AIMessage(content="我这边暂时没能完整处理完这条消息，先不乱判断。")],
                 "llm_call_count": llm_count,
             }
-        started_at = time.monotonic()
         scenario = _USAGE_SCENARIOS.get(self.context.run_kind, "reply_agent")
         request_messages = state.get("messages") or []
-        try:
-            response = await self.model.ainvoke(request_messages)
-        except Exception as exc:
+        response: Any = None
+        calls_used = 0
+        while calls_used < 2 and llm_count + calls_used < max_llm_calls:
+            started_at = time.monotonic()
+            try:
+                response = await self.model.ainvoke(request_messages)
+            except Exception as exc:
+                await record_model_usage(
+                    agent_run_id=self.context.agent_run_id,
+                    scenario=scenario,
+                    service_case_id=self.context.service_case_id,
+                    message_id=self.context.trigger_id,
+                    model=self.settings.ai_model,
+                    elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                    success=False,
+                    error_type=type(exc).__name__,
+                    request_messages=request_messages,
+                    settings=self.settings,
+                )
+                raise
+            calls_used += 1
+            empty_final = not getattr(response, "tool_calls", None) and not _last_ai_text(
+                [response]
+            )
             await record_model_usage(
                 agent_run_id=self.context.agent_run_id,
                 scenario=scenario,
@@ -349,25 +370,20 @@ class RanrenAgentGraph:
                 message_id=self.context.trigger_id,
                 model=self.settings.ai_model,
                 elapsed_ms=int((time.monotonic() - started_at) * 1000),
-                success=False,
-                error_type=type(exc).__name__,
+                response=response,
+                success=not empty_final,
+                error_type="EmptyAgentReply" if empty_final else None,
                 request_messages=request_messages,
                 settings=self.settings,
             )
-            raise
-        await record_model_usage(
-            agent_run_id=self.context.agent_run_id,
-            scenario=scenario,
-            service_case_id=self.context.service_case_id,
-            message_id=self.context.trigger_id,
-            model=self.settings.ai_model,
-            elapsed_ms=int((time.monotonic() - started_at) * 1000),
-            response=response,
-            success=True,
-            request_messages=request_messages,
-            settings=self.settings,
-        )
-        return {"messages": [response], "llm_call_count": llm_count + 1}
+            if not empty_final:
+                break
+            if calls_used < 2 and llm_count + calls_used < max_llm_calls:
+                logger.warning(
+                    "Agent model returned empty final content; retrying once service_case_id=%s",
+                    self.context.service_case_id,
+                )
+        return {"messages": [response], "llm_call_count": llm_count + calls_used}
 
     async def _tools_node(self, state: AgentState) -> dict[str, Any]:
         messages = state.get("messages") or []
