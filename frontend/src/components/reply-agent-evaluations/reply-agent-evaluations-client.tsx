@@ -3,6 +3,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  ArrowRight,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -11,6 +12,7 @@ import {
   GitBranch,
   LoaderCircle,
   MessageSquareReply,
+  Scale,
   ShieldAlert,
   Wrench,
   XCircle,
@@ -50,6 +52,16 @@ export type ReplyAgentEvaluationSummary = {
   model: string;
   evaluation_framework: "deepeval";
   evaluation_framework_version: string;
+  score_source?: "fresh_run" | "saved_output_reanalysis";
+  source_run_id?: string | null;
+  ruler_policy?: {
+    retrieval_reference_policy_version: string;
+    rewrite_harm_policy_version: string;
+    rewrite_recall_drop_threshold: number;
+    task_completion_policy_version: string;
+    task_completion_threshold: number;
+    task_completion_calibration_id: string;
+  } | null;
   counts: {
     total: number;
     completed: number;
@@ -145,7 +157,16 @@ type ReplyAgentEvaluationCase = {
       };
     };
   };
-  usage: Record<string, unknown>;
+  usage: {
+    tracking_available?: boolean;
+    total?: {
+      call_count: number;
+      total_tokens: number;
+      known_estimated_cost_yuan: number;
+      estimated_cost_yuan?: number | null;
+      complete: boolean;
+    };
+  };
   elapsed_ms?: number | null;
 };
 
@@ -237,6 +258,47 @@ function AverageCard({ label, metric }: { label: string; metric: AverageMetric }
   );
 }
 
+function ComparisonRow({
+  label,
+  current,
+  baseline,
+  lowerIsBetter = false,
+}: {
+  label: string;
+  current: RateMetric;
+  baseline: RateMetric;
+  lowerIsBetter?: boolean;
+}) {
+  const currentValue = current.value;
+  const baselineValue = baseline.value;
+  const delta =
+    currentValue == null || baselineValue == null
+      ? null
+      : (currentValue - baselineValue) * 100;
+  const improved =
+    delta == null ? null : lowerIsBetter ? delta <= 0 : delta >= 0;
+
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_52px_18px_52px_64px] items-center gap-2 border-t border-slate-100 py-2.5 text-xs first:border-t-0">
+      <span className="truncate font-semibold text-slate-700">{label}</span>
+      <span className="text-right font-mono text-slate-400">{percent(baseline)}</span>
+      <ArrowRight className="h-3.5 w-3.5 text-slate-300" aria-hidden="true" />
+      <span className="text-right font-mono font-bold text-slate-900">{percent(current)}</span>
+      <span
+        className={`text-right font-mono text-[11px] font-bold ${
+          improved == null
+            ? "text-slate-400"
+            : improved
+              ? "text-emerald-700"
+              : "text-rose-700"
+        }`}
+      >
+        {delta == null ? "—" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}pt`}
+      </span>
+    </div>
+  );
+}
+
 function CaseStatus({ status }: { status: ReplyAgentEvaluationCase["status"] }) {
   if (status === "passed") {
     return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />;
@@ -294,6 +356,7 @@ function CaseRow({ item }: { item: ReplyAgentEvaluationCase }) {
   const rewrittenHits = ragEvidence?.actual?.rewritten_query_hits ?? [];
   const rawRecall = ragEvidence?.scores?.raw_context_recall;
   const rewrittenRecall = ragEvidence?.scores?.context_recall;
+  const caseUsage = item.usage.total;
 
   return (
     <details className="group border-b border-slate-100 last:border-b-0">
@@ -335,6 +398,18 @@ function CaseRow({ item }: { item: ReplyAgentEvaluationCase }) {
               </dd>
             </dl>
           </div>
+          {caseUsage ? (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-[11px] text-slate-500">
+              <span className="font-bold text-slate-700">本题 API 消耗</span>
+              <span>{caseUsage.call_count} 次调用</span>
+              <span>{caseUsage.total_tokens.toLocaleString()} Token</span>
+              <span>
+                {caseUsage.estimated_cost_yuan == null ? "至少 " : ""}¥
+                {caseUsage.known_estimated_cost_yuan.toFixed(4)}
+              </span>
+              <span>{caseUsage.complete ? "记账完整" : "存在未知用量"}</span>
+            </div>
+          ) : null}
           {item.expected.retrieval_decision === "retrieve" ? (
             <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-3.5">
               <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-sky-700">改写与召回对照</p>
@@ -431,6 +506,40 @@ export function ReplyAgentEvaluationsClient({
     if (filter === "failed") return cases.filter((item) => item.status !== "passed");
     return cases.filter((item) => item.expected.metric_groups.includes(filter));
   }, [detail, filter]);
+  const baseline = useMemo(() => {
+    if (
+      !summary ||
+      summary.run_mode !== "real" ||
+      summary.status !== "completed" ||
+      summary.counts.total !== 80 ||
+      summary.score_source === "saved_output_reanalysis"
+    ) {
+      return null;
+    }
+    const currentStartedAt = new Date(summary.started_at).getTime();
+    return (
+      initialRuns.find(
+        (run) =>
+          run.run_id !== summary.run_id &&
+          run.run_mode === "real" &&
+          run.status === "completed" &&
+          run.counts.total === 80 &&
+          run.score_source !== "saved_output_reanalysis" &&
+          new Date(run.started_at).getTime() < currentStartedAt,
+      ) ?? null
+    );
+  }, [initialRuns, summary]);
+  const baselineReplay = useMemo(() => {
+    if (!baseline) return null;
+    return (
+      initialRuns.find(
+        (run) =>
+          run.status === "completed" &&
+          run.score_source === "saved_output_reanalysis" &&
+          run.source_run_id === baseline.run_id,
+      ) ?? null
+    );
+  }, [baseline, initialRuns]);
 
   if (!initialRuns.length) {
     return (
@@ -462,6 +571,9 @@ export function ReplyAgentEvaluationsClient({
                 <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${statusTone(summary.status)}`}>
                   {summary.run_mode === "mock" ? "Mock" : "真实"} · {summary.status}
                 </span>
+                <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-500">
+                  {summary.score_source === "saved_output_reanalysis" ? "存量回复重分析" : "全链路新运行"}
+                </span>
               </div>
               <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">
                 每题先检查基础交付，再按需要追加知识检索、工具或行为边界指标；原生答案相关性只观察，不参与门禁。
@@ -492,8 +604,15 @@ export function ReplyAgentEvaluationsClient({
           </div>
         </div>
 
-        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
+        {summary.error ? (
+          <div className="border-b border-rose-200 bg-rose-50 px-4 py-3 text-xs leading-5 text-rose-800 sm:px-5">
+            本批次未完整结束：{summary.error}
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           <MetricCard label="整题通过" metric={summary.metrics.task_pass_rate} />
+          <MetricCard label="任务完成度门禁" metric={summary.metrics.judge_task_completion_observed} />
           <MetricCard label="检索决策" metric={summary.metrics.retrieval_decision_accuracy} />
           <MetricCard label="改写损伤（越低越好）" metric={summary.metrics.rewrite_harm_rate} />
           <MetricCard label="召回率门禁" metric={summary.metrics.context_recall_pass_rate} />
@@ -510,15 +629,30 @@ export function ReplyAgentEvaluationsClient({
             <p className="text-xs font-black text-slate-700">观察指标</p>
             <p className="text-[11px] text-slate-400">展示问题趋势，不影响本批整题通过</p>
           </div>
-          <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <MetricCard label="回答正确完整" metric={summary.metrics.answer_correctness_observed} />
             <AverageCard label="答案相关平均分" metric={summary.metrics.answer_relevancy_average} />
-            <MetricCard label="Agent 任务完成" metric={summary.metrics.judge_task_completion_observed} />
             <MetricCard label="Agent 证据忠实" metric={summary.metrics.judge_groundedness_observed} />
             <MetricCard label="Agent 澄清合理" metric={summary.metrics.judge_clarification_observed} />
             <MetricCard label="Agent 表达质量" metric={summary.metrics.judge_expression_observed} />
           </div>
         </div>
+
+        {summary.ruler_policy ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 bg-white px-4 py-3 text-[11px] text-slate-500">
+            <span className="flex items-center gap-1.5 font-black text-slate-700">
+              <Scale className="h-4 w-4 text-sky-700" />
+              本批尺子
+            </span>
+            <span>召回事实：{summary.ruler_policy.retrieval_reference_policy_version}</span>
+            <span>改写损伤：{summary.ruler_policy.rewrite_harm_policy_version}</span>
+            <span>
+              任务完成：{summary.ruler_policy.task_completion_policy_version} ≥{" "}
+              {(summary.ruler_policy.task_completion_threshold * 100).toFixed(0)}%
+            </span>
+            <span>校准集：{summary.ruler_policy.task_completion_calibration_id}</span>
+          </div>
+        ) : null}
 
         <div className="grid gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500 sm:grid-cols-3">
           <div className="flex items-center gap-2">
@@ -534,6 +668,42 @@ export function ReplyAgentEvaluationsClient({
           </div>
         </div>
       </section>
+
+
+      {baseline ? (
+        <section className="panel overflow-hidden" aria-label="新旧完整基线对比">
+          <div className="border-b border-slate-200 bg-slate-950 px-4 py-3 text-white sm:px-5">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <p className="text-sm font-black">新旧完整基线对比</p>
+                <p className="mt-0.5 text-[11px] text-slate-300">
+                  同一套 80 题；左侧 {baseline.git_sha.slice(0, 8)}，右侧 {summary.git_sha.slice(0, 8)}
+                  {baselineReplay ? "；任务完成与改写损伤按新尺重算旧回复" : ""}
+                </p>
+              </div>
+              <p className="font-mono text-[11px] text-slate-300">
+                通过 {baseline.counts.passed}/80 → {summary.counts.passed}/80 · 费用 ¥
+                {baseline.usage.known_estimated_cost_yuan.toFixed(4)} → ¥
+                {summary.usage.known_estimated_cost_yuan.toFixed(4)}
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-x-8 px-4 py-2 sm:grid-cols-2 sm:px-5">
+            <div>
+              <ComparisonRow label="整题通过" baseline={baseline.metrics.task_pass_rate} current={summary.metrics.task_pass_rate} />
+              <ComparisonRow label="任务完成度" baseline={(baselineReplay ?? baseline).metrics.judge_task_completion_observed} current={summary.metrics.judge_task_completion_observed} />
+              <ComparisonRow label="改写损伤" baseline={(baselineReplay ?? baseline).metrics.rewrite_harm_rate} current={summary.metrics.rewrite_harm_rate} lowerIsBetter />
+              <ComparisonRow label="上下文召回" baseline={baseline.metrics.context_recall_pass_rate} current={summary.metrics.context_recall_pass_rate} />
+            </div>
+            <div>
+              <ComparisonRow label="事实忠实" baseline={baseline.metrics.faithfulness_pass_rate} current={summary.metrics.faithfulness_pass_rate} />
+              <ComparisonRow label="工具选择" baseline={baseline.metrics.tool_selection_accuracy} current={summary.metrics.tool_selection_accuracy} />
+              <ComparisonRow label="工具参数" baseline={baseline.metrics.argument_accuracy} current={summary.metrics.argument_accuracy} />
+              <ComparisonRow label="行为边界" baseline={baseline.metrics.behavior_accuracy} current={summary.metrics.behavior_accuracy} />
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <section className="panel overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
