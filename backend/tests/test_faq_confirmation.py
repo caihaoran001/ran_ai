@@ -8,18 +8,23 @@ category/tags 等治理字段不升版本、不影响确认状态；unconfirm �
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from sqlalchemy import func, select
 
+from app.core.config import Settings
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.knowledge_faq import KnowledgeFAQVersion
 from app.services.knowledge_faq_service import (
+    FAQConfirmationVersionConflict,
     confirm_faq,
     create_faq,
     set_faq_status,
     unconfirm_faq,
     update_faq,
 )
+from app.services.knowledge_index import upsert_text_chunk
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +78,7 @@ async def test_create_faq_starts_pending_with_chunk_metadata(db_session):
 async def test_confirm_faq_marks_current_version_and_syncs_chunk(db_session):
     """confirm 后指向当前版本，chunk metadata 变为 confirmed 并带版本号。"""
     faq = await _create_sample_faq(db_session)
-    confirmed = await confirm_faq(db_session, faq)
+    confirmed = await confirm_faq(db_session, faq, expected_version=faq.version)
 
     assert confirmed.confirmation_state == "confirmed"
     assert confirmed.last_confirmed_version == confirmed.version
@@ -88,7 +93,7 @@ async def test_editing_answer_invalidates_confirmation_but_keeps_memory(db_sessi
     """已确认后只改 answer：升版本、回待确认、保留旧确认版本号供追溯。"""
     faq = await _create_sample_faq(db_session)
     old_version = faq.version
-    await confirm_faq(db_session, faq)
+    await confirm_faq(db_session, faq, expected_version=faq.version)
 
     updated = await update_faq(db_session, faq, answer="一瓶盖等于 20ml，对应两个刻度。")
 
@@ -105,7 +110,7 @@ async def test_editing_answer_invalidates_confirmation_but_keeps_memory(db_sessi
 async def test_governance_only_update_keeps_version_and_confirmation(db_session):
     """已确认后只改 category/tags：版本号不变、仍 confirmed、不产生新版本行。"""
     faq = await _create_sample_faq(db_session)
-    await confirm_faq(db_session, faq)
+    await confirm_faq(db_session, faq, expected_version=faq.version)
     count_before = await _version_count(db_session, faq.id)
 
     updated = await update_faq(db_session, faq, category="饮食", tags=["换算", "工具"])
@@ -118,11 +123,15 @@ async def test_governance_only_update_keeps_version_and_confirmation(db_session)
 async def test_reconfirm_after_invalidation_points_to_new_version(db_session):
     """编辑失效后重新 confirm：confirmed 且指向新版本。"""
     faq = await _create_sample_faq(db_session)
-    await confirm_faq(db_session, faq)
+    await confirm_faq(db_session, faq, expected_version=faq.version)
     updated = await update_faq(db_session, faq, question="一小瓶盖到底是多少？")
     assert updated.confirmation_state == "pending"
 
-    reconfirmed = await confirm_faq(db_session, updated)
+    reconfirmed = await confirm_faq(
+        db_session,
+        updated,
+        expected_version=updated.version,
+    )
 
     assert reconfirmed.confirmation_state == "confirmed"
     assert reconfirmed.last_confirmed_version == reconfirmed.version
@@ -131,9 +140,13 @@ async def test_reconfirm_after_invalidation_points_to_new_version(db_session):
 async def test_unconfirm_clears_pointer_back_to_pending(db_session):
     """手动取消确认：两字段清空回待确认。"""
     faq = await _create_sample_faq(db_session)
-    await confirm_faq(db_session, faq)
+    await confirm_faq(db_session, faq, expected_version=faq.version)
 
-    unconfirmed = await unconfirm_faq(db_session, faq)
+    unconfirmed = await unconfirm_faq(
+        db_session,
+        faq,
+        expected_version=faq.version,
+    )
 
     assert unconfirmed.confirmation_state == "pending"
     assert unconfirmed.last_confirmed_version is None
@@ -150,7 +163,11 @@ async def test_confirm_disabled_faq_is_independent_of_status(db_session):
     disabled = await set_faq_status(db_session, faq, "disabled")
     assert disabled.status == "disabled"
 
-    confirmed = await confirm_faq(db_session, disabled)
+    confirmed = await confirm_faq(
+        db_session,
+        disabled,
+        expected_version=disabled.version,
+    )
 
     assert confirmed.status == "disabled"
     assert confirmed.confirmation_state == "confirmed"
@@ -176,3 +193,151 @@ async def test_answer_only_update_writes_version_row(db_session):
     )
     versions = sorted(row.version for row in rows)
     assert versions == [1, old_version + 1]
+
+
+async def test_confirm_rejects_a_stale_displayed_version(db_session):
+    """操作者看到 v1 后内容被改成 v2，不得用旧页面误确认 v2。"""
+    faq = await _create_sample_faq(db_session)
+    displayed_version = faq.version
+    updated = await update_faq(db_session, faq, answer="这是并发修改后的新回复。")
+
+    with pytest.raises(FAQConfirmationVersionConflict) as caught:
+        await confirm_faq(
+            db_session,
+            updated,
+            expected_version=displayed_version,
+        )
+
+    assert caught.value.expected_version == displayed_version
+    assert caught.value.actual_version == updated.version
+    assert updated.confirmation_state == "pending"
+    assert updated.last_confirmed_version is None
+
+
+async def test_confirm_endpoint_returns_409_for_a_stale_displayed_version(
+    db_session,
+    admin_client,
+):
+    faq = await _create_sample_faq(db_session)
+    displayed_version = faq.version
+    updated = await update_faq(db_session, faq, question="并发修改后的新问题？")
+
+    response = await admin_client.post(
+        f"/knowledge-faqs/{faq.id}/confirm",
+        json={"expected_version": displayed_version},
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "faq_version_conflict"
+    assert detail["expected_version"] == displayed_version
+    assert detail["actual_version"] == updated.version
+    await db_session.refresh(updated)
+    assert updated.confirmation_state == "pending"
+
+
+async def test_confirm_endpoint_confirms_the_displayed_current_version(
+    db_session,
+    admin_client,
+):
+    faq = await _create_sample_faq(db_session)
+
+    response = await admin_client.post(
+        f"/knowledge-faqs/{faq.id}/confirm",
+        json={"expected_version": faq.version},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["confirmation_state"] == "confirmed"
+    assert payload["last_confirmed_version"] == faq.version
+
+
+async def test_unchanged_chunk_reembeds_when_embedding_model_changed(
+    db_session,
+    monkeypatch,
+):
+    faq = await _create_sample_faq(db_session)
+    chunk = await _get_faq_chunk(db_session, faq.id)
+    chunk.embedding = [0.1, 0.2]
+    chunk.embedding_model = "old-embedding-model"
+    await db_session.commit()
+    embed = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.services.knowledge_index.embed_chunk", embed)
+
+    await upsert_text_chunk(
+        db_session,
+        chunk_uid=chunk.chunk_uid,
+        source_type=chunk.source_type,
+        source_uri=chunk.source_uri,
+        title=chunk.title,
+        content=chunk.content,
+        metadata=chunk.metadata_json,
+        settings=Settings(
+            _env_file=None,
+            EMBEDDING_API_KEY="test-key",
+            EMBEDDING_MODEL="new-embedding-model",
+        ),
+    )
+
+    embed.assert_awaited_once()
+
+
+async def test_unchanged_chunk_reembeds_when_vector_is_missing(
+    db_session,
+    monkeypatch,
+):
+    faq = await _create_sample_faq(db_session)
+    chunk = await _get_faq_chunk(db_session, faq.id)
+    chunk.embedding = None
+    chunk.embedding_model = "current-embedding-model"
+    await db_session.commit()
+    embed = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.services.knowledge_index.embed_chunk", embed)
+
+    await upsert_text_chunk(
+        db_session,
+        chunk_uid=chunk.chunk_uid,
+        source_type=chunk.source_type,
+        source_uri=chunk.source_uri,
+        title=chunk.title,
+        content=chunk.content,
+        metadata=chunk.metadata_json,
+        settings=Settings(
+            _env_file=None,
+            EMBEDDING_API_KEY="test-key",
+            EMBEDDING_MODEL="current-embedding-model",
+        ),
+    )
+
+    embed.assert_awaited_once()
+
+
+async def test_unchanged_chunk_skips_current_existing_embedding(
+    db_session,
+    monkeypatch,
+):
+    faq = await _create_sample_faq(db_session)
+    chunk = await _get_faq_chunk(db_session, faq.id)
+    chunk.embedding = [0.1, 0.2]
+    chunk.embedding_model = "current-embedding-model"
+    await db_session.commit()
+    embed = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.services.knowledge_index.embed_chunk", embed)
+
+    await upsert_text_chunk(
+        db_session,
+        chunk_uid=chunk.chunk_uid,
+        source_type=chunk.source_type,
+        source_uri=chunk.source_uri,
+        title=chunk.title,
+        content=chunk.content,
+        metadata=chunk.metadata_json,
+        settings=Settings(
+            _env_file=None,
+            EMBEDDING_API_KEY="test-key",
+            EMBEDDING_MODEL="current-embedding-model",
+        ),
+    )
+
+    embed.assert_not_awaited()

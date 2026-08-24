@@ -53,3 +53,7 @@ class KnowledgeFAQUpdate(BaseModel):
     category: str | None = None
     tags: list[str] | None = None
     change_note: str | None = None
+
+
+class KnowledgeFAQConfirmation(BaseModel):
+    expected_version: int = Field(ge=1)

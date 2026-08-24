@@ -783,7 +783,17 @@ function KnowledgeFAQRow({
     setBusy(faq.id);
     setError("");
     try {
-      const response = await fetch(`${API_BASE}/knowledge-faqs/${faq.id}/${action}`, { method: "POST" });
+      const response = await fetch(`${API_BASE}/knowledge-faqs/${faq.id}/${action}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expected_version: faq.version }),
+      });
+      if (response.status === 409) {
+        setError("内容已被更新，请刷新后重新查看再操作。");
+        router.refresh();
+        onChanged?.();
+        return;
+      }
       if (!response.ok) throw new Error((await response.text()) || "操作失败");
       router.refresh();
       onChanged?.();
@@ -1020,20 +1030,22 @@ function KnowledgeFAQRow({
                 仅保留历史，不提供直接恢复
               </span>
             )}
-            <Button
-              type="button"
-              className="border border-slate-250 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1"
-              onClick={() => setConfirmation(isConfirmed ? "unconfirm" : "confirm")}
-              loading={busyAction === "confirm" || busyAction === "unconfirm"}
-              loadingText={isConfirmed ? "取消中…" : "确认中…"}
-            >
-              {isConfirmed ? (
-                <X className="h-3.5 w-3.5 text-slate-500" />
-              ) : (
-                <Check className="h-3.5 w-3.5 text-blue-500" />
-              )}
-              <span>{isConfirmed ? "取消确认" : "确认当前版本"}</span>
-            </Button>
+            {faq.status !== "archived" && (
+              <Button
+                type="button"
+                className="border border-slate-250 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800 font-semibold text-xs transition-all active:scale-[0.98] h-8 px-2.5 flex items-center gap-1"
+                onClick={() => setConfirmation(isConfirmed ? "unconfirm" : "confirm")}
+                loading={busyAction === "confirm" || busyAction === "unconfirm"}
+                loadingText={isConfirmed ? "取消中…" : "确认中…"}
+              >
+                {isConfirmed ? (
+                  <X className="h-3.5 w-3.5 text-slate-500" />
+                ) : (
+                  <Check className="h-3.5 w-3.5 text-blue-500" />
+                )}
+                <span>{isConfirmed ? "取消确认" : "确认当前版本"}</span>
+              </Button>
+            )}
           </div>
         </div>
       )}

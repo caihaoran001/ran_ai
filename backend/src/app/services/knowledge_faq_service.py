@@ -3,10 +3,20 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge_faq import KnowledgeFAQ, KnowledgeFAQVersion
 from app.services.knowledge_index import upsert_text_chunk
+
+
+class FAQConfirmationVersionConflict(Exception):
+    def __init__(self, *, expected_version: int, actual_version: int) -> None:
+        self.expected_version = expected_version
+        self.actual_version = actual_version
+        super().__init__(
+            f"FAQ version changed: expected {expected_version}, actual {actual_version}"
+        )
 
 
 async def create_faq(
@@ -86,9 +96,15 @@ async def update_faq(
     return faq
 
 
-async def confirm_faq(session: AsyncSession, faq: KnowledgeFAQ) -> KnowledgeFAQ:
+async def confirm_faq(
+    session: AsyncSession,
+    faq: KnowledgeFAQ,
+    *,
+    expected_version: int,
+) -> KnowledgeFAQ:
     """确认当前版本。启用/停用状态与此无关，允许对停用条目确认。"""
-    faq.last_confirmed_version = faq.version
+    faq = await _lock_expected_version(session, faq.id, expected_version)
+    faq.last_confirmed_version = expected_version
     faq.last_confirmed_at = datetime.now(timezone.utc)
     await session.commit()
     await session.refresh(faq)
@@ -96,13 +112,41 @@ async def confirm_faq(session: AsyncSession, faq: KnowledgeFAQ) -> KnowledgeFAQ:
     return faq
 
 
-async def unconfirm_faq(session: AsyncSession, faq: KnowledgeFAQ) -> KnowledgeFAQ:
+async def unconfirm_faq(
+    session: AsyncSession,
+    faq: KnowledgeFAQ,
+    *,
+    expected_version: int,
+) -> KnowledgeFAQ:
     """手动取消确认：清空指向（区别于编辑失效——编辑失效保留上次确认记录供追溯）。"""
+    faq = await _lock_expected_version(session, faq.id, expected_version)
     faq.last_confirmed_version = None
     faq.last_confirmed_at = None
     await session.commit()
     await session.refresh(faq)
     await sync_faq_to_index(session, faq)
+    return faq
+
+
+async def _lock_expected_version(
+    session: AsyncSession,
+    faq_id: int,
+    expected_version: int,
+) -> KnowledgeFAQ:
+    """锁定 FAQ 并核对操作者当时看到的版本，防止误确认并发新版本。"""
+    faq = await session.scalar(
+        select(KnowledgeFAQ)
+        .where(KnowledgeFAQ.id == faq_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if faq is None:
+        raise LookupError(f"knowledge faq {faq_id} not found")
+    if faq.version != expected_version:
+        raise FAQConfirmationVersionConflict(
+            expected_version=expected_version,
+            actual_version=faq.version,
+        )
     return faq
 
 

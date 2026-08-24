@@ -8,12 +8,14 @@ from sqlalchemy.orm import selectinload
 from app.db.session import get_session
 from app.models.knowledge_faq import KnowledgeFAQ, KnowledgeFAQVersion
 from app.schemas.knowledge_faq import (
+    KnowledgeFAQConfirmation,
     KnowledgeFAQCreate,
     KnowledgeFAQRead,
     KnowledgeFAQUpdate,
     KnowledgeFAQVersionRead,
 )
 from app.services.knowledge_faq_service import (
+    FAQConfirmationVersionConflict,
     confirm_faq,
     create_faq,
     set_faq_status,
@@ -72,17 +74,49 @@ async def disable_knowledge_faq(
 @router.post("/knowledge-faqs/{faq_id}/confirm", response_model=KnowledgeFAQRead)
 async def confirm_knowledge_faq(
     faq_id: int,
+    payload: KnowledgeFAQConfirmation,
     session: AsyncSession = Depends(get_session),
 ) -> KnowledgeFAQ:
-    return await confirm_faq(session, await _get_faq(session, faq_id))
+    try:
+        return await confirm_faq(
+            session,
+            await _get_faq(session, faq_id),
+            expected_version=payload.expected_version,
+        )
+    except FAQConfirmationVersionConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "faq_version_conflict",
+                "message": "FAQ 内容已更新，请刷新后重新确认。",
+                "expected_version": exc.expected_version,
+                "actual_version": exc.actual_version,
+            },
+        ) from exc
 
 
 @router.post("/knowledge-faqs/{faq_id}/unconfirm", response_model=KnowledgeFAQRead)
 async def unconfirm_knowledge_faq(
     faq_id: int,
+    payload: KnowledgeFAQConfirmation,
     session: AsyncSession = Depends(get_session),
 ) -> KnowledgeFAQ:
-    return await unconfirm_faq(session, await _get_faq(session, faq_id))
+    try:
+        return await unconfirm_faq(
+            session,
+            await _get_faq(session, faq_id),
+            expected_version=payload.expected_version,
+        )
+    except FAQConfirmationVersionConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "faq_version_conflict",
+                "message": "FAQ 内容已更新，请刷新后再操作。",
+                "expected_version": exc.expected_version,
+                "actual_version": exc.actual_version,
+            },
+        ) from exc
 
 
 @router.delete("/knowledge-faqs/{faq_id}", response_model=KnowledgeFAQRead)

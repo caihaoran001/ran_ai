@@ -130,7 +130,11 @@ async def upsert_text_chunk(
     # 防重嵌入：内容未变且已有有效向量时跳过本次重算，避免每次同步都真实调用 Embedding API。
     skip_embed = False
     if existing:
-        skip_embed = existing.content_hash == content_hash and bool(existing.embedding_model)
+        skip_embed = (
+            existing.content_hash == content_hash
+            and bool(existing.embedding)
+            and existing.embedding_model == settings.embedding_model
+        )
         existing.source_type = source_type
         existing.source_uri = source_uri
         existing.title = title[:300]
