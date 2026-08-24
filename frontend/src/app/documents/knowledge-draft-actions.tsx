@@ -724,6 +724,19 @@ export function KnowledgeFAQEditor({
   );
 }
 
+async function extractFaqActionError(response: Response): Promise<string> {
+  try {
+    const data = await response.json();
+    const detail = data?.detail;
+    if (response.status === 409 && typeof detail?.message === "string") return detail.message;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail) && typeof detail[0]?.msg === "string") return detail[0].msg;
+  } catch {
+    // 响应不是 JSON 时回退到状态文本
+  }
+  return response.statusText || "操作失败，请稍后再试。";
+}
+
 function KnowledgeFAQRow({
   faq,
   busy,
@@ -810,8 +823,12 @@ function KnowledgeFAQRow({
     setBusy(faq.id);
     setError("");
     try {
-      const response = await fetch(`${API_BASE}/knowledge-faqs/${faq.id}/${action}`, { method: "POST" });
-      if (!response.ok) throw new Error((await response.text()) || "操作失败");
+      const response = await fetch(`${API_BASE}/knowledge-faqs/${faq.id}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_version: faq.version }),
+      });
+      if (!response.ok) throw new Error(await extractFaqActionError(response));
       router.refresh();
       onChanged?.();
     } catch (err) {
