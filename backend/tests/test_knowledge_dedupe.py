@@ -10,6 +10,7 @@ from app.models.knowledge_draft import KnowledgeDraft
 from app.services.knowledge_base import _knowledge_files
 from app.services.knowledge_dedupe import (
     KnowledgeCandidate,
+    KnowledgeDedupeUnavailable,
     _judge_candidates,
     assess_knowledge_draft,
     knowledge_draft_idempotency_hash,
@@ -160,6 +161,47 @@ async def test_conditional_variant_is_published_separately() -> None:
     )
     assert decision.action == "create"
     assert decision.target is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("relation", ["conditional_variant", "related"])
+async def test_answer_conflict_always_stops_publication(relation: str) -> None:
+    decision = await _judge_candidates(
+        _draft(),
+        [_candidate()],
+        ai=StubAI(
+            {
+                "matched_chunk_id": 9,
+                "relation": relation,
+                "answer_relation": "conflict",
+                "reason": "新答案说可以补喝，已有答案要求跳过，时间规则直接冲突。",
+                "canonical_question": None,
+                "canonical_answer": None,
+            }
+        ),
+    )
+    assert decision.action == "conflict"
+    assert decision.target is not None
+    assert decision.target.chunk_id == 9
+
+
+@pytest.mark.asyncio
+async def test_answer_conflict_without_known_target_fails_closed() -> None:
+    with pytest.raises(KnowledgeDedupeUnavailable, match="未知候选"):
+        await _judge_candidates(
+            _draft(),
+            [_candidate()],
+            ai=StubAI(
+                {
+                    "matched_chunk_id": None,
+                    "relation": "related",
+                    "answer_relation": "conflict",
+                    "reason": "两个时间口径直接冲突。",
+                    "canonical_question": None,
+                    "canonical_answer": None,
+                }
+            ),
+        )
 
 
 def test_legacy_markdown_manifest_is_fail_closed(tmp_path) -> None:

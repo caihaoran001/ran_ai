@@ -81,5 +81,7 @@ def test_archivist_faq_prompt_no_longer_forces_empathy_praise_or_followup() -> N
     for source in (extract_source, tool_source):
         assert "直接给结论" in source
         assert "必要事实" in source
-        assert "无关追问" in source
+        assert "最小完整" in source
+        assert "独立业务问题" in source
+        assert "分别调用多次" in source
         assert "先承接情绪、找亮点" not in source

@@ -260,7 +260,7 @@ class ReportCorrectionArgs(BaseModel):
 
 
 class ReportFaqCandidateArgs(BaseModel):
-    """上报一条通用 FAQ 或班主任确认的个人指导。"""
+    """上报一条最小完整的通用 FAQ 或班主任确认的个人指导。"""
 
     scope: Literal["general", "personal"] = Field(
         default="general",
@@ -273,14 +273,16 @@ class ReportFaqCandidateArgs(BaseModel):
     question: str = Field(
         description=(
             "从用户原话提炼成脱离当轮聊天也能看懂的独立问题；"
-            "general 必须通用、去个人隐私、去口语化并补全必要省略"
+            "general 必须通用、去个人隐私、去口语化并补全必要省略。"
+            "一次调用只表达一个独立业务问题；若有多个可独立复用的问题，分别调用多次"
         )
     )
     answer: str = Field(
         description=(
-            "高信息密度的参考回答：直接给结论，只保留必要事实、可执行动作、适用条件和风险边界；"
-            "通常一段短文说清。禁止固定安慰、夸奖、找亮点、口号、昵称、表情、陪伴式收尾，"
-            "禁止无关追问和聊天寒暄。严禁医疗诊断、用药建议和疗效承诺。"
+            "最小完整的参考回答：直接给结论，只保留完成该问题所需的必要事实、动作、适用条件和风险边界；"
+            "回答同一问题必需的条件、例外或风险边界不拆开，但禁止带入另一个业务问题、可选建议、无关提醒或追问。"
+            "通常一段短文说清。禁止固定安慰、夸奖、找亮点、口号、昵称、表情、陪伴式收尾和聊天寒暄。"
+            "严禁医疗诊断、用药建议和疗效承诺。"
         )
     )
     category: str = Field(

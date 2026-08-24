@@ -424,6 +424,8 @@ async def _judge_candidates(
         "候选由向量召回产生，距离只代表需要比较，绝不能仅凭距离判重复。\n"
         "FAQ：只有核心意图和适用条件一致才是 same_meaning；适用人群、时间、剂量、前提或否定条件不同，"
         "必须判 conditional_variant。回答事实相反、剂量/时间/规则不一致判 conflict；"
+        "只要 answer_relation=conflict，matched_chunk_id 必须指向直接冲突的已有候选，"
+        "不得因 relation 是 conditional_variant 或 related 而忽略冲突；"
         "回答等价判 equivalent；新回答补充了兼容且有用的业务事实判 candidate_adds_value。\n"
         "优秀案例：只有同一服务单内同一事件、转折和证据故事才判 same_story；"
         "同一用户不同阶段事件，以及不同用户的相似经历都不能合并。\n"
@@ -462,8 +464,16 @@ async def _judge_candidates(
         (candidate for candidate in candidates if candidate.chunk_id == matched_chunk_id),
         None,
     )
-    if relation in _SAME_RELATIONS and target is None:
+    if (relation in _SAME_RELATIONS or answer_relation == "conflict") and target is None:
         raise KnowledgeDedupeUnavailable("知识语义判重返回了未知候选，草稿尚未入库")
+    if answer_relation == "conflict":
+        return KnowledgeDedupeDecision(
+            action="conflict",
+            relation=relation,
+            answer_relation=answer_relation,
+            reason=reason,
+            target=target,
+        )
     if relation not in _SAME_RELATIONS:
         return KnowledgeDedupeDecision(
             action="create",
