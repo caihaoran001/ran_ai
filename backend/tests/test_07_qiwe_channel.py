@@ -704,11 +704,17 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "写操作缺必填信息时只问缺项并停止" in AGENT_SYSTEM_PROMPT
     assert "同参数成功后立刻回复" in AGENT_SYSTEM_PROMPT
     assert "禁止重复调用或顺手查相邻数据" in AGENT_SYSTEM_PROMPT
-    assert "授权条件不满足时也不得调写工具试探" in AGENT_SYSTEM_PROMPT
+    assert "授权不足也不调写工具试探" in AGENT_SYSTEM_PROMPT
     assert "只给收件人而缺电话、地址时直接问这两项" in AGENT_SYSTEM_PROMPT
     assert "单一问题只搜 1 次" in AGENT_SYSTEM_PROMPT
-    assert "直接查案例并明确不保证一定减重" in AGENT_SYSTEM_PROMPT
+    assert "search_success_case，不先读 skill" in AGENT_SYSTEM_PROMPT
+    assert "明确不保证一定减重" in AGENT_SYSTEM_PROMPT
+    assert "get_recent_checkins(days=7)" in AGENT_SYSTEM_PROMPT
+    assert "不调 get_weight_trend" in AGENT_SYSTEM_PROMPT
+    assert "列提醒逐条带 task_id" in AGENT_SYSTEM_PROMPT
+    assert "最终回复只用工具返回事实" in AGENT_SYSTEM_PROMPT
     assert "涉及是否执行清单、发货、服务周期等操作" in AGENT_SYSTEM_PROMPT
+    assert "即使未 @、不执行或授权不足也要明确回复，不能静默" in AGENT_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio
