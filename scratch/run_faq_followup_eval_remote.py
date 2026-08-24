@@ -158,6 +158,14 @@ def _status(client) -> None:
                     "case_id": item.get("case_id"),
                     "status": item.get("status"),
                     "knowledge_query": (item.get("actual") or {}).get("knowledge_query"),
+                    "raw_query_hits": (
+                        ((item.get("evidence") or {}).get("rag") or {}).get("actual")
+                        or {}
+                    ).get("raw_query_hits"),
+                    "rewritten_query_hits": (
+                        ((item.get("evidence") or {}).get("rag") or {}).get("actual")
+                        or {}
+                    ).get("rewritten_query_hits"),
                     "response": (item.get("actual") or {}).get("response"),
                     "failure_reasons": item.get("failure_reasons"),
                     "nonpassing_metrics": [
@@ -165,7 +173,7 @@ def _status(client) -> None:
                         for metric in item.get("metrics") or []
                         if metric.get("passed") is False
                     ],
-                    "usage": item.get("usage"),
+                    "usage": (item.get("usage") or {}).get("total"),
                 }
                 for item in report.get("cases") or []
             ],
@@ -198,6 +206,7 @@ def _diagnose(client) -> None:
 
         QUERIES = [
             "这个如果我想先喝了产品再接着吃正餐呢",
+            "用户询问：产品是否可以先喝掉产品、再接着吃正餐？与之前建议的“随正餐边吃边喝”相比，这种服用顺序是否可行、是否有影响？需要确认产品是否允许空腹或饭前先喝，再正常进食正餐。",
             "产品服用顺序：先喝产品再吃正餐是否可以？之前建议随正餐边吃边喝，想确认先喝产品再吃正餐是否可行。",
             "产品先喝再吃正餐是否算空腹，还是必须随餐边吃边喝？",
             "早C或午B先喝再吃正餐是否算空腹，还是必须随餐边吃边喝？",

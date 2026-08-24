@@ -31,8 +31,8 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
     suite = load_reply_agent_eval_suite()
     summary = summarize_reply_agent_eval_suite(suite)
 
-    assert suite.suite_id == "reply-agent-core-v2"
-    assert suite.version == 2
+    assert suite.suite_id == "reply-agent-core-v3"
+    assert suite.version == 3
     assert len(suite.cases) == 80
     assert summary["retrieval_counts"] == {"retrieve": 32, "skip": 48}
     assert summary["execution_counts"] == {"agent": 30, "handoff": 3, "rag": 47}
@@ -63,6 +63,17 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
     assert (
         report_noon.rag_case.authoritative_facts[0].statement
         == noon.rag_case.authoritative_facts[0].statement
+    )
+    before_meal = next(case for case in suite.cases if case.case_id == "RA-021")
+    assert before_meal.rag_case.history[0].content.startswith("午B随餐")
+    assert before_meal.rag_case.rewrite.must_include == [
+        "午B",
+        "先喝完再吃正餐",
+        "随餐边吃边喝",
+    ]
+    assert before_meal.rag_case.authoritative_facts[0].statement == (
+        "午B应随正餐边吃边喝，不建议空腹单独喝；"
+        "先喝完午B再开始吃正餐不属于随餐。"
     )
 
 
@@ -95,14 +106,14 @@ def test_metric_routing_covers_retrieve_skip_tool_no_reply_and_handoff() -> None
     assert all("MB" in case.metric_groups for case in suite.cases if case.handoff)
 
 
-def test_unified_cli_defaults_to_fixed_v2_and_ten_yuan_limit(monkeypatch) -> None:
+def test_unified_cli_defaults_to_fixed_v3_and_ten_yuan_limit(monkeypatch) -> None:
     monkeypatch.delenv("REPLY_AGENT_EVALUATION_DATASET_PATH", raising=False)
     monkeypatch.delenv("REPLY_AGENT_EVAL_MAX_COST_YUAN", raising=False)
     monkeypatch.setattr(sys, "argv", ["run_reply_agent_eval.py"])
 
     args = parse_args()
 
-    assert args.dataset.name == "reply_agent_eval_cases.v2.json"
+    assert args.dataset.name == "reply_agent_eval_cases.v3.json"
     assert args.max_cost_yuan == 10
     assert args.case_ids == ""
 

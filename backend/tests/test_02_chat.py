@@ -333,12 +333,14 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     assert "不是空腹血糖" in prompt
     assert "空腹血糖142mg/dL" in prompt
     assert "语义仍有歧义时保持无风险" in prompt
-    assert "疑似产品不良反应或可能与产品使用相关的身体问题才输出不超过300字的独立查询" in prompt
+    assert "疑似产品不良反应或可能与产品使用相关的身体问题才输出不超过80字的独立检索短句" in prompt
     assert "与产品无关的通用健康、饮食、运动问题" in prompt
     assert "一律输出 JSON null" in prompt
     assert "完整保留产品名、症状、动作、数字、时间、否定、不确定性" in prompt
     assert "是否由产品导致/是否需要补喝" in prompt
-    assert "随餐产品未区分就写明‘早C或午B’" in prompt
+    assert "只能还原对话已出现的产品名，不得猜测" in prompt
+    assert "随餐产品未指明名称时保留‘随餐产品’" in prompt
+    assert "不要写‘用户询问’、‘需要确认’或背景解释" in prompt
     assert "是否空腹、是否随餐边吃边喝" in prompt
     assert "这三种/这个/它" in prompt
     assert "补吗/补一下" in prompt and "补喝" in prompt

@@ -332,8 +332,8 @@ def _new_rag_case(spec: dict, source_by_id: dict[str, RagEvalCase]) -> RagEvalCa
     )
 
 
-def _v2_contract_case(case: RagEvalCase) -> RagEvalCase:
-    """Correct two v1-only contract gaps without mutating the old fixture."""
+def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
+    """Apply unified-suite corrections without mutating historical RAG fixtures."""
     payload = case.model_dump(mode="json")
     if case.case_id == "rag-faq-cold-water":
         payload["history"] = [
@@ -353,6 +353,32 @@ def _v2_contract_case(case: RagEvalCase) -> RagEvalCase:
                 "source_ids": source.source_ids,
             }
         ]
+    elif case.case_id == "rag-chat-before-meal":
+        source = case.authoritative_facts[0]
+        payload["history"] = [
+            {
+                "role": "user",
+                "content": "午B随餐是不是在吃正餐时同时喝？",
+            },
+            {"role": "staff", "content": "建议随正餐，边吃边喝。"},
+        ]
+        payload["authoritative_facts"] = [
+            {
+                "fact_id": source.fact_id,
+                "statement": (
+                    "午B应随正餐边吃边喝，不建议空腹单独喝；"
+                    "先喝完午B再开始吃正餐不属于随餐。"
+                ),
+                "provenance": source.provenance,
+                "source_scope": source.source_scope,
+                "source_ids": source.source_ids,
+            }
+        ]
+        payload["rewrite"] = {
+            "decision": "retrieve",
+            "must_include": ["午B", "先喝完再吃正餐", "随餐边吃边喝"],
+            "must_preserve_meanings": ["这个指上文已明确的午B"],
+        }
     return RagEvalCase.model_validate(payload)
 
 
@@ -360,7 +386,7 @@ def build_suite() -> ReplyAgentEvalSuite:
     rag_suite = load_rag_eval_suite()
     agent_suite = load_agent_eval_suite()
     rag_by_id = {
-        case.case_id: _v2_contract_case(case) for case in rag_suite.cases
+        case.case_id: _current_contract_case(case) for case in rag_suite.cases
     }
     selected_rag = [
         rag_by_id[case.case_id]
@@ -446,12 +472,13 @@ def build_suite() -> ReplyAgentEvalSuite:
 
     return ReplyAgentEvalSuite.model_validate(
         {
-            "suite_id": "reply-agent-core-v2",
-            "version": 2,
+            "suite_id": "reply-agent-core-v3",
+            "version": 3,
             "description": (
                 "回复 Agent 统一固定题库：80 道唯一题，32 道产品知识检索，"
                 "48 道跳过检索并覆盖工具、澄清、沉默、授权和转人工；"
-                "v2 补齐三产品指代上下文并将午B超时召回事实限定为本问所需。"
+                "v3 继承v2契约，并为随餐省略问题补齐午B指代上下文、"
+                "将必须事实收敛为单题所需的原子口径。"
             ),
             "cases": cases,
         }
@@ -467,7 +494,7 @@ def parse_args() -> argparse.Namespace:
             Path(__file__).resolve().parents[1]
             / "tests"
             / "fixtures"
-            / "reply_agent_eval_cases.v2.json"
+            / "reply_agent_eval_cases.v3.json"
         ),
     )
     return parser.parse_args()
