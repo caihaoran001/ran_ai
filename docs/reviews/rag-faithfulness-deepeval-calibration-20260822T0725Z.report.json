@@ -1,0 +1,1170 @@
+{
+  "schema_version": 1,
+  "run_id": "deepeval-calibration-1011620-20260822T0725Z",
+  "run_mode": "real",
+  "stage_requested": "calibration",
+  "status": "completed_with_reanalysis",
+  "started_at": "2026-08-22T07:24:14.048853+00:00",
+  "updated_at": "2026-08-22T07:29:49.499928+00:00",
+  "git_sha": "1011620",
+  "model": "deepseek-v4-flash",
+  "judge_model": "deepseek-v4-flash",
+  "deepeval_version": "4.1.5",
+  "ragas_baseline_run_id": null,
+  "dataset_id": null,
+  "dataset_version": null,
+  "budget": {
+    "limit_yuan": 10.0,
+    "spent_yuan": 4.575328,
+    "calls": 838,
+    "failed_calls": 0,
+    "prompt_tokens": 358552,
+    "completion_tokens": 479714,
+    "total_tokens": 838266,
+    "cache_hit_tokens": 281984
+  },
+  "stage": "done",
+  "progress": {
+    "stage": "answer_relevancy_calibration",
+    "done": 120,
+    "total": 120
+  },
+  "main_comparison": null,
+  "faithfulness_calibration": {
+    "suite_id": "faithfulness-zh-v4",
+    "items": [
+      {
+        "case_id": "faithfulness-cap-conversion",
+        "phase": "selection",
+        "error_type": "number_or_unit",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-evening-water",
+        "phase": "selection",
+        "error_type": "number_or_unit",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-cold-water",
+        "phase": "selection",
+        "error_type": "condition_omission",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-missed-dose",
+        "phase": "selection",
+        "error_type": "negation",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-noon-boundary",
+        "phase": "selection",
+        "error_type": "condition_omission",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-period-products",
+        "phase": "selection",
+        "error_type": "condition_omission",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-caffeine-stack",
+        "phase": "selection",
+        "error_type": "negation",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-palpitations",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-diarrhea",
+        "phase": "selection",
+        "error_type": "unsupported_advice",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.6666666666666666,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-night-shift",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-low-carb",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-meal-order",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-snack",
+        "phase": "selection",
+        "error_type": "unsupported_advice",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-staple-substitution",
+        "phase": "selection",
+        "error_type": "negation",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-skip-dinner",
+        "phase": "selection",
+        "error_type": "condition_omission",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-eating-out",
+        "phase": "selection",
+        "error_type": "unsupported_advice",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-sugar-label",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-sudden-weight-gain",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-weighing-time",
+        "phase": "selection",
+        "error_type": "condition_omission",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-waist-change",
+        "phase": "selection",
+        "error_type": "negation",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-low-impact-exercise",
+        "phase": "validation",
+        "error_type": "condition_omission",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-sleep-adjustment",
+        "phase": "validation",
+        "error_type": "number_or_unit",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-checkin-method",
+        "phase": "validation",
+        "error_type": "unsupported_advice",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.6666666666666666,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-constipation",
+        "phase": "validation",
+        "error_type": "unsupported_advice",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-questionnaire-purpose",
+        "phase": "validation",
+        "error_type": "negation",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-unify-dose",
+        "phase": "validation",
+        "error_type": "number_or_unit",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-before-meal",
+        "phase": "validation",
+        "error_type": "fact_reversal",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-no-staple-dinner",
+        "phase": "validation",
+        "error_type": "condition_omission",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-coffee-weight",
+        "phase": "validation",
+        "error_type": "fact_reversal",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-rice-at-lunch",
+        "phase": "validation",
+        "error_type": "negation",
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-cap-conversion",
+        "phase": "selection",
+        "error_type": "number_or_unit",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-evening-water",
+        "phase": "selection",
+        "error_type": "number_or_unit",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-cold-water",
+        "phase": "selection",
+        "error_type": "condition_omission",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-missed-dose",
+        "phase": "selection",
+        "error_type": "negation",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-noon-boundary",
+        "phase": "selection",
+        "error_type": "condition_omission",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-period-products",
+        "phase": "selection",
+        "error_type": "condition_omission",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-caffeine-stack",
+        "phase": "selection",
+        "error_type": "negation",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-palpitations",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-diarrhea",
+        "phase": "selection",
+        "error_type": "unsupported_advice",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-night-shift",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-low-carb",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-meal-order",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-snack",
+        "phase": "selection",
+        "error_type": "unsupported_advice",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-staple-substitution",
+        "phase": "selection",
+        "error_type": "negation",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-skip-dinner",
+        "phase": "selection",
+        "error_type": "condition_omission",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-eating-out",
+        "phase": "selection",
+        "error_type": "unsupported_advice",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": null,
+        "errors": [
+          "ValueError: Evaluation LLM outputted an invalid JSON. Please use a better evaluation model."
+        ]
+      },
+      {
+        "case_id": "faithfulness-sugar-label",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-sudden-weight-gain",
+        "phase": "selection",
+        "error_type": "fact_reversal",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-weighing-time",
+        "phase": "selection",
+        "error_type": "condition_omission",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-waist-change",
+        "phase": "selection",
+        "error_type": "negation",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-low-impact-exercise",
+        "phase": "validation",
+        "error_type": "condition_omission",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-sleep-adjustment",
+        "phase": "validation",
+        "error_type": "number_or_unit",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-checkin-method",
+        "phase": "validation",
+        "error_type": "unsupported_advice",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-constipation",
+        "phase": "validation",
+        "error_type": "unsupported_advice",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-questionnaire-purpose",
+        "phase": "validation",
+        "error_type": "negation",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-unify-dose",
+        "phase": "validation",
+        "error_type": "number_or_unit",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.3333333333333333,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-before-meal",
+        "phase": "validation",
+        "error_type": "fact_reversal",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-no-staple-dinner",
+        "phase": "validation",
+        "error_type": "condition_omission",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-coffee-weight",
+        "phase": "validation",
+        "error_type": "fact_reversal",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "faithfulness-rice-at-lunch",
+        "phase": "validation",
+        "error_type": "negation",
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      }
+    ],
+    "error": "unscored pairs left the stage runs incomplete; scored=59 expected=60",
+    "passed": true,
+    "selected_threshold": 0.833333,
+    "ragas_production_threshold": 0.625,
+    "stability": {
+      "compared_values": 59,
+      "max_abs_repeat_gap": 0.5,
+      "mean_abs_repeat_gap": 0.022598870056497175
+    },
+    "threshold_rule": "perfect_gap_midpoint_v1",
+    "threshold_interval": {
+      "lower_exclusive": 0.6666666666666666,
+      "upper_inclusive": 1.0,
+      "safety_margin": 0.16666633333333336
+    },
+    "failed_criteria": [],
+    "overall_assessment": {
+      "auc": 1.0,
+      "paired_accuracy": 1.0,
+      "positive_pass_rate": 1.0,
+      "negative_rejection_rate": 1.0,
+      "mean_gap": 0.8135593220338984,
+      "passed": true,
+      "failed_criteria": []
+    },
+    "scored_pairs": "59/60",
+    "reanalysis_note": "Thresholds re-selected offline from stored scores via the same select_stable_calibration_threshold core; zero model calls.",
+    "degraded": true
+  },
+  "answer_relevancy_calibration": {
+    "suite_id": "answer-relevancy-zh-v3",
+    "items": [
+      {
+        "case_id": "relevancy-cap-conversion",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.25,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-evening-water",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 0.5,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-cold-water",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 0.75,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-missed-dose",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.8333333333333334,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-noon-boundary",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 0.6666666666666666,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-period-products",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-caffeine-stack",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-palpitations",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.75,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-diarrhea",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 0.75,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-night-shift",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-low-carb",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-meal-order",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-snack",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-staple-substitution",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-skip-dinner",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.16666666666666666,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-eating-out",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-sugar-label",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-sudden-weight-gain",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-weighing-time",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-waist-change",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-low-impact-exercise",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-sleep-adjustment",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-checkin-method",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 0.2222222222222222,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-constipation",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-questionnaire-purpose",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-unify-dose",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-before-meal",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-no-staple-dinner",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.4444444444444444,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-coffee-weight",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-rice-at-lunch",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 1,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-cap-conversion",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-evening-water",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 0.5,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-cold-water",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-missed-dose",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.6666666666666666,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-noon-boundary",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 0.8333333333333334,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-period-products",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-caffeine-stack",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-palpitations",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-diarrhea",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-night-shift",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-low-carb",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-meal-order",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-snack",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-staple-substitution",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-skip-dinner",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.6666666666666666,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-eating-out",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-sugar-label",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-sudden-weight-gain",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-weighing-time",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-waist-change",
+        "phase": "selection",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.5,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-low-impact-exercise",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-sleep-adjustment",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-checkin-method",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-constipation",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-questionnaire-purpose",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-unify-dose",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-before-meal",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-no-staple-dinner",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.6666666666666666,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-coffee-weight",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 1.0,
+        "errors": []
+      },
+      {
+        "case_id": "relevancy-rice-at-lunch",
+        "phase": "validation",
+        "error_type": null,
+        "repeat_index": 2,
+        "positive_score": 1.0,
+        "negative_score": 0.0,
+        "errors": []
+      }
+    ],
+    "selected_threshold": null,
+    "threshold_rule": null,
+    "passed": false,
+    "failed_criteria": [
+      "离线重放仅复核选线；AR 语义区分度结论以完整两阶段评估为准"
+    ],
+    "overall_assessment": null,
+    "ragas_production_state": "calibration_failed_not_enforced_display_only",
+    "stability": {
+      "compared_values": 60,
+      "max_abs_repeat_gap": 1.0,
+      "mean_abs_repeat_gap": 0.08055555555555556
+    },
+    "scored_pairs": "60/60",
+    "degraded": false
+  },
+  "error": null,
+  "finished_at": "2026-08-22T08:32:32.272447+00:00"
+}
