@@ -122,6 +122,10 @@ class AgentKnowledgeHit(BaseModel):
     source_type: str
     updated_at: datetime | None = None
     content_excerpt: str
+    vector_rank: int | None = None
+    vector_distance: float | None = None
+    keyword_rank: int | None = None
+    confirmation_state: str | None = None
 
 
 class AgentKnowledgeDecision(BaseModel):

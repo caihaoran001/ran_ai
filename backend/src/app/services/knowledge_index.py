@@ -44,9 +44,13 @@ class IndexedKnowledgeHit:
     source_type: str
     updated_at: datetime | None
     content: str
+    vector_rank: int | None = None
+    vector_distance: float | None = None
+    keyword_rank: int | None = None
+    confirmation_state: str | None = None
 
     def observation(self) -> dict[str, Any]:
-        return {
+        observation: dict[str, Any] = {
             "rank": self.rank,
             "chunk_id": self.chunk_id,
             "chunk_uid": self.chunk_uid,
@@ -55,6 +59,15 @@ class IndexedKnowledgeHit:
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "content_excerpt": self.content[:1500],
         }
+        if self.vector_rank is not None:
+            observation["vector_rank"] = self.vector_rank
+        if self.vector_distance is not None:
+            observation["vector_distance"] = self.vector_distance
+        if self.keyword_rank is not None:
+            observation["keyword_rank"] = self.keyword_rank
+        if self.confirmation_state is not None:
+            observation["confirmation_state"] = self.confirmation_state
+        return observation
 
 
 @dataclass(frozen=True)
@@ -260,7 +273,7 @@ async def retrieve_indexed_knowledge_result(
     query = query.strip()
     if not query:
         return IndexedKnowledgeResult(context="", hits=[])
-    vec_results: list[tuple[int, str]] = []
+    vec_results: list[tuple[int, str, float]] = []
     text_results: list[tuple[int, str]] = []
 
     if settings.embedding_api_key:
@@ -280,12 +293,14 @@ async def retrieve_indexed_knowledge_result(
     scores: dict[int, float] = {}
     contents: dict[int, str] = {}
     vector_ranks: dict[int, int] = {}
+    vector_distances: dict[int, float] = {}
     text_ranks: dict[int, int] = {}
 
-    for rank, (chunk_id, content) in enumerate(vec_results, start=1):
+    for rank, (chunk_id, content, distance) in enumerate(vec_results, start=1):
         scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rank + rrf_k)
         contents[chunk_id] = content
         vector_ranks[chunk_id] = rank
+        vector_distances[chunk_id] = distance
 
     for rank, (chunk_id, content) in enumerate(text_results, start=1):
         scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rank + rrf_k)
@@ -330,6 +345,15 @@ async def retrieve_indexed_knowledge_result(
                 source_type=chunk.source_type,
                 updated_at=chunk.updated_at,
                 content=contents.get(chunk_id, chunk.content).strip(),
+                vector_rank=vector_ranks.get(chunk_id),
+                vector_distance=vector_distances.get(chunk_id),
+                keyword_rank=text_ranks.get(chunk_id),
+                confirmation_state=(
+                    chunk.metadata_json.get("confirm_state")
+                    if chunk.source_type == "faq"
+                    and isinstance(chunk.metadata_json, dict)
+                    else None
+                ),
             )
         )
 
@@ -435,7 +459,8 @@ async def _retrieve_by_embedding(
     *,
     settings: Settings,
     exclude_source_types: set[str] | None = None,
-) -> list[tuple[int, str]]:
+) -> list[tuple[int, str, float]]:
+    """Return ``(chunk_id, content, cosine_distance)`` preserving SQL rank order."""
     if not await _pgvector_available(session):
         raise RuntimeError(
             "【严重配置错误】检测到数据库未安装 pgvector 扩展，或 'knowledge_chunks' 表缺少 'embedding_vector' 字段。"
@@ -475,7 +500,7 @@ async def _retrieve_by_embedding(
     res = await session.execute(
         sql_text(
             f"""
-            SELECT id, content
+            SELECT id, content, embedding_vector <=> CAST(:qv AS vector) AS distance
             FROM knowledge_chunks
             WHERE status = 'active'
               AND embedding_vector IS NOT NULL
@@ -487,7 +512,7 @@ async def _retrieve_by_embedding(
         ),
         params,
     )
-    return [(row[0], row[1].strip()) for row in res.all()]
+    return [(row[0], row[1].strip(), float(row[2])) for row in res.all()]
 
 
 async def _retrieve_by_text(

@@ -64,6 +64,24 @@ async def test_agent_ledger_tracks_model_tools_and_api(
         service_case_id=service_case_id,
         trigger_message_id=inbound.id,
         input_count=1,
+        metadata={
+            "knowledge": {
+                "decision": "searched",
+                "query": "午B超过时间能补吗",
+                "hit_count": 1,
+                "hits": [
+                    {
+                        "rank": 1,
+                        "chunk_id": 42,
+                        "chunk_uid": "faq:legacy",
+                        "title": "旧历史命中",
+                        "source_type": "faq",
+                        "updated_at": None,
+                        "content_excerpt": "旧历史没有四项观测字段。",
+                    }
+                ],
+            }
+        },
     )
     assert reply_run_id is not None
     model_response = AIMessage(
@@ -223,6 +241,16 @@ async def test_agent_ledger_tracks_model_tools_and_api(
     assert detail["output_message"]["content"] == "没有心慌就很好。继续半份观察满3天。"
     assert detail["output_message"]["role"] == "AI 助教"
     assert detail["output_message"]["status"] == "sent"
+    knowledge = detail["knowledge"]
+    assert knowledge is not None
+    assert knowledge["decision"] == "searched"
+    assert len(knowledge["hits"]) == 1
+    legacy_hit = knowledge["hits"][0]
+    assert legacy_hit["chunk_id"] == 42
+    assert legacy_hit["vector_rank"] is None
+    assert legacy_hit["vector_distance"] is None
+    assert legacy_hit["keyword_rank"] is None
+    assert legacy_hit["confirmation_state"] is None
 
     failed_inbound = Message(
         service_case_id=service_case_id,

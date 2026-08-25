@@ -307,7 +307,10 @@ async def test_indexed_knowledge_result_keeps_ranked_hit_identity_and_content(
     await db_session.flush()
 
     async def fake_vector(*args, **kwargs):
-        return [(faq_chunk.id, faq_chunk.content), (noise_chunk.id, noise_chunk.content)]
+        return [
+            (faq_chunk.id, faq_chunk.content, 0.12),
+            (noise_chunk.id, noise_chunk.content, 0.34),
+        ]
 
     async def fake_text(*args, **kwargs):
         return [(faq_chunk.id, faq_chunk.content)]
@@ -355,7 +358,7 @@ async def test_rrf_tie_prefers_curated_text_hit_over_vector_only_hit(
     await db_session.flush()
 
     async def fake_vector(*args, **kwargs):
-        return [(vector_chunk.id, vector_chunk.content)]
+        return [(vector_chunk.id, vector_chunk.content, 0.25)]
 
     async def fake_text(*args, **kwargs):
         return [(text_chunk.id, text_chunk.content)]
@@ -373,6 +376,146 @@ async def test_rrf_tie_prefers_curated_text_hit_over_vector_only_hit(
         text_chunk.id,
         vector_chunk.id,
     ]
+
+
+@pytest.mark.asyncio
+async def test_retrieval_observation_records_both_channel_ranks_and_distance(
+    db_session,
+    monkeypatch,
+):
+    faq_chunk = KnowledgeChunk(
+        chunk_uid="faq:both-channels",
+        source_type="faq",
+        source_uri="knowledge_faqs/both-channels",
+        title="双路命中观测",
+        content="午B建议随餐。",
+        content_hash="e" * 64,
+        metadata_json={"confirm_state": "confirmed"},
+        status="active",
+    )
+    db_session.add(faq_chunk)
+    await db_session.flush()
+
+    async def fake_vector(*args, **kwargs):
+        return [(faq_chunk.id, faq_chunk.content, 0.123456)]
+
+    async def fake_text(*args, **kwargs):
+        return [(faq_chunk.id, faq_chunk.content)]
+
+    monkeypatch.setattr(knowledge_index_mod, "_retrieve_by_embedding", fake_vector)
+    monkeypatch.setattr(knowledge_index_mod, "_retrieve_by_text", fake_text)
+    result = await knowledge_index_mod.retrieve_indexed_knowledge_result(
+        db_session,
+        "午B随餐吗",
+        settings=SimpleNamespace(embedding_api_key="configured", knowledge_base_top_k=2),
+    )
+
+    hit = result.hits[0]
+    assert hit.rank == 1
+    assert hit.vector_rank == 1
+    assert hit.vector_distance == pytest.approx(0.123456)
+    assert hit.keyword_rank == 1
+    assert hit.confirmation_state == "confirmed"
+
+    observation = hit.observation()
+    assert observation["vector_rank"] == 1
+    assert observation["vector_distance"] == pytest.approx(0.123456)
+    assert observation["keyword_rank"] == 1
+    assert observation["confirmation_state"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_retrieval_observation_leaves_missing_channel_fields_empty(
+    db_session,
+    monkeypatch,
+):
+    vector_only = KnowledgeChunk(
+        chunk_uid="faq:vector-only-obs",
+        source_type="faq",
+        source_uri="knowledge_faqs/vector-only-obs",
+        title="仅向量命中",
+        content="出现不适时先暂停。",
+        content_hash="f" * 64,
+        metadata_json={"confirm_state": "pending"},
+        status="active",
+    )
+    keyword_only = KnowledgeChunk(
+        chunk_uid="faq:keyword-only-obs",
+        source_type="faq",
+        source_uri="knowledge_faqs/keyword-only-obs",
+        title="仅关键词命中",
+        content="手抖不代表代谢启动。",
+        content_hash="a1" * 32,
+        metadata_json={"confirm_state": None},
+        status="active",
+    )
+    db_session.add_all([vector_only, keyword_only])
+    await db_session.flush()
+
+    async def fake_vector(*args, **kwargs):
+        return [(vector_only.id, vector_only.content, 0.321)]
+
+    async def fake_text(*args, **kwargs):
+        return [(keyword_only.id, keyword_only.content)]
+
+    monkeypatch.setattr(knowledge_index_mod, "_retrieve_by_embedding", fake_vector)
+    monkeypatch.setattr(knowledge_index_mod, "_retrieve_by_text", fake_text)
+    result = await knowledge_index_mod.retrieve_indexed_knowledge_result(
+        db_session,
+        "手抖是不是代谢启动",
+        settings=SimpleNamespace(embedding_api_key="configured", knowledge_base_top_k=2),
+    )
+
+    by_chunk_id = {hit.chunk_id: hit for hit in result.hits}
+    vector_hit = by_chunk_id[vector_only.id]
+    keyword_hit = by_chunk_id[keyword_only.id]
+
+    assert vector_hit.vector_rank is not None
+    assert vector_hit.vector_distance == pytest.approx(0.321)
+    assert vector_hit.keyword_rank is None
+    assert vector_hit.confirmation_state == "pending"
+    assert keyword_hit.vector_rank is None
+    assert keyword_hit.vector_distance is None
+    assert keyword_hit.keyword_rank is not None
+    assert keyword_hit.confirmation_state is None
+
+
+@pytest.mark.asyncio
+async def test_non_faq_confirmation_state_is_not_recorded(
+    db_session,
+    monkeypatch,
+):
+    markdown_chunk = KnowledgeChunk(
+        chunk_uid="markdown:observation",
+        source_type="markdown",
+        source_uri="knowledge_base/observation.md",
+        title="普通知识",
+        content="普通知识内容。",
+        content_hash="b1" * 32,
+        # 即使历史数据意外带了 confirm_state，非 FAQ 也不能展示确认状态。
+        metadata_json={"confirm_state": "confirmed"},
+        status="active",
+    )
+    db_session.add(markdown_chunk)
+    await db_session.flush()
+
+    async def fake_vector(*args, **kwargs):
+        return [(markdown_chunk.id, markdown_chunk.content, 0.2)]
+
+    async def fake_text(*args, **kwargs):
+        return [(markdown_chunk.id, markdown_chunk.content)]
+
+    monkeypatch.setattr(knowledge_index_mod, "_retrieve_by_embedding", fake_vector)
+    monkeypatch.setattr(knowledge_index_mod, "_retrieve_by_text", fake_text)
+    result = await knowledge_index_mod.retrieve_indexed_knowledge_result(
+        db_session,
+        "普通知识",
+        settings=SimpleNamespace(embedding_api_key="configured", knowledge_base_top_k=2),
+    )
+
+    hit = result.hits[0]
+    assert hit.confirmation_state is None
+    assert "confirmation_state" not in hit.observation()
 
 
 async def _case(db_session, *, started_at=None):

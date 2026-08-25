@@ -73,6 +73,10 @@ type AgentKnowledgeHit = {
   source_type: string;
   updated_at?: string | null;
   content_excerpt: string;
+  vector_rank?: number | null;
+  vector_distance?: number | null;
+  keyword_rank?: number | null;
+  confirmation_state?: string | null;
 };
 
 type ArchivistDroppedItem = {
@@ -812,6 +816,30 @@ function KnowledgeDecisionCard({
                       <span>更新于 {formatChinaShortDateTime(hit.updated_at)}</span>
                     )}
                   </p>
+                  {(hit.vector_rank != null ||
+                    hit.keyword_rank != null ||
+                    hit.confirmation_state) && (
+                    <p className="mt-1 text-[11px] text-slate-600">
+                      <span className="font-semibold">观测：</span>
+                      {[
+                        `最终第 ${hit.rank}`,
+                        hit.vector_rank != null ? `向量第 ${hit.vector_rank}` : null,
+                        hit.vector_distance != null
+                          ? `距离 ${hit.vector_distance.toFixed(3)}`
+                          : null,
+                        hit.keyword_rank != null
+                          ? `关键词第 ${hit.keyword_rank}`
+                          : null,
+                        hit.source_type === "faq" && hit.confirmation_state
+                          ? hit.confirmation_state === "confirmed"
+                            ? "已确认"
+                            : "待确认"
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join("｜")}
+                    </p>
+                  )}
                   <div className="mt-2 border-l-2 border-cyan-100 pl-2">
                     <p className="text-[10px] font-bold tracking-wide text-slate-400">
                       当时召回内容
