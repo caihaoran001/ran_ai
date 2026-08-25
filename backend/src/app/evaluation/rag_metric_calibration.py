@@ -44,6 +44,16 @@ class RagMetricThresholdSelection:
     safety_margin: float
 
 
+def split_atomic_clauses(statement: str) -> list[str]:
+    """Split one authoritative statement into atomic clauses (atomic-clause-v2).
+
+    Scoring granularity follows this split, so the calibration suite validates
+    its references against it rather than re-implementing the rule.
+    """
+    normalized = statement.replace("；", "\n").replace("。", "\n")
+    return [item.strip(" 。；") for item in normalized.splitlines() if item.strip()]
+
+
 def render_atomic_retrieval_reference(statements: Iterable[str]) -> str:
     """Render retrieval truth as atomic clauses (atomic-clause-v2).
 
@@ -53,10 +63,7 @@ def render_atomic_retrieval_reference(statements: Iterable[str]) -> str:
     """
     clauses: list[str] = []
     for statement in statements:
-        normalized = statement.replace("；", "\n").replace("。", "\n")
-        clauses.extend(
-            item.strip(" 。；") for item in normalized.splitlines() if item.strip()
-        )
+        clauses.extend(split_atomic_clauses(statement))
     return "\n".join(f"- {item}" for item in clauses)
 
 

@@ -12,6 +12,8 @@ import json
 import pytest
 
 from app.evaluation.context_recall_calibration import (
+    MIN_REFERENCE_CLAUSES,
+    PROHIBITION_MARKERS,
     SELECTION_CASE_COUNT,
     VALIDATION_CASE_COUNT,
     ContextRecallCalibrationSuite,
@@ -20,12 +22,15 @@ from app.evaluation.context_recall_calibration import (
     default_context_recall_calibration_path,
     load_context_recall_calibration_suite,
 )
-from app.evaluation.rag_metric_calibration import render_atomic_retrieval_reference
+from app.evaluation.rag_metric_calibration import (
+    render_atomic_retrieval_reference,
+    split_atomic_clauses,
+)
 
 
 def test_suite_loads_with_fixed_phase_counts_and_miss_type_coverage():
     suite = load_context_recall_calibration_suite()
-    assert suite.calibration_id == "context-recall-zh-v1"
+    assert suite.calibration_id == "context-recall-zh-v2"
     assert len(suite.cases) == SELECTION_CASE_COUNT + VALIDATION_CASE_COUNT
     phases = [case.phase for case in suite.cases]
     assert phases.count("selection") == SELECTION_CASE_COUNT
@@ -42,6 +47,38 @@ def test_every_pair_uses_distinct_real_contexts_on_both_sides():
         # A negative built by copying the positive chunk would make the suite
         # trivially separable and the selected threshold meaningless.
         assert not set(case.positive_contexts) & set(case.negative_contexts), case.case_id
+
+
+def test_every_reference_states_retrievable_facts_not_prohibitions():
+    """A prohibition ("不应解释为代谢启动") has no retrievable truth: no chunk
+    asserts the absence of a wrong framing, so the v1 judge returned opposite
+    verdicts for the same pair across repeats. Recall truth stays positive."""
+    suite = load_context_recall_calibration_suite()
+    for case in suite.cases:
+        offenders = [m for m in PROHIBITION_MARKERS if m in case.reference]
+        assert not offenders, (case.case_id, offenders)
+        assert len(split_atomic_clauses(case.reference)) >= MIN_REFERENCE_CLAUSES, case.case_id
+
+
+def test_suite_rejects_prohibition_reference():
+    payload = json.loads(
+        default_context_recall_calibration_path().read_text(encoding="utf-8")
+    )
+    case = payload["cases"][0]
+    case["reference"] = case["reference"].rstrip("。") + "；不要自行加量。"
+    with pytest.raises(ValueError, match="prohibitions"):
+        ContextRecallCalibrationSuite.model_validate(payload)
+
+
+def test_suite_rejects_bundled_single_clause_reference():
+    """v1 shipped references that never split, so a half-covered negative was
+    attributed from its main clause alone and scored full marks."""
+    payload = json.loads(
+        default_context_recall_calibration_path().read_text(encoding="utf-8")
+    )
+    payload["cases"][0]["reference"] = "午B超过下午两点当天直接跳过，当天的晚A照常执行。"
+    with pytest.raises(ValueError, match="atomic clauses"):
+        ContextRecallCalibrationSuite.model_validate(payload)
 
 
 def test_suite_rejects_wrong_phase_counts():
@@ -147,6 +184,30 @@ async def test_judge_real_call_path_records_latency_without_network():
     assert await judge._a_call("ping") == "{}"
     assert judge._ledger.calls == 1
     assert judge._ledger.call_log[0]["latency_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_judgement_reasons_are_kept_alongside_the_score():
+    """The first real recall calibration only persisted floats, so an unstable
+    pair could only be diagnosed by grepping the finished run's call log."""
+    from types import SimpleNamespace
+
+    from eval import deepeval_rag_comparison as runner
+
+    class _Metric:
+        async def a_measure(self, _test_case):
+            self.reason = "两条子句中只有一条能在检索结果中找到依据"
+            self.verdicts = [
+                SimpleNamespace(verdict="yes", reason="第1个节点提到了午B超过两点不补喝"),
+                SimpleNamespace(verdict="no", reason="检索结果没有提到晚A照常执行"),
+            ]
+            return 0.5
+
+    score, error, detail = await runner._ascore_detail(_Metric(), object())
+    assert (score, error) == (0.5, None)
+    assert detail["reason"].startswith("两条子句")
+    assert [v["verdict"] for v in detail["verdicts"]] == ["yes", "no"]
+    assert "晚A照常" in detail["verdicts"][1]["reason"]
 
 
 @pytest.mark.asyncio

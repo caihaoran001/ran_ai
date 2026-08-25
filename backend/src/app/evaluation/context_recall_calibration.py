@@ -10,8 +10,12 @@ Recall differs from faithfulness in what varies between the two sides of a
 pair: the reply is irrelevant here, so the positive and negative sides share
 one authoritative reference and differ in the *retrieved contexts*. Positive
 contexts are the real chunk the reference was condensed from; negative
-contexts are real, topically adjacent chunks that miss at least one required
-clause.
+contexts are real, topically adjacent chunks that miss core required clauses.
+
+The v1 suite failed calibration for two sample defects rather than judge noise,
+and both are now enforced by the suite contract: references written as reply
+guidance instead of retrievable facts, and negatives that covered the main
+requirement while missing only a corner.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from app.evaluation.rag_metric_calibration import (
     RagMetricThresholdSelection,
     assess_rag_metric_calibration,
     select_stable_calibration_threshold,
+    split_atomic_clauses,
 )
 
 
@@ -41,9 +46,19 @@ MIN_MISS_TYPE_COVERAGE = 3
 
 MissType = Literal["wrong_rule", "partial_fact", "adjacent_topic"]
 
+MIN_REFERENCE_CLAUSES = 3
+# A prohibition ("不应解释为代谢启动") states what a reply must not claim. No
+# knowledge chunk asserts the absence of a wrong framing, so the judge has no
+# reproducible verdict for such a clause: the v1 run produced contradictory
+# verdicts for the same pair across repeats. Prohibitions belong to faithfulness
+# and answer correctness; retrieval recall only takes positive assertions.
+PROHIBITION_MARKERS = ("不要", "不应", "不得", "不可", "严禁", "禁止")
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
 
 
 class ContextRecallCalibrationCase(StrictModel):
@@ -61,6 +76,17 @@ class ContextRecallCalibrationCase(StrictModel):
     def validate_pair(self) -> "ContextRecallCalibrationCase":
         if self.positive_contexts == self.negative_contexts:
             raise ValueError("recall calibration sides must use different contexts")
+        found = [marker for marker in PROHIBITION_MARKERS if marker in self.reference]
+        if found:
+            raise ValueError(
+                f"{self.case_id}: recall reference must state retrievable facts, "
+                f"not prohibitions {found}"
+            )
+        if len(split_atomic_clauses(self.reference)) < MIN_REFERENCE_CLAUSES:
+            raise ValueError(
+                f"{self.case_id}: recall reference must split into at least "
+                f"{MIN_REFERENCE_CLAUSES} atomic clauses"
+            )
         if len(self.positive_sources) != len(self.positive_contexts):
             raise ValueError("positive sources must match positive contexts")
         if len(self.negative_sources) != len(self.negative_contexts):
@@ -128,7 +154,7 @@ def default_context_recall_calibration_path() -> Path:
         Path(__file__).resolve().parents[3]
         / "tests"
         / "fixtures"
-        / "rag_context_recall_calibration.v1.json"
+        / "rag_context_recall_calibration.v2.json"
     )
 
 

@@ -256,14 +256,46 @@ def _hits_context(hits: Any) -> list[str]:
     return [str(hit.get("content") or "") for hit in hits if isinstance(hit, dict)]
 
 
-async def _ascore(metric: Any, test_case: LLMTestCase) -> tuple[float | None, str | None]:
+def _judgement_detail(metric: Any) -> dict | None:
+    """Keep the judge's own rationale next to the score.
+
+    The judge already emits a per-statement verdict plus a summary reason; the
+    calibration used to drop both and keep the float, so diagnosing an unstable
+    pair meant grepping the raw call log of a finished run.
+    """
+    reason = getattr(metric, "reason", None)
+    verdicts = []
+    for verdict in getattr(metric, "verdicts", None) or []:
+        value = getattr(verdict, "verdict", None)
+        detail = getattr(verdict, "reason", None)
+        if value is None and detail is None:
+            continue
+        verdicts.append(
+            {
+                "verdict": str(value) if value is not None else None,
+                "reason": str(detail)[:600] if detail is not None else None,
+            }
+        )
+    if not reason and not verdicts:
+        return None
+    return {"reason": str(reason)[:600] if reason else None, "verdicts": verdicts}
+
+
+async def _ascore_detail(
+    metric: Any, test_case: LLMTestCase
+) -> tuple[float | None, str | None, dict | None]:
     try:
         score = await metric.a_measure(test_case)
-        return float(score), None
+        return float(score), None, _judgement_detail(metric)
     except BudgetExceeded:
         raise
     except Exception as exc:  # noqa: BLE001
-        return None, f"{type(exc).__name__}: {exc}"[:400]
+        return None, f"{type(exc).__name__}: {exc}"[:400], None
+
+
+async def _ascore(metric: Any, test_case: LLMTestCase) -> tuple[float | None, str | None]:
+    score, error, _ = await _ascore_detail(metric, test_case)
+    return score, error
 
 
 def _make_metric(kind: str, judge: DeepSeekJudge) -> Any:
@@ -380,12 +412,11 @@ async def _run_calibration_items(
     async def one(pair, repeat_index: int, side: str):
         key = (pair.case_id, repeat_index, side)
         if mock:
-            return key, (0.92 if side == "positive" else 0.31), None
+            return key, (0.92 if side == "positive" else 0.31), None, None
         if build_test_case is not None:
-            score, error = await _ascore(
+            return key, *await _ascore_detail(
                 _make_metric(metric_kind, judge), build_test_case(pair, side)
             )
-            return key, score, error
         response = pair.positive_response if side == "positive" else pair.negative_response
         contexts = getattr(pair, "retrieved_contexts", None)
         retrieval_context = list(contexts) if needs_retrieval_context and contexts else None
@@ -397,8 +428,7 @@ async def _run_calibration_items(
                 actual_output=response,
                 retrieval_context=retrieval_context,
             )
-        score, error = await _ascore(_make_metric(metric_kind, judge), test_case)
-        return key, score, error
+        return key, *await _ascore_detail(_make_metric(metric_kind, judge), test_case)
 
     total = len(pairs) * CALIBRATION_REPEAT_COUNT * 2
     completed = 0
@@ -418,13 +448,18 @@ async def _run_calibration_items(
     ]
     outcomes = await asyncio.gather(*tasks)
 
-    by_key = {key: (score, error) for key, score, error in outcomes}
+    by_key = {key: (score, error, detail) for key, score, error, detail in outcomes}
     duplicate_keys = len(outcomes) != len(by_key)
     items: list[dict] = []
     for repeat_index in range(1, CALIBRATION_REPEAT_COUNT + 1):
         for pair in pairs:
-            (pos_score, pos_err) = by_key.get((pair.case_id, repeat_index, "positive"), (None, "missing"))
-            (neg_score, neg_err) = by_key.get((pair.case_id, repeat_index, "negative"), (None, "missing"))
+            missing = (None, "missing", None)
+            (pos_score, pos_err, pos_detail) = by_key.get(
+                (pair.case_id, repeat_index, "positive"), missing
+            )
+            (neg_score, neg_err, neg_detail) = by_key.get(
+                (pair.case_id, repeat_index, "negative"), missing
+            )
             errors = [e for e in (pos_err, neg_err) if e]
             if duplicate_keys:
                 errors.append("duplicate judgement key detected")
@@ -436,6 +471,8 @@ async def _run_calibration_items(
                     "repeat_index": repeat_index,
                     "positive_score": pos_score,
                     "negative_score": neg_score,
+                    "positive_judgement": pos_detail,
+                    "negative_judgement": neg_detail,
                     "errors": errors,
                 }
             )
