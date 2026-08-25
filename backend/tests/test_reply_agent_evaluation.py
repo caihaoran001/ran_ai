@@ -31,8 +31,8 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
     suite = load_reply_agent_eval_suite()
     summary = summarize_reply_agent_eval_suite(suite)
 
-    assert suite.suite_id == "reply-agent-core-v3"
-    assert suite.version == 3
+    assert suite.suite_id == "reply-agent-core-v4"
+    assert suite.version == 4
     assert len(suite.cases) == 80
     assert summary["retrieval_counts"] == {"retrieve": 32, "skip": 48}
     assert summary["execution_counts"] == {"agent": 30, "handoff": 3, "rag": 47}
@@ -78,8 +78,8 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
         "随餐边吃边喝",
     ]
     assert before_meal.rag_case.authoritative_facts[0].statement == (
-        "午B应随正餐边吃边喝，不建议空腹单独喝；"
-        "先喝完午B再开始吃正餐不属于随餐。"
+        "早C和午B优先随餐饮用；条件不允许时，紧邻正餐前后喝也可以，"
+        "不需要卡固定的分钟数。"
     )
 
 
@@ -235,16 +235,54 @@ def test_metric_routing_covers_retrieve_skip_tool_no_reply_and_handoff() -> None
     assert all("MB" in case.metric_groups for case in suite.cases if case.handoff)
 
 
-def test_unified_cli_defaults_to_fixed_v3_and_ten_yuan_limit(monkeypatch) -> None:
+def test_unified_cli_defaults_to_fixed_v4_and_ten_yuan_limit(monkeypatch) -> None:
     monkeypatch.delenv("REPLY_AGENT_EVALUATION_DATASET_PATH", raising=False)
     monkeypatch.delenv("REPLY_AGENT_EVAL_MAX_COST_YUAN", raising=False)
     monkeypatch.setattr(sys, "argv", ["run_reply_agent_eval.py"])
 
     args = parse_args()
 
-    assert args.dataset.name == "reply_agent_eval_cases.v3.json"
+    assert args.dataset.name == "reply_agent_eval_cases.v4.json"
     assert args.max_cost_yuan == 10
     assert args.case_ids == ""
+
+
+def test_unified_v4_locks_confirmed_business_rulings() -> None:
+    suite = load_reply_agent_eval_suite()
+    by_source = {case.source_case_ids[0]: case for case in suite.cases}
+
+    evening = by_source["rag-faq-evening-water"].rag_case
+    assert "默认配330ml水冲泡" in evening.authoritative_facts[0].statement
+    assert "300ml" not in evening.rewrite.must_include
+
+    cold = by_source["rag-faq-cold-water"].rag_case
+    assert "水温不高于85℃" in cold.authoritative_facts[0].statement
+    assert "60–85℃热水" in cold.authoritative_facts[0].statement
+
+    night = by_source["rag-faq-night-shift"].rag_case
+    assert "晚A在计划睡眠前1至2小时" in night.authoritative_facts[0].statement
+
+    before_meal = by_source["rag-chat-before-meal"].rag_case
+    fact_text = before_meal.authoritative_facts[0].statement
+    assert "紧邻正餐前后喝也可以" in fact_text
+    assert "不属于随餐" not in fact_text
+
+    travel = by_source["rag-chat-travel-interruption"].rag_case
+    assert "28天服务期不会因为旅游中断自动顺延" in (
+        travel.authoritative_facts[0].statement
+    )
+
+    constipation = by_source["rag-chat-two-day-constipation"].rag_case
+    assert constipation.answer.response_mode == "clarify"
+    assert constipation.answer.required_fact_ids == ["chat-r09-clarify"]
+    assert constipation.answer.forbidden_fact_ids == ["chat-r09"]
+    assert constipation.retrieval.required_fact_ids == ["chat-r09"]
+
+    for source_id in ("rag-faq-low-impact-exercise", "rag-faq-sleep-adjustment"):
+        case = by_source[source_id].rag_case
+        assert case.authoritative_facts == []
+        assert case.retrieval.required_fact_ids == []
+        assert case.answer.required_fact_ids == []
 
 
 @pytest.mark.asyncio

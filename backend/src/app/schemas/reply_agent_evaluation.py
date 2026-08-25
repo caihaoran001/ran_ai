@@ -102,8 +102,9 @@ class ReplyAgentEvaluationSummary(StrictModel):
         "reply-agent-core-v1",
         "reply-agent-core-v2",
         "reply-agent-core-v3",
+        "reply-agent-core-v4",
     ]
-    dataset_version: Literal[1, 2, 3]
+    dataset_version: Literal[1, 2, 3, 4]
     model: str = Field(min_length=1, max_length=120)
     evaluation_framework: Literal["deepeval"] = "deepeval"
     evaluation_framework_version: str = Field(min_length=1, max_length=40)

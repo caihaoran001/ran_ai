@@ -113,8 +113,9 @@ class ReplyAgentEvalSuite(StrictModel):
         "reply-agent-core-v1",
         "reply-agent-core-v2",
         "reply-agent-core-v3",
+        "reply-agent-core-v4",
     ]
-    version: Literal[1, 2, 3]
+    version: Literal[1, 2, 3, 4]
     description: str = Field(min_length=1, max_length=1000)
     cases: list[ReplyAgentEvalCase] = Field(
         min_length=FIXED_CASE_COUNT,
@@ -164,7 +165,7 @@ def default_reply_agent_eval_path() -> Path:
         Path(__file__).resolve().parents[3]
         / "tests"
         / "fixtures"
-        / "reply_agent_eval_cases.v3.json"
+        / "reply_agent_eval_cases.v4.json"
     )
 
 

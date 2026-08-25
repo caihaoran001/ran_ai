@@ -336,10 +336,53 @@ def _new_rag_case(spec: dict, source_by_id: dict[str, RagEvalCase]) -> RagEvalCa
 def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
     """Apply unified-suite corrections without mutating historical RAG fixtures."""
     payload = case.model_dump(mode="json")
+    def _replace_fact(fact_id: str, statement: str) -> None:
+        source = next(
+            item for item in case.authoritative_facts if item.fact_id == fact_id
+        )
+        payload["authoritative_facts"] = [
+            {
+                "fact_id": source.fact_id,
+                "statement": statement,
+                "provenance": source.provenance,
+                "source_scope": source.source_scope,
+                "source_ids": source.source_ids,
+            }
+            if item.fact_id == fact_id
+            else item.model_dump(mode="json")
+            for item in case.authoritative_facts
+        ]
+
     if case.case_id == "rag-faq-cold-water":
         payload["history"] = [
             {"role": "user", "content": "早C、午B、晚A这三种我都已经开始用了。"}
         ]
+        _replace_fact(
+            "faq-f03",
+            (
+                "早C、午B、晚A可以用常温水或冷水冲泡，水温不高于85℃，"
+                "冷水与热水口感不同，更建议热水；加卡点钥匙时用60–85℃热水冲开；"
+                "经期更建议热水冲调。"
+            ),
+        )
+    elif case.case_id == "rag-faq-evening-water":
+        _replace_fact(
+            "faq-f02",
+            (
+                "晚A每次用1大刻度（等于3小刻度，约两瓶盖），也就是一标准份，"
+                "默认配330ml水冲泡，可按口感在250–330ml之间调整；按1小刻度冲时默认110ml，"
+                "半份配150–180ml。晚A在睡前1至2小时喝；水温控制在85℃以下。"
+            ),
+        )
+        payload["rewrite"]["must_include"] = ["晚A", "330ml", "水量"]
+    elif case.case_id == "rag-faq-night-shift":
+        _replace_fact(
+            "faq-f10",
+            (
+                "倒班时不要机械照搬白天钟点，应按清醒周期安排：早C在起床后的第一餐，"
+                "午B在清醒周期中段且与计划睡眠至少间隔8小时，晚A在计划睡眠前1至2小时。"
+            ),
+        )
     elif case.case_id == "rag-faq-noon-boundary":
         source = case.authoritative_facts[0]
         payload["authoritative_facts"] = [
@@ -364,8 +407,8 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
             {
                 "fact_id": source.fact_id,
                 "statement": (
-                    "午B应随正餐边吃边喝，不建议空腹单独喝；"
-                    "先喝完午B再开始吃正餐不属于随餐。"
+                    "早C和午B优先随餐饮用；条件不允许时，紧邻正餐前后喝也可以，"
+                    "不需要卡固定的分钟数。"
                 ),
                 "provenance": source.provenance,
                 "source_scope": source.source_scope,
@@ -377,6 +420,47 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
             "must_include": ["午B", "先喝完再吃正餐", "随餐边吃边喝"],
             "must_preserve_meanings": ["这个指上文已明确的午B"],
         }
+    elif case.case_id == "rag-chat-travel-interruption":
+        source = case.authoritative_facts[0]
+        payload["authoritative_facts"] = [
+            {
+                "fact_id": source.fact_id,
+                "statement": (
+                    f"{source.statement}28天服务期不会因为旅游中断自动顺延，"
+                    "需要延长服务窗口请走运营续服流程。"
+                ),
+                "provenance": source.provenance,
+                "source_scope": source.source_scope,
+                "source_ids": source.source_ids,
+            }
+        ]
+    elif case.case_id == "rag-chat-two-day-constipation":
+        source = case.authoritative_facts[0]
+        clarify_fact = {
+            "fact_id": "chat-r09-clarify",
+            "statement": (
+                "上文明确提到产品和作息混乱后出现两天未排便时，本轮只追问基础情况："
+                "这两天饮水、蔬菜和膳食纤维摄入怎么样？活动量、睡眠和产品使用节奏有没有变化？"
+                "不应直接给出调整方案，也不应附整套红旗清单。"
+            ),
+            "provenance": source.provenance,
+            "source_scope": source.source_scope,
+            "source_ids": source.source_ids,
+        }
+        payload["authoritative_facts"] = [
+            source.model_dump(mode="json"),
+            clarify_fact,
+        ]
+        payload["answer"] = {
+            "response_mode": "clarify",
+            "required_fact_ids": ["chat-r09-clarify"],
+            "forbidden_fact_ids": ["chat-r09"],
+        }
+    elif case.case_id in {"rag-faq-low-impact-exercise", "rag-faq-sleep-adjustment"}:
+        payload["authoritative_facts"] = []
+        payload["retrieval"]["required_fact_ids"] = []
+        payload["answer"]["required_fact_ids"] = []
+        payload["answer"]["forbidden_fact_ids"] = []
     return RagEvalCase.model_validate(payload)
 
 
@@ -812,13 +896,14 @@ def build_suite() -> ReplyAgentEvalSuite:
 
     return ReplyAgentEvalSuite.model_validate(
         {
-            "suite_id": "reply-agent-core-v3",
-            "version": 3,
+            "suite_id": "reply-agent-core-v4",
+            "version": 4,
             "description": (
                 "回复 Agent 统一固定题库：80 道唯一题，32 道产品知识检索，"
                 "48 道跳过检索并覆盖工具、澄清、沉默、授权和转人工；"
-                "v3 继承v2契约，并为随餐省略问题补齐午B指代上下文、"
-                "将必须事实收敛为单题所需的原子口径。"
+                "v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、"
+                "冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、"
+                "旅游中断不顺延服务期，无红旗便秘改为先澄清。"
             ),
             "cases": cases,
         }
@@ -834,7 +919,7 @@ def parse_args() -> argparse.Namespace:
             Path(__file__).resolve().parents[1]
             / "tests"
             / "fixtures"
-            / "reply_agent_eval_cases.v3.json"
+            / "reply_agent_eval_cases.v4.json"
         ),
     )
     return parser.parse_args()
