@@ -439,26 +439,31 @@ _PORTRAIT_OPTION_LABELS: dict[str, dict[str, str]] = {
         "晚上嘴馋、控制不住": "晚间嘴馋、控制不住",
         "作息乱、睡不好": "作息乱、睡不好",
         "白天脑子不清楚、专注度差": "清醒感与专注度差",
-        "腰腹部肥胖明显、身体发沉": "腰腹肥胖、身体发沉",
+        "腰腹明显变粗 / 身体发沉": "腰腹肥胖、身体发沉",
         "吃得不算多，但状态和体型都不理想": "食量不多但状态体型不佳",
         "情绪不稳、压力一大就容易乱": "情绪与压力易失控",
         "便秘、胀气、肠胃消化总是不舒服": "消化与排便不适",
         "没有明显健康问题，想进入更规律、更高能量的生活状态": "追求规律、高能量状态",
+        "白天精力和脑力状态下降，工作/做事不像以前那么利落": "白天精力和脑力状态下降",
     },
     "expected_change": {
         "白天更有精神": "白天更有精神",
+        "白天精力更稳，忙一天也不容易垮": "白天精力更稳",
         "晚上更容易入睡，不起夜，睡眠质量明显提高": "睡眠质量提高",
         "白天饥饿感更稳定": "饥饿感更稳定",
         "晚上不容易乱吃": "晚间不乱吃",
         "身体更轻盈、腰腹部维度缩减": "身体轻盈、腰腹缩减",
         "每天节律更稳定、情绪更稳": "节律与情绪更稳定",
         "脑子更清醒、专注更好": "清醒与专注改善",
+        "白天脑子更清醒，工作/做事效率更高": "清醒与专注改善",
         "饮食更容易控制": "饮食更易控制",
         "开始进入“可持续变好”的状态": "进入可持续变好状态",
         "体重体态更匀称，您也可以在“其他”选项填写您的体重和腰围数字管理目标（如X个月减重X公斤，减少XX厘米）": "体重体态更匀称",
+        "体重/腰围出现让我满意的变化（可在“其他”填写数字目标）": "体重体态更匀称",
     },
     "diet_pattern": {
-        "我执行的是排除型饮食，很多食物都主动不吃": "排除型饮食",
+        "我整体吃得比较家常，没有明显偏向": "家常饮食",
+        "我会主动戒掉很多类食物": "排除型饮食",
         "我以肉类 / 动物性食物为核心，种类很少": "动物性食物为主、种类少",
         "我在认真控碳，希望保持稳定燃脂状态": "控碳燃脂模式",
         "我追求低糖、少加工、蛋白优先、主食适量": "低糖少加工、蛋白优先",
@@ -473,6 +478,7 @@ _PORTRAIT_OPTION_LABELS: dict[str, dict[str, str]] = {
 _ORDERED_QUESTIONNAIRE_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "diet_pattern": ("长期饮食模式",),
     "sleep_quality": ("睡眠质量的主观评价",),
+    "occupation_class": ("职业/工作身份",),
 }
 
 # 群体画像维度元数据：画像端点与下钻端点共用，保证顺序/标签/分桶完全一致。
@@ -498,6 +504,12 @@ _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
         "description": "用户明确希望在本服务周期看到的变化；可多选，其他自由填写统一归入补充项。",
         "numeric": False,
         "multi_select": True,
+    },
+    {
+        "key": "occupation_class",
+        "label": "职业身份",
+        "description": "入营问卷中明确选择的主要职业/工作身份，用于观察人群结构。",
+        "numeric": False,
     },
     {
         "key": "diet_pattern",
@@ -823,6 +835,9 @@ async def _compute_case_portrait_labels(
             ),
             "expected_change": _questionnaire_portrait_labels(
                 fields, answers, "expected_change", "最希望 28 天后"
+            ),
+            "occupation_class": _single_questionnaire_portrait_label(
+                fields, answers, "occupation_class", "职业/工作身份"
             ),
             "diet_pattern": _single_questionnaire_portrait_label(
                 fields, answers, "diet_pattern", "长期饮食模式"

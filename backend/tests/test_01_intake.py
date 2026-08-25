@@ -46,6 +46,7 @@ from app.services.intake_generation import (
     _apply_shared_activity_frequency_to_documents,
     _apply_shared_activity_frequency_to_profile,
     _normalize_shared_activity_frequency,
+    _safety_model_readable_answers,
     _generated_daily_checkin_errors,
     _normalize_safety_factors,
     _resolve_management_band,
@@ -962,6 +963,50 @@ def test_document_model_input_excludes_review_state_and_operator_health_text():
     }
     assert "晚间收口" in document_answers
     assert "降压药" not in document_answers
+
+
+def test_default_v2_template_preserves_existing_keys_and_hides_new_answers():
+    fields = default_questionnaire_template("intake")["fields"]
+    keys = [str(field.get("key") or "") for field in fields]
+
+    assert len(fields) == 82
+    assert len(keys) == len(set(keys))
+    assert keys.count("CHECKBOX1774104915668mn0g9dxy") == 1
+    assert "CHECKBOX17776518759860wlspec" in keys
+    assert "RADIO17776518759861occnew" in keys
+    assert keys.index("SIMPLE1774699899282mnaahy8j") < keys.index(
+        "SIMPLE17776518759868srcopen"
+    )
+
+    hidden_keys = {
+        str(field.get("key") or "")
+        for field in fields
+        if field.get("safety_hidden") is True
+    }
+    assert len(hidden_keys) == 9
+    assert all(
+        next(field for field in fields if str(field.get("key") or "") == key).get(
+            "operator_only"
+        )
+        is True
+        for key in hidden_keys
+    )
+
+    answers = {
+        str(field.get("key") or ""): f"answer-{field.get('key')}"
+        for field in fields
+        if field.get("key")
+    }
+    health_key = "SIMPLE1774108071693mn0i515a"
+    health_answer = "正在服用降压药"
+    answers[health_key] = health_answer
+
+    safety_answers = _safety_model_readable_answers(fields, answers)
+    document_answers = _document_model_readable_answers(fields, answers)
+    assert health_answer in safety_answers
+    assert health_answer not in document_answers
+    assert all(f"answer-{key}" not in safety_answers for key in hidden_keys)
+    assert all(f"answer-{key}" not in document_answers for key in hidden_keys)
 
 
 def test_weight_units_stable_comfort_weight_and_waist_ratio_are_normalized():

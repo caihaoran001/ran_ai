@@ -25,6 +25,23 @@ from app.services.intake_facts import CUSTOM_ANSWER_LABEL, structured_answer_val
 from app.services.questionnaire_template import get_active_questionnaire_fields
 
 
+@pytest.fixture(autouse=True)
+async def default_intake_questionnaire_fields(monkeypatch):
+    """隔离本机数据库中可能存在的激活模板，保证画像断言跟随仓库默认模板。"""
+
+    from app.api.routes import dashboard
+    from app.services.questionnaire_template import default_questionnaire_template
+
+    async def _default_fields(session, template_key="intake"):
+        return default_questionnaire_template(template_key)["fields"]
+
+    monkeypatch.setattr(
+        dashboard,
+        "get_active_questionnaire_fields",
+        _default_fields,
+    )
+
+
 async def _create_portrait_case(
     db_session,
     *,
@@ -128,7 +145,7 @@ def test_questionnaire_portrait_option_order_preserves_template_order_and_aliase
         {
             "title": "哪一句最符合你的长期饮食模式？",
             "options": [
-                "我执行的是排除型饮食，很多食物都主动不吃",
+                "我会主动戒掉很多类食物",
                 "我追求低糖、少加工、蛋白优先、主食适量",
                 "我整体都比较乱，经常外卖、宵夜、炸物、酒精混着来",
             ],
@@ -302,6 +319,7 @@ async def test_population_portrait_endpoint_shape(admin_client):
         "customer_type",
         "main_need",
         "expected_change",
+        "occupation_class",
         "diet_pattern",
         "sleep_problem",
         "sleep_quality",
@@ -332,11 +350,13 @@ async def test_population_portrait_endpoint_keeps_questionnaire_order_for_ordere
 ):
     diet_key = "RADIO1774172399735mn1kft01"
     sleep_key = "RADIO1774107228737mn0hmypv"
+    occupation_key = "RADIO17776518759861occnew"
     first_answers = dict(cai_haoran_answers)
     first_answers.update(
         {
-            diet_key: "我执行的是排除型饮食，很多食物都主动不吃",
+            diet_key: "我会主动戒掉很多类食物",
             sleep_key: "很好",
+            occupation_key: "自己经营生意/公司/门店｜企业主、创业者、个体经营者、合伙人",
         }
     )
     last_answers = dict(cai_haoran_answers)
@@ -344,6 +364,7 @@ async def test_population_portrait_endpoint_keeps_questionnaire_order_for_ordere
         {
             diet_key: "我整体都比较乱，经常外卖、宵夜、炸物、酒精混着来",
             sleep_key: "很差",
+            occupation_key: "专业岗位｜医生、教师、律师、财务、科研、设计、技术等",
         }
     )
     await _create_portrait_case(db_session, intake_answers=first_answers)
@@ -355,6 +376,7 @@ async def test_population_portrait_endpoint_keeps_questionnaire_order_for_ordere
     distributions = {item["key"]: item for item in response.json()["distributions"]}
 
     diet_order = [
+        "家常饮食",
         "排除型饮食",
         "动物性食物为主、种类少",
         "控碳燃脂模式",
@@ -364,8 +386,23 @@ async def test_population_portrait_endpoint_keeps_questionnaire_order_for_ordere
         "饮食较乱、外卖宵夜等",
     ]
     sleep_order = ["很好", "还可以", "一般", "不太好", "很差"]
+    occupation_order = [
+        "自己经营生意/公司/门店｜企业主、创业者、个体经营者、合伙人",
+        "企业管理岗位｜部门负责人、经理/总监及以上、职业经理人",
+        "专业岗位｜医生、教师、律师、财务、科研、设计、技术等",
+        "公务员 / 事业单位 / 国企工作人员",
+        "销售 / 商务 / 客户服务等经常与人打交道的岗位",
+        "企业/机构普通职员",
+        "自由职业 / 自媒体 / 居家工作",
+        "一线服务 / 生产 / 物流 / 农业 / 体力工作",
+        "目前主要照顾家庭，暂未工作",
+        "学生",
+        "已退休",
+        "其他",
+    ]
     diet_labels = [item["label"] for item in distributions["diet_pattern"]["buckets"]]
     sleep_labels = [item["label"] for item in distributions["sleep_quality"]["buckets"]]
+    occupation_labels = [item["label"] for item in distributions["occupation_class"]["buckets"]]
 
     assert "排除型饮食" in diet_labels
     assert "饮食较乱、外卖宵夜等" in diet_labels
@@ -376,6 +413,9 @@ async def test_population_portrait_endpoint_keeps_questionnaire_order_for_ordere
     assert "很差" in sleep_labels
     assert [label for label in sleep_labels if label in sleep_order] == [
         label for label in sleep_order if label in sleep_labels
+    ]
+    assert [label for label in occupation_labels if label in occupation_order] == [
+        label for label in occupation_order if label in occupation_labels
     ]
 
 
@@ -533,8 +573,14 @@ async def test_population_portrait_includes_user_without_ai_profile(
     assert labels["health_domain"] == ["心血管"]
     assert labels["health_condition"] == ["高血压"]
     assert labels["allergy_category"] == ["食物过敏"]
-    assert labels["main_need"] == ["情绪与压力易失控"]
-    assert labels["expected_change"] == ["节律与情绪更稳定"]
+    assert labels["main_need"] == [
+        "情绪与压力易失控",
+        "白天精力和脑力状态下降",
+    ]
+    assert labels["expected_change"] == [
+        "节律与情绪更稳定",
+        "白天精力更稳",
+    ]
     assert labels["diet_pattern"] == "高碳饮食"
     assert labels["sleep_problem"] == ["睡眠时间很不固定"]
     assert labels["sleep_quality"] == "还可以"

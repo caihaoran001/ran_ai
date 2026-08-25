@@ -71,7 +71,7 @@ def structured_answer_values(
         }
         normalized: list[str] = []
         for value in values:
-            if value == "其他" or value.startswith(("其他：", "其他:")):
+            if value == "其他":
                 label = CUSTOM_ANSWER_LABEL
             elif options and value not in options:
                 label = CUSTOM_ANSWER_LABEL

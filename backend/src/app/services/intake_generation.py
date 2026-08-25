@@ -788,7 +788,7 @@ async def _generate_intake_analysis_package(
     submission: QuestionnaireSubmission,
 ) -> dict[str, object]:
     fields = await get_active_questionnaire_fields(session, "intake")
-    readable_answers = _readable_answers(fields, submission.answers_json)
+    readable_answers = _safety_model_readable_answers(fields, submission.answers_json)
     preliminary_facts = build_intake_fact_summary(fields, submission.answers_json)
     safety_factors = await _extract_safety_factors(
         ai=ai,
@@ -2045,4 +2045,22 @@ def _document_model_readable_answers(
         is_legacy_health_field = "健康情况" in title or "病史" in title
         if field.get("operator_only") is True or is_legacy_health_field:
             visible_answers.pop(key, None)
+    return _readable_answers(fields, visible_answers)
+
+
+def _safety_model_readable_answers(
+    fields: list[dict[str, Any]],
+    answers: dict[str, Any],
+) -> str:
+    """安全抽取保留健康原文，但排除只供运营统计的新增画像题。"""
+
+    visible_answers = {
+        key: value
+        for key, value in answers.items()
+        if not any(
+            str(field.get("key") or field.get("id") or "") == key
+            and field.get("safety_hidden") is True
+            for field in fields
+        )
+    }
     return _readable_answers(fields, visible_answers)
