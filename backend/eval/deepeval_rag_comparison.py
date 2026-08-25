@@ -45,6 +45,13 @@ from app.evaluation.answer_relevancy_calibration import (
     default_answer_relevancy_calibration_path,
     load_answer_relevancy_calibration_suite,
 )
+from app.evaluation.context_recall_calibration import (
+    assess_context_recall_calibration,
+    assess_two_stage_context_recall_calibration,
+    build_context_recall_calibration_pairs,
+    default_context_recall_calibration_path,
+    load_context_recall_calibration_suite,
+)
 from app.evaluation.faithfulness_calibration import (
     CALIBRATION_REPEAT_COUNT,
     SELECTION_CASE_COUNT,
@@ -57,6 +64,7 @@ from app.evaluation.faithfulness_calibration import (
 )
 from app.evaluation.rag_cases import load_rag_eval_suite
 from app.evaluation.rag_metric_calibration import (
+    render_atomic_retrieval_reference,
     select_stable_calibration_threshold,
 )
 
@@ -359,14 +367,24 @@ async def _run_calibration_items(
     needs_retrieval_context: bool,
     mock: bool,
     on_progress,
+    build_test_case=None,
 ) -> list[dict]:
     """Judge every (pair, repeat, side) exactly once; bounded by the shared
-    judge semaphore; results are reassembled in deterministic suite order."""
+    judge semaphore; results are reassembled in deterministic suite order.
+
+    Response-side metrics vary the reply between the two sides and share the
+    contexts; `build_test_case` lets a retrieval-side metric invert that and
+    vary the contexts instead."""
 
     async def one(pair, repeat_index: int, side: str):
         key = (pair.case_id, repeat_index, side)
         if mock:
             return key, (0.92 if side == "positive" else 0.31), None
+        if build_test_case is not None:
+            score, error = await _ascore(
+                _make_metric(metric_kind, judge), build_test_case(pair, side)
+            )
+            return key, score, error
         response = pair.positive_response if side == "positive" else pair.negative_response
         contexts = getattr(pair, "retrieved_contexts", None)
         retrieval_context = list(contexts) if needs_retrieval_context and contexts else None
@@ -594,6 +612,119 @@ async def run_faithfulness_calibration(judge: DeepSeekJudge, on_progress) -> dic
     }
 
 
+def _recall_test_case(pair, side: str) -> LLMTestCase:
+    """Mirror the production recall scorer exactly: the authoritative fact is
+    rendered as atomic clauses and passed as expected output, and only the
+    retrieval context differs between the two sides of a pair."""
+    reference = render_atomic_retrieval_reference([pair.reference])
+    contexts = pair.positive_contexts if side == "positive" else pair.negative_contexts
+    return LLMTestCase(
+        input=pair.user_input,
+        actual_output=reference,
+        retrieval_context=list(contexts),
+        expected_output=reference,
+    )
+
+
+async def run_context_recall_calibration(judge: DeepSeekJudge, on_progress) -> dict:
+    suite = load_context_recall_calibration_suite(
+        default_context_recall_calibration_path()
+    )
+    pairs = build_context_recall_calibration_pairs(suite)
+    items = await _run_calibration_items(
+        judge=judge,
+        metric_kind="context_recall",
+        pairs=pairs,
+        needs_retrieval_context=True,
+        mock=_MOCK_MODE,
+        on_progress=on_progress,
+        build_test_case=_recall_test_case,
+    )
+    scored = [
+        (item["case_id"], item["repeat_index"], item["positive_score"], item["negative_score"])
+        for item in items
+        if item["positive_score"] is not None and item["negative_score"] is not None
+    ]
+    phase_by_case = {pair.case_id: pair.phase for pair in pairs}
+    selection_runs, validation_runs = _stage_runs(scored, phase_by_case.get)
+    expected_total = len(pairs) * CALIBRATION_REPEAT_COUNT
+    missing = expected_total - len(scored)
+    base = {
+        "suite_id": suite.calibration_id,
+        "items": items,
+        "scored_pairs": f"{len(scored)}/{expected_total}",
+        "stability": _repeat_stability(items),
+        "baseline_threshold": BASELINE_THRESHOLDS["context_recall"],
+    }
+    complete = (
+        len(selection_runs) == CALIBRATION_REPEAT_COUNT
+        and all(len(p) == SELECTION_CASE_COUNT for p, _ in selection_runs)
+        and len(validation_runs) == CALIBRATION_REPEAT_COUNT
+        and all(len(p) == VALIDATION_CASE_COUNT for p, _ in validation_runs)
+    )
+    if not complete and missing > 2:
+        return {
+            **base,
+            "error": (
+                "too many unscored pairs for even degraded selection; "
+                f"scored={len(scored)} expected={expected_total}"
+            ),
+            "passed": None,
+            "selected_threshold": None,
+        }
+    if not complete:
+        return {
+            **base,
+            **_degraded_finalize(
+                selection_runs=selection_runs,
+                validation_runs=validation_runs,
+                assess_overall=assess_context_recall_calibration,
+                positives_all=[pos for _, _, pos, _ in scored],
+                negatives_all=[neg for _, _, _, neg in scored],
+            ),
+        }
+    two_stage = assess_two_stage_context_recall_calibration(
+        selection_runs=selection_runs,
+        validation_runs=validation_runs,
+    )
+    overall = None
+    if two_stage.selected_threshold is not None:
+        assessment = assess_context_recall_calibration(
+            [pos for _, _, pos, _ in scored],
+            [neg for _, _, _, neg in scored],
+            threshold=two_stage.selected_threshold,
+        )
+        overall = {
+            "auc": assessment.auc,
+            "paired_accuracy": assessment.paired_accuracy,
+            "positive_pass_rate": assessment.positive_pass_rate,
+            "negative_rejection_rate": assessment.negative_rejection_rate,
+            "mean_gap": assessment.mean_gap,
+            "passed": assessment.passed,
+            "failed_criteria": list(assessment.failed_criteria),
+        }
+    return {
+        **base,
+        "degraded": False,
+        "selected_threshold": two_stage.selected_threshold,
+        "threshold_rule": (
+            two_stage.threshold_selection.rule if two_stage.threshold_selection else None
+        ),
+        "threshold_interval": (
+            {
+                "lower_exclusive": two_stage.threshold_selection.lower_exclusive,
+                "upper_inclusive": two_stage.threshold_selection.upper_inclusive,
+                "safety_margin": two_stage.threshold_selection.safety_margin,
+            }
+            if two_stage.threshold_selection
+            else None
+        ),
+        "passed": two_stage.passed,
+        "failed_criteria": list(two_stage.failed_criteria),
+        "overall_assessment": overall,
+    }
+
+
 async def run_answer_relevancy_calibration(judge: DeepSeekJudge, on_progress) -> dict:
     suite = load_answer_relevancy_calibration_suite(default_answer_relevancy_calibration_path())
     pairs = build_answer_relevancy_calibration_pairs(suite)
@@ -798,8 +929,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dataset", type=Path, default=None)
     parser.add_argument(
-        "--stage", choices=("full", "calibration"), default="full",
-        help="full = main comparison + both calibrations; calibration = calibrations only",
+        "--stage", choices=("full", "calibration", "recall-calibration"), default="full",
+        help="full = main comparison + both calibrations; calibration = faithfulness"
+        " and answer relevancy only; recall-calibration = context recall only",
     )
     parser.add_argument(
         "--mock", action="store_true",
@@ -937,7 +1069,9 @@ def _run_reanalyze(args: argparse.Namespace) -> int:
 async def async_main(args: argparse.Namespace) -> int:
     global _MOCK_MODE
     _MOCK_MODE = bool(args.mock)
-    if _MOCK_MODE:
+    if _MOCK_MODE and args.stage == "full":
+        # Mock never has a source report to compare against; calibration stages
+        # keep whichever suite the caller asked for.
         args.stage = "calibration"
 
     if args.stage == "full":
@@ -957,9 +1091,12 @@ async def async_main(args: argparse.Namespace) -> int:
         source_cases = []
         expected_decisions = {}
 
+    run_id_prefix = {
+        "calibration": "deepeval-calibration",
+        "recall-calibration": "deepeval-recall-calibration",
+    }.get(args.stage, "deepeval-comparison")
     run_id = args.run_id or datetime.now(timezone.utc).strftime(
-        ("deepeval-calibration-%Y%m%dT%H%M%SZ" if args.stage == "calibration"
-         else "deepeval-comparison-%Y%m%dT%H%M%SZ")
+        f"{run_id_prefix}-%Y%m%dT%H%M%SZ"
     )
     run_dir = args.reports_root / run_id
     if run_dir.exists():
@@ -987,11 +1124,16 @@ async def async_main(args: argparse.Namespace) -> int:
         "dataset_id": source_summary.get("dataset_id"),
         "dataset_version": source_summary.get("dataset_version"),
         "budget": {"limit_yuan": args.budget_yuan},
-        "stage": ("main_comparison" if args.stage == "full" else "faithfulness_calibration"),
+        "stage": (
+            "context_recall_calibration"
+            if args.stage == "recall-calibration"
+            else ("main_comparison" if args.stage == "full" else "faithfulness_calibration")
+        ),
         "progress": {"done": 0},
         "main_comparison": None,
         "faithfulness_calibration": None,
         "answer_relevancy_calibration": None,
+        "context_recall_calibration": None,
         "error": None,
     }
     ledger = ComparisonLedger(settings, args.budget_yuan)
@@ -1016,27 +1158,32 @@ async def async_main(args: argparse.Namespace) -> int:
 
     exit_code = 0
     try:
-        if args.stage == "full":
-            main_result = await run_main_comparison(source_cases, expected_decisions, judge, main_progress)
-            main_result["summary"] = _summarize_comparison(main_result["per_case"])
-            state["main_comparison"] = main_result
-            state["stage"] = "faithfulness_calibration"
-            persist()
+        if args.stage == "recall-calibration":
+            state["context_recall_calibration"] = await run_context_recall_calibration(
+                judge,
+                lambda done, total: calibration_progress(
+                    done, total, "context_recall_calibration"
+                ),
+            )
         else:
+            if args.stage == "full":
+                main_result = await run_main_comparison(source_cases, expected_decisions, judge, main_progress)
+                main_result["summary"] = _summarize_comparison(main_result["per_case"])
+                state["main_comparison"] = main_result
             state["stage"] = "faithfulness_calibration"
             persist()
 
-        state["faithfulness_calibration"] = await run_faithfulness_calibration(
-            judge,
-            lambda done, total: calibration_progress(done, total, "faithfulness_calibration"),
-        )
-        state["stage"] = "answer_relevancy_calibration"
-        persist()
+            state["faithfulness_calibration"] = await run_faithfulness_calibration(
+                judge,
+                lambda done, total: calibration_progress(done, total, "faithfulness_calibration"),
+            )
+            state["stage"] = "answer_relevancy_calibration"
+            persist()
 
-        state["answer_relevancy_calibration"] = await run_answer_relevancy_calibration(
-            judge,
-            lambda done, total: calibration_progress(done, total, "answer_relevancy_calibration"),
-        )
+            state["answer_relevancy_calibration"] = await run_answer_relevancy_calibration(
+                judge,
+                lambda done, total: calibration_progress(done, total, "answer_relevancy_calibration"),
+            )
         final_status = "completed"
     except BudgetExceeded as exc:
         final_status = "stopped_budget"

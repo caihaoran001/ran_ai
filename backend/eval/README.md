@@ -80,6 +80,35 @@ DeepEval 判官最大输出默认 8,000 tokens，由 `DEEPEVAL_JUDGE_MAX_TOKENS`
 
 DeepEval 原生 Answer Relevancy 已用固定中文正负样本对照验证，但负例大量满分且轮间不稳定，无法选出可信门槛。因此它只展示诊断分数和理由，不参与通过判定。正式的回答质量观察项使用逐题注入“必须事实、禁止事实、预期回复方式和参考答案”的回答正确与完整度 GEval；该自定义指标完成独立校准前同样只观察、不作发布门槛。
 
+## 上下文召回中文校准
+
+召回门槛 `0.80` 与精确率门槛 `0.70` 是 RAGAS 时代沿用下来的产品默认值，从未按数据选线；
+忠实度 `0.8333` 则由真实批次 `deepeval-calibration-1011620-20260822T0725Z` 选出，
+证据已归档在 `docs/reviews/2026-08-25_忠实度门槛校准证据归档.md`。
+
+召回校准集 `tests/fixtures/rag_context_recall_calibration.v1.json` 补上其中一条：
+30 组（20 组选线 + 10 组独立验证），权威事实由生产 FAQ 正文浓缩改写，
+正例上下文是该事实所出自的真实检索块，负例上下文是同一次真实评测里话题相邻、
+但缺少至少一个必要子句的其他真实检索块（缺失类型分为口径冲突、部分覆盖、相邻话题）。
+真值逐条人工核对，不采用判官分数，避免用判官验证判官。
+
+校准只调判官，不跑回复 Agent、检索和 Embedding，一批 120 次判断官调用。零费用自检：
+
+```bash
+docker compose -f docker-compose.eval.yml run --rm --no-deps \
+  rag-recall-calibration --mock --run-id recall-calib-mock
+```
+
+真实校准会产生模型费用，必须得到当次明确授权后再运行（同一 `run_id` 不允许重复启动）：
+
+```bash
+docker compose -f docker-compose.eval.yml run --rm --no-deps \
+  rag-recall-calibration --budget-yuan 3
+```
+
+选出的门槛不会自动生效：需要人工确认选线与验证两阶段都通过后，
+再修改 `deepeval_eval.py` 的 `GATE_CONTEXT_RECALL` 并记录校准批次号。
+
 ## 回复忠实度中文校准
 
 DeepEval Faithfulness 已使用固定中文正负样本完成两轮校准，正式门槛为 `0.8333`；Context Recall 门槛为 `0.80`，Context Precision 门槛为 `0.70`。忠实度只比较最终回复与本轮召回内容，不把聊天前文当作事实依据。数字、单位、否定和条件方向由忠实度与回答正确完整度语义判断，不再从整段参考事实自动抽数字做逐字门禁。

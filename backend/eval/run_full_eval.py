@@ -10,6 +10,7 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.db.session import SessionLocal, engine
 from app.evaluation.rag_cases import RagEvalCase, load_rag_eval_suite
+from app.evaluation.rag_metric_calibration import render_atomic_retrieval_reference
 from app.schemas.rag_evaluation import (
     AnswerRelevancyPolicy,
     FaithfulnessPolicy,
@@ -190,13 +191,11 @@ def _reference(case: RagEvalCase) -> str:
 def _retrieval_reference(case: RagEvalCase) -> str:
     """Render retrieval truth as atomic clauses without changing answer truth."""
     required = set(case.retrieval.required_fact_ids)
-    clauses: list[str] = []
-    for fact in case.authoritative_facts:
-        if fact.fact_id not in required:
-            continue
-        normalized = fact.statement.replace("；", "\n").replace("。", "\n")
-        clauses.extend(item.strip(" 。；") for item in normalized.splitlines() if item.strip())
-    return "\n".join(f"- {item}" for item in clauses)
+    return render_atomic_retrieval_reference(
+        fact.statement
+        for fact in case.authoritative_facts
+        if fact.fact_id in required
+    )
 
 
 def _answer_fact_checks(

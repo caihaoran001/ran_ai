@@ -47,3 +47,14 @@ services:
       - ./backend/src:/app/src:ro
       - ./backend/tests/fixtures:/app/tests/fixtures:ro
       - ./diagnostics:/app/diagnostics
+
+  # Context-recall threshold calibration. Judge-only: it never runs the reply
+  # Agent, retrieval or embeddings, so one batch is 120 judge calls.
+  rag-recall-calibration:
+    extends:
+      service: rag-eval
+    entrypoint:
+      - /app/.venv/bin/python
+      - /app/eval/deepeval_rag_comparison.py
+      - --stage
+      - recall-calibration

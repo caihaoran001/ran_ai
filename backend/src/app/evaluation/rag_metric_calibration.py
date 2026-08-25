@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import ceil
 
@@ -41,6 +42,22 @@ class RagMetricThresholdSelection:
     upper_inclusive: float
     selected_threshold: float
     safety_margin: float
+
+
+def render_atomic_retrieval_reference(statements: Iterable[str]) -> str:
+    """Render retrieval truth as atomic clauses (atomic-clause-v2).
+
+    Shared by the formal RAG run and by the recall calibration so a calibrated
+    threshold always describes the same scoring input; a split rule that drifts
+    between the two would silently invalidate the selected gate.
+    """
+    clauses: list[str] = []
+    for statement in statements:
+        normalized = statement.replace("；", "\n").replace("。", "\n")
+        clauses.extend(
+            item.strip(" 。；") for item in normalized.splitlines() if item.strip()
+        )
+    return "\n".join(f"- {item}" for item in clauses)
 
 
 def select_stable_calibration_threshold(
