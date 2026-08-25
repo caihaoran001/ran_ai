@@ -115,6 +115,41 @@ def test_recall_test_case_varies_contexts_not_reply():
 
 
 @pytest.mark.asyncio
+async def test_judge_real_call_path_records_latency_without_network():
+    """20c815e added latency instrumentation to the judge but no `import time`,
+    so every real judgement raised NameError before reaching the API. Mock runs
+    never touch this path, which is why it stayed broken and invisible."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from eval import deepeval_rag_comparison as runner
+
+    settings = SimpleNamespace(
+        ai_base_url="http://localhost", ai_api_key="test", ai_model="test-model",
+        ai_timeout_seconds=5, ai_prompt_cost_per_1m_tokens=0.0,
+        ai_completion_cost_per_1m_tokens=0.0,
+        ai_prompt_cache_hit_cost_per_1m_tokens=0.0,
+        ai_premium_models="", ai_peak_price_multiplier=1,
+    )
+    judge = runner.DeepSeekJudge(
+        settings, runner.ComparisonLedger(settings, 1.0), asyncio.Semaphore(1)
+    )
+
+    class _Completions:
+        async def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
+                usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+            )
+
+    judge._async_client = SimpleNamespace(chat=SimpleNamespace(completions=_Completions()))
+
+    assert await judge._a_call("ping") == "{}"
+    assert judge._ledger.calls == 1
+    assert judge._ledger.call_log[0]["latency_ms"] >= 0
+
+
+@pytest.mark.asyncio
 async def test_mock_calibration_items_cover_every_pair_and_repeat():
     from eval import deepeval_rag_comparison as runner
 
