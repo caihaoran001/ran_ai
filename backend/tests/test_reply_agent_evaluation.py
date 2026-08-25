@@ -89,6 +89,129 @@ def test_generated_fixture_matches_builder_source() -> None:
     assert generated == persisted
 
 
+def test_unified_agent_stubs_match_runtime_tool_contracts() -> None:
+    suite = load_reply_agent_eval_suite()
+    by_id = {case.case_id: case.agent_case for case in suite.cases if case.agent_case}
+
+    def stub(case_id: str, tool_name: str) -> dict:
+        item = next(
+            item
+            for item in by_id[case_id].tool_stubs
+            if item.name == tool_name
+        )
+        return item.results[0]
+
+    yesterday = stub("RA-033", "get_recent_checkins")
+    assert set(yesterday) == {
+        "ok",
+        "days",
+        "offset",
+        "date_from",
+        "date_to",
+        "count",
+        "complete_checkin_days",
+        "has_more",
+        "next_offset",
+        "items",
+        "note",
+    }
+    assert set(yesterday["items"][0]) == {
+        "date",
+        "is_complete",
+        "counts_toward_complete_total",
+        "content",
+        "complete_items",
+        "general",
+        "personalized",
+    }
+
+    weight = stub("RA-034", "get_weight_trend")
+    assert set(weight) == {"ok", "days", "points", "delta_kg", "direction"}
+    assert set(weight["points"][0]) == {"date", "weight"}
+
+    delivery = stub("RA-036", "read_delivery_document")
+    assert set(delivery) == {
+        "ok",
+        "document_id",
+        "document_type",
+        "document_type_label",
+        "title",
+        "status",
+        "created_at",
+        "updated_at",
+        "readable",
+        "text_length",
+        "text",
+        "truncated",
+    }
+
+    group_file = stub("RA-038", "read_group_file")
+    assert set(group_file) == {
+        "ok",
+        "message_id",
+        "filename",
+        "parse_status",
+        "text",
+        "truncated",
+    }
+
+    preference_read = stub("RA-039", "get_checkin_followup_preferences")
+    preference_write = stub("RA-040", "update_checkin_followup_preferences")
+    assert set(preference_read) == {"ok", "preferences"}
+    assert set(preference_write) == {
+        "ok",
+        "updated_topics",
+        "enabled",
+        "preferences",
+    }
+    assert all(
+        set(item) == {"topic", "label", "enabled"}
+        for item in preference_read["preferences"] + preference_write["preferences"]
+    )
+
+    reminder_list = stub("RA-041", "list_group_reminders")
+    reminder_cancel = stub("RA-042", "cancel_group_reminder")
+    assert set(reminder_list) == {"ok", "pending", "count"}
+    assert set(reminder_cancel) == {"ok", "cancelled", "count"}
+    assert all(
+        set(item) == {"task_id", "remind_at", "content", "recurrence"}
+        for item in reminder_list["pending"] + reminder_cancel["cancelled"]
+    )
+
+    checklist = stub("RA-048", "set_checkin_checklist")
+    assert set(checklist) == {
+        "ok",
+        "updated",
+        "source_type",
+        "version_no",
+        "questions",
+    }
+    assert len(checklist["questions"]) == 5
+
+    web_search = stub("RA-059", "web_search_lifestyle")
+    assert set(web_search) == {"ok", "query", "answer", "results"}
+    assert all(
+        set(item) == {"title", "url", "content", "score"}
+        for item in web_search["results"]
+    )
+
+    analysis = stub("RA-061", "get_recent_checkins")
+    assert set(analysis) == set(yesterday)
+    assert len(analysis["items"]) == 7
+    assert sum("exercise" in item["general"] for item in analysis["items"]) == 4
+
+    lifecycle = by_id["RA-055"]
+    assert lifecycle.expected.required_facts == [
+        "本条没有明确 @ 机器人，所以不会执行服务周期修改"
+    ]
+
+    dehydration = next(case for case in suite.cases if case.case_id == "RA-080")
+    assert dehydration.handoff.expected_risk_codes == [
+        "physical_discomfort",
+        "other_risk",
+    ]
+
+
 def test_metric_routing_covers_retrieve_skip_tool_no_reply_and_handoff() -> None:
     suite = load_reply_agent_eval_suite()
 

@@ -2474,13 +2474,30 @@
             "results": [
               {
                 "ok": true,
+                "days": 1,
+                "offset": 0,
+                "date_from": "2026-08-20",
+                "date_to": "2026-08-20",
+                "count": 1,
+                "complete_checkin_days": 0,
+                "has_more": false,
+                "next_offset": null,
                 "items": [
                   {
                     "date": "2026-08-20",
-                    "completed_count": 3,
-                    "total_count": 5
+                    "is_complete": false,
+                    "counts_toward_complete_total": false,
+                    "content": "用户自述五项中已完成三项，其余两项留空。",
+                    "complete_items": [],
+                    "general": {
+                      "water": "达标",
+                      "sleep": "23:40",
+                      "exercise": "快走30分钟"
+                    },
+                    "personalized": []
                   }
-                ]
+                ],
+                "note": ""
               }
             ]
           }
@@ -2558,9 +2575,19 @@
             "results": [
               {
                 "ok": true,
-                "start_weight": 69.2,
-                "latest_weight": 68.4,
-                "change_kg": -0.8
+                "days": 7,
+                "points": [
+                  {
+                    "date": "2026-08-15",
+                    "weight": 69.2
+                  },
+                  {
+                    "date": "2026-08-21",
+                    "weight": 68.4
+                  }
+                ],
+                "delta_kg": -0.8,
+                "direction": "下降"
               }
             ]
           },
@@ -2736,8 +2763,16 @@
               {
                 "ok": true,
                 "document_id": 96,
+                "document_type": "stage_report",
+                "document_type_label": "阶段报告",
                 "title": "第14天阶段报告",
-                "summary": "睡眠稳定，午后困倦减少"
+                "status": "SENT",
+                "created_at": "2026-08-14T10:00:00+08:00",
+                "updated_at": "2026-08-14T10:00:00+08:00",
+                "readable": true,
+                "text_length": 12,
+                "text": "睡眠稳定，午后困倦减少。",
+                "truncated": false
               }
             ]
           }
@@ -2899,7 +2934,9 @@
                 "ok": true,
                 "message_id": 498,
                 "filename": "体检报告.pdf",
-                "content": "总胆固醇5.4 mmol/L，报告建议复查"
+                "parse_status": "ok",
+                "text": "总胆固醇5.4 mmol/L，报告建议复查。",
+                "truncated": false
               }
             ]
           }
@@ -2975,14 +3012,32 @@
             "results": [
               {
                 "ok": true,
-                "enabled": [
-                  "daily_checklist",
-                  "weight"
-                ],
-                "disabled": [
-                  "waist",
-                  "milestone_review",
-                  "contradiction"
+                "preferences": [
+                  {
+                    "topic": "daily_checklist",
+                    "label": "昨日五项打卡回顾",
+                    "enabled": true
+                  },
+                  {
+                    "topic": "weight",
+                    "label": "体重",
+                    "enabled": true
+                  },
+                  {
+                    "topic": "waist",
+                    "label": "腰围",
+                    "enabled": false
+                  },
+                  {
+                    "topic": "milestone_review",
+                    "label": "次晨空腹打卡提醒",
+                    "enabled": false
+                  },
+                  {
+                    "topic": "contradiction",
+                    "label": "打卡数据核对",
+                    "enabled": false
+                  }
                 ]
               }
             ]
@@ -3055,11 +3110,38 @@
             "results": [
               {
                 "ok": true,
-                "updated": [
+                "updated_topics": [
                   "weight",
                   "waist"
                 ],
-                "enabled": false
+                "enabled": false,
+                "preferences": [
+                  {
+                    "topic": "daily_checklist",
+                    "label": "昨日五项打卡回顾",
+                    "enabled": true
+                  },
+                  {
+                    "topic": "weight",
+                    "label": "体重",
+                    "enabled": false
+                  },
+                  {
+                    "topic": "waist",
+                    "label": "腰围",
+                    "enabled": false
+                  },
+                  {
+                    "topic": "milestone_review",
+                    "label": "次晨空腹打卡提醒",
+                    "enabled": true
+                  },
+                  {
+                    "topic": "contradiction",
+                    "label": "打卡数据核对",
+                    "enabled": true
+                  }
+                ]
               }
             ]
           }
@@ -3137,13 +3219,15 @@
             "results": [
               {
                 "ok": true,
-                "reminders": [
+                "pending": [
                   {
                     "task_id": 71,
+                    "remind_at": "2026-08-22T08:00:00+08:00",
                     "content": "称体重",
-                    "remind_at": "2026-08-22T08:00:00+08:00"
+                    "recurrence": "none"
                   }
-                ]
+                ],
+                "count": 1
               }
             ]
           }
@@ -3222,9 +3306,15 @@
             "results": [
               {
                 "ok": true,
-                "cancelled_task_ids": [
-                  71
-                ]
+                "cancelled": [
+                  {
+                    "task_id": 71,
+                    "remind_at": "2026-08-22T08:00:00+08:00",
+                    "content": "称体重",
+                    "recurrence": "none"
+                  }
+                ],
+                "count": 1
               }
             ]
           }
@@ -3646,7 +3736,16 @@
             "results": [
               {
                 "ok": true,
-                "version": 3
+                "updated": true,
+                "source_type": "staff_override",
+                "version_no": 3,
+                "questions": [
+                  "早C、午B、晚A",
+                  "饮水2升",
+                  "快走30分钟",
+                  "23点半前上床",
+                  "情绪评分1到5分"
+                ]
               }
             ]
           }
@@ -4184,7 +4283,7 @@
           "required_literals": [],
           "forbidden_literals": [],
           "required_facts": [
-            "不执行服务周期修改"
+            "本条没有明确 @ 机器人，所以不会执行服务周期修改"
           ],
           "forbidden_claims": [
             "已经开启续服"
@@ -4473,10 +4572,14 @@
             "results": [
               {
                 "ok": true,
+                "query": "上海 周末 摄影展",
+                "answer": "",
                 "results": [
                   {
                     "title": "城市光影摄影展",
-                    "date": "2026-08-20至2026-09-10"
+                    "url": "https://example.com/city-light-photo-exhibition",
+                    "content": "展期为2026-08-20至2026-09-10。",
+                    "score": 0.93
                   }
                 ]
               }
@@ -4657,17 +4760,126 @@
             "results": [
               {
                 "ok": true,
+                "days": 7,
+                "offset": 0,
+                "date_from": "2026-08-15",
+                "date_to": "2026-08-21",
+                "count": 7,
+                "complete_checkin_days": 0,
+                "has_more": false,
+                "next_offset": null,
                 "items": [
                   {
-                    "date": "2026-08-20",
-                    "completed_count": 4
+                    "date": "2026-08-15",
+                    "is_complete": false,
+                    "counts_toward_complete_total": false,
+                    "content": "当日打卡记录。",
+                    "complete_items": [],
+                    "general": {
+                      "product_schedule": "已完成",
+                      "water": "达标",
+                      "sleep": "23:30",
+                      "mood": "稳定",
+                      "exercise": "快走30分钟",
+                      "diet": "蛋白优先"
+                    },
+                    "personalized": []
+                  },
+                  {
+                    "date": "2026-08-16",
+                    "is_complete": false,
+                    "counts_toward_complete_total": false,
+                    "content": "当日打卡记录。",
+                    "complete_items": [],
+                    "general": {
+                      "product_schedule": "已完成",
+                      "water": "达标",
+                      "sleep": "23:30",
+                      "mood": "稳定",
+                      "exercise": "快走30分钟",
+                      "diet": "蛋白优先"
+                    },
+                    "personalized": []
+                  },
+                  {
+                    "date": "2026-08-17",
+                    "is_complete": false,
+                    "counts_toward_complete_total": false,
+                    "content": "当日打卡记录。",
+                    "complete_items": [],
+                    "general": {
+                      "product_schedule": "已完成",
+                      "water": "达标",
+                      "sleep": "23:30",
+                      "mood": "稳定",
+                      "exercise": "快走30分钟",
+                      "diet": "蛋白优先"
+                    },
+                    "personalized": []
+                  },
+                  {
+                    "date": "2026-08-18",
+                    "is_complete": false,
+                    "counts_toward_complete_total": false,
+                    "content": "当日打卡记录。",
+                    "complete_items": [],
+                    "general": {
+                      "product_schedule": "已完成",
+                      "water": "达标",
+                      "sleep": "23:30",
+                      "mood": "稳定",
+                      "exercise": "快走30分钟",
+                      "diet": "蛋白优先"
+                    },
+                    "personalized": []
                   },
                   {
                     "date": "2026-08-19",
-                    "completed_count": 2
+                    "is_complete": false,
+                    "counts_toward_complete_total": false,
+                    "content": "当日打卡记录。",
+                    "complete_items": [],
+                    "general": {
+                      "product_schedule": "已完成",
+                      "water": "达标",
+                      "sleep": "23:30",
+                      "mood": "稳定",
+                      "diet": "蛋白优先"
+                    },
+                    "personalized": []
+                  },
+                  {
+                    "date": "2026-08-20",
+                    "is_complete": false,
+                    "counts_toward_complete_total": false,
+                    "content": "当日打卡记录。",
+                    "complete_items": [],
+                    "general": {
+                      "product_schedule": "已完成",
+                      "water": "达标",
+                      "sleep": "23:30",
+                      "mood": "稳定",
+                      "diet": "蛋白优先"
+                    },
+                    "personalized": []
+                  },
+                  {
+                    "date": "2026-08-21",
+                    "is_complete": false,
+                    "counts_toward_complete_total": false,
+                    "content": "当日打卡记录。",
+                    "complete_items": [],
+                    "general": {
+                      "product_schedule": "已完成",
+                      "water": "达标",
+                      "sleep": "23:30",
+                      "mood": "稳定",
+                      "diet": "蛋白优先"
+                    },
+                    "personalized": []
                   }
                 ],
-                "most_missing": "运动"
+                "note": ""
               }
             ]
           }
@@ -6089,6 +6301,7 @@
         "history": [],
         "user_query": "昨天开始又吐又拉，人已经有点虚脱了。",
         "expected_risk_codes": [
+          "physical_discomfort",
           "other_risk"
         ],
         "requires_handoff": true,
