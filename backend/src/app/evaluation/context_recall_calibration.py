@@ -53,6 +53,12 @@ MIN_REFERENCE_CLAUSES = 3
 # verdicts for the same pair across repeats. Prohibitions belong to faithfulness
 # and answer correctness; retrieval recall only takes positive assertions.
 PROHIBITION_MARKERS = ("不要", "不应", "不得", "不可", "严禁", "禁止")
+# The FAQ "用户常见问法" field lists several phrasings of one question side by
+# side for retrieval matching; pasted verbatim it is not an utterance any user
+# produces. Recall never sends the question to the judge, but the precision
+# calibration reuses this suite and does, and a bundled question makes almost
+# any adjacent chunk look relevant.
+MAX_USER_INPUT_QUESTIONS = 1
 
 
 class StrictModel(BaseModel):
@@ -76,6 +82,12 @@ class ContextRecallCalibrationCase(StrictModel):
     def validate_pair(self) -> "ContextRecallCalibrationCase":
         if self.positive_contexts == self.negative_contexts:
             raise ValueError("recall calibration sides must use different contexts")
+        questions = self.user_input.count("？") + self.user_input.count("?")
+        if questions > MAX_USER_INPUT_QUESTIONS:
+            raise ValueError(
+                f"{self.case_id}: user_input must be one real utterance, not the "
+                f"FAQ's list of alternative phrasings ({questions} questions)"
+            )
         found = [marker for marker in PROHIBITION_MARKERS if marker in self.reference]
         if found:
             raise ValueError(
@@ -108,6 +120,9 @@ class ContextRecallCalibrationSuite(StrictModel):
         case_ids = [case.case_id for case in self.cases]
         if len(case_ids) != len(set(case_ids)):
             raise ValueError("calibration suite contains duplicate case_id")
+        questions = [case.user_input for case in self.cases]
+        if len(questions) != len(set(questions)):
+            raise ValueError("calibration suite reuses one user question across cases")
         phase_counts = Counter(case.phase for case in self.cases)
         if phase_counts != {
             "selection": SELECTION_CASE_COUNT,

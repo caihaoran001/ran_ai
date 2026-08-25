@@ -12,6 +12,7 @@ import json
 import pytest
 
 from app.evaluation.context_recall_calibration import (
+    MAX_USER_INPUT_QUESTIONS,
     MIN_REFERENCE_CLAUSES,
     PROHIBITION_MARKERS,
     SELECTION_CASE_COUNT,
@@ -58,6 +59,37 @@ def test_every_reference_states_retrievable_facts_not_prohibitions():
         offenders = [m for m in PROHIBITION_MARKERS if m in case.reference]
         assert not offenders, (case.case_id, offenders)
         assert len(split_atomic_clauses(case.reference)) >= MIN_REFERENCE_CLAUSES, case.case_id
+
+
+def test_user_questions_are_single_real_utterances_and_distinct():
+    """v2's first cut pasted the FAQ's alternative-phrasing list in as the user
+    question, which bundled three questions into one and left two cases sharing
+    the same text. Recall ignores the question; the precision calibration reuses
+    this suite and does not."""
+    suite = load_context_recall_calibration_suite()
+    questions = [case.user_input for case in suite.cases]
+    assert len(set(questions)) == len(questions)
+    for case in suite.cases:
+        marks = case.user_input.count("？") + case.user_input.count("?")
+        assert marks <= MAX_USER_INPUT_QUESTIONS, (case.case_id, case.user_input)
+
+
+def test_suite_rejects_bundled_user_question():
+    payload = json.loads(
+        default_context_recall_calibration_path().read_text(encoding="utf-8")
+    )
+    payload["cases"][0]["user_input"] = "一瓶盖等于几个刻度？一大刻度又是多少？够不够足量？"
+    with pytest.raises(ValueError, match="one real utterance"):
+        ContextRecallCalibrationSuite.model_validate(payload)
+
+
+def test_suite_rejects_shared_user_question():
+    payload = json.loads(
+        default_context_recall_calibration_path().read_text(encoding="utf-8")
+    )
+    payload["cases"][1]["user_input"] = payload["cases"][0]["user_input"]
+    with pytest.raises(ValueError, match="reuses one user question"):
+        ContextRecallCalibrationSuite.model_validate(payload)
 
 
 def test_suite_rejects_prohibition_reference():
