@@ -49,7 +49,13 @@ if __package__:
         install_rag_usage_collectors,
         usage_from_calls,
     )
-    from .deepeval_eval import DeepEvalScorer, DEEPEVAL_VERSION, GATE_FAITHFULNESS
+    from .deepeval_eval import (
+        DEEPEVAL_VERSION,
+        GATE_CONTEXT_PRECISION,
+        GATE_CONTEXT_RECALL,
+        GATE_FAITHFULNESS,
+        DeepEvalScorer,
+    )
     from .read_only import install_read_only_guards
     from .reporting import aggregate_summary, atomic_write_json, utc_now, write_report
     from .rewrite_harm import assess_rewrite_harm
@@ -64,7 +70,13 @@ else:
         install_rag_usage_collectors,
         usage_from_calls,
     )
-    from deepeval_eval import DeepEvalScorer, DEEPEVAL_VERSION, GATE_FAITHFULNESS
+    from deepeval_eval import (
+        DEEPEVAL_VERSION,
+        GATE_CONTEXT_PRECISION,
+        GATE_CONTEXT_RECALL,
+        GATE_FAITHFULNESS,
+        DeepEvalScorer,
+    )
     from read_only import install_read_only_guards
     from reporting import aggregate_summary, atomic_write_json, utc_now, write_report
     from rewrite_harm import assess_rewrite_harm
@@ -87,11 +99,15 @@ def _empty_metrics() -> RagEvaluationMetrics:
 
 def _gate_thresholds() -> dict[str, float]:
     """Fixed product gates for the DeepEval era. Answer relevancy and answer
-    correctness/completeness are observational until calibrated."""
+    correctness/completeness are observational until calibrated.
+
+    The values are re-exported from the scorer rather than restated: this copy
+    silently kept 0.80 after the recall gate was recalibrated to 0.75, so a
+    calibrated threshold would never have reached the gate check."""
     return {
-        "context_recall": 0.80,
-        "context_precision": 0.70,
-        "faithfulness": 0.8333,
+        "context_recall": GATE_CONTEXT_RECALL,
+        "context_precision": GATE_CONTEXT_PRECISION,
+        "faithfulness": GATE_FAITHFULNESS,
     }
 
 

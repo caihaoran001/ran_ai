@@ -31,8 +31,16 @@ else:
 
 
 DEEPEVAL_VERSION = "4.1.5"
-GATE_CONTEXT_RECALL = 0.80
+# Selected from labelled Chinese pairs, batch
+# recall-calib-v2-f8e0352-20260826T014102Z: the clean-gap rule put the usable
+# interval at (0.5, 1.0] and its midpoint at 0.75. The measured judge wobble is
+# one clause (max 0.25 between repeats), so 0.75 leaves a full clause of
+# headroom on a four-clause reference while 0.80 leaves none. The previous 0.80
+# was a pre-DeepEval product default and had never been selected from data.
+GATE_CONTEXT_RECALL = 0.75
+# Still an unvalidated pre-DeepEval default; calibrate before trusting it.
 GATE_CONTEXT_PRECISION = 0.70
+# Batch deepeval-calibration-1011620-20260822T0725Z.
 GATE_FAITHFULNESS = 0.8333
 
 ANSWER_CORRECTNESS_NAME = "回答正确与完整度"
