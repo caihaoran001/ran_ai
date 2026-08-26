@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -537,6 +538,51 @@ def test_v3_sandbox_results_match_runtime_tool_contracts() -> None:
         "tool_args_search_success_case"
     ] is True
     assert failures == []
+
+
+@pytest.mark.asyncio
+async def test_agent_cost_ledger_attributes_eight_concurrent_cases() -> None:
+    ledger = AgentEvaluationCostLedger(get_settings())
+    ready = 0
+    all_ready = asyncio.Event()
+
+    async def record(case_index: int) -> tuple[str, str | None]:
+        nonlocal ready
+        case_id = f"agent-concurrent-{case_index}"
+        metric_key = f"metric_{case_index}"
+        ledger.begin_case(case_id, 1)
+        ready += 1
+        if ready == 8:
+            all_ready.set()
+        await all_ready.wait()
+        ledger.record_judge_model_usage(
+            model="mock-judge",
+            response=SimpleNamespace(
+                model="mock-judge",
+                usage=SimpleNamespace(
+                    prompt_tokens=10,
+                    completion_tokens=2,
+                    total_tokens=12,
+                ),
+            ),
+            elapsed_ms=1,
+            success=True,
+            error_type=None,
+            metric_key=metric_key,
+        )
+        usage = ledger.case_usage(case_id, 1)
+        ledger.end_case(case_id, 1)
+        return case_id, usage.calls[0].metric_key
+
+    recorded = await asyncio.gather(*(record(index) for index in range(8)))
+
+    assert recorded == [
+        (f"agent-concurrent-{index}", f"metric_{index}") for index in range(8)
+    ]
+    assert all(
+        ledger.case_usage(f"agent-concurrent-{index}", 1).total.call_count == 1
+        for index in range(8)
+    )
 
 
 @pytest.mark.asyncio

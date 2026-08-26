@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -25,6 +26,52 @@ def _settings(**updates):
             "embedding_cost_per_1m_tokens": 0.5,
             **updates,
         }
+    )
+
+
+@pytest.mark.asyncio
+async def test_rag_cost_ledger_attributes_eight_concurrent_cases() -> None:
+    ledger = RagEvaluationCostLedger(_settings())
+    ready = 0
+    all_ready = asyncio.Event()
+
+    async def record(case_index: int) -> tuple[str, str | None]:
+        nonlocal ready
+        case_id = f"rag-concurrent-{case_index}"
+        stage_key = f"stage_{case_index}"
+        ledger.begin_case(case_id)
+        with ledger.stage(stage_key):
+            ready += 1
+            if ready == 8:
+                all_ready.set()
+            await all_ready.wait()
+            ledger.record_openai_response(
+                component="ragas_judge",
+                configured_model="mock-judge",
+                response=SimpleNamespace(
+                    model="mock-judge",
+                    usage=SimpleNamespace(
+                        prompt_tokens=10,
+                        completion_tokens=2,
+                        total_tokens=12,
+                    ),
+                ),
+                elapsed_ms=1,
+                success=True,
+                error_type=None,
+            )
+        usage = ledger.case_usage(case_id)
+        ledger.end_case(case_id)
+        return case_id, usage.calls[0].stage_key
+
+    recorded = await asyncio.gather(*(record(index) for index in range(8)))
+
+    assert recorded == [
+        (f"rag-concurrent-{index}", f"stage_{index}") for index in range(8)
+    ]
+    assert all(
+        ledger.case_usage(f"rag-concurrent-{index}").total.call_count == 1
+        for index in range(8)
     )
 
 

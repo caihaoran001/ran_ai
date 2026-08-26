@@ -6,6 +6,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -159,7 +160,7 @@ def summarize_case_usage(
 
 
 class RagEvaluationCostLedger:
-    """In-memory API-cost ledger for the sequential, isolated RAG evaluator."""
+    """In-memory API-cost ledger with task-local case/stage attribution."""
 
     def __init__(
         self,
@@ -169,8 +170,12 @@ class RagEvaluationCostLedger:
     ):
         self._settings = settings
         self._calls: dict[str, list[RagEvaluationModelCall]] = defaultdict(list)
-        self._active_case_id: str | None = None
-        self._stage_key: str | None = None
+        self._active_case_id: ContextVar[str | None] = ContextVar(
+            "rag_evaluation_active_case_id", default=None
+        )
+        self._stage_key_var: ContextVar[str | None] = ContextVar(
+            "rag_evaluation_stage_key", default=None
+        )
         self._call_log_path = call_log_path
         self._call_log_lock = threading.Lock()
         if self._call_log_path is not None:
@@ -178,28 +183,34 @@ class RagEvaluationCostLedger:
             self._call_log_path.write_text("", encoding="utf-8")
 
     def begin_case(self, case_id: str) -> None:
-        if self._active_case_id is not None:
+        active_case_id = self._active_case_id.get()
+        if active_case_id is not None:
             raise RuntimeError(
-                f"RAG 评测费用账本仍有未结束题目: {self._active_case_id}"
+                f"RAG 评测费用账本仍有未结束题目: {active_case_id}"
             )
-        self._active_case_id = case_id
+        self._active_case_id.set(case_id)
 
     def end_case(self, case_id: str) -> None:
-        if self._active_case_id != case_id:
+        active_case_id = self._active_case_id.get()
+        if active_case_id != case_id:
             raise RuntimeError(
-                f"RAG 评测费用账本题目不匹配: active={self._active_case_id}, end={case_id}"
+                f"RAG 评测费用账本题目不匹配: active={active_case_id}, end={case_id}"
             )
-        self._active_case_id = None
-        self._stage_key = None
+        self._active_case_id.set(None)
+        self._stage_key_var.set(None)
+
+    @property
+    def _stage_key(self) -> str | None:
+        """Current task's stage, kept readable for metric audit hooks."""
+        return self._stage_key_var.get()
 
     @contextmanager
     def stage(self, stage_key: str) -> Iterator[None]:
-        previous = self._stage_key
-        self._stage_key = stage_key
+        token = self._stage_key_var.set(stage_key)
         try:
             yield
         finally:
-            self._stage_key = previous
+            self._stage_key_var.reset(token)
 
     def case_usage(self, case_id: str) -> RagEvaluationCaseUsage:
         return usage_from_calls(list(self._calls[case_id]))
@@ -249,7 +260,8 @@ class RagEvaluationCostLedger:
         error_type: str | None,
         scenario: str,
     ) -> RagEvaluationModelCall:
-        if self._active_case_id is None:
+        active_case_id = self._active_case_id.get()
+        if active_case_id is None:
             raise RuntimeError("RAG 评测费用账本没有活动题目")
         if component == "embedding":
             rate = float(self._settings.embedding_cost_per_1m_tokens or 0)
@@ -266,7 +278,7 @@ class RagEvaluationCostLedger:
                 scenario=scenario,
                 prompt_cache_hit_tokens=prompt_cache_hit_tokens,
             )
-        calls = self._calls[self._active_case_id]
+        calls = self._calls[active_case_id]
         call = RagEvaluationModelCall(
             component=component,
             stage_key=self._stage_key,
@@ -298,7 +310,7 @@ class RagEvaluationCostLedger:
         payload = {
             "schema_version": 1,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
-            "case_id": self._active_case_id,
+            "case_id": self._active_case_id.get(),
             "component": call.component,
             "stage_key": call.stage_key,
             "call_index": call.call_index,

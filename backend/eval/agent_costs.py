@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from collections import defaultdict
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -116,7 +117,7 @@ def summarize_case_usage(
 
 
 class AgentEvaluationCostLedger:
-    """In-memory API ledger for the sequential, isolated Agent evaluator."""
+    """In-memory API ledger with task-local case attribution."""
 
     def __init__(
         self,
@@ -127,7 +128,9 @@ class AgentEvaluationCostLedger:
     ):
         self._settings = settings
         self._calls: dict[CaseKey, list[AgentEvaluationModelCall]] = defaultdict(list)
-        self._active_key: CaseKey | None = None
+        self._active_key: ContextVar[CaseKey | None] = ContextVar(
+            "agent_evaluation_active_key", default=None
+        )
         self._call_log_path = call_log_path
         self._call_log_lock = threading.Lock()
         if self._call_log_path is not None:
@@ -136,17 +139,19 @@ class AgentEvaluationCostLedger:
                 self._call_log_path.write_text("", encoding="utf-8")
 
     def begin_case(self, case_id: str, round_index: int) -> None:
-        if self._active_key is not None:
-            raise RuntimeError(f"评测成本账本仍有未结束题目: {self._active_key}")
-        self._active_key = (case_id, round_index)
+        active_key = self._active_key.get()
+        if active_key is not None:
+            raise RuntimeError(f"评测成本账本仍有未结束题目: {active_key}")
+        self._active_key.set((case_id, round_index))
 
     def end_case(self, case_id: str, round_index: int) -> None:
         expected = (case_id, round_index)
-        if self._active_key != expected:
+        active_key = self._active_key.get()
+        if active_key != expected:
             raise RuntimeError(
-                f"评测成本账本题目不匹配: active={self._active_key}, end={expected}"
+                f"评测成本账本题目不匹配: active={active_key}, end={expected}"
             )
-        self._active_key = None
+        self._active_key.set(None)
 
     def case_usage(self, case_id: str, round_index: int) -> AgentEvaluationCaseUsage:
         return usage_from_calls(list(self._calls[(case_id, round_index)]))
@@ -166,7 +171,8 @@ class AgentEvaluationCostLedger:
         metric_key: str | None,
         scenario: str,
     ) -> AgentEvaluationModelCall:
-        if self._active_key is None:
+        active_key = self._active_key.get()
+        if active_key is None:
             raise RuntimeError("评测成本账本没有活动题目")
         cost = None
         if prompt_tokens is not None and completion_tokens is not None:
@@ -178,7 +184,7 @@ class AgentEvaluationCostLedger:
                 model=model,
                 prompt_cache_hit_tokens=prompt_cache_hit_tokens,
             )
-        calls = self._calls[self._active_key]
+        calls = self._calls[active_key]
         call = AgentEvaluationModelCall(
             component=component,
             metric_key=metric_key,
@@ -206,7 +212,7 @@ class AgentEvaluationCostLedger:
     ) -> None:
         if self._call_log_path is None:
             return
-        case_id, round_index = self._active_key or (None, None)
+        case_id, round_index = self._active_key.get() or (None, None)
         payload = {
             "schema_version": 1,
             "recorded_at": datetime.now(timezone.utc).isoformat(),

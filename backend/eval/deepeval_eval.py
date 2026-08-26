@@ -155,6 +155,9 @@ class _JudgeModel:
         # 原始响应仍完整保留在 calls.jsonl，后续还会通过 schema 校验。
         return (getattr(message, "reasoning_content", None) or "").strip()
 
+    async def close(self) -> None:
+        await self._client.close()
+
 
 def _parse_json_dict(raw: str) -> dict[str, Any]:
     text = raw.strip()
@@ -226,6 +229,7 @@ class DeepEvalScorer:
         judge = _JudgeModel(
             settings, cost_ledger, asyncio.Semaphore(max(1, max_concurrency))
         )
+        self._judge = judge
         bridge = _DeepEvalJudgeBridge(judge)
         common = {"model": bridge, "include_reason": True, "async_mode": True}
         self._context_recall = ContextualRecallMetric(
@@ -240,6 +244,9 @@ class DeepEvalScorer:
             self._answer_relevancy = AnswerRelevancyMetric(threshold=0.80, **common)
         self._include_answer_correctness = include_answer_correctness
         self._bridge = bridge
+
+    async def close(self) -> None:
+        await self._judge.close()
 
     def _cost_stage(self, stage_key: str):
         ledger = self._ledger

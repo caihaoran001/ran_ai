@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from collections import Counter
@@ -21,7 +22,9 @@ from eval.build_reply_agent_suite import build_suite
 from eval.reanalyze_reply_agent_report import async_main as reanalyze_main
 from eval.run_full_eval import _mock_cases as mock_rag_cases
 from eval.run_reply_agent_eval import (
+    REAL_CASE_CONCURRENCY,
     _base_summary,
+    _run_case_batch,
     adapt_rag_result,
     aggregate_summary,
     async_main,
@@ -319,6 +322,74 @@ def test_unified_cli_defaults_to_fixed_v4_and_ten_yuan_limit(monkeypatch) -> Non
     assert args.dataset.name == "reply_agent_eval_cases.v4.json"
     assert args.max_cost_yuan == 10
     assert args.case_ids == ""
+
+
+@pytest.mark.asyncio
+async def test_real_case_batch_uses_exactly_eight_workers() -> None:
+    cases = list(range(24))
+    results: list[int] = []
+    active = 0
+    peak_active = 0
+    first_wave_ready = asyncio.Event()
+    progress_counts: list[int] = []
+
+    async def run_case(case: int) -> int:
+        nonlocal active, peak_active
+        active += 1
+        peak_active = max(peak_active, active)
+        if active == REAL_CASE_CONCURRENCY:
+            first_wave_ready.set()
+        await first_wave_ready.wait()
+        await asyncio.sleep(0)
+        active -= 1
+        return case
+
+    async def progress(current: list[int]) -> None:
+        progress_counts.append(len(current))
+
+    await _run_case_batch(
+        cases,
+        run_case=run_case,
+        results=results,
+        on_progress=progress,
+    )
+
+    assert REAL_CASE_CONCURRENCY == 8
+    assert peak_active == 8
+    assert sorted(results) == cases
+    assert progress_counts == list(range(1, 25))
+
+
+@pytest.mark.asyncio
+async def test_real_case_batch_stops_new_work_after_cost_gate() -> None:
+    cases = list(range(20))
+    results: list[int] = []
+    started: list[int] = []
+    first_wave_ready = asyncio.Event()
+
+    async def run_case(case: int) -> int:
+        started.append(case)
+        if len(started) == REAL_CASE_CONCURRENCY:
+            first_wave_ready.set()
+        await first_wave_ready.wait()
+        await asyncio.sleep(0)
+        return case
+
+    async def cost_gate(_current: list[int]) -> None:
+        raise RuntimeError("统一评测已达到费用上限")
+
+    with pytest.raises(RuntimeError, match="已达到费用上限"):
+        await _run_case_batch(
+            cases,
+            run_case=run_case,
+            results=results,
+            on_progress=cost_gate,
+        )
+
+    # 已在途的 8 道允许收尾并进入费用汇总，但不会领取第 9 道。
+    assert len(started) == 8
+    assert sorted(started) == list(range(8))
+    assert sorted(results) == list(range(8))
 
 
 def test_unified_v4_locks_confirmed_business_rulings() -> None:

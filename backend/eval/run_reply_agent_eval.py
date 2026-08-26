@@ -5,7 +5,7 @@ import asyncio
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable, TypeVar
 
 from app.core.config import get_settings
 from app.db.session import engine
@@ -38,6 +38,11 @@ from app.schemas.reply_agent_evaluation import (
 )
 from app.services.message_insight_service import analyze_message_insight
 from app.services.ranren_ai.engine import _requires_health_handoff
+
+
+REAL_CASE_CONCURRENCY = 8
+TCase = TypeVar("TCase")
+TResult = TypeVar("TResult")
 
 if __package__:
     from .agent_costs import AgentEvaluationCostLedger, install_agent_usage_collector
@@ -958,6 +963,62 @@ async def _mock_cases_for_suite(
     return results
 
 
+async def _run_case_batch(
+    cases: list[TCase],
+    *,
+    run_case: Callable[[TCase], Awaitable[TResult]],
+    results: list[TResult],
+    on_progress,
+    max_concurrency: int = REAL_CASE_CONCURRENCY,
+) -> None:
+    """Run independent cases with a fixed worker pool and one progress writer.
+
+    A worker only takes a new case after the previous result has been persisted.
+    If the cost gate or a case raises, no new cases start; already-running cases
+    are allowed to finish so their calls remain attributable in the report.
+    """
+    if not cases:
+        return
+    worker_count = min(max(1, max_concurrency), len(cases))
+    next_index = 0
+    stopped = False
+    first_error: Exception | None = None
+    state_lock = asyncio.Lock()
+    progress_lock = asyncio.Lock()
+
+    async def worker() -> None:
+        nonlocal next_index, stopped, first_error
+        while True:
+            async with state_lock:
+                if stopped or next_index >= len(cases):
+                    return
+                case = cases[next_index]
+                next_index += 1
+            try:
+                result = await run_case(case)
+            except Exception as exc:  # stop scheduling, preserve in-flight evidence
+                async with state_lock:
+                    stopped = True
+                    if first_error is None:
+                        first_error = exc
+                return
+
+            async with progress_lock:
+                results.append(result)
+                try:
+                    await on_progress(results)
+                except Exception as exc:
+                    async with state_lock:
+                        stopped = True
+                        if first_error is None:
+                            first_error = exc
+                    return
+
+    await asyncio.gather(*(worker() for _ in range(worker_count)))
+    if first_error is not None:
+        raise first_error
+
+
 async def _real_cases_for_suite(
     suite: ReplyAgentEvalSuite,
     *,
@@ -975,12 +1036,15 @@ async def _real_cases_for_suite(
     )
     restore_rag = install_rag_usage_collectors(rag_ledger)
     try:
-        scorer = DeepEvalScorer(settings, cost_ledger=rag_ledger)
-        for case in suite.cases:
+        async def run_rag_or_handoff_case(
+            case: ReplyAgentEvalCase,
+        ) -> ReplyAgentEvaluationCaseResult:
             if case.rag_case:
                 source_id = case.rag_case.case_id
                 rag_ledger.begin_case(source_id)
+                scorer: DeepEvalScorer | None = None
                 try:
+                    scorer = DeepEvalScorer(settings, cost_ledger=rag_ledger)
                     source_result = await _evaluate_real_case(
                         case.rag_case,
                         scorer=scorer,
@@ -992,29 +1056,37 @@ async def _real_cases_for_suite(
                         cost_ledger=rag_ledger,
                     )
                     source_result.usage = rag_ledger.case_usage(source_id)
-                    results.append(adapt_rag_result(case, source_result))
+                    return adapt_rag_result(case, source_result)
                 finally:
-                    rag_ledger.end_case(source_id)
-                await on_progress(results)
-            elif case.handoff:
-                source_id = case.source_case_ids[0]
-                rag_ledger.begin_case(source_id)
-                try:
-                    analysis = await analyze_message_insight(
-                        source="chat_message",
-                        content=case.handoff.user_query,
-                        context={
-                            "current_message": case.handoff.user_query,
-                            "recent_user_messages": case.handoff.history,
-                        },
-                    )
-                    usage = rag_ledger.case_usage(source_id).model_dump(mode="json")
-                    results.append(
-                        adapt_handoff_result(case, analysis=analysis, usage=usage)
-                    )
-                finally:
-                    rag_ledger.end_case(source_id)
-                await on_progress(results)
+                    try:
+                        if scorer is not None:
+                            await scorer.close()
+                    finally:
+                        rag_ledger.end_case(source_id)
+
+            assert case.handoff is not None
+            source_id = case.source_case_ids[0]
+            rag_ledger.begin_case(source_id)
+            try:
+                analysis = await analyze_message_insight(
+                    source="chat_message",
+                    content=case.handoff.user_query,
+                    context={
+                        "current_message": case.handoff.user_query,
+                        "recent_user_messages": case.handoff.history,
+                    },
+                )
+                usage = rag_ledger.case_usage(source_id).model_dump(mode="json")
+                return adapt_handoff_result(case, analysis=analysis, usage=usage)
+            finally:
+                rag_ledger.end_case(source_id)
+
+        await _run_case_batch(
+            [case for case in suite.cases if case.rag_case or case.handoff],
+            run_case=run_rag_or_handoff_case,
+            results=results,
+            on_progress=on_progress,
+        )
     finally:
         restore_rag()
 
@@ -1023,25 +1095,38 @@ async def _real_cases_for_suite(
         call_log_path=run_dir / "calls.jsonl",
         reset_call_log=False,
     )
-    judge = AgentQualityJudge(settings, mock=False, cost_ledger=agent_ledger)
     restore_agent = install_agent_usage_collector(agent_ledger)
     try:
-        for case in suite.cases:
-            if not case.agent_case:
-                continue
-            source_result = await real_agent_result(
-                case=case.agent_case,
-                round_index=1,
-                settings=settings,
-                judge=judge,
+        async def run_agent_case(
+            case: ReplyAgentEvalCase,
+        ) -> ReplyAgentEvaluationCaseResult:
+            assert case.agent_case is not None
+            judge = AgentQualityJudge(
+                settings,
+                mock=False,
                 cost_ledger=agent_ledger,
-                knowledge_query="",
             )
-            results.append(adapt_agent_result(case, source_result))
-            await on_progress(results)
+            try:
+                source_result = await real_agent_result(
+                    case=case.agent_case,
+                    round_index=1,
+                    settings=settings,
+                    judge=judge,
+                    cost_ledger=agent_ledger,
+                    knowledge_query="",
+                )
+                return adapt_agent_result(case, source_result)
+            finally:
+                await judge.close()
+
+        await _run_case_batch(
+            [case for case in suite.cases if case.agent_case],
+            run_case=run_agent_case,
+            results=results,
+            on_progress=on_progress,
+        )
     finally:
         restore_agent()
-        await judge.close()
     return sorted(results, key=lambda item: item.case_id)
 
 
