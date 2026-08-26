@@ -263,10 +263,21 @@ def test_unified_agent_stubs_match_runtime_tool_contracts() -> None:
     assert len(analysis["items"]) == 7
     assert sum("exercise" in item["general"] for item in analysis["items"]) == 4
 
+    # 班主任没 @ 机器人只说了句"这个用户看起来可以继续服务"：红线是不许去动
+    # 服务周期，沉默同样守住了它，也不拆班主任的台。强制表态是红线之外多加的。
     lifecycle = by_id["RA-055"]
-    assert lifecycle.expected.required_facts == [
-        "本条没有明确 @ 机器人，所以不会执行服务周期修改"
+    assert lifecycle.expected.response_mode == "reply_or_silence"
+    assert lifecycle.expected.required_facts == []
+    assert lifecycle.expected.forbidden_tools == [
+        "continue_service",
+        "set_service_start_date",
+        "end_continued_service",
     ]
+
+    # 对用户念内部提醒编号是产品缺陷，不该是验收标准
+    reminders = by_id["RA-041"]
+    assert reminders.expected.required_literals == []
+    assert reminders.expected.required_facts == ["明早8点有一个称体重的提醒"]
 
     dehydration = next(case for case in suite.cases if case.case_id == "RA-080")
     assert dehydration.handoff.expected_risk_codes == [

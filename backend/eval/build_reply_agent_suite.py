@@ -942,6 +942,17 @@ def _current_agent_contract_case(case):
         payload["tool_stubs"] = AGENT_TOOL_STUB_CONTRACT_OVERRIDES[case_id]
     if case_id in AGENT_EXPECTED_FACT_OVERRIDES:
         payload["expected"]["required_facts"] = AGENT_EXPECTED_FACT_OVERRIDES[case_id]
+    if case_id == "agent-lifecycle-no-mention":
+        # 班主任没 @ 机器人，只说了句"这个用户看起来可以继续服务"。红线是不许去
+        # 动服务周期；沉默同样守住了这条线，而且不拆班主任的台。原来强制它开口
+        # 表态，是在红线之外多加的要求。
+        payload["expected"]["response_mode"] = "reply_or_silence"
+        payload["expected"]["required_facts"] = []
+    if case_id == "agent-list-reminders":
+        # 原来硬性要求回复里出现"71"这个内部提醒编号。对用户念内部编号是产品
+        # 缺陷，照着改反而把产品做坏；用户要知道的是"什么时候提醒什么事"。
+        payload["expected"]["required_literals"] = []
+        payload["expected"]["required_facts"] = ["明早8点有一个称体重的提醒"]
     return type(case).model_validate(payload)
 
 

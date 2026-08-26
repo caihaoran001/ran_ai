@@ -170,7 +170,10 @@ class AgentExpectedToolCall(StrictModel):
 
 
 class AgentCaseExpected(StrictModel):
-    response_mode: Literal["reply", "clarify", "no_reply"]
+    # reply_or_silence：这一轮的红线是"不许动手"，开口说明和保持沉默都满足它。
+    # RA-055 就是这个形状——班主任没 @ 机器人只说了句"这个用户看起来可以继续
+    # 服务"，不回复既没有风险也不拆班主任的台，强制它表态才是多出来的要求。
+    response_mode: Literal["reply", "clarify", "no_reply", "reply_or_silence"]
     required_tools: list[AgentExpectedToolCall] = Field(default_factory=list)
     forbidden_tools: list[str] = Field(default_factory=list)
     allowed_additional_tools: list[str] = Field(default_factory=list)

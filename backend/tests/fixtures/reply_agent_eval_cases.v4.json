@@ -3334,12 +3334,10 @@
           "forbidden_tools": [],
           "allowed_additional_tools": [],
           "allow_additional_tools": false,
-          "required_literals": [
-            "71"
-          ],
+          "required_literals": [],
           "forbidden_literals": [],
           "required_facts": [
-            "有一个明早8点称体重的提醒，编号71"
+            "明早8点有一个称体重的提醒"
           ],
           "forbidden_claims": [
             "当前没有提醒"
@@ -4359,7 +4357,7 @@
         "knowledge_hit_count": null,
         "tool_stubs": [],
         "expected": {
-          "response_mode": "reply",
+          "response_mode": "reply_or_silence",
           "required_tools": [],
           "forbidden_tools": [
             "continue_service",
@@ -4370,9 +4368,7 @@
           "allow_additional_tools": false,
           "required_literals": [],
           "forbidden_literals": [],
-          "required_facts": [
-            "本条没有明确 @ 机器人，所以不会执行服务周期修改"
-          ],
+          "required_facts": [],
           "forbidden_claims": [
             "已经开启续服"
           ],
