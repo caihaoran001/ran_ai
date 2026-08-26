@@ -14,7 +14,6 @@ import pytest
 from app.evaluation.context_recall_calibration import (
     MAX_USER_INPUT_QUESTIONS,
     MIN_REFERENCE_CLAUSES,
-    PROHIBITION_MARKERS,
     SELECTION_CASE_COUNT,
     VALIDATION_CASE_COUNT,
     ContextRecallCalibrationSuite,
@@ -24,7 +23,9 @@ from app.evaluation.context_recall_calibration import (
     load_context_recall_calibration_suite,
 )
 from app.evaluation.rag_metric_calibration import (
+    PROHIBITION_MARKERS,
     render_atomic_retrieval_reference,
+    render_atomic_retrieval_reference_from_statements,
     split_atomic_clauses,
 )
 
@@ -134,7 +135,7 @@ def test_suite_rejects_identical_sides():
 
 
 def test_atomic_reference_rendering_splits_clauses_like_production():
-    rendered = render_atomic_retrieval_reference(
+    rendered = render_atomic_retrieval_reference_from_statements(
         ["午B随午餐前后饮用，尽量下午两点前完成；超过时间当天跳过。晚A照常。"]
     )
     assert rendered.splitlines() == [
@@ -142,6 +143,17 @@ def test_atomic_reference_rendering_splits_clauses_like_production():
         "- 超过时间当天跳过",
         "- 晚A照常",
     ]
+
+
+def test_pre_split_clauses_render_identically_to_split_statements():
+    """The formal suite may state its retrieval clauses explicitly, so both
+    paths must reach the judge in the same shape — a rendering that differed
+    would stop the calibrated gate from describing the scored input."""
+    statement = "午B随午餐前后饮用，尽量下午两点前完成；超过时间当天跳过。晚A照常。"
+
+    assert render_atomic_retrieval_reference(
+        split_atomic_clauses(statement)
+    ) == render_atomic_retrieval_reference_from_statements([statement])
 
 
 def test_two_stage_selection_picks_midpoint_and_locks_validation():

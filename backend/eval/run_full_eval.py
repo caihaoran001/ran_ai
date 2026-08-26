@@ -9,7 +9,11 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal, engine
-from app.evaluation.rag_cases import RagEvalCase, load_rag_eval_suite
+from app.evaluation.rag_cases import (
+    RagEvalCase,
+    load_rag_eval_suite,
+    retrieval_clauses_for,
+)
 from app.evaluation.rag_metric_calibration import render_atomic_retrieval_reference
 from app.schemas.rag_evaluation import (
     AnswerRelevancyPolicy,
@@ -205,12 +209,18 @@ def _reference(case: RagEvalCase) -> str:
 
 
 def _retrieval_reference(case: RagEvalCase) -> str:
-    """Render retrieval truth as atomic clauses without changing answer truth."""
+    """Render retrieval truth as atomic clauses without changing answer truth.
+
+    Prohibitions stay in `statement` for answer correctness but never reach this
+    reference: recall and precision ask what the retrieved chunks support, and no
+    chunk asserts the absence of a wrong framing.
+    """
     required = set(case.retrieval.required_fact_ids)
     return render_atomic_retrieval_reference(
-        fact.statement
+        clause
         for fact in case.authoritative_facts
         if fact.fact_id in required
+        for clause in retrieval_clauses_for(fact)
     )
 
 

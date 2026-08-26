@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.evaluation.rag_cases import retrieval_clauses_for
+from app.evaluation.rag_metric_calibration import find_prohibition_clauses
 from app.evaluation.reply_agent_cases import (
     REQUIRED_RETRIEVAL_FAMILIES,
     load_reply_agent_eval_suite,
@@ -81,6 +83,43 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
         "早C和午B优先随餐饮用；条件不允许时，紧邻正餐前后喝也可以，"
         "不需要卡固定的分钟数。"
     )
+
+
+def test_every_recall_gated_case_scores_on_retrievable_clauses_only() -> None:
+    """The 32 recall-gated cases are what the calibrated 0.75 gate judges. A
+    prohibition among their clauses has no retrievable truth, so the score it
+    produces is not reproducible — 15 of them carried one before this contract."""
+    suite = load_reply_agent_eval_suite()
+
+    gated = 0
+    offenders: dict[str, list[str]] = {}
+    for case in suite.cases:
+        rag_case = case.rag_case
+        if not rag_case or not rag_case.retrieval.required_fact_ids:
+            continue
+        gated += 1
+        fact_by_id = {fact.fact_id: fact for fact in rag_case.authoritative_facts}
+        for fact_id in rag_case.retrieval.required_fact_ids:
+            clauses = retrieval_clauses_for(fact_by_id[fact_id])
+            assert clauses, f"{case.case_id}: recall has no clause to score"
+            found = find_prohibition_clauses(clauses)
+            if found:
+                offenders[f"{case.case_id}:{fact_id}"] = found
+
+    assert gated == 32
+    assert offenders == {}
+
+
+def test_recall_gated_prohibitions_survive_for_answer_scoring() -> None:
+    suite = load_reply_agent_eval_suite()
+    by_id = {case.case_id: case for case in suite.cases}
+
+    noon_fact = by_id["RA-005"].rag_case.authoritative_facts[0]
+    assert "不要补喝" in noon_fact.statement
+    assert noon_fact.retrieval_clauses == [
+        "午B超过下午2点当天跳过",
+        "当天的晚A照常按原计划进行",
+    ]
 
 
 def test_generated_fixture_matches_builder_source() -> None:

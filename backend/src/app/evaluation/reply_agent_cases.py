@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.evaluation.agent_cases import AgentEvalCase
-from app.evaluation.rag_cases import RagEvalCase
+from app.evaluation.rag_cases import RagEvalCase, validate_retrieval_clause_contract
 
 
 FIXED_CASE_COUNT = 80
@@ -91,6 +91,8 @@ class ReplyAgentEvalCase(StrictModel):
             raise ValueError(
                 "rag payload retrieval decision disagrees with unified decision"
             )
+        if self.rag_case:
+            validate_retrieval_clause_contract(self.rag_case)
         if self.agent_case and self.retrieval_decision != "skip":
             raise ValueError(
                 "legacy Agent payloads must skip the general knowledge index"

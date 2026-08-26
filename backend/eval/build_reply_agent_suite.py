@@ -317,6 +317,7 @@ def _new_rag_case(spec: dict, source_by_id: dict[str, RagEvalCase]) -> RagEvalCa
                     "provenance": fact.provenance,
                     "source_scope": fact.source_scope,
                     "source_ids": fact.source_ids,
+                    "retrieval_clauses": fact.retrieval_clauses,
                 }
             ],
             "rewrite": {
@@ -336,7 +337,19 @@ def _new_rag_case(spec: dict, source_by_id: dict[str, RagEvalCase]) -> RagEvalCa
 def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
     """Apply unified-suite corrections without mutating historical RAG fixtures."""
     payload = case.model_dump(mode="json")
-    def _replace_fact(fact_id: str, statement: str) -> None:
+
+    def _replace_fact(
+        fact_id: str,
+        statement: str,
+        *,
+        retrieval_clauses: list[str] | None = None,
+    ) -> None:
+        """Replace a fact's wording.
+
+        A corrected statement invalidates the source fact's retrieval clauses,
+        so they are re-stated here rather than carried over; passing none falls
+        back to splitting the corrected statement.
+        """
         source = next(
             item for item in case.authoritative_facts if item.fact_id == fact_id
         )
@@ -347,6 +360,7 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
                 "provenance": source.provenance,
                 "source_scope": source.source_scope,
                 "source_ids": source.source_ids,
+                "retrieval_clauses": retrieval_clauses or [],
             }
             if item.fact_id == fact_id
             else item.model_dump(mode="json")
@@ -382,18 +396,16 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
                 "倒班时不要机械照搬白天钟点，应按清醒周期安排：早C在起床后的第一餐，"
                 "午B在清醒周期中段且与计划睡眠至少间隔8小时，晚A在计划睡眠前1至2小时。"
             ),
+            retrieval_clauses=[
+                "倒班时应按自己的清醒周期安排产品",
+                "早C在起床后的第一餐",
+                "午B在清醒周期中段且与计划睡眠至少间隔8小时",
+                "晚A在计划睡眠前1至2小时",
+            ],
         )
     elif case.case_id == "rag-faq-noon-boundary":
         source = case.authoritative_facts[0]
-        payload["authoritative_facts"] = [
-            {
-                "fact_id": source.fact_id,
-                "statement": source.statement,
-                "provenance": source.provenance,
-                "source_scope": source.source_scope,
-                "source_ids": source.source_ids,
-            }
-        ]
+        payload["authoritative_facts"] = [source.model_dump(mode="json")]
     elif case.case_id == "rag-chat-before-meal":
         source = case.authoritative_facts[0]
         payload["history"] = [
@@ -413,6 +425,10 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
                 "provenance": source.provenance,
                 "source_scope": source.source_scope,
                 "source_ids": source.source_ids,
+                # The corrected statement is already positive throughout, so the
+                # source case's clauses no longer describe it: let the split rule
+                # derive them.
+                "retrieval_clauses": [],
             }
         ]
         payload["rewrite"] = {
@@ -432,6 +448,13 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
                 "provenance": source.provenance,
                 "source_scope": source.source_scope,
                 "source_ids": source.source_ids,
+                # The source clauses still hold; the appended service-window rule
+                # is a second requirement the retrieval must also surface.
+                "retrieval_clauses": [
+                    *source.retrieval_clauses,
+                    "28天服务期不会因为旅游中断自动顺延",
+                    "需要延长服务窗口请走运营续服流程",
+                ],
             }
         ]
     elif case.case_id == "rag-chat-two-day-constipation":

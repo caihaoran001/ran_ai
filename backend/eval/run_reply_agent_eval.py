@@ -151,7 +151,7 @@ def _base_summary(
         evaluation_framework="deepeval",
         evaluation_framework_version=DEEPEVAL_VERSION,
         ruler_policy=ReplyAgentRulerPolicy(
-            retrieval_reference_policy_version="atomic-clause-v2",
+            retrieval_reference_policy_version="atomic-clause-v3",
             rewrite_harm_policy_version=REWRITE_HARM_POLICY_VERSION,
             rewrite_recall_drop_threshold=REWRITE_RECALL_DROP_THRESHOLD,
             task_completion_policy_version=TASK_COMPLETION_POLICY_VERSION,

@@ -65,7 +65,7 @@ from app.evaluation.faithfulness_calibration import (
 )
 from app.evaluation.rag_cases import load_rag_eval_suite
 from app.evaluation.rag_metric_calibration import (
-    render_atomic_retrieval_reference,
+    render_atomic_retrieval_reference_from_statements,
     select_stable_calibration_threshold,
 )
 
@@ -654,7 +654,7 @@ def _recall_test_case(pair, side: str) -> LLMTestCase:
     """Mirror the production recall scorer exactly: the authoritative fact is
     rendered as atomic clauses and passed as expected output, and only the
     retrieval context differs between the two sides of a pair."""
-    reference = render_atomic_retrieval_reference([pair.reference])
+    reference = render_atomic_retrieval_reference_from_statements([pair.reference])
     contexts = pair.positive_contexts if side == "positive" else pair.negative_contexts
     return LLMTestCase(
         input=pair.user_input,

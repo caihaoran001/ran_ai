@@ -13,6 +13,30 @@ MIN_MEAN_GAP = 0.20
 PERFECT_GAP_SELECTION_RULE = "perfect_gap_midpoint_v1"
 STABLE_INTERVAL_SELECTION_RULE = "class_rate_interval_midpoint_v1"
 
+# A prohibition ("不应解释为代谢启动") states what a reply must not claim. No
+# knowledge chunk asserts the absence of a wrong framing, so the judge has no
+# reproducible verdict for such a clause: the v1 recall calibration produced
+# contradictory verdicts for the same pair across repeats. Prohibitions belong
+# to faithfulness and answer correctness; the retrieval-side reference (recall
+# and precision) takes positive assertions only.
+#
+# Lives here rather than in the calibration module because the calibration
+# suite and the formal suites must be screened by one identical rule; two
+# copies drifting apart is how a selected threshold silently stops describing
+# the input it was selected on.
+PROHIBITION_MARKERS = (
+    "不要",
+    "不应",
+    "不得",
+    "不可",
+    "不能",
+    "不建议",
+    "严禁",
+    "禁止",
+    "避免",
+    "切勿",
+)
+
 
 @dataclass(frozen=True)
 class RagMetricCalibrationAssessment:
@@ -45,7 +69,7 @@ class RagMetricThresholdSelection:
 
 
 def split_atomic_clauses(statement: str) -> list[str]:
-    """Split one authoritative statement into atomic clauses (atomic-clause-v2).
+    """Split one authoritative statement into atomic clauses (atomic-clause-v3).
 
     Scoring granularity follows this split, so the calibration suite validates
     its references against it rather than re-implementing the rule.
@@ -54,17 +78,33 @@ def split_atomic_clauses(statement: str) -> list[str]:
     return [item.strip(" 。；") for item in normalized.splitlines() if item.strip()]
 
 
-def render_atomic_retrieval_reference(statements: Iterable[str]) -> str:
-    """Render retrieval truth as atomic clauses (atomic-clause-v2).
+def find_prohibition_clauses(clauses: Iterable[str]) -> list[str]:
+    """Return the clauses that state a prohibition instead of a retrievable fact."""
+    return [
+        clause
+        for clause in clauses
+        if any(marker in clause for marker in PROHIBITION_MARKERS)
+    ]
+
+
+def render_atomic_retrieval_reference(clauses: Iterable[str]) -> str:
+    """Render already-atomic retrieval clauses as the judge's reference.
 
     Shared by the formal RAG run and by the recall calibration so a calibrated
-    threshold always describes the same scoring input; a split rule that drifts
+    threshold always describes the same scoring input; a rendering that drifts
     between the two would silently invalidate the selected gate.
     """
+    return "\n".join(f"- {item}" for item in clauses)
+
+
+def render_atomic_retrieval_reference_from_statements(
+    statements: Iterable[str],
+) -> str:
+    """Split statements into atomic clauses, then render them as the reference."""
     clauses: list[str] = []
     for statement in statements:
         clauses.extend(split_atomic_clauses(statement))
-    return "\n".join(f"- {item}" for item in clauses)
+    return render_atomic_retrieval_reference(clauses)
 
 
 def select_stable_calibration_threshold(

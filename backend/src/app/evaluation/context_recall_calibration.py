@@ -32,6 +32,7 @@ from app.evaluation.rag_metric_calibration import (
     RagMetricCalibrationAssessment,
     RagMetricThresholdSelection,
     assess_rag_metric_calibration,
+    find_prohibition_clauses,
     select_stable_calibration_threshold,
     split_atomic_clauses,
 )
@@ -47,12 +48,9 @@ MIN_MISS_TYPE_COVERAGE = 3
 MissType = Literal["wrong_rule", "partial_fact", "adjacent_topic"]
 
 MIN_REFERENCE_CLAUSES = 3
-# A prohibition ("不应解释为代谢启动") states what a reply must not claim. No
-# knowledge chunk asserts the absence of a wrong framing, so the judge has no
-# reproducible verdict for such a clause: the v1 run produced contradictory
-# verdicts for the same pair across repeats. Prohibitions belong to faithfulness
-# and answer correctness; retrieval recall only takes positive assertions.
-PROHIBITION_MARKERS = ("不要", "不应", "不得", "不可", "严禁", "禁止")
+# The prohibition rule itself lives in the shared calibration core
+# (`find_prohibition_clauses`): the formal suites are screened by the same rule,
+# so the gate never stops describing the input it was selected on.
 # The FAQ "用户常见问法" field lists several phrasings of one question side by
 # side for retrieval matching; pasted verbatim it is not an utterance any user
 # produces. Recall never sends the question to the judge, but the precision
@@ -88,7 +86,7 @@ class ContextRecallCalibrationCase(StrictModel):
                 f"{self.case_id}: user_input must be one real utterance, not the "
                 f"FAQ's list of alternative phrasings ({questions} questions)"
             )
-        found = [marker for marker in PROHIBITION_MARKERS if marker in self.reference]
+        found = find_prohibition_clauses(split_atomic_clauses(self.reference))
         if found:
             raise ValueError(
                 f"{self.case_id}: recall reference must state retrievable facts, "

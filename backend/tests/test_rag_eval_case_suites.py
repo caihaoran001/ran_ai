@@ -45,14 +45,33 @@ def test_v3_suite_loads_with_product_scoped_gating():
         assert by_id[drop].rewrite.decision == "skip", drop
 
 
+# e0797e3 re-pointed rag-faq-noon-boundary at the atomic FAQ confirmed by
+# operations, so v3 no longer carries v2's bundled statement for it. v2 is a
+# frozen record of the superseded suite and is deliberately not back-patched.
+CASES_CORRECTED_AFTER_V2 = {"rag-faq-noon-boundary"}
+
+
 def test_v2_and_v3_share_identical_case_content_except_decisions():
+    """v3 re-gated the suite; apart from the corrections listed above it did not
+    rewrite the material. `retrieval_clauses` is excluded because it is scoring
+    policy, not content: it says which half of an unchanged statement recall may
+    be judged on, and only v3 gates these cases."""
     v2 = {c.case_id: c for c in load_rag_eval_suite(FIXTURES / "rag_eval_cases.v2.json").cases}
     v3 = {c.case_id: c for c in load_rag_eval_suite(FIXTURES / "rag_eval_cases.v3.json").cases}
     assert set(v2) == set(v3)
+    assert CASES_CORRECTED_AFTER_V2 <= set(v3)
     for case_id, old in v2.items():
         new = v3[case_id]
         assert new.user_query == old.user_query
-        assert new.authoritative_facts == old.authoritative_facts
+        if case_id in CASES_CORRECTED_AFTER_V2:
+            continue
+        assert [
+            fact.model_dump(exclude={"retrieval_clauses"})
+            for fact in new.authoritative_facts
+        ] == [
+            fact.model_dump(exclude={"retrieval_clauses"})
+            for fact in old.authoritative_facts
+        ]
 
 
 def test_unregistered_suite_version_is_rejected(tmp_path):

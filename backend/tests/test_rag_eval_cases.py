@@ -1,7 +1,15 @@
 import re
 from collections import Counter
 
-from app.evaluation.rag_cases import REQUIRED_RISK_TAGS, load_rag_eval_suite
+import pytest
+
+from app.evaluation.rag_cases import (
+    REQUIRED_RISK_TAGS,
+    load_rag_eval_suite,
+    retrieval_clauses_for,
+    validate_retrieval_clause_contract,
+)
+from app.evaluation.rag_metric_calibration import find_prohibition_clauses
 
 
 def test_fixed_rag_eval_suite_has_exact_contract_and_risk_coverage():
@@ -79,3 +87,84 @@ def test_conversation_correction_skips_knowledge_but_preserves_positive_fact():
     assert not case.retrieval.required_fact_ids
     assert case.answer.required_fact_ids == ["chat-s08"]
     assert case.authoritative_facts[0].source_scope == "conversation"
+
+
+def test_recall_gated_facts_state_retrievable_clauses_only():
+    """Recall asks what the retrieved chunks support. No chunk asserts that a
+    wrong framing is absent, so a prohibition there has no reproducible verdict:
+    the v1 calibration judged identical pairs both ways across repeats."""
+    suite = load_rag_eval_suite()
+
+    offenders = {}
+    for case in suite.cases:
+        fact_by_id = {fact.fact_id: fact for fact in case.authoritative_facts}
+        for fact_id in case.retrieval.required_fact_ids:
+            clauses = retrieval_clauses_for(fact_by_id[fact_id])
+            assert clauses, f"{case.case_id}: recall has no clause to score"
+            found = find_prohibition_clauses(clauses)
+            if found:
+                offenders[f"{case.case_id}:{fact_id}"] = found
+
+    assert offenders == {}
+
+
+def test_prohibitions_stay_in_the_statement_for_answer_scoring():
+    """Dropping them from recall must not drop them from the case: answer
+    correctness still requires the reply to carry the prohibition."""
+    suite = load_rag_eval_suite()
+    cases = {case.case_id: case for case in suite.cases}
+
+    palpitations = cases["rag-faq-palpitations"].authoritative_facts[0]
+    assert "不应解释为代谢启动" in palpitations.statement
+    assert not find_prohibition_clauses(retrieval_clauses_for(palpitations))
+
+    night_shift = cases["rag-faq-night-shift"].authoritative_facts[0]
+    assert "不要机械照搬白天钟点" in night_shift.statement
+    # One bundled sentence became four scoreable clauses, so the gate stops
+    # being all-or-nothing on this case.
+    assert retrieval_clauses_for(night_shift) == [
+        "倒班时应按自己的清醒周期安排产品",
+        "早C在起床后的第一餐",
+        "午B在清醒周期中段且与计划睡眠至少间隔8小时",
+        "晚A在最后一餐或准备结束清醒周期时",
+    ]
+
+
+def test_retrieval_clauses_fall_back_to_splitting_the_statement():
+    suite = load_rag_eval_suite()
+    case = next(item for item in suite.cases if item.case_id == "rag-faq-evening-water")
+    fact = case.authoritative_facts[0]
+
+    assert not fact.retrieval_clauses
+    assert retrieval_clauses_for(fact) == [
+        "晚A每次用1大刻度（等于3小刻度，约两瓶盖），配约300ml温水冲泡，在睡前1至2小时喝",
+        "水温控制在85℃以下",
+    ]
+
+
+def test_suite_rejects_a_prohibition_in_a_recall_gated_fact():
+    case = next(
+        item
+        for item in load_rag_eval_suite().cases
+        if item.case_id == "rag-faq-noon-boundary"
+    )
+    case.authoritative_facts[0].retrieval_clauses = [
+        "午B超过下午2点当天跳过",
+        "不要补喝",
+    ]
+
+    with pytest.raises(ValueError, match="prohibitions"):
+        validate_retrieval_clause_contract(case)
+
+
+def test_suite_rejects_a_recall_gated_fact_with_nothing_left_to_score():
+    case = next(
+        item
+        for item in load_rag_eval_suite().cases
+        if item.case_id == "rag-faq-noon-boundary"
+    )
+    case.authoritative_facts[0].statement = "午B超过下午2点当天不要补喝。"
+    case.authoritative_facts[0].retrieval_clauses = []
+
+    with pytest.raises(ValueError, match="prohibitions"):
+        validate_retrieval_clause_contract(case)

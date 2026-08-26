@@ -7,6 +7,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.evaluation.rag_metric_calibration import (
+    find_prohibition_clauses,
+    split_atomic_clauses,
+)
+
 
 REQUIRED_RISK_TAGS = frozenset(
     {
@@ -33,6 +38,11 @@ SUITE_DECISION_COUNTS = {
 # Legacy suites force every faq_rewrite case to retrieve; product-scoped
 # suites (v3+) may mark faq cases as skip when they are not product-related.
 VERSIONS_REQUIRING_FAQ_RETRIEVAL = {("rag-fixed-50-v2", 2)}
+# v2 is a frozen record of the superseded gating, kept only so the contract
+# tests can show what changed. It gates 35 cases on recall, including material
+# v3 no longer retrieves at all, so it predates the retrievable-clause contract
+# and is not retrofitted to it.
+VERSIONS_PREDATING_RETRIEVAL_CLAUSE_CONTRACT = {("rag-fixed-50-v2", 2)}
 
 
 class StrictModel(BaseModel):
@@ -50,6 +60,47 @@ class RagAuthoritativeFact(StrictModel):
     provenance: str = Field(min_length=1, max_length=200)
     source_scope: Literal["knowledge", "conversation", "runtime"] = "knowledge"
     source_ids: list[str] = Field(default_factory=list, max_length=20)
+    # The retrieval-side reference (context recall and precision) asks whether a
+    # statement is attributable to the retrieved chunks, so it may contain only
+    # positive assertions a chunk can support. `statement` keeps the complete
+    # authoritative content — including the prohibitions that answer correctness
+    # still checks — and these clauses carry the retrievable half of it.
+    # Left empty, the retrieval reference falls back to splitting `statement`.
+    retrieval_clauses: list[str] = Field(default_factory=list, max_length=12)
+
+
+def retrieval_clauses_for(fact: RagAuthoritativeFact) -> list[str]:
+    """Atomic clauses a retrieval must surface for this fact."""
+    if fact.retrieval_clauses:
+        return list(fact.retrieval_clauses)
+    return split_atomic_clauses(fact.statement)
+
+
+def validate_retrieval_clause_contract(case: "RagEvalCase") -> None:
+    """Fail a case whose recall is scored on something no chunk can support.
+
+    Recall asks whether a statement is attributable to the retrieved contexts.
+    A prohibition has no such truth, and the v1 calibration showed the judge
+    then returns opposite verdicts for the same pair across repeats — the score
+    stops meaning anything, silently. Prohibitions belong in `statement`, where
+    faithfulness and answer correctness still hold the reply to them.
+    """
+    fact_by_id = {fact.fact_id: fact for fact in case.authoritative_facts}
+    for fact_id in case.retrieval.required_fact_ids:
+        clauses = retrieval_clauses_for(fact_by_id[fact_id])
+        if not clauses:
+            raise ValueError(
+                f"{case.case_id}: retrieval fact [{fact_id}] has no clause to "
+                "score recall on"
+            )
+        prohibitions = find_prohibition_clauses(clauses)
+        if prohibitions:
+            raise ValueError(
+                f"{case.case_id}: retrieval fact [{fact_id}] must state "
+                f"retrievable facts, not prohibitions {prohibitions}; keep them "
+                "in the statement and list the positive assertions in "
+                "retrieval_clauses"
+            )
 
 
 class RagCaseOrigin(StrictModel):
@@ -142,6 +193,9 @@ class RagEvalSuite(StrictModel):
                 "suite must contain exactly 25 faq_rewrite and 25 real_chat cases"
             )
         suite_key = (self.suite_id, self.version)
+        if suite_key not in VERSIONS_PREDATING_RETRIEVAL_CLAUSE_CONTRACT:
+            for case in self.cases:
+                validate_retrieval_clause_contract(case)
         expected_counts = SUITE_DECISION_COUNTS.get(suite_key)
         if expected_counts is None:
             raise ValueError(
