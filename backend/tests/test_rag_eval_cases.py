@@ -131,15 +131,38 @@ def test_prohibitions_stay_in_the_statement_for_answer_scoring():
 
 
 def test_retrieval_clauses_fall_back_to_splitting_the_statement():
+    """A fact whose whole statement answers its question needs no override."""
     suite = load_rag_eval_suite()
-    case = next(item for item in suite.cases if item.case_id == "rag-faq-evening-water")
+    case = next(item for item in suite.cases if item.case_id == "rag-faq-cap-conversion")
     fact = case.authoritative_facts[0]
 
     assert not fact.retrieval_clauses
     assert retrieval_clauses_for(fact) == [
-        "晚A每次用1大刻度（等于3小刻度，约两瓶盖），配约300ml温水冲泡，在睡前1至2小时喝",
-        "水温控制在85℃以下",
+        "一瓶盖是半份，约等于1.5个小刻度",
+        "一大刻度等于3个小刻度，也就是一份，约两瓶盖",
+        "所以按一大刻度执行时，一瓶盖不够，量取时以瓶体刻度或附赠刻度杯为准",
     ]
+
+
+def test_off_topic_clauses_leave_the_recall_reference():
+    """The judge is asked what the retrieval had to surface to answer *this*
+    question. A rule that merely shares a FAQ paragraph with the answer is not
+    that, and requiring it turns a good retrieval into a failed case."""
+    suite = load_rag_eval_suite()
+    cases = {case.case_id: case for case in suite.cases}
+
+    # 问「两点多才想起来还补吗」：晚A的安排不是回答这个问题所需的知识
+    noon = cases["rag-faq-noon-boundary"].authoritative_facts[0]
+    assert "晚A照常按原计划进行" in noon.statement
+    assert retrieval_clauses_for(noon) == [
+        "午B的完成时限是下午2点",
+        "午B超过时限当天跳过",
+    ]
+
+    # 问「这三种都只能用温水吗」：经期口径同段但与本题无关
+    cold = cases["rag-faq-cold-water"].authoritative_facts[0]
+    assert "经期建议热水冲调" in cold.statement
+    assert not any("经期" in clause for clause in retrieval_clauses_for(cold))
 
 
 def test_suite_rejects_a_prohibition_in_a_recall_gated_fact():

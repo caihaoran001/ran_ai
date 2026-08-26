@@ -117,9 +117,32 @@ def test_recall_gated_prohibitions_survive_for_answer_scoring() -> None:
     noon_fact = by_id["RA-005"].rag_case.authoritative_facts[0]
     assert "不要补喝" in noon_fact.statement
     assert noon_fact.retrieval_clauses == [
-        "午B超过下午2点当天跳过",
-        "当天的晚A照常按原计划进行",
+        "午B的完成时限是下午2点",
+        "午B超过时限当天跳过",
     ]
+
+
+def test_derived_cases_scope_recall_to_the_side_they_ask_about() -> None:
+    """RA-002 and RA-075 quote the same FAQ paragraph but ask about water volume
+    and water temperature. One clause list for both would fail a retrieval that
+    correctly surfaced the answer to the question actually asked."""
+    suite = load_reply_agent_eval_suite()
+    by_id = {case.case_id: case for case in suite.cases}
+
+    volume = by_id["RA-002"].rag_case.authoritative_facts[0].retrieval_clauses
+    temperature = by_id["RA-075"].rag_case.authoritative_facts[0].retrieval_clauses
+
+    assert any("330ml" in clause for clause in volume)
+    assert not any("85℃" in clause for clause in volume)
+    assert temperature == ["晚A冲泡水温控制在85℃以下"]
+
+    # 卡点钥匙题与经期题共用冷水 FAQ，各自只保留自己那一侧
+    hot_key = by_id["RA-065"].rag_case.authoritative_facts[0].retrieval_clauses
+    period = by_id["RA-073"].rag_case.authoritative_facts[0].retrieval_clauses
+    assert any("卡点钥匙" in clause for clause in hot_key)
+    assert not any("经期" in clause for clause in hot_key)
+    assert any("经期" in clause for clause in period)
+    assert not any("卡点钥匙" in clause for clause in period)
 
 
 def test_generated_fixture_matches_builder_source() -> None:

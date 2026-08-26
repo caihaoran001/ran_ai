@@ -132,14 +132,16 @@ def test_noon_boundary_uses_current_atomic_faq_truth():
     retrieval_reference = _retrieval_reference(case)
 
     assert answer_reference.count("\n") == 0
-    # "不要补喝" stays in the answer reference and leaves the retrieval one: no
-    # chunk asserts that补喝 is absent, so recall cannot be judged on it.
+    # Two things leave the retrieval reference and stay in the answer one: the
+    # prohibition, which no chunk can support, and the 晚A rule, which is not
+    # needed to answer whether the missed 午B still gets drunk.
     assert retrieval_reference.splitlines() == [
-        "- 午B超过下午2点当天跳过",
-        "- 当天的晚A照常按原计划进行",
+        "- 午B的完成时限是下午2点",
+        "- 午B超过时限当天跳过",
     ]
     assert "超过下午2点当天跳过" in answer_reference
     assert "不要补喝" in answer_reference
+    assert "晚A照常按原计划进行" in answer_reference
     assert case.origin.reference_id == "faq_2b69430ec351e003"
     assert (
         case.authoritative_facts[0].provenance

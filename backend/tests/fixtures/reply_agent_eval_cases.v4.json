@@ -146,7 +146,11 @@
             "source_ids": [
               "faq_2818e99c76489d83"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "晚A一标准份等于1大刻度、3小刻度、约两瓶盖",
+              "晚A一标准份默认配330ml水冲泡",
+              "可按口感在250–330ml之间调整"
+            ]
           }
         ],
         "rewrite": {
@@ -227,7 +231,12 @@
             "source_ids": [
               "faq_2ff2485a2ae76cf1"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "早C、午B、晚A可以用常温水或冷水冲泡",
+              "水温不高于85℃",
+              "冷水与热水口感不同，更建议热水",
+              "加卡点钥匙时用60–85℃热水冲开"
+            ]
           }
         ],
         "rewrite": {
@@ -390,8 +399,8 @@
               "faq_2b69430ec351e003"
             ],
             "retrieval_clauses": [
-              "午B超过下午2点当天跳过",
-              "当天的晚A照常按原计划进行"
+              "午B的完成时限是下午2点",
+              "午B超过时限当天跳过"
             ]
           }
         ],
@@ -5276,7 +5285,11 @@
             "source_ids": [
               "faq_2ff2485a2ae76cf1"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "早C可以用常温水或冷水冲泡",
+              "水温不高于85℃",
+              "加卡点钥匙时用60–85℃热水冲开"
+            ]
           }
         ],
         "rewrite": {
@@ -5434,8 +5447,8 @@
               "faq_2b69430ec351e003"
             ],
             "retrieval_clauses": [
-              "午B超过下午2点当天跳过",
-              "当天的晚A照常按原计划进行"
+              "午B的完成时限是下午2点",
+              "午B超过时限当天跳过"
             ]
           }
         ],
@@ -5934,7 +5947,11 @@
             "source_ids": [
               "faq_2ff2485a2ae76cf1"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "早C、午B、晚A可以用常温水或冷水冲泡",
+              "冷水与热水口感不同，更建议热水",
+              "经期更建议热水冲调"
+            ]
           }
         ],
         "rewrite": {
@@ -6102,7 +6119,9 @@
             "source_ids": [
               "faq_2818e99c76489d83"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "晚A冲泡水温控制在85℃以下"
+            ]
           }
         ],
         "rewrite": {

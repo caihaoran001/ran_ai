@@ -109,6 +109,12 @@ NEW_RETRIEVAL_CASES = (
         "must_include": ["早C", "冷水", "卡点钥匙", "热水"],
         "meaning": "区分产品冷水冲泡与卡点钥匙热水冲开的规则",
         "families": ["brewing_usage", "retrieval_interference"],
+        # 问的是钥匙，经期口径与本题无关
+        "retrieval_clauses": [
+            "早C可以用常温水或冷水冲泡",
+            "水温不高于85℃",
+            "加卡点钥匙时用60–85℃热水冲开",
+        ],
     },
     {
         "source_id": "eval-retrieval-report-dose",
@@ -191,6 +197,12 @@ NEW_RETRIEVAL_CASES = (
         "must_include": ["经期", "冷水", "早C"],
         "meaning": "冷水可冲不等于经期推荐冰水",
         "families": ["brewing_usage", "retrieval_interference"],
+        # 问的是经期，卡点钥匙与本题无关
+        "retrieval_clauses": [
+            "早C、午B、晚A可以用常温水或冷水冲泡",
+            "冷水与热水口感不同，更建议热水",
+            "经期更建议热水冲调",
+        ],
     },
     {
         "source_id": "eval-retrieval-symptom-reference",
@@ -214,6 +226,9 @@ NEW_RETRIEVAL_CASES = (
         "must_include": ["晚餐", "晚A", "刚烧开的水"],
         "meaning": "承接餐食上报并回答晚A水温上限",
         "families": ["mixed_report_question", "brewing_usage"],
+        # 问的是水温。剂量换算、水量档位和饮用时间在同一段 FAQ 里，但回答本题不需要
+        # 检索捞到它们，要求捞到就是在拿出题失误当检索失分。
+        "retrieval_clauses": ["晚A冲泡水温控制在85℃以下"],
     },
     {
         "source_id": "eval-retrieval-detox-interference",
@@ -295,6 +310,14 @@ def _metric_groups_for_agent(case) -> list[str]:
 
 
 def _new_rag_case(spec: dict, source_by_id: dict[str, RagEvalCase]) -> RagEvalCase:
+    """Derive a boundary case from a source case's authoritative fact.
+
+    A derived case reuses the fact but asks a different side of it, so it may
+    need its own retrieval clauses: a question about brewing temperature must
+    not require the retrieval to also surface the dosage-to-water table that
+    happens to sit in the same FAQ paragraph. Absent an override the source
+    case's clauses carry over.
+    """
     source = source_by_id[spec["fact_source"]]
     fact = source.authoritative_facts[0]
     suffix = spec["source_id"].removeprefix("eval-retrieval-").replace("-", "_")
@@ -317,7 +340,9 @@ def _new_rag_case(spec: dict, source_by_id: dict[str, RagEvalCase]) -> RagEvalCa
                     "provenance": fact.provenance,
                     "source_scope": fact.source_scope,
                     "source_ids": fact.source_ids,
-                    "retrieval_clauses": fact.retrieval_clauses,
+                    "retrieval_clauses": spec.get(
+                        "retrieval_clauses", fact.retrieval_clauses
+                    ),
                 }
             ],
             "rewrite": {
@@ -378,6 +403,13 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
                 "冷水与热水口感不同，更建议热水；加卡点钥匙时用60–85℃热水冲开；"
                 "经期更建议热水冲调。"
             ),
+            # 问「这三种都只能用温水吗」，经期口径与本题无关
+            retrieval_clauses=[
+                "早C、午B、晚A可以用常温水或冷水冲泡",
+                "水温不高于85℃",
+                "冷水与热水口感不同，更建议热水",
+                "加卡点钥匙时用60–85℃热水冲开",
+            ],
         )
     elif case.case_id == "rag-faq-evening-water":
         _replace_fact(
@@ -387,6 +419,13 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
                 "默认配330ml水冲泡，可按口感在250–330ml之间调整；按1小刻度冲时默认110ml，"
                 "半份配150–180ml。晚A在睡前1至2小时喝；水温控制在85℃以下。"
             ),
+            # 问「晚上这个配多少水」，指的是晚A常规用量的水量。其他刻度档位、
+            # 饮用时间和水温同段但不在本题问的范围内。
+            retrieval_clauses=[
+                "晚A一标准份等于1大刻度、3小刻度、约两瓶盖",
+                "晚A一标准份默认配330ml水冲泡",
+                "可按口感在250–330ml之间调整",
+            ],
         )
         payload["rewrite"]["must_include"] = ["晚A", "330ml", "水量"]
     elif case.case_id == "rag-faq-night-shift":
