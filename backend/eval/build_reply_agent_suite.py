@@ -392,6 +392,53 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
             for item in case.authoritative_facts
         ]
 
+    def _set_aside_off_topic_half(
+        fact_id: str,
+        *,
+        answers_the_question: str,
+        answers_a_different_question: str,
+    ) -> None:
+        """Require only the half of a FAQ that answers the question asked.
+
+        Answer correctness hands the required facts to the judge as things the
+        reply must cover, so a requirement the user never asked about docks a
+        reply that answered the actual question exactly. The other half stays on
+        the case as an unrequired fact: the FAQ's full wording stays on record,
+        and no reply is graded against it.
+        """
+        source = next(
+            item for item in case.authoritative_facts if item.fact_id == fact_id
+        )
+        aside_id = f"{fact_id}-aside"
+        payload["authoritative_facts"] = [
+            item
+            for entry in case.authoritative_facts
+            for item in (
+                [
+                    {
+                        "fact_id": source.fact_id,
+                        "statement": answers_the_question,
+                        "provenance": source.provenance,
+                        "source_scope": source.source_scope,
+                        "source_ids": source.source_ids,
+                        "retrieval_clauses": [],
+                    },
+                    {
+                        "fact_id": aside_id,
+                        "statement": answers_a_different_question,
+                        "provenance": source.provenance,
+                        "source_scope": source.source_scope,
+                        "source_ids": source.source_ids,
+                        "retrieval_clauses": [],
+                    },
+                ]
+                if entry.fact_id == fact_id
+                else [entry.model_dump(mode="json")]
+            )
+        ]
+        # `answer.required_fact_ids` is deliberately left alone: it already names
+        # only the original fact, so the aside is on the case without being graded.
+
     if case.case_id == "rag-faq-cold-water":
         payload["history"] = [
             {"role": "user", "content": "早C、午B、晚A这三种我都已经开始用了。"}
@@ -518,6 +565,37 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
             "required_fact_ids": ["chat-r09-clarify"],
             "forbidden_fact_ids": ["chat-r09"],
         }
+    elif case.case_id == "rag-faq-meal-order":
+        # 问的是进食顺序；「三餐要保证蛋白质、无需戒主食」回答的是另一个问题。
+        _set_aside_off_topic_half(
+            "faq-f12",
+            answers_the_question=(
+                "正餐按蛋白质、蔬菜、粗粮主食的顺序进食：先吃蛋白质打底，"
+                "再吃蔬菜，最后吃适量粗粮主食。"
+            ),
+            answers_a_different_question="三餐都应保证蛋白质，无需完全戒主食。",
+        )
+    elif case.case_id == "rag-chat-meal-order-why":
+        # 同上：本轮问顺序的理由，蛋白质与主食总则不在问题范围内。
+        _set_aside_off_topic_half(
+            "chat-r10",
+            answers_the_question=(
+                "当前饮食建议的顺序是先吃几口蛋白质打底，再吃蔬菜，最后吃适量粗粮主食。"
+            ),
+            answers_a_different_question="三餐应保证蛋白质，也无需完全戒主食。",
+        )
+    elif case.case_id == "rag-faq-checkin-method":
+        # 问的是在哪里打卡；打卡该填哪些项目是另一个问题。
+        _set_aside_off_topic_half(
+            "faq-f23",
+            answers_the_question=(
+                "可以直接在当前打卡群里发文字记录，无需等待链接或进入其他系统。"
+            ),
+            answers_a_different_question=(
+                "打卡只填写当天实际发生的体重、饮食、运动、睡眠、排便、"
+                "身体感受和产品完成情况。"
+            ),
+        )
     elif case.case_id in {"rag-faq-low-impact-exercise", "rag-faq-sleep-adjustment"}:
         payload["authoritative_facts"] = []
         payload["retrieval"]["required_fact_ids"] = []

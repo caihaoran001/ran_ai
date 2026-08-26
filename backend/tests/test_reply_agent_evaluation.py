@@ -630,3 +630,39 @@ def test_rewrite_harm_excludes_unchanged_queries_from_denominator() -> None:
 
     assert assessment.applicable is False
     assert assessment.signal == "not_rewritten"
+
+
+def test_answer_requirements_stay_on_the_question_asked() -> None:
+    """A required fact is handed to the judge as something the reply must cover.
+
+    Three FAQs bundle the answer to a second question the user never asked, so a
+    reply that answered the actual question exactly was marked incomplete. The
+    second half stays on the case as an unrequired fact — on record, not graded.
+    """
+    suite = load_reply_agent_eval_suite()
+    by_id = {case.case_id: case for case in suite.cases}
+
+    off_topic = {
+        # 问进食顺序，不问要不要戒主食
+        "RA-012": ("faq-f12", "无需完全戒主食"),
+        # 问在哪里打卡，不问打卡填哪些项目
+        "RA-016": ("faq-f23", "身体感受"),
+        # 问顺序的理由，不问蛋白质与主食总则
+        "RA-026": ("chat-r10", "无需完全戒主食"),
+    }
+
+    for case_id, (fact_id, aside_marker) in off_topic.items():
+        rag_case = by_id[case_id].rag_case
+        assert rag_case is not None
+        facts = {fact.fact_id: fact for fact in rag_case.authoritative_facts}
+        required = rag_case.answer.required_fact_ids
+
+        assert required == [fact_id], case_id
+        assert aside_marker not in facts[fact_id].statement, (
+            f"{case_id}: 必答事实里还捆着另一个问题的答案"
+        )
+        aside = facts.get(f"{fact_id}-aside")
+        assert aside is not None, f"{case_id}: 跑题的那半句被删掉了，没有留档"
+        assert aside_marker in aside.statement, case_id
+        assert aside.fact_id not in required, case_id
+        assert aside.source_ids == facts[fact_id].source_ids, case_id

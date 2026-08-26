@@ -942,7 +942,17 @@
         "authoritative_facts": [
           {
             "fact_id": "faq-f12",
-            "statement": "正餐按蛋白质、蔬菜、粗粮主食的顺序进食：先吃蛋白质打底，再吃蔬菜，最后吃适量粗粮主食；三餐都应保证蛋白质，无需完全戒主食。",
+            "statement": "正餐按蛋白质、蔬菜、粗粮主食的顺序进食：先吃蛋白质打底，再吃蔬菜，最后吃适量粗粮主食。",
+            "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v3",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "faq_66de72eea085a5b9"
+            ],
+            "retrieval_clauses": []
+          },
+          {
+            "fact_id": "faq-f12-aside",
+            "statement": "三餐都应保证蛋白质，无需完全戒主食。",
             "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v3",
             "source_scope": "knowledge",
             "source_ids": [
@@ -1202,7 +1212,17 @@
         "authoritative_facts": [
           {
             "fact_id": "faq-f23",
-            "statement": "可以直接在当前打卡群里发文字记录，无需等待链接或进入其他系统；只填写当天实际发生的体重、饮食、运动、睡眠、排便、身体感受和产品完成情况。",
+            "statement": "可以直接在当前打卡群里发文字记录，无需等待链接或进入其他系统。",
+            "provenance": "knowledge_faqs:faq_239f9c2f6c86f434:v3",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "faq_239f9c2f6c86f434"
+            ],
+            "retrieval_clauses": []
+          },
+          {
+            "fact_id": "faq-f23-aside",
+            "statement": "打卡只填写当天实际发生的体重、饮食、运动、睡眠、排便、身体感受和产品完成情况。",
             "provenance": "knowledge_faqs:faq_239f9c2f6c86f434:v3",
             "source_scope": "knowledge",
             "source_ids": [
@@ -2054,7 +2074,17 @@
         "authoritative_facts": [
           {
             "fact_id": "chat-r10",
-            "statement": "当前饮食建议的顺序是先吃几口蛋白质打底，再吃蔬菜，最后吃适量粗粮主食；三餐应保证蛋白质，也无需完全戒主食。",
+            "statement": "当前饮食建议的顺序是先吃几口蛋白质打底，再吃蔬菜，最后吃适量粗粮主食。",
+            "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v3",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "faq_66de72eea085a5b9"
+            ],
+            "retrieval_clauses": []
+          },
+          {
+            "fact_id": "chat-r10-aside",
+            "statement": "三餐应保证蛋白质，也无需完全戒主食。",
             "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v3",
             "source_scope": "knowledge",
             "source_ids": [
