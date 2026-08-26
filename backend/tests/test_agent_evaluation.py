@@ -18,6 +18,7 @@ from app.evaluation.agent_assessment import (
 )
 from app.evaluation.agent_cases import load_agent_eval_suite
 from app.schemas.agent_evaluation import (
+    AgentCaseActual,
     AgentCaseExpected,
     AgentEvaluationCaseResult,
     AgentEvaluationCounts,
@@ -183,7 +184,10 @@ def test_task_completion_description_only_contains_user_visible_outcome() -> Non
     assert "96" in description
     assert "read_delivery_document" not in description
     assert "set_checkin_checklist" not in description
-    assert "工具选择、次数和参数由独立指标负责" in description
+    assert "由独立的确定性指标核对" in description
+    # 说清"拿不到调用记录"，而不只是"不要判"。禁令句压不住它看得见的东西：
+    # 这把尺子曾因为在证据里看见工具名，自行长出"回复得体现调用了它"的要求。
+    assert "拿不到调用记录" in description
 
 
 def test_task_completion_uses_user_visible_geval_not_trace_outcome() -> None:
@@ -877,3 +881,47 @@ def test_every_registered_tool_is_classified_read_only_or_state_changing() -> No
         f"这些名字已经不是产品里注册的工具了：{sorted(classified - registered)}"
     )
     assert not (READ_ONLY_TOOLS & STATE_CHANGING_TOOLS)
+
+
+def test_task_completion_evidence_hides_tool_names() -> None:
+    """判分材料里不出现工具名。
+
+    这把尺子拿不到调用记录，却因为在证据里看见了工具名，自行长出"回复里得体现
+    调用了它"的要求——RA-053 的理由原话是"符合任务要求，但未明确体现调用的
+    continue_service 工具调用"，然后判 0 分。核对事实真伪只需要返回内容。
+    """
+    from eval.agent_judge import AgentQualityJudge
+
+    judge = object.__new__(AgentQualityJudge)
+    judge._api = {
+        "ToolCall": lambda **kwargs: kwargs,
+        "LLMTestCase": lambda **kwargs: kwargs,
+    }
+    test_case = judge._test_case(
+        history=[],
+        user_query="@燃人AI 这个用户继续服务",
+        expected=AgentCaseExpected(
+            response_mode="reply",
+            required_tools=[AgentExpectedToolCall(name="continue_service")],
+            required_facts=["已恢复连续服务，当前是第31天"],
+        ),
+        actual=AgentCaseActual(
+            response_mode="reply",
+            response="好的，已恢复连续服务，当前是第 31 天。",
+            tool_calls=[
+                AgentToolCallEvidence(
+                    name="continue_service",
+                    args={},
+                    result={"ok": True, "service_day": 31},
+                    ok=True,
+                )
+            ],
+        ),
+    )
+
+    context = "\n".join(test_case["context"])
+    assert "continue_service" not in context
+    assert "31" in context, "返回内容本身必须留着，否则没法核对回复真伪"
+    assert "不在本次判断范围内" in context
+    # 需要按工具归因的证据忠实那把尺子仍能从工具调用列表拿到名字
+    assert test_case["tools_called"][0]["name"] == "continue_service"
