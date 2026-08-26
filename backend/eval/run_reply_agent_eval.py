@@ -372,6 +372,9 @@ def aggregate_summary(
         cases, only_code="retrieval_returned_nothing"
     )
     summary.lowest_scores = _lowest_scores(cases)
+    # 显式区分“本批汇总后确实为空”和“旧报告生成时根本没有记录这些字段”。
+    # 不能用列表是否为空推断，否则历史报告会被页面误报成“本批没有问题”。
+    summary.diagnostic_rollups_recorded = True
     summary.usage = usage
     summary.estimated_cost_yuan = usage.estimated_cost_yuan
     return summary

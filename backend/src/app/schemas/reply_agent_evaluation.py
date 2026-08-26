@@ -165,7 +165,10 @@ class ReplyAgentEvaluationSummary(StrictModel):
     counts: ReplyAgentEvaluationCounts
     coverage: ReplyAgentEvaluationCoverage
     metrics: ReplyAgentEvaluationMetrics
-    # 三份名单代替原来的"通过率"当报告主视图。历史报告没有这些字段，读回来是空的。
+    # 旧报告没有下面这些汇总字段。只靠空列表无法区分“确认没有”与“当时没记录”，
+    # 所以新聚合完成后必须显式置 True；历史 JSON 缺字段时保留 False。
+    diagnostic_rollups_recorded: bool = False
+    # 三份名单代替原来的"通过率"当报告主视图。
     boundary_violations: list[ReplyAgentBoundaryViolation] = Field(
         default_factory=list, max_length=200
     )

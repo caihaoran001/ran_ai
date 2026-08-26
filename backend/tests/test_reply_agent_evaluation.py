@@ -377,6 +377,8 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     report = ReplyAgentEvaluationRunDetail.model_validate(payload)
 
     assert report.summary.status == "completed"
+    assert report.summary.diagnostic_rollups_recorded is True
+    assert payload["summary"]["diagnostic_rollups_recorded"] is True
     assert report.summary.counts.total == 80
     assert report.summary.counts.completed == 80
     assert report.summary.counts.errors == 0
@@ -451,6 +453,34 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     store = ReplyAgentEvaluationReportStore(reports_root)
     assert [item.run_id for item in store.list_runs()] == ["reply-agent-mock-test"]
     assert store.get_run("reply-agent-mock-test").summary.counts.total == 80
+
+
+def test_legacy_report_without_diagnostic_rollup_marker_stays_unknown(
+    tmp_path,
+) -> None:
+    """旧报告缺标记不是“名单为空”，页面必须能看见它是未知。"""
+    reports_root = tmp_path / "reply-agent-evaluations"
+    run_dir = reports_root / "reply-agent-legacy-test"
+    run_dir.mkdir(parents=True)
+    base = _base_summary(
+        run_id="reply-agent-legacy-test",
+        suite=load_reply_agent_eval_suite(),
+        mock=True,
+    )
+    payload = {
+        "summary": base.model_dump(mode="json"),
+        "cases": [],
+    }
+    payload["summary"].pop("diagnostic_rollups_recorded")
+    (run_dir / "report.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    summary = ReplyAgentEvaluationReportStore(reports_root).get_run(
+        "reply-agent-legacy-test"
+    ).summary
+    assert summary.diagnostic_rollups_recorded is False
 
 
 @pytest.mark.asyncio

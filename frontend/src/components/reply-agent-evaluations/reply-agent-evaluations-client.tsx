@@ -72,6 +72,7 @@ export type ReplyAgentEvaluationSummary = {
     errors: number;
   };
   coverage: Coverage;
+  diagnostic_rollups_recorded?: boolean;
   boundary_violations?: BoundaryViolation[];
   retrieval_returned_nothing?: BoundaryViolation[];
   lowest_scores?: LowScore[];
@@ -272,15 +273,25 @@ function MetricCard({ label, metric }: { label: string; metric: RateMetric }) {
   );
 }
 
-function AverageCard({ label, metric }: { label: string; metric: AverageMetric }) {
+function AverageCard({
+  label,
+  metric,
+  recorded = true,
+}: {
+  label: string;
+  metric: AverageMetric;
+  recorded?: boolean;
+}) {
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-3">
       <p className="text-xs font-semibold leading-5 text-slate-500">{label}</p>
       <div className="mt-1 flex items-end justify-between gap-3">
         <p className="text-xl font-black tabular-nums text-slate-900">{percent({ ...metric, numerator: 0 })}</p>
-        <p className="text-[11px] tabular-nums text-slate-400">{metric.denominator} 题</p>
+        <p className="text-[11px] tabular-nums text-slate-400">
+          {recorded ? `${metric.denominator} 题` : "历史未记录"}
+        </p>
       </div>
-      {metric.denominator > 0 ? (
+      {recorded && metric.denominator > 0 ? (
         <p className="mt-1 text-[11px] tabular-nums text-slate-400">
           最低 {metric.minimum === null || metric.minimum === undefined ? "—" : `${Math.round(metric.minimum * 1000) / 10}%`}
           {metric.zero_count ? <span className="ml-1.5 font-black text-rose-600">{metric.zero_count} 题 0 分</span> : null}
@@ -296,12 +307,14 @@ function CaseFlagList({
   tone,
   items,
   emptyText,
+  recorded,
 }: {
   title: string;
   hint: string;
   tone: "rose" | "amber";
   items: BoundaryViolation[];
   emptyText: string;
+  recorded: boolean;
 }) {
   const skin =
     tone === "rose"
@@ -333,13 +346,21 @@ function CaseFlagList({
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-[11px] text-slate-400">{emptyText}</p>
+        <p className="mt-2 text-[11px] text-slate-400">
+          {recorded ? emptyText : "该历史批次未记录此项，不能据此判断本批没有问题"}
+        </p>
       )}
     </div>
   );
 }
 
-function LowScoreList({ items }: { items: LowScore[] }) {
+function LowScoreList({
+  items,
+  recorded,
+}: {
+  items: LowScore[];
+  recorded: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? items : items.slice(0, 12);
   return (
@@ -395,7 +416,11 @@ function LowScoreList({ items }: { items: LowScore[] }) {
           ) : null}
         </>
       ) : (
-        <p className="mt-2 text-[11px] text-slate-400">本批没有任何指标低于参考线</p>
+        <p className="mt-2 text-[11px] text-slate-400">
+          {recorded
+            ? "本批没有任何指标低于参考线"
+            : "该历史批次未记录此项，不能据此判断本批没有低分"}
+        </p>
       )}
     </div>
   );
@@ -702,6 +727,7 @@ export function ReplyAgentEvaluationsClient({
   const skip = summary.coverage.retrieval_counts.skip ?? 0;
   const tools = summary.coverage.metric_group_counts.MT ?? 0;
   const behavior = summary.coverage.metric_group_counts.MB ?? 0;
+  const diagnosticRollupsRecorded = summary.diagnostic_rollups_recorded === true;
 
   return (
     <div className="space-y-4">
@@ -759,6 +785,7 @@ export function ReplyAgentEvaluationsClient({
           tone="rose"
           items={summary.retrieval_returned_nothing ?? []}
           emptyText="本批没有出现空召回"
+          recorded={diagnosticRollupsRecorded}
         />
 
         <CaseFlagList
@@ -769,9 +796,13 @@ export function ReplyAgentEvaluationsClient({
             (item) => !item.codes.includes("retrieval_returned_nothing"),
           )}
           emptyText="本批没有越界"
+          recorded={diagnosticRollupsRecorded}
         />
 
-        <LowScoreList items={summary.lowest_scores ?? []} />
+        <LowScoreList
+          items={summary.lowest_scores ?? []}
+          recorded={diagnosticRollupsRecorded}
+        />
 
         <div className="border-t border-slate-100 bg-white px-4 py-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -793,10 +824,26 @@ export function ReplyAgentEvaluationsClient({
             <p className="text-[11px] text-slate-400">分数只作诊断，不判整题成败；看均分、最低分和 0 分题数</p>
           </div>
           <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <AverageCard label="召回平均分" metric={summary.metrics.context_recall_average} />
-            <AverageCard label="精确率平均分" metric={summary.metrics.context_precision_average} />
-            <AverageCard label="忠实度平均分" metric={summary.metrics.faithfulness_average} />
-            <AverageCard label="回答正确完整平均分" metric={summary.metrics.answer_correctness_average} />
+            <AverageCard
+              label="召回平均分"
+              metric={summary.metrics.context_recall_average}
+              recorded={diagnosticRollupsRecorded}
+            />
+            <AverageCard
+              label="精确率平均分"
+              metric={summary.metrics.context_precision_average}
+              recorded={diagnosticRollupsRecorded}
+            />
+            <AverageCard
+              label="忠实度平均分"
+              metric={summary.metrics.faithfulness_average}
+              recorded={diagnosticRollupsRecorded}
+            />
+            <AverageCard
+              label="回答正确完整平均分"
+              metric={summary.metrics.answer_correctness_average}
+              recorded={diagnosticRollupsRecorded}
+            />
           </div>
         </div>
 
