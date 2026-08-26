@@ -114,9 +114,12 @@ def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():
     ]
     assert result.actual.raw_query_hits == result.actual.rewritten_query_hits
     assert result.scores.raw_context_recall == result.scores.context_recall
+    # 分数低于参考线不再判死：这道样本演示的是"进低分名单"，不是越界
     assert [reason.code for reason in result.failure_reasons] == [
-        "faithfulness_below_threshold"
+        "faithfulness_below_reference"
     ]
+    assert result.status == "passed"
+    assert all(reason.severity != "critical" for reason in result.failure_reasons)
 
 
 def test_noon_boundary_uses_current_atomic_faq_truth():

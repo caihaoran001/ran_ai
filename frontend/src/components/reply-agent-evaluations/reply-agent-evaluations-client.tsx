@@ -72,6 +72,9 @@ export type ReplyAgentEvaluationSummary = {
     errors: number;
   };
   coverage: Coverage;
+  boundary_violations?: BoundaryViolation[];
+  retrieval_returned_nothing?: BoundaryViolation[];
+  lowest_scores?: LowScore[];
   metrics: {
     task_pass_rate: RateMetric;
     retrieval_decision_accuracy: RateMetric;
@@ -106,6 +109,23 @@ export type ReplyAgentEvaluationSummary = {
   };
   estimated_cost_yuan?: number | null;
   error?: string | null;
+};
+
+type BoundaryViolation = {
+  case_id: string;
+  title: string;
+  codes: string[];
+  detail: string;
+};
+
+type LowScore = {
+  case_id: string;
+  title: string;
+  metric_key: string;
+  metric_label: string;
+  score: number;
+  reference?: number | null;
+  reason?: string | null;
 };
 
 type MetricResult = {
@@ -266,6 +286,117 @@ function AverageCard({ label, metric }: { label: string; metric: AverageMetric }
           {metric.zero_count ? <span className="ml-1.5 font-black text-rose-600">{metric.zero_count} 题 0 分</span> : null}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function CaseFlagList({
+  title,
+  hint,
+  tone,
+  items,
+  emptyText,
+}: {
+  title: string;
+  hint: string;
+  tone: "rose" | "amber";
+  items: BoundaryViolation[];
+  emptyText: string;
+}) {
+  const skin =
+    tone === "rose"
+      ? "border-rose-200 bg-rose-50/60 text-rose-900"
+      : "border-amber-200 bg-amber-50/60 text-amber-900";
+  return (
+    <div className="border-t border-slate-100 bg-white px-4 py-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-xs font-black text-slate-700">
+          {title}
+          {items.length ? (
+            <span className={`ml-2 rounded-md border px-1.5 py-0.5 text-[11px] font-black tabular-nums ${skin}`}>
+              {items.length} 题
+            </span>
+          ) : null}
+        </p>
+        <p className="text-[11px] text-slate-400">{hint}</p>
+      </div>
+      {items.length ? (
+        <ul className="mt-2 space-y-1.5">
+          {items.map((item) => (
+            <li key={`${item.case_id}-${item.codes.join(",")}`} className={`rounded-xl border px-3 py-2 ${skin}`}>
+              <p className="text-xs font-black tabular-nums">
+                {item.case_id}
+                <span className="ml-2 font-semibold opacity-80">{item.title}</span>
+              </p>
+              <p className="mt-0.5 text-[11px] leading-5 opacity-90">{item.detail}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-[11px] text-slate-400">{emptyText}</p>
+      )}
+    </div>
+  );
+}
+
+function LowScoreList({ items }: { items: LowScore[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? items : items.slice(0, 12);
+  return (
+    <div className="border-t border-slate-100 bg-slate-50/40 px-4 py-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-xs font-black text-slate-700">
+          低于参考线的题
+          {items.length ? (
+            <span className="ml-2 rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] font-black tabular-nums text-slate-700">
+              {items.length} 项
+            </span>
+          ) : null}
+        </p>
+        <p className="text-[11px] text-slate-400">
+          最差在前。半分题不是零分，但业务上就是该说的一半没说
+        </p>
+      </div>
+      {items.length ? (
+        <>
+          <ul className="mt-2 space-y-1">
+            {shown.map((item) => (
+              <li
+                key={`${item.case_id}-${item.metric_key}`}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5"
+              >
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span className="text-xs font-black tabular-nums text-slate-900">{item.case_id}</span>
+                  <span className="text-[11px] font-semibold text-slate-500">{item.metric_label}</span>
+                  <span className="text-xs font-black tabular-nums text-rose-600">
+                    {Math.round(item.score * 1000) / 10}%
+                  </span>
+                  {item.reference === null || item.reference === undefined ? null : (
+                    <span className="text-[11px] tabular-nums text-slate-400">
+                      参考线 {Math.round(item.reference * 1000) / 10}%
+                    </span>
+                  )}
+                  <span className="text-[11px] text-slate-400">{item.title}</span>
+                </div>
+                {item.reason ? (
+                  <p className="mt-0.5 line-clamp-2 text-[11px] leading-5 text-slate-500">{item.reason}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          {items.length > 12 ? (
+            <button
+              type="button"
+              onClick={() => setExpanded((value) => !value)}
+              className="mt-2 text-[11px] font-bold text-sky-700 hover:underline"
+            >
+              {expanded ? "收起" : `展开全部 ${items.length} 项`}
+            </button>
+          ) : null}
+        </>
+      ) : (
+        <p className="mt-2 text-[11px] text-slate-400">本批没有任何指标低于参考线</p>
+      )}
     </div>
   );
 }
@@ -622,24 +753,44 @@ export function ReplyAgentEvaluationsClient({
           </div>
         ) : null}
 
-        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-          <MetricCard label="整题通过" metric={summary.metrics.task_pass_rate} />
-          <MetricCard label="任务完成度门禁" metric={summary.metrics.judge_task_completion_observed} />
-          <MetricCard label="检索决策" metric={summary.metrics.retrieval_decision_accuracy} />
-          <MetricCard label="改写损伤（越低越好）" metric={summary.metrics.rewrite_harm_rate} />
-          <MetricCard label="召回率门禁" metric={summary.metrics.context_recall_pass_rate} />
-          <MetricCard label="精确率门禁" metric={summary.metrics.context_precision_pass_rate} />
-          <MetricCard label="忠实度门禁" metric={summary.metrics.faithfulness_pass_rate} />
-          <MetricCard label="工具选择" metric={summary.metrics.tool_selection_accuracy} />
-          <MetricCard label="工具参数" metric={summary.metrics.argument_accuracy} />
-          <MetricCard label="行为边界" metric={summary.metrics.behavior_accuracy} />
-          <MetricCard label="高风险转人工" metric={summary.metrics.handoff_accuracy} />
+        <CaseFlagList
+          title="检索空手而归"
+          hint="应当检索却一条知识都没召回，回复只能靠模型自己编 — 先看这几道"
+          tone="rose"
+          items={summary.retrieval_returned_nothing ?? []}
+          emptyText="本批没有出现空召回"
+        />
+
+        <CaseFlagList
+          title="越界"
+          hint="非黑即白的红线：调了禁用或计划外的写操作、该回复没回复、说了禁止内容"
+          tone="amber"
+          items={(summary.boundary_violations ?? []).filter(
+            (item) => !item.codes.includes("retrieval_returned_nothing"),
+          )}
+          emptyText="本批没有越界"
+        />
+
+        <LowScoreList items={summary.lowest_scores ?? []} />
+
+        <div className="border-t border-slate-100 bg-white px-4 py-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="text-xs font-black text-slate-700">硬检查</p>
+            <p className="text-[11px] text-slate-400">不调模型、逐条比对，结果可复现</p>
+          </div>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <MetricCard label="检索决策" metric={summary.metrics.retrieval_decision_accuracy} />
+            <MetricCard label="工具选择" metric={summary.metrics.tool_selection_accuracy} />
+            <MetricCard label="工具参数" metric={summary.metrics.argument_accuracy} />
+            <MetricCard label="行为边界" metric={summary.metrics.behavior_accuracy} />
+            <MetricCard label="高风险转人工" metric={summary.metrics.handoff_accuracy} />
+          </div>
         </div>
 
         <div className="border-t border-slate-100 bg-white px-4 py-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-xs font-black text-slate-700">检索与回复平均分</p>
-            <p className="text-[11px] text-slate-400">门禁只看过了几题，平均分和 0 分题数看差多远</p>
+            <p className="text-[11px] text-slate-400">分数只作诊断，不判整题成败；看均分、最低分和 0 分题数</p>
           </div>
           <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <AverageCard label="召回平均分" metric={summary.metrics.context_recall_average} />
@@ -652,11 +803,13 @@ export function ReplyAgentEvaluationsClient({
         <div className="border-t border-slate-100 bg-slate-50/40 px-4 py-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-xs font-black text-slate-700">观察指标</p>
-            <p className="text-[11px] text-slate-400">展示问题趋势，不影响本批整题通过</p>
+            <p className="text-[11px] text-slate-400">分数只作诊断，都不判整题成败</p>
           </div>
           <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <MetricCard label="回答正确完整" metric={summary.metrics.answer_correctness_observed} />
             <AverageCard label="答案相关平均分" metric={summary.metrics.answer_relevancy_average} />
+            <MetricCard label="Agent 任务完成" metric={summary.metrics.judge_task_completion_observed} />
+            <MetricCard label="改写损伤（越低越好）" metric={summary.metrics.rewrite_harm_rate} />
             <MetricCard label="Agent 证据忠实" metric={summary.metrics.judge_groundedness_observed} />
             <MetricCard label="Agent 澄清合理" metric={summary.metrics.judge_clarification_observed} />
             <MetricCard label="Agent 表达质量" metric={summary.metrics.judge_expression_observed} />
@@ -707,7 +860,7 @@ export function ReplyAgentEvaluationsClient({
                 </p>
               </div>
               <p className="font-mono text-[11px] text-slate-300">
-                通过 {baseline.counts.passed}/80 → {summary.counts.passed}/80 · 费用 ¥
+                无越界 {baseline.counts.passed}/80 → {summary.counts.passed}/80 · 费用 ¥
                 {baseline.usage.known_estimated_cost_yuan.toFixed(4)} → ¥
                 {summary.usage.known_estimated_cost_yuan.toFixed(4)}
               </p>
@@ -715,7 +868,7 @@ export function ReplyAgentEvaluationsClient({
           </div>
           <div className="grid gap-x-8 px-4 py-2 sm:grid-cols-2 sm:px-5">
             <div>
-              <ComparisonRow label="整题通过" baseline={baseline.metrics.task_pass_rate} current={summary.metrics.task_pass_rate} />
+              <ComparisonRow label="无越界题" baseline={baseline.metrics.task_pass_rate} current={summary.metrics.task_pass_rate} />
               <ComparisonRow label="任务完成度" baseline={(baselineReplay ?? baseline).metrics.judge_task_completion_observed} current={summary.metrics.judge_task_completion_observed} />
               <ComparisonRow label="改写损伤" baseline={(baselineReplay ?? baseline).metrics.rewrite_harm_rate} current={summary.metrics.rewrite_harm_rate} lowerIsBetter />
               <ComparisonRow label="上下文召回" baseline={baseline.metrics.context_recall_pass_rate} current={summary.metrics.context_recall_pass_rate} />

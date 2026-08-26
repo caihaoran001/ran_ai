@@ -24,12 +24,14 @@ from app.schemas.reply_agent_evaluation import (
     ReplyAgentEvaluationCaseResult,
     ReplyAgentEvaluationCounts,
     ReplyAgentEvaluationCoverage,
+    ReplyAgentBoundaryViolation,
     ReplyAgentEvaluationMetrics,
     ReplyAgentEvaluationRunDetail,
     ReplyAgentEvaluationSummary,
     ReplyAgentExpected,
     ReplyAgentFailureReason,
     ReplyAgentMetricResult,
+    ReplyAgentLowScore,
     ReplyAgentRateMetric,
     ReplyAgentRulerPolicy,
     ReplyAgentUsageTotals,
@@ -365,9 +367,70 @@ def aggregate_summary(
         judge_clarification_observed=_metric_rate(cases, "judge_clarification"),
         judge_expression_observed=_metric_rate(cases, "judge_expression"),
     )
+    summary.boundary_violations = _boundary_violations(cases)
+    summary.retrieval_returned_nothing = _boundary_violations(
+        cases, only_code="retrieval_returned_nothing"
+    )
+    summary.lowest_scores = _lowest_scores(cases)
     summary.usage = usage
     summary.estimated_cost_yuan = usage.estimated_cost_yuan
     return summary
+
+
+def _boundary_violations(
+    cases: list[ReplyAgentEvaluationCaseResult],
+    *,
+    only_code: str | None = None,
+) -> list[ReplyAgentBoundaryViolation]:
+    """踩了非黑即白红线的题。这是报告的第一份名单——人应该先看这几道。"""
+    flagged: list[ReplyAgentBoundaryViolation] = []
+    for case in cases:
+        hits = [
+            item
+            for item in case.failure_reasons
+            if item.severity == "critical"
+            and (only_code is None or item.code == only_code)
+        ]
+        if not hits:
+            continue
+        flagged.append(
+            ReplyAgentBoundaryViolation(
+                case_id=case.case_id,
+                title=case.title,
+                codes=sorted({item.code for item in hits}),
+                detail="；".join(item.message for item in hits)[:2000],
+            )
+        )
+    return flagged
+
+
+def _lowest_scores(
+    cases: list[ReplyAgentEvaluationCaseResult],
+) -> list[ReplyAgentLowScore]:
+    """所有低于参考线的题，最差在前——不只是零分题。
+
+    两个知识点的题漏一个是 0.5 分，在平均分里不显眼，业务上却是"该说的一半
+    没说"（只说了漏喝直接跳过、没说不要集中补喝，用户就会去补两份）。这类
+    才是最常见的真实失败。
+    """
+    rows = [
+        ReplyAgentLowScore(
+            case_id=case.case_id,
+            title=case.title,
+            metric_key=metric.key,
+            metric_label=metric.label,
+            score=metric.score,
+            reference=metric.threshold,
+            reason=(metric.reason or None),
+        )
+        for case in cases
+        for metric in case.metrics
+        if metric.kind == "llm"
+        and metric.score is not None
+        and metric.threshold is not None
+        and metric.score < metric.threshold
+    ]
+    return sorted(rows, key=lambda item: (item.score, item.case_id, item.metric_key))
 
 
 def _failure_severity(value: str) -> str:

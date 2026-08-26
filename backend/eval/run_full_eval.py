@@ -666,7 +666,9 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
             (item for item in output if item.case_id == "rag-chat-cap-ambiguity"),
             output[0],
         )
-        failure.status = "failed"
+        # 分数低不再判死，所以这个样本保持 passed：它演示的是"忠实度低于参考线、
+        # 出现在低分名单里"，而不是越界。越界样本由 agent 侧的禁用工具题演示。
+        failure.status = "passed"
         failure.actual.response = "一大刻度不够一瓶盖。"
         failure.scores.faithfulness = 0.42
         failure.metric_evidence.faithfulness = [
@@ -679,8 +681,9 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
         failure.failure_reasons = [
             RagFailureReason(
                 stage="deepeval",
-                code="faithfulness_below_threshold",
-                message="faithfulness=0.42，低于基线0.85",
+                code="faithfulness_below_reference",
+                message=f"faithfulness=0.42，低于参考线{GATE_FAITHFULNESS:.4f}",
+                severity="warning",
             ),
         ]
     return output

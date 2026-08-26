@@ -712,3 +712,48 @@ def test_only_black_and_white_violations_decide_a_case() -> None:
     )
     # 多查一次打卡记录 + 额外看了体重趋势：都不判死
     assert all(item.severity != "critical" or item.passed for item in checks)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_case_always_names_the_line_it_crossed(tmp_path) -> None:
+    """判死和判死的理由必须对得上，两个方向都要对。
+
+    RA-041 曾经整题失败而九项指标全绿——判死的理由（"回复里必须出现编号71"）
+    只存在于失败列表里。反过来也踩过：题被标失败，而失败原因里只有一条分数
+    低于参考线。看报告的人两种情况都无从下手。
+    """
+    reports_root = tmp_path / "reply-agent-evaluations"
+    exit_code = await async_main(
+        SimpleNamespace(
+            mock=True,
+            run_id="reply-agent-invariant-mock",
+            reports_root=reports_root,
+            dataset=None,
+        )
+    )
+    assert exit_code == 0
+    report = ReplyAgentEvaluationReportStore(reports_root).get_run(
+        "reply-agent-invariant-mock"
+    )
+
+    for case in report.cases:
+        crossed = [item for item in case.failure_reasons if item.severity == "critical"]
+        assert (case.status == "failed") is bool(crossed), (
+            f"{case.case_id}: 状态={case.status}，越界理由={[i.code for i in crossed]}"
+        )
+        if case.status == "failed":
+            keys = {metric.key for metric in case.metrics if metric.passed is False}
+            assert keys, f"{case.case_id}: 判死了却没有任何一行指标标红"
+
+    flagged = {item.case_id for item in report.summary.boundary_violations}
+    assert flagged == {case.case_id for case in report.cases if case.status == "failed"}
+    # 低分名单不只收零分：真正常见的失败是"漏了一个知识点"这种半分题
+    assert report.summary.lowest_scores
+    assert report.summary.lowest_scores == sorted(
+        report.summary.lowest_scores, key=lambda item: item.score
+    ) or all(
+        a.score <= b.score
+        for a, b in zip(
+            report.summary.lowest_scores, report.summary.lowest_scores[1:]
+        )
+    )

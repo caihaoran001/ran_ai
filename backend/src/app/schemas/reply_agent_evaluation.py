@@ -39,6 +39,32 @@ class ReplyAgentAverageMetric(StrictModel):
     zero_count: int = Field(default=0, ge=0)
 
 
+class ReplyAgentBoundaryViolation(StrictModel):
+    """一道题踩了非黑即白的红线，需要人先看这几道。"""
+
+    case_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=200)
+    codes: list[str] = Field(default_factory=list, max_length=20)
+    detail: str = Field(min_length=1, max_length=2000)
+
+
+class ReplyAgentLowScore(StrictModel):
+    """一道题某项分数低于参考线。不判死，但要能一眼看到差多远。
+
+    通过率会把"漏了一个知识点"和"检索一条都没捞到"压成同一个字。真正常见的
+    失败恰好不是零分：两个知识点的题漏一个是 0.5 分，在平均分里不显眼，但业务
+    上就是该说的一半没说。
+    """
+
+    case_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=200)
+    metric_key: str = Field(min_length=1, max_length=64)
+    metric_label: str = Field(min_length=1, max_length=200)
+    score: float = Field(ge=0.0, le=1.0)
+    reference: float | None = Field(default=None, ge=0.0, le=1.0)
+    reason: str | None = Field(default=None, max_length=4000)
+
+
 class ReplyAgentEvaluationMetrics(StrictModel):
     task_pass_rate: ReplyAgentRateMetric
     retrieval_decision_accuracy: ReplyAgentRateMetric
@@ -139,6 +165,16 @@ class ReplyAgentEvaluationSummary(StrictModel):
     counts: ReplyAgentEvaluationCounts
     coverage: ReplyAgentEvaluationCoverage
     metrics: ReplyAgentEvaluationMetrics
+    # 三份名单代替原来的"通过率"当报告主视图。历史报告没有这些字段，读回来是空的。
+    boundary_violations: list[ReplyAgentBoundaryViolation] = Field(
+        default_factory=list, max_length=200
+    )
+    retrieval_returned_nothing: list[ReplyAgentBoundaryViolation] = Field(
+        default_factory=list, max_length=200
+    )
+    lowest_scores: list[ReplyAgentLowScore] = Field(
+        default_factory=list, max_length=400
+    )
     usage: ReplyAgentUsageTotals = Field(default_factory=ReplyAgentUsageTotals)
     estimated_cost_yuan: float | None = Field(default=0, ge=0)
     error: str | None = Field(default=None, max_length=2000)
