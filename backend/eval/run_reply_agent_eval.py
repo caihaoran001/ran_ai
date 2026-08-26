@@ -465,8 +465,12 @@ def adapt_rag_result(
                     kind="llm",
                     score=score,
                     threshold=threshold,
+                    # 阈值降为参考线：仍然标红提示"低于这条线"，但不再决定整题成败。
+                    # 这套评测没有接任何自动流水线，是人手启动、人读报告，
+                    # 判死没有对象；判死反而会让一次判官抖动改写结论。
                     passed=(score >= threshold if score is not None else None),
                     reason=reason,
+                    enforced=False,
                 )
             )
         metrics.append(
@@ -538,7 +542,21 @@ def adapt_agent_result(
         item
         for item in result.deterministic_checks
         if item.code.startswith("required_tool_")
-        or item.code in {"forbidden_tools", "additional_tools"}
+        or item.code in {"forbidden_tools", "additional_write_tools"}
+    ]
+    tool_notes = [
+        item
+        for item in result.deterministic_checks
+        if not item.passed
+        and (
+            item.code.startswith("tool_calls_over_plan_")
+            or item.code == "additional_read_tools"
+        )
+    ]
+    literal_checks = [
+        item
+        for item in result.deterministic_checks
+        if item.code in {"required_literals", "forbidden_literals"}
     ]
     arg_checks = [
         item
@@ -581,7 +599,9 @@ def adapt_agent_result(
                     score=1.0 if tool_passed else 0.0,
                     threshold=1.0,
                     passed=tool_passed,
-                    reason="；".join(item.message for item in tool_checks),
+                    reason="；".join(
+                        item.message for item in (*tool_checks, *tool_notes)
+                    ),
                 ),
                 _metric(
                     key="argument_accuracy",
@@ -599,6 +619,23 @@ def adapt_agent_result(
                 ),
             ]
         )
+    if literal_checks:
+        # 这一项能判死整题（RA-041 就栽在"回复里必须出现编号 71"），过去只在
+        # 行为边界题里露面，其余题九项指标全绿却整题失败，看报告的人无从下手。
+        # 凡是能判死的检查，必须有自己的一行。
+        literals_passed = all(item.passed for item in literal_checks)
+        metrics.append(
+            _metric(
+                key="key_facts",
+                label="关键事实原文",
+                group=behavior_group,
+                kind="deterministic",
+                score=1.0 if literals_passed else 0.0,
+                threshold=1.0,
+                passed=literals_passed,
+                reason="；".join(item.message for item in literal_checks),
+            )
+        )
     if "MB" in case.metric_groups:
         behavior_checks = [
             item
@@ -609,6 +646,7 @@ def adapt_agent_result(
                 "required_literals",
                 "forbidden_literals",
                 "forbidden_tools",
+                "additional_write_tools",
             }
         ]
         behavior_passed = bool(behavior_checks) and all(
@@ -626,17 +664,6 @@ def adapt_agent_result(
                 reason="；".join(item.message for item in behavior_checks),
             )
         )
-    task_completion = next(
-        (
-            item
-            for item in result.judge.framework_metrics
-            if item.key == "task_completion"
-        ),
-        None,
-    )
-    task_completion_failed = bool(
-        task_completion is not None and task_completion.passed is False
-    )
     for item in result.judge.framework_metrics:
         group = "MT" if item.key == "tool_correctness" else behavior_group
         metrics.append(
@@ -649,7 +676,10 @@ def adapt_agent_result(
                 threshold=item.threshold,
                 passed=item.passed,
                 reason=item.reason,
-                enforced=item.key == "task_completion",
+                # 任务完成度也降为诊断。它的判分标准里含"必须调用某工具"，
+                # 而它只拿到回复正文、看不到调用记录，只能猜——8/23 有 5 道
+                # 正确回复被它判 0 分。工具调用由确定性核对负责，那份能看见记录。
+                enforced=False,
             )
         )
     failure_reasons = [
@@ -661,18 +691,6 @@ def adapt_agent_result(
         )
         for item in result.failure_reasons
     ]
-    if task_completion_failed:
-        failure_reasons.append(
-            ReplyAgentFailureReason(
-                stage="judge",
-                code="task_completion",
-                message=(
-                    task_completion.reason
-                    or "用户可见业务结果未达到校准后阈值"
-                ),
-                severity="warning",
-            )
-        )
     return ReplyAgentEvaluationCaseResult(
         case_id=case.case_id,
         title=case.title,
@@ -683,9 +701,7 @@ def adapt_agent_result(
             "error"
             if result.status == "error"
             else (
-                "failed"
-                if result.status == "failed" or task_completion_failed
-                else "passed"
+                "failed" if result.status == "failed" else "passed"
             )
         ),
         user_query=result.user_query,

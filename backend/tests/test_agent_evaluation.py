@@ -4,13 +4,18 @@ import json
 import os
 from datetime import datetime, timezone
 from importlib.util import find_spec
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.api.routes.agent_evaluations import get_report_store
 from app.core.config import get_settings
-from app.evaluation.agent_assessment import assess_agent_case
+from app.evaluation.agent_assessment import (
+    READ_ONLY_TOOLS,
+    STATE_CHANGING_TOOLS,
+    assess_agent_case,
+)
 from app.evaluation.agent_cases import load_agent_eval_suite
 from app.schemas.agent_evaluation import (
     AgentCaseExpected,
@@ -348,8 +353,8 @@ def test_deterministic_assessment_allows_only_named_auxiliary_tools() -> None:
         ],
     )
     allowed_by_code = {item.code: item for item in allowed_checks}
-    assert allowed_by_code["additional_tools"].passed is True
-    assert "明确允许" in allowed_by_code["additional_tools"].message
+    assert allowed_by_code["additional_read_tools"].passed is True
+    assert "明确允许" in allowed_by_code["additional_read_tools"].message
     assert allowed_failures == []
 
     _, rejected_checks, rejected_failures = assess_agent_case(
@@ -370,10 +375,58 @@ def test_deterministic_assessment_allows_only_named_auxiliary_tools() -> None:
             ),
         ],
     )
+    # 计划外多查了一个只读工具：记账，不判越界。事先猜的工具清单不可能穷尽所有
+    # 合理路径，而只读查询既不改数据也不外发，代价只有一次调用的钱。
     rejected_by_code = {item.code: item for item in rejected_checks}
-    assert rejected_by_code["additional_tools"].passed is False
-    assert "get_service_progress" in rejected_by_code["additional_tools"].message
-    assert {item.code for item in rejected_failures} == {"additional_tools"}
+    read_extra = rejected_by_code["additional_read_tools"]
+    assert read_extra.passed is False
+    assert read_extra.severity == "info"
+    assert "get_service_progress" in read_extra.message
+    assert rejected_by_code["additional_write_tools"].passed is True
+    assert {item.code for item in rejected_failures} == {"additional_read_tools"}
+    assert all(item.severity != "critical" for item in rejected_failures)
+
+
+def test_unplanned_write_tool_is_a_boundary_violation() -> None:
+    """只读放宽不能顺带放过写操作。
+
+    RA-047 就是这个形状：回复文字说"需要 @ 我才能改"，手上却真的调了修改清单
+    的工具。这类调用改到真实数据，一次都不能算记账。
+    """
+    expected = AgentCaseExpected(response_mode="reply")
+    _, checks, failures = assess_agent_case(
+        expected=expected,
+        response="更新打卡追问需要班主任在群里 @ 我。",
+        tool_calls=[
+            AgentToolCallEvidence(
+                name="set_checkin_checklist",
+                args={"items": ["饮水", "运动"]},
+                result={"ok": True},
+                ok=True,
+            )
+        ],
+    )
+    by_code = {item.code: item for item in checks}
+    assert by_code["additional_write_tools"].passed is False
+    assert by_code["additional_write_tools"].severity == "critical"
+    assert "set_checkin_checklist" in by_code["additional_write_tools"].message
+    assert any(item.severity == "critical" for item in failures)
+
+
+def test_unregistered_tool_counts_as_state_changing() -> None:
+    """新工具上线时忘了归类，宁可误报越界也不要默默放过一个可能在改数据的调用。"""
+    _, checks, _ = assess_agent_case(
+        expected=AgentCaseExpected(response_mode="reply"),
+        response="好。",
+        tool_calls=[
+            AgentToolCallEvidence(
+                name="brand_new_tool", args={}, result={"ok": True}, ok=True
+            )
+        ],
+    )
+    by_code = {item.code: item for item in checks}
+    assert by_code["additional_write_tools"].passed is False
+    assert "brand_new_tool" in by_code["additional_write_tools"].message
 
 
 def test_argument_accuracy_is_independent_from_call_count() -> None:
@@ -405,12 +458,16 @@ def test_argument_accuracy_is_independent_from_call_count() -> None:
             ),
         ],
     )
+    # 次数只卡下限：调够了就算办到了事。多调是浪费，单独记一条成本提示，
+    # 不再判失败——否则"同一份记录查了两次但答案完全正确"会变成失败。
     by_code = {item.code: item for item in checks}
-    assert by_code["required_tool_get_recent_checkins"].passed is False
+    assert by_code["required_tool_get_recent_checkins"].passed is True
     assert by_code["tool_args_get_recent_checkins"].passed is True
-    assert {item.code for item in failures} == {
-        "required_tool_get_recent_checkins"
-    }
+    over = by_code["tool_calls_over_plan_get_recent_checkins"]
+    assert over.passed is False
+    assert over.severity == "info"
+    assert "仅多花调用成本" in over.message
+    assert all(item.severity != "critical" for item in failures)
 
 
 def test_string_argument_rules_accept_paraphrase_and_reject_invented_fact() -> None:
@@ -791,3 +848,32 @@ async def test_agent_evaluation_api_rejects_bad_paths_and_invalid_reports(
     assert broken.status_code == 422
     assert listing.status_code == 200
     assert listing.json() == {"items": []}
+
+
+def test_every_registered_tool_is_classified_read_only_or_state_changing() -> None:
+    """新工具上线时必须归类，否则评测放不放过它就成了偶然。
+
+    评测靠这份分类决定"多调一次"算记账还是算越界。漏归类的工具会被
+    `changes_state` 当成写操作报出来——那是安全的默认，但会误报，所以这里
+    盯着分类和产品实际注册的工具保持一致。
+    """
+    import re
+
+    tools_dir = (
+        Path(__file__).resolve().parents[1] / "src" / "app" / "services" / "agent" / "tools"
+    )
+    registered = {
+        match
+        for path in tools_dir.glob("*.py")
+        for match in re.findall(r'name="([a-z_]+)"', path.read_text(encoding="utf-8"))
+    }
+    assert registered, "没有扫到任何工具定义，说明扫描方式失效了"
+
+    classified = READ_ONLY_TOOLS | STATE_CHANGING_TOOLS
+    assert not registered - classified, (
+        f"这些工具还没归类为只读或写操作：{sorted(registered - classified)}"
+    )
+    assert not classified - registered, (
+        f"这些名字已经不是产品里注册的工具了：{sorted(classified - registered)}"
+    )
+    assert not (READ_ONLY_TOOLS & STATE_CHANGING_TOOLS)

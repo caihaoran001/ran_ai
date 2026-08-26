@@ -218,7 +218,12 @@ async def _result_from_evidence(
         actual=actual,
         mock_failure=mock_failure,
     )
-    deterministic_passed = all(check.passed for check in checks)
+    # 只有真正非黑即白的越界才判失败：调了禁用或计划外的写操作、该开口却沉默、
+    # 必须调的工具一次没调。多查一次只读数据是 info，只记账不判死——否则这个
+    # 标签反映的不是回复质量，而是"调用次数和我们事先猜的一样不一样"。
+    deterministic_passed = all(
+        check.passed for check in checks if check.severity == "critical"
+    )
     return AgentEvaluationCaseResult(
         case_id=case.case_id,
         title=case.title,
@@ -311,7 +316,9 @@ async def _real_result(
                     message=judged.error or "判断官运行失败",
                 )
             )
-        deterministic_passed = all(check.passed for check in checks)
+        deterministic_passed = all(
+            check.passed for check in checks if check.severity == "critical"
+        )
         status = (
             "error"
             if judged.status == "error"

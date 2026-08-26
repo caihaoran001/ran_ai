@@ -9,6 +9,7 @@ import pytest
 
 from app.evaluation.rag_cases import retrieval_clauses_for
 from app.evaluation.rag_metric_calibration import find_prohibition_clauses
+from app.schemas.agent_evaluation import AgentExpectedToolCall
 from app.evaluation.reply_agent_cases import (
     REQUIRED_RETRIEVAL_FAMILIES,
     load_reply_agent_eval_suite,
@@ -413,10 +414,18 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
         if case.execution_kind == "agent"
         for metric in case.metrics
     ]
+    # 四把大模型评分官全部降为诊断：分数照样存、照样标红，但不决定整题成败。
+    # 这套评测没接任何自动流水线，判死没有对象；而任务完成度那把尺子的判分标准
+    # 里含"必须调用某工具"，它只拿到回复正文、看不见调用记录，只能猜。
     assert all(
-        metric.enforced is (metric.key == "judge_task_completion")
+        metric.enforced is False
         for metric in agent_metrics
         if metric.key.startswith("judge_")
+    )
+    assert all(
+        metric.enforced is True
+        for metric in agent_metrics
+        if metric.kind == "deterministic" and not metric.key.startswith("judge_")
     )
 
     no_reply = next(
@@ -666,3 +675,40 @@ def test_answer_requirements_stay_on_the_question_asked() -> None:
         assert aside_marker in aside.statement, case_id
         assert aside.fact_id not in required, case_id
         assert aside.source_ids == facts[fact_id].source_ids, case_id
+
+
+def test_only_black_and_white_violations_decide_a_case() -> None:
+    """整题成败只反映越界，不反映分数。
+
+    这套评测是人手启动、人读报告，没有任何自动流程依赖成败标签——它唯一的
+    作用是决定人先看哪几道题。让分数参与判定的代价很实在：8/23 那批 24 道
+    失败里 13 道只栽在分数上，其中 5 道其实是检索一条都没捞到，而另一批题
+    则因为"同一份记录查了两次"被判死。两种情况都需要人看，但严重程度天差
+    地别，混在一个标签里就都看不见了。
+    """
+    from app.evaluation.agent_assessment import assess_agent_case
+    from app.schemas.agent_evaluation import AgentCaseExpected, AgentToolCallEvidence
+
+    expected = AgentCaseExpected(
+        response_mode="reply",
+        required_tools=[
+            AgentExpectedToolCall(name="get_recent_checkins", max_calls=1)
+        ],
+    )
+    _, checks, _ = assess_agent_case(
+        expected=expected,
+        response="8/19 完成 2 项、8/20 完成 4 项，缺得最多的是运动。",
+        tool_calls=[
+            AgentToolCallEvidence(
+                name="get_recent_checkins", args={}, result={"n": 2}, ok=True
+            ),
+            AgentToolCallEvidence(
+                name="get_recent_checkins", args={}, result={"n": 2}, ok=True
+            ),
+            AgentToolCallEvidence(
+                name="get_weight_trend", args={}, result={"change_kg": -0.4}, ok=True
+            ),
+        ],
+    )
+    # 多查一次打卡记录 + 额外看了体重趋势：都不判死
+    assert all(item.severity != "critical" or item.passed for item in checks)

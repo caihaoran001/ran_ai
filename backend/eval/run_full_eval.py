@@ -239,6 +239,7 @@ def _answer_fact_checks(
                     f"本题需要回复（response_mode={case.answer.response_mode}），"
                     "但 Agent 没有产出最终回复"
                 ),
+                severity="critical",
             )
         )
         return reasons
@@ -251,6 +252,7 @@ def _answer_fact_checks(
                     stage="answer",
                     code="forbidden_fact_present",
                     message=f"回复出现禁止事实[{fact_id}]：{statement[:80]}",
+                    severity="critical",
                 )
             )
     return reasons
@@ -340,6 +342,7 @@ async def _evaluate_real_case(
                     stage="decision",
                     code="retrieval_decision_mismatch",
                     message=(f"期望{case.rewrite.decision}，实际{intent.decision}"),
+                    severity="critical",
                 )
             )
 
@@ -370,6 +373,18 @@ async def _evaluate_real_case(
             result.actual.rewritten_query_hits = [
                 _knowledge_hit(hit) for hit in rewritten_hits
             ]
+            if not rewritten_hits:
+                # 一条知识都没捞到，回复只能靠模型自己编。这时召回/精确率/忠实度
+                # 三项必然是 0，但它们只是参考线不判死；空手而归本身是确定性事实，
+                # 必须单独判死并在报告里显眼，否则报告会显示一片绿。
+                reasons.append(
+                    RagFailureReason(
+                        stage="retrieval",
+                        code="retrieval_returned_nothing",
+                        message="本题应当检索，但知识库一条都没有召回，回复无据可依",
+                        severity="critical",
+                    )
+                )
 
         with cost_ledger.stage("answer_generation"):
             response = await _agent_reply(case, intent, settings)
@@ -469,16 +484,21 @@ async def _evaluate_real_case(
                         stage="rewrite",
                         code="rewrite_harmed_retrieval",
                         message=rewrite_assessment.reason,
+                        severity="warning",
                     )
                 )
+            # 三条基线降为参考线：分数低于线仍会在报告里标红，但不再判整题失败。
+            # 这套评测是人手启动、人读报告，没有任何自动流程依赖这个成败标签；
+            # 判死只会让一次判官抖动改写结论，而真正需要人看的是分数本身。
             for name, threshold in _gate_thresholds().items():
                 value = getattr(scores, name)
                 if value < threshold:
                     reasons.append(
                         RagFailureReason(
                             stage="deepeval",
-                            code=f"{name}_below_threshold",
-                            message=f"{name}={value:.2f}，低于基线{threshold:.2f}",
+                            code=f"{name}_below_reference",
+                            message=f"{name}={value:.2f}，低于参考线{threshold:.2f}",
+                            severity="warning",
                         )
                     )
         elif case.rewrite.decision == "retrieve":
@@ -487,6 +507,7 @@ async def _evaluate_real_case(
                     stage="retrieval",
                     code="missing_metric_inputs",
                     message="缺少召回内容或最终回复，无法计算四项评测指标",
+                    severity="critical",
                 )
             )
         if response and case.rewrite.decision != "retrieve":
@@ -526,7 +547,13 @@ async def _evaluate_real_case(
         result.judge_reasons = judge_reasons
         result.scores.judge_reasons = judge_reasons
         result.failure_reasons = reasons
-        result.status = "failed" if reasons else "passed"
+        # 整题成败只反映非黑即白的越界：该检索没检索、检索空手而归、该回复没回复、
+        # 说了禁止内容。分数低于参考线仍然记在原因里并标红，但不改变成败。
+        result.status = (
+            "failed"
+            if any(item.severity == "critical" for item in reasons)
+            else "passed"
+        )
     except Exception as exc:
         result.status = "error"
         result.failure_reasons = [
