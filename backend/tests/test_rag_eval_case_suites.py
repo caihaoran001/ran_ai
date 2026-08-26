@@ -45,33 +45,66 @@ def test_v3_suite_loads_with_product_scoped_gating():
         assert by_id[drop].rewrite.decision == "skip", drop
 
 
-# e0797e3 re-pointed rag-faq-noon-boundary at the atomic FAQ confirmed by
-# operations, so v3 no longer carries v2's bundled statement for it. v2 is a
-# frozen record of the superseded suite and is deliberately not back-patched.
-CASES_CORRECTED_AFTER_V2 = {"rag-faq-noon-boundary"}
+def test_v3_asks_the_same_questions_as_v2_and_only_re_gates_them():
+    """What v3 promised was to keep the questions and change the gating.
 
-
-def test_v2_and_v3_share_identical_case_content_except_decisions():
-    """v3 re-gated the suite; apart from the corrections listed above it did not
-    rewrite the material. `retrieval_clauses` is excluded because it is scoring
-    policy, not content: it says which half of an unchanged statement recall may
-    be judged on, and only v3 gates these cases."""
+    It did NOT promise to freeze the reference answers: a question whose FAQ is
+    later corrected by operations must follow the FAQ, and v2 is a frozen record
+    that is never back-patched. So the invariant worth guarding is the question
+    set and the wording users see — the material a case's identity rests on.
+    Comparing reference answers instead would need a per-case exception list
+    that grows with every business ruling and stops guarding anything.
+    """
     v2 = {c.case_id: c for c in load_rag_eval_suite(FIXTURES / "rag_eval_cases.v2.json").cases}
     v3 = {c.case_id: c for c in load_rag_eval_suite(FIXTURES / "rag_eval_cases.v3.json").cases}
+
     assert set(v2) == set(v3)
-    assert CASES_CORRECTED_AFTER_V2 <= set(v3)
     for case_id, old in v2.items():
         new = v3[case_id]
-        assert new.user_query == old.user_query
-        if case_id in CASES_CORRECTED_AFTER_V2:
-            continue
-        assert [
-            fact.model_dump(exclude={"retrieval_clauses"})
-            for fact in new.authoritative_facts
-        ] == [
-            fact.model_dump(exclude={"retrieval_clauses"})
-            for fact in old.authoritative_facts
-        ]
+        assert new.user_query == old.user_query, case_id
+        assert [item.model_dump() for item in new.history] == [
+            item.model_dump() for item in old.history
+        ], case_id
+        assert new.origin.kind == old.origin.kind, case_id
+        assert [fact.fact_id for fact in new.authoritative_facts] == [
+            fact.fact_id for fact in old.authoritative_facts
+        ], case_id
+
+    # v3 差异只允许出现在门禁上：至少一道题的判定被改过，否则这一版没有意义。
+    assert any(
+        v3[case_id].rewrite.decision != old.rewrite.decision
+        for case_id, old in v2.items()
+    )
+
+
+def test_reference_answers_track_their_faq_and_are_not_frozen_by_v2():
+    """The counterpart to the test above: an answer that changed did so because
+    the cited FAQ changed, and the citation moves with it."""
+    v2 = {c.case_id: c for c in load_rag_eval_suite(FIXTURES / "rag_eval_cases.v2.json").cases}
+    v3 = {c.case_id: c for c in load_rag_eval_suite(FIXTURES / "rag_eval_cases.v3.json").cases}
+
+    changed = {
+        case_id
+        for case_id, old in v2.items()
+        if [fact.statement for fact in v3[case_id].authoritative_facts]
+        != [fact.statement for fact in old.authoritative_facts]
+    }
+
+    for case_id in changed:
+        old_sources = {
+            source
+            for fact in v2[case_id].authoritative_facts
+            for source in fact.source_ids
+        }
+        new_sources = {
+            source
+            for fact in v3[case_id].authoritative_facts
+            for source in fact.source_ids
+        }
+        assert new_sources, f"{case_id}: 改了标准答案却没有引用来源"
+        assert new_sources != old_sources or not old_sources, (
+            f"{case_id}: 标准答案变了但仍标着原来的 FAQ，来源和内容对不上"
+        )
 
 
 def test_unregistered_suite_version_is_rejected(tmp_path):

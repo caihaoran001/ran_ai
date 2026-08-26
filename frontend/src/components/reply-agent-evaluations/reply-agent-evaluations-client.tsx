@@ -29,6 +29,8 @@ type RateMetric = {
 type AverageMetric = {
   value?: number | null;
   denominator: number;
+  minimum?: number | null;
+  zero_count?: number;
 };
 
 type Coverage = {
@@ -83,6 +85,10 @@ export type ReplyAgentEvaluationSummary = {
     handoff_accuracy: RateMetric;
     answer_correctness_observed: RateMetric;
     answer_relevancy_average: AverageMetric;
+    context_recall_average: AverageMetric;
+    context_precision_average: AverageMetric;
+    faithfulness_average: AverageMetric;
+    answer_correctness_average: AverageMetric;
     judge_task_completion_observed: RateMetric;
     judge_groundedness_observed: RateMetric;
     judge_clarification_observed: RateMetric;
@@ -254,6 +260,12 @@ function AverageCard({ label, metric }: { label: string; metric: AverageMetric }
         <p className="text-xl font-black tabular-nums text-slate-900">{percent({ ...metric, numerator: 0 })}</p>
         <p className="text-[11px] tabular-nums text-slate-400">{metric.denominator} 题</p>
       </div>
+      {metric.denominator > 0 ? (
+        <p className="mt-1 text-[11px] tabular-nums text-slate-400">
+          最低 {metric.minimum === null || metric.minimum === undefined ? "—" : `${Math.round(metric.minimum * 1000) / 10}%`}
+          {metric.zero_count ? <span className="ml-1.5 font-black text-rose-600">{metric.zero_count} 题 0 分</span> : null}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -622,6 +634,19 @@ export function ReplyAgentEvaluationsClient({
           <MetricCard label="工具参数" metric={summary.metrics.argument_accuracy} />
           <MetricCard label="行为边界" metric={summary.metrics.behavior_accuracy} />
           <MetricCard label="高风险转人工" metric={summary.metrics.handoff_accuracy} />
+        </div>
+
+        <div className="border-t border-slate-100 bg-white px-4 py-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="text-xs font-black text-slate-700">检索与回复平均分</p>
+            <p className="text-[11px] text-slate-400">门禁只看过了几题，平均分和 0 分题数看差多远</p>
+          </div>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <AverageCard label="召回平均分" metric={summary.metrics.context_recall_average} />
+            <AverageCard label="精确率平均分" metric={summary.metrics.context_precision_average} />
+            <AverageCard label="忠实度平均分" metric={summary.metrics.faithfulness_average} />
+            <AverageCard label="回答正确完整平均分" metric={summary.metrics.answer_correctness_average} />
+          </div>
         </div>
 
         <div className="border-t border-slate-100 bg-slate-50/40 px-4 py-3">

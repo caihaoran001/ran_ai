@@ -572,6 +572,36 @@ def test_rewrite_harm_is_explicit_per_case_and_in_batch_summary() -> None:
     }
 
 
+def test_batch_summary_reports_averages_beside_the_gates() -> None:
+    """A gate says how many cases cleared the line. Two cases at 1.0 and 0.0
+    clear the same count as two cases at 1.0 and 0.7, and the first pair means
+    the retrieval returned nothing while the second means it nearly made it."""
+    suite = load_reply_agent_eval_suite()
+    cases = [
+        item
+        for item in suite.cases
+        if item.rag_case and item.retrieval_decision == "retrieve"
+    ][:2]
+    adapted = []
+    for case, recall in zip(cases, (1.0, 0.0), strict=True):
+        source_result = mock_rag_cases([case.rag_case])[0]
+        source_result.scores.raw_context_recall = recall
+        source_result.scores.context_recall = recall
+        adapted.append(adapt_rag_result(case, source_result))
+
+    summary = aggregate_summary(
+        base=_base_summary(run_id="average-test", suite=suite, mock=True),
+        cases=adapted,
+    )
+
+    assert summary.metrics.context_recall_pass_rate.value == pytest.approx(0.5)
+    recall_average = summary.metrics.context_recall_average
+    assert recall_average.value == pytest.approx(0.5)
+    assert recall_average.denominator == 2
+    assert recall_average.minimum == pytest.approx(0.0)
+    assert recall_average.zero_count == 1
+
+
 def test_rewrite_harm_detects_hit_collapse_when_both_llm_recalls_are_zero() -> None:
     assessment = assess_rewrite_harm(
         original_query="喝完手有点抖，这算代谢起来了吗？",

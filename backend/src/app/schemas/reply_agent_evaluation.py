@@ -25,8 +25,18 @@ class ReplyAgentRateMetric(StrictModel):
 
 
 class ReplyAgentAverageMetric(StrictModel):
+    """A mean plus the two numbers a mean hides.
+
+    A pass rate of 24/32 reads the same whether the eight failures each missed
+    one clause or returned nothing at all, and those call for opposite fixes
+    (tune retrieval vs. the knowledge base has no such content). `minimum` and
+    `zero_count` make the difference visible without opening the case list.
+    """
+
     value: float | None = Field(default=None, ge=0.0, le=1.0)
     denominator: int = Field(default=0, ge=0)
+    minimum: float | None = Field(default=None, ge=0.0, le=1.0)
+    zero_count: int = Field(default=0, ge=0)
 
 
 class ReplyAgentEvaluationMetrics(StrictModel):
@@ -44,6 +54,21 @@ class ReplyAgentEvaluationMetrics(StrictModel):
     handoff_accuracy: ReplyAgentRateMetric = Field(default_factory=ReplyAgentRateMetric)
     answer_correctness_observed: ReplyAgentRateMetric
     answer_relevancy_average: ReplyAgentAverageMetric = Field(
+        default_factory=ReplyAgentAverageMetric
+    )
+    # Averages sit beside the gates, not instead of them: a gate says how many
+    # cases cleared a calibrated line, the average says how far the rest were
+    # from it. Historical reports predate these fields and read back as zeroed.
+    context_recall_average: ReplyAgentAverageMetric = Field(
+        default_factory=ReplyAgentAverageMetric
+    )
+    context_precision_average: ReplyAgentAverageMetric = Field(
+        default_factory=ReplyAgentAverageMetric
+    )
+    faithfulness_average: ReplyAgentAverageMetric = Field(
+        default_factory=ReplyAgentAverageMetric
+    )
+    answer_correctness_average: ReplyAgentAverageMetric = Field(
         default_factory=ReplyAgentAverageMetric
     )
     judge_task_completion_observed: ReplyAgentRateMetric = Field(

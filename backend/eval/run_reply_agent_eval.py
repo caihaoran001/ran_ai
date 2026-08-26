@@ -109,6 +109,10 @@ def _zero_metrics() -> ReplyAgentEvaluationMetrics:
         handoff_accuracy=ReplyAgentRateMetric(),
         answer_correctness_observed=ReplyAgentRateMetric(),
         answer_relevancy_average=ReplyAgentAverageMetric(),
+        context_recall_average=ReplyAgentAverageMetric(),
+        context_precision_average=ReplyAgentAverageMetric(),
+        faithfulness_average=ReplyAgentAverageMetric(),
+        answer_correctness_average=ReplyAgentAverageMetric(),
         judge_task_completion_observed=ReplyAgentRateMetric(),
         judge_groundedness_observed=ReplyAgentRateMetric(),
         judge_clarification_observed=ReplyAgentRateMetric(),
@@ -253,6 +257,8 @@ def _metric_average(
     return ReplyAgentAverageMetric(
         value=(round(sum(values) / len(values), 6) if values else None),
         denominator=len(values),
+        minimum=(min(values) if values else None),
+        zero_count=sum(1 for value in values if value == 0.0),
     )
 
 
@@ -350,6 +356,10 @@ def aggregate_summary(
         handoff_accuracy=_metric_rate(cases, "handoff_required"),
         answer_correctness_observed=_metric_rate(cases, "answer_correctness"),
         answer_relevancy_average=_metric_average(cases, "answer_relevancy"),
+        context_recall_average=_metric_average(cases, "context_recall"),
+        context_precision_average=_metric_average(cases, "context_precision"),
+        faithfulness_average=_metric_average(cases, "faithfulness"),
+        answer_correctness_average=_metric_average(cases, "answer_correctness"),
         judge_task_completion_observed=_metric_rate(cases, "judge_task_completion"),
         judge_groundedness_observed=_metric_rate(cases, "judge_groundedness"),
         judge_clarification_observed=_metric_rate(cases, "judge_clarification"),
