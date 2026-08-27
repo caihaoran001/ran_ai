@@ -7,6 +7,7 @@ import pytest
 
 from app.core.config import Settings
 from app.services.ai_service import AIService, RetryableAIContentError
+from app.services.message_insight_service import analyze_message_insight
 
 
 class _FakeCompletions:
@@ -94,6 +95,70 @@ async def test_non_document_generation_keeps_global_budget_without_document_opti
         {"role": "user", "content": "hello"},
     ]
     assert usage_payload["response_payload"] is not None
+
+
+@pytest.mark.asyncio
+async def test_message_insight_retries_empty_final_content_until_non_empty() -> None:
+    service, completions = _service(
+        [
+            _response(content="", reasoning='{"requires_human_intervention":true}'),
+            _response(content='{"requires_human_intervention":false}'),
+        ]
+    )
+
+    result = await service.generate_text(
+        scenario="message_insight",
+        system_prompt="only output json",
+        user_prompt="classify this message",
+    )
+
+    assert result == '{"requires_human_intervention":false}'
+    assert len(completions.calls) == 2
+    usage_payload = service._record_usage.await_args.kwargs
+    assert usage_payload["attempts"] == 2
+    assert usage_payload["success"] is True
+    assert usage_payload["error_type"] is None
+
+
+@pytest.mark.asyncio
+async def test_message_insight_falls_back_after_three_empty_final_contents() -> None:
+    service, completions = _service(
+        [
+            _response(content="", reasoning="analysis"),
+            _response(content="", reasoning="analysis"),
+            _response(content="", reasoning="analysis"),
+        ]
+    )
+
+    with pytest.raises(RetryableAIContentError, match="after 3 attempts"):
+        await service.generate_text(
+            scenario="message_insight",
+            system_prompt="only output json",
+            user_prompt="classify this message",
+        )
+
+    assert len(completions.calls) == 3
+    usage_payload = service._record_usage.await_args.kwargs
+    assert usage_payload["attempts"] == 3
+    assert usage_payload["success"] is False
+    assert usage_payload["error_type"] == "RetryableAIContentError"
+
+
+@pytest.mark.asyncio
+async def test_message_insight_classifier_failure_falls_back_to_human(monkeypatch) -> None:
+    class _FailingAI:
+        async def extract_message_insight(self, **_: object) -> dict[str, object]:
+            raise RetryableAIContentError("empty final content after 3 attempts")
+
+    monkeypatch.setattr("app.services.message_insight_service.AIService", _FailingAI)
+
+    insight = await analyze_message_insight(
+        source="chat_message",
+        content="刚发现怀孕了，早C午B晚A还能继续喝吗？",
+    )
+
+    assert insight["requires_human_intervention"] is True
+    assert insight["risk_flags"][0]["code"] == "risk_classifier_unavailable"
 
 
 @pytest.mark.asyncio

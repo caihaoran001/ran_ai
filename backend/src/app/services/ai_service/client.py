@@ -43,6 +43,8 @@ _MEAL_UNSPECIFIC_MARKERS = (
     "一顿餐",
 )
 _DOCUMENT_JSON_SCENARIOS = frozenset({"intake_doc", "stage_report", "population_insight"})
+_EMPTY_CONTENT_RETRY_SCENARIOS = frozenset({"message_insight"})
+_EMPTY_CONTENT_MAX_ATTEMPTS = 3
 
 
 class RetryableAIContentError(RuntimeError):
@@ -584,6 +586,7 @@ class AIService:
         usage = None
         attempts = 0
         response = None
+        content_attempts = 0
         request_payload = {
             "model": model,
             "messages": [
@@ -594,36 +597,37 @@ class AIService:
             "max_tokens": max_tokens,
         }
         try:
-            response, attempts = await self._create_chat_completion_with_retry(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                temperature=temperature,
-                model=model,
-                scenario=scenario,
-                max_tokens=max_tokens,
-            )
-            finish = response.choices[0].finish_reason if response.choices else None
-            usage = getattr(response, "usage", None)
-            if finish == "length":
-                limit_name = (
-                    "AI_DOCUMENT_MAX_TOKENS"
-                    if scenario in _DOCUMENT_JSON_SCENARIOS
-                    else "AI_MAX_TOKENS"
+            while True:
+                response, request_attempts = await self._create_chat_completion_with_retry(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=temperature,
+                    model=model,
+                    scenario=scenario,
+                    max_tokens=max_tokens,
                 )
-                error_type = (
-                    RetryableAIContentError
-                    if scenario in _DOCUMENT_JSON_SCENARIOS
-                    else RuntimeError
-                )
-                raise error_type(
-                    f"AI output truncated at max_tokens={max_tokens}。"
-                    f"请增大 {limit_name} 后重试。"
-                )
-            message = response.choices[0].message if response.choices else None
-            content = message.content if message else ""
-            reasoning_content = getattr(message, "reasoning_content", None) if message else None
-            if not str(content or "").strip():
-                if scenario in _DOCUMENT_JSON_SCENARIOS:
+                attempts += request_attempts
+                finish = response.choices[0].finish_reason if response.choices else None
+                usage = getattr(response, "usage", None)
+                if finish == "length":
+                    limit_name = (
+                        "AI_DOCUMENT_MAX_TOKENS"
+                        if scenario in _DOCUMENT_JSON_SCENARIOS
+                        else "AI_MAX_TOKENS"
+                    )
+                    error_type = (
+                        RetryableAIContentError
+                        if scenario in _DOCUMENT_JSON_SCENARIOS
+                        else RuntimeError
+                    )
+                    raise error_type(
+                        f"AI output truncated at max_tokens={max_tokens}。"
+                        f"请增大 {limit_name} 后重试。"
+                    )
+                message = response.choices[0].message if response.choices else None
+                content = message.content if message else ""
+                reasoning_content = getattr(message, "reasoning_content", None) if message else None
+                if not str(content or "").strip() and scenario in _DOCUMENT_JSON_SCENARIOS:
                     detail = (
                         "AI completed reasoning but returned empty final content"
                         if str(reasoning_content or "").strip()
@@ -632,6 +636,29 @@ class AIService:
                     raise RetryableAIContentError(
                         f"{detail}; reasoning_content is not used as a delivery document"
                     )
+                if str(content or "").strip() or scenario not in _EMPTY_CONTENT_RETRY_SCENARIOS:
+                    break
+
+                content_attempts += 1
+                if content_attempts >= _EMPTY_CONTENT_MAX_ATTEMPTS:
+                    detail = (
+                        "AI completed reasoning but returned empty final content"
+                        if str(reasoning_content or "").strip()
+                        else "AI returned empty final content"
+                    )
+                    raise RetryableAIContentError(
+                        f"{detail} after {content_attempts} attempts; "
+                        "the risk classifier will fall back to human review"
+                    )
+                logger.warning(
+                    "AI returned empty final content; retrying scenario=%s "
+                    "content_attempt=%s/%s service_case_id=%s message_id=%s",
+                    scenario,
+                    content_attempts,
+                    _EMPTY_CONTENT_MAX_ATTEMPTS,
+                    service_case_id,
+                    message_id,
+                )
             logger.info(
                 "llm_call scenario=%s model=%s elapsed_ms=%.1f finish_reason=%s prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s total_tokens=%s attempts=%s success=%s",
                 scenario,
