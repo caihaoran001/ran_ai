@@ -12,7 +12,7 @@ from app.evaluation.rag_cases import RagEvalCase, validate_retrieval_clause_cont
 
 
 FIXED_CASE_COUNT = 80
-FIXED_RETRIEVAL_COUNTS = {"retrieve": 32, "skip": 48}
+FIXED_RETRIEVAL_COUNTS = {"retrieve": 34, "skip": 46}
 REQUIRED_RETRIEVAL_FAMILIES = frozenset(
     {
         "dosage_scale",
@@ -56,6 +56,8 @@ class ReplyAgentEvalCase(StrictModel):
             "multi_turn_resolution",
             "mixed_report_question",
             "retrieval_interference",
+            "diet_rule",
+            "service_rule",
         ]
     ] = Field(default_factory=list)
     metric_groups: list[Literal["M0", "MR", "MT", "MB"]] = Field(min_length=1)

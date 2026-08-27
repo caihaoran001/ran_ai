@@ -848,10 +848,13 @@
         "rag-faq-low-carb"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "diet_rule"
+      ],
       "metric_groups": [
-        "M0"
+        "M0",
+        "MR"
       ],
       "tags": [
         "diet",
@@ -883,7 +886,7 @@
           }
         ],
         "rewrite": {
-          "decision": "skip",
+          "decision": "retrieve",
           "must_include": [
             "低碳饮食",
             "米饭面条",
@@ -894,7 +897,9 @@
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "faq-f11"
+          ],
           "forbidden_source_types": [
             "case"
           ]
@@ -1348,10 +1353,13 @@
         "rag-faq-questionnaire-purpose"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "service_rule"
+      ],
       "metric_groups": [
         "M0",
+        "MR",
         "MB"
       ],
       "tags": [
@@ -1385,11 +1393,14 @@
             "source_ids": [
               "faq_684731c83ca05582"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "入营问卷用于记录基础信息、目标、生活习惯和健康边界",
+              "系统据此生成用户画像并支持个性化文件和后续服务调整"
+            ]
           }
         ],
         "rewrite": {
-          "decision": "skip",
+          "decision": "retrieve",
           "must_include": [
             "入营问卷",
             "用途",
@@ -1400,7 +1411,9 @@
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "faq-f25"
+          ],
           "forbidden_source_types": [
             "case"
           ]

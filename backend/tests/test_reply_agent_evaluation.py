@@ -40,12 +40,17 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
     assert suite.suite_id == "reply-agent-core-v4"
     assert suite.version == 4
     assert len(suite.cases) == 80
-    assert summary["retrieval_counts"] == {"retrieve": 32, "skip": 48}
+    assert summary["retrieval_counts"] == {"retrieve": 34, "skip": 46}
     assert summary["execution_counts"] == {"agent": 30, "handoff": 3, "rag": 47}
     assert summary["metric_group_counts"]["M0"] == 80
-    assert summary["metric_group_counts"]["MR"] == 32
-    assert set(summary["retrieval_family_counts"]) == REQUIRED_RETRIEVAL_FAMILIES
-    assert min(summary["retrieval_family_counts"].values()) >= 4
+    assert summary["metric_group_counts"]["MR"] == 34
+    assert REQUIRED_RETRIEVAL_FAMILIES <= set(summary["retrieval_family_counts"])
+    # 覆盖度契约只约束核心产品检索族；饮食/服务规则是改判后新增的窄族，
+    # 与套件模型的校验口径保持一致。
+    assert all(
+        summary["retrieval_family_counts"][family] >= 4
+        for family in REQUIRED_RETRIEVAL_FAMILIES
+    )
     assert [case.case_id for case in suite.cases] == [
         f"RA-{index:03d}" for index in range(1, 81)
     ]
@@ -90,7 +95,7 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
 
 
 def test_every_recall_gated_case_scores_on_retrievable_clauses_only() -> None:
-    """The 32 recall-gated cases are what the calibrated 0.75 gate judges. A
+    """The 34 recall-gated cases are what the calibrated 0.75 gate judges. A
     prohibition among their clauses has no retrievable truth, so the score it
     produces is not reproducible — 15 of them carried one before this contract."""
     suite = load_reply_agent_eval_suite()
@@ -110,7 +115,7 @@ def test_every_recall_gated_case_scores_on_retrievable_clauses_only() -> None:
             if found:
                 offenders[f"{case.case_id}:{fact_id}"] = found
 
-    assert gated == 32
+    assert gated == 34
     assert offenders == {}
 
 
@@ -459,9 +464,9 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     assert report.summary.metrics.rewrite_harm_rate.model_dump() == {
         "value": 0.0,
         "numerator": 0,
-        "denominator": 32,
+        "denominator": 34,
     }
-    assert report.summary.metrics.answer_relevancy_average.denominator == 32
+    assert report.summary.metrics.answer_relevancy_average.denominator == 34
     assert report.summary.metrics.answer_correctness_observed.denominator == 47
     assert report.summary.metrics.handoff_accuracy.model_dump() == {
         "value": 1.0,
@@ -480,7 +485,7 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
         "handoff": 3,
     }
     assert (
-        sum(case.actual.retrieval_decision == "retrieve" for case in report.cases) == 32
+        sum(case.actual.retrieval_decision == "retrieve" for case in report.cases) == 34
     )
     assert all(
         case.usage.get("total", {}).get("call_count") == 0 for case in report.cases

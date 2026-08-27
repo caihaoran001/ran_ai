@@ -28,6 +28,16 @@ KEPT_RAG_SKIP_IDS = (
     "rag-chat-ambiguous-how",
 )
 
+# 原判 skip 是错的：低碳饮食口径和入营问卷用途的权威答案都在知识库里，不查
+# 回复 Agent 只能自己编一套说法。改判为该检索，与生产意图提示词同步放开。
+RETRIEVE_CORRECTED_IDS = (
+    "rag-faq-low-carb",
+    "rag-faq-questionnaire-purpose",
+)
+
+# 问卷那道带 privacy 标签，改判前按行为组评；检索放开后行为要求不应被顶掉。
+RETRIEVE_CORRECTED_MB_IDS = ("rag-faq-questionnaire-purpose",)
+
 
 RETRIEVAL_FAMILIES = {
     "rag-faq-cap-conversion": ["dosage_scale", "multi_turn_resolution"],
@@ -53,6 +63,9 @@ RETRIEVAL_FAMILIES = {
         "adverse_reaction",
         "multi_turn_resolution",
     ],
+    # 改判为该检索的两道：一道问饮食口径，一道问服务规则。
+    "rag-faq-low-carb": ["diet_rule"],
+    "rag-faq-questionnaire-purpose": ["service_rule"],
 }
 
 
@@ -282,7 +295,11 @@ def _metric_groups_for_rag(case: RagEvalCase) -> list[str]:
     groups = ["M0"]
     if case.rewrite.decision == "retrieve":
         groups.append("MR")
-    elif case.answer.response_mode != "answer" or any(
+        # 改判为该检索的两道里，问卷那道原本就按行为组评，检索放开后两组并存。
+        if case.case_id in RETRIEVE_CORRECTED_MB_IDS:
+            groups.append("MB")
+        return groups
+    if case.answer.response_mode != "answer" or any(
         tag in {"staff_correction", "support", "privacy", "ambiguous"}
         for tag in case.tags
     ):
@@ -601,6 +618,28 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
         payload["retrieval"]["required_fact_ids"] = []
         payload["answer"]["required_fact_ids"] = []
         payload["answer"]["forbidden_fact_ids"] = []
+    if case.case_id in RETRIEVE_CORRECTED_IDS:
+        # 原判为 skip，等于要求回复 Agent 凭记忆解释低碳饮食口径和入营问卷用途。
+        # 这两件事的权威答案都在知识库里，不查就只能自己编一套说法。改判为该检索，
+        # 与生产意图提示词同步放开。
+        payload["rewrite"]["decision"] = "retrieve"
+        if case.case_id == "rag-faq-questionnaire-purpose":
+            # 事实原文含一句"不应…"的禁止性表述，检索断言只列可被召回的正面事实。
+            payload["authoritative_facts"] = [
+                {
+                    **fact,
+                    "retrieval_clauses": [
+                        "入营问卷用于记录基础信息、目标、生活习惯和健康边界",
+                        "系统据此生成用户画像并支持个性化文件和后续服务调整",
+                    ],
+                }
+                if fact["fact_id"] == "faq-f25"
+                else fact
+                for fact in payload["authoritative_facts"]
+            ]
+        payload["retrieval"]["required_fact_ids"] = [
+            fact["fact_id"] for fact in payload["authoritative_facts"]
+        ]
     return RagEvalCase.model_validate(payload)
 
 
