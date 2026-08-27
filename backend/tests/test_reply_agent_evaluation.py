@@ -40,10 +40,10 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
     assert suite.suite_id == "reply-agent-core-v4"
     assert suite.version == 4
     assert len(suite.cases) == 80
-    assert summary["retrieval_counts"] == {"retrieve": 41, "skip": 39}
+    assert summary["retrieval_counts"] == {"retrieve": 43, "skip": 37}
     assert summary["execution_counts"] == {"agent": 30, "handoff": 3, "rag": 47}
     assert summary["metric_group_counts"]["M0"] == 80
-    assert summary["metric_group_counts"]["MR"] == 41
+    assert summary["metric_group_counts"]["MR"] == 43
     assert REQUIRED_RETRIEVAL_FAMILIES <= set(summary["retrieval_family_counts"])
     # 覆盖度契约只约束核心产品检索族；饮食/服务规则是改判后新增的窄族，
     # 与套件模型的校验口径保持一致。
@@ -115,7 +115,7 @@ def test_every_recall_gated_case_scores_on_retrievable_clauses_only() -> None:
             if found:
                 offenders[f"{case.case_id}:{fact_id}"] = found
 
-    assert gated == 41
+    assert gated == 43
     assert offenders == {}
 
 
@@ -210,6 +210,22 @@ def test_retrieval_noise_cases_follow_live_knowledge_boundary() -> None:
                 "随餐指边吃边喝，条件不允许时紧邻正餐前后喝也可以",
             ],
         ),
+        # 运动/作息两道原判 skip，等于让回复 Agent 自己编一套执行方法。
+        "rag-faq-low-impact-exercise": (
+            "health_knowledge",
+            [
+                "减重可以从短时间快走、饭后散步、骑行或家务等活动开始",
+                "膝盖、脚踝或腰部有伤时选择不加重疼痛的低冲击活动",
+            ],
+        ),
+        "rag-faq-sleep-adjustment": (
+            "health_knowledge",
+            [
+                "先固定起床时间",
+                "睡前减少咖啡因、酒精和屏幕刺激",
+                "每几天把上床时间提前15至30分钟",
+            ],
+        ),
     }
 
     for source_id, (family, clauses) in expected.items():
@@ -227,12 +243,7 @@ def test_retrieval_noise_cases_follow_live_knowledge_boundary() -> None:
         )
         assert fact.retrieval_clauses == clauses, source_id
 
-    for source_id in (
-        "rag-faq-low-impact-exercise",
-        "rag-faq-sleep-adjustment",
-        "rag-chat-ambiguous-how",
-    ):
-        assert by_source[source_id].retrieval_decision == "skip", source_id
+    assert by_source["rag-chat-ambiguous-how"].retrieval_decision == "skip"
 
 
 def test_date_cases_grade_business_time_without_requiring_iso_wording() -> None:
@@ -549,11 +560,16 @@ def test_unified_v4_locks_confirmed_business_rulings() -> None:
     assert constipation.answer.forbidden_fact_ids == ["chat-r09"]
     assert constipation.retrieval.required_fact_ids == ["chat-r09"]
 
-    for source_id in ("rag-faq-low-impact-exercise", "rag-faq-sleep-adjustment"):
+    # 运动/作息两道改判为该检索：权威事实回到题上，召回按正面事实评分，
+    # 原文里的"不要…"仍留在 statement 供忠实度和回答正确性判分。
+    for source_id, fact_id in (
+        ("rag-faq-low-impact-exercise", "faq-f21"),
+        ("rag-faq-sleep-adjustment", "faq-f22"),
+    ):
         case = by_source[source_id].rag_case
-        assert case.authoritative_facts == []
-        assert case.retrieval.required_fact_ids == []
-        assert case.answer.required_fact_ids == []
+        assert [fact.fact_id for fact in case.authoritative_facts] == [fact_id]
+        assert case.retrieval.required_fact_ids == [fact_id]
+        assert case.answer.required_fact_ids == [fact_id]
 
 
 @pytest.mark.asyncio
@@ -585,9 +601,9 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     assert report.summary.metrics.rewrite_harm_rate.model_dump() == {
         "value": 0.0,
         "numerator": 0,
-        "denominator": 41,
+        "denominator": 43,
     }
-    assert report.summary.metrics.answer_relevancy_average.denominator == 41
+    assert report.summary.metrics.answer_relevancy_average.denominator == 43
     assert report.summary.metrics.answer_correctness_observed.denominator == 47
     assert report.summary.metrics.handoff_accuracy.model_dump() == {
         "value": 1.0,
@@ -606,7 +622,7 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
         "handoff": 3,
     }
     assert (
-        sum(case.actual.retrieval_decision == "retrieve" for case in report.cases) == 41
+        sum(case.actual.retrieval_decision == "retrieve" for case in report.cases) == 43
     )
     assert all(
         case.usage.get("total", {}).get("call_count") == 0 for case in report.cases

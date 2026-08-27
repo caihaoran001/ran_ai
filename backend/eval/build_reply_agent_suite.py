@@ -40,6 +40,10 @@ RETRIEVE_CORRECTED_IDS = (
     "rag-faq-low-carb",
     "rag-faq-questionnaire-purpose",
     "rag-chat-cafeteria-privacy",
+    # 运动与作息两道同属"执行方法"，生产意图口径本就要求检索；原判 skip
+    # 等于允许回复 Agent 自行编一套运动/作息建议，与 RA-025 同类问题。
+    "rag-faq-low-impact-exercise",
+    "rag-faq-sleep-adjustment",
 )
 
 # 问卷和饭堂隐私两道原本带行为标签，检索放开后仍保留支持/行为要求。
@@ -83,6 +87,9 @@ RETRIEVAL_FAMILIES = {
     "rag-chat-meal-order-why": ["diet_rule"],
     "rag-faq-low-carb": ["diet_rule"],
     "rag-faq-questionnaire-purpose": ["service_rule"],
+    # 运动安排与作息调整都是执行方法类健康知识。
+    "rag-faq-low-impact-exercise": ["health_knowledge"],
+    "rag-faq-sleep-adjustment": ["health_knowledge"],
 }
 
 
@@ -717,10 +724,25 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
             "forbidden_fact_ids": [],
         }
     elif case.case_id in {"rag-faq-low-impact-exercise", "rag-faq-sleep-adjustment"}:
-        payload["authoritative_facts"] = []
-        payload["retrieval"]["required_fact_ids"] = []
-        payload["answer"]["required_fact_ids"] = []
-        payload["answer"]["forbidden_fact_ids"] = []
+        # 两条权威事实以"不要…"开头，禁止性表述没有可召回的真值。原文整句留在
+        # statement 供忠实度和回答正确性判分，召回只看下面这些正面事实。
+        if case.case_id == "rag-faq-low-impact-exercise":
+            _set_retrieval_clauses(
+                "faq-f21",
+                [
+                    "减重可以从短时间快走、饭后散步、骑行或家务等活动开始",
+                    "膝盖、脚踝或腰部有伤时选择不加重疼痛的低冲击活动",
+                ],
+            )
+        else:
+            _set_retrieval_clauses(
+                "faq-f22",
+                [
+                    "先固定起床时间",
+                    "睡前减少咖啡因、酒精和屏幕刺激",
+                    "每几天把上床时间提前15至30分钟",
+                ],
+            )
     if case.case_id in RETRIEVE_CORRECTED_IDS:
         # 原判为 skip，等于要求回复 Agent 凭记忆解释知识口径。改判为该检索，
         # 与生产意图提示词同步放开。若事实被拆成「必答半句 + 留档旁句」，
@@ -1248,8 +1270,8 @@ def build_suite() -> ReplyAgentEvalSuite:
             "suite_id": "reply-agent-core-v4",
             "version": 4,
             "description": (
-                "回复 Agent 统一固定题库：80 道唯一题，41 道需要知识依据的检索，"
-                "39 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；"
+                "回复 Agent 统一固定题库：80 道唯一题，43 道需要知识依据的检索，"
+                "37 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；"
                 "v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、"
                 "冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、"
                 "旅游中断不顺延服务期，无红旗便秘改为先澄清；饭堂隐私场景若上下文涉及"

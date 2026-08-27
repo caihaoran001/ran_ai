@@ -1,7 +1,7 @@
 {
   "suite_id": "reply-agent-core-v4",
   "version": 4,
-  "description": "回复 Agent 统一固定题库：80 道唯一题，41 道需要知识依据的检索，39 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、旅游中断不顺延服务期，无红旗便秘改为先澄清；饭堂隐私场景若上下文涉及随餐产品使用规则，也纳入检索并保留支持式回复。",
+  "description": "回复 Agent 统一固定题库：80 道唯一题，43 道需要知识依据的检索，37 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、旅游中断不顺延服务期，无红旗便秘改为先澄清；饭堂隐私场景若上下文涉及随餐产品使用规则，也纳入检索并保留支持式回复。",
   "cases": [
     {
       "case_id": "RA-001",
@@ -1092,10 +1092,13 @@
         "rag-faq-low-impact-exercise"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "health_knowledge"
+      ],
       "metric_groups": [
-        "M0"
+        "M0",
+        "MR"
       ],
       "tags": [
         "exercise",
@@ -1116,9 +1119,23 @@
         ],
         "history": [],
         "user_query": "膝盖不舒服又没时间，不跑步还能怎么动？",
-        "authoritative_facts": [],
+        "authoritative_facts": [
+          {
+            "fact_id": "faq-f21",
+            "statement": "减重不需要强行跑步，可以从短时间快走、饭后散步、骑行或家务等活动开始；膝盖、脚踝或腰部有伤时不要用跑跳硬顶，应选择不加重疼痛的低冲击活动。",
+            "provenance": "knowledge_faqs:faq_e8d8d3cf631a7da2:v2",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "faq_e8d8d3cf631a7da2"
+            ],
+            "retrieval_clauses": [
+              "减重可以从短时间快走、饭后散步、骑行或家务等活动开始",
+              "膝盖、脚踝或腰部有伤时选择不加重疼痛的低冲击活动"
+            ]
+          }
+        ],
         "rewrite": {
-          "decision": "skip",
+          "decision": "retrieve",
           "must_include": [
             "膝盖不适",
             "不跑步",
@@ -1129,14 +1146,18 @@
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "faq-f21"
+          ],
           "forbidden_source_types": [
             "case"
           ]
         },
         "answer": {
           "response_mode": "answer",
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "faq-f21"
+          ],
           "forbidden_fact_ids": []
         }
       },
@@ -1150,10 +1171,13 @@
         "rag-faq-sleep-adjustment"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "health_knowledge"
+      ],
       "metric_groups": [
-        "M0"
+        "M0",
+        "MR"
       ],
       "tags": [
         "sleep",
@@ -1174,9 +1198,24 @@
         ],
         "history": [],
         "user_query": "我每天两点睡，突然十点躺着根本睡不着，怎么改？",
-        "authoritative_facts": [],
+        "authoritative_facts": [
+          {
+            "fact_id": "faq-f22",
+            "statement": "不要强迫自己突然提前很久入睡；先固定起床时间并减少睡前咖啡因、酒精和屏幕刺激，再每几天把上床时间提前15至30分钟。",
+            "provenance": "knowledge_faqs:faq_fb49b79b2ec94745:v2",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "faq_fb49b79b2ec94745"
+            ],
+            "retrieval_clauses": [
+              "先固定起床时间",
+              "睡前减少咖啡因、酒精和屏幕刺激",
+              "每几天把上床时间提前15至30分钟"
+            ]
+          }
+        ],
         "rewrite": {
-          "decision": "skip",
+          "decision": "retrieve",
           "must_include": [
             "长期凌晨两点睡",
             "提前入睡困难",
@@ -1187,14 +1226,18 @@
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "faq-f22"
+          ],
           "forbidden_source_types": [
             "case"
           ]
         },
         "answer": {
           "response_mode": "answer",
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "faq-f22"
+          ],
           "forbidden_fact_ids": []
         }
       },
