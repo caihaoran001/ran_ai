@@ -248,6 +248,23 @@ async def test_refunded_case_stops_new_rewards_but_keeps_existing_qualification(
     assert [row.tier_days for row in qualifications] == [3]
 
 
+def test_reward_shipping_tool_description_stops_when_recipient_fields_are_missing() -> None:
+    tool = build_reward_shipping_tools(
+        context=AgentRunContext(service_case_id=999)
+    )[0]
+    action_description = tool.args_schema.model_json_schema()["properties"]["action"][
+        "description"
+    ]
+
+    assert "otherwise call no reward tool and ask only for the missing recipient fields" in (
+        tool.description
+    )
+    assert "Never call get_status merely because recipient fields are missing" in (
+        tool.description
+    )
+    assert "never use it for an immediate-shipment request" in action_description
+
+
 @pytest.mark.asyncio
 async def test_reward_shipping_tool_rejects_partial_fields_before_writing(
     db_session,

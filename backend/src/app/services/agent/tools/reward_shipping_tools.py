@@ -43,7 +43,9 @@ REWARD_PROGRAM_PAUSED_REPLY = "奖励规则正在讨论中，确认后会另行�
 class RewardShippingArgs(BaseModel):
     action: RewardShippingAction = Field(
         description=(
-            "get_status=read current reward/shipping context; ship_now=user clearly chooses immediate shipment; "
+            "get_status=read a pending reward choice only to interpret an otherwise ambiguous bare reply such as "
+            "1 or 2; never use it for an immediate-shipment request that is missing recipient fields; "
+            "ship_now=user clearly chooses immediate shipment; "
             "accumulate=user clearly chooses to wait for a later tier; save_shipping_info=add or correct recipient details."
         )
     )
@@ -485,12 +487,16 @@ def build_reward_shipping_tools(
             coroutine=manage_reward_shipping,
             name="manage_reward_shipping",
             description=(
-                "Read and record THIS user's cumulative check-in reward shipping context. All ordinary replies, "
-                "including a bare 1 or 2, still go through the Agent: first call get_status when context is unclear. "
-                "Call ship_now/accumulate only if this user's current message clearly answers a pending reward "
-                "shipping choice. ship_now and save_shipping_info require recipient name, phone, and detailed "
-                "address together; ship_now may instead reuse prior data only on an explicit request and only when "
-                "all three saved fields exist. The tool never calculates awards, "
+                "Record THIS user's cumulative check-in reward shipping decision. Follow exactly one branch for an "
+                "immediate-shipment request: (1) call ship_now only when the current message supplies recipient "
+                "name, phone, and detailed address together; (2) call ship_now with reuse_saved_address=true only "
+                "when the user explicitly asks to reuse previously saved details; (3) otherwise call no reward "
+                "tool and ask only for the missing recipient fields. Never call get_status merely because recipient "
+                "fields are missing. get_status is reserved for interpreting an otherwise ambiguous bare reply such "
+                "as 1 or 2 to a pending choice; explicit reward or shipping status questions use "
+                "get_checkin_reward_status. Call accumulate only if this user's current message clearly answers a "
+                "pending reward choice. ship_now and save_shipping_info require all three recipient fields together. "
+                "The tool never calculates awards, "
                 "changes quantities, or marks a shipment as shipped. When the program is paused, do not write "
                 "anything and reply only with reply_instruction."
             ),
