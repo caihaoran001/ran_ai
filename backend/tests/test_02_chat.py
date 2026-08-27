@@ -333,10 +333,13 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     assert "不是空腹血糖" in prompt
     assert "空腹血糖142mg/dL" in prompt
     assert "语义仍有歧义时保持无风险" in prompt
-    assert "疑似产品不良反应或可能与产品使用相关的身体问题" in prompt
+    assert "当前正在发生的身体不适或身体异常（含疑似产品不良反应；用户没提产品也算）" in prompt
     assert "服务规则（问卷、打卡、交付文件、服务流程的用途与要求）" in prompt
     assert "都输出不超过80字的独立检索短句" in prompt
     assert "只有实时数据查询、系统操作、纯上报、确认收尾和闲聊才输出 JSON null" in prompt
+    assert "纯上报仅指体重、饮水、饮食、运动等数值或完成情况的记录" in prompt
+    assert "用户陈述身体不适（如两天没排便、心慌、腹泻）不是纯上报" in prompt
+    assert "即使没有以问句提出也必须输出检索短句" in prompt
     assert "完整保留产品名、症状、动作、数字、时间、否定、不确定性" in prompt
     assert "是否由产品导致/是否需要补喝" in prompt
     assert "只能还原对话已出现的产品名，不得猜测" in prompt
