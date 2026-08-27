@@ -39,10 +39,14 @@ RETRIEVE_CORRECTED_IDS = (
     "rag-chat-meal-order-why",
     "rag-faq-low-carb",
     "rag-faq-questionnaire-purpose",
+    "rag-chat-cafeteria-privacy",
 )
 
-# 问卷那道带 privacy 标签，改判前按行为组评；检索放开后行为要求不应被顶掉。
-RETRIEVE_CORRECTED_MB_IDS = ("rag-faq-questionnaire-purpose",)
+# 问卷和饭堂隐私两道原本带行为标签，检索放开后仍保留支持/行为要求。
+RETRIEVE_CORRECTED_MB_IDS = (
+    "rag-faq-questionnaire-purpose",
+    "rag-chat-cafeteria-privacy",
+)
 
 
 RETRIEVAL_FAMILIES = {
@@ -65,6 +69,7 @@ RETRIEVAL_FAMILIES = {
     "rag-chat-unify-dose": ["dosage_scale", "retrieval_interference"],
     "rag-chat-before-meal": ["timing_missed", "multi_turn_resolution"],
     "rag-chat-travel-interruption": ["timing_missed", "product_pairing"],
+    "rag-chat-cafeteria-privacy": ["brewing_usage"],
     "rag-chat-two-day-constipation": [
         "adverse_reaction",
         "multi_turn_resolution",
@@ -676,6 +681,41 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
                 "与蛋白质和蔬菜搭配",
             ],
         )
+    elif case.case_id == "rag-chat-cafeteria-privacy":
+        # 当前消息是在表达饭堂里的隐私顾虑，但上下文明确围绕随餐产品的使用规则；
+        # 先检索产品口径，再让回复 Agent 用支持语气接住顾虑。
+        payload["tags"] = ["production_chat", "product_rule", "support", "privacy"]
+        payload["authoritative_facts"] = [
+            {
+                "fact_id": "chat-r11",
+                "statement": (
+                    "早C和午B优先随餐饮用；条件不允许时，紧邻正餐前后喝也可以，"
+                    "不需要卡固定的分钟数。"
+                ),
+                "provenance": "knowledge_faqs:faq_61fab86fe347b2bc:v2",
+                "source_scope": "knowledge",
+                "source_ids": [
+                    "faq_61fab86fe347b2bc",
+                    "faq_c985c0d43ef0f64c",
+                ],
+                "retrieval_clauses": [
+                    "早C和午B优先随正餐进行",
+                    "随餐指边吃边喝，条件不允许时紧邻正餐前后喝也可以",
+                ],
+            }
+        ]
+        payload["rewrite"] = {
+            "decision": "retrieve",
+            "must_include": ["随餐", "边吃边喝"],
+            "must_preserve_meanings": [
+                "用户在表达公开场合使用产品的隐私和社交顾虑，同时上下文涉及随餐产品使用规则"
+            ],
+        }
+        payload["answer"] = {
+            "response_mode": "support",
+            "required_fact_ids": ["chat-r11"],
+            "forbidden_fact_ids": [],
+        }
     elif case.case_id in {"rag-faq-low-impact-exercise", "rag-faq-sleep-adjustment"}:
         payload["authoritative_facts"] = []
         payload["retrieval"]["required_fact_ids"] = []
@@ -1160,11 +1200,12 @@ def build_suite() -> ReplyAgentEvalSuite:
             "suite_id": "reply-agent-core-v4",
             "version": 4,
             "description": (
-                "回复 Agent 统一固定题库：80 道唯一题，40 道需要知识依据的检索，"
-                "40 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；"
+                "回复 Agent 统一固定题库：80 道唯一题，41 道需要知识依据的检索，"
+                "39 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；"
                 "v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、"
                 "冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、"
-                "旅游中断不顺延服务期，无红旗便秘改为先澄清。"
+                "旅游中断不顺延服务期，无红旗便秘改为先澄清；饭堂隐私场景若上下文涉及"
+                "随餐产品使用规则，也纳入检索并保留支持式回复。"
             ),
             "cases": cases,
         }

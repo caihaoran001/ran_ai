@@ -1,7 +1,7 @@
 {
   "suite_id": "reply-agent-core-v4",
   "version": 4,
-  "description": "回复 Agent 统一固定题库：80 道唯一题，40 道需要知识依据的检索，40 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、旅游中断不顺延服务期，无红旗便秘改为先澄清。",
+  "description": "回复 Agent 统一固定题库：80 道唯一题，41 道需要知识依据的检索，39 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、旅游中断不顺延服务期，无红旗便秘改为先澄清；饭堂隐私场景若上下文涉及随餐产品使用规则，也纳入检索并保留支持式回复。",
   "cases": [
     {
       "case_id": "RA-001",
@@ -2387,15 +2387,18 @@
         "rag-chat-cafeteria-privacy"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "brewing_usage"
+      ],
       "metric_groups": [
         "M0",
+        "MR",
         "MB"
       ],
       "tags": [
         "production_chat",
-        "skip_retrieval",
+        "product_rule",
         "support",
         "privacy"
       ],
@@ -2408,7 +2411,7 @@
         },
         "tags": [
           "production_chat",
-          "skip_retrieval",
+          "product_rule",
           "support",
           "privacy"
         ],
@@ -2423,23 +2426,45 @@
           }
         ],
         "user_query": "因为饭堂太多同事了，不想一个个解释及被解读",
-        "authoritative_facts": [],
+        "authoritative_facts": [
+          {
+            "fact_id": "chat-r11",
+            "statement": "早C和午B优先随餐饮用；条件不允许时，紧邻正餐前后喝也可以，不需要卡固定的分钟数。",
+            "provenance": "knowledge_faqs:faq_61fab86fe347b2bc:v2",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "faq_61fab86fe347b2bc",
+              "faq_c985c0d43ef0f64c"
+            ],
+            "retrieval_clauses": [
+              "早C和午B优先随正餐进行",
+              "随餐指边吃边喝，条件不允许时紧邻正餐前后喝也可以"
+            ]
+          }
+        ],
         "rewrite": {
-          "decision": "skip",
-          "must_include": [],
+          "decision": "retrieve",
+          "must_include": [
+            "随餐",
+            "边吃边喝"
+          ],
           "must_preserve_meanings": [
-            "用户在表达公开场合使用产品的隐私和社交顾虑"
+            "用户在表达公开场合使用产品的隐私和社交顾虑，同时上下文涉及随餐产品使用规则"
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "chat-r11"
+          ],
           "forbidden_source_types": [
             "case"
           ]
         },
         "answer": {
           "response_mode": "support",
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "chat-r11"
+          ],
           "forbidden_fact_ids": []
         }
       },

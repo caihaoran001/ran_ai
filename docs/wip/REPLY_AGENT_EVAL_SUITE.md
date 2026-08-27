@@ -1,6 +1,6 @@
 # 回复 Agent 统一评测题库合并方案（只读分析）
 
-> **实施状态（2026-08-27）**：下文“75+6=81”是合并阶段的历史提案，已被最终产品决策取代。当前唯一有效题库为 `reply-agent-core-v4`：**80 道唯一题，40 道检索、40 道跳过**；实际题目与编号以 `backend/tests/fixtures/reply_agent_eval_cases.v4.json` 为准，硬校验以 `backend/src/app/evaluation/reply_agent_cases.py` 为准。下文旧表仅用于追溯来源，不再是执行口径。
+> **实施状态（2026-08-27）**：下文“75+6=81”是合并阶段的历史提案，已被最终产品决策取代。当前唯一有效题库为 `reply-agent-core-v4`：**80 道唯一题，41 道检索、39 道跳过**；实际题目与编号以 `backend/tests/fixtures/reply_agent_eval_cases.v4.json` 为准，硬校验以 `backend/src/app/evaluation/reply_agent_cases.py` 为准。下文旧表仅用于追溯来源，不再是执行口径。
 
 > 状态：方案稿 v2（本文档仅为只读分析与规划，未改动任何题库、脚本或依赖）
 > 分析基线：`rag_eval_cases.v3.json`（rag-fixed-50-v3）+ `agent_eval_cases.v3.json`（agent-task-core-v3）
