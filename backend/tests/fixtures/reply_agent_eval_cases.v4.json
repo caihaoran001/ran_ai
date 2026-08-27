@@ -2625,7 +2625,7 @@
           ],
           "forbidden_literals": [],
           "required_facts": [
-            "2026年8月20日完成3/5项"
+            "昨天完成3/5项"
           ],
           "forbidden_claims": [
             "今天完成3项",
@@ -4035,7 +4035,7 @@
           ],
           "forbidden_literals": [],
           "required_facts": [
-            "已创建2026年8月22日早上8点称体重的一次性提醒"
+            "已创建明早8点称体重的一次性提醒"
           ],
           "forbidden_claims": [
             "创建成每天重复提醒"

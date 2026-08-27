@@ -160,6 +160,27 @@ def test_generated_fixture_matches_builder_source() -> None:
     assert generated == persisted
 
 
+def test_date_cases_grade_business_time_without_requiring_iso_wording() -> None:
+    suite = load_reply_agent_eval_suite()
+    by_id = {case.case_id: case.agent_case for case in suite.cases if case.agent_case}
+
+    yesterday = by_id["RA-033"].expected
+    assert yesterday.required_facts == ["昨天完成3/5项"]
+    assert yesterday.required_tools[0].args_subset == {
+        "date_from": "2026-08-20",
+        "date_to": "2026-08-20",
+    }
+    assert "今天完成3项" in yesterday.forbidden_claims
+
+    reminder = by_id["RA-050"].expected
+    assert reminder.required_facts == ["已创建明早8点称体重的一次性提醒"]
+    assert reminder.required_tools[0].args_subset == {
+        "remind_at": "2026-08-22T08:00:00+08:00",
+        "content": "称体重",
+    }
+    assert "创建成每天重复提醒" in reminder.forbidden_claims
+
+
 def test_unified_agent_stubs_match_runtime_tool_contracts() -> None:
     suite = load_reply_agent_eval_suite()
     by_id = {case.case_id: case.agent_case for case in suite.cases if case.agent_case}

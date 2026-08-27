@@ -967,6 +967,12 @@ AGENT_TOOL_STUB_CONTRACT_OVERRIDES: dict[str, list[dict[str, Any]]] = {
 }
 
 AGENT_EXPECTED_FACT_OVERRIDES: dict[str, list[str]] = {
+    # 用户问“昨天”，回复“昨天完成3项”已经准确承接；工具参数仍单独要求
+    # 2026-08-20，不能再强迫回复把相对日期复述成完整年月日。
+    "agent-yesterday-checkins": ["昨天完成3/5项"],
+    # 用户刚说“明天早上8点”，回复确认“明早8点”并不会丢失信息；提醒
+    # 的绝对时间和一次性属性仍由工具参数及禁止事实分别确定性核对。
+    "agent-create-reminder": ["已创建明早8点称体重的一次性提醒"],
     "agent-lifecycle-no-mention": [
         "本条没有明确 @ 机器人，所以不会执行服务周期修改",
     ]
