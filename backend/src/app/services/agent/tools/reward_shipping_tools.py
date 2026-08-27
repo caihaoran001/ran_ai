@@ -49,15 +49,24 @@ class RewardShippingArgs(BaseModel):
     )
     recipient_name: str | None = Field(
         default=None,
-        description="Recipient name explicitly supplied by the user; never infer it from profile or nickname.",
+        description=(
+            "Recipient name explicitly supplied by the user; required together with phone and address for "
+            "ship_now or save_shipping_info unless ship_now explicitly reuses a complete saved address."
+        ),
     )
     recipient_phone: str | None = Field(
         default=None,
-        description="Phone number explicitly supplied by the user; preserve it exactly as text.",
+        description=(
+            "Phone number explicitly supplied by the user; required together with recipient and address for "
+            "ship_now or save_shipping_info unless ship_now explicitly reuses a complete saved address."
+        ),
     )
     shipping_address: str | None = Field(
         default=None,
-        description="Detailed shipping address explicitly supplied by the user; preserve the full text.",
+        description=(
+            "Detailed shipping address explicitly supplied by the user; required together with recipient and "
+            "phone for ship_now or save_shipping_info unless ship_now explicitly reuses a complete saved address."
+        ),
     )
     reuse_saved_address: bool = Field(
         default=False,
@@ -355,6 +364,34 @@ def build_reward_shipping_tools(
             cleaned_name = _clean(recipient_name)
             cleaned_phone = _clean(recipient_phone)
             cleaned_address = _clean(shipping_address)
+            supplied_fields = {
+                "收件人": cleaned_name,
+                "手机号": cleaned_phone,
+                "详细地址": cleaned_address,
+            }
+            if reuse_saved_address and action != "ship_now":
+                return {
+                    "ok": False,
+                    "error": "只有明确申请立即寄出时才能沿用已保存的完整收件信息。",
+                }
+            if reuse_saved_address and any(supplied_fields.values()):
+                return {
+                    "ok": False,
+                    "error": "沿用已保存地址和本条提供新地址只能二选一；如需换地址，请一次写全收件人、手机号和详细地址。",
+                }
+            if not reuse_saved_address:
+                missing_input = [
+                    label for label, value in supplied_fields.items() if value is None
+                ]
+                if missing_input:
+                    return {
+                        "ok": False,
+                        "missing_shipping_fields": missing_input,
+                        "error": (
+                            "收件信息必须一次提供完整的收件人、手机号和详细地址；本次缺少："
+                            + "、".join(missing_input)
+                        ),
+                    }
             source_text = _clean(source.content) or ""
             ungrounded = [
                 label
@@ -373,18 +410,46 @@ def build_reward_shipping_tools(
                         + "、".join(ungrounded)
                     ),
                 }
-            if (
-                action == "save_shipping_info"
-                and not any((cleaned_name, cleaned_phone, cleaned_address))
-                and not reuse_saved_address
-            ):
-                return {"ok": False, "error": "用户本条消息没有提供可记录的收件信息。"}
             active = status["active_shipment"]
-            if action == "save_shipping_info" and active is None:
+            if action == "save_shipping_info":
+                program.recipient_name = cleaned_name
+                program.recipient_phone = cleaned_phone
+                program.shipping_address = cleaned_address
+                if active is not None:
+                    active.recipient_name = cleaned_name
+                    active.recipient_phone = cleaned_phone
+                    active.shipping_address = cleaned_address
+                    active.status = "pending_shipment"
+                await session.commit()
+                refreshed = await _reward_status(
+                    session, service_case_id=service_case.id
+                )
                 return {
-                    "ok": False,
-                    "error": "还没有待完善地址的寄送批次。如果用户是想现在寄，请用 ship_now 并同时传入已明确给出的收件信息。",
+                    **_public_payload(refreshed),
+                    "recorded": "save_shipping_info",
+                    "reply_instruction": "完整收件信息已保存；未明确要求立即寄出时，不要声称已经申请发货。",
                 }
+
+            if reuse_saved_address:
+                saved_fields = {
+                    "收件人": _clean(program.recipient_name),
+                    "手机号": _clean(program.recipient_phone),
+                    "详细地址": _clean(program.shipping_address),
+                }
+                missing_saved = [
+                    label for label, value in saved_fields.items() if value is None
+                ]
+                if missing_saved:
+                    return {
+                        "ok": False,
+                        "missing_shipping_fields": missing_saved,
+                        "error": (
+                            "当前没有可沿用的完整收件信息；请一次提供收件人、手机号和详细地址。"
+                        ),
+                    }
+                cleaned_name = saved_fields["收件人"]
+                cleaned_phone = saved_fields["手机号"]
+                cleaned_address = saved_fields["详细地址"]
 
             if active is None:
                 active = CheckinRewardShipment(
@@ -398,30 +463,13 @@ def build_reward_shipping_tools(
                     if qualification.shipment_id is None:
                         qualification.shipment_id = active.id
 
-            if reuse_saved_address:
-                active.recipient_name = program.recipient_name
-                active.recipient_phone = program.recipient_phone
-                active.shipping_address = program.shipping_address
-            if cleaned_name is not None:
-                active.recipient_name = cleaned_name
-                program.recipient_name = cleaned_name
-            if cleaned_phone is not None:
-                active.recipient_phone = cleaned_phone
-                program.recipient_phone = cleaned_phone
-            if cleaned_address is not None:
-                active.shipping_address = cleaned_address
-                program.shipping_address = cleaned_address
-
-            missing = [
-                label
-                for label, value in (
-                    ("收件人", active.recipient_name),
-                    ("手机号", active.recipient_phone),
-                    ("详细地址", active.shipping_address),
-                )
-                if not _clean(value)
-            ]
-            active.status = "missing_address" if missing else "pending_shipment"
+            active.recipient_name = cleaned_name
+            active.recipient_phone = cleaned_phone
+            active.shipping_address = cleaned_address
+            program.recipient_name = cleaned_name
+            program.recipient_phone = cleaned_phone
+            program.shipping_address = cleaned_address
+            active.status = "pending_shipment"
             program.current_choice = "ship_now"
             program.choice_updated_at = now
             await session.commit()
@@ -429,11 +477,7 @@ def build_reward_shipping_tools(
             return {
                 **_public_payload(refreshed),
                 "recorded": "ship_now",
-                "reply_instruction": (
-                    f"已记录现在寄出，只追问这些缺失信息：{'、'.join(missing)}。"
-                    if missing
-                    else "收件信息已齐，告诉用户已记下，等待班主任安排寄出。"
-                ),
+                "reply_instruction": "收件信息已齐，告诉用户已记下，等待班主任安排寄出。",
             }
 
     return [
@@ -444,8 +488,9 @@ def build_reward_shipping_tools(
                 "Read and record THIS user's cumulative check-in reward shipping context. All ordinary replies, "
                 "including a bare 1 or 2, still go through the Agent: first call get_status when context is unclear. "
                 "Call ship_now/accumulate only if this user's current message clearly answers a pending reward "
-                "shipping choice. Save only recipient name, phone, and detailed address explicitly supplied in the "
-                "current message, or reuse prior data only on an explicit request. The tool never calculates awards, "
+                "shipping choice. ship_now and save_shipping_info require recipient name, phone, and detailed "
+                "address together; ship_now may instead reuse prior data only on an explicit request and only when "
+                "all three saved fields exist. The tool never calculates awards, "
                 "changes quantities, or marks a shipment as shipped. When the program is paused, do not write "
                 "anything and reply only with reply_instruction."
             ),

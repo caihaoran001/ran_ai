@@ -249,7 +249,9 @@ async def test_refunded_case_stops_new_rewards_but_keeps_existing_qualification(
 
 
 @pytest.mark.asyncio
-async def test_reward_shipping_tool_collects_fields_across_messages(db_session) -> None:
+async def test_reward_shipping_tool_rejects_partial_fields_before_writing(
+    db_session,
+) -> None:
     service_case = _case()
     db_session.add(service_case)
     await db_session.flush()
@@ -274,7 +276,7 @@ async def test_reward_shipping_tool_collects_fields_across_messages(db_session) 
         direction=MessageDirection.INBOUND,
         sender_type=MessageSenderType.USER,
         message_type="text",
-        content="1，张三，13800138000",
+        content="现在发货，收件人张三",
         purpose=MessagePurpose.CHAT,
         status=MessageStatus.RECEIVED,
     )
@@ -291,34 +293,74 @@ async def test_reward_shipping_tool_collects_fields_across_messages(db_session) 
         {
             "action": "ship_now",
             "recipient_name": "张三",
-            "recipient_phone": "13800138000",
         }
     )
-    assert result["shipment_status"] == "missing_address"
-    assert result["missing_shipping_fields"] == ["详细地址"]
+    assert result["ok"] is False
+    assert result["missing_shipping_fields"] == ["手机号", "详细地址"]
+    assert "必须一次提供完整" in result["error"]
+    save_result = await tool.ainvoke(
+        {"action": "save_shipping_info", "recipient_name": "张三"}
+    )
+    assert save_result["ok"] is False
+    assert save_result["missing_shipping_fields"] == ["手机号", "详细地址"]
+    assert await db_session.scalar(
+        select(CheckinRewardShipment).where(
+            CheckinRewardShipment.service_case_id == service_case.id
+        )
+    ) is None
+    await db_session.refresh(program)
+    await db_session.refresh(qualification)
+    assert program.current_choice == "pending_choice"
+    assert program.recipient_name is None
+    assert qualification.shipment_id is None
 
-    second_message = Message(
+
+@pytest.mark.asyncio
+async def test_reward_shipping_tool_writes_once_when_all_fields_are_complete(
+    db_session,
+) -> None:
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    program = CheckinRewardProgram(
+        service_case_id=service_case.id,
+        current_choice="pending_choice",
+        choice_tier_days=3,
+    )
+    qualification = CheckinRewardQualification(
+        service_case_id=service_case.id,
+        tier_days=3,
+        reward_code="coffee_tube",
+        reward_name="咖啡",
+        quantity=1,
+        qualified_on=date(2026, 8, 3),
+    )
+    db_session.add_all([program, qualification])
+    await db_session.flush()
+    message = Message(
         service_case_id=service_case.id,
         group_id=service_case.group_id,
         direction=MessageDirection.INBOUND,
         sender_type=MessageSenderType.USER,
         message_type="text",
-        content="杭州市西湖区某街道 88 号",
+        content="现在发货，收件人张三，手机号13800138000，详细地址杭州市西湖区某街道88号",
         purpose=MessagePurpose.CHAT,
         status=MessageStatus.RECEIVED,
     )
-    db_session.add(second_message)
+    db_session.add(message)
     await db_session.flush()
     tool = build_reward_shipping_tools(
         context=AgentRunContext(
             service_case_id=service_case.id,
-            trigger_id=second_message.id,
+            trigger_id=message.id,
         )
     )[0]
     result = await tool.ainvoke(
         {
-            "action": "save_shipping_info",
-            "shipping_address": "杭州市西湖区某街道 88 号",
+            "action": "ship_now",
+            "recipient_name": "张三",
+            "recipient_phone": "13800138000",
+            "shipping_address": "杭州市西湖区某街道88号",
         }
     )
     shipment = await db_session.scalar(
@@ -326,11 +368,158 @@ async def test_reward_shipping_tool_collects_fields_across_messages(db_session) 
             CheckinRewardShipment.service_case_id == service_case.id
         )
     )
+    await db_session.refresh(qualification)
     assert result["shipment_status"] == "pending_shipment"
     assert result["missing_shipping_fields"] == []
     assert shipment.recipient_name == "张三"
-    assert shipment.shipping_address == "杭州市西湖区某街道 88 号"
+    assert shipment.recipient_phone == "13800138000"
+    assert shipment.shipping_address == "杭州市西湖区某街道88号"
     assert qualification.shipment_id == shipment.id
+
+
+@pytest.mark.asyncio
+async def test_reward_shipping_tool_saves_complete_address_then_reuses_it(
+    db_session,
+) -> None:
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    program = CheckinRewardProgram(
+        service_case_id=service_case.id,
+        current_choice="pending_choice",
+        choice_tier_days=3,
+    )
+    qualification = CheckinRewardQualification(
+        service_case_id=service_case.id,
+        tier_days=3,
+        reward_code="coffee_tube",
+        reward_name="咖啡",
+        quantity=1,
+        qualified_on=date(2026, 8, 3),
+    )
+    db_session.add_all([program, qualification])
+    await db_session.flush()
+    save_message = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="收件人张三，手机号13800138000，详细地址杭州市西湖区某街道88号，帮我保存",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(save_message)
+    await db_session.flush()
+    tool = build_reward_shipping_tools(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=save_message.id,
+        )
+    )[0]
+    saved = await tool.ainvoke(
+        {
+            "action": "save_shipping_info",
+            "recipient_name": "张三",
+            "recipient_phone": "13800138000",
+            "shipping_address": "杭州市西湖区某街道88号",
+        }
+    )
+    assert saved["recorded"] == "save_shipping_info"
+    assert saved["active_shipment"] is False
+    assert await db_session.scalar(
+        select(CheckinRewardShipment).where(
+            CheckinRewardShipment.service_case_id == service_case.id
+        )
+    ) is None
+
+    reuse_message = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="沿用之前保存的地址，现在发货",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(reuse_message)
+    await db_session.flush()
+    tool = build_reward_shipping_tools(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=reuse_message.id,
+        )
+    )[0]
+    shipped = await tool.ainvoke(
+        {"action": "ship_now", "reuse_saved_address": True}
+    )
+    shipment = await db_session.scalar(
+        select(CheckinRewardShipment).where(
+            CheckinRewardShipment.service_case_id == service_case.id
+        )
+    )
+    assert shipped["shipment_status"] == "pending_shipment"
+    assert shipment.recipient_name == "张三"
+    assert shipment.recipient_phone == "13800138000"
+    assert shipment.shipping_address == "杭州市西湖区某街道88号"
+
+
+@pytest.mark.asyncio
+async def test_reward_shipping_tool_rejects_reuse_without_complete_saved_address(
+    db_session,
+) -> None:
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    program = CheckinRewardProgram(
+        service_case_id=service_case.id,
+        current_choice="pending_choice",
+        choice_tier_days=3,
+    )
+    qualification = CheckinRewardQualification(
+        service_case_id=service_case.id,
+        tier_days=3,
+        reward_code="coffee_tube",
+        reward_name="咖啡",
+        quantity=1,
+        qualified_on=date(2026, 8, 3),
+    )
+    db_session.add_all([program, qualification])
+    await db_session.flush()
+    message = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="沿用之前保存的地址，现在发货",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    tool = build_reward_shipping_tools(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=message.id,
+        )
+    )[0]
+    result = await tool.ainvoke(
+        {"action": "ship_now", "reuse_saved_address": True}
+    )
+    assert result["ok"] is False
+    assert result["missing_shipping_fields"] == ["收件人", "手机号", "详细地址"]
+    assert "没有可沿用的完整收件信息" in result["error"]
+    assert await db_session.scalar(
+        select(CheckinRewardShipment).where(
+            CheckinRewardShipment.service_case_id == service_case.id
+        )
+    ) is None
+    await db_session.refresh(program)
+    await db_session.refresh(qualification)
+    assert program.current_choice == "pending_choice"
+    assert qualification.shipment_id is None
 
 
 @pytest.mark.asyncio
