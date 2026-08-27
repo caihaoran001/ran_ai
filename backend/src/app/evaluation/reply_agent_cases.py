@@ -12,7 +12,7 @@ from app.evaluation.rag_cases import RagEvalCase, validate_retrieval_clause_cont
 
 
 FIXED_CASE_COUNT = 80
-FIXED_RETRIEVAL_COUNTS = {"retrieve": 34, "skip": 46}
+FIXED_RETRIEVAL_COUNTS = {"retrieve": 40, "skip": 40}
 REQUIRED_RETRIEVAL_FAMILIES = frozenset(
     {
         "dosage_scale",
@@ -58,6 +58,7 @@ class ReplyAgentEvalCase(StrictModel):
             "retrieval_interference",
             "diet_rule",
             "service_rule",
+            "health_knowledge",
         ]
     ] = Field(default_factory=list)
     metric_groups: list[Literal["M0", "MR", "MT", "MB"]] = Field(min_length=1)
@@ -142,7 +143,7 @@ class ReplyAgentEvalSuite(StrictModel):
             raise ValueError("source_case_ids cannot be reused across unified cases")
         decision_counts = Counter(case.retrieval_decision for case in self.cases)
         if dict(decision_counts) != FIXED_RETRIEVAL_COUNTS:
-            raise ValueError("suite must contain exactly 32 retrieve and 48 skip cases")
+            raise ValueError("suite must contain exactly 40 retrieve and 40 skip cases")
         family_counts = Counter(
             family for case in self.cases for family in case.retrieval_families
         )

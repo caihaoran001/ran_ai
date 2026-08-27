@@ -1,7 +1,7 @@
 {
   "suite_id": "reply-agent-core-v4",
   "version": 4,
-  "description": "回复 Agent 统一固定题库：80 道唯一题，32 道产品知识检索，48 道跳过检索并覆盖工具、澄清、沉默、授权和转人工；v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、旅游中断不顺延服务期，无红旗便秘改为先澄清。",
+  "description": "回复 Agent 统一固定题库：80 道唯一题，40 道需要知识依据的检索，40 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、旅游中断不顺延服务期，无红旗便秘改为先澄清。",
   "cases": [
     {
       "case_id": "RA-001",
@@ -922,10 +922,13 @@
         "rag-faq-meal-order"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "diet_rule"
+      ],
       "metric_groups": [
-        "M0"
+        "M0",
+        "MR"
       ],
       "tags": [
         "diet",
@@ -953,7 +956,12 @@
             "source_ids": [
               "faq_66de72eea085a5b9"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "正餐按蛋白质、蔬菜、粗粮主食的顺序进食",
+              "先吃蛋白质打底",
+              "再吃蔬菜",
+              "最后吃适量粗粮主食"
+            ]
           },
           {
             "fact_id": "faq-f12-aside",
@@ -967,7 +975,7 @@
           }
         ],
         "rewrite": {
-          "decision": "skip",
+          "decision": "retrieve",
           "must_include": [
             "蛋白质",
             "蔬菜",
@@ -978,7 +986,9 @@
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "faq-f12"
+          ],
           "forbidden_source_types": [
             "case"
           ]
@@ -1001,10 +1011,13 @@
         "rag-faq-sudden-weight-gain"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "health_knowledge"
+      ],
       "metric_groups": [
-        "M0"
+        "M0",
+        "MR"
       ],
       "tags": [
         "weight",
@@ -1036,11 +1049,14 @@
             "source_ids": [
               "faq_e68d85edb1129472"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "单日体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响",
+              "应在相同条件下继续记录并观察一周左右趋势"
+            ]
           }
         ],
         "rewrite": {
-          "decision": "skip",
+          "decision": "retrieve",
           "must_include": [
             "聚餐后",
             "体重上涨一斤",
@@ -1051,7 +1067,9 @@
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "faq-f18"
+          ],
           "forbidden_source_types": [
             "case"
           ]
@@ -1190,10 +1208,13 @@
         "rag-faq-checkin-method"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "service_rule"
+      ],
       "metric_groups": [
-        "M0"
+        "M0",
+        "MR"
       ],
       "tags": [
         "service_rule",
@@ -1223,7 +1244,9 @@
             "source_ids": [
               "faq_239f9c2f6c86f434"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "可以直接在当前打卡群里发文字记录"
+            ]
           },
           {
             "fact_id": "faq-f23-aside",
@@ -1237,7 +1260,7 @@
           }
         ],
         "rewrite": {
-          "decision": "skip",
+          "decision": "retrieve",
           "must_include": [
             "训练营打卡",
             "群里发文字",
@@ -1248,7 +1271,9 @@
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "faq-f23"
+          ],
           "forbidden_source_types": [
             "case"
           ]
@@ -1725,10 +1750,13 @@
         "rag-chat-coffee-weight"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "health_knowledge"
+      ],
       "metric_groups": [
-        "M0"
+        "M0",
+        "MR"
       ],
       "tags": [
         "production_chat",
@@ -1760,11 +1788,13 @@
             "source_ids": [
               "faq_e68d85edb1129472"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "单日或短期体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响"
+            ]
           }
         ],
         "rewrite": {
-          "decision": "skip",
+          "decision": "retrieve",
           "must_include": [
             "喝咖啡后",
             "短期体重上涨",
@@ -1775,7 +1805,9 @@
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "chat-r06"
+          ],
           "forbidden_source_types": [
             "case"
           ]
@@ -1798,10 +1830,13 @@
         "rag-chat-rice-at-lunch"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "diet_rule"
+      ],
       "metric_groups": [
-        "M0"
+        "M0",
+        "MR"
       ],
       "tags": [
         "production_chat",
@@ -1831,11 +1866,14 @@
             "source_ids": [
               "faq_20d507bd54f4eb46"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "午餐可以吃适量米饭",
+              "与蛋白质和蔬菜搭配"
+            ]
           }
         ],
         "rewrite": {
-          "decision": "skip",
+          "decision": "retrieve",
           "must_include": [
             "减重期间",
             "午餐",
@@ -1846,7 +1884,9 @@
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "chat-r07"
+          ],
           "forbidden_source_types": [
             "case"
           ]
@@ -2055,10 +2095,13 @@
         "rag-chat-meal-order-why"
       ],
       "execution_kind": "rag",
-      "retrieval_decision": "skip",
-      "retrieval_families": [],
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "diet_rule"
+      ],
       "metric_groups": [
-        "M0"
+        "M0",
+        "MR"
       ],
       "tags": [
         "production_chat",
@@ -2093,7 +2136,11 @@
             "source_ids": [
               "faq_66de72eea085a5b9"
             ],
-            "retrieval_clauses": []
+            "retrieval_clauses": [
+              "当前饮食建议的顺序是先吃几口蛋白质打底",
+              "再吃蔬菜",
+              "最后吃适量粗粮主食"
+            ]
           },
           {
             "fact_id": "chat-r10-aside",
@@ -2107,7 +2154,7 @@
           }
         ],
         "rewrite": {
-          "decision": "skip",
+          "decision": "retrieve",
           "must_include": [
             "蛋白质",
             "蔬菜",
@@ -2118,7 +2165,9 @@
           ]
         },
         "retrieval": {
-          "required_fact_ids": [],
+          "required_fact_ids": [
+            "chat-r10"
+          ],
           "forbidden_source_types": [
             "case"
           ]

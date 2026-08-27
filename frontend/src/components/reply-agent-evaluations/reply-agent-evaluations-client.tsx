@@ -225,6 +225,9 @@ const FAMILY_LABELS: Record<string, string> = {
   multi_turn_resolution: "多轮指代",
   mixed_report_question: "上报夹提问",
   retrieval_interference: "干扰与冲突",
+  diet_rule: "饮食规则",
+  service_rule: "服务规则",
+  health_knowledge: "健康知识",
 };
 
 function percent(metric: RateMetric) {
@@ -968,7 +971,7 @@ export function ReplyAgentEvaluationsClient({
       </section>
 
       <section className="panel p-4">
-        <p className="text-xs font-black text-slate-800">32 道检索题的八类覆盖</p>
+        <p className="text-xs font-black text-slate-800">40 道检索题的知识覆盖</p>
         <div className="mt-3 flex flex-wrap gap-2">
           {Object.entries(summary.coverage.retrieval_family_counts).map(([family, count]) => (
             <span key={family} className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-800">

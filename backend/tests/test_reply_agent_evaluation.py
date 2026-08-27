@@ -40,10 +40,10 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
     assert suite.suite_id == "reply-agent-core-v4"
     assert suite.version == 4
     assert len(suite.cases) == 80
-    assert summary["retrieval_counts"] == {"retrieve": 34, "skip": 46}
+    assert summary["retrieval_counts"] == {"retrieve": 40, "skip": 40}
     assert summary["execution_counts"] == {"agent": 30, "handoff": 3, "rag": 47}
     assert summary["metric_group_counts"]["M0"] == 80
-    assert summary["metric_group_counts"]["MR"] == 34
+    assert summary["metric_group_counts"]["MR"] == 40
     assert REQUIRED_RETRIEVAL_FAMILIES <= set(summary["retrieval_family_counts"])
     # 覆盖度契约只约束核心产品检索族；饮食/服务规则是改判后新增的窄族，
     # 与套件模型的校验口径保持一致。
@@ -95,7 +95,7 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
 
 
 def test_every_recall_gated_case_scores_on_retrievable_clauses_only() -> None:
-    """The 34 recall-gated cases are what the calibrated 0.75 gate judges. A
+    """The 40 recall-gated cases are what the calibrated 0.75 gate judges. A
     prohibition among their clauses has no retrievable truth, so the score it
     produces is not reproducible — 15 of them carried one before this contract."""
     suite = load_reply_agent_eval_suite()
@@ -115,7 +115,7 @@ def test_every_recall_gated_case_scores_on_retrievable_clauses_only() -> None:
             if found:
                 offenders[f"{case.case_id}:{fact_id}"] = found
 
-    assert gated == 34
+    assert gated == 40
     assert offenders == {}
 
 
@@ -158,6 +158,74 @@ def test_generated_fixture_matches_builder_source() -> None:
     generated = build_suite().model_dump(mode="json")
     persisted = load_reply_agent_eval_suite().model_dump(mode="json")
     assert generated == persisted
+
+
+def test_retrieval_noise_cases_follow_live_knowledge_boundary() -> None:
+    suite = load_reply_agent_eval_suite()
+    by_source = {case.source_case_ids[0]: case for case in suite.cases}
+
+    expected: dict[str, tuple[str, list[str]]] = {
+        "rag-faq-meal-order": (
+            "diet_rule",
+            [
+                "正餐按蛋白质、蔬菜、粗粮主食的顺序进食",
+                "先吃蛋白质打底",
+                "再吃蔬菜",
+                "最后吃适量粗粮主食",
+            ],
+        ),
+        "rag-faq-sudden-weight-gain": (
+            "health_knowledge",
+            [
+                "单日体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响",
+                "应在相同条件下继续记录并观察一周左右趋势",
+            ],
+        ),
+        "rag-faq-checkin-method": (
+            "service_rule",
+            ["可以直接在当前打卡群里发文字记录"],
+        ),
+        "rag-chat-coffee-weight": (
+            "health_knowledge",
+            [
+                "单日或短期体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响",
+            ],
+        ),
+        "rag-chat-rice-at-lunch": (
+            "diet_rule",
+            ["午餐可以吃适量米饭", "与蛋白质和蔬菜搭配"],
+        ),
+        "rag-chat-meal-order-why": (
+            "diet_rule",
+            [
+                "当前饮食建议的顺序是先吃几口蛋白质打底",
+                "再吃蔬菜",
+                "最后吃适量粗粮主食",
+            ],
+        ),
+    }
+
+    for source_id, (family, clauses) in expected.items():
+        case = by_source[source_id]
+        assert case.retrieval_decision == "retrieve", source_id
+        assert case.retrieval_families == [family], source_id
+        assert case.rag_case is not None
+        assert case.rag_case.rewrite.decision == "retrieve"
+        assert case.rag_case.retrieval.required_fact_ids == (
+            case.rag_case.answer.required_fact_ids
+        )
+        fact_id = case.rag_case.retrieval.required_fact_ids[0]
+        fact = next(
+            fact for fact in case.rag_case.authoritative_facts if fact.fact_id == fact_id
+        )
+        assert fact.retrieval_clauses == clauses, source_id
+
+    for source_id in (
+        "rag-faq-low-impact-exercise",
+        "rag-faq-sleep-adjustment",
+        "rag-chat-ambiguous-how",
+    ):
+        assert by_source[source_id].retrieval_decision == "skip", source_id
 
 
 def test_date_cases_grade_business_time_without_requiring_iso_wording() -> None:
@@ -485,9 +553,9 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     assert report.summary.metrics.rewrite_harm_rate.model_dump() == {
         "value": 0.0,
         "numerator": 0,
-        "denominator": 34,
+        "denominator": 40,
     }
-    assert report.summary.metrics.answer_relevancy_average.denominator == 34
+    assert report.summary.metrics.answer_relevancy_average.denominator == 40
     assert report.summary.metrics.answer_correctness_observed.denominator == 47
     assert report.summary.metrics.handoff_accuracy.model_dump() == {
         "value": 1.0,
@@ -506,7 +574,7 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
         "handoff": 3,
     }
     assert (
-        sum(case.actual.retrieval_decision == "retrieve" for case in report.cases) == 34
+        sum(case.actual.retrieval_decision == "retrieve" for case in report.cases) == 40
     )
     assert all(
         case.usage.get("total", {}).get("call_count") == 0 for case in report.cases

@@ -28,9 +28,15 @@ KEPT_RAG_SKIP_IDS = (
     "rag-chat-ambiguous-how",
 )
 
-# 原判 skip 是错的：低碳饮食口径和入营问卷用途的权威答案都在知识库里，不查
-# 回复 Agent 只能自己编一套说法。改判为该检索，与生产意图提示词同步放开。
+# 原判 skip 是错的：这些问题的权威答案都在知识库里，不查回复 Agent 只能自己
+# 编一套说法。改判为该检索，与生产意图提示词同步放开；v3 历史套件不动。
 RETRIEVE_CORRECTED_IDS = (
+    "rag-faq-meal-order",
+    "rag-faq-sudden-weight-gain",
+    "rag-faq-checkin-method",
+    "rag-chat-coffee-weight",
+    "rag-chat-rice-at-lunch",
+    "rag-chat-meal-order-why",
     "rag-faq-low-carb",
     "rag-faq-questionnaire-purpose",
 )
@@ -64,6 +70,12 @@ RETRIEVAL_FAMILIES = {
         "multi_turn_resolution",
     ],
     # 改判为该检索的两道：一道问饮食口径，一道问服务规则。
+    "rag-faq-meal-order": ["diet_rule"],
+    "rag-faq-sudden-weight-gain": ["health_knowledge"],
+    "rag-faq-checkin-method": ["service_rule"],
+    "rag-chat-coffee-weight": ["health_knowledge"],
+    "rag-chat-rice-at-lunch": ["diet_rule"],
+    "rag-chat-meal-order-why": ["diet_rule"],
     "rag-faq-low-carb": ["diet_rule"],
     "rag-faq-questionnaire-purpose": ["service_rule"],
 }
@@ -456,6 +468,13 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
         # `answer.required_fact_ids` is deliberately left alone: it already names
         # only the original fact, so the aside is on the case without being graded.
 
+    def _set_retrieval_clauses(fact_id: str, clauses: list[str]) -> None:
+        for fact in payload["authoritative_facts"]:
+            if fact["fact_id"] == fact_id:
+                fact["retrieval_clauses"] = clauses
+                return
+        raise ValueError(f"{case.case_id}: unknown fact for retrieval clauses: {fact_id}")
+
     if case.case_id == "rag-faq-cold-water":
         payload["history"] = [
             {"role": "user", "content": "早C、午B、晚A这三种我都已经开始用了。"}
@@ -592,6 +611,23 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
             ),
             answers_a_different_question="三餐都应保证蛋白质，无需完全戒主食。",
         )
+        _set_retrieval_clauses(
+            "faq-f12",
+            [
+                "正餐按蛋白质、蔬菜、粗粮主食的顺序进食",
+                "先吃蛋白质打底",
+                "再吃蔬菜",
+                "最后吃适量粗粮主食",
+            ],
+        )
+    elif case.case_id == "rag-faq-sudden-weight-gain":
+        _set_retrieval_clauses(
+            "faq-f18",
+            [
+                "单日体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响",
+                "应在相同条件下继续记录并观察一周左右趋势",
+            ],
+        )
     elif case.case_id == "rag-chat-meal-order-why":
         # 同上：本轮问顺序的理由，蛋白质与主食总则不在问题范围内。
         _set_aside_off_topic_half(
@@ -600,6 +636,14 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
                 "当前饮食建议的顺序是先吃几口蛋白质打底，再吃蔬菜，最后吃适量粗粮主食。"
             ),
             answers_a_different_question="三餐应保证蛋白质，也无需完全戒主食。",
+        )
+        _set_retrieval_clauses(
+            "chat-r10",
+            [
+                "当前饮食建议的顺序是先吃几口蛋白质打底",
+                "再吃蔬菜",
+                "最后吃适量粗粮主食",
+            ],
         )
     elif case.case_id == "rag-faq-checkin-method":
         # 问的是在哪里打卡；打卡该填哪些项目是另一个问题。
@@ -613,15 +657,34 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
                 "身体感受和产品完成情况。"
             ),
         )
+        _set_retrieval_clauses(
+            "faq-f23",
+            ["可以直接在当前打卡群里发文字记录"],
+        )
+    elif case.case_id == "rag-chat-coffee-weight":
+        _set_retrieval_clauses(
+            "chat-r06",
+            [
+                "单日或短期体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响",
+            ],
+        )
+    elif case.case_id == "rag-chat-rice-at-lunch":
+        _set_retrieval_clauses(
+            "chat-r07",
+            [
+                "午餐可以吃适量米饭",
+                "与蛋白质和蔬菜搭配",
+            ],
+        )
     elif case.case_id in {"rag-faq-low-impact-exercise", "rag-faq-sleep-adjustment"}:
         payload["authoritative_facts"] = []
         payload["retrieval"]["required_fact_ids"] = []
         payload["answer"]["required_fact_ids"] = []
         payload["answer"]["forbidden_fact_ids"] = []
     if case.case_id in RETRIEVE_CORRECTED_IDS:
-        # 原判为 skip，等于要求回复 Agent 凭记忆解释低碳饮食口径和入营问卷用途。
-        # 这两件事的权威答案都在知识库里，不查就只能自己编一套说法。改判为该检索，
-        # 与生产意图提示词同步放开。
+        # 原判为 skip，等于要求回复 Agent 凭记忆解释知识口径。改判为该检索，
+        # 与生产意图提示词同步放开。若事实被拆成「必答半句 + 留档旁句」，
+        # 召回只要求必答事实，旁句仍保留但不参与召回评分。
         payload["rewrite"]["decision"] = "retrieve"
         if case.case_id == "rag-faq-questionnaire-purpose":
             # 事实原文含一句"不应…"的禁止性表述，检索断言只列可被召回的正面事实。
@@ -638,7 +701,9 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
                 for fact in payload["authoritative_facts"]
             ]
         payload["retrieval"]["required_fact_ids"] = [
-            fact["fact_id"] for fact in payload["authoritative_facts"]
+            fact["fact_id"]
+            for fact in payload["authoritative_facts"]
+            if fact["fact_id"] in payload["answer"]["required_fact_ids"]
         ]
     return RagEvalCase.model_validate(payload)
 
@@ -1095,8 +1160,8 @@ def build_suite() -> ReplyAgentEvalSuite:
             "suite_id": "reply-agent-core-v4",
             "version": 4,
             "description": (
-                "回复 Agent 统一固定题库：80 道唯一题，32 道产品知识检索，"
-                "48 道跳过检索并覆盖工具、澄清、沉默、授权和转人工；"
+                "回复 Agent 统一固定题库：80 道唯一题，40 道需要知识依据的检索，"
+                "40 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；"
                 "v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、"
                 "冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、"
                 "旅游中断不顺延服务期，无红旗便秘改为先澄清。"
