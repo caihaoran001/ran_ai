@@ -834,11 +834,13 @@ class AIService:
                 "【风险边界】\n"
                 "- high：仅限本人明确披露的疾病、长期或激素用药、孕产哺乳、肝肾/结石、报告明确的严重检测异常、"
                 "明确抑郁诊断或自伤轻生。会长期写入服务单，必须有当前原话证据。疑似/待查疾病只能 pending，且不能仅凭疑似升为 high。\n"
-                "- medium：当前正在发生的明显不适，或诊断/治疗/调药/疗效保证请求；明确退款退出、要求人工、停止机器人，"
+                "- medium：当前正在发生或未缓解的明显不适（呕吐、腹泻、虚脱、头晕、发热、剧烈腹痛等），"
+                "或诊断/治疗/调药/疗效保证请求；明确退款退出、要求人工、停止机器人，"
                 "以及升级中的辱骂或服务冲突。转人工但不等于长期疾病。\n"
                 "- low：普通产品疑问、轻度执行焦虑、活动/规则咨询、功能报错或仅询问退款规则；不转人工。\n"
                 "月经推迟不等于怀孕；药名不能反推疾病；转述他人疾病不算本人风险；普通低落不等于抑郁。"
-                "产品使用后新发心悸、过敏或持续不适至少为 medium。other_risk 不能为 high。\n\n"
+                "产品使用后新发心悸、过敏或持续不适至少为 medium。other_risk 不能为 high。\n"
+                "急性不适没提产品、没提问、只陈述也算风险，多症状齐发或伴虚脱脱水必须转人工。\n\n"
                 "【意图边界】\n"
                 "refund_intent：想退/问怎么退/已申请都 detected=true；只有已申请、已发起或已到账才 completed=true。\n"
                 "renewal_intent：明确续期、复购或购买下一阶段才 detected=true；继续执行当前方案不算续购。\n"
@@ -848,7 +850,7 @@ class AIService:
                 "所有字段必须保留；无结果用 false、null、空数组或空对象，理由只在 detected=true 或确有异常时填写。\n"
                 "{\n"
                 '  "requires_human_intervention": false, "requires_immediate_safety_reply": false,\n'
-                '  "risk_flags": [{"code":"pregnancy|lactation|chronic_disease|long_term_medication|hormone_medication|liver_kidney|stone|severe_test_abnormality|depression|severe_insomnia|chest_pain|palpitation|allergy|medical_claim|other_risk", "level":"low|medium|high", "reason":"", "evidence":"当前原话", "source":"chat_message|questionnaire"}],\n'
+                '  "risk_flags": [{"code":"pregnancy|lactation|chronic_disease|long_term_medication|hormone_medication|liver_kidney|stone|severe_test_abnormality|depression|severe_insomnia|chest_pain|palpitation|allergy|medical_claim|physical_discomfort|other_risk", "level":"low|medium|high", "reason":"", "evidence":"当前原话", "source":"chat_message|questionnaire"}],\n'
                 '  "health_profile": {\n'
                 '    "conditions":[{"code":"hypertension|elevated_blood_pressure|type2_diabetes|diabetes_unspecified|dyslipidemia|hypothyroidism|hyperthyroidism|thyroid_nodule|post_thyroidectomy|pcos|hyperprolactinemia|fatty_liver|cholecystitis|gallstone|liver_condition_unspecified|renal_impairment|kidney_stone|depression_diagnosis", "status":"confirmed|pending|resolved", "evidence":"", "source":"chat_message|questionnaire|checkin"}],\n'
                 '    "medications":[{"category_code":"thyroid_hormone|antihypertensive|glucose_lowering|lipid_lowering|prolactin_lowering|endocrine_therapy|other_prescription", "name":"", "long_term":false, "status":"active|stopped|unknown", "evidence":"", "source":"chat_message|questionnaire|checkin"}],\n'

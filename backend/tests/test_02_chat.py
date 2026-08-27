@@ -333,6 +333,9 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     assert "不是空腹血糖" in prompt
     assert "空腹血糖142mg/dL" in prompt
     assert "语义仍有歧义时保持无风险" in prompt
+    assert "当前正在发生或未缓解的明显不适（呕吐、腹泻、虚脱、头晕、发热、剧烈腹痛等）" in prompt
+    assert "急性不适没提产品、没提问、只陈述也算风险，多症状齐发或伴虚脱脱水必须转人工" in prompt
+    assert "medical_claim|physical_discomfort|other_risk" in prompt
     assert "当前正在发生的身体不适或身体异常（含疑似产品不良反应；用户没提产品也算）" in prompt
     assert "服务规则（问卷、打卡、交付文件、服务流程的用途与要求）" in prompt
     assert "都输出不超过80字的独立检索短句" in prompt
