@@ -3422,7 +3422,9 @@
           "allowed_additional_tools": [],
           "allow_additional_tools": false,
           "required_literals": [],
-          "forbidden_literals": [],
+          "forbidden_literals": [
+            "71"
+          ],
           "required_facts": [
             "明早8点有一个称体重的提醒"
           ],
@@ -3462,18 +3464,36 @@
           "write_tool"
         ],
         "query_speaker": "用户",
-        "history": [
-          {
-            "role": "assistant",
-            "content": "明早称体重提醒编号是71，晚间收口提醒编号是72。"
-          }
-        ],
-        "user_query": "把71取消掉",
+        "history": [],
+        "user_query": "把明早8点称体重的提醒取消掉",
         "current_time_context": "当前北京时间：2026年8月21日（星期五）10:00。",
         "memory_context": "暂无可用用户背景。",
         "knowledge_context": "暂无相关参考问答。",
         "knowledge_hit_count": null,
         "tool_stubs": [
+          {
+            "name": "list_group_reminders",
+            "results": [
+              {
+                "ok": true,
+                "pending": [
+                  {
+                    "task_id": 72,
+                    "remind_at": "2026-08-21T21:00:00+08:00",
+                    "content": "当日收口",
+                    "recurrence": "none"
+                  },
+                  {
+                    "task_id": 71,
+                    "remind_at": "2026-08-22T08:00:00+08:00",
+                    "content": "称体重",
+                    "recurrence": "none"
+                  }
+                ],
+                "count": 2
+              }
+            ]
+          },
           {
             "name": "cancel_group_reminder",
             "results": [
@@ -3496,6 +3516,13 @@
           "response_mode": "reply",
           "required_tools": [
             {
+              "name": "list_group_reminders",
+              "args_subset": {},
+              "string_args": {},
+              "min_calls": 1,
+              "max_calls": 1
+            },
+            {
               "name": "cancel_group_reminder",
               "args_subset": {
                 "task_id": 71
@@ -3508,15 +3535,16 @@
           "forbidden_tools": [],
           "allowed_additional_tools": [],
           "allow_additional_tools": false,
-          "required_literals": [
-            "71"
+          "required_literals": [],
+          "forbidden_literals": [
+            "71",
+            "72"
           ],
-          "forbidden_literals": [],
           "required_facts": [
-            "只取消编号71的提醒"
+            "已取消明早8点称体重的提醒"
           ],
           "forbidden_claims": [
-            "编号72也已取消"
+            "晚间收口提醒也已取消"
           ],
           "clarification_requirement": null
         }

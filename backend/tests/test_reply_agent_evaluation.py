@@ -337,12 +337,19 @@ def test_unified_agent_stubs_match_runtime_tool_contracts() -> None:
     )
 
     reminder_list = stub("RA-041", "list_group_reminders")
+    reminder_lookup_for_cancel = stub("RA-042", "list_group_reminders")
     reminder_cancel = stub("RA-042", "cancel_group_reminder")
     assert set(reminder_list) == {"ok", "pending", "count"}
+    assert set(reminder_lookup_for_cancel) == {"ok", "pending", "count"}
+    assert reminder_lookup_for_cancel["count"] == 2
     assert set(reminder_cancel) == {"ok", "cancelled", "count"}
     assert all(
         set(item) == {"task_id", "remind_at", "content", "recurrence"}
-        for item in reminder_list["pending"] + reminder_cancel["cancelled"]
+        for item in (
+            reminder_list["pending"]
+            + reminder_lookup_for_cancel["pending"]
+            + reminder_cancel["cancelled"]
+        )
     )
 
     checklist = stub("RA-048", "set_checkin_checklist")
@@ -378,10 +385,28 @@ def test_unified_agent_stubs_match_runtime_tool_contracts() -> None:
         "end_continued_service",
     ]
 
-    # 对用户念内部提醒编号是产品缺陷，不该是验收标准
+    # 提醒任务编号只用于内部工具参数，不得出现在用户问题或回复中。
     reminders = by_id["RA-041"]
     assert reminders.expected.required_literals == []
+    assert reminders.expected.forbidden_literals == ["71"]
     assert reminders.expected.required_facts == ["明早8点有一个称体重的提醒"]
+
+    cancel_reminder = by_id["RA-042"]
+    assert cancel_reminder.history == []
+    assert cancel_reminder.user_query == "把明早8点称体重的提醒取消掉"
+    assert [tool.name for tool in cancel_reminder.expected.required_tools] == [
+        "list_group_reminders",
+        "cancel_group_reminder",
+    ]
+    assert cancel_reminder.expected.required_tools[1].args_subset == {"task_id": 71}
+    assert cancel_reminder.expected.required_literals == []
+    assert cancel_reminder.expected.forbidden_literals == ["71", "72"]
+    assert cancel_reminder.expected.required_facts == [
+        "已取消明早8点称体重的提醒"
+    ]
+    assert cancel_reminder.expected.forbidden_claims == [
+        "晚间收口提醒也已取消"
+    ]
 
     dehydration = next(case for case in suite.cases if case.case_id == "RA-080")
     assert dehydration.handoff.expected_risk_codes == [

@@ -117,6 +117,28 @@ def test_agent_and_tool_timeouts_are_configured_independently():
     assert shorter_agent_graph._tool_timeout_seconds == 15
 
 
+def test_reminder_tool_descriptions_keep_task_ids_internal():
+    tools = {
+        tool.name: tool
+        for tool in build_reminder_tools(
+            context=AgentRunContext(service_case_id=123),
+            settings=get_settings(),
+        )
+    }
+
+    list_description = tools["list_group_reminders"].description
+    cancel_description = tools["cancel_group_reminder"].description
+    cancel_schema_description = tools["cancel_group_reminder"].args_schema.model_fields[
+        "task_id"
+    ].description
+
+    assert "MUST NOT be included in the final user-facing reply" in list_description
+    assert "describe reminders by time, content and recurrence" in list_description
+    assert "never reveal it" in cancel_description
+    assert "Never expose this id in the user-facing reply" in cancel_schema_description
+    assert "MUST preserve every numeric task_id" not in list_description
+
+
 @pytest.mark.asyncio
 async def test_create_group_reminder_tool_creates_pending_task(db_session):
     service_case = await _case(db_session)

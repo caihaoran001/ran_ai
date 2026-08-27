@@ -952,6 +952,29 @@ AGENT_TOOL_STUB_CONTRACT_OVERRIDES: dict[str, list[dict[str, Any]]] = {
     ],
     "agent-cancel-reminder": [
         {
+            "name": "list_group_reminders",
+            "results": [
+                {
+                    "ok": True,
+                    "pending": [
+                        {
+                            "task_id": 72,
+                            "remind_at": "2026-08-21T21:00:00+08:00",
+                            "content": "当日收口",
+                            "recurrence": "none",
+                        },
+                        {
+                            "task_id": 71,
+                            "remind_at": "2026-08-22T08:00:00+08:00",
+                            "content": "称体重",
+                            "recurrence": "none",
+                        },
+                    ],
+                    "count": 2,
+                }
+            ],
+        },
+        {
             "name": "cancel_group_reminder",
             "results": [
                 {
@@ -1102,7 +1125,32 @@ def _current_agent_contract_case(case):
         # 原来硬性要求回复里出现"71"这个内部提醒编号。对用户念内部编号是产品
         # 缺陷，照着改反而把产品做坏；用户要知道的是"什么时候提醒什么事"。
         payload["expected"]["required_literals"] = []
+        payload["expected"]["forbidden_literals"] = ["71"]
         payload["expected"]["required_facts"] = ["明早8点有一个称体重的提醒"]
+    if case_id == "agent-cancel-reminder":
+        # 用户用时间和内容指代提醒；Agent 先查内部映射，再用 task_id 精确取消。
+        # task_id 只属于工具参数，历史、用户问题和最终回复都不应暴露它。
+        payload["history"] = []
+        payload["user_query"] = "把明早8点称体重的提醒取消掉"
+        cancel_tool = payload["expected"]["required_tools"][0]
+        payload["expected"]["required_tools"] = [
+            {
+                "name": "list_group_reminders",
+                "args_subset": {},
+                "string_args": {},
+                "min_calls": 1,
+                "max_calls": 1,
+            },
+            cancel_tool,
+        ]
+        payload["expected"]["required_literals"] = []
+        payload["expected"]["forbidden_literals"] = ["71", "72"]
+        payload["expected"]["required_facts"] = [
+            "已取消明早8点称体重的提醒",
+        ]
+        payload["expected"]["forbidden_claims"] = [
+            "晚间收口提醒也已取消",
+        ]
     return type(case).model_validate(payload)
 
 

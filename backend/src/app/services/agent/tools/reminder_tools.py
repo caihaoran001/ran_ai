@@ -51,7 +51,11 @@ class CreateReminderArgs(BaseModel):
 class CancelReminderArgs(BaseModel):
     task_id: int | None = Field(
         default=None,
-        description="Specific pending reminder id to cancel (from list_group_reminders). Omit to auto-pick when only one is pending.",
+        description=(
+            "Internal pending reminder id to cancel (from list_group_reminders). "
+            "Never expose this id in the user-facing reply. Omit it to auto-pick "
+            "when only one reminder is pending."
+        ),
     )
     cancel_all: bool = Field(
         default=False,
@@ -264,10 +268,11 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
             coroutine=list_group_reminders,
             name="list_group_reminders",
             description=(
-                "List all pending (not-yet-sent) reminders for the current group, with their id, local time, "
-                "content and recurrence. The final user-facing reply MUST preserve every numeric task_id exactly. "
-                "Call this before cancel_group_reminder when the user's reference is "
-                "ambiguous, so you can map it to a task_id. The result may also carry an 'interrupted' list: "
+                "List all pending (not-yet-sent) reminders for the current group, with their internal id, "
+                "local time, content and recurrence. task_id is only for follow-up tool calls and MUST NOT "
+                "be included in the final user-facing reply; describe reminders by time, content and recurrence. "
+                "Call this before cancel_group_reminder when the user's reference is ambiguous, so you can map "
+                "the user's time/content description to a task_id. The result may also carry an 'interrupted' list: "
                 "recurring reminders that were really set up but stopped after a send/generation failure. When "
                 "the user asks why a reminder disappeared or claims one was set, check that list before saying "
                 "it was never configured."
@@ -280,7 +285,8 @@ def build_reminder_tools(*, context: AgentRunContext, settings: Settings) -> lis
                 "Cancel pending reminder(s) for the current group when the user says things like '别提醒了' / "
                 "'取消提醒' / '晚A那个先别提醒'. Pass task_id to cancel a specific one, cancel_all=true to cancel "
                 "every pending reminder. With no args it auto-cancels when exactly one is pending, otherwise it "
-                "returns the pending list (need_choice) so you can ask the user which to cancel."
+                "returns the pending list (need_choice) so you can ask the user which to cancel. task_id is an "
+                "internal argument: never reveal it; confirm cancellation by reminder time and content instead."
             ),
             args_schema=CancelReminderArgs,
         ),

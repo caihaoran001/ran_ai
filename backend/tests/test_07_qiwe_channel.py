@@ -699,8 +699,8 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "get_checkin_reward_status" in AGENT_SYSTEM_PROMPT
     assert "get_recent_checkins" in AGENT_SYSTEM_PROMPT
     assert "奖励规则正在讨论中，确认后会另行通知" in AGENT_SYSTEM_PROMPT
-    assert "完成当前一问所需的工具" in AGENT_SYSTEM_PROMPT
-    assert "已有明确编号就直接读/取消" in AGENT_SYSTEM_PROMPT
+    assert "每个所需工具默认只调1次" in AGENT_SYSTEM_PROMPT
+    assert "文档编号" in AGENT_SYSTEM_PROMPT
     assert "写操作先核验授权、意图和全部必填信息" in AGENT_SYSTEM_PROMPT
     assert "任一不满足，本轮写调用必须为0" in AGENT_SYSTEM_PROMPT
     assert "同参数成功后立刻回复" in AGENT_SYSTEM_PROMPT
@@ -714,7 +714,10 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "明确不保证一定减重" in AGENT_SYSTEM_PROMPT
     assert "get_recent_checkins(days=7)" in AGENT_SYSTEM_PROMPT
     assert "不调 get_weight_trend" in AGENT_SYSTEM_PROMPT
-    assert "列提醒逐条带 task_id" in AGENT_SYSTEM_PROMPT
+    assert "task_id只内部用" in AGENT_SYSTEM_PROMPT
+    assert "回复禁显" in AGENT_SYSTEM_PROMPT
+    assert "按时间/内容取消前查列表映射" in AGENT_SYSTEM_PROMPT
+    assert "列提醒逐条带 task_id" not in AGENT_SYSTEM_PROMPT
     assert "最终回复只用工具返回事实" in AGENT_SYSTEM_PROMPT
     assert "涉及是否执行清单、发货、服务周期等操作" in AGENT_SYSTEM_PROMPT
     assert "即使未 @、不执行或授权不足也要明确回复，不能静默" in AGENT_SYSTEM_PROMPT
