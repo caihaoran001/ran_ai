@@ -333,9 +333,10 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     assert "不是空腹血糖" in prompt
     assert "空腹血糖142mg/dL" in prompt
     assert "语义仍有歧义时保持无风险" in prompt
-    assert "疑似产品不良反应或可能与产品使用相关的身体问题才输出不超过80字的独立检索短句" in prompt
-    assert "与产品无关的通用健康、饮食、运动问题" in prompt
-    assert "一律输出 JSON null" in prompt
+    assert "疑似产品不良反应或可能与产品使用相关的身体问题" in prompt
+    assert "服务规则（问卷、打卡、交付文件、服务流程的用途与要求）" in prompt
+    assert "都输出不超过80字的独立检索短句" in prompt
+    assert "只有实时数据查询、系统操作、纯上报、确认收尾和闲聊才输出 JSON null" in prompt
     assert "完整保留产品名、症状、动作、数字、时间、否定、不确定性" in prompt
     assert "是否由产品导致/是否需要补喝" in prompt
     assert "只能还原对话已出现的产品名，不得猜测" in prompt
@@ -346,7 +347,6 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     assert "补吗/补一下" in prompt and "补喝" in prompt
     assert "拿另一款顶一下/换着喝" in prompt and "产品替代" in prompt
     assert "只能温水吗" in prompt and "冷水冲泡是否可用" in prompt
-    assert "低碳是否停米面、为什么填问卷都返回 null" in prompt
     assert "不得回答、不得新增事实、不得把工作人员的话改成用户事实" in prompt
     assert "产品规则优先 current_state/habits/warnings" in prompt
     assert "复盘历程才用 case_summary" in prompt
