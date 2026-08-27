@@ -701,11 +701,14 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "奖励规则正在讨论中，确认后会另行通知" in AGENT_SYSTEM_PROMPT
     assert "完成当前一问所需的工具" in AGENT_SYSTEM_PROMPT
     assert "已有明确编号就直接读/取消" in AGENT_SYSTEM_PROMPT
-    assert "写操作缺必填信息时只问缺项并停止" in AGENT_SYSTEM_PROMPT
+    assert "写操作先核验授权、意图和全部必填信息" in AGENT_SYSTEM_PROMPT
+    assert "任一不满足，本轮写调用必须为0" in AGENT_SYSTEM_PROMPT
     assert "同参数成功后立刻回复" in AGENT_SYSTEM_PROMPT
     assert "禁止重复调用或顺手查相邻数据" in AGENT_SYSTEM_PROMPT
-    assert "授权不足也不调写工具试探" in AGENT_SYSTEM_PROMPT
-    assert "只给收件人而缺电话、地址时直接问这两项" in AGENT_SYSTEM_PROMPT
+    assert "禁止调用试探" in AGENT_SYSTEM_PROMPT
+    assert "立即发货仅在本条给齐收件人、手机号、详细地址" in AGENT_SYSTEM_PROMPT
+    assert "明确沿用完整已存地址" in AGENT_SYSTEM_PROMPT
+    assert "缺项只问，不调工具" in AGENT_SYSTEM_PROMPT
     assert "单一问题只搜 1 次" in AGENT_SYSTEM_PROMPT
     assert "search_success_case，不先读 skill" in AGENT_SYSTEM_PROMPT
     assert "明确不保证一定减重" in AGENT_SYSTEM_PROMPT
