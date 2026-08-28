@@ -21,7 +21,7 @@ from app.services.embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
-_FAQ_CANDIDATE_LIMIT = 4
+_FAQ_CANDIDATE_LIMIT = 8
 _CASE_CANDIDATE_LIMIT = 20
 _SAME_RELATIONS = {"same_meaning", "same_story"}
 _ALLOWED_RELATIONS = _SAME_RELATIONS | {"conditional_variant", "related", "different"}
@@ -69,6 +69,28 @@ class KnowledgeCandidate:
 
 
 @dataclass(frozen=True)
+class KnowledgeCandidateAssessment:
+    """One judged candidate; the judge must return one of these per candidate."""
+
+    candidate: KnowledgeCandidate
+    relation: str
+    answer_relation: str
+    reason: str
+    canonical_question: str | None = None
+    canonical_answer: str | None = None
+
+    def audit_payload(self) -> dict[str, Any]:
+        return {
+            "chunk_id": self.candidate.chunk_id,
+            "item_id": self.candidate.item_id,
+            "distance": self.candidate.distance,
+            "relation": self.relation,
+            "answer_relation": self.answer_relation,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
 class KnowledgeDedupeDecision:
     action: str
     relation: str
@@ -77,6 +99,7 @@ class KnowledgeDedupeDecision:
     target: KnowledgeCandidate | None = None
     canonical_question: str | None = None
     canonical_answer: str | None = None
+    assessments: tuple[KnowledgeCandidateAssessment, ...] = ()
 
 
 def normalize_knowledge_text(value: object) -> str:
@@ -163,6 +186,16 @@ async def record_dedupe_event(
 ) -> KnowledgeDedupeEvent:
     target = decision.target
     payload = details or {}
+    if decision.assessments:
+        payload = {
+            **payload,
+            "candidate_assessments": [item.audit_payload() for item in decision.assessments],
+            "conflicting_chunk_ids": [
+                item.candidate.chunk_id
+                for item in decision.assessments
+                if item.answer_relation == "conflict"
+            ],
+        }
     if target is not None:
         payload = {
             **payload,
@@ -422,10 +455,13 @@ async def _judge_candidates(
     system_prompt = (
         "你是知识库入库前的语义判重裁判。只判断内容关系，不改写、不回答业务问题。"
         "候选由向量召回产生，距离只代表需要比较，绝不能仅凭距离判重复。\n"
+        "你必须为 existing_candidates 里的每一条候选各自给出独立判定，逐条比较，"
+        "不得只挑最像的一条作答，也不得因为已找到一条重复就跳过其余候选。"
+        "输出条目数必须与候选条目数一致，chunk_id 必须来自候选列表且不得重复。\n"
         "FAQ：只有核心意图和适用条件一致才是 same_meaning；适用人群、时间、剂量、前提或否定条件不同，"
         "必须判 conditional_variant。回答事实相反、剂量/时间/规则不一致判 conflict；"
-        "只要 answer_relation=conflict，matched_chunk_id 必须指向直接冲突的已有候选，"
-        "不得因 relation 是 conditional_variant 或 related 而忽略冲突；"
+        "任意一条候选与新内容的规则/剂量/时间互斥，该条就必须判 conflict，"
+        "不得因为它与新内容的 relation 只是 conditional_variant 或 related 而放过冲突；"
         "回答等价判 equivalent；新回答补充了兼容且有用的业务事实判 candidate_adds_value。\n"
         "优秀案例：只有同一服务单内同一事件、转折和证据故事才判 same_story；"
         "同一用户不同阶段事件，以及不同用户的相似经历都不能合并。\n"
@@ -433,9 +469,10 @@ async def _judge_candidates(
         "只合并输入中已有且互不冲突的事实，形成可直接替代旧内容的精炼完整版本；不得新增事实、寒暄、夸奖或无关追问。"
         "其他 answer_relation 的 canonical_question/canonical_answer 输出 null。\n"
         "只输出 JSON："
-        '{"matched_chunk_id":整数或null,"relation":"same_meaning|same_story|conditional_variant|related|different",'
-        '"answer_relation":"equivalent|candidate_adds_value|conflict|not_applicable","reason":"一句具体理由",'
-        '"canonical_question":"字符串或null","canonical_answer":"字符串或null"}'
+        '{"assessments":[{"chunk_id":整数,'
+        '"relation":"same_meaning|same_story|conditional_variant|related|different",'
+        '"answer_relation":"equivalent|candidate_adds_value|conflict|not_applicable",'
+        '"reason":"一句具体理由","canonical_question":"字符串或null","canonical_answer":"字符串或null"}]}'
     )
     try:
         text = await ai_service.generate_text(
@@ -453,56 +490,133 @@ async def _judge_candidates(
         logger.exception("Knowledge dedupe LLM judge failed draft_id=%s", draft.id)
         raise KnowledgeDedupeUnavailable("知识语义判重失败，草稿尚未入库") from exc
 
-    relation = str(payload.get("relation") or "").strip()
-    answer_relation = str(payload.get("answer_relation") or "").strip()
-    matched_chunk_id = _positive_int(payload.get("matched_chunk_id"))
-    reason = normalize_knowledge_text(payload.get("reason"))[:1000]
-    if relation not in _ALLOWED_RELATIONS or answer_relation not in _ALLOWED_ANSWER_RELATIONS or not reason:
-        raise KnowledgeDedupeUnavailable("知识语义判重返回格式无效，草稿尚未入库")
+    assessments = _parse_candidate_assessments(payload, candidates)
+    return _resolve_decision(assessments)
 
-    target = next(
-        (candidate for candidate in candidates if candidate.chunk_id == matched_chunk_id),
-        None,
-    )
-    if (relation in _SAME_RELATIONS or answer_relation == "conflict") and target is None:
-        raise KnowledgeDedupeUnavailable("知识语义判重返回了未知候选，草稿尚未入库")
-    if answer_relation == "conflict":
+
+def _parse_candidate_assessments(
+    payload: dict[str, Any],
+    candidates: list[KnowledgeCandidate],
+) -> list[KnowledgeCandidateAssessment]:
+    raw_items = payload.get("assessments")
+    if not isinstance(raw_items, list) or not raw_items:
+        raise KnowledgeDedupeUnavailable("知识语义判重没有返回逐条判定，草稿尚未入库")
+
+    by_chunk = {candidate.chunk_id: candidate for candidate in candidates}
+    assessments: list[KnowledgeCandidateAssessment] = []
+    seen: set[int] = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            raise KnowledgeDedupeUnavailable("知识语义判重返回格式无效，草稿尚未入库")
+        chunk_id = _positive_int(item.get("chunk_id"))
+        candidate = by_chunk.get(chunk_id) if chunk_id else None
+        if candidate is None:
+            raise KnowledgeDedupeUnavailable("知识语义判重返回了未知候选，草稿尚未入库")
+        if chunk_id in seen:
+            raise KnowledgeDedupeUnavailable("知识语义判重对同一候选重复判定，草稿尚未入库")
+        seen.add(chunk_id)
+
+        relation = str(item.get("relation") or "").strip()
+        answer_relation = str(item.get("answer_relation") or "").strip()
+        reason = normalize_knowledge_text(item.get("reason"))[:1000]
+        if (
+            relation not in _ALLOWED_RELATIONS
+            or answer_relation not in _ALLOWED_ANSWER_RELATIONS
+            or not reason
+        ):
+            raise KnowledgeDedupeUnavailable("知识语义判重返回格式无效，草稿尚未入库")
+
+        canonical_question = None
+        canonical_answer = None
+        if relation in _SAME_RELATIONS and answer_relation == "candidate_adds_value":
+            canonical_question = normalize_knowledge_text(item.get("canonical_question"))
+            canonical_answer = normalize_knowledge_text(item.get("canonical_answer"))
+            if not canonical_question or not canonical_answer:
+                raise KnowledgeDedupeUnavailable("兼容知识没有返回可用的合并版本，草稿尚未入库")
+
+        assessments.append(
+            KnowledgeCandidateAssessment(
+                candidate=candidate,
+                relation=relation,
+                answer_relation=answer_relation,
+                reason=reason,
+                canonical_question=canonical_question,
+                canonical_answer=canonical_answer,
+            )
+        )
+
+    if len(assessments) != len(candidates):
+        raise KnowledgeDedupeUnavailable("知识语义判重漏判了部分候选，草稿尚未入库")
+    return assessments
+
+
+def _resolve_decision(
+    assessments: list[KnowledgeCandidateAssessment],
+) -> KnowledgeDedupeDecision:
+    """Deterministic rollup: any conflict wins, then dedupe, then create."""
+
+    ordered = tuple(assessments)
+
+    def _nearest(matches: list[KnowledgeCandidateAssessment]) -> KnowledgeCandidateAssessment:
+        return min(
+            matches,
+            key=lambda item: (
+                item.candidate.distance if item.candidate.distance is not None else 1.0,
+                item.candidate.chunk_id,
+            ),
+        )
+
+    conflicts = [item for item in ordered if item.answer_relation == "conflict"]
+    if conflicts:
+        picked = _nearest(conflicts)
+        reason = picked.reason
+        if len(conflicts) > 1:
+            others = "、".join(str(item.candidate.chunk_id) for item in conflicts if item is not picked)
+            reason = f"{reason}（另有 {len(conflicts) - 1} 条已有知识同样冲突：{others}）"
         return KnowledgeDedupeDecision(
             action="conflict",
-            relation=relation,
-            answer_relation=answer_relation,
-            reason=reason,
-            target=target,
+            relation=picked.relation,
+            answer_relation="conflict",
+            reason=reason[:1000],
+            target=picked.candidate,
+            assessments=ordered,
         )
-    if relation not in _SAME_RELATIONS:
-        return KnowledgeDedupeDecision(
-            action="create",
-            relation=relation,
-            answer_relation=answer_relation,
-            reason=reason,
-        )
-    action = {
-        "equivalent": "skip",
-        "candidate_adds_value": "update",
-        "conflict": "conflict",
-    }.get(answer_relation)
-    if action is None:
+
+    duplicates = [item for item in ordered if item.relation in _SAME_RELATIONS]
+    if duplicates:
+        equivalents = [item for item in duplicates if item.answer_relation == "equivalent"]
+        if equivalents:
+            picked = _nearest(equivalents)
+            return KnowledgeDedupeDecision(
+                action="skip",
+                relation=picked.relation,
+                answer_relation="equivalent",
+                reason=picked.reason,
+                target=picked.candidate,
+                assessments=ordered,
+            )
+        adds_value = [item for item in duplicates if item.answer_relation == "candidate_adds_value"]
+        if adds_value:
+            picked = _nearest(adds_value)
+            return KnowledgeDedupeDecision(
+                action="update",
+                relation=picked.relation,
+                answer_relation="candidate_adds_value",
+                reason=picked.reason,
+                target=picked.candidate,
+                canonical_question=picked.canonical_question,
+                canonical_answer=picked.canonical_answer,
+                assessments=ordered,
+            )
         raise KnowledgeDedupeUnavailable("重复知识缺少有效的回答关系，草稿尚未入库")
-    canonical_question = None
-    canonical_answer = None
-    if answer_relation == "candidate_adds_value":
-        canonical_question = normalize_knowledge_text(payload.get("canonical_question"))
-        canonical_answer = normalize_knowledge_text(payload.get("canonical_answer"))
-        if not canonical_question or not canonical_answer:
-            raise KnowledgeDedupeUnavailable("兼容知识没有返回可用的合并版本，草稿尚未入库")
+
+    picked = _nearest(list(ordered))
     return KnowledgeDedupeDecision(
-        action=action,
-        relation=relation,
-        answer_relation=answer_relation,
-        reason=reason,
-        target=target,
-        canonical_question=canonical_question,
-        canonical_answer=canonical_answer,
+        action="create",
+        relation=picked.relation,
+        answer_relation=picked.answer_relation,
+        reason=picked.reason,
+        assessments=ordered,
     )
 
 

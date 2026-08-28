@@ -109,12 +109,16 @@ async def test_approval_does_not_shortcut_identical_text_with_hash(monkeypatch) 
     )
     ai = StubAI(
         {
-            "matched_chunk_id": identical.chunk_id,
-            "relation": "same_meaning",
-            "answer_relation": "equivalent",
-            "reason": "内容一致，无新增信息。",
-            "canonical_question": None,
-            "canonical_answer": None,
+            "assessments": [
+                {
+                    "chunk_id": identical.chunk_id,
+                    "relation": "same_meaning",
+                    "answer_relation": "equivalent",
+                    "reason": "内容一致，无新增信息。",
+                    "canonical_question": None,
+                    "canonical_answer": None,
+                }
+            ]
         }
     )
     decision = await assess_knowledge_draft(None, draft, ai=ai)
@@ -129,12 +133,16 @@ async def test_semantic_judge_returns_one_call_merged_canonical_answer() -> None
         [_candidate()],
         ai=StubAI(
             {
-                "matched_chunk_id": 9,
-                "relation": "same_meaning",
-                "answer_relation": "candidate_adds_value",
-                "reason": "问法一致，新答案补齐了时间边界。",
-                "canonical_question": "晚A应该什么时候喝？",
-                "canonical_answer": "晚A在睡前1至2小时喝完；如方案另有安排，以审核后的方案为准。",
+                "assessments": [
+                    {
+                        "chunk_id": 9,
+                        "relation": "same_meaning",
+                        "answer_relation": "candidate_adds_value",
+                        "reason": "问法一致，新答案补齐了时间边界。",
+                        "canonical_question": "晚A应该什么时候喝？",
+                        "canonical_answer": "晚A在睡前1至2小时喝完；如方案另有安排，以审核后的方案为准。",
+                    }
+                ]
             }
         ),
     )
@@ -150,12 +158,16 @@ async def test_conditional_variant_is_published_separately() -> None:
         [_candidate()],
         ai=StubAI(
             {
-                "matched_chunk_id": None,
-                "relation": "conditional_variant",
-                "answer_relation": "not_applicable",
-                "reason": "新问题限定了咖啡因敏感人群，适用条件不同。",
-                "canonical_question": None,
-                "canonical_answer": None,
+                "assessments": [
+                    {
+                        "chunk_id": 9,
+                        "relation": "conditional_variant",
+                        "answer_relation": "not_applicable",
+                        "reason": "新问题限定了咖啡因敏感人群，适用条件不同。",
+                        "canonical_question": None,
+                        "canonical_answer": None,
+                    }
+                ]
             }
         ),
     )
@@ -171,12 +183,16 @@ async def test_answer_conflict_always_stops_publication(relation: str) -> None:
         [_candidate()],
         ai=StubAI(
             {
-                "matched_chunk_id": 9,
-                "relation": relation,
-                "answer_relation": "conflict",
-                "reason": "新答案说可以补喝，已有答案要求跳过，时间规则直接冲突。",
-                "canonical_question": None,
-                "canonical_answer": None,
+                "assessments": [
+                    {
+                        "chunk_id": 9,
+                        "relation": relation,
+                        "answer_relation": "conflict",
+                        "reason": "新答案说可以补喝，已有答案要求跳过，时间规则直接冲突。",
+                        "canonical_question": None,
+                        "canonical_answer": None,
+                    }
+                ]
             }
         ),
     )
@@ -193,12 +209,117 @@ async def test_answer_conflict_without_known_target_fails_closed() -> None:
             [_candidate()],
             ai=StubAI(
                 {
-                    "matched_chunk_id": None,
-                    "relation": "related",
-                    "answer_relation": "conflict",
-                    "reason": "两个时间口径直接冲突。",
-                    "canonical_question": None,
-                    "canonical_answer": None,
+                    "assessments": [
+                        {
+                            "chunk_id": 4242,
+                            "relation": "related",
+                            "answer_relation": "conflict",
+                            "reason": "两个时间口径直接冲突。",
+                            "canonical_question": None,
+                            "canonical_answer": None,
+                        }
+                    ]
+                }
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_conflict_on_any_candidate_beats_non_conflict_verdicts() -> None:
+    """RA-030 回归：多候选里只要一条冲突，就不能被"条件变体"盖过去而独立入库。"""
+
+    near_variant = replace(_candidate(), chunk_id=11, distance=0.14)
+    far_conflict = replace(_candidate(), chunk_id=22, distance=0.28)
+    decision = await _judge_candidates(
+        _draft(),
+        [near_variant, far_conflict],
+        ai=StubAI(
+            {
+                "assessments": [
+                    {
+                        "chunk_id": 11,
+                        "relation": "conditional_variant",
+                        "answer_relation": "candidate_adds_value",
+                        "reason": "适用条件不同，补充了新的时间边界。",
+                        "canonical_question": None,
+                        "canonical_answer": None,
+                    },
+                    {
+                        "chunk_id": 22,
+                        "relation": "related",
+                        "answer_relation": "conflict",
+                        "reason": "已有答案要求随餐，新答案要求空腹，规则互斥。",
+                        "canonical_question": None,
+                        "canonical_answer": None,
+                    },
+                ]
+            }
+        ),
+    )
+    assert decision.action == "conflict"
+    assert decision.target is not None
+    assert decision.target.chunk_id == 22
+    assert [item.candidate.chunk_id for item in decision.assessments] == [11, 22]
+
+
+@pytest.mark.asyncio
+async def test_multiple_conflicts_are_all_reported_in_reason() -> None:
+    first = replace(_candidate(), chunk_id=11, distance=0.14)
+    second = replace(_candidate(), chunk_id=22, distance=0.21)
+    decision = await _judge_candidates(
+        _draft(),
+        [first, second],
+        ai=StubAI(
+            {
+                "assessments": [
+                    {
+                        "chunk_id": 11,
+                        "relation": "related",
+                        "answer_relation": "conflict",
+                        "reason": "时间口径冲突。",
+                        "canonical_question": None,
+                        "canonical_answer": None,
+                    },
+                    {
+                        "chunk_id": 22,
+                        "relation": "related",
+                        "answer_relation": "conflict",
+                        "reason": "剂量口径冲突。",
+                        "canonical_question": None,
+                        "canonical_answer": None,
+                    },
+                ]
+            }
+        ),
+    )
+    assert decision.action == "conflict"
+    assert decision.target is not None
+    assert decision.target.chunk_id == 11
+    assert "22" in decision.reason
+
+
+@pytest.mark.asyncio
+async def test_missing_candidate_verdict_fails_closed() -> None:
+    """漏判即失败：模型只回一条时不得放过其余候选。"""
+
+    first = replace(_candidate(), chunk_id=11, distance=0.14)
+    second = replace(_candidate(), chunk_id=22, distance=0.21)
+    with pytest.raises(KnowledgeDedupeUnavailable, match="漏判"):
+        await _judge_candidates(
+            _draft(),
+            [first, second],
+            ai=StubAI(
+                {
+                    "assessments": [
+                        {
+                            "chunk_id": 11,
+                            "relation": "different",
+                            "answer_relation": "not_applicable",
+                            "reason": "主题不同。",
+                            "canonical_question": None,
+                            "canonical_answer": None,
+                        }
+                    ]
                 }
             ),
         )
