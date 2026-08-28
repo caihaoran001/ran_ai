@@ -16,6 +16,7 @@ from app.evaluation.reply_agent_cases import (
     load_reply_agent_eval_suite,
     summarize_reply_agent_eval_suite,
 )
+from app.evaluation.rag_cases import retrieval_clauses_for
 from app.schemas.agent_evaluation import AgentEvaluationCaseResult
 from app.schemas.rag_evaluation import RagEvaluationCaseResult
 from app.schemas.reply_agent_evaluation import (
@@ -445,6 +446,33 @@ def _failure_severity(value: str) -> str:
     return value if value in {"info", "warning", "critical"} else "warning"
 
 
+def _recall_clause_count(case: ReplyAgentEvalCase) -> int:
+    """本题召回实际按几个子句评分（即这道题的分母）。
+
+    门槛 0.75 是在平均 4 子句的校准集上选的，但正式题库里多数题只有 2~3 个
+    子句：2 子句题漏一句就是 0.50，等价于"一句都不能漏"。分母不写进报告，
+    读报告的人无从判断某道题的低分是判官抖动还是真漏检。
+    """
+    rag_case = case.rag_case
+    if rag_case is None:
+        return 0
+    fact_by_id = {fact.fact_id: fact for fact in rag_case.authoritative_facts}
+    total = 0
+    for fact_id in rag_case.retrieval.required_fact_ids:
+        fact = fact_by_id.get(fact_id)
+        if fact is not None:
+            total += len(retrieval_clauses_for(fact))
+    return total
+
+
+def _with_clause_denominator(reason: str | None, clause_count: int) -> str | None:
+    """把本题召回分母写进判分理由，方便人读报告时判断一格值多少分。"""
+    if clause_count <= 0:
+        return reason
+    note = f"[本题召回分母：{clause_count} 个子句，漏 1 句 ≈ -{1 / clause_count:.2f}]"
+    return f"{note} {reason}" if reason else note
+
+
 def adapt_rag_result(
     case: ReplyAgentEvalCase,
     result: RagEvaluationCaseResult,
@@ -510,7 +538,10 @@ def adapt_rag_result(
                 "上下文召回率",
                 result.scores.context_recall,
                 GATE_CONTEXT_RECALL,
-                result.judge_reasons.get("context_recall"),
+                _with_clause_denominator(
+                    result.judge_reasons.get("context_recall"),
+                    _recall_clause_count(case),
+                ),
             ),
             (
                 "context_precision",
