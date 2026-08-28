@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, TypeVar
 
 from app.core.config import get_settings
-from app.db.session import engine
+from app.db.session import SessionLocal, engine
 from app.evaluation.reply_agent_cases import (
     ReplyAgentEvalCase,
     ReplyAgentEvalSuite,
@@ -60,6 +60,7 @@ if __package__:
         GATE_FAITHFULNESS,
         DeepEvalScorer,
     )
+    from .faq_provenance_check import check_faq_provenance, format_drift_report
     from .rag_costs import RagEvaluationCostLedger, install_rag_usage_collectors
     from .read_only import install_read_only_guards
     from .reporting import atomic_write_json
@@ -86,6 +87,7 @@ else:
         GATE_FAITHFULNESS,
         DeepEvalScorer,
     )
+    from faq_provenance_check import check_faq_provenance, format_drift_report
     from rag_costs import RagEvaluationCostLedger, install_rag_usage_collectors
     from read_only import install_read_only_guards
     from reporting import atomic_write_json
@@ -1050,17 +1052,37 @@ async def _run_case_batch(
         raise first_error
 
 
+async def _assert_faq_provenance_fresh(
+    suite: ReplyAgentEvalSuite, *, allow_drift: bool
+) -> None:
+    """题库快照落后于库中 FAQ 时，在跑真实评测前中止。
+
+    否则判官会把"模型答对了新口径"记成失败，而失败原因看起来像模型问题。
+    """
+    async with SessionLocal() as session:
+        drifts = await check_faq_provenance(session, suite)
+    if not drifts:
+        return
+    report = format_drift_report(drifts)
+    if allow_drift:
+        print(f"[warn] {report}", flush=True)
+        return
+    raise RuntimeError(report)
+
+
 async def _real_cases_for_suite(
     suite: ReplyAgentEvalSuite,
     *,
     run_dir: Path,
     results: list[ReplyAgentEvaluationCaseResult],
     on_progress,
+    allow_faq_drift: bool = False,
 ) -> list[ReplyAgentEvaluationCaseResult]:
     settings = get_settings().model_copy(update={"web_search_enabled": False})
     if not settings.ai_api_key or not settings.embedding_api_key:
         raise RuntimeError("真实统一评测要求 AI_API_KEY 和 EMBEDDING_API_KEY")
     install_read_only_guards(engine)
+    await _assert_faq_provenance_fresh(suite, allow_drift=allow_faq_drift)
     rag_ledger = RagEvaluationCostLedger(
         settings,
         call_log_path=run_dir / "calls.jsonl",
@@ -1220,6 +1242,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 run_dir=run_dir,
                 results=results,
                 on_progress=progress,
+                allow_faq_drift=getattr(args, "allow_faq_drift", False),
             )
         )
         summary = aggregate_summary(base=base, cases=results)
@@ -1254,6 +1277,11 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=float(os.getenv("REPLY_AGENT_EVAL_MAX_COST_YUAN", "10")),
         help="Stop the real run after known cost reaches this amount",
+    )
+    parser.add_argument(
+        "--allow-faq-drift",
+        action="store_true",
+        help="题库引用的 FAQ 版本落后于库中时仅告警，不中止（默认中止）",
     )
     parser.add_argument(
         "--reports-root",

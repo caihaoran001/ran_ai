@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -615,21 +616,23 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
         }
     elif case.case_id == "rag-faq-meal-order":
         # 问的是进食顺序；「三餐要保证蛋白质、无需戒主食」回答的是另一个问题。
+        # 口径随 faq_66de72eea085a5b9 v5 更新：主食不再限定"粗粮"，改为控制在 1 拳以内。
         _set_aside_off_topic_half(
             "faq-f12",
             answers_the_question=(
-                "正餐按蛋白质、蔬菜、粗粮主食的顺序进食：先吃蛋白质打底，"
-                "再吃蔬菜，最后吃适量粗粮主食。"
+                "正餐按蛋白质、蔬菜、主食的顺序进食：先吃蛋白质打底，"
+                "再吃蔬菜，最后吃适量主食，主食控制在1拳以内。"
             ),
             answers_a_different_question="三餐都应保证蛋白质，无需完全戒主食。",
         )
         _set_retrieval_clauses(
             "faq-f12",
             [
-                "正餐按蛋白质、蔬菜、粗粮主食的顺序进食",
+                "正餐按蛋白质、蔬菜、主食的顺序进食",
                 "先吃蛋白质打底",
                 "再吃蔬菜",
-                "最后吃适量粗粮主食",
+                "最后吃适量主食",
+                "主食控制在1拳以内",
             ],
         )
     elif case.case_id == "rag-faq-sudden-weight-gain":
@@ -642,10 +645,11 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
         )
     elif case.case_id == "rag-chat-meal-order-why":
         # 同上：本轮问顺序的理由，蛋白质与主食总则不在问题范围内。
+        # 口径随 faq_66de72eea085a5b9 v5 更新：主食不再限定"粗粮"。
         _set_aside_off_topic_half(
             "chat-r10",
             answers_the_question=(
-                "当前饮食建议的顺序是先吃几口蛋白质打底，再吃蔬菜，最后吃适量粗粮主食。"
+                "当前饮食建议的顺序是先吃几口蛋白质打底，再吃蔬菜，最后吃适量主食。"
             ),
             answers_a_different_question="三餐应保证蛋白质，也无需完全戒主食。",
         )
@@ -654,7 +658,7 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
             [
                 "当前饮食建议的顺序是先吃几口蛋白质打底",
                 "再吃蔬菜",
-                "最后吃适量粗粮主食",
+                "最后吃适量主食",
             ],
         )
     elif case.case_id == "rag-faq-checkin-method":
@@ -1176,6 +1180,35 @@ def _current_agent_contract_case(case):
     return type(case).model_validate(payload)
 
 
+# 题库里的权威事实是 FAQ 的手抄快照；生产 FAQ 由知识进化链路自动升版本，两边没有
+# 联动。这里把每条引用对齐到 2026-08-28 复核过的当前生产版本：绝大多数是题库正文
+# 早已写成新口径、只有版本标签没跟上，逐条比对过确认无实质差异。
+CURRENT_FAQ_VERSIONS = {
+    "faq_0363f074a325ae2c": 6,
+    "faq_2818e99c76489d83": 4,
+    "faq_2ff2485a2ae76cf1": 3,
+    "faq_591b722cc8059cd6": 2,
+    "faq_61fab86fe347b2bc": 3,
+    "faq_66de72eea085a5b9": 5,
+    "faq_cb2a4afab94e1bc1": 3,
+}
+
+_FAQ_PROVENANCE_RE = re.compile(r"^knowledge_faqs:(faq_[0-9a-f]+):v(\d+)$")
+
+
+def _realign_faq_provenance(payload: dict) -> None:
+    """把 rag 用例里的 FAQ 引用版本对齐到当前生产版本。"""
+    for fact in payload.get("authoritative_facts", []):
+        match = _FAQ_PROVENANCE_RE.match(str(fact.get("provenance", "")).strip())
+        if match is None:
+            continue
+        uid = match.group(1)
+        current = CURRENT_FAQ_VERSIONS.get(uid)
+        if current is None or current == int(match.group(2)):
+            continue
+        fact["provenance"] = f"knowledge_faqs:{uid}:v{current}"
+
+
 def build_suite() -> ReplyAgentEvalSuite:
     rag_suite = load_rag_eval_suite()
     agent_suite = load_agent_eval_suite()
@@ -1194,6 +1227,8 @@ def build_suite() -> ReplyAgentEvalSuite:
 
     def append_case(payload: dict) -> None:
         payload["case_id"] = f"RA-{len(cases) + 1:03d}"
+        if payload.get("rag_case"):
+            _realign_faq_provenance(payload["rag_case"])
         cases.append(payload)
 
     for case in selected_rag:

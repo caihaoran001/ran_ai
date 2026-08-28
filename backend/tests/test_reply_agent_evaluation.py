@@ -168,10 +168,11 @@ def test_retrieval_noise_cases_follow_live_knowledge_boundary() -> None:
         "rag-faq-meal-order": (
             "diet_rule",
             [
-                "正餐按蛋白质、蔬菜、粗粮主食的顺序进食",
+                "正餐按蛋白质、蔬菜、主食的顺序进食",
                 "先吃蛋白质打底",
                 "再吃蔬菜",
-                "最后吃适量粗粮主食",
+                "最后吃适量主食",
+                "主食控制在1拳以内",
             ],
         ),
         "rag-faq-sudden-weight-gain": (
@@ -200,7 +201,7 @@ def test_retrieval_noise_cases_follow_live_knowledge_boundary() -> None:
             [
                 "当前饮食建议的顺序是先吃几口蛋白质打底",
                 "再吃蔬菜",
-                "最后吃适量粗粮主食",
+                "最后吃适量主食",
             ],
         ),
         "rag-chat-cafeteria-privacy": (
@@ -1011,3 +1012,23 @@ async def test_a_failed_case_always_names_the_line_it_crossed(tmp_path) -> None:
             report.summary.lowest_scores, report.summary.lowest_scores[1:]
         )
     )
+
+
+def test_suite_cites_the_faq_version_it_quotes() -> None:
+    """题库的 FAQ 引用必须指向当前生产版本。
+
+    题库里的权威答案是手抄快照，FAQ 由知识进化链路自动升版本，两边没有联动。
+    刻度那条从 v3 涨到 v5 隔了近一个月无人察觉，判官把"模型答对了新口径"记成
+    失败。这里锁住重映射表本身：改口径时必须同时更新它，否则测试先红。
+    """
+    from eval.build_reply_agent_suite import CURRENT_FAQ_VERSIONS
+    from eval.faq_provenance_check import cited_faq_versions
+
+    suite = load_reply_agent_eval_suite()
+    cited = cited_faq_versions(suite)
+    stale = {
+        (uid, version)
+        for uid, version in cited
+        if uid in CURRENT_FAQ_VERSIONS and CURRENT_FAQ_VERSIONS[uid] != version
+    }
+    assert not stale, f"引用版本与重映射表不一致：{sorted(stale)}"

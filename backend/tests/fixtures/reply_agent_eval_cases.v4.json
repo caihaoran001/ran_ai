@@ -55,7 +55,7 @@
           {
             "fact_id": "faq-f01",
             "statement": "一瓶盖是半份，约等于1.5个小刻度；一大刻度等于3个小刻度，也就是一份，约两瓶盖。所以按一大刻度执行时，一瓶盖不够，量取时以瓶体刻度或附赠刻度杯为准。",
-            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v3",
+            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v6",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_0363f074a325ae2c"
@@ -141,7 +141,7 @@
           {
             "fact_id": "faq-f02",
             "statement": "晚A每次用1大刻度（等于3小刻度，约两瓶盖），也就是一标准份，默认配330ml水冲泡，可按口感在250–330ml之间调整；按1小刻度冲时默认110ml，半份配150–180ml。晚A在睡前1至2小时喝；水温控制在85℃以下。",
-            "provenance": "knowledge_faqs:faq_2818e99c76489d83:v3",
+            "provenance": "knowledge_faqs:faq_2818e99c76489d83:v4",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_2818e99c76489d83"
@@ -226,7 +226,7 @@
           {
             "fact_id": "faq-f03",
             "statement": "早C、午B、晚A可以用常温水或冷水冲泡，水温不高于85℃，冷水与热水口感不同，更建议热水；加卡点钥匙时用60–85℃热水冲开；经期更建议热水冲调。",
-            "provenance": "knowledge_faqs:faq_2ff2485a2ae76cf1:v2",
+            "provenance": "knowledge_faqs:faq_2ff2485a2ae76cf1:v3",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_2ff2485a2ae76cf1"
@@ -796,7 +796,7 @@
           {
             "fact_id": "faq-f10",
             "statement": "倒班时不要机械照搬白天钟点，应按清醒周期安排：早C在起床后的第一餐，午B在清醒周期中段且与计划睡眠至少间隔8小时，晚A在计划睡眠前1至2小时。",
-            "provenance": "knowledge_faqs:faq_cb2a4afab94e1bc1:v2",
+            "provenance": "knowledge_faqs:faq_cb2a4afab94e1bc1:v3",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_cb2a4afab94e1bc1"
@@ -950,23 +950,24 @@
         "authoritative_facts": [
           {
             "fact_id": "faq-f12",
-            "statement": "正餐按蛋白质、蔬菜、粗粮主食的顺序进食：先吃蛋白质打底，再吃蔬菜，最后吃适量粗粮主食。",
-            "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v3",
+            "statement": "正餐按蛋白质、蔬菜、主食的顺序进食：先吃蛋白质打底，再吃蔬菜，最后吃适量主食，主食控制在1拳以内。",
+            "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v5",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_66de72eea085a5b9"
             ],
             "retrieval_clauses": [
-              "正餐按蛋白质、蔬菜、粗粮主食的顺序进食",
+              "正餐按蛋白质、蔬菜、主食的顺序进食",
               "先吃蛋白质打底",
               "再吃蔬菜",
-              "最后吃适量粗粮主食"
+              "最后吃适量主食",
+              "主食控制在1拳以内"
             ]
           },
           {
             "fact_id": "faq-f12-aside",
             "statement": "三餐都应保证蛋白质，无需完全戒主食。",
-            "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v3",
+            "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v5",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_66de72eea085a5b9"
@@ -1558,7 +1559,7 @@
           {
             "fact_id": "chat-r01",
             "statement": "一瓶盖约等于1.5个小刻度，一大刻度等于3个小刻度，按一大刻度执行时约需两瓶盖，一瓶盖不够；量取以瓶体刻度为准。",
-            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v3",
+            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v6",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_0363f074a325ae2c"
@@ -1656,7 +1657,7 @@
           {
             "fact_id": "chat-r02",
             "statement": "一瓶盖约等于1.5个小刻度，一大刻度等于3个小刻度，也就是约两瓶盖；用量应优先按瓶体刻度或刻度杯量取。",
-            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v3",
+            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v6",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_0363f074a325ae2c"
@@ -1747,7 +1748,7 @@
           {
             "fact_id": "chat-r03",
             "statement": "早C和午B优先随餐饮用；条件不允许时，紧邻正餐前后喝也可以，不需要卡固定的分钟数。",
-            "provenance": "knowledge_faqs:faq_61fab86fe347b2bc:v2",
+            "provenance": "knowledge_faqs:faq_61fab86fe347b2bc:v3",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_61fab86fe347b2bc",
@@ -1986,7 +1987,7 @@
           {
             "fact_id": "chat-r08",
             "statement": "旅游期间能保持节奏就尽量保持，漏掉的一次直接跳过，不要回头补量，下一次按原计划继续；也可以回来后再继续。28天服务期不会因为旅游中断自动顺延，需要延长服务窗口请走运营续服流程。",
-            "provenance": "knowledge_faqs:faq_591b722cc8059cd6:v1",
+            "provenance": "knowledge_faqs:faq_591b722cc8059cd6:v2",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_591b722cc8059cd6",
@@ -2173,8 +2174,8 @@
         "authoritative_facts": [
           {
             "fact_id": "chat-r10",
-            "statement": "当前饮食建议的顺序是先吃几口蛋白质打底，再吃蔬菜，最后吃适量粗粮主食。",
-            "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v3",
+            "statement": "当前饮食建议的顺序是先吃几口蛋白质打底，再吃蔬菜，最后吃适量主食。",
+            "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v5",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_66de72eea085a5b9"
@@ -2182,13 +2183,13 @@
             "retrieval_clauses": [
               "当前饮食建议的顺序是先吃几口蛋白质打底",
               "再吃蔬菜",
-              "最后吃适量粗粮主食"
+              "最后吃适量主食"
             ]
           },
           {
             "fact_id": "chat-r10-aside",
             "statement": "三餐应保证蛋白质，也无需完全戒主食。",
-            "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v3",
+            "provenance": "knowledge_faqs:faq_66de72eea085a5b9:v5",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_66de72eea085a5b9"
@@ -2473,7 +2474,7 @@
           {
             "fact_id": "chat-r11",
             "statement": "早C和午B优先随餐饮用；条件不允许时，紧邻正餐前后喝也可以，不需要卡固定的分钟数。",
-            "provenance": "knowledge_faqs:faq_61fab86fe347b2bc:v2",
+            "provenance": "knowledge_faqs:faq_61fab86fe347b2bc:v3",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_61fab86fe347b2bc",
@@ -5213,7 +5214,7 @@
           {
             "fact_id": "eval_dose_correction",
             "statement": "一瓶盖是半份，约等于1.5个小刻度；一大刻度等于3个小刻度，也就是一份，约两瓶盖。所以按一大刻度执行时，一瓶盖不够，量取时以瓶体刻度或附赠刻度杯为准。",
-            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v3",
+            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v6",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_0363f074a325ae2c"
@@ -5464,7 +5465,7 @@
           {
             "fact_id": "eval_hot_key",
             "statement": "早C、午B、晚A可以用常温水或冷水冲泡，水温不高于85℃，冷水与热水口感不同，更建议热水；加卡点钥匙时用60–85℃热水冲开；经期更建议热水冲调。",
-            "provenance": "knowledge_faqs:faq_2ff2485a2ae76cf1:v2",
+            "provenance": "knowledge_faqs:faq_2ff2485a2ae76cf1:v3",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_2ff2485a2ae76cf1"
@@ -5547,7 +5548,7 @@
           {
             "fact_id": "eval_report_dose",
             "statement": "一瓶盖是半份，约等于1.5个小刻度；一大刻度等于3个小刻度，也就是一份，约两瓶盖。所以按一大刻度执行时，一瓶盖不够，量取时以瓶体刻度或附赠刻度杯为准。",
-            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v3",
+            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v6",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_0363f074a325ae2c"
@@ -5872,7 +5873,7 @@
           {
             "fact_id": "eval_conflicting_cap",
             "statement": "一瓶盖约等于1.5个小刻度，一大刻度等于3个小刻度，也就是约两瓶盖；用量应优先按瓶体刻度或刻度杯量取。",
-            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v3",
+            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v6",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_0363f074a325ae2c"
@@ -6126,7 +6127,7 @@
           {
             "fact_id": "eval_conflicting_water",
             "statement": "早C、午B、晚A可以用常温水或冷水冲泡，水温不高于85℃，冷水与热水口感不同，更建议热水；加卡点钥匙时用60–85℃热水冲开；经期更建议热水冲调。",
-            "provenance": "knowledge_faqs:faq_2ff2485a2ae76cf1:v2",
+            "provenance": "knowledge_faqs:faq_2ff2485a2ae76cf1:v3",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_2ff2485a2ae76cf1"
@@ -6298,7 +6299,7 @@
           {
             "fact_id": "eval_report_water_temperature",
             "statement": "晚A每次用1大刻度（等于3小刻度，约两瓶盖），也就是一标准份，默认配330ml水冲泡，可按口感在250–330ml之间调整；按1小刻度冲时默认110ml，半份配150–180ml。晚A在睡前1至2小时喝；水温控制在85℃以下。",
-            "provenance": "knowledge_faqs:faq_2818e99c76489d83:v3",
+            "provenance": "knowledge_faqs:faq_2818e99c76489d83:v4",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_2818e99c76489d83"
@@ -6463,7 +6464,7 @@
           {
             "fact_id": "eval_dose_no_hit_shape",
             "statement": "一瓶盖是半份，约等于1.5个小刻度；一大刻度等于3个小刻度，也就是一份，约两瓶盖。所以按一大刻度执行时，一瓶盖不够，量取时以瓶体刻度或附赠刻度杯为准。",
-            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v3",
+            "provenance": "knowledge_faqs:faq_0363f074a325ae2c:v6",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_0363f074a325ae2c"
