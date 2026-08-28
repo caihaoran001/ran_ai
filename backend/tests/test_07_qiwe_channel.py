@@ -728,6 +728,7 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "即使未 @、不执行或授权不足也要明确回复，不能静默" in AGENT_SYSTEM_PROMPT
     assert "用户的猜测不覆盖口径" in AGENT_SYSTEM_PROMPT
     assert "不把“边吃边喝”放宽成“先喝再吃也算”" in AGENT_SYSTEM_PROMPT
+    assert "产品规则遇执行/隐私障碍，先接住顾虑，再给检索边界" in AGENT_SYSTEM_PROMPT
     assert "一句话只要夹带问题或请求，即使前半句是上报，也必须回答" in AGENT_SYSTEM_PROMPT
 
 
