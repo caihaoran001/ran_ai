@@ -1190,6 +1190,7 @@ CURRENT_FAQ_VERSIONS = {
     "faq_591b722cc8059cd6": 2,
     "faq_61fab86fe347b2bc": 3,
     "faq_66de72eea085a5b9": 5,
+    "faq_e68d85edb1129472": 3,
     "faq_cb2a4afab94e1bc1": 3,
 }
 

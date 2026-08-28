@@ -1045,7 +1045,7 @@
           {
             "fact_id": "faq-f18",
             "statement": "单日体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响，不能直接等同于长了同样重量的脂肪；应在相同条件下继续记录并观察一周左右趋势。",
-            "provenance": "knowledge_faqs:faq_e68d85edb1129472:v2",
+            "provenance": "knowledge_faqs:faq_e68d85edb1129472:v3",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_e68d85edb1129472"
@@ -1827,7 +1827,7 @@
           {
             "fact_id": "chat-r06",
             "statement": "单日或短期体重上涨常受饮水、盐分、碳水储存、胃肠内容物、排便、运动和激素变化影响，不能只凭时间先后认定是咖啡导致，也不能等同于长了同样重量的脂肪。",
-            "provenance": "knowledge_faqs:faq_e68d85edb1129472:v2",
+            "provenance": "knowledge_faqs:faq_e68d85edb1129472:v3",
             "source_scope": "knowledge",
             "source_ids": [
               "faq_e68d85edb1129472"
