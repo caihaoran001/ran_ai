@@ -343,6 +343,8 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     assert "纯上报仅指体重、饮水、饮食、运动等数值或完成情况的记录" in prompt
     assert "用户陈述身体不适（如两天没排便、心慌、腹泻）不是纯上报" in prompt
     assert "即使没有以问句提出也必须输出检索短句" in prompt
+    assert "多轮若前文有产品/服务规则，当前只说执行障碍、替代或隐私顾虑，仍带规则检索" in prompt
+    assert "‘怎么弄/怎么办/这个呢’等无明确对象动作主题时输出 null，不补造主题" in prompt
     assert "完整保留产品名、症状、动作、数字、时间、否定、不确定性" in prompt
     assert "是否由产品导致/是否需要补喝" in prompt
     assert "只能还原对话已出现的产品名，不得猜测" in prompt

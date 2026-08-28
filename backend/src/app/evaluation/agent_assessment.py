@@ -14,6 +14,19 @@ from app.schemas.agent_evaluation import (
 
 
 _NO_REPLY_RE = re.compile(r"<\s*no_reply\s*/?\s*>", re.IGNORECASE)
+_CHINESE_DIGIT_TRANSLATION = str.maketrans(
+    "零〇一二两三四五六七八九",
+    "001223456789",
+)
+
+
+def _literal_present(literal: str, text: str) -> bool:
+    """Match numeric constraints across Arabic and basic Chinese digits."""
+    if literal in text:
+        return True
+    if not literal.isdigit():
+        return False
+    return literal in text.translate(_CHINESE_DIGIT_TRANSLATION)
 
 
 # 工具分两类，因为"多调一次"的后果完全不同。
@@ -227,8 +240,12 @@ def assess_agent_case(
     )
 
     clean_response = response or ""
-    missing_literals = [item for item in expected.required_literals if item not in clean_response]
-    forbidden_literals = [item for item in expected.forbidden_literals if item in clean_response]
+    missing_literals = [
+        item for item in expected.required_literals if not _literal_present(item, clean_response)
+    ]
+    forbidden_literals = [
+        item for item in expected.forbidden_literals if _literal_present(item, clean_response)
+    ]
     add(
         "required_literals",
         "关键事实原文",

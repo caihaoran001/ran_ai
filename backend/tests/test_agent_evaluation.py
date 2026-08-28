@@ -191,6 +191,20 @@ def test_task_completion_description_only_contains_user_visible_outcome() -> Non
     assert "拿不到调用记录" in description
 
 
+def test_numeric_literal_accepts_basic_chinese_digit_form() -> None:
+    expected = AgentCaseExpected(response_mode="reply", required_literals=["3"])
+
+    _, checks, failures = assess_agent_case(
+        expected=expected,
+        response="昨天完成了三项。",
+        tool_calls=[],
+    )
+
+    literal_check = next(item for item in checks if item.code == "required_literals")
+    assert literal_check.passed is True
+    assert all(item.code != "required_literals" for item in failures)
+
+
 def test_task_completion_uses_user_visible_geval_not_trace_outcome() -> None:
     from eval.agent_judge import AgentQualityJudge, TASK_COMPLETION_THRESHOLD
 
