@@ -510,6 +510,7 @@ _PORTRAIT_DIMENSIONS: list[dict[str, Any]] = [
         "label": "职业身份",
         "description": "入营问卷中明确选择的主要职业/工作身份，用于观察人群结构。",
         "numeric": False,
+        "include_empty_buckets": True,
     },
     {
         "key": "diet_pattern",
@@ -1042,14 +1043,19 @@ def _build_distribution(
         ]
     elif ordered_labels is not None:
         ordered_set = set(ordered_labels)
-        names = [name for name in ordered_labels if name in counts]
+        include_empty_buckets = bool(dim.get("include_empty_buckets"))
+        names = [
+            name
+            for name in ordered_labels
+            if include_empty_buckets or name in counts
+        ]
         names.extend(
             name
             for name, _ in sorted(counts.items(), key=lambda kv: -kv[1])
             if name not in ordered_set
         )
         buckets = [
-            PopulationDistributionBucket(label=name, count=counts[name])
+            PopulationDistributionBucket(label=name, count=counts.get(name, 0))
             for name in names
         ]
     else:

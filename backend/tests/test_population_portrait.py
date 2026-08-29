@@ -272,6 +272,35 @@ def test_build_ordered_questionnaire_distribution_does_not_sort_by_count():
     assert [bucket.count for bucket in dist.buckets] == [1, 3, 2]
 
 
+def test_build_ordered_questionnaire_distribution_can_include_zero_buckets():
+    dim = {
+        "key": "occupation_class",
+        "label": "职业身份",
+        "description": "",
+        "numeric": False,
+        "include_empty_buckets": True,
+    }
+    case_labels = {
+        1: {"occupation_class": "企业管理岗位"},
+        2: {"occupation_class": UNKNOWN_LABEL},
+    }
+
+    dist = _build_distribution(
+        dim,
+        case_labels,
+        ordered_labels=["自己经营生意", "企业管理岗位", "专业岗位"],
+    )
+
+    assert [bucket.label for bucket in dist.buckets] == [
+        "自己经营生意",
+        "企业管理岗位",
+        "专业岗位",
+    ]
+    assert [bucket.count for bucket in dist.buckets] == [0, 1, 0]
+    assert dist.total == 1
+    assert dist.unknown == 1
+
+
 def test_build_multi_select_distribution_counts_each_case_once_per_bucket():
     dim = {
         "key": "health_domain",
@@ -417,6 +446,14 @@ async def test_population_portrait_endpoint_keeps_questionnaire_order_for_ordere
     assert [label for label in occupation_labels if label in occupation_order] == [
         label for label in occupation_order if label in occupation_labels
     ]
+    assert occupation_labels == occupation_order
+    occupation_counts = {
+        item["label"]: item["count"]
+        for item in distributions["occupation_class"]["buckets"]
+    }
+    assert occupation_counts[occupation_order[0]] == 1
+    assert occupation_counts[occupation_order[1]] == 0
+    assert occupation_counts[occupation_order[2]] == 3
 
 
 @pytest.mark.asyncio

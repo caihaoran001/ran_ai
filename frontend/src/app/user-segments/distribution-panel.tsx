@@ -8,6 +8,8 @@ import type { PopulationDistribution, ServiceCase } from "@/lib/api";
 
 // 默认最多展示的分桶数（与年龄段等固定 5 桶的维度保持一致高度）；超出的收起，可点开。
 const DEFAULT_VISIBLE_BUCKETS = 5;
+// 职业身份是固定问卷选项，零人数类别也要完整展示，便于运营比较结构。
+const SHOW_ALL_BUCKETS_DIMENSIONS = new Set(["occupation_class"]);
 
 // 分型标签配色，与单人画像页顶部标签保持一致。
 const CUSTOMER_TYPE_COLORS: Record<string, string> = {
@@ -47,8 +49,11 @@ export function DistributionPanel({
   const [activeBucket, setActiveBucket] = useState<string | null>(null);
   // 分桶过多时默认收起，只显示前若干条，避免页面某一块过长、与相邻框高度不齐。
   const [expanded, setExpanded] = useState(false);
-  const overflow = dist.buckets.length - DEFAULT_VISIBLE_BUCKETS;
-  const visibleBuckets = expanded ? dist.buckets : dist.buckets.slice(0, DEFAULT_VISIBLE_BUCKETS);
+  const showAllBuckets = SHOW_ALL_BUCKETS_DIMENSIONS.has(dist.key);
+  const overflow = showAllBuckets ? 0 : dist.buckets.length - DEFAULT_VISIBLE_BUCKETS;
+  const visibleBuckets = showAllBuckets || expanded
+    ? dist.buckets
+    : dist.buckets.slice(0, DEFAULT_VISIBLE_BUCKETS);
 
   const header = (
     <div className="min-w-0">
