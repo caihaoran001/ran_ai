@@ -111,7 +111,7 @@ class ServiceCase(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(String(2000))
     auto_send_documents: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    # 机器人被员工首次 @ 并成功发出自我介绍后才置值。
+    # 机器人被群成员首次 @ 并成功发出自我介绍后才置值。
     # 该闸门只控制群聊参与，与 28 天服务起算日期独立。
     ai_introduced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ai_introduced_by_wecom_user_id: Mapped[str | None] = mapped_column(String(128))

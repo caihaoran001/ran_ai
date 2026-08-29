@@ -286,7 +286,7 @@ QIWEI_BATCH_WINDOW_SECONDS=8
 - 按 `group_id` 关联 `service_cases`
 - 写入 `messages`
 - 群内首条有效消息自动创建本群服务单，引荐前只留痕不回复
-- 本群第一次由已识别员工 @ 机器人时，机器人只发送固定自我介绍；从后续消息起开放正常回复
+- 本群第一次由任意群成员 @ 机器人时，机器人只发送固定自我介绍；从后续消息起开放正常回复
 - 引荐后的普通聊天会检索知识库后调用 DeepSeek 生成回复
 - 群里发送“发送本群入营问卷”仅复用已有服务单并回复可选的本群专属问卷链接
 - 已识别员工可在引荐后的消息中 @ 机器人设置服务开始日期；该日期只控制 28 天计时和按天任务，不影响群聊问答
@@ -308,7 +308,7 @@ app/services/channels/          通用消息通道接口、当前通道注册表
 app/services/ranren_ai/         通道无关的业务处理引擎
 ```
 
-完整链路是：QiWe callback → `ingress` 持久化到 `inbound_events` → `backend` 领取事件并转成 `ChannelMessage` → 同群同用户消息按约 8 秒窗口聚合 → `RanrenAIEngine` 处理。这样即使业务后端正在部署或重启，已经收到的 callback 也不会只停留在进程内存中。`RanrenAIEngine` 只依赖通用 `MessageChannel`，负责群服务单建立、员工引荐闸门、可选问卷指令、知识库检索、LLM 回复和消息落库。
+完整链路是：QiWe callback → `ingress` 持久化到 `inbound_events` → `backend` 领取事件并转成 `ChannelMessage` → 同群同用户消息按约 8 秒窗口聚合 → `RanrenAIEngine` 处理。这样即使业务后端正在部署或重启，已经收到的 callback 也不会只停留在进程内存中。`RanrenAIEngine` 只依赖通用 `MessageChannel`，负责群服务单建立、机器人引荐闸门、可选问卷指令、知识库检索、LLM 回复和消息落库。
 
 ## 定时提醒
 

@@ -653,7 +653,7 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         service_case_id: int,
         trigger_id: int,
     ) -> bool:
-        """首次员工 @ 只发固定自我介绍；发送成功后再持久化开放群聊。"""
+        """首次群成员 @ 只发固定自我介绍；发送成功后再持久化开放群聊。"""
         # 极窄崩溃窗：渠道已成功、SENT 已回填，但进程还没来得及给服务单置引荐状态。
         # 再次触发前先以成功出站记录补齐状态，避免重复自我介绍。
         if await reconcile_group_introduction_state(service_case_id=service_case_id):
@@ -1786,7 +1786,7 @@ def _message_reply_is_terminal(analysis_json: dict | None) -> bool:
     processing = analysis_json.get(_REPLY_PROCESSING_KEY)
     if isinstance(processing, dict) and processing.get("status") in _REPLY_TERMINAL_STATUSES:
         return True
-    # 兼容新终态上线前已落库的“等待员工引荐”消息：它本来就不应迟到补回。
+    # 兼容新终态上线前已落库的“等待首次 @”消息：它本来就不应迟到补回。
     reply_gate = analysis_json.get("_reply_gate")
     return (
         isinstance(reply_gate, dict)
@@ -1863,7 +1863,7 @@ async def recover_stuck_inbound_messages(
     min_created_at = startup_time - timedelta(hours=2)
     
     async with SessionLocal() as session:
-        # 问卷已改为可选；是否恢复聊天只看群是否已完成员工引荐，
+        # 问卷已改为可选；是否恢复聊天只看群是否已完成机器人引荐，
         # 不再依赖问卷/文档推进到哪个 service status。
         cases = list(
             await session.scalars(
@@ -1900,14 +1900,17 @@ async def recover_stuck_inbound_messages(
             service_case = cases_by_id.get(inbound.service_case_id)
             if service_case is None:
                 continue
-            if inbound.sender_type == MessageSenderType.STAFF:
+            reply_gate = (
+                analysis.get("_reply_gate")
+                if isinstance(analysis.get("_reply_gate"), dict)
+                else {}
+            )
+            is_introduction = reply_gate.get("state") == "introduction_trigger"
+            if is_introduction:
+                # 首次 @ 可由任意群成员触发；引荐事件本身不受普通回复闸门影响。
+                pass
+            elif inbound.sender_type == MessageSenderType.STAFF:
                 meta = analysis.get("_qiwe_meta") if isinstance(analysis.get("_qiwe_meta"), dict) else {}
-                reply_gate = (
-                    analysis.get("_reply_gate")
-                    if isinstance(analysis.get("_reply_gate"), dict)
-                    else {}
-                )
-                is_introduction = reply_gate.get("state") == "introduction_trigger"
                 is_group_control = bool(analysis.get("_group_control"))
                 is_system_command = bool(analysis.get("_system_command"))
                 is_explicit_query = bool(meta.get("explicit_bot_query_text"))
@@ -1915,16 +1918,11 @@ async def recover_stuck_inbound_messages(
                     is_explicit_query
                     or is_group_control
                     or is_system_command
-                    or is_introduction
                 ):
                     continue
-                if (
-                    not is_introduction
-                    and not is_group_control
-                    and (
-                        not service_case.ai_auto_reply_enabled
-                        or service_case.ai_introduced_at is None
-                    )
+                if not is_group_control and (
+                    not service_case.ai_auto_reply_enabled
+                    or service_case.ai_introduced_at is None
                 ):
                     continue
             elif (
@@ -1940,9 +1938,13 @@ async def recover_stuck_inbound_messages(
                 stale_before=startup_time,
             ):
                 continue
-            if _legacy_message_looks_processed(analysis) and not await _inbound_checkpoint_exists(
-                channel_name=channel.name,
-                inbound=inbound,
+            if (
+                not is_introduction
+                and _legacy_message_looks_processed(analysis)
+                and not await _inbound_checkpoint_exists(
+                    channel_name=channel.name,
+                    inbound=inbound,
+                )
             ):
                 continue
 

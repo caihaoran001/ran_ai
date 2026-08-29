@@ -482,13 +482,12 @@ class EngineGraph:
                 service_case_introduced = service_case.ai_introduced_at is not None
                 should_send_introduction = bool(
                     not service_case_introduced
-                    and is_staff
                     and message.chat_type == "group"
                     and message.message_type == "text"
                     and _message_mentions_bot(message)
                 )
 
-                # 未引荐时的第一次员工 @ 只能做引荐，其后正文不执行任何指令。
+                # 未引荐时的第一次群成员 @ 只能做引荐，其后正文不执行任何指令。
                 if service_case_introduced and group_control_command == "silence":
                     service_case.ai_auto_reply_enabled = False
                     session.add(service_case)
@@ -802,7 +801,7 @@ class EngineGraph:
         }
 
     async def _group_introduction(self, state: EngineState) -> dict[str, Any]:
-        """首次员工 @ 是确定性引荐事件：只发自我介绍，不处理同条正文。"""
+        """首次群成员 @ 是确定性引荐事件：只发自我介绍，不处理同条正文。"""
         message: ChannelMessage = state["message"]
         service_case_id = state.get("service_case_id")
         inbound_id = state.get("inbound_id")

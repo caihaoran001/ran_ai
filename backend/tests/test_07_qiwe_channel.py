@@ -1060,10 +1060,10 @@ async def test_first_group_message_creates_case_but_stays_silent_before_introduc
 
 
 @pytest.mark.asyncio
-async def test_first_staff_mention_only_introduces_then_opens_normal_reply(
+async def test_first_member_mention_only_introduces_then_opens_normal_reply(
     db_session, monkeypatch
 ):
-    """首次员工 @ 的正文必须被忽略；介绍成功后才开放用户/员工问题。"""
+    """首次任意群成员 @ 的正文必须被忽略；介绍成功后才开放用户/员工问题。"""
     from sqlalchemy import select
     from app.models.message import Message, MessageDirection
     from app.models.service_case import ServiceCase
@@ -1111,8 +1111,8 @@ async def test_first_staff_mention_only_introduces_then_opens_normal_reply(
             chat_type="group",
             text="@燃人AI 这句内容不应该被处理",
             message_id="intro-trigger",
-            user_id="staff-1",
-            user_name="班主任",
+            user_id="customer-1",
+            user_name="用户小燃",
             raw_payload=mention_payload,
             timestamp=datetime.now(timezone.utc),
         )
@@ -1123,7 +1123,7 @@ async def test_first_staff_mention_only_introduces_then_opens_normal_reply(
     )
     assert service_case is not None
     assert service_case.ai_introduced_at is not None
-    assert service_case.ai_introduced_by_wecom_user_id == "staff-1"
+    assert service_case.ai_introduced_by_wecom_user_id == "customer-1"
     assert sent_texts == [GROUP_AI_INTRODUCTION, GROUP_AI_INTRO_FOLLOWUP]
     assert reply_inputs == []
 
@@ -1831,6 +1831,26 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
     )
     db_session.add(msg_j)
 
+    # Scenario N: 尚未引荐时由普通用户 @ 机器人触发的引荐事件也必须恢复。
+    case_n = ServiceCase(
+        user_id=user.id, case_no="CASE-N", status=ServiceCaseStatus.CREATED,
+        ai_auto_reply_enabled=True, group_id="group-n", questionnaire_token="token-n",
+    )
+    db_session.add(case_n)
+    await db_session.flush()
+    msg_n = Message(
+        service_case_id=case_n.id, group_id="group-n", wecom_message_id="msg-n",
+        content="@燃人AI 这句正文不应被处理", message_type="text",
+        direction=MessageDirection.INBOUND, sender_type=MessageSenderType.USER,
+        purpose=MessagePurpose.CHAT, status=MessageStatus.RECEIVED,
+        analysis_json={
+            "_qiwe_meta": {"explicit_bot_query_text": "这句正文不应被处理"},
+            "_reply_gate": {"state": "introduction_trigger"},
+        },
+        created_at=now - timedelta(minutes=1),
+    )
+    db_session.add(msg_n)
+
     # Scenario K: 已走到 Graph 统一收尾节点的消息不得再次恢复。
     case_k = ServiceCase(
         user_id=user.id, case_no="CASE-K", status=ServiceCaseStatus.IN_SERVICE,
@@ -1922,6 +1942,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         msg_i.id,
         msg_j.id,
         msg_m.id,
+        msg_n.id,
     }
     assert {item.content for item in reprocess_calls} == {
         "我需要补发这个回复。",
@@ -1931,6 +1952,7 @@ async def test_qiwe_recovery_of_stuck_inbound_messages(db_session, monkeypatch):
         "[图片]",
         "@燃人AI 看下这个用户",
         "排队时被部署中断。",
+        "@燃人AI 这句正文不应被处理",
     }
 
 

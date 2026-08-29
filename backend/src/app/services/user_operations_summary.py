@@ -89,7 +89,7 @@ def attention_summary(service_case: ServiceCase) -> tuple[str, str, str]:
         return "action_required", "退款待确认", "已识别退款完成信号，等待运营确认。"
     if status == ServiceCaseStatus.CREATED.value:
         if not getattr(service_case, "ai_introduced_at", None):
-            return "watch", "等待员工引荐", "群服务单已建立，等待员工首次 @ 机器人完成引荐。"
+            return "watch", "等待首次 @ 机器人", "群服务单已建立，等待群成员首次 @ 机器人完成引荐。"
         if not getattr(service_case, "service_plan_start_date", None):
             return (
                 "watch",
