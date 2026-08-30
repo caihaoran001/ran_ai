@@ -177,21 +177,39 @@ def test_product_retrieval_keyword_whitelist_covers_failure_anchors():
 
 @pytest.mark.asyncio
 async def test_keyword_retrieval_ranks_meal_timing_above_product_only_match(db_session):
+    timing_faq = KnowledgeFAQ(
+        faq_uid="faq_meal_timing_match",
+        status="active",
+        title="早C和午B餐前或餐后喝法",
+        question="早C和午B可以餐前或餐后喝吗？",
+        answer="优先随餐，餐前或餐后也可以。",
+        version=1,
+    )
+    product_only_faq = KnowledgeFAQ(
+        faq_uid="faq_product_only_match",
+        status="active",
+        title="旅游期间怎么喝产品",
+        question="旅游期间早C和午B怎么安排？",
+        answer="餐前或餐后都按原方案执行。",
+        version=1,
+    )
+    db_session.add_all([timing_faq, product_only_faq])
+    await db_session.flush()
     timing_chunk = KnowledgeChunk(
-        chunk_uid="faq:meal-timing-match",
+        chunk_uid=f"faq:{timing_faq.id}",
         source_type="faq",
-        source_uri="knowledge_faqs/meal-timing-match",
+        source_uri=f"knowledge_faq:{timing_faq.id}",
         title="早C和午B餐前或餐后喝法",
         content="早C和午B优先随餐，餐前或餐后饮用也可以。",
         content_hash="1" * 64,
         status="active",
     )
     product_only_chunk = KnowledgeChunk(
-        chunk_uid="faq:product-only-match",
+        chunk_uid=f"faq:{product_only_faq.id}",
         source_type="faq",
-        source_uri="knowledge_faqs/product-only-match",
+        source_uri=f"knowledge_faq:{product_only_faq.id}",
         title="产品不能替代正餐",
-        content="早C和午B不是代餐，不能替代正常饮食。",
+        content="旅游期间早C和午B可以餐前或餐后饮用。",
         content_hash="2" * 64,
         status="active",
     )
@@ -205,7 +223,41 @@ async def test_keyword_retrieval_ranks_meal_timing_above_product_only_match(db_s
         exclude_source_types={"case"},
     )
 
-    assert hits[0][0] == timing_chunk.id
+    assert hits == [(timing_chunk.id, timing_chunk.content)]
+
+
+@pytest.mark.asyncio
+async def test_keyword_retrieval_falls_back_to_answer_when_questions_do_not_match(db_session):
+    faq = KnowledgeFAQ(
+        faq_uid="faq_answer_fallback",
+        status="active",
+        title="产品不适处理",
+        question="喝完不舒服怎么办？",
+        answer="咖啡因敏感时可能手抖。",
+        version=1,
+    )
+    db_session.add(faq)
+    await db_session.flush()
+    chunk = KnowledgeChunk(
+        chunk_uid=f"faq:{faq.id}",
+        source_type="faq",
+        source_uri=f"knowledge_faq:{faq.id}",
+        title=faq.title,
+        content=f"{faq.question}\n{faq.answer}",
+        content_hash="3" * 64,
+        status="active",
+    )
+    db_session.add(chunk)
+    await db_session.flush()
+
+    hits = await knowledge_index_mod._retrieve_by_text(
+        db_session,
+        "咖啡因手抖怎么办",
+        top_k=2,
+        exclude_source_types={"case"},
+    )
+
+    assert hits == [(chunk.id, chunk.content)]
 
 
 def test_knowledge_observation_records_decision_hits_and_skipped_product_terms():

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.models.knowledge_chunk import KnowledgeChunk
+from app.models.knowledge_faq import KnowledgeFAQ
 from app.services.embedding_service import EmbeddingService
 from app.services.knowledge_base import _knowledge_files, _query_terms, _split_sections
 
@@ -522,22 +523,107 @@ async def _retrieve_by_text(
     top_k: int,
     exclude_source_types: set[str] | None = None,
 ) -> list[tuple[int, str]]:
-    """Keyword fallback retrieval backed by the pg_trgm GIN index.
+    """Keyword retrieval that prefers canonical FAQ questions over answer text.
 
-    Scores each active chunk by how many query terms appear in its content using
-    ILIKE.  PostgreSQL uses the ``ix_knowledge_chunks_content_trgm`` GIN index
-    for every ILIKE pattern, so no full sequential scan occurs regardless of
-    table size.  Only the top-K content strings are transferred to Python.
+    FAQ titles/questions are the primary lexical surface.  Answer-body matching
+    is only a fallback when no FAQ question matches at all, preventing incidental
+    words in a long answer from outranking the FAQ that asks the same question.
     """
     query_terms = _query_terms(query)
     if not query_terms:
         return []
 
+    if not exclude_source_types or "faq" not in exclude_source_types:
+        question_hits = await _retrieve_faqs_by_question(
+            session,
+            query_terms,
+            top_k=top_k,
+        )
+        if question_hits:
+            return question_hits
+
+    return await _retrieve_chunks_by_content(
+        session,
+        query_terms,
+        top_k=top_k,
+        exclude_source_types=exclude_source_types,
+    )
+
+
+async def _retrieve_faqs_by_question(
+    session: AsyncSession,
+    query_terms: list[str],
+    *,
+    top_k: int,
+) -> list[tuple[int, str]]:
     from functools import reduce
     import operator as _op
     from sqlalchemy import case, or_, text as sa_text
 
-    # One CASE expression per term → sum = match-count score
+    score_parts = [
+        case(
+            (
+                or_(
+                    KnowledgeFAQ.title.ilike(f"%{term}%"),
+                    KnowledgeFAQ.question.ilike(f"%{term}%"),
+                ),
+                1,
+            ),
+            else_=0,
+        )
+        for term in query_terms
+    ]
+    score_expr = reduce(_op.add, score_parts)
+    any_match = or_(
+        *(
+            or_(
+                KnowledgeFAQ.title.ilike(f"%{term}%"),
+                KnowledgeFAQ.question.ilike(f"%{term}%"),
+            )
+            for term in query_terms
+        )
+    )
+    rows = list(
+        await session.execute(
+            select(KnowledgeFAQ.id, score_expr.label("score"))
+            .where(KnowledgeFAQ.status == "active", any_match)
+            .order_by(sa_text("score DESC"), KnowledgeFAQ.id.asc())
+            .limit(top_k)
+        )
+    )
+    if not rows:
+        return []
+
+    best_score = int(rows[0].score)
+    faq_ids = [row.id for row in rows if int(row.score) == best_score]
+    chunk_uids = [f"faq:{faq_id}" for faq_id in faq_ids]
+    chunks = list(
+        await session.scalars(
+            select(KnowledgeChunk).where(
+                KnowledgeChunk.chunk_uid.in_(chunk_uids),
+                KnowledgeChunk.status == "active",
+            )
+        )
+    )
+    chunks_by_uid = {chunk.chunk_uid: chunk for chunk in chunks}
+    return [
+        (chunk.id, chunk.content.strip())
+        for faq_id in faq_ids
+        if (chunk := chunks_by_uid.get(f"faq:{faq_id}")) is not None
+    ]
+
+
+async def _retrieve_chunks_by_content(
+    session: AsyncSession,
+    query_terms: list[str],
+    *,
+    top_k: int,
+    exclude_source_types: set[str] | None = None,
+) -> list[tuple[int, str]]:
+    from functools import reduce
+    import operator as _op
+    from sqlalchemy import case, or_, text as sa_text
+
     score_parts = [
         case((KnowledgeChunk.content.ilike(f"%{term}%"), 1), else_=0)
         for term in query_terms
@@ -552,7 +638,7 @@ async def _retrieve_by_text(
         await session.execute(
             select(KnowledgeChunk.id, KnowledgeChunk.content, score_expr.label("score"))
             .where(*conditions)
-            .order_by(sa_text("score DESC"))
+            .order_by(sa_text("score DESC"), KnowledgeChunk.id.asc())
             .limit(top_k)
         )
     )
