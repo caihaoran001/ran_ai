@@ -145,6 +145,12 @@ def test_product_retrieval_keyword_whitelist_covers_failure_anchors():
 
     _keyword_whitelist.cache_clear()
     assert _query_terms("早C冰水冲泡可以吗") == ["冰水", "冲泡", "早C"]
+    assert _query_terms("早C和午B可以餐前或餐后喝吗") == [
+        "午B",
+        "早C",
+        "餐前",
+        "餐后",
+    ]
     assert _query_terms("午B漏喝后能用晚A替代补喝吗") == [
         "午B",
         "晚A",
@@ -167,6 +173,39 @@ def test_product_retrieval_keyword_whitelist_covers_failure_anchors():
         "胶囊",
         "通便",
     ]
+
+
+@pytest.mark.asyncio
+async def test_keyword_retrieval_ranks_meal_timing_above_product_only_match(db_session):
+    timing_chunk = KnowledgeChunk(
+        chunk_uid="faq:meal-timing-match",
+        source_type="faq",
+        source_uri="knowledge_faqs/meal-timing-match",
+        title="早C和午B餐前或餐后喝法",
+        content="早C和午B优先随餐，餐前或餐后饮用也可以。",
+        content_hash="1" * 64,
+        status="active",
+    )
+    product_only_chunk = KnowledgeChunk(
+        chunk_uid="faq:product-only-match",
+        source_type="faq",
+        source_uri="knowledge_faqs/product-only-match",
+        title="产品不能替代正餐",
+        content="早C和午B不是代餐，不能替代正常饮食。",
+        content_hash="2" * 64,
+        status="active",
+    )
+    db_session.add_all([timing_chunk, product_only_chunk])
+    await db_session.flush()
+
+    hits = await knowledge_index_mod._retrieve_by_text(
+        db_session,
+        "早C和午B可以餐前或餐后喝吗",
+        top_k=2,
+        exclude_source_types={"case"},
+    )
+
+    assert hits[0][0] == timing_chunk.id
 
 
 def test_knowledge_observation_records_decision_hits_and_skipped_product_terms():
