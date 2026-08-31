@@ -145,6 +145,12 @@ def test_product_retrieval_keyword_whitelist_covers_failure_anchors():
 
     _keyword_whitelist.cache_clear()
     assert _query_terms("早C冰水冲泡可以吗") == ["冰水", "冲泡", "早C"]
+    assert _query_terms("早C午B晚A一箱12瓶怎么用28天") == [
+        "12瓶",
+        "午B",
+        "早C",
+        "晚A",
+    ]
     assert _query_terms("早C和午B可以餐前或餐后喝吗") == [
         "午B",
         "早C",
@@ -224,6 +230,55 @@ async def test_keyword_retrieval_ranks_meal_timing_above_product_only_match(db_s
     )
 
     assert hits == [(timing_chunk.id, timing_chunk.content)]
+
+
+@pytest.mark.asyncio
+async def test_keyword_retrieval_ranks_package_size_above_product_only_matches(db_session):
+    generic_faqs = [
+        KnowledgeFAQ(
+            faq_uid=f"faq_product_generic_{index}",
+            status="active",
+            title=f"三款产品通用问题{index}",
+            question="早C、午B、晚A每天怎么安排？",
+            answer="按方案执行。",
+            version=1,
+        )
+        for index in range(7)
+    ]
+    package_faq = KnowledgeFAQ(
+        faq_uid="faq_package_12_bottles",
+        status="active",
+        title="早C、午B、晚A一箱12瓶为什么能用28天？",
+        question="早C、午B、晚A一箱12瓶为什么能用28天？",
+        answer="三款各4瓶，每瓶使用7天。",
+        version=1,
+    )
+    db_session.add_all([*generic_faqs, package_faq])
+    await db_session.flush()
+    chunks = [
+        KnowledgeChunk(
+            chunk_uid=f"faq:{faq.id}",
+            source_type="faq",
+            source_uri=f"knowledge_faq:{faq.id}",
+            title=faq.title,
+            content=f"{faq.question}\n{faq.answer}",
+            content_hash=f"{index + 10:064d}",
+            status="active",
+        )
+        for index, faq in enumerate([*generic_faqs, package_faq])
+    ]
+    db_session.add_all(chunks)
+    await db_session.flush()
+
+    hits = await knowledge_index_mod._retrieve_by_text(
+        db_session,
+        "早C午B晚A一箱12瓶怎么用28天",
+        top_k=3,
+        exclude_source_types={"case"},
+    )
+
+    package_chunk = chunks[-1]
+    assert hits == [(package_chunk.id, package_chunk.content)]
 
 
 @pytest.mark.asyncio
