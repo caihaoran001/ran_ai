@@ -89,8 +89,8 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
         "随餐边吃边喝",
     ]
     assert before_meal.rag_case.authoritative_facts[0].statement == (
-        "早C和午B优先随餐饮用；条件不允许时，紧邻正餐前后喝也可以，"
-        "不需要卡固定的分钟数。"
+        "早C和午B用法一致，优先随餐饮用；"
+        "餐前5分钟或餐后30分钟内饮用也可以。"
     )
 
 
@@ -207,8 +207,9 @@ def test_retrieval_noise_cases_follow_live_knowledge_boundary() -> None:
         "rag-chat-cafeteria-privacy": (
             "brewing_usage",
             [
-                "早C和午B优先随正餐进行",
-                "随餐指边吃边喝，条件不允许时紧邻正餐前后喝也可以",
+                "早C和午B优先随餐饮用",
+                "餐前5分钟饮用也可以",
+                "餐后30分钟内饮用也可以",
             ],
         ),
         # 运动/作息两道原判 skip，等于让回复 Agent 自己编一套执行方法。
@@ -547,8 +548,15 @@ def test_unified_v4_locks_confirmed_business_rulings() -> None:
 
     before_meal = by_source["rag-chat-before-meal"].rag_case
     fact_text = before_meal.authoritative_facts[0].statement
-    assert "紧邻正餐前后喝也可以" in fact_text
+    assert "餐前5分钟" in fact_text
+    assert "餐后30分钟内" in fact_text
+    assert "不需要卡固定的分钟数" not in fact_text
     assert "不属于随餐" not in fact_text
+
+    cafeteria = by_source["rag-chat-cafeteria-privacy"].rag_case
+    cafeteria_fact = cafeteria.authoritative_facts[0]
+    assert cafeteria_fact.provenance == "knowledge_faqs:faq_61fab86fe347b2bc:v4"
+    assert cafeteria_fact.statement == fact_text
 
     travel = by_source["rag-chat-travel-interruption"].rag_case
     assert "28天服务期不会因为旅游中断自动顺延" in (

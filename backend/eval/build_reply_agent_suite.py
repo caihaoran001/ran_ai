@@ -554,8 +554,8 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
             {
                 "fact_id": source.fact_id,
                 "statement": (
-                    "早C和午B优先随餐饮用；条件不允许时，紧邻正餐前后喝也可以，"
-                    "不需要卡固定的分钟数。"
+                    "早C和午B用法一致，优先随餐饮用；"
+                    "餐前5分钟或餐后30分钟内饮用也可以。"
                 ),
                 "provenance": source.provenance,
                 "source_scope": source.source_scope,
@@ -700,18 +700,19 @@ def _current_contract_case(case: RagEvalCase) -> RagEvalCase:
             {
                 "fact_id": "chat-r11",
                 "statement": (
-                    "早C和午B优先随餐饮用；条件不允许时，紧邻正餐前后喝也可以，"
-                    "不需要卡固定的分钟数。"
+                    "早C和午B用法一致，优先随餐饮用；"
+                    "餐前5分钟或餐后30分钟内饮用也可以。"
                 ),
-                "provenance": "knowledge_faqs:faq_61fab86fe347b2bc:v2",
+                "provenance": "knowledge_faqs:faq_61fab86fe347b2bc:v4",
                 "source_scope": "knowledge",
                 "source_ids": [
                     "faq_61fab86fe347b2bc",
                     "faq_c985c0d43ef0f64c",
                 ],
                 "retrieval_clauses": [
-                    "早C和午B优先随正餐进行",
-                    "随餐指边吃边喝，条件不允许时紧邻正餐前后喝也可以",
+                    "早C和午B优先随餐饮用",
+                    "餐前5分钟饮用也可以",
+                    "餐后30分钟内饮用也可以",
                 ],
             }
         ]
@@ -1181,14 +1182,14 @@ def _current_agent_contract_case(case):
 
 
 # 题库里的权威事实是 FAQ 的手抄快照；生产 FAQ 由知识进化链路自动升版本，两边没有
-# 联动。这里把每条引用对齐到 2026-08-28 复核过的当前生产版本：绝大多数是题库正文
-# 早已写成新口径、只有版本标签没跟上，逐条比对过确认无实质差异。
+# 联动。这里把每条引用对齐到最近一次生产复核的当前版本；知识口径
+# 发生实质变化时，必须同步更新题库正文，不能只改版本标签。
 CURRENT_FAQ_VERSIONS = {
     "faq_0363f074a325ae2c": 6,
     "faq_2818e99c76489d83": 4,
     "faq_2ff2485a2ae76cf1": 3,
     "faq_591b722cc8059cd6": 2,
-    "faq_61fab86fe347b2bc": 3,
+    "faq_61fab86fe347b2bc": 4,
     "faq_66de72eea085a5b9": 5,
     "faq_e68d85edb1129472": 3,
     "faq_cb2a4afab94e1bc1": 3,
@@ -1309,7 +1310,8 @@ def build_suite() -> ReplyAgentEvalSuite:
                 "回复 Agent 统一固定题库：80 道唯一题，43 道需要知识依据的检索，"
                 "37 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；"
                 "v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、"
-                "冷水冲泡上限85℃、倒班晚A睡前1至2小时、随餐放宽为紧邻正餐前后亦可、"
+                "冷水冲泡上限85℃、倒班晚A睡前1至2小时、早C午B优先随餐且"
+                "餐前5分钟或餐后30分钟内亦可、"
                 "旅游中断不顺延服务期，无红旗便秘改为先澄清；饭堂隐私场景若上下文涉及"
                 "随餐产品使用规则，也纳入检索并保留支持式回复。"
             ),
