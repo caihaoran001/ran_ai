@@ -328,6 +328,7 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     prompt = captured["system_prompt"]
     assert len(prompt) < 4500
     assert "紧邻问题决定省略的指标和对象" in prompt
+    assert "历史仅用于风险解指代" in prompt
     assert "不得补造单位" in prompt
     assert "今天早上空腹142" in prompt
     assert "不是空腹血糖" in prompt
@@ -343,9 +344,11 @@ async def test_intervention_prompt_is_compact_and_binds_ambiguous_metrics_to_con
     assert "纯上报仅指体重、饮水、饮食、运动等数值或完成情况的记录" in prompt
     assert "用户陈述身体不适（如两天没排便、心慌、腹泻）不是纯上报" in prompt
     assert "即使没有以问句提出也必须输出检索短句" in prompt
-    assert "当前问题依赖前文明确的产品/服务规则" in prompt
-    assert "即使只说执行、替代或隐私障碍，也保留规则检索" in prompt
-    assert "上下文无法确定对象或动作主题时输出 null，不猜主题" in prompt
+    assert "多轮合并本轮和前文判断" in prompt
+    assert "执行条件、替代方式或现实阻碍（含隐私/社交顾虑）" in prompt
+    assert "合并后无法确定主题或动作" in prompt
+    assert "才输出 null，不猜主题" in prompt
+    assert "当前问题依赖前文明确的产品/服务规则" not in prompt
     assert "怎么弄/怎么办/这个呢" not in prompt
     assert "完整保留产品名、症状、动作、数字、时间、否定、不确定性" in prompt
     assert "是否由产品导致/是否需要补喝" in prompt
