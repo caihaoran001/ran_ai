@@ -696,6 +696,9 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "连续出现至少3次" in AGENT_SYSTEM_PROMPT
     assert "连续7天执行与结果方向一致" in AGENT_SYSTEM_PROMPT
     assert "回答完整后自然结束，不为延续对话机械追加“……就行”、“直接说就行”等口头禅" in AGENT_SYSTEM_PROMPT
+    assert "通用规则只用【参考问答】" in AGENT_SYSTEM_PROMPT
+    assert "只有状态显示待确认时才可追问选档" in AGENT_SYSTEM_PROMPT
+    assert "不自创分档或连续打卡要求" in AGENT_SYSTEM_PROMPT
     assert "70%–84%" not in AGENT_SYSTEM_PROMPT
     assert "50%–69%" not in AGENT_SYSTEM_PROMPT
     assert "紧邻明确行动/指令 > 本轮图片描述 > 更早偏好" in AGENT_SYSTEM_PROMPT

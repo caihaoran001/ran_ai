@@ -36,7 +36,9 @@ def initialize_execution_commitment(
     state = deepcopy(existing) if isinstance(existing, dict) else {}
     candidate = intake_facts.get("high_commitment_candidate") is True
     standard_target = str(intake_facts.get("basic_target_jin_or_range") or "").strip()
-    high_target = str(intake_facts.get("challenge_target_jin_or_review_text") or "").strip()
+    high_target = str(
+        intake_facts.get("challenge_target_jin_or_review_text") or ""
+    ).strip()
     if not candidate:
         high_target = ""
 
@@ -263,21 +265,52 @@ def _render_below_standard_message(
 def agent_execution_context(state: dict[str, Any] | None) -> str:
     data = state if isinstance(state, dict) else {}
     if not data:
-        return "暂无执行承诺数据。"
-    confirmation = data.get("confirmation") if isinstance(data.get("confirmation"), dict) else {}
+        return (
+            "当前未生成执行约定，未处于邀请待确认状态；只解释通用规则，不询问用户选档。"
+        )
+    confirmation = (
+        data.get("confirmation") if isinstance(data.get("confirmation"), dict) else {}
+    )
+    invitation = (
+        data.get("invitation") if isinstance(data.get("invitation"), dict) else {}
+    )
+    status = str(data.get("status") or STATUS_PENDING)
+    invitation_sent = str(invitation.get("status") or "") in {
+        "sending",
+        "sent",
+        "unknown",
+    }
+    if status == STATUS_PENDING and invitation_sent and not confirmation:
+        selection_state = "邀请已发出，等待用户明确选择"
+    elif status == STATUS_RECONFIRMING:
+        selection_state = "阶段复评后等待用户重新确认"
+    elif confirmation:
+        selection_state = "已确认，不主动重复追问选档"
+    else:
+        selection_state = "邀请未发出或未成功，不询问用户选档"
+    if status == STATUS_ACTIVE:
+        path_display = str(data.get("execution_path") or STANDARD_PATH)
+    elif status == STATUS_PAUSED:
+        path_display = "当前节奏（目标暂停）"
+    elif status == STATUS_RECONFIRMING:
+        path_display = "标准档待重新确认"
+    else:
+        path_display = "待确认，尚未生效"
     last_review = None
     reviews = data.get("reviews") if isinstance(data.get("reviews"), dict) else {}
     if reviews:
-        last_key = max(reviews, key=lambda item: int(str(item).removeprefix("day") or 0))
+        last_key = max(
+            reviews, key=lambda item: int(str(item).removeprefix("day") or 0)
+        )
         last_review = reviews[last_key]
     lines = [
-        f"当前执行档位：{data.get('execution_path') or STANDARD_PATH}",
-        f"承诺状态：{data.get('status') or STATUS_PENDING}",
+        f"当前执行档位：{path_display}",
+        f"承诺状态：{status}",
+        f"选档状态：{selection_state}",
+        f"高承诺资格：{'通过' if data.get('high_commitment_candidate') is True else '未通过'}",
         f"标准目标：{data.get('standard_target') or '未提供'}",
         f"高承诺目标：{data.get('high_commitment_target') or '不适用'}",
         f"当前有效目标：{effective_target(data) or '暂未启用'}",
-        "完整打卡口径：当天群内五项打卡都有回答，才计1个完整打卡日。",
-        "标准档门槛：60%；高承诺档门槛：85%。",
     ]
     if confirmation:
         lines.append(

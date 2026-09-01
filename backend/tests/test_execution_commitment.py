@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.services.execution_commitment import (
+    agent_execution_context,
     apply_commitment_choice,
     initialize_execution_commitment,
     minimum_complete_days,
@@ -36,6 +37,122 @@ def _choose(state: dict, choice: str) -> dict:
 def test_cumulative_threshold_days_round_up():
     assert [minimum_complete_days(day, 0.60) for day in (7, 14, 21, 28)] == [5, 9, 13, 17]
     assert [minimum_complete_days(day, 0.85) for day in (7, 14, 21, 28)] == [6, 12, 18, 24]
+
+
+def test_agent_context_blocks_selection_before_invitation():
+    context = agent_execution_context(_state())
+    assert "当前执行档位：待确认，尚未生效" in context
+    assert "邀请未发出或未成功，不询问用户选档" in context
+    assert "高承诺资格：通过" in context
+
+
+def test_agent_context_allows_selection_only_after_invitation():
+    state = _state()
+    state["invitation"] = {"status": "sent", "message_id": 456}
+    context = agent_execution_context(state)
+    assert "邀请已发出，等待用户明确选择" in context
+
+
+def test_agent_context_does_not_repeat_selection_after_confirmation():
+    state = _choose(_state(), "high_commitment")
+    state["invitation"] = {"status": "sent", "message_id": 456}
+    context = agent_execution_context(state)
+    assert "已确认，不主动重复追问选档" in context
+
+
+def test_execution_commitment_faq_specs_cover_approved_rules():
+    from app.services.execution_commitment_knowledge import (
+        load_execution_commitment_faq_specs,
+    )
+
+    source_type, specs = load_execution_commitment_faq_specs()
+    combined = "\n".join(f"{item['question']}\n{item['answer']}" for item in specs)
+
+    assert source_type == "manual_curated"
+    assert len(specs) == 4
+    assert "标准档：D7至少5天、D14至少9天、D21至少13天、D28至少17天" in combined
+    assert "高承诺档：D7至少6天、D14至少12天、D21至少18天、D28至少24天" in combined
+    assert "D14统计D1–D14" in combined
+    assert "不是断一天就失败" in combined
+    assert "未收到邀请时机器人只能解释规则，不能催选" in combined
+
+
+@pytest.mark.asyncio
+async def test_execution_commitment_faqs_retrieve_for_rule_followups(db_session):
+    from types import SimpleNamespace
+
+    from app.models.knowledge_chunk import KnowledgeChunk
+    from app.models.knowledge_faq import KnowledgeFAQ
+    from app.services.execution_commitment_knowledge import (
+        load_execution_commitment_faq_specs,
+    )
+    from app.services.knowledge_index import retrieve_indexed_knowledge_result
+
+    _, specs = load_execution_commitment_faq_specs()
+    for index, spec in enumerate(specs, start=1):
+        faq = KnowledgeFAQ(
+            faq_uid=f"execution-faq-{index}",
+            status="active",
+            title=spec["title"],
+            question=spec["question"],
+            answer=spec["answer"],
+            category=spec["category"],
+            tags=spec["tags"],
+            version=1,
+        )
+        db_session.add(faq)
+        await db_session.flush()
+        db_session.add(
+            KnowledgeChunk(
+                chunk_uid=f"faq:{faq.id}",
+                source_type="faq",
+                source_uri=f"knowledge_faq:{faq.id}",
+                title=faq.title,
+                content=f"## {faq.title}\n\n{faq.question}\n\n{faq.answer}",
+                content_hash=f"{index:064x}",
+                status="active",
+            )
+        )
+    await db_session.flush()
+
+    settings = SimpleNamespace(embedding_api_key="", knowledge_base_top_k=3)
+    probes = {
+        "高承诺档能自由选吗": "高承诺档的筛选与D0确认",
+        "D14要完整打卡几天才达标": "标准档和高承诺档的达标天数",
+        "断一天是不是就不达标": "标准档和高承诺档的达标天数",
+        "D7打卡率不够会怎样": "复盘节点的保留与降档规则",
+    }
+    for query, expected_title in probes.items():
+        result = await retrieve_indexed_knowledge_result(
+            db_session,
+            query,
+            settings=settings,
+            exclude_source_types={"case"},
+        )
+        assert expected_title in {hit.title for hit in result.hits}
+
+
+@pytest.mark.asyncio
+async def test_execution_commitment_faq_publish_is_idempotent(db_session, monkeypatch):
+    from app.services import knowledge_faq_service
+    from app.services.execution_commitment_knowledge import (
+        upsert_execution_commitment_faqs,
+    )
+
+    synced: list[int] = []
+
+    async def fake_sync(_session, faq):
+        synced.append(faq.id)
+
+    monkeypatch.setattr(knowledge_faq_service, "sync_faq_to_index", fake_sync)
+    first = await upsert_execution_commitment_faqs(db_session)
+    second = await upsert_execution_commitment_faqs(db_session)
+
+    assert len(first) == len(second) == 4
+    assert [faq.id for faq in first] == [faq.id for faq in second]
+    assert all(faq.version == 1 for faq in second)
+    assert all(faq.confirmation_state == "confirmed" for faq in second)
+    assert len(synced) == 8
 
 
 def test_high_commitment_below_85_downgrades_to_standard():
@@ -95,4 +212,3 @@ def test_render_commitment_invitation_merges_checkin_examples():
     assert "早C已喝" in text
     assert "高承诺档" in text
     assert "完整打卡率需达到85%" in text
-

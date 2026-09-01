@@ -144,6 +144,14 @@ def test_product_retrieval_keyword_whitelist_covers_failure_anchors():
     from app.services.knowledge_base import _keyword_whitelist, _query_terms
 
     _keyword_whitelist.cache_clear()
+    assert _query_terms("高承诺档D14完整打卡率怎么才达标") == [
+        "完整打卡率",
+        "高承诺档",
+        "D14",
+        "打卡率",
+        "打卡",
+        "达标",
+    ]
     assert _query_terms("早C冰水冲泡可以吗") == ["冰水", "冲泡", "早C"]
     assert _query_terms("早C午B晚A一箱12瓶怎么用28天") == [
         "12瓶",
