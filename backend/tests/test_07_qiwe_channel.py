@@ -689,6 +689,14 @@ def test_agent_prompt_does_not_repeat_staff_speaker_prefix():
 
 def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain():
     assert len(AGENT_SYSTEM_PROMPT) < 4_500
+    assert "专业健康 Buddy" in AGENT_SYSTEM_PROMPT
+    assert "事实承接 → 明确判断 → 一个下一步动作" in AGENT_SYSTEM_PROMPT
+    assert "不评价人格" in AGENT_SYSTEM_PROMPT
+    assert "可依据真实事实和已注入执行约定给一个小调整" in AGENT_SYSTEM_PROMPT
+    assert "连续出现至少3次" in AGENT_SYSTEM_PROMPT
+    assert "连续7天执行与结果方向一致" in AGENT_SYSTEM_PROMPT
+    assert "70%–84%" not in AGENT_SYSTEM_PROMPT
+    assert "50%–69%" not in AGENT_SYSTEM_PROMPT
     assert "紧邻明确行动/指令 > 本轮图片描述 > 更早偏好" in AGENT_SYSTEM_PROMPT
     assert "紧跟行动发图通常是在继续上报" in AGENT_SYSTEM_PROMPT
     assert "不因旧偏好重问“是什么/还是……”" in AGENT_SYSTEM_PROMPT
