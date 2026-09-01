@@ -69,12 +69,15 @@ def test_execution_commitment_faq_specs_cover_approved_rules():
     combined = "\n".join(f"{item['question']}\n{item['answer']}" for item in specs)
 
     assert source_type == "manual_curated"
-    assert len(specs) == 4
+    assert len(specs) == 5
     assert "标准档：D7至少5天、D14至少9天、D21至少13天、D28至少17天" in combined
     assert "高承诺档：D7至少6天、D14至少12天、D21至少18天、D28至少24天" in combined
     assert "D14统计D1–D14" in combined
     assert "不是断一天就失败" in combined
     assert "未收到邀请时机器人只能解释规则，不能催选" in combined
+    # 「断一天算不算失败」必须有独立问法承载：混进长问句会被语义稀释，检索不到。
+    assert "断一天不等于失败" in combined
+    assert any("我断了一天是不是就失败了" in item["question"] for item in specs)
 
 
 @pytest.mark.asyncio
@@ -136,6 +139,7 @@ async def test_execution_commitment_faqs_retrieve_for_rule_followups(db_session)
 async def test_execution_commitment_faq_publish_is_idempotent(db_session, monkeypatch):
     from app.services import knowledge_faq_service
     from app.services.execution_commitment_knowledge import (
+        load_execution_commitment_faq_specs,
         upsert_execution_commitment_faqs,
     )
 
@@ -145,14 +149,21 @@ async def test_execution_commitment_faq_publish_is_idempotent(db_session, monkey
         synced.append(faq.id)
 
     monkeypatch.setattr(knowledge_faq_service, "sync_faq_to_index", fake_sync)
+    _, specs = load_execution_commitment_faq_specs()
+    expected = len(specs)
     first = await upsert_execution_commitment_faqs(db_session)
+    synced_after_first = len(synced)
     second = await upsert_execution_commitment_faqs(db_session)
 
-    assert len(first) == len(second) == 4
+    assert len(first) == len(second) == expected
     assert [faq.id for faq in first] == [faq.id for faq in second]
-    assert all(faq.version == 1 for faq in second)
+    # 幂等的判据是"重复发布不再改动"，不是"版本恒等于1"：库里已存在旧口径时，
+    # 首次发布本来就该升版本，只有第二次必须原地不动。
+    assert [faq.version for faq in first] == [faq.version for faq in second]
     assert all(faq.confirmation_state == "confirmed" for faq in second)
-    assert len(synced) == 8
+    # 第二次发布内容已一致，不应再写库、也不该重新同步索引。
+    # 首次同步次数取决于库内既有状态，不能写死。
+    assert len(synced) == synced_after_first
 
 
 def test_high_commitment_below_85_downgrades_to_standard():
