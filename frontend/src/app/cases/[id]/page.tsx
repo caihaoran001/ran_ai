@@ -246,6 +246,10 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         <InfoCard title="日均发言" value={`${stats?.avg_daily_inbound_messages ?? 0} 条/天`} icon={BarChart3} />
       </div>
 
+      {serviceCase.execution_commitment && (
+        <ExecutionCommitmentPanel value={serviceCase.execution_commitment} />
+      )}
+
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <AICostInfoCard
           cost={stats?.ai_estimated_cost_yuan}
@@ -393,6 +397,58 @@ function StatusBadge({ status, continued = false }: { status: string; continued?
       {config.label}
     </span>
   );
+}
+
+function ExecutionCommitmentPanel({ value }: { value: Record<string, unknown> }) {
+  const confirmation = asRecord(value.confirmation);
+  const reviews = Object.values(asRecord(value.reviews))
+    .map(asRecord)
+    .filter((item) => Object.keys(item).length > 0)
+    .sort((a, b) => Number(b.checkpoint ?? 0) - Number(a.checkpoint ?? 0));
+  const latest = reviews[0];
+  const path = value.execution_path === "high_commitment" ? "高承诺档" : "标准档";
+  const statusLabels: Record<string, string> = {
+    pending: "待用户确认",
+    active: "目标已启用",
+    reconfirming: "待用户重新选择",
+    paused: "按当前节奏，目标暂停",
+  };
+  const target = value.status === "active"
+    ? value.execution_path === "high_commitment"
+      ? value.high_commitment_target
+      : value.standard_target
+    : "暂未启用";
+  return (
+    <section className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-black text-slate-950">执行承诺与目标档位</h2>
+        <span className="status-pill border-cyan-200 bg-white text-cyan-800">
+          {path} · {statusLabels[String(value.status ?? "pending")] ?? String(value.status ?? "待确认")}
+        </span>
+      </div>
+      <div className="mt-4 grid gap-3 text-sm md:grid-cols-3">
+        <div><p className="text-slate-500">当前生效目标</p><p className="mt-1 font-bold text-slate-900">{String(target ?? "暂未启用")}</p></div>
+        <div><p className="text-slate-500">完整打卡门槛</p><p className="mt-1 font-bold text-slate-900">{value.execution_path === "high_commitment" ? "85%" : "60%"}</p></div>
+        <div><p className="text-slate-500">最近复盘</p><p className="mt-1 font-bold text-slate-900">{latest ? `D${latest.checkpoint}：${latest.complete_days}/${latest.checkpoint}天（${latest.complete_rate_percent}%）` : "尚未到复盘节点"}</p></div>
+      </div>
+      {confirmation && Object.keys(confirmation).length > 0 && (
+        <p className="mt-4 rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
+          确认证据：{String(confirmation.source_text ?? "")}
+          {confirmation.occurred_at ? ` · ${formatDateTime(String(confirmation.occurred_at))}` : ""}
+          {confirmation.source_message_id ? ` · 消息 #${confirmation.source_message_id}` : ""}
+        </p>
+      )}
+      {Boolean(value.high_commitment_downgrade_reason) && (
+        <p className="mt-3 text-sm font-semibold text-amber-800">降为标准档原因：{String(value.high_commitment_downgrade_reason)}</p>
+      )}
+    </section>
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function InfoCard({

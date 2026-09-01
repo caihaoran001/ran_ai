@@ -101,6 +101,10 @@ class ServiceCase(TimestampMixin, Base):
     # 轻量审计轨迹：记录群内设置开始日期、续服/结束服务动作的时间、来源消息和发送者。
     # 不建新服务周期，也不覆盖历史聊天/打卡/文档。
     service_lifecycle_events: Mapped[list[dict] | None] = mapped_column(JSON)
+    # 标准档 / 高承诺档是执行承诺，不复用服务生命周期 status。
+    # 这里保存当前档位、目标、用户确认原始证据和各节点复评留痕；每次更新都整体赋新 dict，
+    # 避免 JSON 原地修改未被 SQLAlchemy 追踪。
+    execution_commitment: Mapped[dict | None] = mapped_column(JSON)
     content_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 入营问卷提交后的"待生成"信号：提交只落库并置此字段，重活(风险分析→画像/文档→欢迎语)
     # 由 backend 的 reminder loop 周期消费后清空。让公开提交入口能在常驻 ingress 上只做

@@ -43,14 +43,24 @@ ENERGY_FIELD_SPEC = {
     "goal_response": {
         "goal_type": "specific 或 general。specific=用户写了明确数字/明确结果；general=用户只勾选了期待变化或泛化诉求",
         "judgement_type": "reasonable 或 needs_adjustment。needs_adjustment=目标过激、当前不建议或需先安全复核",
-        "content": "直接面向用户的一段完整回应。需要包含用户目标/期待、判断、基础目标、挑战目标或当前更适合方向、冲刺/下调条件；"
+        "content": "直接面向用户的一段完整回应。需要包含用户目标/期待、判断、标准目标、高承诺目标或当前更适合方向、启用/暂停条件；"
         "A带只能定性概括数字减重诉求，不得复述具体斤数、公斤数或目标体重；不要空泛，不承诺结果。",
         "user_goal": "兼容字段：概括用户原始目标或期待变化；A带不得复述具体减重斤数、公斤数或目标体重",
         "judgement": "兼容字段：直接回应目标是否适合当前阶段；A带只做定性判断，不得复述具体减重数字",
-        "base_goal": "兼容字段：基础目标；A带禁止任何减重数字",
-        "challenge_goal": "兼容字段：挑战目标；A带使用系统无数字目标",
-        "conditions": "兼容字段：冲刺条件或下调条件",
+        "base_goal": "兼容字段：标准目标；A带禁止任何减重数字",
+        "challenge_goal": "兼容字段：高承诺目标；不符合资格时不得出现高承诺数字",
+        "conditions": "兼容字段：标准档60%、高承诺档85%的完整打卡约定；高承诺目标群内确认后生效",
     },
+    "occupation_context": "基于问卷明确答案概括真实工作节奏、活动情况、精力消耗和家庭责任，≤100字；不凭职业名称推断",
+    "weight_loss_history": "基于既往减重选项写可复用经验、难维持原因和不再重复的做法，≤100字；资料不足就明确未提供",
+    "key_influence_chains": ["1–2条：明确场景→重复行为→当前表现→目标受阻；不得补用户未提供的时间或因果"],
+    "desired_outcomes": [
+        {
+            "name": "用户明确选择的成果，1项主要成果、最多2项辅助成果",
+            "role": "main 或 supporting，且只能有1项 main",
+            "tracking_method": "简短、可执行的记录方式，不编造数值目标",
+        }
+    ],
     "judgement_points": [
         "为什么这样判断，严格3-5条。每条固定写成「现象/数据 → 说明什么问题」，控制在18-32字，宁短不长。"
         "每条尽量引用不同类型的问卷证据（节律 / 饮食 / 睡眠 / 情绪 / 运动 / 体型），不要从同一字段反复推导同一结论"
@@ -115,8 +125,10 @@ ENERGY_FIELD_SPEC = {
 
 EXECUTION_FIELD_SPEC = {
     "weight_band": "与 shared_analysis.weight_band 一致的管理带，由系统强制覆写",
-    "base_goal": "与 shared_analysis.base_goal 逐字一致的28天基础目标，由系统强制覆写",
-    "challenge_goal": "与 shared_analysis.challenge_goal 逐字一致的挑战目标，由系统强制覆写",
+    "base_goal": "与 shared_analysis.base_goal 逐字一致的28天标准目标，由系统强制覆写",
+    "challenge_goal": "与 shared_analysis.challenge_goal 逐字一致的高承诺目标，由系统强制覆写",
+    "execution_path": "默认 standard；文档生成时不得写成已经进入高承诺档",
+    "commitment_rule": "标准档完整打卡率60%；高承诺档85%，群内确认后生效；完整打卡=当天群内五项都有回答",
     "path_goal": "与 shared_analysis.long_term_goal 逐字一致的长期方向，由系统强制覆写",
     "current_mainline": "与 shared_analysis.current_mainline 一致的当前唯一主线，≤16字",
     "day28_goal": "这28天要完成的任务，≤48字，同时包含阶段任务和要观察的结果；没有明确数字目标时不得编造斤数或厘米数。",
@@ -132,6 +144,14 @@ EXECUTION_FIELD_SPEC = {
     },
     "diet_rules": ["对应用户真实生活场景的饮食规则，最多3条，每条≤34字"],
     "exercise_rules": ["运动频率只能使用 shared_analysis.activity_plan.sessions_per_week；再写单次时长、强度、动作和替代方案，最多2条，每条≤44字"],
+    "core_actions": [
+        {
+            "event_anchor": "早餐后、午餐后、晚餐后、上床前等相对场景；只能来自真实作息或方案",
+            "action": "核心动作，写清数量/时长/频次",
+            "fallback": "现实中做不到完整版本时的简化替代",
+            "checkin_mapping": "对应五项打卡中的题目或关注点",
+        }
+    ],
     "weekly_plan": [
         {"week": "第1周", "core_task": "稳住底盘", "acceptance_standard": "1个短句，例如：按个案产品排班完成；晚餐主食≤1拳；完成计划内活动。"},
         {"week": "第2周", "core_task": "提高一致性", "acceptance_standard": "1个短句，例如：连续5天不漏早餐；晚餐后走15–20分钟；应酬日不加宵夜。"},
@@ -279,6 +299,7 @@ def _build_energy(title: str, user_name: str, display_name: str | None, fields: 
         },
         _core_conclusions_block(fields),
         _goal_response_block(fields),
+        _personal_execution_basis_block(fields),
         _list_block("judgement_points", "4. 为什么我会这样判断", fields.get("judgement_points")),
         _success_path_block(fields),
         _priority_items_block(fields),
@@ -366,6 +387,7 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
         # 一页预算：饮食最多3条、运动最多2条，每条限长，避免真实模型输出把版面顶到第二页。
         _list_block("diet_rules", "5. 饮食规则", fields.get("diet_rules"), limit=3, max_item_len=34),
         _list_block("exercise_rules", "6. 运动规则", fields.get("exercise_rules"), limit=2, max_item_len=44),
+        _core_actions_block(fields.get("core_actions")),
         {"key": "weekly_plan", "title": "7. 四周执行表", "kind": "table", "rows": table_rows},
         _daily_checkin_block(fields.get("daily_checkin")),
         _text_block("weekly_standard", "9. 每周通过标准", _weekly_standard_text(fields.get("weekly_standard"))),
@@ -525,9 +547,9 @@ def _goal_response_block(fields: dict[str, Any]) -> dict[str, Any]:
         *meta,
         f"用户目标：{_text(value.get('user_goal'))}",
         f"直接回应：{_text(value.get('judgement')) or ('当前需要调整' if judgement_type == 'needs_adjustment' else '')}",
-        f"基础目标：{_text(value.get('base_goal'))}",
-        f"挑战目标：{_text(value.get('challenge_goal'))}",
-        f"冲刺条件：{_text(value.get('conditions'))}",
+        f"标准目标：{_text(value.get('base_goal'))}",
+        f"高承诺目标：{_text(value.get('challenge_goal'))}",
+        f"执行约定：{_text(value.get('conditions'))}",
     ]
     return _text_block("goal_response", title, "\n".join(line for line in lines if not line.endswith("：")))
 
@@ -644,8 +666,9 @@ def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
 
     lines = [
         f"管理带：{_length_checked(fields.get('weight_band'), max_len=18)}",
-        f"基础目标：{_length_checked(fields.get('base_goal'), max_len=36)}",
-        f"挑战目标：{_length_checked(fields.get('challenge_goal'), max_len=28)}",
+        f"标准目标：{_length_checked(fields.get('base_goal'), max_len=36)}",
+        f"高承诺目标：{_length_checked(fields.get('challenge_goal'), max_len=28)}",
+        f"执行约定：{_length_checked(fields.get('commitment_rule'), max_len=72)}",
         f"长期方向：{_length_checked(fields.get('path_goal') or fields.get('long_term_goal'), max_len=42)}",
         f"当前主线：{_length_checked(fields.get('current_mainline'), max_len=16)}",
     ]
@@ -654,6 +677,62 @@ def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
         "1. 目标摘要",
         "\n".join(line for line in lines if not line.endswith("：")),
     )
+
+
+def _personal_execution_basis_block(fields: dict[str, Any]) -> dict[str, Any]:
+    lines: list[str] = []
+    occupation = _clean_text(fields.get("occupation_context"))
+    history = _clean_text(fields.get("weight_loss_history"))
+    if occupation:
+        lines.append(f"生活与工作场景：{occupation}")
+    if history:
+        lines.append(f"既往经验：{history}")
+
+    chains = fields.get("key_influence_chains")
+    if isinstance(chains, list):
+        for index, item in enumerate(chains[:2], start=1):
+            text = _clean_text(item)
+            if text:
+                lines.append(f"关键影响{index}：{text}")
+
+    outcomes = fields.get("desired_outcomes")
+    if isinstance(outcomes, list):
+        outcome_parts = []
+        for item in outcomes[:3]:
+            if not isinstance(item, dict):
+                continue
+            name = _clean_text(item.get("name"))
+            method = _clean_text(item.get("tracking_method"))
+            if name:
+                outcome_parts.append(f"{name}（{method}）" if method else name)
+        if outcome_parts:
+            lines.append(f"本期成果：{'；'.join(outcome_parts)}")
+    return _text_block(
+        "personal_execution_basis",
+        "与您生活相匹配的执行依据",
+        "\n".join(lines),
+    )
+
+
+def _core_actions_block(value: Any) -> dict[str, Any]:
+    items: list[str] = []
+    if isinstance(value, list):
+        for action in value[:5]:
+            if not isinstance(action, dict):
+                continue
+            anchor = _clean_text(action.get("event_anchor"))
+            body = _clean_text(action.get("action"))
+            fallback = _clean_text(action.get("fallback"))
+            mapping = _clean_text(action.get("checkin_mapping"))
+            parts = [part for part in (anchor, body) if part]
+            text = "：".join(parts)
+            if fallback:
+                text += f"；做不到时：{fallback}"
+            if mapping:
+                text += f"；打卡：{mapping}"
+            if text:
+                items.append(text)
+    return _list_block("core_actions", "核心执行动作", items, limit=5)
 
 
 def _execution_product_block(fields: dict[str, Any]) -> dict[str, Any]:

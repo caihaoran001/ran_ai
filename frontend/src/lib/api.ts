@@ -57,6 +57,7 @@ export type ServiceCase = {
   member_left_at?: string | null;
   checkin_count?: number | null;
   service_continued_at?: string | null;
+  execution_commitment?: Record<string, unknown> | null;
   content_generated_at?: string | null;
   questionnaire_to_llm_output_ms?: number | null;
   risk_level?: string;

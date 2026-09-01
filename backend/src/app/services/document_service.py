@@ -37,6 +37,7 @@ from app.services.risk_service import is_high_risk
 from app.services.intake_facts import customer_type_for_profile
 from app.services.service_case_queries import get_active_service_case
 from app.services.service_case_activation import set_pre_service_status_or_activate
+from app.services.execution_commitment import initialize_execution_commitment
 
 from app.services.document_common import (
     DOCUMENT_DEFINITIONS,
@@ -133,6 +134,10 @@ async def generate_profile_and_documents(
     llm_output_at = datetime.now(timezone.utc)
     intake_model = _actual_model_for(ai, "intake_doc")
     intake_facts = package.get("intake_facts") if isinstance(package.get("intake_facts"), dict) else {}
+    service_case.execution_commitment = initialize_execution_commitment(
+        intake_facts,
+        service_case.execution_commitment,
+    )
     legal_name = str(intake_facts.get("legal_name") or user_name or "未提供").strip()
     display_name = str(intake_facts.get("recipient_name") or user_name or "未提供").strip()
     # 客户分型标签：在带位 + 风控风险等级上做确定性投影，供运营“定调”与群体聚合。

@@ -49,7 +49,12 @@ from app.services.agent_observability import (
 )
 from app.services.channels import get_current_channel, send_channel_text
 from app.services.checkin_rewards import check_checkin_rewards_once
+from app.services.checkin_completion import is_complete_checkin
 from app.services.document_common import DOCUMENT_DEFINITIONS
+from app.services.execution_commitment import (
+    REVIEW_CHECKPOINTS,
+    review_execution_commitment,
+)
 from app.services.document_service import (
     generate_profile_and_documents,
     generate_stage_report,
@@ -156,6 +161,7 @@ class ReminderService:
                         )
                     else:
                         await self.check_service_starts_once()
+                        await self.check_execution_commitments_once()
                         await self.check_service_phase_ends_once()
                         if self.settings.agent_reminders_enabled:
                             await self.check_agent_reminder_tasks_once()
@@ -203,6 +209,123 @@ class ReminderService:
                 )
             except asyncio.TimeoutError:
                 pass
+
+    async def check_execution_commitments_once(
+        self, now: datetime | None = None
+    ) -> None:
+        """D7/D14/D21/D28 结束后的次日上午，按累计完整打卡日复评。"""
+
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        current = now or datetime.now(tz)
+        current = current.replace(tzinfo=tz) if current.tzinfo is None else current.astimezone(tz)
+        if current.hour < 9:
+            return
+        async with SessionLocal() as session:
+            cases = list(
+                await session.scalars(
+                    select(ServiceCase).where(
+                        ServiceCase.deleted_at.is_(None),
+                        ServiceCase.status.in_(
+                            [ServiceCaseStatus.IN_SERVICE, ServiceCaseStatus.COMPLETED]
+                        ),
+                        ServiceCase.service_plan_start_date.is_not(None),
+                        ServiceCase.member_left_at.is_(None),
+                    )
+                )
+            )
+            for service_case in cases:
+                state = service_case.execution_commitment
+                if not isinstance(state, dict):
+                    continue
+                start = service_case.service_plan_start_date
+                if start is None:
+                    continue
+                elapsed = (current.date() - start).days + 1
+                due = next(
+                    (
+                        checkpoint
+                        for checkpoint in reversed(REVIEW_CHECKPOINTS)
+                        if elapsed >= checkpoint + 1
+                        and f"day{checkpoint}" not in (state.get("reviews") or {})
+                    ),
+                    None,
+                )
+                if due is None:
+                    continue
+                if service_case.status == ServiceCaseStatus.COMPLETED and due != 28:
+                    continue
+                end_date = start + timedelta(days=due - 1)
+                checkins = list(
+                    await session.scalars(
+                        select(Checkin).where(
+                            Checkin.service_case_id == service_case.id,
+                            Checkin.deleted_at.is_(None),
+                            Checkin.checkin_date >= start,
+                            Checkin.checkin_date <= end_date,
+                        )
+                    )
+                )
+                complete_days = len(
+                    {
+                        item.checkin_date
+                        for item in checkins
+                        if is_complete_checkin(item)
+                    }
+                )
+                updated, content = review_execution_commitment(
+                    state,
+                    checkpoint=due,
+                    complete_days=complete_days,
+                    occurred_at=current.astimezone(timezone.utc),
+                )
+                service_case.execution_commitment = updated
+                if not content:
+                    await session.commit()
+                    continue
+                message = Message(
+                    service_case_id=service_case.id,
+                    group_id=service_case.group_id,
+                    direction=MessageDirection.OUTBOUND,
+                    sender_type=MessageSenderType.BOT,
+                    message_type="markdown",
+                    content=content,
+                    purpose=MessagePurpose.REMINDER,
+                    status=MessageStatus.SENDING,
+                    analysis_json={"execution_commitment": {"checkpoint": due}},
+                )
+                session.add(message)
+                await session.flush()
+                review = updated["reviews"][f"day{due}"]
+                review["message_id"] = message.id
+                review["message_status"] = "sending"
+                service_case.execution_commitment = updated
+                await session.commit()
+                try:
+                    result = await _send_channel_text_with_retries(
+                        service_case.group_id, content
+                    )
+                except Exception as exc:
+                    message.status = MessageStatus.UNKNOWN
+                    message.error = f"send raised: {type(exc).__name__}: {exc}"
+                    review["message_status"] = "unknown"
+                else:
+                    message.status = (
+                        MessageStatus.SENT
+                        if result.success
+                        else MessageStatus.UNKNOWN
+                        if result.delivery_uncertain
+                        else MessageStatus.FAILED
+                    )
+                    message.wecom_message_id = result.message_id
+                    message.error = result.error
+                    if result.success:
+                        message.sent_at = datetime.now(timezone.utc)
+                    review["message_status"] = message.status.value
+                service_case.execution_commitment = {
+                    **updated,
+                    "reviews": dict(updated["reviews"]),
+                }
+                await session.commit()
 
     async def check_archivist_once(self) -> None:
         """档案官周期扫描：DB 派生找到点的服务单，跑聊天转打卡。触发/幂等/防双跑见 archivist.trigger。"""

@@ -916,9 +916,9 @@ def test_manual_review_keeps_calculated_challenge_target():
 
     _apply_canonical_target_contract(shared, facts)
 
-    assert shared["base_goal"] == "28天减重5-6斤"
-    assert shared["challenge_goal"] == "向7斤推进"
-    assert facts["challenge_target_jin_or_review_text"] == "向7斤推进"
+    assert shared["base_goal"] == "28天减重5-7斤"
+    assert shared["challenge_goal"] == "当前不开放高承诺目标"
+    assert facts["challenge_target_jin_or_review_text"] == "当前不开放高承诺目标"
 
 
 def test_manual_review_does_not_replace_unresolved_target_contract():
@@ -1159,13 +1159,13 @@ def test_day28_targets_derive_from_the_monthly_cap_not_the_band_table():
 
     # 165cm/62kg → C带，cap 3.1kg = 6.2斤 → 展示上限 6 斤。
     c_band = _day28_targets_for("165", "62")
-    assert c_band["base"] == "28天减重4-5斤"
-    assert c_band["challenge"] == "向6斤推进"
+    assert c_band["base"] == "28天减重4-6斤"
+    assert c_band["challenge"] == "当前不开放高承诺目标"
 
     # 170cm/95kg → D带，cap 撞 4.0kg 硬顶 = 8 斤。
     d_band = _day28_targets_for("170", "95")
-    assert d_band["base"] == "28天减重6-7斤"
-    assert d_band["challenge"] == "向8斤推进"
+    assert d_band["base"] == "28天减重6-8斤"
+    assert d_band["challenge"] == "当前不开放高承诺目标"
 
     # 4kg 硬顶保留：120kg 的用户 5% 是 6kg，仍被压到 4kg，结果与 95kg 相同。
     assert _day28_targets_for("175", "120") == d_band
@@ -1173,14 +1173,11 @@ def test_day28_targets_derive_from_the_monthly_cap_not_the_band_table():
     # 带位不决定28天斤数（A带除外）：同一体重、同一展示上限的 B/C 带拿到同一目标。
     assert _day28_targets_for("168", "60") == _day28_targets_for("165", "60")
 
-    # 基础目标必须严格低于挑战目标，否则"挑战"没有意义——旧实现在这里退化过。
-    for height, weight in (("165", "57"), ("165", "62"), ("165", "70"), ("170", "85")):
-        targets = _day28_targets_for(height, weight)
-        base_max = max(int(n) for n in re.findall(r"(\d+)", targets["base"]) if n != "28")
-        challenge_min = min(
-            int(n) for n in re.findall(r"(\d+)", targets["challenge"]) if n != "28"
-        )
-        assert base_max < challenge_min, f"{height}/{weight}: {targets}"
+    # 未满足筛选条件时不展示高承诺数字，标准档直接覆盖原基础档到常规上限。
+    assert all(
+        _day28_targets_for(height, weight)["challenge"] == "当前不开放高承诺目标"
+        for height, weight in (("165", "57"), ("165", "62"), ("165", "70"), ("170", "85"))
+    )
 
 
 def test_day28_targets_never_exceed_the_cap():
@@ -1209,7 +1206,7 @@ def test_day28_targets_never_exceed_the_cap():
 def test_day28_targets_for_band_a_and_unknown_band_carry_no_numbers():
     a_band = _day28_targets_for("175", "63")  # room 1.75kg → A带
     assert a_band["base"] == "不设置必须下降的体重硬指标，优先改善体态、睡眠、精力、恢复和执行一致性"
-    assert a_band["challenge"] == "不设置体重挑战目标，优先修复塑形"
+    assert a_band["challenge"] == "当前不开放高承诺减重目标，优先修复塑形"
     assert not re.search(r"\d+\s*斤", a_band["base"] + a_band["challenge"])
 
     # 空间归零的 A 带（cap=0）同样一个数字都不给
@@ -1221,6 +1218,25 @@ def test_day28_targets_for_band_a_and_unknown_band_carry_no_numbers():
     )["day28_targets"]
     assert unknown["base"] == "待补齐身高体重后与班主任确认目标"
     assert not re.search(r"\d+\s*斤", unknown["base"] + unknown["challenge"])
+
+
+def test_high_commitment_target_requires_deterministic_eligibility():
+    fields = [
+        {"key": "h", "title": "您的身高（cm/厘米）"},
+        {"key": "w", "title": "您当前体重（kg/公斤）"},
+        {"key": "goal", "title": "您最希望 28 天后看到哪些变化？"},
+    ]
+    facts = build_intake_fact_summary(
+        fields,
+        {
+            "h": "165",
+            "w": "90",
+            "goal": ["身体更轻盈、腰腹部维度缩减"],
+        },
+    )
+    assert facts["high_commitment_candidate"] is True
+    assert facts["day28_targets"]["base"] == "28天减重6-8斤"
+    assert facts["day28_targets"]["challenge"] == "28天向9-10斤推进"
 
 
 def test_intake_prompt_delegates_day28_numbers_to_the_facts():
@@ -2116,7 +2132,8 @@ def test_execution_document_keeps_single_page_content_budget(caplog):
             "day28_goal": "先把晚间收口和午餐结构稳住，观察腰腹围度、下午精力和睡眠连续性的变化趋势，并记录每周体感",
             "body_trend": "缓慢变沉",
             "base_goal": "28天减重4-5斤",
-            "challenge_goal": "向6斤推进",
+                "challenge_goal": "向6斤推进",
+                "commitment_rule": "标准档60%；高承诺档85%；群内确认后生效",
             "path_goal": "12周形成稳定节律，围度稳步收紧",
             "product_schedule": {
                 "morning_c": "早C半份随早餐7:30，观察三天无心慌后再上满份",
@@ -2150,12 +2167,13 @@ def test_execution_document_keeps_single_page_content_budget(caplog):
     blocks = {block["key"]: block for block in content_json["blocks"]}
 
     goal_lines = blocks["goal_summary"]["content"].splitlines()
-    assert len(goal_lines) == 5
+    assert len(goal_lines) == 6
     assert goal_lines[0].startswith("管理带：")
-    assert goal_lines[1].startswith("基础目标：")
-    assert goal_lines[2].startswith("挑战目标：")
-    assert goal_lines[3].startswith("长期方向：")
-    assert goal_lines[4].startswith("当前主线：")
+    assert goal_lines[1].startswith("标准目标：")
+    assert goal_lines[2].startswith("高承诺目标：")
+    assert goal_lines[3].startswith("执行约定：")
+    assert goal_lines[4].startswith("长期方向：")
+    assert goal_lines[5].startswith("当前主线：")
     summary_text = blocks["goal_summary"]["content"]
     assert "28天减重4-5斤" in summary_text
     assert "向6斤推进" in summary_text
@@ -2266,7 +2284,7 @@ async def test_manual_review_keeps_business_band_and_blocks_auto_send(
             for label in ("需人工复核", "人工复核", "待复核", "red风险", "风险等级"):
                 assert label not in rendered, f"{document.title} 的 blocks 泄漏了 {label}"
                 assert label not in document.content_md, f"{document.title} 的正文泄漏了 {label}"
-            assert "向6斤推进" in document.content_md
+                assert "28天减重4-6斤" in document.content_md
             assert "D7复评" not in document.content_md
             # 整句剔除，不留「本方案。」这类残句
             assert "本方案。" not in document.content_md
@@ -2538,6 +2556,13 @@ def test_shared_activity_frequency_syncs_full_profile_and_documents():
     assert execution["exercise_rules"] == ["每周3次30分钟快走，中低强度，以能说话为准"]
     assert execution["weekly_plan"][0]["acceptance_standard"] == "每周3次轻力量，每次20分钟"
     assert execution["weekly_standard"] == "每周1次复测腰围，完成计划内活动。"
+
+
+def test_shared_activity_frequency_allows_two_or_four_sessions():
+    for requested in (2, 4):
+        shared = {"activity_plan": {"status": "planned", "sessions_per_week": requested}}
+        assert _normalize_shared_activity_frequency(shared) == requested
+        assert shared["activity_plan"]["sessions_per_week"] == requested
 
 
 def test_a_band_user_visible_goal_contract_replaces_model_numbers():

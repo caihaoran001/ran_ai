@@ -12,9 +12,11 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from sqlalchemy import select
 
 from app.core.config import Settings, get_settings
 from app.db import session as db_session_module
+from app.models.service_case import ServiceCase
 from app.services.agent.checkpoint import (
     ainvoke_resumable,
     checkpoint_config,
@@ -30,6 +32,7 @@ from app.services.agent.tools import build_agent_tools
 from app.services.channels.registry import get_current_channel
 from app.services.content_policy import get_qiwe_group_nickname, get_qiwe_nickname
 from app.services.knowledge_index import retrieve_indexed_knowledge_result
+from app.services.execution_commitment import agent_execution_context
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -263,11 +266,17 @@ class RanrenAgentGraph:
         try:
             async with db_session_module.SessionLocal() as session:
                 memory_scopes = _agent_memory_scopes(self.context.agent_context_plan)
-                return await build_agent_memory_context(
+                memory = await build_agent_memory_context(
                     session,
                     service_case_id=self.context.service_case_id,
                     memory_scopes=memory_scopes,
                 )
+                commitment = await session.scalar(
+                    select(ServiceCase.execution_commitment).where(
+                        ServiceCase.id == self.context.service_case_id
+                    )
+                )
+                return f"{memory}\n\n【执行约定】\n{agent_execution_context(commitment)}"
         except Exception:
             logger.exception("Failed to build agent memory context service_case_id=%s", self.context.service_case_id)
             return "暂无可用用户背景。"

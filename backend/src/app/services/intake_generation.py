@@ -68,6 +68,14 @@ BAND_CALCULATION_FIELDS = (
     "basic_target_jin_or_range",
     "challenge_target_jin_or_review_text",
     "target_generation_rule_applied",
+    "high_commitment_candidate",
+    "high_commitment_basis",
+    "stretch_review_cap_kg",
+    "stretch_review_cap_jin",
+    "execution_path",
+    "execution_status",
+    "standard_complete_rate",
+    "high_commitment_complete_rate",
 )
 
 INTAKE_DOCUMENT_MAX_ATTEMPTS = 3
@@ -112,6 +120,7 @@ _DOCUMENT_MODEL_FACT_KEYS = (
     "adherence_worry",
     "pressure_reaction",
     "diet_pattern",
+    "document_context",
 )
 # 文档模型不负责这些内部状态；即使它在越界输出中带回，也不能污染运营画像。
 _MODEL_OWNED_INTERNAL_FIELDS = (
@@ -164,9 +173,8 @@ class RetryableIntakePackageError(RuntimeError):
 def _normalize_shared_activity_frequency(shared: dict[str, object]) -> int | None:
     """Normalize the one activity-frequency source for an intake package.
 
-    A paused plan deliberately has no numerical frequency. Otherwise the current
-    28-day service uses the agreed fixed cadence of three sessions every week.
-    This is a value normalization, not another model decision or call.
+    A paused plan deliberately has no numerical frequency. Otherwise accept only
+    the agreed 2/3/4-session cadence; malformed output falls back to three.
     """
 
     raw_plan = shared.get("activity_plan")
@@ -176,8 +184,14 @@ def _normalize_shared_activity_frequency(shared: dict[str, object]) -> int | Non
         shared["activity_plan"] = {"status": "paused", "sessions_per_week": None}
         return None
 
-    shared["activity_plan"] = {"status": "planned", "sessions_per_week": 3}
-    return 3
+    try:
+        sessions = int(plan.get("sessions_per_week"))
+    except (TypeError, ValueError):
+        sessions = 3
+    if sessions not in {2, 3, 4}:
+        sessions = 3
+    shared["activity_plan"] = {"status": "planned", "sessions_per_week": sessions}
+    return sessions
 
 
 def _sync_activity_frequency_in_text(value: object, sessions_per_week: int) -> object:
@@ -391,13 +405,21 @@ def _apply_canonical_target_contract(
         "28_day_auto_cap_kg",
         "28_day_display_cap_jin",
         "target_generation_rule_applied",
+        "high_commitment_candidate",
+        "high_commitment_basis",
+        "stretch_review_cap_kg",
+        "execution_path",
+        "execution_status",
+        "standard_complete_rate",
+        "high_commitment_complete_rate",
+        "document_context",
     ):
         shared[key] = facts.get(key)
     shared["basic_target_jin_or_range"] = base_goal
     shared["challenge_target_jin_or_review_text"] = challenge_goal
     shared["base_goal"] = base_goal
     shared["challenge_goal"] = challenge_goal
-    shared["day28_goal"] = f"基础目标：{base_goal}；挑战目标：{challenge_goal}"
+    shared["day28_goal"] = f"标准目标：{base_goal}；高承诺目标：{challenge_goal}"
     stage_targets = facts.get("stage_targets") if isinstance(facts.get("stage_targets"), dict) else {}
     shared["week5_8_target"] = str(stage_targets.get("week5_8") or "").strip()
     shared["week9_12_target"] = str(stage_targets.get("week9_12") or "").strip()
@@ -943,8 +965,16 @@ def _intake_package_schema() -> dict[str, object]:
             "body_trend_confidence": "high / medium / low",
             "core_problem": "核心问题，只基于问卷事实",
             "current_mainline": "当前唯一主线，只能取：保肌减脂 / 节律稳定 / 睡眠修复 / 饮食结构修复 / 系统化管理；主要依据睡眠、精力、饮食、食欲边界、晚间失控、运动和恢复状态选择",
-            "base_goal": "基础目标；用户没有明确数字时不得编造斤数；A带禁止任何减重数字",
-            "challenge_goal": "条件性挑战目标；逐字复制系统目标",
+            "base_goal": "标准目标；逐字复制系统目标；用户没有明确数字时不得编造斤数；A带禁止任何减重数字",
+            "challenge_goal": "高承诺目标；仅候选人展示并逐字复制系统目标",
+            "high_commitment_candidate": "逐字复制 intake_facts.high_commitment_candidate，模型不得自行筛选",
+            "high_commitment_basis": ["逐字复制系统给出的筛选依据，不得补充职业推断"],
+            "stretch_review_cap_kg": "逐字复制 intake_facts.stretch_review_cap_kg，模型不得重算",
+            "execution_path": "文档生成时固定 standard，待用户在群内明确确认后才可变更",
+            "execution_status": "文档生成时固定 pending",
+            "standard_complete_rate": "固定0.60",
+            "high_commitment_complete_rate": "固定0.85",
+            "document_context": "系统对白名单问卷答案的结构化投影；只据原答案概括，不新增事实或因果",
             "28_day_auto_cap_kg": "逐字复制 intake_facts.28_day_auto_cap_kg，模型不得重算",
             "28_day_display_cap_jin": "逐字复制 intake_facts.28_day_display_cap_jin，模型不得重算",
             "basic_target_jin_or_range": "逐字复制 intake_facts.basic_target_jin_or_range",
@@ -956,7 +986,7 @@ def _intake_package_schema() -> dict[str, object]:
             "execution_principle": "执行总原则",
             "activity_plan": {
                 "status": "planned / paused；只有问卷明确需要暂停活动时才为 paused",
-                "sessions_per_week": "planned 时固定为3；28天内不分首周/后续周。profile和两份文件必须逐字使用这个次数",
+                "sessions_per_week": "planned 时只能取2、3或4；结合当前运动基础与可执行性选一个，28天内不分首周/后续周。profile和两份文件必须逐字使用这个次数",
             },
             "evidence_notes": ["关键判断对应的问卷证据，3-5条"],
         },
@@ -982,6 +1012,10 @@ def _intake_package_schema() -> dict[str, object]:
                 "evidence_notes": ["对应的问卷证据，2-4条"],
             },
             "notes": "AI陪跑建议，供运营参考",
+            "occupation_fit": "职业与家庭场景如何影响执行，只基于白名单原答案",
+            "history_reuse": "既往经验中可复用与不建议重复的部分",
+            "outcome_dashboard": "1项主要成果、最多2项辅助成果的简短跟踪摘要",
+            "execution_contract_summary": "标准档60%、高承诺档85%的完整打卡约定摘要",
         },
         "documents": combined_prompt_schema(),
     }
@@ -1737,6 +1771,12 @@ def _normalize_combined_document_payload(
         (goal_response, "challenge_goal", shared.get("challenge_goal")),
         (execution_payload, "base_goal", shared.get("base_goal")),
         (execution_payload, "challenge_goal", shared.get("challenge_goal")),
+        (execution_payload, "execution_path", shared.get("execution_path")),
+        (
+            execution_payload,
+            "commitment_rule",
+            "标准档累计完整打卡率60%；高承诺档85%，均在群内确认后生效；当天五项都有回答才计为1个完整打卡日。",
+        ),
         (shared_path, "day28_goal", shared.get("day28_goal")),
         (execution_payload, "day28_goal", shared.get("day28_goal")),
         (shared_path, "total_goal", shared.get("long_term_goal")),
@@ -2043,7 +2083,17 @@ def _document_model_readable_answers(
         key = str(field.get("key") or field.get("id") or "")
         title = str(field.get("title") or field.get("label") or "")
         is_legacy_health_field = "健康情况" in title or "病史" in title
-        if field.get("operator_only") is True or is_legacy_health_field:
+        is_marketing_field = (
+            "最早是在哪里认识加速燃" in title
+            or "让您最终愿意购买并进群" in title
+        )
+        is_upload_field = str(field.get("type") or "").upper() == "FILE"
+        if (
+            field.get("operator_only") is True
+            or is_legacy_health_field
+            or is_marketing_field
+            or is_upload_field
+        ):
             visible_answers.pop(key, None)
     return _readable_answers(fields, visible_answers)
 

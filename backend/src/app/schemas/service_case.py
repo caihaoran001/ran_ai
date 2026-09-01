@@ -50,6 +50,7 @@ class ServiceCaseRead(Timestamped):
     # 打卡次数：仅「已退群」名单按需填充，其余列表为 null（避免每行都做聚合）
     checkin_count: int | None = None
     service_continued_at: datetime | None = None
+    execution_commitment: dict | None = None
     content_generated_at: datetime | None
     questionnaire_to_llm_output_ms: int | None
     notes: str | None

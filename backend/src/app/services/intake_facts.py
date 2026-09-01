@@ -19,6 +19,24 @@ MANAGEMENT_BANDS_WITH_NUMBERS = (
     "D带｜系统减重",
 )
 
+# 2026-08-25 新增、但此前被 operator_only 全量过滤掉的 8 道交付画像题。
+# 这里做的是「白名单原答案投影」，不是第三次 LLM 总结，也不把全部运营字段放开。
+DOCUMENT_CONTEXT_QUESTION_KEYS = {
+    "CHECKBOX17776518759860wlspec": "weight_loss_history",
+    "RADIO17776518759861occnew": "occupation_identity",
+    "SIMPLE17776518759862jobdet": "job_detail",
+    "RADIO17776518759863rolelvl": "work_responsibility",
+    "CHECKBOX17776518759864famrole": "family_roles",
+    "RADIO17776518759865neatlv": "daily_activity_level",
+    "CHECKBOX17776518759866loadtop": "main_energy_loads",
+    "CHECKBOX17776518759867statval": "body_improvement_values",
+}
+
+_WEIGHT_RELATED_DAY28_EXPECTATIONS = {
+    "身体更轻盈、腰腹部维度缩减",
+    "体重/腰围出现让我满意的变化（可在“其他”填写数字目标）",
+}
+
 # 保护性下限的上调档位。客户 V2.1 §6.5 只说了"可将该下限上调"，没有给幅度，
 # 这套档位是我们定的可审计规则：以 BMI 20 自动复核线为起点，每命中一类风险抬 0.5 个
 # BMI 单位，累计封顶 1.5 个（即最高按 BMI 21.5 计）。
@@ -136,8 +154,23 @@ def build_intake_fact_summary(
         safe_reduction["safe_reduction_room_kg"]
     )
 
-    day28_targets = _day28_targets(
-        weight_loss_band, safe_reduction["day28_goal_cap_kg"]
+    selected_day28_expectations = _answer_values_for_title(
+        fields, answers, "最希望", "28 天后"
+    ) or _answer_values_for_title(fields, answers, "最希望", "28天后")
+    high_commitment_candidate, high_commitment_basis = _high_commitment_eligibility(
+        selected_day28_expectations=selected_day28_expectations,
+        bmi=bmi,
+        waist_height_ratio=waist_height_ratio,
+        safe_reduction_room_kg=safe_reduction["safe_reduction_room_kg"],
+        safety_factors=safety_factors,
+        weight_loss_band=weight_loss_band,
+    )
+    day28_targets, stretch_review_cap_kg = _day28_targets(
+        weight_loss_band,
+        safe_reduction["day28_goal_cap_kg"],
+        baseline_weight_kg=weight,
+        safe_reduction_room_kg=safe_reduction["safe_reduction_room_kg"],
+        high_commitment_candidate=high_commitment_candidate,
     )
     display_cap_jin = (
         int(safe_reduction["day28_goal_cap_kg"] * 2)
@@ -205,10 +238,22 @@ def build_intake_fact_summary(
         "28_day_display_cap_jin": display_cap_jin if display_cap_jin is not None else "暂无数据",
         "basic_target_jin_or_range": day28_targets["base"],
         "challenge_target_jin_or_review_text": day28_targets["challenge"],
+        "high_commitment_candidate": high_commitment_candidate,
+        "high_commitment_basis": high_commitment_basis,
+        "stretch_review_cap_kg": _format_safe_measurement(stretch_review_cap_kg),
+        "stretch_review_cap_jin": (
+            int(stretch_review_cap_kg * 2)
+            if stretch_review_cap_kg is not None
+            else "暂无数据"
+        ),
+        "execution_path": "standard",
+        "execution_status": "pending",
+        "standard_complete_rate": 0.60,
+        "high_commitment_complete_rate": 0.85,
         "target_generation_rule_applied": (
             "A带不设减重数字"
             if weight_loss_band == BAND_A
-            else "min(基线体重×5%, 4kg, 安全减重空间)；基础目标=展示上限减2至减1斤；挑战目标=向展示上限推进"
+            else "标准目标=min(基线体重×5%, 4kg, 安全减重空间)；高承诺目标=min(基线体重×7.5%, 5kg, 安全减重空间-1kg)，仅合格且群内确认后生效"
         ),
         "waist": _format_number(waist) if waist else "未提供",
         "waist_cm": _format_number(waist) if waist else "未提供",
@@ -233,7 +278,89 @@ def build_intake_fact_summary(
         "adherence_worry": adherence_worry or "未提供",
         "pressure_reaction": pressure_reaction or "未提供",
         "diet_pattern": diet_pattern or "未提供",
+        "document_context": _document_context_answers(answers),
     }
+
+
+def _document_context_answers(answers: dict[str, Any]) -> dict[str, object]:
+    """原样投影 8 道白名单题；列表仍是列表，自由文本仍是原文。"""
+
+    projected: dict[str, object] = {}
+    for key, label in DOCUMENT_CONTEXT_QUESTION_KEYS.items():
+        if key not in answers:
+            continue
+        value = answers.get(key)
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if cleaned:
+                projected[label] = cleaned
+        else:
+            text = str(value or "").strip()
+            if text:
+                projected[label] = [
+                    item.strip() for item in text.split("||") if item.strip()
+                ] if "||" in text else text
+    return projected
+
+
+def _answer_values_for_title(
+    fields: list[dict[str, Any]], answers: dict[str, Any], *title_parts: str
+) -> list[str]:
+    for field in fields:
+        key = str(field.get("key") or field.get("id") or "")
+        title = str(field.get("title") or field.get("label") or "")
+        if key not in answers or not all(part in title for part in title_parts):
+            continue
+        raw = answers.get(key)
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        return [item.strip() for item in str(raw or "").split("||") if item.strip()]
+    return []
+
+
+def _high_commitment_eligibility(
+    *,
+    selected_day28_expectations: list[str],
+    bmi: float | None,
+    waist_height_ratio: float | None,
+    safe_reduction_room_kg: object,
+    safety_factors: dict[str, Any] | None,
+    weight_loss_band: str,
+) -> tuple[bool, list[str]]:
+    """最小版四条件筛选；已按业务决定取消独立的三个行动窗口条件。"""
+
+    goal_supported = any(
+        item in _WEIGHT_RELATED_DAY28_EXPECTATIONS
+        for item in selected_day28_expectations[:3]
+    )
+    body_supported = bool(
+        (bmi is not None and bmi >= 24)
+        or (waist_height_ratio is not None and waist_height_ratio >= 0.5)
+    )
+    try:
+        safe_room_supported = float(safe_reduction_room_kg) >= 7.5
+    except (TypeError, ValueError):
+        safe_room_supported = False
+    factors = safety_factors if isinstance(safety_factors, dict) else {}
+    no_safety_limit = not any(
+        factors.get(key) is True
+        for key in (
+            "safety_review_required",
+            "muscle_insufficiency",
+            "disease_or_medication_limit",
+            "recovery_risk",
+        )
+    )
+    checks = [
+        (goal_supported, "减重或腰腹改善属于前三项28天期待"),
+        (body_supported, "BMI≥24或腰高比≥0.5"),
+        (safe_room_supported, "安全减重空间≥7.5kg并预留1kg缓冲"),
+        (no_safety_limit, "未触发安全、肌肉或恢复限制"),
+        (weight_loss_band in MANAGEMENT_BANDS_WITH_NUMBERS, "当前管理带允许数字减重目标"),
+    ]
+    return all(passed for passed, _ in checks), [
+        f"{'满足' if passed else '不满足'}：{label}" for passed, label in checks
+    ]
 
 
 def sanitize_profile_json(profile: dict[str, Any], facts: dict[str, Any] | None) -> dict[str, Any]:
@@ -493,36 +620,72 @@ def _stage_targets(band: str, safe_room_kg: float | None) -> dict[str, str]:
 #
 _DAY28_TEXT_A_BAND = {
     "base": "不设置必须下降的体重硬指标，优先改善体态、睡眠、精力、恢复和执行一致性",
-    "challenge": "不设置体重挑战目标，优先修复塑形",
+    "challenge": "当前不开放高承诺减重目标，优先修复塑形",
 }
 _DAY28_TEXT_UNKNOWN = {
     "base": "待补齐身高体重后与班主任确认目标",
-    "challenge": "待补齐身高体重后确定",
+    "challenge": "待补齐身高体重后判断是否开放高承诺目标",
 }
-def _day28_targets(band: str, goal_cap_kg: float | None) -> dict[str, str]:
-    """按 day28_goal_cap_kg 给出28天基础/挑战目标。
+
+
+def _day28_targets(
+    band: str,
+    goal_cap_kg: float | None,
+    *,
+    baseline_weight_kg: float | None = None,
+    safe_reduction_room_kg: object = None,
+    high_commitment_candidate: bool = False,
+) -> tuple[dict[str, str], float | None]:
+    """给出标准目标和条件性高承诺目标。
 
     单位换算一次：cap 是公斤，用户可见文案用斤。cap 向下取整，宁可少给。
     """
 
     if band == BAND_A:
-        return dict(_DAY28_TEXT_A_BAND)
+        return dict(_DAY28_TEXT_A_BAND), None
     if band not in MANAGEMENT_BANDS_WITH_NUMBERS or goal_cap_kg is None:
-        return dict(_DAY28_TEXT_UNKNOWN)
+        return dict(_DAY28_TEXT_UNKNOWN), None
 
     cap_jin = int(goal_cap_kg * 2)
     if cap_jin <= 0:
         # 空间归零但带位不是 A 带，理论上不该出现；真出现了也不能给数字。
-        return dict(_DAY28_TEXT_A_BAND)
+        return dict(_DAY28_TEXT_A_BAND), None
 
-    # 客户 V2.2 统一口径：展示上限向下取整；基础目标固定比上限低 2-1 斤，
-    # 挑战目标只写「向上限推进」，不再另造一个可能与基础目标重叠的区间。
+    # 标准档吸收旧「基础 + 向上限推进」两层，用户只看到一套标准目标。
     base_low = max(1, cap_jin - 2)
-    base_high = max(base_low, cap_jin - 1)
+    standard_target = _day28_jin_text(base_low, cap_jin)
+    stretch_cap_kg = _stretch_review_cap_kg(
+        baseline_weight_kg=baseline_weight_kg,
+        safe_reduction_room_kg=safe_reduction_room_kg,
+    )
+    challenge_target = "当前不开放高承诺目标"
+    if high_commitment_candidate and stretch_cap_kg is not None:
+        stretch_jin = int(stretch_cap_kg * 2)
+        high_low = cap_jin + 1
+        if high_low <= stretch_jin:
+            challenge_target = (
+                f"28天向{high_low}斤推进"
+                if high_low == stretch_jin
+                else f"28天向{high_low}-{stretch_jin}斤推进"
+            )
+        else:
+            high_commitment_candidate = False
     return {
-        "base": _day28_jin_text(base_low, base_high),
-        "challenge": f"向{cap_jin}斤推进",
-    }
+        "base": standard_target,
+        "challenge": challenge_target,
+    }, stretch_cap_kg if high_commitment_candidate else None
+
+
+def _stretch_review_cap_kg(
+    *, baseline_weight_kg: float | None, safe_reduction_room_kg: object
+) -> float | None:
+    if baseline_weight_kg is None:
+        return None
+    try:
+        safe_room = float(safe_reduction_room_kg)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(baseline_weight_kg * 0.075, 5.0, safe_room - 1.0))
 
 
 def _day28_jin_text(low: int, high: int) -> str:

@@ -301,6 +301,15 @@ async def test_two_documents_sent_one_by_one_trigger_reward_intro_once(
 @pytest.mark.asyncio
 async def test_bulk_send_uses_same_completion_trigger(db_session, monkeypatch, tmp_path):
     service_case = _case(status=ServiceCaseStatus.REVIEWING, plan=date(2026, 8, 12))
+    service_case.execution_commitment = {
+        "version": 1,
+        "high_commitment_candidate": True,
+        "standard_target": "28天减重5-7斤",
+        "high_commitment_target": "28天向8-10斤推进",
+        "execution_path": "standard",
+        "status": "pending",
+        "reviews": {},
+    }
     db_session.add(service_case)
     await db_session.flush()
     items = [
@@ -357,9 +366,11 @@ async def test_bulk_send_uses_same_completion_trigger(db_session, monkeypatch, t
     await document_delivery.send_case_documents(db_session, service_case.id)
     await document_delivery.send_case_documents(db_session, service_case.id)
 
-    assert len(sent_texts) == 2  # 文件发送前的固定说明 + 两份发送完成后的打卡示例
+    assert len(sent_texts) == 3  # 文件说明 + 打卡示例 + 执行承诺邀请，重复调用不重发
     assert sent_texts[1].count("【每日打卡】") == 1
     assert all(f"个性化原题{index}" in sent_texts[1] for index in range(1, 6))
+    assert "高承诺档" in sent_texts[2]
+    assert "完整打卡率需达到85%" in sent_texts[2]
 
 
 @pytest.mark.asyncio
