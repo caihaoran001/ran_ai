@@ -55,6 +55,7 @@ READ_ONLY_TOOLS = frozenset(
 STATE_CHANGING_TOOLS = frozenset(
     {
         "cancel_group_reminder",
+        "confirm_execution_commitment",
         "continue_service",
         "create_group_reminder",
         "end_continued_service",
