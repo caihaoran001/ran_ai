@@ -241,17 +241,19 @@ class ReminderService:
                 if start is None:
                     continue
                 elapsed = (current.date() - start).days + 1
-                due = next(
+                latest_due = next(
                     (
                         checkpoint
                         for checkpoint in reversed(REVIEW_CHECKPOINTS)
                         if elapsed >= checkpoint + 1
-                        and f"day{checkpoint}" not in (state.get("reviews") or {})
                     ),
                     None,
                 )
-                if due is None:
+                if latest_due is None or f"day{latest_due}" in (
+                    state.get("reviews") or {}
+                ):
                     continue
+                due = latest_due
                 if service_case.status == ServiceCaseStatus.COMPLETED and due != 28:
                     continue
                 end_date = start + timedelta(days=due - 1)

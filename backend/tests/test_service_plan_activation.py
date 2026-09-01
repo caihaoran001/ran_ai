@@ -366,11 +366,11 @@ async def test_bulk_send_uses_same_completion_trigger(db_session, monkeypatch, t
     await document_delivery.send_case_documents(db_session, service_case.id)
     await document_delivery.send_case_documents(db_session, service_case.id)
 
-    assert len(sent_texts) == 3  # 文件说明 + 打卡示例 + 执行承诺邀请，重复调用不重发
+    assert len(sent_texts) == 2  # 文件说明 + 合并后的打卡示例与执行承诺邀请，重复调用不重发
     assert sent_texts[1].count("【每日打卡】") == 1
     assert all(f"个性化原题{index}" in sent_texts[1] for index in range(1, 6))
-    assert "高承诺档" in sent_texts[2]
-    assert "完整打卡率需达到85%" in sent_texts[2]
+    assert "高承诺档" in sent_texts[1]
+    assert "完整打卡率需达到85%" in sent_texts[1]
 
 
 @pytest.mark.asyncio

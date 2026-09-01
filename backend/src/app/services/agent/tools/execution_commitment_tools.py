@@ -48,7 +48,10 @@ def build_execution_commitment_tools(*, context: AgentRunContext) -> list[BaseTo
                 return {"ok": False, "error": "当前还没有可确认的执行约定。"}
             state = dict(service_case.execution_commitment)
             invitation = state.get("invitation")
-            if not isinstance(invitation, dict) or invitation.get("status") != "sent":
+            if not isinstance(invitation, dict):
+                return {"ok": False, "error": "当前还没有可确认的执行约定。"}
+            inv_status = str(invitation.get("status") or "")
+            if inv_status not in {"sending", "sent", "unknown"}:
                 return {"ok": False, "error": "执行邀请尚未成功发出，暂不能确认。"}
             meta = (
                 source.analysis_json.get("_qiwe_meta", {})

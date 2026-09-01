@@ -70,14 +70,38 @@ def effective_target(state: dict[str, Any] | None) -> str | None:
     return str(data.get("standard_target") or "").strip() or None
 
 
-def render_commitment_invitation(state: dict[str, Any]) -> str:
-    """两份交付文件已发送后的固定邀请；不向用户暴露内部 D0 名称。"""
+def render_commitment_invitation(
+    state: dict[str, Any],
+    *,
+    checkin_example_lines: list[str] | None = None,
+) -> str:
+    """两份交付文件已发送后的固定邀请；不向用户暴露内部 D0 名称。
+
+    若传入生成时保存的个性化打卡原题与示例，合并为单条引导发送，避免连续多条长消息刷屏。
+    """
 
     standard_target = str(state.get("standard_target") or "当前标准目标").strip()
-    lines = [
-        "两份专属文件已经发到群里了，接下来请每天在群内完成五项打卡。当天五项都有回答，才计为1个完整打卡日。",
-        "",
-    ]
+    lines = ["两份专属文件已经发到群里了。"]
+    if checkin_example_lines:
+        lines.extend(
+            [
+                "",
+                "每天直接复制下面这段，只把“｜”后面的内容改成当天实际情况：",
+                "",
+                "【每日打卡】",
+                "",
+                *checkin_example_lines,
+                "",
+                "没完成也照实改，当天五项都有回答，才计为1个完整打卡日。产品和餐食建议随手拍照发群里，有疑问随时问我们。",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "接下来请每天在群内完成五项打卡。当天五项都有回答，才计为1个完整打卡日。",
+            ]
+        )
+    lines.append("")
     if state.get("high_commitment_candidate") is True and state.get(
         "high_commitment_target"
     ):

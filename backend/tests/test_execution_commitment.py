@@ -77,3 +77,22 @@ def test_current_pace_pauses_target_until_explicit_recommitment():
 def test_non_candidate_cannot_choose_high_commitment():
     with pytest.raises(ValueError, match="不具备高承诺档资格"):
         _choose(_state(candidate=False), "high_commitment")
+
+
+def test_render_commitment_invitation_merges_checkin_examples():
+    from app.services.execution_commitment import render_commitment_invitation
+
+    state = _state(candidate=True)
+    examples = [
+        "1. 早C/午B/晚A｜早C已喝；午B已喝；晚A未完成",
+        "2. 蔬菜总量｜已吃够2拳",
+        "3. 运动步数｜快走30分钟",
+        "4. 睡前收口｜22:30后未吃东西",
+        "5. 晨起体重｜62.5kg",
+    ]
+    text = render_commitment_invitation(state, checkin_example_lines=examples)
+    assert "【每日打卡】" in text
+    assert "早C已喝" in text
+    assert "高承诺档" in text
+    assert "完整打卡率需达到85%" in text
+

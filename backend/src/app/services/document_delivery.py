@@ -239,10 +239,35 @@ async def _maybe_send_post_document_checkin_example(
     return bool(result.success)
 
 
+async def _extract_post_document_checkin_example_lines(
+    session: AsyncSession, *, service_case_id: int
+) -> list[str]:
+    """读取已发送执行建议书的原题与示例打卡行。"""
+    document = await session.scalar(
+        select(UserDocument)
+        .where(
+            UserDocument.service_case_id == service_case_id,
+            UserDocument.document_type == DocumentType.DAY28_EXECUTION_STANDARD,
+            UserDocument.status == DocumentStatus.SENT,
+        )
+        .order_by(UserDocument.sent_at.desc(), UserDocument.id.desc())
+        .limit(1)
+    )
+    if document is None or not isinstance(document.content_json, dict):
+        return []
+    items = _raw_checkin_example_items(document.content_json)
+    if len(items) != 5:
+        return []
+    return [
+        f"{index}. {item['title']}｜{item['example_answer']}"
+        for index, item in enumerate(items, start=1)
+    ]
+
+
 async def _maybe_send_execution_commitment_invitation(
     session: AsyncSession, service_case: ServiceCase
 ) -> bool:
-    """两份最新交付文件均发送成功后，只发送一次执行承诺邀请。"""
+    """两份最新交付文件均发送成功后，只发送一次执行承诺邀请（若有打卡示例则合并为单条引导）。"""
     if not await _both_latest_intake_documents_sent(
         session, service_case_id=service_case.id
     ):
@@ -256,7 +281,13 @@ async def _maybe_send_execution_commitment_invitation(
     invitation = dict(state.get("invitation") or {})
     if invitation.get("status") in {"sending", "sent", "unknown"}:
         return False
-    content = render_commitment_invitation(state)
+
+    example_lines = await _extract_post_document_checkin_example_lines(
+        session, service_case_id=service_case.id
+    )
+    content = render_commitment_invitation(
+        state, checkin_example_lines=example_lines or None
+    )
     message = Message(
         service_case_id=service_case.id,
         group_id=service_case.group_id,
@@ -273,6 +304,20 @@ async def _maybe_send_execution_commitment_invitation(
     invitation.update({"status": "sending", "message_id": message.id})
     state["invitation"] = invitation
     locked_case.execution_commitment = state
+
+    program = await session.scalar(
+        select(CheckinRewardProgram).where(
+            CheckinRewardProgram.service_case_id == service_case.id
+        )
+    )
+    if program is None and example_lines:
+        program = CheckinRewardProgram(service_case_id=service_case.id)
+        session.add(program)
+        await session.flush()
+    if program is not None and example_lines:
+        program.intro_status = "sending"
+        program.intro_message_id = message.id
+
     await session.commit()
     try:
         result = await send_channel_text(service_case.group_id, content)
@@ -280,6 +325,8 @@ async def _maybe_send_execution_commitment_invitation(
         message.status = MessageStatus.UNKNOWN
         message.error = f"send raised: {type(exc).__name__}: {exc}"
         invitation["status"] = "unknown"
+        if program is not None and example_lines:
+            program.intro_status = "unknown"
         locked_case.execution_commitment = {**state, "invitation": invitation}
         await session.commit()
         return False
@@ -297,8 +344,12 @@ async def _maybe_send_execution_commitment_invitation(
         invitation.update(
             {"status": "sent", "sent_at": message.sent_at.isoformat()}
         )
+        if program is not None and example_lines:
+            program.intro_status = "sent"
     else:
         invitation["status"] = "unknown" if result.delivery_uncertain else "failed"
+        if program is not None and example_lines:
+            program.intro_status = "unknown" if result.delivery_uncertain else "failed"
     locked_case.execution_commitment = {**state, "invitation": invitation}
     await session.commit()
     return bool(result.success)
@@ -327,8 +378,8 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
         raise RuntimeError("documents are required before sending")
     documents_to_send = [document for document in documents if document.status != DocumentStatus.SENT]
     if not documents_to_send:
-        await _maybe_send_post_document_checkin_example(session, service_case)
         await _maybe_send_execution_commitment_invitation(session, service_case)
+        await _maybe_send_post_document_checkin_example(session, service_case)
         return documents
 
     should_send_intro = not any(
@@ -380,8 +431,8 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
         document.sent_at = _utc_now()
         _record_document_delivery(session, service_case, document, result.message_id)
         await session.commit()
-    await _maybe_send_post_document_checkin_example(session, service_case)
     await _maybe_send_execution_commitment_invitation(session, service_case)
+    await _maybe_send_post_document_checkin_example(session, service_case)
     for document in documents:
         await session.refresh(document)
     return documents
@@ -415,8 +466,8 @@ async def send_one_document(session: AsyncSession, document: UserDocument) -> Us
     document.sent_at = _utc_now()
     _record_document_delivery(session, service_case, document, result.message_id)
     await session.commit()
-    await _maybe_send_post_document_checkin_example(session, service_case)
     await _maybe_send_execution_commitment_invitation(session, service_case)
+    await _maybe_send_post_document_checkin_example(session, service_case)
     await session.refresh(document)
     return document
 
