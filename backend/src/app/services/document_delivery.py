@@ -176,6 +176,16 @@ async def _maybe_send_post_document_checkin_example(
     )
     if locked_case is None:
         return False
+    commitment = (
+        locked_case.execution_commitment
+        if isinstance(locked_case.execution_commitment, dict)
+        else {}
+    )
+    invitation = commitment.get("invitation")
+    if isinstance(invitation, dict) and isinstance(invitation.get("message_id"), int):
+        # 合并引导已经拥有自己的发送账本：明确失败时由它整体重试，
+        # 不再走旧的单独打卡示例路径，避免一次交付被拆成两条。
+        return False
     program = await session.scalar(
         select(CheckinRewardProgram).where(
             CheckinRewardProgram.service_case_id == service_case.id

@@ -608,6 +608,7 @@ async def mock_session_local(db_session):
         "app.services.agent.tools.service_case_tools",
         "app.services.agent.tools.checkin_checklist_tools",
         "app.services.agent.tools.followup_preference_tools",
+        "app.services.agent.tools.execution_commitment_tools",
         "app.services.agent.tools.service_lifecycle_tools",
         "app.services.agent.tools.reward_shipping_tools",
         "app.services.agent.tools.knowledge_tools",

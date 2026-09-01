@@ -374,6 +374,103 @@ async def test_bulk_send_uses_same_completion_trigger(db_session, monkeypatch, t
 
 
 @pytest.mark.asyncio
+async def test_failed_merged_guide_retries_as_one_complete_message(
+    db_session, monkeypatch
+):
+    service_case = _case(status=ServiceCaseStatus.REVIEWING, plan=date(2026, 8, 12))
+    service_case.execution_commitment = {
+        "version": 1,
+        "high_commitment_candidate": True,
+        "standard_target": "28天减重5-7斤",
+        "high_commitment_target": "28天向8-10斤推进",
+        "execution_path": "standard",
+        "status": "pending",
+        "reviews": {},
+    }
+    db_session.add(service_case)
+    await db_session.flush()
+    items = [
+        {
+            "order": index,
+            "category": "product" if index == 1 else "state",
+            "title": f"个性化原题{index}",
+            "answer_type": "text",
+            "options": [],
+            "example_answer": f"已完成第{index}项",
+        }
+        for index in range(1, 6)
+    ]
+    db_session.add_all(
+        [
+            UserDocument(
+                service_case_id=service_case.id,
+                document_type=document_type,
+                title=title,
+                content_md="内容",
+                content_json={
+                    "blocks": (
+                        [{"key": "daily_checkin", "checkin_items": items}]
+                        if document_type == DocumentType.DAY28_EXECUTION_STANDARD
+                        else []
+                    )
+                },
+                status=DocumentStatus.SENT,
+                sent_at=datetime.now(TZ),
+            )
+            for document_type, title in (
+                (DocumentType.ENERGY_RESTART_PRESCRIPTION, "个人能量重启诊断报告"),
+                (DocumentType.DAY28_EXECUTION_STANDARD, "28天高燃人生执行建议书"),
+            )
+        ]
+    )
+    await db_session.flush()
+    sent_texts: list[str] = []
+
+    async def fake_send_channel_text(group_id, content):
+        sent_texts.append(content)
+        if len(sent_texts) == 1:
+            return SimpleNamespace(
+                success=False,
+                message_id=None,
+                error="definite failure",
+                delivery_uncertain=False,
+            )
+        return SimpleNamespace(
+            success=True,
+            message_id="merged-retry",
+            error=None,
+            delivery_uncertain=False,
+        )
+
+    monkeypatch.setattr(document_delivery, "send_channel_text", fake_send_channel_text)
+
+    assert (
+        await document_delivery._maybe_send_execution_commitment_invitation(
+            db_session, service_case
+        )
+        is False
+    )
+    assert (
+        await document_delivery._maybe_send_post_document_checkin_example(
+            db_session, service_case
+        )
+        is False
+    )
+    assert len(sent_texts) == 1
+
+    assert (
+        await document_delivery._maybe_send_execution_commitment_invitation(
+            db_session, service_case
+        )
+        is True
+    )
+    assert len(sent_texts) == 2
+    assert all(text.count("【每日打卡】") == 1 for text in sent_texts)
+    assert all("高承诺档" in text for text in sent_texts)
+    assert sent_texts[0] == sent_texts[1]
+
+
+@pytest.mark.asyncio
 async def test_missing_example_answers_skip_message_without_blocking_files(
     db_session, monkeypatch, tmp_path, caplog
 ):

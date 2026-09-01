@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from langchain_core.tools import BaseTool, StructuredTool
@@ -17,6 +18,14 @@ from app.services.service_case_queries import select_active_service_cases
 class ConfirmExecutionCommitmentArgs(BaseModel):
     choice: Literal["high_commitment", "standard", "current_pace"] = Field(
         description="用户明确选择：高承诺档、标准档或先按当前节奏。"
+    )
+
+
+def _as_utc(value: datetime) -> datetime:
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
     )
 
 
@@ -53,6 +62,33 @@ def build_execution_commitment_tools(*, context: AgentRunContext) -> list[BaseTo
             inv_status = str(invitation.get("status") or "")
             if inv_status not in {"sending", "sent", "unknown"}:
                 return {"ok": False, "error": "执行邀请尚未成功发出，暂不能确认。"}
+            invitation_message_id = invitation.get("message_id")
+            invitation_message = None
+            if isinstance(invitation_message_id, int):
+                invitation_message = await session.scalar(
+                    select(Message).where(
+                        Message.id == invitation_message_id,
+                        Message.service_case_id == context.service_case_id,
+                        Message.direction == MessageDirection.OUTBOUND,
+                        Message.sender_type == MessageSenderType.BOT,
+                    )
+                )
+            invitation_meta = (
+                invitation_message.analysis_json.get("execution_commitment", {})
+                if invitation_message is not None
+                and isinstance(invitation_message.analysis_json, dict)
+                else {}
+            )
+            if (
+                invitation_message is None
+                or invitation_meta.get("kind") != "invitation"
+            ):
+                return {"ok": False, "error": "执行邀请记录不完整，暂不能确认。"}
+            if _as_utc(source.created_at) <= _as_utc(invitation_message.created_at):
+                return {
+                    "ok": False,
+                    "error": "这条回复早于执行邀请，请用户根据当前邀请重新明确选择。",
+                }
             meta = (
                 source.analysis_json.get("_qiwe_meta", {})
                 if isinstance(source.analysis_json, dict)
