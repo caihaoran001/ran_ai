@@ -622,6 +622,27 @@ def _length_checked(value: Any, *, max_len: int) -> str:
     return text_val
 
 
+def _jin_to_lbs_match(m: re.Match) -> str:
+    raw_range = m.group(1)
+    sep = "–" if "–" in raw_range else ("-" if "-" in raw_range else ("~" if "~" in raw_range else None))
+    if sep:
+        parts = raw_range.split(sep)
+        try:
+            p1 = round(float(parts[0].strip()) * 1.10231131, 1)
+            p2 = round(float(parts[1].strip()) * 1.10231131, 1)
+            t1 = f"{int(p1)}" if p1 == int(p1) else f"{p1:.1f}"
+            t2 = f"{int(p2)}" if p2 == int(p2) else f"{p2:.1f}"
+            return f"{t1}–{t2} lbs"
+        except (ValueError, IndexError):
+            return f"{raw_range} lbs"
+    try:
+        val = round(float(raw_range.strip()) * 1.10231131, 1)
+        text = f"{int(val)}" if val == int(val) else f"{val:.1f}"
+        return f"{text} lbs"
+    except ValueError:
+        return f"{raw_range} lbs"
+
+
 def _localize_band_and_units_en(text: Any) -> str:
     if not text:
         return ""
@@ -637,8 +658,8 @@ def _localize_band_and_units_en(text: Any) -> str:
     val = val.replace("B带", "Band B")
     val = val.replace("C带", "Band C")
     val = val.replace("D带", "Band D")
-    # Unit replacements
-    val = re.sub(r"(\d+(?:\.\d+)?(?:[–\-~]\d+(?:\.\d+)?)?)\s*斤", r"\1 lbs", val)
+    # Unit replacements with accurate numeric scaling (1 jin = 1.1023 lbs)
+    val = re.sub(r"(\d+(?:\.\d+)?(?:[–\-~]\d+(?:\.\d+)?)?)\s*斤", _jin_to_lbs_match, val)
     val = re.sub(r"(\d+(?:\.\d+)?(?:[–\-~]\d+(?:\.\d+)?)?)\s*公斤", r"\1 kg", val)
     return val
 

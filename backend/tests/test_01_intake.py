@@ -3129,12 +3129,15 @@ def test_imperial_units_weight_and_waist_conversion():
     assert _normalize_waist_cm("28 inch") == pytest.approx(71.12, 0.05)
     assert _normalize_waist_cm("28 inches") == pytest.approx(71.12, 0.05)
     assert _normalize_waist_cm("70 cm") == 70.0
+    # "I think 80" should NOT be matched as inches (not 80 * 2.54 = 203.2)
+    assert _normalize_waist_cm("I think 80") == 80.0
 
     body_val = parse_weight_kg("165 lbs")
     assert body_val.ok is True
     assert body_val.value == pytest.approx(74.84, 0.05)
 
     assert waist_explicit_unit_scale("28 inch") == 2.54
+    assert waist_explicit_unit_scale("I think 80") is None
 
     # Weight display formatting
     assert _weight_kg_to_display(74.84, language="en") == "165 lbs"
@@ -3167,8 +3170,8 @@ def test_english_document_template_localizes_bands_and_units():
     )
 
     assert _localize_band_and_units_en("B带｜轻盈启动") == "Band B | Gentle Energy Kickstart"
-    assert _localize_band_and_units_en("4–6斤") == "4–6 lbs"
-    assert _localize_band_and_units_en("8斤") == "8 lbs"
+    assert _localize_band_and_units_en("4–6斤") == "4.4–6.6 lbs"
+    assert _localize_band_and_units_en("8斤") == "8.8 lbs"
 
     summary_block = _execution_goal_summary_block(
         {
@@ -3182,7 +3185,7 @@ def test_english_document_template_localizes_bands_and_units():
         is_en=True,
     )
     assert "Band B | Gentle Energy Kickstart" in summary_block["content"]
-    assert "4–6 lbs" in summary_block["content"]
-    assert "8 lbs" in summary_block["content"]
+    assert "4.4–6.6 lbs" in summary_block["content"]
+    assert "8.8 lbs" in summary_block["content"]
     assert "B带" not in summary_block["content"]
     assert "斤" not in summary_block["content"]

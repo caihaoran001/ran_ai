@@ -742,10 +742,8 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 target_path=f"/q/{service_case.questionnaire_token}",
             )
             await link_session.commit()
-        link = f"{base_url}/s/{code}"
-        cmd_lang = questionnaire_command_language(message.text)
         case_lang = getattr(service_case, "language", "zh") or "zh"
-        lang = cmd_lang if cmd_lang == "en" else case_lang
+        lang = case_lang
 
         if lang == "en":
             reply = (

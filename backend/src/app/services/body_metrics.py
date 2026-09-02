@@ -88,6 +88,7 @@ def first_number(text: str) -> float | None:
 
 
 _LBS_HINTS = ("lb", "lbs", "pound", "pounds", "磅")
+_INCH_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?\s*(?:inch(?:es)?|in)\b|\b(?:inch(?:es)?|in)\b)", re.IGNORECASE)
 
 
 def has_explicit_kg(text: str) -> bool:
@@ -96,6 +97,10 @@ def has_explicit_kg(text: str) -> bool:
 
 def has_explicit_lbs(text: str) -> bool:
     return any(hint in text.lower() for hint in _LBS_HINTS)
+
+
+def has_explicit_inch(text: str) -> bool:
+    return bool(_INCH_PATTERN.search(text or ""))
 
 
 def has_explicit_jin(text: str) -> bool:
@@ -110,12 +115,12 @@ def waist_explicit_unit_scale(text: str) -> float | None:
     ``cm`` 里含 ``m``、``厘米``/``毫米`` 里含``米``，所以必须按从具体到宽泛的顺序判断。
     """
 
-    lower = text.lower()
+    lower = (text or "").lower()
     if "mm" in lower or "毫米" in lower:
         return 0.1
     if "cm" in lower or "厘米" in lower or "公分" in lower:
         return 1.0
-    if any(unit in lower for unit in ("inch", "inches", "in")):
+    if has_explicit_inch(text):
         return 2.54
     if "m" in lower or "米" in lower:
         return 100.0

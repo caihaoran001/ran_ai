@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.services.body_metrics import has_explicit_jin, has_explicit_lbs, parse_waist_cm
+from app.services.body_metrics import has_explicit_inch, has_explicit_jin, has_explicit_lbs, parse_waist_cm
 
 CUSTOM_ANSWER_LABEL = "其他（用户补充）"
 
@@ -432,11 +432,11 @@ def _normalize_waist_cm(value: str) -> float | None:
     问卷腰围会进腰高比和交付文件，填 24.5 当成 24.5 厘米会让腰高比变成 0.15。
     """
 
-    val_str = str(value or "").lower()
+    val_str = str(value or "")
     number = _first_number(val_str)
     if number is None or number <= 0:
         return None
-    if any(unit in val_str for unit in ("inch", "inches", "in")) and not any(u in val_str for u in ("cm", "厘米")):
+    if has_explicit_inch(val_str) and not any(u in val_str.lower() for u in ("cm", "厘米")):
         return round(number * 2.54, 2)
     parsed = parse_waist_cm(value)
     if parsed.value is not None:
