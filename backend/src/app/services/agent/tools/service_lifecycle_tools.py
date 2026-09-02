@@ -313,6 +313,56 @@ def build_service_lifecycle_tools(
                 "note": "续服已结束，原服务单和所有历史记录保留。",
             }
 
+    async def set_service_case_language(language: str) -> dict[str, Any]:
+        """由当前群内工作人员或用户切换本服务单的主服务语言（zh 或 en）。"""
+        target_lang = (language or "").strip().lower()
+        if target_lang in ("chinese", "zh-cn", "zh_cn", "cn", "中文", "汉语", "普通话"):
+            target_lang = "zh"
+        elif target_lang in ("english", "en-us", "en_us", "en-gb", "英文", "英语"):
+            target_lang = "en"
+
+        if target_lang not in ("zh", "en"):
+            return {
+                "ok": False,
+                "error": "语言代码必须为 'zh'（中文）或 'en'（英文）。",
+            }
+
+        now = datetime.now(timezone.utc)
+        async with SessionLocal() as session:
+            source, meta = await _explicit_group_source(session, context)
+            service_case = await session.scalar(
+                select_active_service_cases(
+                    ServiceCase.id == context.service_case_id
+                ).with_for_update()
+            )
+            if service_case is None:
+                return {"ok": False, "error": "当前服务单不存在或已删除。"}
+            if service_case.language == target_lang:
+                return {
+                    "ok": True,
+                    "language": target_lang,
+                    "already_set": True,
+                    "note": f"当前群服务语言已经是 {target_lang}，无需重复设置。",
+                }
+
+            service_case.language = target_lang
+            if source:
+                _append_event(
+                    service_case,
+                    action="set_service_case_language",
+                    occurred_at=now,
+                    source=source,
+                    meta=meta,
+                    details={"language": target_lang},
+                )
+            await session.commit()
+            return {
+                "ok": True,
+                "language": target_lang,
+                "updated": True,
+                "note": f"本群服务语言已成功切换为 {target_lang}。",
+            }
+
     return [
         StructuredTool.from_function(
             coroutine=set_service_start_date,
@@ -341,6 +391,16 @@ def build_service_lifecycle_tools(
             description=(
                 "End an open-ended continued service on THIS service case. Use only for an explicit @bot request from "
                 "identified staff. It must not end an ordinary first 28-day service or act on a customer's request."
+            ),
+        ),
+        StructuredTool.from_function(
+            coroutine=set_service_case_language,
+            name="set_service_case_language",
+            description=(
+                "Set or switch the primary service language for THIS group (strictly 'zh' for Chinese or 'en' for English). "
+                "Use when staff or user explicitly @mentions the bot or clearly asks to speak/chat in English or Chinese in this group "
+                "(e.g. '请使用英文对话', '此专属群全程使用英文对话', 'switch to English', 'use English', '全程中文', '换回中文'). "
+                "Never use for general quotes or incidental English/Chinese words in normal conversation."
             ),
         ),
     ]

@@ -77,7 +77,10 @@ from app.services.ranren_ai.engine import (
     _sanitize_ai_reply,
     _segments_from_meta,
 )
-from app.services.ranren_ai.commands import is_questionnaire_command
+from app.services.ranren_ai.commands import (
+    is_language_switch_command,
+    is_questionnaire_command,
+)
 from app.services.service_case_queries import select_active_service_cases
 
 if TYPE_CHECKING:
@@ -510,6 +513,19 @@ class EngineGraph:
                         message.chat_id, service_case.id, message.message_id, was_silenced,
                     )
                     resume_takeover_receipt = was_silenced
+
+                switch_lang = is_language_switch_command(message.text) if message.message_type == "text" else None
+                if switch_lang and _message_mentions_bot(message):
+                    if getattr(service_case, "language", "zh") != switch_lang:
+                        service_case.language = switch_lang
+                        session.add(service_case)
+                        await session.flush()
+                        service_case_language = switch_lang
+                        logger.info(
+                            "RanrenAI group command switched language chat_id=%s service_case_id=%s language=%s",
+                            message.chat_id, service_case.id, switch_lang,
+                        )
+
                 service_case_silenced = not bool(getattr(service_case, "ai_auto_reply_enabled", True))
 
                 # 进退群通知也是「非员工发言」，但绝不能拿它认客户：生产上 #285 建单那一刻
