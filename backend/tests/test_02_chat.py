@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 import secrets
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 from app.services.service_case_queries import checkin_day, effective_service_day
@@ -90,6 +92,70 @@ async def _ingest_and_analyze(db_session, case_id, group_id, content, mock_ai):
     ))
     await db_session.flush()
     return insight
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "expected_copy"),
+    [
+        ("zh", "已为本群生成专属入营问卷"),
+        ("en", "The enrollment questionnaire for this group is ready"),
+    ],
+)
+async def test_questionnaire_link_reply_sends_short_link_in_case_language(
+    mock_message_channel, monkeypatch, language, expected_copy
+):
+    """问卷短链及文案必须随服务单语言一起进入实际发送路径。"""
+    import app.services.ranren_ai.engine as engine_mod
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def commit(self):
+            return None
+
+    short_link = AsyncMock(return_value="enroll42")
+    monkeypatch.setattr(engine_mod, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(engine_mod, "get_or_create_short_link", short_link)
+
+    engine = RanrenAIEngine(mock_message_channel)
+    sent: dict[str, object] = {}
+
+    async def fake_send_and_record(**kwargs):
+        sent.update(kwargs)
+        return SimpleNamespace(success=True, message_id="questionnaire-sent")
+
+    monkeypatch.setattr(engine, "_send_and_record", fake_send_and_record)
+    message = ChannelMessage(
+        channel="qiwe",
+        chat_id="questionnaire-language-group",
+        chat_type="group",
+        text="Send the group enrollment questionnaire",
+        message_id="questionnaire-command-1",
+    )
+    service_case = SimpleNamespace(
+        id=42,
+        language=language,
+        questionnaire_token="intake-token-42",
+    )
+
+    await engine._reply_questionnaire_link(message, service_case)
+
+    expected_link = f"{engine.settings.frontend_public_base_url.rstrip('/')}/s/enroll42"
+    assert expected_link in str(sent["content"])
+    assert expected_copy in str(sent["content"])
+    assert sent["service_case_id"] == 42
+    short_link.assert_awaited_once()
+    _args, short_link_kwargs = short_link.await_args
+    assert short_link_kwargs == {
+        "service_case_id": 42,
+        "template_key": "intake",
+        "target_path": "/q/intake-token-42",
+    }
 
 
 def test_format_chat_history_line_labels_bot_as_assistant():

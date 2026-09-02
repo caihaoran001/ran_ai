@@ -44,7 +44,6 @@ from app.services.service_case_activation import (
     restore_case_on_member_return,
 )
 from app.services.qiwe_service.non_text import TYPE_SYSTEM_NOTICE
-from app.services.ranren_ai.commands import questionnaire_command_language
 from app.services.short_link import get_or_create_short_link
 from app.services.message_insight_service import analyze_message_insight, merge_case_insight
 from app.services.service_case_queries import (
@@ -742,6 +741,7 @@ class RanrenAIEngine(InboundAttachmentProcessor):
                 target_path=f"/q/{service_case.questionnaire_token}",
             )
             await link_session.commit()
+        link = f"{base_url}/s/{code}"
         case_lang = getattr(service_case, "language", "zh") or "zh"
         lang = case_lang
 
