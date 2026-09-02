@@ -16,45 +16,59 @@ INTAKE_TEMPLATE_KEY = "intake"
 
 
 @lru_cache
-def get_questionnaire_template() -> dict[str, Any]:
-    path = Path(__file__).with_name("questionnaire_template.json")
+def _load_template_json(filename: str) -> dict[str, Any]:
+    path = Path(__file__).with_name(filename)
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def get_questionnaire_fields() -> list[dict[str, Any]]:
-    fields = get_questionnaire_template().get("fields", [])
+def get_questionnaire_template(language: str = "zh") -> dict[str, Any]:
+    filename = "questionnaire_template_en.json" if language == "en" else "questionnaire_template.json"
+    return _load_template_json(filename)
+
+
+def get_questionnaire_fields(language: str = "zh") -> list[dict[str, Any]]:
+    fields = get_questionnaire_template(language).get("fields", [])
     return fields if isinstance(fields, list) else []
 
 
-def default_questionnaire_template(template_key: str = INTAKE_TEMPLATE_KEY) -> dict[str, Any]:
+def default_questionnaire_template(
+    template_key: str = INTAKE_TEMPLATE_KEY,
+    language: str = "zh",
+) -> dict[str, Any]:
     if template_key == INTAKE_TEMPLATE_KEY:
-        template = get_questionnaire_template()
+        template = get_questionnaire_template(language)
+        default_name = "HumanBurning AI 1.0 Assessment" if language == "en" else "燃人AI 1.0 问卷"
+        default_title = "HumanBurning Intake Assessment" if language == "en" else "燃人AI服务问卷"
+        default_desc = "Please complete the following information." if language == "en" else "请完成以下信息。"
         return {
             "template_key": INTAKE_TEMPLATE_KEY,
-            "name": str(template.get("name") or "燃人AI 1.0 问卷"),
-            "title": str(template.get("title") or "燃人AI服务问卷"),
-            "description": str(template.get("description") or "请完成以下信息。"),
-            "fields": get_questionnaire_fields(),
+            "language": language,
+            "name": str(template.get("name") or default_name),
+            "title": str(template.get("title") or default_title),
+            "description": str(template.get("description") or default_desc),
+            "fields": get_questionnaire_fields(language),
         }
     for template in default_checkin_questionnaire_templates():
         if template.get("template_key") == template_key:
-            return template
+            return {**template, "language": language}
     raise KeyError(template_key)
 
 
-def default_questionnaire_templates() -> list[dict[str, Any]]:
-    return [default_questionnaire_template(INTAKE_TEMPLATE_KEY), *default_checkin_questionnaire_templates()]
+def default_questionnaire_templates(language: str = "zh") -> list[dict[str, Any]]:
+    return [default_questionnaire_template(INTAKE_TEMPLATE_KEY, language=language), *default_checkin_questionnaire_templates()]
 
 
 async def get_active_questionnaire_template(
     session: AsyncSession,
     template_key: str = INTAKE_TEMPLATE_KEY,
+    language: str = "zh",
 ) -> dict[str, Any]:
     template = await session.scalar(
         select(QuestionnaireTemplate)
         .where(
             QuestionnaireTemplate.is_active.is_(True),
             QuestionnaireTemplate.template_key == template_key,
+            QuestionnaireTemplate.language == language,
         )
         .order_by(QuestionnaireTemplate.updated_at.desc())
         .limit(1)
@@ -62,33 +76,42 @@ async def get_active_questionnaire_template(
     if template:
         return {
             "template_key": template.template_key,
+            "language": template.language,
             "name": template.name,
             "title": template.title,
             "description": template.description,
             "fields": template.fields_json,
         }
-    return default_questionnaire_template(template_key)
+    return default_questionnaire_template(template_key, language=language)
 
 
 async def get_active_questionnaire_fields(
     session: AsyncSession,
     template_key: str = INTAKE_TEMPLATE_KEY,
+    language: str = "zh",
 ) -> list[dict[str, Any]]:
-    return list((await get_active_questionnaire_template(session, template_key)).get("fields") or [])
+    return list((await get_active_questionnaire_template(session, template_key, language=language)).get("fields") or [])
 
 
-async def get_all_active_questionnaire_templates(session: AsyncSession) -> list[dict[str, Any]]:
-    templates = {item["template_key"]: item for item in default_questionnaire_templates()}
+async def get_all_active_questionnaire_templates(
+    session: AsyncSession,
+    language: str = "zh",
+) -> list[dict[str, Any]]:
+    templates = {item["template_key"]: item for item in default_questionnaire_templates(language=language)}
     active = list(
         await session.scalars(
             select(QuestionnaireTemplate)
-            .where(QuestionnaireTemplate.is_active.is_(True))
+            .where(
+                QuestionnaireTemplate.is_active.is_(True),
+                QuestionnaireTemplate.language == language,
+            )
             .order_by(QuestionnaireTemplate.template_key.asc(), QuestionnaireTemplate.updated_at.desc())
         )
     )
     for template in active:
         templates[template.template_key] = {
             "template_key": template.template_key,
+            "language": template.language,
             "name": template.name,
             "title": template.title,
             "description": template.description,
@@ -103,6 +126,7 @@ async def save_active_questionnaire_fields(
     *,
     name: str = "燃人AI 1.0 问卷",
     template_key: str = INTAKE_TEMPLATE_KEY,
+    language: str = "zh",
     title: str | None = None,
     description: str | None = None,
 ) -> QuestionnaireTemplate:
@@ -111,6 +135,7 @@ async def save_active_questionnaire_fields(
             select(QuestionnaireTemplate).where(
                 QuestionnaireTemplate.is_active.is_(True),
                 QuestionnaireTemplate.template_key == template_key,
+                QuestionnaireTemplate.language == language,
             )
         )
     )
@@ -118,6 +143,7 @@ async def save_active_questionnaire_fields(
         item.is_active = False
     template = QuestionnaireTemplate(
         template_key=template_key,
+        language=language,
         name=name,
         title=title,
         description=description,
@@ -133,15 +159,18 @@ async def save_active_questionnaire_fields(
 async def save_questionnaire_templates(
     session: AsyncSession,
     templates: list[dict[str, Any]],
+    language: str = "zh",
 ) -> list[dict[str, Any]]:
     for template in templates:
         template_key = str(template.get("template_key") or INTAKE_TEMPLATE_KEY)
+        tpl_lang = str(template.get("language") or language)
         await save_active_questionnaire_fields(
             session,
             list(template.get("fields") or []),
             name=str(template.get("name") or template_key),
             template_key=template_key,
+            language=tpl_lang,
             title=template.get("title"),
             description=template.get("description"),
         )
-    return await get_all_active_questionnaire_templates(session)
+    return await get_all_active_questionnaire_templates(session, language=language)

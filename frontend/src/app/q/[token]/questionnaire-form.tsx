@@ -5,7 +5,6 @@ import { Check, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { CAI_HAORAN_SAMPLE_ANSWERS } from "./sample-answers";
 
 type Questionnaire = {
   token: string;
@@ -43,84 +42,6 @@ const BANDS: Record<"height" | "weight" | "age" | "bmi", Band> = {
   },
 };
 
-const I18N_FIELD_MAP: Record<string, { title: string; subtitle?: string; options?: Record<string, string> }> = {
-  "SEGMENTATION1774103277530mn0fa9y2": {
-    title: "Module 1 | Identity & Baseline",
-    subtitle: "By completing and submitting this assessment, you agree that this information will be used for state evaluation, plan generation, and 28-day coaching.",
-  },
-  "SIMPLE1774103358253mn0fc08d": {
-    title: "Full Legal Name",
-    subtitle: "For personal plan records and coaching communication",
-  },
-  "SIMPLE1774103429810mn0fdjg2": {
-    title: "Phone / Contact Number",
-    subtitle: "For service coordination",
-  },
-  "SIMPLE1774103480574mn0femm6": {
-    title: "Preferred Name / Nickname",
-    subtitle: "How you would like our coaching team to address you",
-  },
-  "DATEPLANSTART0001": {
-    title: "Planned Start Date",
-    subtitle: "When would you like to officially begin? We will schedule your check-ins and pace from this day.",
-  },
-  "RADIO1774103553031mn0fg6ix": {
-    title: "Gender",
-    options: {
-      "男": "Male",
-      "女": "Female",
-    },
-  },
-  "SIMPLE1774103589114mn0fgyd6": {
-    title: "Age",
-    subtitle: "Please enter your age in years",
-  },
-  "SIMPLE1774103860160mn0fmri8": {
-    title: "City of Residence",
-    subtitle: "Your current city or time zone",
-  },
-  "SEGMENTATION1774103999829mn0fpr9y": {
-    title: "Module 2 | Body Measurements",
-    subtitle: "Please provide accurate measurements to ensure safe and effective plan targets.",
-  },
-  "SIMPLE1774104038286mn0fqky6": {
-    title: "Height (cm)",
-    subtitle: "e.g., 175",
-  },
-  "SIMPLE1774104087629mn0frn0t": {
-    title: "Current Weight (kg)",
-    subtitle: "e.g., 70.5",
-  },
-  "SIMPLE_ADULT_STABLE_COMFORT_WEIGHT_KG": {
-    title: "Adult Stable Comfort Weight (kg)",
-    subtitle: "A historical weight where you felt energetic, healthy, and comfortable",
-  },
-  "SIMPLE1774104132462mn0fslm6": {
-    title: "Waist Circumference (cm)",
-    subtitle: "Measured horizontally at navel level (optional/recommended)",
-  },
-  "SIMPLE1774104236120mn0futlk": {
-    title: "Body Fat %",
-    subtitle: "Optional (if scale data available)",
-  },
-  "SEGMENTATION1774104390470mn0fy4p2": {
-    title: "Module 3 | Health History & Goals",
-    subtitle: "Tell us about your background and what you hope to achieve.",
-  },
-  "SEGMENTATION1774105083327mn0gczb3": {
-    title: "Module 4 | Daily Routine & Work Context",
-    subtitle: "Understanding your schedule helps us create actionable recommendations that fit your real life.",
-  },
-  "SEGMENTATION1774105914655mn0gusrj": {
-    title: "Module 5 | Dietary Patterns & Preferences",
-    subtitle: "Your eating habits, food choices, and meal timings.",
-  },
-  "SEGMENTATION1774171370170mn1jtqka": {
-    title: "Module 6 | Exercise & Physical Activity",
-    subtitle: "Your current movement habits and fitness background.",
-  },
-};
-
 function classifyBand(v: number, b: Band): "hard" | "soft" | null {
   if (v < b.hardLow || v > b.hardHigh) return "hard";
   if (v < b.softLow || v > b.softHigh) return "soft";
@@ -151,15 +72,15 @@ function checkBodyMeasurements(
   const weightKg = (value: { key: string; num: number; raw: string } | null) => {
     if (!value) return null;
     const text = value.raw.toLowerCase();
-    const isLbs = text.includes("lb") || text.includes("pound");
-    if (isLbs) return { ...value, num: value.num / 2.20462 };
+    const isLbs = text.includes("lb") || text.includes("pound") || text.includes("磅");
+    if (isLbs) return { ...value, num: value.num * 0.45359237 };
     const isJin = text.includes("斤") && !["公斤", "千克", "kg", "㎏"].some((unit) => text.includes(unit));
     return { ...value, num: isJin ? value.num / 2 : value.num };
   };
   const waistCm = (value: { key: string; num: number; raw: string } | null) => {
     if (!value) return null;
     const text = value.raw.toLowerCase();
-    if (text.includes("inch") || text.includes("in")) return { ...value, num: value.num * 2.54 };
+    if (text.includes("inch") || text.includes("in") || text.includes("英寸")) return { ...value, num: value.num * 2.54 };
     if (text.includes("mm") || text.includes("毫米")) return { ...value, num: value.num / 10 };
     if ((text.includes("m") && !text.includes("cm") && !text.includes("mm")) ||
         (text.includes("米") && !text.includes("厘米") && !text.includes("毫米"))) {
@@ -180,7 +101,7 @@ function checkBodyMeasurements(
         level: "hard",
         msg: isEn
           ? `Height entered as ${h.num}. It appears to be in meters; please use centimeters (e.g., enter 170 for 1.7m).`
-          : `身高填写为 ${h.num}，疑似填成了"米"，请改用厘米（如 1.7 米应填 170）`,
+          : `身高填写为 ${h.num}，疑似填成了“米”，请改用厘米（如 1.7 米应填 170）`,
       });
     } else {
       const lv = classifyBand(h.num, BANDS.height);
@@ -205,14 +126,14 @@ function checkBodyMeasurements(
   }
   if (w) {
     const lv = classifyBand(w.num, BANDS.weight);
-    if (lv === "hard") issues.push({ key: w.key, level: "hard", msg: DISSUADE(isEn ? "Weight" : "体重", w.num, " kg", isEn) });
+    if (lv === "hard") issues.push({ key: w.key, level: "hard", msg: DISSUADE(isEn ? "Weight" : "体重", Number(w.num.toFixed(1)), " kg", isEn) });
     else if (lv === "soft") {
       issues.push({
         key: w.key,
         level: "soft",
         msg: isEn
-          ? `Weight of ${w.num} kg deviates from typical range. Please confirm it is correct.`
-          : `体重 ${w.num} kg 偏离常见范围，请确认填写无误`,
+          ? `Weight of ${w.num.toFixed(1)} kg deviates from typical range. Please confirm it is correct.`
+          : `体重 ${w.num.toFixed(1)} kg 偏离常见范围，请确认填写无误`,
       });
     }
   }
@@ -315,7 +236,7 @@ export function QuestionnaireForm({
     });
     if (missing) {
       setShowSoftConfirm(false);
-      const title = I18N_FIELD_MAP[missing.key]?.title ?? missing.title ?? missing.label;
+      const title = missing.title ?? missing.label;
       const msg = isEn ? `Please fill in: ${title}` : `请填写：${title}`;
       setFieldIssues((prev) => ({
         ...prev,
@@ -373,7 +294,7 @@ export function QuestionnaireForm({
     try {
       const response = await fetch(url, {
         method: editMode ? "PATCH" : "POST",
-        headers: {"content-type": "application/json"},
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ answers: nextAnswers, language: questionnaire.language || "zh" }),
       });
       if (!response.ok) {
@@ -455,10 +376,10 @@ export function QuestionnaireForm({
           value={answers[field.key]}
           issue={fieldIssues[field.key]}
           onChange={(value) => {
-            setAnswers({...answers, [field.key]: value});
+            setAnswers({ ...answers, [field.key]: value });
             if (fieldIssues[field.key]) {
               setFieldIssues((prev) => {
-                const next = {...prev};
+                const next = { ...prev };
                 delete next[field.key];
                 return next;
               });
@@ -553,9 +474,8 @@ function FieldInput({
   issue?: BodyIssue;
 }) {
   const id = `q-field-${field.key}`;
-  const custom = isEn ? I18N_FIELD_MAP[field.key] : undefined;
-  const label = custom?.title ?? field.title ?? field.label;
-  const subtitle = custom?.subtitle ?? field.subtitle;
+  const label = field.title ?? field.label;
+  const subtitle = field.subtitle;
 
   if (field.type === "SEGMENTATION") {
     return (
@@ -586,7 +506,6 @@ function FieldInput({
         label={label}
         subtitle={subtitle}
         required={required}
-        customOptions={custom?.options}
       />
     );
   } else if (field.type === "DATE") {
@@ -665,7 +584,6 @@ function ChoiceField({
   label,
   subtitle,
   required,
-  customOptions,
 }: {
   field: Questionnaire["fields"][number];
   isEn: boolean;
@@ -675,21 +593,38 @@ function ChoiceField({
   label: string;
   subtitle?: string;
   required: React.ReactNode;
-  customOptions?: Record<string, string>;
 }) {
   const selected = (value ?? "").split("||").filter(Boolean);
-  const isOtherEntry = (s: string) => s === OTHER_OPTION || s.startsWith(`${OTHER_OPTION}：`) || s === OTHER_OPTION_EN || s.startsWith(`${OTHER_OPTION_EN}: `);
+  const isOther = (opt: string) =>
+    opt === OTHER_OPTION ||
+    opt === OTHER_OPTION_EN ||
+    opt.startsWith(`${OTHER_OPTION}：`) ||
+    opt.startsWith(`${OTHER_OPTION_EN}: `) ||
+    opt.toLowerCase().startsWith("other:") ||
+    opt.startsWith("其他：") ||
+    opt.toLowerCase() === "other: ____" ||
+    opt === "其他：____";
+  const isOtherEntry = (s: string) => isOther(s);
   const otherEntry = selected.find(isOtherEntry);
   const otherChosen = Boolean(otherEntry);
-  const [otherText, setOtherText] = useState(
-    otherEntry && (otherEntry.startsWith(`${OTHER_OPTION}：`) || otherEntry.startsWith(`${OTHER_OPTION_EN}: `))
-      ? otherEntry.slice(otherEntry.indexOf(isEn ? ": " : "：") + (isEn ? 2 : 1))
-      : "",
-  );
 
-  const otherLabel = isEn ? OTHER_OPTION_EN : OTHER_OPTION;
-  const isOther = (opt: string) => opt === OTHER_OPTION || opt === OTHER_OPTION_EN;
-  const encodeOther = (text: string) => (text.trim() ? `${OTHER_OPTION}：${text.trim()}` : OTHER_OPTION);
+  const [otherText, setOtherText] = useState(() => {
+    if (!otherEntry) return "";
+    if (otherEntry.includes(": ")) {
+      return otherEntry.slice(otherEntry.indexOf(": ") + 2);
+    }
+    if (otherEntry.includes("：")) {
+      return otherEntry.slice(otherEntry.indexOf("：") + 1);
+    }
+    return "";
+  });
+
+  const encodeOther = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return isEn ? OTHER_OPTION_EN : OTHER_OPTION;
+    return isEn ? `${OTHER_OPTION_EN}: ${trimmed}` : `${OTHER_OPTION}：${trimmed}`;
+  };
+
   const isActive = (opt: string) => (isOther(opt) ? otherChosen : selected.includes(opt));
 
   function toggle(opt: string) {
@@ -721,7 +656,7 @@ function ChoiceField({
       <div className="mt-2 grid gap-2">
         {(field.options ?? []).map((option) => {
           const active = isActive(option);
-          const displayOption = customOptions?.[option] ?? (isOther(option) ? otherLabel : option);
+          const displayOption = option;
           return (
             <label
               key={option}

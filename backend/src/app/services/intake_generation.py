@@ -810,7 +810,10 @@ async def _generate_intake_analysis_package(
     user_name: str,
     submission: QuestionnaireSubmission,
 ) -> dict[str, object]:
-    fields = await get_active_questionnaire_fields(session, "intake")
+    case_lang = getattr(service_case, "language", "zh") or "zh"
+    if case_lang not in ("zh", "en"):
+        case_lang = "zh"
+    fields = await get_active_questionnaire_fields(session, "intake", language=case_lang)
     readable_answers = _safety_model_readable_answers(fields, submission.answers_json)
     preliminary_facts = build_intake_fact_summary(fields, submission.answers_json)
     safety_factors = await _extract_safety_factors(

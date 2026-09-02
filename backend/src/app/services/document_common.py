@@ -37,13 +37,14 @@ def get_document_title(doc_type: DocumentType, language: str = "zh") -> str:
 async def _user_name(session: AsyncSession, service_case: ServiceCase) -> str:
     submission = await _latest_submission(session, service_case.id)
     if submission:
-        fields = await get_active_questionnaire_fields(session, "intake")
+        case_lang = getattr(service_case, "language", "zh") or "zh"
+        fields = await get_active_questionnaire_fields(session, "intake", language=case_lang)
         facts = build_intake_fact_summary(fields, submission.answers_json)
         preferred_name = str(facts.get("preferred_name") or "").strip()
-        if preferred_name and preferred_name != "未提供":
+        if preferred_name and preferred_name not in ("未提供", "N/A"):
             return preferred_name
         legal_name = str(facts.get("legal_name") or "").strip()
-        if legal_name and legal_name != "未提供":
+        if legal_name and legal_name not in ("未提供", "N/A"):
             return legal_name
     if not service_case.user_id:
         return "未提供"
@@ -62,11 +63,12 @@ async def _recipient_name_and_gender(
     """
     submission = await _latest_submission(session, service_case.id)
     if submission:
-        fields = await get_active_questionnaire_fields(session, "intake")
+        case_lang = getattr(service_case, "language", "zh") or "zh"
+        fields = await get_active_questionnaire_fields(session, "intake", language=case_lang)
         facts = build_intake_fact_summary(fields, submission.answers_json)
         recipient = str(facts.get("recipient_name") or "").strip()
         gender = str(facts.get("gender") or "").strip() or "未提供"
-        if recipient and recipient != "未提供":
+        if recipient and recipient not in ("未提供", "N/A"):
             return recipient, gender
     name = await _user_name(session, service_case)
     return name, "未提供"

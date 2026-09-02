@@ -124,13 +124,13 @@ function GraduatedCheckinPage() {
 function QuestionnaireReadonly({ questionnaire }: { questionnaire: Questionnaire }) {
   const isEn = questionnaire.language === "en";
   const answers = questionnaire.latest_submission?.answers_json ?? {};
-  const answeredFields = answerItems(questionnaire.fields, answers);
+  const answeredFields = answerItems(questionnaire.fields, answers, isEn);
   return (
     <section className="space-y-3">
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm leading-6 text-emerald-800">
         {isEn
-          ? `Submitted on ${formatDateTime(questionnaire.latest_submission?.created_at)}. This page is currently read-only.`
-          : `已于 ${formatDateTime(questionnaire.latest_submission?.created_at)} 提交。该链接现在仅用于查看，不支持修改或重复提交。`}
+          ? `Submitted on ${formatDateTime(questionnaire.latest_submission?.created_at, isEn)}. This page is currently read-only.`
+          : `已于 ${formatDateTime(questionnaire.latest_submission?.created_at, isEn)} 提交。该链接现在仅用于查看，不支持修改或重复提交。`}
       </div>
       {answeredFields.map((field) => (
         <div key={field.key} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -148,6 +148,7 @@ function QuestionnaireReadonly({ questionnaire }: { questionnaire: Questionnaire
 function answerItems(
   fields: Questionnaire["fields"],
   answers: Record<string, unknown>,
+  isEn: boolean,
 ) {
   const knownKeys = new Set<string>();
   const items = fields
@@ -158,26 +159,28 @@ function answerItems(
         key: field.key,
         label: field.title ?? field.label,
         subtitle: field.subtitle,
-        value: formatAnswer(answers[field.key]),
+        value: formatAnswer(answers[field.key], isEn),
       };
     })
     .filter((item) => item.value);
 
   for (const [key, value] of Object.entries(answers)) {
     if (knownKeys.has(key)) continue;
-    const display = formatAnswer(value);
+    const display = formatAnswer(value, isEn);
     if (display) items.push({ key, label: key, subtitle: undefined, value: display });
   }
   return items;
 }
 
-function formatAnswer(value: unknown) {
-  if (Array.isArray(value)) return value.join("、");
+function formatAnswer(value: unknown, isEn = false) {
+  const sep = isEn ? ", " : "、";
+  if (Array.isArray(value)) return value.join(sep);
   if (value === null || value === undefined) return "";
-  return String(value).replaceAll("||", "、");
+  return String(value).replaceAll("||", sep);
 }
 
-function formatDateTime(value?: string | null) {
-  if (!value) return "未知时间";
-  return formatChinaDateTime(value, "未知时间");
+function formatDateTime(value?: string | null, isEn = false) {
+  const fallback = isEn ? "Unknown time" : "未知时间";
+  if (!value) return fallback;
+  return formatChinaDateTime(value, fallback);
 }

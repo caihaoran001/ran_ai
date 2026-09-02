@@ -73,21 +73,35 @@ async def get_questionnaire(
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnairePublic:
     service_case = await _case_by_token(session, token, include_deleted=False)
+    case_lang = getattr(service_case, "language", "zh") or "zh"
+    if case_lang not in ("zh", "en"):
+        case_lang = "zh"
     default_values: dict[str, Any] = {}
     timezone = ZoneInfo(get_settings().reminder_timezone)
     if template != "intake" and service_window_ended(service_case, datetime.now(timezone), timezone):
-        raise HTTPException(status_code=410, detail="28天服务已结束，无需继续打卡")
+        raise HTTPException(
+            status_code=410,
+            detail="28天服务已结束，无需继续打卡" if case_lang == "zh" else "28-day service cycle completed.",
+        )
     if template == "personalized_checkin":
         fields = await _personalized_checkin_fields(session, service_case)
         template_payload = {
             "template_key": "personalized_checkin",
-            "name": "每日行动",
-            "title": f"燃人HumanBurning.AI | {service_case.user.name if service_case.user else '您'}的每日行动（必填）",
-            "description": "这是为您量身定制的每日固定行动（共 5 项）。今日如时间紧张，请优先完成此表（只需10秒）。",
-            "fields": fields
+            "name": "Daily Actions" if case_lang == "en" else "每日行动",
+            "title": (
+                f"HumanBurning.AI | {service_case.user.name if service_case.user else 'Your'} Daily Actions (Required)"
+                if case_lang == "en"
+                else f"燃人HumanBurning.AI | {service_case.user.name if service_case.user else '您'}的每日行动（必填）"
+            ),
+            "description": (
+                "These are your 5 personalized daily actions. If short on time today, please prioritize completing this form (~10s)."
+                if case_lang == "en"
+                else "这是为您量身定制的每日固定行动（共 5 项）。今日如时间紧张，请优先完成此表（只需10秒）。"
+            ),
+            "fields": fields,
         }
     else:
-        template_payload = await _template_or_404(session, template)
+        template_payload = await _template_or_404(session, template, language=case_lang)
         if template != "intake":
             default_values = await _build_checkin_default_values(session, service_case, template)
 
@@ -96,7 +110,7 @@ async def get_questionnaire(
         service_case_id=service_case.id,
         token=token,
         template_key=template,
-        language=getattr(service_case, "language", "zh") or "zh",
+        language=case_lang,
         title=template_payload.get("title"),
         description=template_payload.get("description"),
         allow_repeat=_allow_repeat(template),
@@ -119,14 +133,20 @@ async def submit_questionnaire(
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnaireSubmission:
     service_case = await _case_by_token(session, token, include_deleted=False)
+    case_lang = getattr(service_case, "language", "zh") or "zh"
+    if case_lang not in ("zh", "en"):
+        case_lang = "zh"
     timezone = ZoneInfo(get_settings().reminder_timezone)
     if template != "intake" and service_window_ended(service_case, datetime.now(timezone), timezone):
-        raise HTTPException(status_code=410, detail="28天服务已结束，无需继续打卡")
+        raise HTTPException(
+            status_code=410,
+            detail="28天服务已结束，无需继续打卡" if case_lang == "zh" else "28-day service cycle completed.",
+        )
     if template == "personalized_checkin":
         fields = await _personalized_checkin_fields(session, service_case)
     else:
-        await _template_or_404(session, template)
-        fields = await get_active_questionnaire_fields(session, template)
+        await _template_or_404(session, template, language=case_lang)
+        fields = await get_active_questionnaire_fields(session, template, language=case_lang)
 
     if not _allow_repeat(template) and await _latest_submission(session, service_case.id, template):
         raise HTTPException(status_code=409, detail="questionnaire already submitted")
@@ -198,7 +218,10 @@ async def edit_intake_submission(
     已发送的旧文档保留在库（发送时自动跳过），重新生成的新文档进入待审核。
     """
     service_case = await _case_by_token(session, token, include_deleted=False)
-    fields = await get_active_questionnaire_fields(session, "intake")
+    case_lang = getattr(service_case, "language", "zh") or "zh"
+    if case_lang not in ("zh", "en"):
+        case_lang = "zh"
+    fields = await get_active_questionnaire_fields(session, "intake", language=case_lang)
     submission = await _latest_submission(session, service_case.id, "intake")
     if not submission:
         raise HTTPException(status_code=404, detail="no intake submission to edit")
@@ -254,9 +277,9 @@ async def _latest_submission(
     )
 
 
-async def _template_or_404(session: AsyncSession, template_key: str) -> dict:
+async def _template_or_404(session: AsyncSession, template_key: str, language: str = "zh") -> dict:
     try:
-        return await get_active_questionnaire_template(session, template_key)
+        return await get_active_questionnaire_template(session, template_key, language=language)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="questionnaire template not found") from exc
 
@@ -636,8 +659,8 @@ async def _sync_user_from_answers(
     if not user:
         return
 
-    name = _answer_by_label(fields, answers, ("真实姓名", "姓名", "name"))
-    phone = _answer_by_label(fields, answers, ("手机号", "手机", "phone"))
+    name = _answer_by_label(fields, answers, ("真实姓名", "姓名", "legal name", "full name", "name"))
+    phone = _answer_by_label(fields, answers, ("手机号", "手机", "phone", "contact"))
     if name:
         user.name = name[:100]
     if phone and not user.phone:
@@ -645,7 +668,7 @@ async def _sync_user_from_answers(
 
     # 「计划开始日期」控制服务计时起点(打卡/阶段报告/看板服务天数都跟它)；未填/解析失败则留空，回退 started_at
     plan_start = _parse_plan_start_date(
-        _answer_by_label(fields, answers, ("计划开始日期", "计划开始", "开始日期"))
+        _answer_by_label(fields, answers, ("计划开始日期", "计划开始", "开始日期", "planned start", "start date", "plan start"))
     )
     if plan_start:
         service_case.service_plan_start_date = plan_start
@@ -669,8 +692,8 @@ def _answer_by_label(fields: list[dict], answers: dict, keywords: tuple[str, ...
         key = field.get("key") or field.get("id")
         if not key:
             continue
-        label = str(field.get("title") or field.get("label") or "")
-        if any(keyword in label for keyword in keywords):
+        label = str(field.get("title") or field.get("label") or "").lower()
+        if any(keyword.lower() in label for keyword in keywords):
             value = answers.get(key)
             if isinstance(value, str):
                 value = value.strip()

@@ -37,6 +37,8 @@ _WEIGHT_RELATED_DAY28_EXPECTATIONS = {
     "体重/腰围出现让我满意的变化（可在“其他”填写数字目标）",
     "Lighter body, reduced waist and abdominal size",
     "Satisfying change in weight/waist",
+    "Satisfying change in weight/waist (you may write numerical goals in 'Other')",
+    "Satisfying change in weight/waist (you may write numerical targets in 'Other')",
 }
 
 # 保护性下限的上调档位。客户 V2.1 §6.5 只说了"可将该下限上调"，没有给幅度，
@@ -161,9 +163,19 @@ def build_intake_fact_summary(
         safe_reduction["safe_reduction_room_kg"]
     )
 
-    selected_day28_expectations = _answer_values_for_title(
-        fields, answers, "最希望", "28 天后"
-    ) or _answer_values_for_title(fields, answers, "最希望", "28天后")
+    selected_day28_expectations = (
+        _answer_values_for_title(fields, answers, "最希望", "28 天后")
+        or _answer_values_for_title(fields, answers, "最希望", "28天后")
+        or _answer_values_for_title(fields, answers, "hope to see", "28 days")
+        or _answer_values_for_title(fields, answers, "28 days")
+        or (
+            [answers.get("CHECKBOX1774104667027mn0g4239")]
+            if isinstance(answers.get("CHECKBOX1774104667027mn0g4239"), str)
+            else (answers.get("CHECKBOX1774104667027mn0g4239") or [])
+            if isinstance(answers.get("CHECKBOX1774104667027mn0g4239"), list)
+            else []
+        )
+    )
     high_commitment_candidate, high_commitment_basis = _high_commitment_eligibility(
         selected_day28_expectations=selected_day28_expectations,
         bmi=bmi,
@@ -853,9 +865,9 @@ def _recipient_name(preferred_name: str, legal_name: str, gender: str) -> str:
 
 
 def _gender_suffix(gender: str) -> str:
-    normalized = (gender or "").strip()
-    if normalized == "女":
+    normalized = (gender or "").strip().lower()
+    if normalized in ("女", "female", "woman"):
         return " 女士"
-    if normalized == "男":
+    if normalized in ("男", "male", "man"):
         return " 先生"
     return ""

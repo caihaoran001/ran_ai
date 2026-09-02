@@ -1,0 +1,1226 @@
+{
+  "name": "HumanBurning AI 1.0 Assessment",
+  "title": "HumanBurning.AI 28-Day Camp | User Profile & Baseline Assessment",
+  "description": "Please complete the following information.",
+  "fields": [
+    {
+      "id": "SEGMENTATION1774103277530mn0fa9y2",
+      "key": "SEGMENTATION1774103277530mn0fa9y2",
+      "type": "SEGMENTATION",
+      "title": "Module 1 | Identity & Baseline",
+      "label": "Module 1 | Identity & Baseline",
+      "subtitle": "By completing and submitting this assessment, you agree that this information will be used for personal health evaluation, tailored plan generation, coaching communication, and 28-day support. The more complete and accurate your responses, the more customized and effective your plan will be.",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774103358253mn0fc08d",
+      "key": "SIMPLE1774103358253mn0fc08d",
+      "type": "SIMPLE",
+      "title": "Full Legal Name",
+      "label": "Full Legal Name",
+      "subtitle": "Used for coaching records and service coordination",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774103429810mn0fdjg2",
+      "key": "SIMPLE1774103429810mn0fdjg2",
+      "type": "SIMPLE",
+      "title": "Phone / Contact Number",
+      "label": "Phone / Contact Number",
+      "subtitle": "Used for coaching communication and service coordination",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774103480574mn0femm6",
+      "key": "SIMPLE1774103480574mn0femm6",
+      "type": "SIMPLE",
+      "title": "Preferred Name / Nickname",
+      "label": "Preferred Name / Nickname",
+      "subtitle": "How you would like our coaching team to address you in daily communication",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "DATEPLANSTART0001",
+      "key": "DATEPLANSTART0001",
+      "type": "DATE",
+      "title": "Planned Start Date",
+      "label": "Planned Start Date",
+      "subtitle": "When would you like to officially begin? We will pace your check-ins and coaching from this date (you will still receive your tailored documents in advance).",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "RADIO1774103553031mn0fg6ix",
+      "key": "RADIO1774103553031mn0fg6ix",
+      "type": "RADIO",
+      "title": "Gender",
+      "label": "Gender",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Male",
+        "Female"
+      ]
+    },
+    {
+      "id": "SIMPLE1774103589114mn0fgyd6",
+      "key": "SIMPLE1774103589114mn0fgyd6",
+      "type": "SIMPLE",
+      "title": "Your Age",
+      "label": "Your Age",
+      "subtitle": "Please enter your age in years",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774103860160mn0fmri8",
+      "key": "SIMPLE1774103860160mn0fmri8",
+      "type": "SIMPLE",
+      "title": "City / Location of Residence",
+      "label": "City / Location of Residence",
+      "subtitle": "Your current city or time zone",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774103904301mn0fnpkf",
+      "key": "RADIO1774103904301mn0fnpkf",
+      "type": "RADIO",
+      "title": "What time of day is most convenient to contact you for daily coaching or communication?",
+      "label": "What time of day is most convenient to contact you for daily coaching or communication?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Morning (9:00 - 12:00)",
+        "Afternoon (13:00 - 18:00)",
+        "Evening (20:00 - 22:00)",
+        "Anytime throughout the day"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774103999829mn0fpr9y",
+      "key": "SEGMENTATION1774103999829mn0fpr9y",
+      "type": "SEGMENTATION",
+      "title": "Module 2 | Baseline Body Measurements",
+      "label": "Module 2 | Baseline Body Measurements",
+      "subtitle": "This section establishes your baseline body metrics and historical comfort weight to determine the most suitable starting pace for your 28-day program.",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774104038286mn0fqky6",
+      "key": "SIMPLE1774104038286mn0fqky6",
+      "type": "SIMPLE",
+      "title": "Your Height (cm)",
+      "label": "Your Height (cm)",
+      "subtitle": "e.g., 175 (or enter 1.75 for meters)",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774104087629mn0frn0t",
+      "key": "SIMPLE1774104087629mn0frn0t",
+      "type": "SIMPLE",
+      "title": "Your Current Weight (kg or lbs)",
+      "label": "Your Current Weight (kg or lbs)",
+      "subtitle": "You can enter in kg or lbs (e.g., 70 kg or 154 lbs). Recommended to weigh yourself now; if inconvenient, you can submit and update later.",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE_ADULT_STABLE_COMFORT_WEIGHT_KG",
+      "key": "SIMPLE_ADULT_STABLE_COMFORT_WEIGHT_KG",
+      "type": "SIMPLE",
+      "title": "Thinking back to your adult life, was there a weight where you felt energetic, light, eating normally, and that remained stable for over a year? If so, what was it?",
+      "label": "Thinking back to your adult life, was there a weight where you felt energetic, light, eating normally, and that remained stable for over a year? If so, what was it?",
+      "subtitle": "You can enter in kg or lbs. If none or unsure, enter 'None' or 'Unsure'.",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774104132462mn0fslm6",
+      "key": "SIMPLE1774104132462mn0fslm6",
+      "type": "SIMPLE",
+      "title": "Your Current Body Fat % (Recommended, or provide later)",
+      "label": "Your Current Body Fat % (Recommended, or provide later)",
+      "subtitle": "Optional if scale measurement is available",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774104236120mn0futlk",
+      "key": "SIMPLE1774104236120mn0futlk",
+      "type": "SIMPLE",
+      "title": "Your Current Waist Circumference (Recommended, or provide later)",
+      "label": "Your Current Waist Circumference (Recommended, or provide later)",
+      "subtitle": "Measured horizontally at navel level. You can enter in cm or inches (e.g., 80 cm or 31 inches).",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774104297253mn0fw4rr",
+      "key": "RADIO1774104297253mn0fw4rr",
+      "type": "RADIO",
+      "title": "Your Weight Trend Over the Past 3 Months",
+      "label": "Your Weight Trend Over the Past 3 Months",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Basically stable",
+        "Slowly increasing",
+        "Significantly increasing",
+        "Slowly decreasing",
+        "Significantly decreasing",
+        "Unsure"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774104390470mn0fy4p2",
+      "key": "SEGMENTATION1774104390470mn0fy4p2",
+      "type": "SEGMENTATION",
+      "title": "Module 3 | Motivation & 28-Day Goals",
+      "label": "Module 3 | Motivation & 28-Day Goals",
+      "subtitle": "This section helps identify your underlying challenges and the key outcomes you want to achieve over these 28 days.",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "CHECKBOX1774104416332mn0fyoni",
+      "key": "CHECKBOX1774104416332mn0fyoni",
+      "type": "CHECKBOX",
+      "title": "Which issues would you most like to resolve first?",
+      "label": "Which issues would you most like to resolve first?",
+      "subtitle": "Please select 1-3 items that concern you most.",
+      "required": true,
+      "options": [
+        "Constantly feeling fatigued and low on energy",
+        "Getting hungry easily, craving food right after eating",
+        "Late-night food cravings and lack of control",
+        "Irregular daily schedule and poor sleep",
+        "Daytime brain fog and poor concentration",
+        "Noticeable waist/belly expansion or feeling physically heavy",
+        "Not eating much, but body shape and state are still unsatisfactory",
+        "Emotional instability, prone to feeling overwhelmed under stress",
+        "Constipation, bloating, or chronic digestive discomfort",
+        "Declining daytime energy/mental sharpness, less efficient at work than before",
+        "No major health issues; looking to build a structured, high-energy lifestyle",
+        "Other"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774104667027mn0g4239",
+      "key": "CHECKBOX1774104667027mn0g4239",
+      "type": "CHECKBOX",
+      "title": "What changes do you most hope to see after 28 days?",
+      "label": "What changes do you most hope to see after 28 days?",
+      "subtitle": "Please select 1-3 items that matter most to you.",
+      "required": true,
+      "options": [
+        "More stable daytime energy, without crashing after a busy day",
+        "Easier to fall asleep at night, no middle-of-the-night waking, noticeably improved sleep quality",
+        "More stable daytime hunger and appetite",
+        "Less mindless snacking or overeating in the evening",
+        "Lighter body, reduced waist and abdominal size",
+        "More stable daily rhythm and emotional state",
+        "Clearer mind during the day, higher productivity and focus",
+        "Easier to manage diet and eating habits",
+        "Entering a sustainable state of continuous improvement",
+        "Satisfying change in weight/waist (you may write numerical goals in 'Other')",
+        "Other"
+      ]
+    },
+    {
+      "id": "CHECKBOX17776518759860wlspec",
+      "key": "CHECKBOX17776518759860wlspec",
+      "type": "CHECKBOX",
+      "title": "Which of the following past weight loss / management experiences have you had? (Select all that apply)",
+      "label": "Which of the following past weight loss / management experiences have you had? (Select all that apply)",
+      "subtitle": "Select all that apply.",
+      "required": true,
+      "options": [
+        "Prolonged severe calorie restriction or fasting | intermittent fasting, skipping dinner, one meal a day, deliberate starvation",
+        "Long-term zero/very low carb diet | almost completely eliminating rice, noodles, and grains",
+        "Long-term monotonous diet | only eating boiled vegetables, boiled eggs, meal replacements, unable to eat normal meals",
+        "Tried various 'rapid weight loss' products | candies, jellies, enzyme drinks, weight loss pills",
+        "Relied on laxatives, diarrhea, or appetite suppressants that caused physical discomfort",
+        "Repeatedly switching products/methods | effective at first, then losing effectiveness over time",
+        "Successfully lost significant weight before, but experienced rebound/regain",
+        "Methods were too extreme; easily derailed when life became busy or during social meals",
+        "Repeated weight loss and rebound cycles, leading to declining confidence in weight loss",
+        "Required high workout volume to maintain weight, rebounding as soon as exercise stopped",
+        "Have never seriously attempted weight loss before",
+        "Have had successful weight loss experiences that were maintained long-term",
+        "Other: ____"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774104915668mn0g9dxy",
+      "key": "CHECKBOX1774104915668mn0g9dxy",
+      "type": "CHECKBOX",
+      "title": "What are you most worried might prevent you from sticking to the 28-day program?",
+      "label": "What are you most worried might prevent you from sticking to the 28-day program?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Busy work schedule",
+        "Irregular daily routine",
+        "Frequent social dining / eating out",
+        "Family routine and obligations",
+        "High emotional stress",
+        "Prone to breaking diet in the evening",
+        "Tendency to look for quick shortcuts",
+        "Losing momentum after a few days, lacking perseverance",
+        "Wanting too many outcomes at once, unsure where to prioritize",
+        "Other"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774105083327mn0gczb3",
+      "key": "SEGMENTATION1774105083327mn0gczb3",
+      "type": "SEGMENTATION",
+      "title": "Module 4 | Daily Routine & Work Context",
+      "label": "Module 4 | Daily Routine & Work Context",
+      "subtitle": "Understanding your work environment and a typical day helps us tailor realistic nutrition, sleep, activity, and action plans that fit your real life.",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO17776518759861occnew",
+      "key": "RADIO17776518759861occnew",
+      "type": "RADIO",
+      "title": "What is your primary occupation / work identity?",
+      "label": "What is your primary occupation / work identity?",
+      "subtitle": "Single choice.",
+      "required": true,
+      "options": [
+        "Business owner / Founder / Store owner | Entrepreneur, self-employed, partner",
+        "Corporate management | Department head, manager/director & above, professional executive",
+        "Professional specialist | Doctor, teacher, lawyer, finance, scientific research, design, engineering, etc.",
+        "Civil servant / Public sector / State-owned enterprise employee",
+        "Sales / Business Development / Customer Service (frequent interpersonal communication)",
+        "General office staff / Corporate employee",
+        "Freelancer / Content creator / Remote worker",
+        "Frontline service / Production / Logistics / Agriculture / Physical labor",
+        "Currently homemaker / managing family, not formally employed",
+        "Student",
+        "Retired",
+        "Other"
+      ]
+    },
+    {
+      "id": "SIMPLE17776518759862jobdet",
+      "key": "SIMPLE17776518759862jobdet",
+      "type": "SIMPLE",
+      "title": "If willing, please tell us specifically what you do",
+      "label": "If willing, please tell us specifically what you do",
+      "subtitle": "e.g., Boutique hotel owner / Restaurant operator / Accountant / School administrator / Sales manager / Physician / Full-time mother",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO17776518759863rolelvl",
+      "key": "RADIO17776518759863rolelvl",
+      "type": "RADIO",
+      "title": "Which best describes your current work responsibility level?",
+      "label": "Which best describes your current work responsibility level?",
+      "subtitle": "If you are not currently employed, please choose the closest match.",
+      "required": true,
+      "options": [
+        "I am primarily responsible for my own individual work output",
+        "I lead a team / manage projects / oversee business operations",
+        "I am ultimately responsible for the overall business results of a company, store, or enterprise",
+        "A mix of the above",
+        "None of the above matches my situation"
+      ]
+    },
+    {
+      "id": "CHECKBOX17776518759864famrole",
+      "key": "CHECKBOX17776518759864famrole",
+      "type": "CHECKBOX",
+      "title": "Besides work, what main family roles do you currently take on?",
+      "label": "Besides work, what main family roles do you currently take on?",
+      "subtitle": "This question is independent of occupation and evaluates caregiving responsibilities.",
+      "required": true,
+      "options": [
+        "Have minor children requiring frequent care",
+        "Need to care for elderly parents or other family members",
+        "Household management and chores are primarily handled by me",
+        "Have children/family, but daily caregiving pressure is light",
+        "Currently no significant family caregiving responsibilities",
+        "Other: ____"
+      ]
+    },
+    {
+      "id": "RADIO1774105107178mn0gdhpo",
+      "key": "RADIO1774105107178mn0gdhpo",
+      "type": "RADIO",
+      "title": "Which best describes your schedule on most workdays?",
+      "label": "Which best describes your schedule on most workdays?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Relatively regular, fixed working hours",
+        "Fixed hours, but frequently work overtime or handle work after hours",
+        "Long working hours, often leaving early and returning late",
+        "Irregular hours with frequent unscheduled tasks",
+        "Frequent business travel / social dining / client dinners, meal times hard to predict",
+        "Evening shift / Night shift / Rotating shifts",
+        "Currently no fixed working hours",
+        "Other: ____"
+      ]
+    },
+    {
+      "id": "RADIO17776518759865neatlv",
+      "key": "RADIO17776518759865neatlv",
+      "type": "RADIO",
+      "title": "What is your physical activity level during your daily 'work / daily tasks' (NEAT)?",
+      "label": "What is your physical activity level during your daily 'work / daily tasks' (NEAT)?",
+      "subtitle": "This refers to routine daily movement (e.g., store work, nursing, teaching, farming, walking), not dedicated workouts. If not employed, base this on your typical daily movement.",
+      "required": true,
+      "options": [
+        "Mostly seated",
+        "Predominantly seated with occasional walking",
+        "About 50% sitting and 50% walking/standing",
+        "Standing or walking most of the time",
+        "Heavy physical labor / high physical activity",
+        "Varies greatly from day to day"
+      ]
+    },
+    {
+      "id": "CHECKBOX17776518759866loadtop",
+      "key": "CHECKBOX17776518759866loadtop",
+      "type": "CHECKBOX",
+      "title": "What currently drains your energy the most?",
+      "label": "What currently drains your energy the most?",
+      "subtitle": "Select up to 3 items.",
+      "required": true,
+      "options": [
+        "Prolonged deep thinking, analysis, judgment, and decision-making",
+        "Managing teams / projects / business, being ultimately responsible for outcomes",
+        "Pressure from sales targets, income, cash flow, or business results",
+        "Frequently meeting clients, partners, or team members, needing to maintain high energy and presence",
+        "Prolonged screen time (computer/phone), high attentional fatigue",
+        "Long working hours, frequent overtime, or heavy business travel",
+        "Frequent social meals, dining out, and client dinners",
+        "Excessive prolonged sitting",
+        "Prolonged standing or walking",
+        "High physical exertion",
+        "Juggling work and childcare / family simultaneously",
+        "Overall stress is relatively low",
+        "Other: ____"
+      ]
+    },
+    {
+      "id": "CHECKBOX17776518759867statval",
+      "key": "CHECKBOX17776518759867statval",
+      "type": "CHECKBOX",
+      "title": "If your physical state improves significantly, what would be the most valuable outcome for you right now?",
+      "label": "If your physical state improves significantly, what would be the most valuable outcome for you right now?",
+      "subtitle": "Select up to 2 items.",
+      "required": true,
+      "options": [
+        "More satisfying weight, waist circumference, and body silhouette in clothing",
+        "Higher daytime energy, feeling less fatigued in work and daily life",
+        "Clearer mind, improved focus, sharper decision-making, and better work efficiency",
+        "Looking more vibrant, energized, and confident when facing clients, teams, and friends",
+        "More stable emotional state, less vulnerable to burnout under stress",
+        "Sufficient stamina to comfortably manage both career and family",
+        "Preventing year-over-year physical decline after age 40",
+        "Reclaiming my past peak physical state and vitality",
+        "Primarily general health; work and appearance impact is secondary",
+        "Other: ____"
+      ]
+    },
+    {
+      "id": "RADIO1774105241706mn0ggdik",
+      "key": "RADIO1774105241706mn0ggdik",
+      "type": "RADIO",
+      "title": "What time do you usually go to sleep?",
+      "label": "What time do you usually go to sleep?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Before 22:30",
+        "22:30 - 23:30",
+        "23:30 - 00:30",
+        "00:30 - 01:30",
+        "After 01:30",
+        "Irregular"
+      ]
+    },
+    {
+      "id": "RADIO1774105303177mn0ghoy4",
+      "key": "RADIO1774105303177mn0ghoy4",
+      "type": "RADIO",
+      "title": "What time do you usually wake up?",
+      "label": "What time do you usually wake up?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Before 6:00",
+        "6:00 - 7:00",
+        "7:00 - 8:00",
+        "8:00 - 9:00",
+        "After 9:00",
+        "Irregular"
+      ]
+    },
+    {
+      "id": "RADIO1774105374228mn0gj7rr",
+      "key": "RADIO1774105374228mn0gj7rr",
+      "type": "RADIO",
+      "title": "Approximately how many nights per week do you go to sleep after 23:30?",
+      "label": "Approximately how many nights per week do you go to sleep after 23:30?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "0 - 1 day",
+        "2 - 3 days",
+        "4 - 5 days",
+        "6 - 7 days"
+      ]
+    },
+    {
+      "id": "RADIO1774105428032mn0gkdab",
+      "key": "RADIO1774105428032mn0gkdab",
+      "type": "RADIO",
+      "title": "What time do you usually eat dinner?",
+      "label": "What time do you usually eat dinner?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Before 18:00",
+        "18:00 - 19:00",
+        "19:00 - 20:00",
+        "20:00 - 21:00",
+        "After 21:00",
+        "Irregular"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774105613109mn0goc3b",
+      "key": "CHECKBOX1774105613109mn0goc3b",
+      "type": "CHECKBOX",
+      "title": "What is your most common dining situation?",
+      "label": "What is your most common dining situation?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Home cooking",
+        "Company / School cafeteria",
+        "Takeout / Food delivery",
+        "Social / Business dining",
+        "Meals prepared by family",
+        "Irregular, frequently skipping meals",
+        "Other"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774105760075mn0grhhp",
+      "key": "CHECKBOX1774105760075mn0grhhp",
+      "type": "RADIO",
+      "title": "Do you usually snack or have late-night meals after dinner?",
+      "label": "Do you usually snack or have late-night meals after dinner?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Rarely eat anything after dinner",
+        "Occasionally have a light snack",
+        "Frequently eat snacks or fruit",
+        "Frequently have late-night meals (supper)",
+        "Irregular"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774105914655mn0gusrj",
+      "key": "SEGMENTATION1774105914655mn0gusrj",
+      "type": "SEGMENTATION",
+      "title": "Module 5 | Dietary Patterns & Digestive Baseline",
+      "label": "Module 5 | Dietary Patterns & Digestive Baseline",
+      "subtitle": "This section assesses your hunger rhythms, cravings, meal pacing, and digestive health to determine the most effective dietary starting point.",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774105949628mn0gvjr2",
+      "key": "RADIO1774105949628mn0gvjr2",
+      "type": "RADIO",
+      "title": "Are your daily three meals regular?",
+      "label": "Are your daily three meals regular?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Very regular, eating on time",
+        "Generally regular, mostly eating on time",
+        "Somewhat irregular",
+        "Very irregular"
+      ]
+    },
+    {
+      "id": "RADIO1774106134803mn0gzimv",
+      "key": "RADIO1774106134803mn0gzimv",
+      "type": "RADIO",
+      "title": "Which meal is most prone to overeating or losing control?",
+      "label": "Which meal is most prone to overeating or losing control?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Breakfast",
+        "Lunch",
+        "Dinner",
+        "Late-night meal",
+        "Snacks between meals",
+        "No meal is noticeably out of control",
+        "About the same across meals"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774106190188mn0h0pda",
+      "key": "CHECKBOX1774106190188mn0h0pda",
+      "type": "CHECKBOX",
+      "title": "Do you frequently experience any of the following?",
+      "label": "Do you frequently experience any of the following?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Very strong appetite and large portion sizes",
+        "Habitually seeking food even when not physically hungry",
+        "Craving food whenever emotional stress arises",
+        "Strong cravings in the evening / night",
+        "Feeling uncomfortable if not eating sweets",
+        "Prone to post-meal sleepiness / drowsiness",
+        "Prone to post-meal bloating / fullness",
+        "Constipation or irregular bowel movements",
+        "No noticeable issues"
+      ]
+    },
+    {
+      "id": "RADIO1774106329171mn0h3olx",
+      "key": "RADIO1774106329171mn0h3olx",
+      "type": "RADIO",
+      "title": "What is your typical breakfast habit?",
+      "label": "What is your typical breakfast habit?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Eat breakfast almost every day",
+        "Occasionally skip breakfast",
+        "Frequently skip breakfast",
+        "Completely depends on the day"
+      ]
+    },
+    {
+      "id": "RADIO1774106385794mn0h4was",
+      "key": "RADIO1774106385794mn0h4was",
+      "type": "RADIO",
+      "title": "How do you typically react after drinking coffee, tea, or energy drinks?",
+      "label": "How do you typically react after drinking coffee, tea, or energy drinks?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Energizing, without heart palpitations or excessive jitters",
+        "Significantly energizing, but slightly prone to palpitations",
+        "Drinking in the afternoon disrupts my nighttime sleep",
+        "Very sensitive, generally avoid caffeine",
+        "Almost no noticeable effect"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774171370170mn1jtqka",
+      "key": "SEGMENTATION1774171370170mn1jtqka",
+      "type": "SEGMENTATION",
+      "title": "Module 6 | Dietary Composition & Macronutrient Intake",
+      "label": "Module 6 | Dietary Composition & Macronutrient Intake",
+      "subtitle": "This section evaluates your long-term macronutrient patterns to help transition toward an optimal leptin-sensitive nutritional structure.",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774171736563mn1k1l9x",
+      "key": "RADIO1774171736563mn1k1l9x",
+      "type": "RADIO",
+      "title": "What proportion of your typical meal consists of staple carbs (rice, noodles, bread, dumplings, porridge, etc.)?",
+      "label": "What proportion of your typical meal consists of staple carbs (rice, noodles, bread, dumplings, porridge, etc.)?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Almost none",
+        "Very little, usually not exceeding a small portion (fist size / half a small bowl)",
+        "A small portion, but not the main component of the meal",
+        "Usually about half the plate / a full bowl",
+        "Often more than meat and vegetables combined",
+        "Heavy in carbs, frequently combined with sugary drinks / desserts"
+      ]
+    },
+    {
+      "id": "RADIO1774171867362mn1k4e78",
+      "key": "RADIO1774171867362mn1k4e78",
+      "type": "RADIO",
+      "title": "Which best describes your daily protein intake?",
+      "label": "Which best describes your daily protein intake?",
+      "subtitle": "Visual reference: one palm-sized portion of meat/fish/tofu.",
+      "required": true,
+      "options": [
+        "Mainly from meat, with very high intake",
+        "Clear protein source in every meal",
+        "Protein present in most main meals, but may not be sufficient",
+        "Often very little protein in meals",
+        "Mainly carbs and snacks, protein is clearly deficient",
+        "Diet is very chaotic, hard to tell how much protein is consumed"
+      ]
+    },
+    {
+      "id": "RADIO1774172055667mn1k8fhy",
+      "key": "RADIO1774172055667mn1k8fhy",
+      "type": "RADIO",
+      "title": "Which best describes your vegetable intake habits?",
+      "label": "Which best describes your vegetable intake habits?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Rarely eat vegetables, or avoid them long-term",
+        "Eat plenty of low-carb vegetables with very little staple carbs",
+        "Eat a substantial portion of vegetables with almost every meal",
+        "Eat some vegetables, but usually less than half a plate",
+        "Often almost no vegetables in meals",
+        "Frequently eat takeout / late-night food / fried items, rarely eat vegetables"
+      ]
+    },
+    {
+      "id": "RADIO1774172195394mn1kbfb8",
+      "key": "RADIO1774172195394mn1kbfb8",
+      "type": "RADIO",
+      "title": "How often do you consume sugary drinks or sweet treats / desserts?",
+      "label": "How often do you consume sugary drinks or sweet treats / desserts?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Almost never",
+        "Rarely",
+        "1 - 2 times per week",
+        "3 - 5 times per week",
+        "Roughly once daily",
+        "Multiple times daily"
+      ]
+    },
+    {
+      "id": "RADIO1774172399733mn1kfszi",
+      "key": "RADIO1774172399733mn1kfszi",
+      "type": "RADIO",
+      "title": "How often do you eat ultra-processed foods (packaged snacks, instant meals, fast food)?",
+      "label": "How often do you eat ultra-processed foods (packaged snacks, instant meals, fast food)?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Almost never",
+        "Rarely",
+        "1 - 2 times per week",
+        "3 - 4 times per week",
+        "Almost daily",
+        "More than once a day"
+      ]
+    },
+    {
+      "id": "RADIO1774172399734mn1kfszr",
+      "key": "RADIO1774172399734mn1kfszr",
+      "type": "RADIO",
+      "title": "What do you usually eat when snacking or having cravings?",
+      "label": "What do you usually eat when snacking or having cravings?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Rarely snack, strong dietary self-control",
+        "Eggs, meat, cheese, nuts, unsweetened yogurt",
+        "Fruit or small amounts of healthy snacks",
+        "Bread, cookies, cereal / granola bars",
+        "Boba tea, pastries, ice cream, candy",
+        "Chips, fried foods, instant noodles, BBQ, alcohol"
+      ]
+    },
+    {
+      "id": "RADIO1774172399735mn1kft01",
+      "key": "RADIO1774172399735mn1kft01",
+      "type": "RADIO",
+      "title": "Which statement best describes your long-term dietary pattern?",
+      "label": "Which statement best describes your long-term dietary pattern?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "General home-cooked style, no extreme preference",
+        "Actively eliminate many food categories",
+        "Meat / animal-based core with very little food diversity",
+        "Strictly controlling carbs to maintain stable fat-burning",
+        "Low sugar, low processing, protein-first, moderate carbs",
+        "High carb intake, staples are dominant",
+        "High sugar intake, sweet foods are dominant",
+        "Generally chaotic with frequent takeout, late meals, fried foods, and alcohol"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774106479180mn0h6wcs",
+      "key": "SEGMENTATION1774106479180mn0h6wcs",
+      "type": "SEGMENTATION",
+      "title": "Module 7 | Energy, Stress & Daytime Performance",
+      "label": "Module 7 | Energy, Stress & Daytime Performance",
+      "subtitle": "This section evaluates energy deficits, fluctuations, overexertion, and stress tolerance.",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774106601945mn0h9j2z",
+      "key": "RADIO1774106601945mn0h9j2z",
+      "type": "RADIO",
+      "title": "How would you rate your overall energy level over the past 2 weeks?",
+      "label": "How would you rate your overall energy level over the past 2 weeks?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Very poor",
+        "Poor, lacking energy and drive",
+        "Average, barely sufficient for daily tasks",
+        "Good, would like to optimize further",
+        "Excellent and vibrant"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774106739991mn0hchln",
+      "key": "CHECKBOX1774106739991mn0hchln",
+      "type": "CHECKBOX",
+      "title": "What are your most common daytime states (if any)?",
+      "label": "What are your most common daytime states (if any)?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Hard to wake up in the morning, difficult to get into work/study mode",
+        "Fine in the morning, but energy drops noticeably in the afternoon",
+        "Energy fluctuates drastically, requiring caffeine or willpower to push through",
+        "Prone to brain fog and slower cognitive response",
+        "Hyper-focused when busy, but completely crashing once stopping",
+        "Constantly feeling tired throughout the day",
+        "Relatively stable"
+      ]
+    },
+    {
+      "id": "RADIO1774106869788mn0hf9r2",
+      "key": "RADIO1774106869788mn0hf9r2",
+      "type": "RADIO",
+      "title": "How would you describe your recent stress level?",
+      "label": "How would you describe your recent stress level?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Almost no stress",
+        "Manageable and easily handled",
+        "Noticeable stress, but within coping capacity",
+        "High stress, feeling very burdened",
+        "Overwhelming stress, feeling close to burnout"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107036716mn0hiujy",
+      "key": "CHECKBOX1774107036716mn0hiujy",
+      "type": "CHECKBOX",
+      "title": "How do you typically react under high stress?",
+      "label": "How do you typically react under high stress?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Anxiety, racing mind, poor sleep",
+        "Impatience, irritability, short temper",
+        "Urge to eat food for emotional comfort",
+        "Physically exhausted but unable to slow down",
+        "Low mood and demotivation",
+        "Mental numbness, procrastination",
+        "No major change, able to endure and handle it"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774107178536mn0hlvzc",
+      "key": "SEGMENTATION1774107178536mn0hlvzc",
+      "type": "SEGMENTATION",
+      "title": "Module 8 | Sleep & Recovery",
+      "label": "Module 8 | Sleep & Recovery",
+      "subtitle": "This section evaluates difficulty falling asleep, light sleep, nighttime waking, circadian disruption, and sleep restorative capacity.",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774107228737mn0hmypv",
+      "key": "RADIO1774107228737mn0hmypv",
+      "type": "RADIO",
+      "title": "How would you subjectively rate your recent sleep quality?",
+      "label": "How would you subjectively rate your recent sleep quality?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Very good",
+        "Good",
+        "Average",
+        "Not so good",
+        "Very poor"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107333066mn0hp77x",
+      "key": "CHECKBOX1774107333066mn0hp77x",
+      "type": "CHECKBOX",
+      "title": "What are your most common sleep issues?",
+      "label": "What are your most common sleep issues?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Difficulty falling asleep",
+        "Easily waking up after falling asleep",
+        "Waking up too early regardless of bedtime",
+        "Excessive dreaming",
+        "Still feeling unrefreshed despite long sleep",
+        "Difficulty getting out of bed in the morning",
+        "Prone to daytime drowsiness",
+        "Very irregular sleep schedule",
+        "No noticeable sleep issues"
+      ]
+    },
+    {
+      "id": "RADIO1774107460930mn0hrxvo",
+      "key": "RADIO1774107460930mn0hrxvo",
+      "type": "RADIO",
+      "title": "Do you wake up during the night after falling asleep?",
+      "label": "Do you wake up during the night after falling asleep?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Rarely",
+        "Occasionally",
+        "Frequently 1 time per night",
+        "Frequently 2 or more times per night"
+      ]
+    },
+    {
+      "id": "RADIO1774107574262mn0hudbt",
+      "key": "RADIO1774107574262mn0hudbt",
+      "type": "RADIO",
+      "title": "What is your immediate feeling upon waking up in the morning?",
+      "label": "What is your immediate feeling upon waking up in the morning?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Able to wake up alert quickly",
+        "Decent, but takes a short while to get moving",
+        "Body and mind feel heavy and difficult to start",
+        "Feel exhausted despite having slept"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774107682414mn0hwory",
+      "key": "SEGMENTATION1774107682414mn0hwory",
+      "type": "SEGMENTATION",
+      "title": "Module 9 | Physical Activity & Action Readiness",
+      "label": "Module 9 | Physical Activity & Action Readiness",
+      "subtitle": "This section assesses your dedicated workout habits and where you feel most comfortable starting. Routine work movement was captured in previous sections.",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774107759627mn0hycct",
+      "key": "RADIO1774107759627mn0hycct",
+      "type": "RADIO",
+      "title": "What is your weekly workout frequency?",
+      "label": "What is your weekly workout frequency?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "0 times",
+        "1 - 2 times",
+        "3 - 4 times",
+        "5 or more times"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107823025mn0hzp9v",
+      "key": "CHECKBOX1774107823025mn0hzp9v",
+      "type": "CHECKBOX",
+      "title": "What types of physical exercise do you usually engage in?",
+      "label": "What types of physical exercise do you usually engage in?",
+      "subtitle": "",
+      "required": true,
+      "options": [
+        "Walking / Brisk walking",
+        "Running / Aerobic cardio",
+        "Strength / Resistance training",
+        "Yoga or stretching",
+        "Swimming",
+        "Ball sports",
+        "No regular exercise",
+        "Other"
+      ]
+    },
+    {
+      "id": "CHECKBOX1774107925408mn0i1w9u",
+      "key": "CHECKBOX1774107925408mn0i1w9u",
+      "type": "CHECKBOX",
+      "title": "Which area are you most receptive to starting your transformation with?",
+      "label": "Which area are you most receptive to starting your transformation with?",
+      "subtitle": "Select up to 2 items.",
+      "required": true,
+      "options": [
+        "Start with nutrition first",
+        "Start with sleep first",
+        "Start with energy and daytime vitality first",
+        "Start with light physical movement",
+        "Need dedicated step-by-step coaching guidance"
+      ]
+    },
+    {
+      "id": "SEGMENTATION1774108003942mn0i3kva",
+      "key": "SEGMENTATION1774108003942mn0i3kva",
+      "type": "SEGMENTATION",
+      "title": "Module 10 | Health Background & Medical Notes",
+      "label": "Module 10 | Health Background & Medical Notes",
+      "subtitle": "",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SIMPLE1774108071693mn0i515a",
+      "key": "SIMPLE1774108071693mn0i515a",
+      "type": "SIMPLE",
+      "title": "Allergies / Dietary Restrictions / Injuries / Current Medications / Medical History",
+      "label": "Allergies / Dietary Restrictions / Injuries / Current Medications / Medical History",
+      "subtitle": "If applicable, please specify: ① Allergies/food intolerances ② Current medications/supplements ③ Medical conditions or past surgeries ④ Injury/exercise limitations. If none, write 'None'.",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "FILE1774108153106mn0i6ryq",
+      "key": "FILE1774108153106mn0i6ryq",
+      "type": "FILE",
+      "title": "Recent health checkup reports / lab result images (Optional)",
+      "label": "Recent health checkup reports / lab result images (Optional)",
+      "subtitle": "Please provide file links, or enter 'Will provide later'",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "SEGMENTATION1774172753810mn1kne6q",
+      "key": "SEGMENTATION1774172753810mn1kne6q",
+      "type": "SEGMENTATION",
+      "title": "Module 11 | Long-Term Constitution & Imbalance Assessment",
+      "label": "Module 11 | Long-Term Constitution & Imbalance Assessment",
+      "subtitle": "Optional assessment of your body constitution and balance. Recommended to complete all 12 single-choice questions if started (~2 min).",
+      "required": false,
+      "options": []
+    },
+    {
+      "id": "RADIO1774173217404mn1kxbwh",
+      "key": "RADIO1774173217404mn1kxbwh",
+      "type": "RADIO",
+      "title": "Body Type & Metabolism",
+      "label": "Body Type & Metabolism",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Naturally lean, difficult to gain weight",
+        "Medium/balanced build, fast metabolism, gets hungry easily",
+        "Sturdy/heavier build, difficult to lose weight",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217404mn1kxbwn",
+      "key": "RADIO1774173217404mn1kxbwn",
+      "type": "RADIO",
+      "title": "Temperature Sensation",
+      "label": "Temperature Sensation",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Cold hands/feet, sensitive to cold",
+        "Tends to feel hot, uncomfortable in warm weather",
+        "Sensitive to damp cold, feels heavy on rainy days",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbwt",
+      "key": "RADIO1774173217405mn1kxbwt",
+      "type": "RADIO",
+      "title": "Appetite Rhythm",
+      "label": "Appetite Rhythm",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Unstable appetite, forgets to eat when busy",
+        "Gets hungry quickly, feels uncomfortable if meals are delayed",
+        "Slow to get hungry, can go long hours on modest meals",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbwz",
+      "key": "RADIO1774173217405mn1kxbwz",
+      "type": "RADIO",
+      "title": "Digestion & Bowel Movements",
+      "label": "Digestion & Bowel Movements",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Prone to bloating, dry stool, or irregular bowel movements",
+        "Fast digestion, occasional heartburn or stomach warmth",
+        "Slow digestion, feels heavy/full after meals",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbx5",
+      "key": "RADIO1774173217405mn1kxbx5",
+      "type": "RADIO",
+      "title": "Skin & Body Sensation",
+      "label": "Skin & Body Sensation",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Dry skin, chapped lips",
+        "Sensitive skin, prone to redness or heat",
+        "Thicker/moist skin, prone to puffiness or oiliness",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbxb",
+      "key": "RADIO1774173217405mn1kxbxb",
+      "type": "RADIO",
+      "title": "Sleep Pattern",
+      "label": "Sleep Pattern",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Difficulty falling asleep or easily awakened",
+        "Sleeps reasonably well, but irritable under stress",
+        "Deep sleeper, slow to wake up, prone to daytime drowsiness",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbxh",
+      "key": "RADIO1774173217405mn1kxbxh",
+      "type": "RADIO",
+      "title": "Energy Rhythm",
+      "label": "Energy Rhythm",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Energy comes quickly and drops quickly",
+        "Abundant energy, proactive drive",
+        "Steady energy, but slow startup / long warm-up",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217405mn1kxbxn",
+      "key": "RADIO1774173217405mn1kxbxn",
+      "type": "RADIO",
+      "title": "Working / Execution Style",
+      "label": "Working / Execution Style",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Fast-paced, full of ideas, adaptable",
+        "High efficiency, strong goal orientation, high standards",
+        "Steady, deliberate, patient, unhurried",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217406mn1kxbxt",
+      "key": "RADIO1774173217406mn1kxbxt",
+      "type": "RADIO",
+      "title": "Emotional Characteristics",
+      "label": "Emotional Characteristics",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Frequent emotional fluctuations, prone to worry or overthinking",
+        "Quick-tempered, impatient under pressure",
+        "Generally calm, but prone to procrastination or low motivation",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217406mn1kxbxz",
+      "key": "RADIO1774173217406mn1kxbxz",
+      "type": "RADIO",
+      "title": "Learning & Memory Style",
+      "label": "Learning & Memory Style",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Learns fast, but easily forgets without repetition",
+        "Quick comprehension and analysis, grasps key points easily",
+        "Learns more gradually, but retains well once learned",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217406mn1kxby5",
+      "key": "RADIO1774173217406mn1kxby5",
+      "type": "RADIO",
+      "title": "Stress Response",
+      "label": "Stress Response",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Anxious, poor sleep, restless mind",
+        "Irritable, rushed, wants immediate resolution",
+        "Withdraws, delays, or uses food for comfort",
+        "Other"
+      ]
+    },
+    {
+      "id": "RADIO1774173217406mn1kxbyb",
+      "key": "RADIO1774173217406mn1kxbyb",
+      "type": "RADIO",
+      "title": "Lifestyle Rhythm",
+      "label": "Lifestyle Rhythm",
+      "subtitle": "",
+      "required": false,
+      "options": [
+        "Irregular sleep and meal schedules",
+        "Tendency to overexert when workload increases",
+        "Tends to stay in comfort zone, slow to start exercise or change",
+        "Other"
+      ]
+    },
+    {
+      "id": "SIMPLE1774699899282mnaahy8j",
+      "key": "SIMPLE1774699899282mnaahy8j",
+      "type": "RADIO",
+      "title": "Where did you first learn about HumanBurning?",
+      "label": "Where did you first learn about HumanBurning?",
+      "subtitle": "Single choice.",
+      "required": false,
+      "options": [
+        "Short video (TikTok / Douyin)",
+        "Livestream",
+        "Friend referral",
+        "WeChat community / private domain",
+        "E-commerce platform",
+        "Offline event",
+        "Other"
+      ]
+    },
+    {
+      "id": "SIMPLE17776518759868srcopen",
+      "key": "SIMPLE17776518759868srcopen",
+      "type": "SIMPLE",
+      "title": "Which specific message, insight, or product feature inspired you to enroll?",
+      "label": "Which specific message, insight, or product feature inspired you to enroll?",
+      "subtitle": "Optional. You may also share any suggestions here.",
+      "required": false,
+      "options": []
+    }
+  ]
+}
