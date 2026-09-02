@@ -839,13 +839,23 @@ async def _generate_intake_analysis_package(
     document_facts = _document_model_intake_facts(intake_facts)
     document_answers = _document_model_readable_answers(fields, submission.answers_json)
 
-    base_user_prompt = (
-        f"当前用户：{user_name}\n"
-        f"服务单：{service_case.case_no}\n\n"
-        f"请严格按这个 package 顶层字段结构填值：\n{json.dumps(_intake_package_schema(), ensure_ascii=False, indent=2)}\n\n"
-        f"intake_facts（共同事实摘要，优先级最高）：\n{json.dumps(document_facts, ensure_ascii=False, indent=2)}\n\n"
-        f"问卷结果：\n{document_answers}"
-    )
+    if case_lang == "en":
+        base_user_prompt = (
+            f"Current User: {user_name}\n"
+            f"Service Case: {service_case.case_no}\n\n"
+            f"CRITICAL INSTRUCTION: You MUST output all text, descriptions, analysis, rules, and fields in professional, natural ENGLISH ONLY. Do NOT output Chinese text.\n\n"
+            f"Please strictly populate values following this package schema structure:\n{json.dumps(_intake_package_schema(language='en'), ensure_ascii=False, indent=2)}\n\n"
+            f"intake_facts (Core baseline facts):\n{json.dumps(document_facts, ensure_ascii=False, indent=2)}\n\n"
+            f"Questionnaire Answers:\n{document_answers}"
+        )
+    else:
+        base_user_prompt = (
+            f"当前用户：{user_name}\n"
+            f"服务单：{service_case.case_no}\n\n"
+            f"请严格按这个 package 顶层字段结构填值：\n{json.dumps(_intake_package_schema(language='zh'), ensure_ascii=False, indent=2)}\n\n"
+            f"intake_facts（共同事实摘要，优先级最高）：\n{json.dumps(document_facts, ensure_ascii=False, indent=2)}\n\n"
+            f"问卷结果：\n{document_answers}"
+        )
     last_error: RetryableAIContentError | RetryableIntakePackageError | None = None
     # 每次尝试的拒绝原因都要留下：只留最后一次的话，"第一次为什么被判不合格"只存在于
     # 运行日志里，容器日志一轮转就永久查不到（2026-08-17 排查服务单 308 时正是如此）。
@@ -853,14 +863,23 @@ async def _generate_intake_analysis_package(
     for attempt in range(1, INTAKE_DOCUMENT_MAX_ATTEMPTS + 1):
         retry_instruction = ""
         if last_error is not None:
-            retry_instruction = (
-                "\n\n【重新生成要求】\n"
-                f"上一次输出未通过完整性校验：{str(last_error)[:500]}。\n"
-                "请从头重新生成完整 JSON；必须同时包含 shared_analysis、profile、"
-                "energy_restart_prescription 和 day28_execution_standard，"
-                "且最终只输出完整有效的 JSON。不要复述字段结构或问卷，"
-                "在字段齐全的前提下压缩每个文本字段，避免再次截断。"
-            )
+            if case_lang == "en":
+                retry_instruction = (
+                    "\n\n[REGENERATION INSTRUCTION]\n"
+                    f"Previous output failed integrity validation: {str(last_error)[:500]}.\n"
+                    "Please regenerate the complete JSON in natural English from scratch. "
+                    "Must include shared_analysis, profile, energy_restart_prescription, and day28_execution_standard. "
+                    "Output ONLY valid JSON without Markdown formatting or wrappers. Ensure all text and fields are in ENGLISH."
+                )
+            else:
+                retry_instruction = (
+                    "\n\n【重新生成要求】\n"
+                    f"上一次输出未通过完整性校验：{str(last_error)[:500]}。\n"
+                    "请从头重新生成完整 JSON；必须同时包含 shared_analysis、profile、"
+                    "energy_restart_prescription 和 day28_execution_standard，"
+                    "且最终只输出完整有效的 JSON。不要复述字段结构或问卷，"
+                    "在字段齐全的前提下压缩每个文本字段，避免再次截断。"
+                )
         try:
             text = await ai.generate_text(
                 scenario="intake_doc",
@@ -945,7 +964,7 @@ def _normalize_intake_analysis_package(
     _strip_internal_review_labels(document_payloads)
     # 五项打卡在这里收敛成严格 5 项结构化数组，之后画像、执行文档和 H5 问卷都读同一份结构。
     _normalize_daily_checkin_in_payloads(document_payloads, intake_facts)
-    profile_json = _normalize_profile_from_package(payload, document_payloads, intake_facts)
+    profile_json = _normalize_profile_from_package(payload, document_payloads, intake_facts, language=case_lang)
     _apply_shared_activity_frequency_to_profile(profile_json, activity_frequency)
     summary = str(profile_json.get("summary") or _profile_summary_from_documents(document_payloads) or "")[:2000]
     if not summary:
@@ -958,7 +977,74 @@ def _normalize_intake_analysis_package(
     }
 
 
-def _intake_package_schema() -> dict[str, object]:
+def _intake_package_schema(language: str = "zh") -> dict[str, object]:
+    if language == "en":
+        return {
+            "shared_analysis": {
+                "weight_band": "Deterministic management band from system. Must strictly be one of: Band A | Body Rejuvenation & Sculpting / Band B | Gentle Energy Kickstart / Band C | Targeted Fat Loss / Band D | Systematic Weight Loss. Do not alter or output internal review status.",
+                "band_basis": ["System deterministic band basis in English, model must not rewrite"],
+                "body_trend": "3-month trend from questionnaire: Improving / Basically stable / Slowly increasing / Significantly worsening / Insufficient information",
+                "body_trend_summary": "One sentence explaining recent 3-month trend in English",
+                "body_trend_direct_evidence": "1 direct factual evidence supporting trend direction in English",
+                "body_trend_support_signals": ["1-2 supporting signals from current state in English"],
+                "body_trend_confidence": "high / medium / low",
+                "core_problem": "Core problem identified purely from questionnaire facts in English",
+                "current_mainline": "Must be one of: Muscle Preservation & Fat Loss / Rhythm Stabilization / Sleep Recovery / Dietary Structure Repair / Systematic Management",
+                "base_goal": "Standard goal in English; for Band A no numeric weight loss is allowed",
+                "challenge_goal": "High commitment goal in English",
+                "high_commitment_candidate": "Copy from intake_facts.high_commitment_candidate",
+                "high_commitment_basis": ["Copy from system screening basis"],
+                "stretch_review_cap_kg": "Copy from intake_facts.stretch_review_cap_kg",
+                "execution_path": "Fixed 'standard' during initial generation",
+                "execution_status": "Fixed 'pending'",
+                "standard_complete_rate": "Fixed 0.60",
+                "high_commitment_complete_rate": "Fixed 0.85",
+                "document_context": "Structured projection of questionnaire answers in English",
+                "28_day_auto_cap_kg": "Copy from intake_facts",
+                "28_day_display_cap_jin": "Copy from intake_facts",
+                "basic_target_jin_or_range": "Copy from intake_facts",
+                "challenge_target_jin_or_review_text": "Copy from intake_facts",
+                "target_generation_rule_applied": "Copy from intake_facts",
+                "long_term_goal": "Long-term direction in English, must include non-scale outcomes; no numeric weight loss for Band A",
+                "day28_goal": "28-day goal in English; for Band A focus on stability, energy, sleep, habits",
+                "day28_task": "What to solve first in these 28 days in English",
+                "execution_principle": "Core execution principle in English",
+                "activity_plan": {
+                    "status": "planned / paused",
+                    "sessions_per_week": "2, 3, or 4 when planned",
+                },
+                "evidence_notes": ["3-5 questionnaire evidence bullet points in English"],
+            },
+            "profile": {
+                "summary": "Backend natural language profile summary in English, within 200 words",
+                "tags": ["2-4 short English tags, e.g. Band B, Late Sleep Habit, Afternoon Fatigue, Sedentary Worker"],
+                "overview": {
+                    "gender_age": "Gender / Age matching intake_facts (e.g. Male / 30)",
+                    "height_weight": "Height / Weight matching intake_facts (e.g. 175cm / 143.3 lbs)",
+                    "bmi": "BMI matching intake_facts.bmi",
+                    "waist": "Waist matching intake_facts",
+                    "weight_loss_band": "Management band consistent with shared_analysis.weight_band",
+                },
+                "state": "Current state assessment in English",
+                "main_problem": "Core main problem in English",
+                "day28_goal": "28-day goal in English",
+                "need_analysis": {
+                    "surface_needs": ["User's stated surface needs in English"],
+                    "deep_needs": ["Underlying real service needs inferred from questionnaire evidence in English"],
+                    "priority_need": "Top priority need in English",
+                    "system_outputs": ["System delivery directions in English"],
+                    "next_actions": ["Top 1-3 immediate actions in English; exercise frequency must match shared_analysis.activity_plan.sessions_per_week"],
+                    "evidence_notes": ["2-4 questionnaire evidence bullet points in English"],
+                },
+                "notes": "Coaching tips for human operators in English",
+                "occupation_fit": "How occupation and lifestyle context impact execution in English",
+                "history_reuse": "Reusable experiences and methods to avoid in English",
+                "outcome_dashboard": "Tracking summary for 1 main outcome and up to 2 supporting outcomes in English",
+                "execution_contract_summary": "Summary of 60% standard / 85% high commitment check-in agreement in English",
+            },
+            "documents": combined_prompt_schema(language="en"),
+        }
+
     return {
         "shared_analysis": {
             "weight_band": "系统已经按安全减重空间算好的最终业务管理带，只能逐字复制：A带｜修复塑形 / B带｜轻盈启动 / C带｜明确减脂 / D带｜系统减重。"
@@ -1024,7 +1110,7 @@ def _intake_package_schema() -> dict[str, object]:
             "outcome_dashboard": "1项主要成果、最多2项辅助成果的简短跟踪摘要",
             "execution_contract_summary": "标准档60%、高承诺档85%的完整打卡约定摘要",
         },
-        "documents": combined_prompt_schema(),
+        "documents": combined_prompt_schema(language="zh"),
     }
 
 
@@ -1032,6 +1118,7 @@ def _normalize_profile_from_package(
     payload: dict,
     document_payloads: dict[str, dict],
     intake_facts: dict[str, object],
+    language: str = "zh",
 ) -> dict[str, object]:
     profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
     if not profile:
@@ -1048,9 +1135,9 @@ def _normalize_profile_from_package(
         profile["management_band"] = str(
             shared.get("weight_band")
             or intake_facts.get("weight_loss_band")
-            or "需补充身高体重后判断"
+            or ("To be assessed with height and weight" if language == "en" else "需补充身高体重后判断")
         )
-        profile["body_trend"] = str(shared.get("body_trend") or "信息不足")
+        profile["body_trend"] = str(shared.get("body_trend") or ("Insufficient information" if language == "en" else "信息不足"))
         direct_evidence, support_signals = _trend_evidence_parts(shared)
         profile["body_trend_direct_evidence"] = direct_evidence
         profile["body_trend_support_signals"] = support_signals
@@ -1071,8 +1158,8 @@ def _normalize_profile_from_package(
         profile["provisional_band"] = _boolean_value(shared.get("provisional_band"))
         for key in BAND_CALCULATION_FIELDS:
             profile[key] = shared.get(key)
-    profile["need_analysis"] = _normalize_need_analysis(profile.get("need_analysis"), intake_facts, shared)
-    profile.setdefault("notes", "建议围绕问卷中明确的执行卡点进行轻量陪跑，避免一次性增加太多动作。")
+    profile["need_analysis"] = _normalize_need_analysis(profile.get("need_analysis"), intake_facts, shared, language=language)
+    profile.setdefault("notes", "Provide light-touch coaching around execution friction points without overloading actions." if language == "en" else "建议围绕问卷中明确的执行卡点进行轻量陪跑，避免一次性增加太多动作。")
     tags = payload.get("profile", {}).get("tags") if isinstance(payload.get("profile"), dict) else None
     profile["tags"] = _clean_list(tags) if isinstance(tags, list) else []
     profile["personalized_checkin_fields"] = (
@@ -1096,7 +1183,7 @@ def _profile_from_document_payloads(document_payloads: dict[str, dict]) -> dict[
     }
 
 
-def _normalize_need_analysis(value: object, facts: dict[str, object], shared: dict[str, object]) -> dict[str, object]:
+def _normalize_need_analysis(value: object, facts: dict[str, object], shared: dict[str, object], language: str = "zh") -> dict[str, object]:
     """Keep the need engine structured even when the LLM omits optional fields.
 
     This is intentionally not a keyword classifier. It preserves the user's
@@ -1105,6 +1192,7 @@ def _normalize_need_analysis(value: object, facts: dict[str, object], shared: di
     """
 
     analysis = value if isinstance(value, dict) else {}
+    is_en = language == "en"
     main_needs = _split_need_text(facts.get("main_needs"))
     expectation = _split_need_text(facts.get("day28_expectation"))
     surface_needs = _clean_list(analysis.get("surface_needs")) or main_needs or expectation
@@ -1113,29 +1201,40 @@ def _normalize_need_analysis(value: object, facts: dict[str, object], shared: di
     actions = _clean_list(analysis.get("next_actions"))
     evidence = _clean_list(analysis.get("evidence_notes"))
 
+    if is_en:
+        evidence_fallback = _clean_list(
+            [
+                f"Service needs: {facts.get('main_needs')}",
+                f"28-day expectation: {facts.get('day28_expectation')}",
+                f"Execution worry: {facts.get('adherence_worry')}",
+            ]
+        )
+    else:
+        evidence_fallback = _clean_list(
+            [
+                f"服务需求：{facts.get('main_needs')}",
+                f"28天期待：{facts.get('day28_expectation')}",
+                f"执行担心：{facts.get('adherence_worry')}",
+            ]
+        )
+
     return {
-        "surface_needs": surface_needs or ["待补充"],
-        "deep_needs": deep_needs or ["待结合聊天和打卡继续识别"],
+        "surface_needs": surface_needs or (["To be supplemented"] if is_en else ["待补充"]),
+        "deep_needs": deep_needs or (["To be observed via daily check-ins"] if is_en else ["待结合聊天和打卡继续识别"]),
         "priority_need": str(
             analysis.get("priority_need")
             or shared.get("core_problem")
             or facts.get("main_needs")
-            or "待补充"
+            or ("To be supplemented" if is_en else "待补充")
         ),
         "system_outputs": outputs or _clean_list(
             [
                 shared.get("day28_goal"),
                 shared.get("execution_principle"),
             ]
-        ) or ["待根据方案生成结果补充"],
-        "next_actions": actions or ["按已生成方案先完成入营前3天执行与反馈"],
-        "evidence_notes": evidence or _clean_list(
-            [
-                f"服务需求：{facts.get('main_needs')}",
-                f"28天期待：{facts.get('day28_expectation')}",
-                f"执行担心：{facts.get('adherence_worry')}",
-            ]
-        ),
+        ) or (["To be refined based on plan execution"] if is_en else ["待根据方案生成结果补充"]),
+        "next_actions": actions or (["Complete first 3 days of plan and share feedback"] if is_en else ["按已生成方案先完成入营前3天执行与反馈"]),
+        "evidence_notes": evidence or evidence_fallback,
     }
 
 

@@ -185,6 +185,142 @@ EXECUTION_FIELD_SPEC = {
 }
 
 
+ENERGY_FIELD_SPEC_EN = {
+    "recipient": "Preferred name / nickname, e.g. Carol or Alex",
+    "overview": {
+        "name": "User's full legal name",
+        "gender_age": "Gender / Age (e.g. Male / 30)",
+        "height_weight": "Height / Weight (e.g. 175cm / 143.3 lbs)",
+        "bmi": "BMI & status (e.g. 21.2 Normal)",
+        "waist_bodyfat": "Waist / Body Fat percentage (if missing, write 'Waist not provided' or 'Body fat not provided')",
+        "recent_change": "Recent 3-Month Trend (e.g. Basically stable / Slowly increasing)",
+        "schedule": "Daily rhythm & sleep schedule",
+        "exercise": "Physical activity baseline",
+        "main_need": "Primary goal / need",
+        "current_focus": "Current mainline, matching shared_analysis.current_mainline",
+    },
+    "one_sentence": "One-sentence core conclusion in natural English",
+    "core_conclusions": {
+        "management_band": "Deterministic business management band from system, e.g. Band A | Body Rejuvenation & Sculpting / Band B | Gentle Energy Kickstart / Band C | Targeted Fat Loss / Band D | Systematic Weight Loss",
+        "band_explanation": "One clear sentence explaining why the user belongs to this band in English",
+        "body_trend": "Trend in the past 3 months: Improving / Basically stable / Slowly increasing / Significantly worsening / Insufficient information",
+        "trend_explanation": "One sentence explaining the 3-month trend in English",
+        "trend_direct_evidence": "1 direct factual evidence supporting trend direction",
+        "trend_support_signals": ["1-2 supporting signals from current state in English"],
+        "day28_task": "What to solve first in these 28 days in one clear sentence",
+    },
+    "goal_response": {
+        "goal_type": "specific or general",
+        "judgement_type": "reasonable or needs_adjustment",
+        "content": "A direct paragraph addressing the user's expectations, evaluation, standard goal, high commitment goal, and execution agreement in English.",
+        "user_goal": "Summary of user's original goal",
+        "judgement": "Direct assessment of goal feasibility",
+        "base_goal": "Standard 28-day goal in lbs or habit focus",
+        "challenge_goal": "High commitment goal in lbs or review condition",
+        "conditions": "Standard tier 60% completion, high commitment 85% completion agreement",
+    },
+    "occupation_context": "Summary of actual work rhythm, physical activity, and stress based on questionnaire in English (<=100 words)",
+    "weight_loss_history": "Summary of reusable experience and past methods to avoid based on questionnaire (<=100 words)",
+    "key_influence_chains": ["1-2 chains: Context -> Habit -> State -> Goal limitation in English"],
+    "desired_outcomes": [
+        {
+            "name": "Desired outcome selected by user in English",
+            "role": "main or supporting (exactly 1 main)",
+            "tracking_method": "Brief actionable tracking method in English",
+        }
+    ],
+    "judgement_points": [
+        "Rationale & evidence in English, exactly 3-5 items. Each written as 'Phenomenon/Data -> Insight' (10-25 words each)."
+    ],
+    "current_state": "What to genuinely focus on regarding current physical state in English",
+    "insulin_resistance": "Lifestyle signals regarding appetite control and post-meal energy in English (<=30 words)",
+    "leptin_sensitivity": "Lifestyle signals regarding satiety and evening cravings in English (<=30 words)",
+    "hormone_stage": "Impact of age, sleep, and stress on recovery capacity in English (<=30 words)",
+    "priority_direction": "Top priority direction to focus on in English",
+    "priority_items": [
+        "Top 3 priority problems to solve in English, exactly 3 items ranked by priority."
+    ],
+    "success_path": {
+        "intro": "Overall success pathway summary in English",
+        "weight_band": "Current management band",
+        "total_goal": "Total pathway goal in English",
+        "day28_goal": "First 28 days goal in English",
+        "week5_8": "Weeks 5-8 milestone in English",
+        "week9_12": "Weeks 9-12 milestone in English",
+    },
+    "module_diagnosis": {
+        "rhythm": "Daily rhythm diagnosis in English",
+        "diet": "Diet & nutrition diagnosis in English",
+        "sleep": "Sleep diagnosis in English",
+        "pressure": "Stress & recovery diagnosis in English",
+        "activity": "Physical activity diagnosis in English",
+    },
+    "expected_changes": {
+        "day7": "Expected changes in first 7 days in English",
+        "day14_28": "Expected changes in days 14-28 in English",
+    },
+    "week_actions": [
+        "Immediate action items for this week in English, 4-5 items. Must specify numbers, timing, or context. Must include at least 1 exercise action with type+frequency+duration."
+    ],
+    "product_schedule": {
+        "morning_c": "Morning C: 1 sachet with 300-330ml water during or within 30 min of breakfast, plus benefit for user (<=40 words)",
+        "noon_b": "Noon B: 1 sachet with 300-330ml water during or within 30 min of lunch (<=40 words)",
+        "night_a": "Evening A: 1 sachet with 300-330ml warm water, complete at latest 1 hour before bedtime (<=40 words)",
+        "summary": "Product protocol summary in English",
+    },
+    "product_meaning": "Significance of Morning C / Noon B / Evening A for this user across 3 progressive layers in English (<=120 words)",
+    "special_reminder": "Special reminders, medical advice, or safety notes in English",
+    "missing_information": ["Missing information to be supplemented, or empty list"],
+}
+
+
+EXECUTION_FIELD_SPEC_EN = {
+    "weight_band": "Management band consistent with shared_analysis.weight_band",
+    "base_goal": "Standard 28-day goal consistent with shared_analysis.base_goal",
+    "challenge_goal": "High commitment goal consistent with shared_analysis.challenge_goal",
+    "execution_path": "Default 'standard'",
+    "commitment_rule": "Standard tier 60% completion rate; High commitment 85% completion rate",
+    "path_goal": "Long-term direction consistent with shared_analysis.long_term_goal",
+    "current_mainline": "Current mainline consistent with shared_analysis.current_mainline",
+    "day28_goal": "Tasks and outcomes for these 28 days in English (<=35 words)",
+    "current_phase_goal": "Current phase goal in English (<=25 words), e.g. 'Stabilize daily rhythm first, rather than chasing uncontrolled rapid weight drops.'",
+    "principle": "Core execution principle in English (<=25 words), e.g. 'Build baseline consistency first, then gradually increase progression.'",
+    "product_schedule": {
+        "morning_c": "Morning C: 1 sachet + 300-330ml water with breakfast or within 30 min",
+        "noon_b": "Noon B: 1 sachet + 300-330ml water with lunch or within 30 min",
+        "night_a": "Evening A: 1 sachet + 300-330ml warm water, at latest 1 hour before sleep",
+    },
+    "diet_rules": ["Diet rules tailored to user's real context in English, max 3 items, each <=25 words"],
+    "exercise_rules": ["Exercise rules specifying frequency, duration, intensity and action in English, max 2 items, each <=30 words"],
+    "core_actions": [
+        {
+            "event_anchor": "Relative anchor: After breakfast, After lunch, After dinner, Before bed",
+            "action": "Core action with quantity/duration in English",
+            "fallback": "Simplified fallback if unable to complete full action in English",
+            "checkin_mapping": "Corresponding daily check-in category or focus",
+        }
+    ],
+    "weekly_plan": [
+        {"week": "Week 1", "core_task": "Rhythm Stabilization / Foundation", "acceptance_standard": "Complete product protocol; eat 2 fists of vegetables daily; follow planned activity."},
+        {"week": "Week 2", "core_task": "Consistency in Key Habits", "acceptance_standard": "Maintain diet rules 5 days/wk; 2x15-min bodyweight strength; 15-20 min post-dinner walk."},
+        {"week": "Week 3", "core_task": "Tracking & Progress Evaluation", "acceptance_standard": "Log weight & waist; brisk walk & light strength; observe sleep, energy & digestion."},
+        {"week": "Week 4", "core_task": "Sustainable Maintenance & Solidification", "acceptance_standard": "Solidify nutrition & activity routines; reproduce effective habits sustainably."},
+    ],
+    "daily_checkin": [
+        {
+            "order": "Integer 1-5, unique and strictly increasing; exactly 5 items total",
+            "category": "Must be one of: product / diet / activity / sleep / state. Item 1 must be product, exactly 1 item must be activity",
+            "title": "Clear English question targeting user's specific friction point. No leading numbers or '1.', no relative time words like 'today/tonight'. Each item has exactly 1 intent.",
+            "answer_type": "One of: yes_no / score_1_5 / number / text",
+            "options": "[\"Yes\", \"No\"] for yes_no; [\"1\", \"2\", \"3\", \"4\", \"5\"] for score_1_5; [] for number and text",
+            "example_answer": "Realistic filled answer in English matching title. Item 1 must address Morning C, Noon B, Evening A respectively with at least 1 paused or incomplete scenario.",
+        }
+    ],
+    "weekly_standard": "Weekly completion criteria in English (<=50 words)",
+    "adjust_stop_conditions": "Adjustment and stopping criteria in English (<=60 words)",
+}
+
+
 STAGE_REPORT_SPEC = {
     "stage_summary": "阶段总结",
     "risk_reminder": "风险提醒",
@@ -193,13 +329,22 @@ STAGE_REPORT_SPEC = {
 }
 
 
-def prompt_schema_for(document_type: DocumentType) -> dict[str, Any]:
+def prompt_schema_for(document_type: DocumentType, language: str = "zh") -> dict[str, Any]:
+    if language == "en":
+        if document_type == DocumentType.ENERGY_RESTART_PRESCRIPTION:
+            return ENERGY_FIELD_SPEC_EN
+        return EXECUTION_FIELD_SPEC_EN
     if document_type == DocumentType.ENERGY_RESTART_PRESCRIPTION:
         return ENERGY_FIELD_SPEC
     return EXECUTION_FIELD_SPEC
 
 
-def combined_prompt_schema() -> dict[str, Any]:
+def combined_prompt_schema(language: str = "zh") -> dict[str, Any]:
+    if language == "en":
+        return {
+            DocumentType.ENERGY_RESTART_PRESCRIPTION.value: ENERGY_FIELD_SPEC_EN,
+            DocumentType.DAY28_EXECUTION_STANDARD.value: EXECUTION_FIELD_SPEC_EN,
+        }
     return {
         DocumentType.ENERGY_RESTART_PRESCRIPTION.value: ENERGY_FIELD_SPEC,
         DocumentType.DAY28_EXECUTION_STANDARD.value: EXECUTION_FIELD_SPEC,

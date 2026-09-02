@@ -221,3 +221,21 @@ async def test_batch_template_save_uses_requested_language_not_payload_language(
     )
 
     assert (await get_active_questionnaire_fields(db_session, "intake", language="en"))[0]["key"] == "english_key"
+
+
+def test_english_intake_package_schema_and_prompt_specs():
+    from app.services.document_templates import combined_prompt_schema, prompt_schema_for
+    from app.services.intake_generation import _intake_package_schema
+    from app.models.user_document import DocumentType
+
+    schema_zh = _intake_package_schema("zh")
+    schema_en = _intake_package_schema("en")
+
+    assert "management band" in schema_en["shared_analysis"]["weight_band"].lower()
+    assert "backend natural language" in schema_en["profile"]["summary"].lower()
+    
+    energy_en = prompt_schema_for(DocumentType.ENERGY_RESTART_PRESCRIPTION, language="en")
+    assert "preferred name" in energy_en["recipient"].lower()
+
+    combined_en = combined_prompt_schema("en")
+    assert "morning_c" in combined_en[DocumentType.DAY28_EXECUTION_STANDARD.value]["product_schedule"]
