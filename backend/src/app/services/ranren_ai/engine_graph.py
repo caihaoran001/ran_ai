@@ -103,6 +103,7 @@ class EngineState(TypedDict, total=False):
     is_staff: bool
     sender_type: Any
     service_case_id: int | None
+    service_case_language: str
     service_case_introduced: bool
     should_send_introduction: bool
     service_case_silenced: bool
@@ -370,6 +371,7 @@ class EngineGraph:
         explicit_bot_query_text = state["explicit_bot_query_text"]
 
         service_case_id: int | None = None
+        service_case_language: str = "zh"
         service_case_introduced = False
         should_send_introduction = False
         service_case_silenced = False
@@ -480,6 +482,7 @@ class EngineGraph:
 
             if service_case:
                 service_case_id = service_case.id
+                service_case_language = getattr(service_case, "language", "zh") or "zh"
                 service_case_introduced = service_case.ai_introduced_at is not None
                 should_send_introduction = bool(
                     not service_case_introduced
@@ -667,6 +670,7 @@ class EngineGraph:
             "is_staff": is_staff,
             "sender_type": sender_type,
             "service_case_id": service_case_id,
+            "service_case_language": service_case_language,
             "service_case_introduced": service_case_introduced,
             "should_send_introduction": should_send_introduction,
             "service_case_silenced": service_case_silenced,
@@ -1473,7 +1477,7 @@ class EngineGraph:
                 "settings": settings,
                 "agent_run_id": state.get("agent_run_id"),
             }
-            case_lang = getattr(state.get("service_case"), "language", None)
+            case_lang = state.get("service_case_language") or getattr(state.get("service_case"), "language", None)
             if case_lang and case_lang != "zh":
                 agent_kwargs["language"] = case_lang
             if self.checkpointer is not None and state.get("checkpoint_thread_id"):

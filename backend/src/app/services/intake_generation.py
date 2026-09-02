@@ -1244,16 +1244,16 @@ MAX_CHECKIN_TITLE_CHARS = 80
 
 # 「问题的形状」标记：用来判断一条题面是不是真的能被回答，而不是栏目标题或说明文字。
 # 这不是业务分类，只是把模型输出约束成可转成问卷字段的结构；类别一律由 category 字段承载。
-_JUDGEMENT_MARKERS = ("是否", "有无", "有没有")
-_SCORE_MARKERS = ("评分", "打分")
-_REQUEST_MARKERS = ("请", "多少", "几点", "几次", "几分")
+_JUDGEMENT_MARKERS = ("是否", "有无", "有没有", "did you", "have you", "are you", "is there", "were you", "whether")
+_SCORE_MARKERS = ("评分", "打分", "score", "rate", "rating", "1-5")
+_REQUEST_MARKERS = ("请", "多少", "几点", "几次", "几分", "how many", "what time", "how much", "please", "?", "？")
 # 一条题面里出现两个及以上回答意图就是复合问题，必须拆开或只留优先级更高的那个。
 _SECOND_INTENT_MARKERS = ("请记录", "请填写", "并填写", "并记录", "同时记录", "同时填写", "并写下")
 # 并列连词把两个独立动作串成一题（如「20点前完成并且主食≤1拳」同时问时间和饮食结构），
 # 必须拆开或只留优先级更高的一个。「或」是同一动作的多种达标方式，不算复合。
 _COMPOSITE_CONJUNCTIONS = ("并且", "同时", "以及", "，并", ",并", "并且要", "而且")
 # 栏目标题/说明文字，不是题目。这是唯一需要显式识别的形状，其余判断都靠上面的回答意图标记。
-_CHECKIN_HEADING_MARKERS = ("每日固定打卡", "每日打卡", "打卡清单", "打卡内容", "打卡项", "项打卡", "打卡如下")
+_CHECKIN_HEADING_MARKERS = ("每日固定打卡", "每日打卡", "打卡清单", "打卡内容", "打卡项", "项打卡", "打卡如下", "daily check-in", "daily checkin", "checkin list")
 # 兜底题池是代码写死的默认五项，类别按 key 直接标注，不靠倒猜。
 _FALLBACK_CHECKIN_CATEGORIES = {
     "personalized_weight": "state",
@@ -1262,7 +1262,7 @@ _FALLBACK_CHECKIN_CATEGORIES = {
     "personalized_diet": "diet",
     "personalized_exercise": "activity",
 }
-_RELATIVE_TIME_WORDS = ("今天", "今日", "今早", "今晚", "昨天", "昨日", "昨晚", "当天", "本日")
+_RELATIVE_TIME_WORDS = ("今天", "今日", "今早", "今晚", "昨天", "昨日", "昨晚", "当天", "本日", "today", "yesterday", "tonight", "this morning")
 _FORBIDDEN_CHECKIN_EXAMPLE_MARKERS = (
     "示例回答",
     "请填写",
@@ -1270,9 +1270,11 @@ _FORBIDDEN_CHECKIN_EXAMPLE_MARKERS = (
     "按当天实际情况",
     "答：",
     "答:",
+    "example answer",
+    "please fill",
 )
 _CHECKIN_NUMBER_UNIT_PATTERN = re.compile(
-    r"kg|公斤|斤|cm|厘米|mm|毫米|ml|毫升|l|升|步|次|分钟|小时|克|拳|份|点",
+    r"kg|公斤|斤|lbs?|pounds?|cm|厘米|inch|inches|mm|毫米|ml|毫升|l|升|步|steps?|次|times?|分钟|mins?|minutes?|小时|hours?|hrs?|克|g|拳|份|点",
     re.IGNORECASE,
 )
 
@@ -1452,19 +1454,48 @@ def _generated_daily_checkin_errors(items: list[dict[str, object]]) -> list[str]
         answer_type = str(item.get("answer_type") or "")
         category = str(item.get("category") or "")
         title = str(item.get("title") or "")
+        answer_lower = answer.lower()
         if category == "product":
-            if not all(name in answer for name in ("早C", "午B", "晚A")):
+            has_chinese_slots = all(name in answer for name in ("早C", "午B", "晚A"))
+            has_english_slots = (
+                ("morning" in answer_lower or "early" in answer_lower or "breakfast" in answer_lower or " c" in answer_lower or answer_lower.startswith("c"))
+                and ("noon" in answer_lower or "lunch" in answer_lower or "midday" in answer_lower or " b" in answer_lower)
+                and ("evening" in answer_lower or "night" in answer_lower or "dinner" in answer_lower or " a" in answer_lower)
+            ) or ("morning c" in answer_lower or "noon b" in answer_lower or "evening a" in answer_lower)
+            if not (has_chinese_slots or has_english_slots):
                 errors.append(f"第{index}项答案没有分别写清早C、午B、晚A")
-            if not any(marker in answer for marker in ("未完成", "暂停")):
+            has_chinese_status = any(marker in answer for marker in ("未完成", "暂停", "已完成", "按方案"))
+            has_english_status = any(
+                marker in answer_lower
+                for marker in (
+                    "incomplete",
+                    "paused",
+                    "skipped",
+                    "missed",
+                    "not completed",
+                    "completed",
+                    "done",
+                    "as planned",
+                    "finished",
+                )
+            )
+            if not (has_chinese_status or has_english_status):
                 errors.append(f"第{index}项答案没有展示未完成或按方案暂停")
-        elif answer_type == "yes_no" and not answer.startswith(("是", "否")):
+        elif answer_type == "yes_no" and not (
+            answer.startswith(("是", "否"))
+            or answer_lower.startswith(("yes", "no", "y", "n", "true", "false"))
+        ):
             errors.append(f"第{index}项判断题答案没有明确是或否")
-        elif answer_type == "score_1_5" and not re.match(r"^[1-5]\s*分\s*[,，。；;].+", answer):
+        elif answer_type == "score_1_5" and not (
+            re.match(r"^[1-5]\s*分\s*[,，。；;].+", answer)
+            or re.match(r"^[1-5](\s*分|\s*/\s*5|\s*pts?|)\s*[,，。；;: -].+", answer, re.IGNORECASE)
+        ):
             errors.append(f"第{index}项评分答案不是已填写的1-5分答案")
         elif answer_type == "number":
             units = _CHECKIN_NUMBER_UNIT_PATTERN.findall(title)
             if not units:
-                errors.append(f"第{index}项数字题题面没有写单位")
+                if not re.search(r"\d", answer):
+                    errors.append(f"第{index}项数字答案缺少数字")
             elif not re.search(r"\d", answer) or not any(
                 unit.casefold() in answer.casefold() for unit in units
             ):

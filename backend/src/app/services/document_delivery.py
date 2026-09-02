@@ -105,6 +105,20 @@ async def _render_post_document_checkin_example(
         f"{index}. {item['title']}｜{item['example_answer']}"
         for index, item in enumerate(items, start=1)
     ]
+    service_case = await session.get(ServiceCase, service_case_id)
+    is_en = getattr(service_case, "language", "zh") == "en" if service_case else False
+    if is_en:
+        return "\n".join(
+            [
+                "Here are your 2 tailored documents. Each day, simply copy the text below and update the part after '|' with your actual progress for the day:",
+                "",
+                "【Daily Check-in】",
+                "",
+                *item_lines,
+                "",
+                "Even if an item is not completed, just log it truthfully—answering all 5 items counts as a complete check-in. Feel free to snap photos of products and meals to share in the group. Reach out anytime if you have questions!",
+            ]
+        )
     return "\n".join(
         [
             "两份专属文件都发给你啦。每天直接复制下面这段，只把“｜”后面的内容改成当天实际情况：",
@@ -398,7 +412,10 @@ async def send_case_documents(session: AsyncSession, service_case_id: int) -> li
         document.status == DocumentStatus.SENT for document in documents
     ) and not await _document_intro_already_sent(session, service_case)
     if should_send_intro:
-        intro = "两份专属文件已生成，请查收：\n1.《个人能量重启诊断报告》\n2.《28天高燃人生执行建议书》"
+        if getattr(service_case, "language", "zh") == "en":
+            intro = "Your 2 tailored documents have been generated, please check:\n1. 《Personal Energy Reboot Diagnostic Report》\n2. 《28-Day HumanBurning Action Plan》"
+        else:
+            intro = "两份专属文件已生成，请查收：\n1.《个人能量重启诊断报告》\n2.《28天高燃人生执行建议书》"
         intro_result = await send_channel_text(service_case.group_id, intro)
         session.add(
             Message(

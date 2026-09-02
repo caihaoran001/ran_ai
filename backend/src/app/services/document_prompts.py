@@ -85,7 +85,7 @@ def _intake_generation_system_prompt(language: str = "zh") -> str:
 【一页硬预算】执行建议书按 schema 的字段字数上限输出：目标摘要只展示权威值；diet_rules 最多3条，每条≤34字；exercise_rules 最多2条，每条≤44字；四周表每周一个短任务和一个验收短句。不要删必需字段，也不要用重复解释撑满篇幅。系统不再自动裁剪超长内容，写超了就会直接撑破一页——所以字数要靠上面的精简纪律自己收住。"""
 
 
-def _stage_report_method_prompt(stage: str) -> str:
+def _stage_report_method_prompt(stage: str, language: str = "zh") -> str:
     expected_days = {
         "day3": 3,
         "day7": 7,
@@ -93,6 +93,17 @@ def _stage_report_method_prompt(stage: str) -> str:
         "day21": 21,
         "day28": 28,
     }.get(stage, 7)
+    if language == "en":
+        return (
+            "【Stage Report Data Interpretation Method】\n"
+            f"1. This report corresponds to Day {expected_days} milestone review. Assess execution consistency before weight results; do not evaluate the user based solely on single-day weight.\n"
+            "2. Calculate adherence rate: adherence rate = active check-in days / expected days. >=80% is 'Stable', 50%-79% is 'Improving', <50% is 'Needs Followup'.\n"
+            "3. Weight change: Compare initial valid weight against latest valid weight. If weight data is missing, note insufficient data—never fabricate numbers.\n"
+            "4. If weight is plateaued or fluctuating, evaluate sleep, hydration, bowel movements, evening meal cutoffs, stress, and Morning C/Noon B/Evening A adherence. Do not simply blame user effort.\n"
+            "5. Risk reminders: Base solely on real check-ins and chat logs. If chest tightness, palpitations, allergies, or medications are mentioned, prompt medical review without giving medical advice.\n"
+            "6. Fine-tuning advice: Give 1-2 specific actions max, executable today (e.g. hydration volume, dinner portion, bedtime routine, step count).\n"
+            "7. Follow-up advice: Provide execution guidance strictly for the current program window; never mention repurchase or sales."
+        )
     return (
         "【阶段报告数据解读方法】\n"
         f"1. 本报告对应服务第 {expected_days} 天左右的阶段复盘。先看执行质量，再看体重结果，不能只用单日体重评价用户。\n"

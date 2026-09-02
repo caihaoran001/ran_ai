@@ -279,7 +279,8 @@ async def generate_stage_report(
         .order_by(UserStateProfile.updated_at.desc())
         .limit(1)
     )
-    title = _stage_title(stage)
+    case_lang = getattr(service_case, "language", "zh") or "zh"
+    title = _stage_title(stage, language=case_lang)
     ai = AIService()
     fields_payload = await _generate_stage_payload(
         ai=ai,
@@ -293,6 +294,7 @@ async def generate_stage_report(
         messages=messages,
         recipient_name=recipient_name,
         gender=gender,
+        language=case_lang,
     )
     degraded = bool(fields_payload.pop("__degraded__", False)) if isinstance(fields_payload, dict) else False
     content_json = build_stage_report_content_json(
@@ -300,6 +302,7 @@ async def generate_stage_report(
         title=title,
         user_name=user_name,
         fields=fields_payload,
+        language=case_lang,
     )
     if degraded and isinstance(content_json, dict):
         content_json["degraded"] = True
@@ -365,7 +368,8 @@ async def retry_degraded_stage_report(session: AsyncSession, document: UserDocum
         .order_by(UserStateProfile.updated_at.desc())
         .limit(1)
     )
-    title = _stage_title(stage)
+    case_lang = getattr(service_case, "language", "zh") or "zh"
+    title = _stage_title(stage, language=case_lang)
     ai = AIService()
     fields_payload = await _generate_stage_payload(
         ai=ai,
@@ -379,6 +383,7 @@ async def retry_degraded_stage_report(session: AsyncSession, document: UserDocum
         messages=messages,
         recipient_name=recipient_name,
         gender=gender,
+        language=case_lang,
     )
     still_degraded = isinstance(fields_payload, dict) and bool(fields_payload.pop("__degraded__", False))
     if still_degraded:
@@ -390,7 +395,13 @@ async def retry_degraded_stage_report(session: AsyncSession, document: UserDocum
         logger.info("Stage report retry still degraded doc_id=%s stage=%s count=%s", document.id, stage, retry_count)
         return False
 
-    content_json = build_stage_report_content_json(stage=stage, title=title, user_name=user_name, fields=fields_payload)
+    content_json = build_stage_report_content_json(
+        stage=stage,
+        title=title,
+        user_name=user_name,
+        fields=fields_payload,
+        language=case_lang,
+    )
     document.content_json = content_json  # 不含 degraded / degraded_retry_count
     document.content_md = render_document_content(content_json)
     document.file_path = None

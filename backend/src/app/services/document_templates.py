@@ -229,17 +229,30 @@ def build_stage_report_content_json(
     title: str,
     user_name: str,
     fields: dict[str, Any],
+    language: str = "zh",
 ) -> dict[str, Any]:
-    blocks = [
-        _text_block("stage_summary", "1. 阶段总结", fields.get("stage_summary")),
-        _text_block("risk_reminder", "2. 风险提醒", fields.get("risk_reminder")),
-        _text_block("adjustment_advice", "3. 微调建议", fields.get("adjustment_advice")),
-        _text_block(
-            "followup_advice",
-            "4. 后续执行建议",
-            fields.get("followup_advice") or fields.get("repurchase_advice"),
-        ),
-    ]
+    if language == "en":
+        blocks = [
+            _text_block("stage_summary", "1. Stage Summary", fields.get("stage_summary")),
+            _text_block("risk_reminder", "2. Risk Reminders", fields.get("risk_reminder")),
+            _text_block("adjustment_advice", "3. Fine-tuning Recommendations", fields.get("adjustment_advice")),
+            _text_block(
+                "followup_advice",
+                "4. Follow-up Action Plan",
+                fields.get("followup_advice") or fields.get("repurchase_advice"),
+            ),
+        ]
+    else:
+        blocks = [
+            _text_block("stage_summary", "1. 阶段总结", fields.get("stage_summary")),
+            _text_block("risk_reminder", "2. 风险提醒", fields.get("risk_reminder")),
+            _text_block("adjustment_advice", "3. 微调建议", fields.get("adjustment_advice")),
+            _text_block(
+                "followup_advice",
+                "4. 后续执行建议",
+                fields.get("followup_advice") or fields.get("repurchase_advice"),
+            ),
+        ]
     payload = _payload(title=title, recipient=user_name, blocks=blocks)
     payload["stage"] = stage
     return payload

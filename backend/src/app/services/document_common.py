@@ -24,6 +24,7 @@ DOCUMENT_DEFINITIONS = {
 DOCUMENT_DEFINITIONS_EN = {
     DocumentType.ENERGY_RESTART_PRESCRIPTION: "Personal Energy Reboot Diagnostic Report",
     DocumentType.DAY28_EXECUTION_STANDARD: "28-Day HumanBurning Action Plan",
+    DocumentType.STAGE_REPORT: "Stage Progress Report",
 }
 
 

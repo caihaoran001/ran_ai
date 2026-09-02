@@ -194,6 +194,15 @@ class RanrenAgentGraph:
             ),
         )
         bot_nickname = await self._resolve_bot_nickname()
+        language = self.context.language or "zh"
+        if language == "zh" and self.context.service_case_id:
+            try:
+                async with db_session_module.SessionLocal() as session:
+                    case_row = await session.get(ServiceCase, self.context.service_case_id)
+                    if case_row and getattr(case_row, "language", None):
+                        language = case_row.language
+            except Exception:
+                pass
         initial_messages: list[BaseMessage] = [
             SystemMessage(content=AGENT_SYSTEM_PROMPT),
             HumanMessage(
@@ -206,7 +215,7 @@ class RanrenAgentGraph:
                     memory_context=memory_context,
                     knowledge_context=knowledge_context,
                     bot_nickname=bot_nickname,
-                    language=self.context.language,
+                    language=language,
                 )
             ),
         ]

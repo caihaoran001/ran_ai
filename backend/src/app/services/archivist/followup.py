@@ -205,9 +205,23 @@ def compose_followup_message(
 
 
 def compose_milestone_followup(
-    milestone_day: int, need_waist: bool, need_weight: bool = False
+    milestone_day: int, need_waist: bool, need_weight: bool = False, language: str = "zh"
 ) -> str:
     """里程碑前夜的固定模板：提醒用户次晨如厕后空腹打卡。"""
+    if language == "en":
+        actions = [
+            action
+            for action, needed in (("record your weight", need_weight), ("measure your waist", need_waist))
+            if needed
+        ]
+        checkin_action = (
+            f"{' and '.join(actions)}, then share it in the group" if actions else "complete your check-in and post it in the group"
+        )
+        return (
+            f"Tomorrow is Day {milestone_day} of your program! Quick reminder for tonight: "
+            f"tomorrow morning after using the restroom, please {checkin_action} on an empty stomach. No need to measure tonight, get some good rest~"
+        )
+
     actions = [
         action
         for action, needed in (("称好体重", need_weight), ("量好腰围", need_waist))
@@ -245,6 +259,7 @@ class ScheduledFollowupPlan:
     milestone_day: int | None = None
     need_waist: bool = False
     need_weight: bool = False
+    language: str = "zh"
 
 
 async def get_active_daily_checklist(
@@ -337,15 +352,20 @@ async def plan_document_checklist_followup(
             missing.append(item)
     if not missing:
         return None
+    case_lang = getattr(service_case, "language", "zh") or "zh"
     return ScheduledFollowupPlan(
         kind="daily_checklist",
         target_date=target_date,
         expected_items=missing,
+        language=case_lang,
     )
 
 
-def _compose_document_checklist_followup_text(*, missing: list[dict[str, str]]) -> str:
+def _compose_document_checklist_followup_text(*, missing: list[dict[str, str]], language: str = "zh") -> str:
     """Fill the fixed daily-checklist template with yesterday's missing items."""
+    if language == "en":
+        labels = "; ".join(item["label"] for item in missing)
+        return f"Good morning! Just a quick follow-up on yesterday's check-in: {labels}. Reply to me with an update so I can log it and help adjust your plan~"
     labels = "；".join(item["label"] for item in missing)
     return f"早上好，补一下昨天的打卡：{labels}。回我一句，我记上，后面好帮你调整～"
 
@@ -375,6 +395,7 @@ async def plan_scheduled_followups(
     tz: ZoneInfo,
 ) -> list[ScheduledFollowupPlan]:
     """Build independent candidates without generating any LLM copy."""
+    case_lang = getattr(service_case, "language", "zh") or "zh"
     detect = await detect_followup(session, service_case=service_case, now=now, tz=tz)
     preferences = await get_followup_preference_states(
         session, service_case_id=service_case.id
@@ -393,6 +414,7 @@ async def plan_scheduled_followups(
                 ],
                 confirmation_fields=[item["field"] for item in confirmations],
                 fixed_text=confirmation_text,
+                language=case_lang,
             )
         )
     milestone = detect.get("milestone")
@@ -402,11 +424,12 @@ async def plan_scheduled_followups(
                 kind="milestone",
                 target_date=now.date() + timedelta(days=1),
                 expected_items=[
-                    {"id": "milestone_morning_checkin", "label": "次晨空腹打卡"}
+                    {"id": "milestone_morning_checkin", "label": "Morning fasting check-in" if case_lang == "en" else "次晨空腹打卡"}
                 ],
                 milestone_day=milestone["milestone_day"],
                 need_waist=bool(milestone["need_waist"] and preferences["waist"]),
                 need_weight=bool(milestone["need_weight"] and preferences["weight"]),
+                language=case_lang,
             )
         )
     if preferences["daily_checklist"]:
@@ -426,12 +449,13 @@ def render_scheduled_followup(plan: ScheduledFollowupPlan) -> ScheduledFollowup:
     if plan.fixed_text is not None:
         text = plan.fixed_text
     elif plan.kind == "daily_checklist":
-        text = _compose_document_checklist_followup_text(missing=plan.expected_items)
+        text = _compose_document_checklist_followup_text(missing=plan.expected_items, language=plan.language)
     elif plan.kind == "milestone" and plan.milestone_day is not None:
         text = compose_milestone_followup(
             milestone_day=plan.milestone_day,
             need_waist=plan.need_waist,
             need_weight=plan.need_weight,
+            language=plan.language,
         )
     else:
         raise ValueError(f"Unsupported followup plan: {plan.kind}")

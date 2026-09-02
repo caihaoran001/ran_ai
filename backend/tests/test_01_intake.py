@@ -2975,3 +2975,142 @@ async def test_english_intake_submit_reply(db_session, monkeypatch):
     assert "received your enrollment assessment" in receipt.content
     assert "September 10, 2026" in receipt.content
 
+
+def test_english_daily_checkin_validation_rules():
+    from app.services.intake_generation import _generated_daily_checkin_errors
+
+    valid_english_items = [
+        {
+            "category": "product",
+            "title": "Morning C, Noon B, Evening A product protocol",
+            "answer_type": "text",
+            "example_answer": "Morning C completed, Noon B completed, Evening A paused as planned",
+        },
+        {
+            "category": "diet",
+            "title": "Did you eat at least 2 fist-sized portions of vegetables?",
+            "answer_type": "yes_no",
+            "example_answer": "Yes, 2 bowls of spinach",
+        },
+        {
+            "category": "activity",
+            "title": "Did you complete 20 minutes of brisk walking?",
+            "answer_type": "yes_no",
+            "example_answer": "Yes, 25 mins brisk walk after dinner",
+        },
+        {
+            "category": "sleep",
+            "title": "Did you start sleep wind-down by 23:00?",
+            "answer_type": "yes_no",
+            "example_answer": "Yes, in bed by 22:45",
+        },
+        {
+            "category": "state",
+            "title": "Rate your daytime alertness on a 1-5 scale",
+            "answer_type": "score_1_5",
+            "example_answer": "4 / 5, felt energetic all day",
+        },
+    ]
+    errors = _generated_daily_checkin_errors(valid_english_items)
+    assert errors == []
+
+
+@pytest.mark.asyncio
+async def test_english_document_delivery_intro_and_checkin_template(db_session):
+    from app.services.document_delivery import _render_post_document_checkin_example
+    from app.services.execution_commitment import render_commitment_invitation
+
+    service_case = ServiceCase(
+        case_no="CASE-EN-DELIVERY",
+        group_id="group-en-delivery",
+        questionnaire_token="token-en-delivery",
+        status=ServiceCaseStatus.DOCUMENTS_GENERATED,
+        language="en",
+    )
+    db_session.add(service_case)
+    await db_session.flush()
+
+    checkin_items = [
+        {"order": 1, "title": "Product Protocol", "example_answer": "Morning C / Noon B / Evening A completed"},
+        {"order": 2, "title": "Vegetables", "example_answer": "Yes, 2 fist-sized portions"},
+        {"order": 3, "title": "Activity", "example_answer": "Yes, 20 mins walk"},
+        {"order": 4, "title": "Sleep", "example_answer": "Yes, slept by 23:00"},
+        {"order": 5, "title": "Energy", "example_answer": "4 / 5, high alertness"},
+    ]
+    doc = UserDocument(
+        service_case_id=service_case.id,
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28-Day HumanBurning Action Plan",
+        status=DocumentStatus.SENT,
+        sent_at=datetime.now(timezone.utc),
+        content_json={"blocks": [{"key": "daily_checkin", "checkin_items": checkin_items}]},
+        content_md="...",
+    )
+    db_session.add(doc)
+    await db_session.flush()
+
+    checkin_msg = await _render_post_document_checkin_example(db_session, service_case_id=service_case.id)
+    assert checkin_msg is not None
+    assert "Here are your 2 tailored documents" in checkin_msg
+    assert "【Daily Check-in】" in checkin_msg
+    assert "1. Product Protocol｜Morning C / Noon B / Evening A completed" in checkin_msg
+
+    invitation = render_commitment_invitation(
+        {
+            "standard_target": "4-6 lbs",
+            "high_commitment_candidate": True,
+            "high_commitment_target": "8 lbs",
+        },
+        language="en",
+    )
+    assert "High Commitment Track" in invitation
+    assert "Standard Track" in invitation
+    assert "8 lbs" in invitation
+
+
+def test_english_stage_report_and_followup_templates():
+    from app.services.document_templates import build_stage_report_content_json
+    from app.services.stage_report import _stage_title, _fallback_stage_payload
+    from app.services.archivist.followup import (
+        _compose_document_checklist_followup_text,
+        compose_milestone_followup,
+    )
+
+    assert _stage_title("day7", language="en") == "Day 7 Stage Progress Report"
+
+    fallback = _fallback_stage_payload("day7", {}, [], language="en")
+    assert "Recorded 0 active check-in days" in fallback["stage_summary"]
+    assert "Morning C/Noon B/Evening A" in fallback["adjustment_advice"]
+
+    report_json = build_stage_report_content_json(
+        stage="day7",
+        title="Day 7 Stage Progress Report",
+        user_name="Alex",
+        fields={
+            "stage_summary": "Great compliance in Week 1.",
+            "risk_reminder": "No adverse risks identified.",
+            "adjustment_advice": "Maintain hydration.",
+            "followup_advice": "Focus on evening routine.",
+        },
+        language="en",
+    )
+    assert report_json["blocks"][0]["title"] == "1. Stage Summary"
+    assert report_json["blocks"][1]["title"] == "2. Risk Reminders"
+    assert report_json["blocks"][2]["title"] == "3. Fine-tuning Recommendations"
+    assert report_json["blocks"][3]["title"] == "4. Follow-up Action Plan"
+
+    followup_text = _compose_document_checklist_followup_text(
+        missing=[{"id": "c1", "label": "Product Protocol"}, {"id": "c2", "label": "Vegetables"}],
+        language="en",
+    )
+    assert "Good morning! Just a quick follow-up" in followup_text
+    assert "Product Protocol; Vegetables" in followup_text
+
+    milestone_text = compose_milestone_followup(
+        milestone_day=7,
+        need_waist=True,
+        need_weight=True,
+        language="en",
+    )
+    assert "Tomorrow is Day 7 of your program!" in milestone_text
+    assert "record your weight and measure your waist" in milestone_text
