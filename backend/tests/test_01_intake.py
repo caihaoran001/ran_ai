@@ -3207,6 +3207,87 @@ def test_imperial_units_weight_and_waist_conversion():
     assert _weight_kg_to_display(74.84, language="zh") == "149.7斤"
 
 
+def test_english_deterministic_targets_are_native_english():
+    """确定性目标必须按语言原生生成，不能靠正则把中文句子事后改写成英文。
+
+    事后改写只换掉带名和「X斤」，"从入营起算累计""不预设累计斤数…" 原样留在
+    英文客户的交付文档里，成了中英混排；而提示词又要求模型"照抄 intake_facts"，
+    模型只能照抄中文或自己翻译换算。
+    """
+
+    from app.services.intake_facts import build_intake_fact_summary
+    from app.services.questionnaire_template import get_questionnaire_fields
+
+    fields_en = get_questionnaire_fields("en")
+    fields_zh = get_questionnaire_fields("zh")
+    answers = {
+        "SIMPLE1774104038286mn0fqky6": "70 inches",
+        "SIMPLE1774104087629mn0frn0t": "200 lbs",
+        "SIMPLE1774104236120mn0futlk": "38 inches",
+        "RADIO1774103553031mn0fg6ix": "Male",
+        "SIMPLE1774103589114mn0fgyd6": "35",
+    }
+
+    facts_en = build_intake_fact_summary(fields_en, answers, language="en")
+    facts_zh = build_intake_fact_summary(fields_zh, answers, language="zh")
+
+    # 英文目标里不能残留任何中文
+    for key in ("basic_target_jin_or_range", "challenge_target_jin_or_review_text", "target_generation_rule_applied"):
+        assert not re.search(r"[一-鿿]", str(facts_en[key])), (key, facts_en[key])
+    for value in facts_en["stage_targets"].values():
+        assert not re.search(r"[一-鿿]", str(value)), value
+    for value in facts_en["day28_targets"].values():
+        assert not re.search(r"[一-鿿]", str(value)), value
+
+    # 英文用 lbs，中文用斤，但说的是同一个安全上限（1斤=1.10231 lbs）
+    assert "lbs" in facts_en["day28_targets"]["base"]
+    assert "斤" in facts_zh["day28_targets"]["base"]
+    assert facts_en["28_day_display_cap_jin"] == pytest.approx(
+        facts_zh["28_day_display_cap_jin"] * 1.10231, 0.01
+    )
+
+    # 带位标识仍是中文内部键：看板分类统计和阻塞判据都按它过滤
+    assert facts_en["weight_loss_band"] == facts_zh["weight_loss_band"]
+    # 缺失哨兵同样保持中文，由渲染层翻译
+    assert facts_en["city"] == "未提供"
+
+
+def test_english_overview_and_sentinels_render_in_english():
+    """报告首屏的概览格和缺失占位符不能出中文。
+
+    facts 里的"未提供""暂无数据"是跨模块哨兵值（看板分类统计、文档生成阻塞判据
+    都按它们过滤），所以源头保持中文，必须由渲染层翻译。
+    """
+
+    from app.services.document_templates import _localize_band_and_units_en
+    from app.services.intake_generation import _format_waist_bodyfat
+
+    assert _format_waist_bodyfat("96.52", "未提供", language="en") == (
+        "Waist: 96.52cm / Body fat: not provided"
+    )
+    # 中文行为不变
+    assert _format_waist_bodyfat("96.52", "未提供", language="zh") == "腰围96.52cm / 体脂率未提供"
+
+    for sentinel, expected in (
+        ("未提供", "Not provided"),
+        ("暂无数据", "No data yet"),
+        ("需补充身高体重后判断", "To be assessed once height and weight are provided"),
+        ("信息不足", "Insufficient information"),
+    ):
+        assert _localize_band_and_units_en(sentinel) == expected
+
+
+def test_a_band_weight_number_guard_covers_imperial_units():
+    """A带禁止出现减重数字的闸门必须认 lbs，否则对英文客户完全不设防。"""
+
+    from app.services.intake_generation import _WEIGHT_NUMBER_PATTERN
+
+    for text in ("28天减重6斤", "reduce 3 kg", "Lose 5 lbs in 28 days", "down 10 pounds", "目标 4公斤"):
+        assert _WEIGHT_NUMBER_PATTERN.search(text), text
+    for text in ("focus on posture and strength", "不设减重指标，以体态与力量提升为主"):
+        assert not _WEIGHT_NUMBER_PATTERN.search(text), text
+
+
 def test_imperial_height_conversion():
     """英文客户按本地习惯填英寸/英尺，必须换算成厘米。
 

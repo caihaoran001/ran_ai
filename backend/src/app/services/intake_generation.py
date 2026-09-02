@@ -388,6 +388,7 @@ def _force_high_risk_manual_review(
 def _apply_canonical_target_contract(
     shared: dict[str, object],
     facts: dict[str, object],
+    language: str = "zh",
 ) -> None:
     """把系统计算目标写成唯一权威值，后续两份文档只能逐字复制。
 
@@ -421,7 +422,11 @@ def _apply_canonical_target_contract(
     shared["challenge_target_jin_or_review_text"] = challenge_goal
     shared["base_goal"] = base_goal
     shared["challenge_goal"] = challenge_goal
-    shared["day28_goal"] = f"标准目标：{base_goal}；高承诺目标：{challenge_goal}"
+    shared["day28_goal"] = (
+        f"Standard target: {base_goal}; high-commitment target: {challenge_goal}"
+        if language == "en"
+        else f"标准目标：{base_goal}；高承诺目标：{challenge_goal}"
+    )
     stage_targets = facts.get("stage_targets") if isinstance(facts.get("stage_targets"), dict) else {}
     shared["week5_8_target"] = str(stage_targets.get("week5_8") or "").strip()
     shared["week9_12_target"] = str(stage_targets.get("week9_12") or "").strip()
@@ -816,7 +821,7 @@ async def _generate_intake_analysis_package(
         case_lang = "zh"
     fields = await get_active_questionnaire_fields(session, "intake", language=case_lang)
     readable_answers = _safety_model_readable_answers(fields, submission.answers_json)
-    preliminary_facts = build_intake_fact_summary(fields, submission.answers_json)
+    preliminary_facts = build_intake_fact_summary(fields, submission.answers_json, language=case_lang)
     safety_factors = await _extract_safety_factors(
         ai=ai,
         service_case=service_case,
@@ -832,7 +837,7 @@ async def _generate_intake_analysis_package(
         # 即使关键体征不足而不能生成文件，问卷中的明确持续风险也已被同一次安全提取保留；
         # 这里只跳过后续正式文档生成，避免继续消耗一次大模型调用。
         raise DocumentGenerationBlocked(preliminary_block_reasons)
-    intake_facts = build_intake_fact_summary(fields, submission.answers_json, safety_factors)
+    intake_facts = build_intake_fact_summary(fields, submission.answers_json, safety_factors, language=case_lang)
     block_reasons = _document_generation_block_reasons(intake_facts)
     if block_reasons:
         raise DocumentGenerationBlocked(block_reasons)
@@ -927,6 +932,9 @@ def _normalize_intake_analysis_package(
 ) -> dict[str, object]:
     """把一次模型正文收敛成可落库 package；内容问题交给上层重新生成。"""
 
+    case_lang = getattr(service_case, "language", "zh") or "zh"
+    if case_lang not in ("zh", "en"):
+        case_lang = "zh"
     payload = parse_json_object(text)
     if isinstance(payload.get("intake_analysis_package"), dict):
         payload = payload["intake_analysis_package"]
@@ -939,7 +947,7 @@ def _normalize_intake_analysis_package(
     # 持续高风险与A-D带并存；服务单高风险无条件点亮运营页面的重点关注。
     _apply_deterministic_band(shared, intake_facts)
     _force_high_risk_manual_review(shared, service_case)
-    _apply_canonical_target_contract(shared, intake_facts)
+    _apply_canonical_target_contract(shared, intake_facts, language=case_lang)
     activity_frequency = _normalize_shared_activity_frequency(shared)
     shared["ready_for_document_generation"] = True
     shared["document_generation_block_reasons"] = []
@@ -952,7 +960,6 @@ def _normalize_intake_analysis_package(
         raise RetryableIntakePackageError(
             "intake analysis package must contain both delivery documents"
         )
-    case_lang = getattr(service_case, "language", "zh") or "zh"
     _apply_intake_facts_to_document_payloads(document_payloads, intake_facts, language=case_lang)
     _append_waist_remeasurement_note(document_payloads, intake_facts)
     _apply_shared_activity_frequency_to_documents(document_payloads, activity_frequency)
@@ -991,8 +998,8 @@ def _intake_package_schema(language: str = "zh") -> dict[str, object]:
                 "body_trend_confidence": "high / medium / low",
                 "core_problem": "Core problem identified purely from questionnaire facts in English",
                 "current_mainline": "Must be one of: Muscle Preservation & Fat Loss / Rhythm Stabilization / Sleep Recovery / Dietary Structure Repair / Systematic Management",
-                "base_goal": "Standard goal in English; for Band A no numeric weight loss is allowed",
-                "challenge_goal": "High commitment goal in English",
+                "base_goal": "Verbatim copy of intake_facts.day28_targets.base (already English, figures in lbs); for Band A no numeric weight loss is allowed",
+                "challenge_goal": "Verbatim copy of intake_facts.day28_targets.challenge (already English, figures in lbs)",
                 "high_commitment_candidate": "Copy from intake_facts.high_commitment_candidate",
                 "high_commitment_basis": ["Copy from system screening basis"],
                 "stretch_review_cap_kg": "Copy from intake_facts.stretch_review_cap_kg",
@@ -1001,11 +1008,11 @@ def _intake_package_schema(language: str = "zh") -> dict[str, object]:
                 "standard_complete_rate": "Fixed 0.60",
                 "high_commitment_complete_rate": "Fixed 0.85",
                 "document_context": "Structured projection of questionnaire answers in English",
-                "28_day_auto_cap_kg": "Copy from intake_facts",
-                "28_day_display_cap_jin": "Copy from intake_facts",
-                "basic_target_jin_or_range": "Copy from intake_facts",
-                "challenge_target_jin_or_review_text": "Copy from intake_facts",
-                "target_generation_rule_applied": "Copy from intake_facts",
+                "28_day_auto_cap_kg": "Copy from intake_facts (kg)",
+                "28_day_display_cap_jin": "Copy from intake_facts as-is — the value is already in lbs for English cases despite the internal field name. Do not convert it.",
+                "basic_target_jin_or_range": "Verbatim copy from intake_facts (already English, figures in lbs)",
+                "challenge_target_jin_or_review_text": "Verbatim copy from intake_facts (already English, figures in lbs)",
+                "target_generation_rule_applied": "Verbatim copy from intake_facts",
                 "long_term_goal": "Long-term direction in English, must include non-scale outcomes; no numeric weight loss for Band A",
                 "day28_goal": "28-day goal in English; for Band A focus on stability, energy, sleep, habits",
                 "day28_task": "What to solve first in these 28 days in English",
@@ -1128,7 +1135,7 @@ def _normalize_profile_from_package(
     if shared:
         profile.setdefault("main_problem", shared.get("core_problem"))
         profile.setdefault("day28_goal", shared.get("day28_goal"))
-    profile = sanitize_profile_json(dict(profile), intake_facts)
+    profile = sanitize_profile_json(dict(profile), intake_facts, language=language)
     # 风险与复核属于运营风控链，不能由交付文件模型生成或在画像自由文本中混写。
     profile.pop("risks", None)
     if shared:
@@ -2040,7 +2047,12 @@ def _normalize_combined_document_payload(
 
 # 用户可见字段里的减重数字。业务判断仍以模型的 goal_type 为准，这个只做最后一道
 # 格式兜底：A带的整个话术契约存在的理由就是提示词封不住数字，所以放行前再查一次。
-_WEIGHT_NUMBER_PATTERN = re.compile(r"\d+(?:\.\d+)?\s*(?:斤|公斤|千克|[kK][gG])")
+# 必须同时认英制：英文服务单的目标文案本来就以 lbs 给出，只认中文单位等于对
+# 英文 A 带客户完全不设防（"Lose 5 lbs" 会被原样放过去）。
+_WEIGHT_NUMBER_PATTERN = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:斤|公斤|千克|kg|lbs?|pounds?)",
+    re.IGNORECASE,
+)
 # 概览表里"腰围/体脂率"这类量测值：纯数字或数字区间才算填了数值，才配拼上单位。
 _MEASUREMENT_VALUE_PATTERN = re.compile(
     r"^\d+(?:\.\d+)?(?:\s*[-–~〜至]\s*\d+(?:\.\d+)?)?$"
@@ -2168,6 +2180,7 @@ def _apply_intake_facts_to_single_payload(
             overview["waist_bodyfat"] = _format_waist_bodyfat(
                 facts.get("waist"),
                 facts.get("bodyfat"),
+                language=language,
             )
     elif document_type == DocumentType.DAY28_EXECUTION_STANDARD:
         payload["weight_band"] = weight_band
@@ -2204,7 +2217,7 @@ def _blank_if_missing(value: object) -> str:
     return "" if text in {"未提供", "暂无数据"} else text
 
 
-def _format_waist_bodyfat(waist: object, bodyfat: object) -> str:
+def _format_waist_bodyfat(waist: object, bodyfat: object, language: str = "zh") -> str:
     """Render the two measurements as independently labeled facts.
 
     They share one overview cell for layout only. Dropping an absent waist used
@@ -2218,23 +2231,26 @@ def _format_waist_bodyfat(waist: object, bodyfat: object) -> str:
     """
 
     missing_values = {"", "未提供", "暂无数据", "暂未测量", "待补充", "待测量"}
+    is_en = language == "en"
+    missing_text = "not provided" if is_en else "未提供"
+    sep = ": " if is_en else ""
 
     def display(value: object, *, label: str, unit: str) -> str:
         text = str(value or "").strip()
         if text in missing_values:
-            return f"{label}未提供"
+            return f"{label}{sep}{missing_text}"
         measurement = text[: -len(unit)].strip() if text.endswith(unit) else text
         if _MEASUREMENT_VALUE_PATTERN.match(measurement):
-            return f"{label}{measurement}{unit}"
+            return f"{label}{sep}{measurement}{unit}"
         if _ANY_DIGIT_PATTERN.search(text):
             # 有数值但夹着说明（"30 左右，去年测的"）：原样保留信息，只是不再拼单位。
-            return f"{label}{text}"
-        return f"{label}未提供"
+            return f"{label}{sep}{text}"
+        return f"{label}{sep}{missing_text}"
 
     return " / ".join(
         (
-            display(waist, label="腰围", unit="cm"),
-            display(bodyfat, label="体脂率", unit="%"),
+            display(waist, label="Waist" if is_en else "腰围", unit="cm"),
+            display(bodyfat, label="Body fat" if is_en else "体脂率", unit="%"),
         )
     )
 

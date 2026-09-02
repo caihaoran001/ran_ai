@@ -115,6 +115,7 @@ def build_intake_fact_summary(
     fields: list[dict[str, Any]],
     answers: dict[str, Any],
     safety_factors: dict[str, Any] | None = None,
+    language: str = "zh",
 ) -> dict[str, Any]:
     """Extract deterministic facts shared by profile and document generation.
 
@@ -122,6 +123,10 @@ def build_intake_fact_summary(
     ``intake_generation._extract_safety_factors``）。它决定保护性下限上调多少，
     以及是否因红色风险直接进入 A 带。缺省为 None 时退化成纯 BMI 20 下限，
     行为与历史一致。
+
+    ``language`` 只影响**用户可见的目标文案**（28天目标、12周阶段目标及其单位）。
+    带位标识、"未提供"/"暂无数据" 这些是跨模块的内部哨兵值（看板分类统计、
+    文档生成阻塞判据都按它们过滤），一律保持中文，由渲染层翻译成英文展示。
     """
 
     title_by_key = {
@@ -196,9 +201,12 @@ def build_intake_fact_summary(
         baseline_weight_kg=weight,
         safe_reduction_room_kg=safe_reduction["safe_reduction_room_kg"],
         high_commitment_candidate=high_commitment_candidate,
+        language=language,
     )
+    # 展示上限跟着服务语言换单位（英文客户看 lbs）。字段名沿用 _jin 是内部键名，
+    # 模型只按 schema 里写明的单位照抄，不自己换算。
     display_cap_jin = (
-        int(safe_reduction["day28_goal_cap_kg"] * 2)
+        _display_cap_in_language(safe_reduction["day28_goal_cap_kg"], language)
         if safe_reduction["day28_goal_cap_kg"] is not None
         else None
     )
@@ -241,7 +249,7 @@ def build_intake_fact_summary(
         "safety_review_reasons": _safety_review_reasons(safety_factors) if safety_review else [],
         # 12周阶段目标由代码查表并按安全空间封顶，模型只负责照抄和补个案重点。
         "stage_targets": _stage_targets(
-            weight_loss_band, safe_reduction["safe_reduction_room_kg"]
+            weight_loss_band, safe_reduction["safe_reduction_room_kg"], language
         ),
         # 28天基础/挑战目标同理：查表 + 按 day28_goal_cap_kg 封顶，模型只照抄数字。
         "day28_targets": day28_targets,
@@ -267,7 +275,7 @@ def build_intake_fact_summary(
         "high_commitment_basis": high_commitment_basis,
         "stretch_review_cap_kg": _format_safe_measurement(stretch_review_cap_kg),
         "stretch_review_cap_jin": (
-            int(stretch_review_cap_kg * 2)
+            _display_cap_in_language(stretch_review_cap_kg, language)
             if stretch_review_cap_kg is not None
             else "暂无数据"
         ),
@@ -275,11 +283,7 @@ def build_intake_fact_summary(
         "execution_status": "pending",
         "standard_complete_rate": 0.60,
         "high_commitment_complete_rate": 0.85,
-        "target_generation_rule_applied": (
-            "A带不设减重数字"
-            if weight_loss_band == BAND_A
-            else "标准目标=min(基线体重×5%, 4kg, 安全减重空间)；高承诺目标=min(基线体重×7.5%, 5kg, 安全减重空间-1kg)，仅合格且群内确认后生效"
-        ),
+        "target_generation_rule_applied": _target_rule_text(weight_loss_band, language),
         "waist": _format_number(waist) if waist else "未提供",
         "waist_cm": _format_number(waist) if waist else "未提供",
         "waist_height_ratio": f"{waist_height_ratio:.3f}" if waist_height_ratio else "暂无数据",
@@ -388,24 +392,35 @@ def _high_commitment_eligibility(
     ]
 
 
-def sanitize_profile_json(profile: dict[str, Any], facts: dict[str, Any] | None) -> dict[str, Any]:
+def sanitize_profile_json(
+    profile: dict[str, Any],
+    facts: dict[str, Any] | None,
+    language: str = "zh",
+) -> dict[str, Any]:
+    is_en = language == "en"
     if not facts:
         return profile
     overview = profile.setdefault("overview", {})
     if isinstance(overview, dict):
         overview["gender_age"] = _join_non_empty([facts.get("gender"), facts.get("age")], " / ")
-        # 用户可见展示统一用「斤」；同时把结构化 kg 值单独存一份，供 _extract_initial_weight
-        # 等读取端稳定取数，不再依赖从展示串里按「kg」关键字解析（换单位会静默切断那条链路）。
+        # 用户可见展示中文用「斤」、英文用 lbs；同时把结构化 kg 值单独存一份，供
+        # _extract_initial_weight 等读取端稳定取数，不再依赖从展示串里按「kg」关键字
+        # 解析（换单位会静默切断那条链路）。
         overview["height_weight"] = _join_non_empty(
-            [_with_unit(facts.get("height_cm"), "cm"), _weight_kg_to_jin(facts.get("weight_kg"))],
+            [
+                _with_unit(facts.get("height_cm"), "cm"),
+                _weight_kg_to_display(facts.get("weight_kg"), language=language),
+            ],
             " / ",
         )
         weight_kg_value = facts.get("weight_kg")
         if weight_kg_value and str(weight_kg_value) not in {"未提供", "暂无数据"}:
             overview["weight_kg"] = weight_kg_value
-        overview["bmi"] = str(facts.get("bmi") or "暂无数据")
-        overview["waist"] = str(facts.get("waist") or "未提供")
-        overview["weight_loss_band"] = str(facts.get("weight_loss_band") or "需后续补充")
+        overview["bmi"] = str(facts.get("bmi") or ("No data yet" if is_en else "暂无数据"))
+        overview["waist"] = str(facts.get("waist") or ("Not provided" if is_en else "未提供"))
+        overview["weight_loss_band"] = str(
+            facts.get("weight_loss_band") or ("To be added later" if is_en else "需后续补充")
+        )
 
     return profile
 
@@ -587,6 +602,9 @@ _STAGE_RANGES = {
 }
 
 _STAGE_SUFFIX = {"week9_12": "，或提前达到适宜目标后转入维持"}
+_STAGE_SUFFIX_EN = {
+    "week9_12": ", or move into maintenance once a suitable target is reached ahead of schedule"
+}
 
 # 不给数字的那几格照抄客户表述，模型不需要自己组织。
 _STAGE_TEXT_A_BAND = {
@@ -596,36 +614,120 @@ _STAGE_TEXT_A_BAND = {
 _STAGE_TEXT_D_WEEK5_8 = "不预设累计斤数，按第一个28天的实际结果、耐受度和肌肉保护情况继续推进"
 _STAGE_TEXT_UNKNOWN = "待补齐身高体重后确定"
 
+# 英文服务单的同一批文案。刻意**不**靠事后正则把中文句子改写成英文：那样只有
+# 带名和「X斤」会被替换掉，"从入营起算累计""不预设累计斤数..." 这些原样留在
+# 英文客户的交付文档里，成了中英混排。数值边界仍按斤计算（见 _jin_display），
+# 保证两种语言说的是同一个安全上限。
+_STAGE_TEXT_A_BAND_EN = {
+    "week5_8": "No weight-loss target; focus on posture and strength",
+    "week9_12": (
+        "No weight-loss target; stabilize weight and improve body composition, "
+        "then reassess whether to move into Band B pacing"
+    ),
+}
+_STAGE_TEXT_D_WEEK5_8_EN = (
+    "No preset cumulative amount; continue based on your actual results, tolerance "
+    "and muscle protection over the first 28 days"
+)
+_STAGE_TEXT_UNKNOWN_EN = "To be confirmed once height and weight are provided"
 
-def _stage_targets(band: str, safe_room_kg: float | None) -> dict[str, str]:
+# 1 斤 = 1.10231 lbs。和 document_templates 的换算率一致，改一处要同步另一处。
+_LBS_PER_JIN = 1.10231131
+
+
+def _jin_display(value: float, language: str = "zh") -> str:
+    """把内部按斤计算的数值渲染成用户可见的单位文本。"""
+
+    if language != "en":
+        return f"{int(value)}斤"
+    lbs = round(value * _LBS_PER_JIN, 1)
+    text = f"{int(lbs)}" if lbs == int(lbs) else f"{lbs:.1f}"
+    return f"{text} lbs"
+
+
+def _target_rule_text(weight_loss_band: str, language: str = "zh") -> str:
+    if language == "en":
+        return (
+            "Band A carries no weight-loss figure"
+            if weight_loss_band == BAND_A
+            else (
+                "Standard target = min(baseline weight x 5%, 4kg, safe reduction room); "
+                "high-commitment target = min(baseline weight x 7.5%, 5kg, safe reduction room - 1kg), "
+                "effective only when eligible and confirmed in the group"
+            )
+        )
+    return (
+        "A带不设减重数字"
+        if weight_loss_band == BAND_A
+        else "标准目标=min(基线体重×5%, 4kg, 安全减重空间)；高承诺目标=min(基线体重×7.5%, 5kg, 安全减重空间-1kg)，仅合格且群内确认后生效"
+    )
+
+
+def _display_cap_in_language(goal_cap_kg: float, language: str = "zh") -> float | int:
+    """28天展示上限的数值：中文按斤、英文按 lbs，都从同一个公斤上限换算。"""
+
+    cap_jin = int(goal_cap_kg * 2)
+    if language != "en":
+        return cap_jin
+    lbs = round(cap_jin * _LBS_PER_JIN, 1)
+    return int(lbs) if lbs == int(lbs) else lbs
+
+
+def _jin_range_display(low: float, high: float, language: str = "zh") -> str:
+    if language != "en":
+        return f"{int(low)}-{int(high)}斤"
+    return f"{_jin_display(low, 'en').removesuffix(' lbs')}–{_jin_display(high, 'en')}"
+
+
+def _stage_targets(
+    band: str,
+    safe_room_kg: float | None,
+    language: str = "zh",
+) -> dict[str, str]:
     """按管理带生成两个阶段的目标表述，并用安全减重空间封顶。
 
     封顶是这里唯一的判断：默认区间的上界可能超出这个人的安全空间（例如 C 带下沿
     只有 5kg 空间，而 C 带第9-12周默认到 16 斤＝8kg），此时必须收窄。
     """
 
+    is_en = language == "en"
     if band == BAND_A:
-        return dict(_STAGE_TEXT_A_BAND)
+        return dict(_STAGE_TEXT_A_BAND_EN if is_en else _STAGE_TEXT_A_BAND)
     ranges = _STAGE_RANGES.get(band)
     if ranges is None:
-        return {"week5_8": _STAGE_TEXT_UNKNOWN, "week9_12": _STAGE_TEXT_UNKNOWN}
+        unknown = _STAGE_TEXT_UNKNOWN_EN if is_en else _STAGE_TEXT_UNKNOWN
+        return {"week5_8": unknown, "week9_12": unknown}
 
     room_jin = safe_room_kg * 2 if safe_room_kg is not None else None
     targets: dict[str, str] = {}
     for stage, bounds in ranges.items():
         if bounds is None:
-            targets[stage] = _STAGE_TEXT_D_WEEK5_8
+            targets[stage] = _STAGE_TEXT_D_WEEK5_8_EN if is_en else _STAGE_TEXT_D_WEEK5_8
             continue
         low, high = bounds
-        suffix = _STAGE_SUFFIX.get(stage, "")
+        suffix = (_STAGE_SUFFIX_EN if is_en else _STAGE_SUFFIX).get(stage, "")
         if room_jin is None or high <= room_jin:
-            targets[stage] = f"从入营起算累计{low}-{high}斤{suffix}"
+            capped_high: int | None = high
         elif low < int(room_jin):
             # 取整后仍高于下界才给区间；否则会写出「累计7-7斤」这种退化区间。
-            targets[stage] = f"从入营起算累计{low}-{int(room_jin)}斤{suffix}"
+            capped_high = int(room_jin)
         else:
             # 安全空间连区间下界都撑不住：不给区间，只给上限。
-            targets[stage] = f"从入营起算累计不超过{int(room_jin)}斤，达到条件后再评估"
+            capped_high = None
+        if capped_high is None:
+            limit = _jin_display(int(room_jin), language)
+            targets[stage] = (
+                f"No more than {limit} cumulative from day 1; reassess once reached"
+                if is_en
+                else f"从入营起算累计不超过{limit}，达到条件后再评估"
+            )
+            continue
+        span = _jin_range_display(low, capped_high, language)
+        targets[stage] = (
+            f"{span} cumulative from day 1{suffix}"
+            if is_en
+            else f"从入营起算累计{span}{suffix}"
+        )
     return targets
 
 
@@ -659,6 +761,21 @@ _DAY28_TEXT_UNKNOWN = {
     "base": "待补齐身高体重后与班主任确认目标",
     "challenge": "待补齐身高体重后判断是否开放高承诺目标",
 }
+_DAY28_TEXT_A_BAND_EN = {
+    "base": (
+        "No mandatory weight-loss figure; prioritize posture, sleep, energy, recovery "
+        "and execution consistency"
+    ),
+    "challenge": "No high-commitment weight-loss target for now; prioritize rejuvenation and sculpting",
+}
+_DAY28_TEXT_UNKNOWN_EN = {
+    "base": "To be confirmed with your coach once height and weight are provided",
+    "challenge": (
+        "Eligibility for a high-commitment target to be assessed once height and weight are provided"
+    ),
+}
+_DAY28_NO_CHALLENGE = "当前不开放高承诺目标"
+_DAY28_NO_CHALLENGE_EN = "No high-commitment target available for now"
 
 
 def _day28_targets(
@@ -668,38 +785,44 @@ def _day28_targets(
     baseline_weight_kg: float | None = None,
     safe_reduction_room_kg: object = None,
     high_commitment_candidate: bool = False,
+    language: str = "zh",
 ) -> tuple[dict[str, str], float | None]:
     """给出标准目标和条件性高承诺目标。
 
-    单位换算一次：cap 是公斤，用户可见文案用斤。cap 向下取整，宁可少给。
+    单位换算一次：cap 是公斤，用户可见文案中文用斤、英文用 lbs。cap 向下取整，
+    宁可少给。边界一律先按斤算再换算显示，两种语言说的是同一个安全上限。
     """
 
+    is_en = language == "en"
     if band == BAND_A:
-        return dict(_DAY28_TEXT_A_BAND), None
+        return dict(_DAY28_TEXT_A_BAND_EN if is_en else _DAY28_TEXT_A_BAND), None
     if band not in MANAGEMENT_BANDS_WITH_NUMBERS or goal_cap_kg is None:
-        return dict(_DAY28_TEXT_UNKNOWN), None
+        return dict(_DAY28_TEXT_UNKNOWN_EN if is_en else _DAY28_TEXT_UNKNOWN), None
 
     cap_jin = int(goal_cap_kg * 2)
     if cap_jin <= 0:
         # 空间归零但带位不是 A 带，理论上不该出现；真出现了也不能给数字。
-        return dict(_DAY28_TEXT_A_BAND), None
+        return dict(_DAY28_TEXT_A_BAND_EN if is_en else _DAY28_TEXT_A_BAND), None
 
     # 标准档吸收旧「基础 + 向上限推进」两层，用户只看到一套标准目标。
     base_low = max(1, cap_jin - 2)
-    standard_target = _day28_jin_text(base_low, cap_jin)
+    standard_target = _day28_jin_text(base_low, cap_jin, language)
     stretch_cap_kg = _stretch_review_cap_kg(
         baseline_weight_kg=baseline_weight_kg,
         safe_reduction_room_kg=safe_reduction_room_kg,
     )
-    challenge_target = "当前不开放高承诺目标"
+    challenge_target = _DAY28_NO_CHALLENGE_EN if is_en else _DAY28_NO_CHALLENGE
     if high_commitment_candidate and stretch_cap_kg is not None:
         stretch_jin = int(stretch_cap_kg * 2)
         high_low = cap_jin + 1
         if high_low <= stretch_jin:
-            challenge_target = (
-                f"28天向{high_low}斤推进"
+            span = (
+                _jin_display(high_low, language)
                 if high_low == stretch_jin
-                else f"28天向{high_low}-{stretch_jin}斤推进"
+                else _jin_range_display(high_low, stretch_jin, language)
+            )
+            challenge_target = (
+                f"Push toward {span} in 28 days" if is_en else f"28天向{span}推进"
             )
         else:
             high_commitment_candidate = False
@@ -721,10 +844,15 @@ def _stretch_review_cap_kg(
     return max(0.0, min(baseline_weight_kg * 0.075, 5.0, safe_room - 1.0))
 
 
-def _day28_jin_text(low: int, high: int) -> str:
+def _day28_jin_text(low: int, high: int, language: str = "zh") -> str:
     """区间退化成一个数时不写成「3-3斤」。"""
 
-    return f"28天减重{low}斤" if low >= high else f"28天减重{low}-{high}斤"
+    span = (
+        _jin_display(low, language)
+        if low >= high
+        else _jin_range_display(low, high, language)
+    )
+    return f"Lose {span} in 28 days" if language == "en" else f"28天减重{span}"
 
 
 def _safety_review_reasons(safety_factors: dict[str, Any] | None) -> list[str]:

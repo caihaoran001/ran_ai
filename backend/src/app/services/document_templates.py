@@ -215,8 +215,8 @@ ENERGY_FIELD_SPEC_EN = {
         "content": "A direct paragraph addressing the user's expectations, evaluation, standard goal, high commitment goal, and execution agreement in English.",
         "user_goal": "Summary of user's original goal",
         "judgement": "Direct assessment of goal feasibility",
-        "base_goal": "Standard 28-day goal in lbs or habit focus",
-        "challenge_goal": "High commitment goal in lbs or review condition",
+        "base_goal": "Verbatim copy of shared_analysis.base_goal (already English, figures in lbs) or habit focus",
+        "challenge_goal": "Verbatim copy of shared_analysis.challenge_goal (already English, figures in lbs) or review condition",
         "conditions": "Standard tier 60% completion, high commitment 85% completion agreement",
     },
     "occupation_context": "Summary of actual work rhythm, physical activity, and stress based on questionnaire in English (<=100 words)",
@@ -310,10 +310,10 @@ EXECUTION_FIELD_SPEC_EN = {
         {
             "order": "Integer 1-5, unique and strictly increasing; exactly 5 items total",
             "category": "Must be one of: product / diet / activity / sleep / state. Item 1 must be product, exactly 1 item must be activity",
-            "title": "Clear English question targeting user's specific friction point. No leading numbers or '1.', no relative time words like 'today/tonight'. Each item has exactly 1 intent.",
-            "answer_type": "One of: yes_no / score_1_5 / number / text",
+            "title": "Clear English question targeting user's specific friction point (e.g. 'Did you complete Morning C, Noon B, and Evening A as planned?' for product; 'Did you control dinner carbohydrates to at most 1 fist?' for diet; 'How many minutes of brisk walking did you complete?' for activity; 'Did you start sleep wind-down by 23:30?' for sleep; 'Afternoon energy level rating (1-5)' for state). No leading numbers, no relative words like 'today/tonight'.",
+            "answer_type": "One of: yes_no / score_1_5 / number / text matching the question format",
             "options": "[\"Yes\", \"No\"] for yes_no; [\"1\", \"2\", \"3\", \"4\", \"5\"] for score_1_5; [] for number and text",
-            "example_answer": "Realistic filled answer in English matching title. Item 1 must address Morning C, Noon B, Evening A respectively with at least 1 paused or incomplete scenario.",
+            "example_answer": "Realistic filled answer in English matching title. Item 1 MUST explicitly write Morning C, Noon B, and Evening A respectively with at least one status (e.g. 'Morning C: completed; Noon B: completed; Evening A: paused'). For yes_no write 'Yes, completed'; for score_1_5 write '4 points, felt energetic'; for number include units like '25 minutes'.",
         }
     ],
     "weekly_standard": "Weekly completion criteria in English (<=50 words)",
@@ -788,12 +788,36 @@ def _jin_to_lbs_match(m: re.Match) -> str:
         return f"{raw_range} lbs"
 
 
+# 跨模块的中文哨兵值。看板分类统计和文档生成阻塞判据都按它们过滤，所以
+# intake_facts 一律按中文产出，只在这里（英文渲染层）翻成英文展示。
+_SENTINEL_TEXT_EN = {
+    "未提供": "Not provided",
+    "暂无数据": "No data yet",
+    "暂未测量": "Not measured yet",
+    "待补充": "To be supplemented",
+    "待测量": "To be measured",
+    "需后续补充": "To be added later",
+    "待补齐身高体重后确定，班主任会尽快与您核对": (
+        "To be confirmed once height and weight are provided; your coach will follow up shortly"
+    ),
+    "需补充身高体重后判断": "To be assessed once height and weight are provided",
+    "待补齐身高体重后确定": "To be confirmed once height and weight are provided",
+    "信息不足": "Insufficient information",
+}
+
+
 def _localize_band_and_units_en(text: Any) -> str:
     if not text:
         return ""
     val = _text(text)
     if not val:
         return ""
+    # 缺失哨兵先整串比对，避免把「未提供」这类词替换进更长的句子里造成半中半英。
+    stripped = val.strip()
+    if stripped in _SENTINEL_TEXT_EN:
+        return _SENTINEL_TEXT_EN[stripped]
+    for sentinel, replacement in _SENTINEL_TEXT_EN.items():
+        val = val.replace(sentinel, replacement)
     # Management band replacements
     val = val.replace("A带｜修复塑形", "Band A | Body Rejuvenation & Sculpting")
     val = val.replace("B带｜轻盈启动", "Band B | Gentle Energy Kickstart")
@@ -803,7 +827,9 @@ def _localize_band_and_units_en(text: Any) -> str:
     val = val.replace("B带", "Band B")
     val = val.replace("C带", "Band C")
     val = val.replace("D带", "Band D")
-    # Unit replacements with accurate numeric scaling (1 jin = 1.1023 lbs)
+    # 单位兜底（1 斤 = 1.1023 lbs）。目标文案本身已由 intake_facts 按语言原生生成为
+    # lbs，这里只兜两种情况：历史英文文档里存的中文串，以及模型没照抄、自己写了中文。
+    # 换算率必须和 intake_facts._LBS_PER_JIN 一致，改一处要同步另一处。
     val = re.sub(r"(\d+(?:\.\d+)?(?:[–\-~]\d+(?:\.\d+)?)?)\s*斤", _jin_to_lbs_match, val)
     val = re.sub(r"(\d+(?:\.\d+)?(?:[–\-~]\d+(?:\.\d+)?)?)\s*公斤", r"\1 kg", val)
     return val

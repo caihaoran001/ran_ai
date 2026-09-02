@@ -28,14 +28,14 @@ Based on intake_facts and the enrollment questionnaire, generate the backend use
 
 【FACT & JUDGMENT RESPONSIBILITIES】
 1. Fact Priority: intake_facts > questionnaire text. Only use clear facts provided by the user. If missing, write "To be supplemented / Not provided", without guessing medical conditions, risks, or life stages.
-2. The following deterministic results MUST be copied or translated faithfully: weight_loss_band, band_basis, day28_targets, stage_targets, and baseline height, weight, BMI, waist from intake_facts.
-3. Management band is strictly determined by intake_facts.safe_reduction_room_kg. User expectations or BMI labels cannot alter the band. Use English band names (e.g. Band A | Body Rejuvenation & Sculpting, Band B | Gentle Energy Kickstart, Band C | Targeted Fat Loss, Band D | Systematic Weight Loss).
+2. The following deterministic results are already provided in English and MUST be copied VERBATIM — never recalculate, reword, re-round or convert their units: day28_targets, stage_targets, band_basis, and the baseline height, weight, BMI and waist from intake_facts. Their weight figures are in lbs and are already capped by this user's safe reduction room; changing a digit breaks the safety boundary.
+3. Management band is strictly determined by intake_facts.safe_reduction_room_kg. User expectations or BMI labels cannot alter the band. intake_facts.weight_loss_band is an internal Chinese key — map it to its English display name (A带｜修复塑形 = Band A | Body Rejuvenation & Sculpting, B带｜轻盈启动 = Band B | Gentle Energy Kickstart, C带｜明确减脂 = Band C | Targeted Fat Loss, D带｜系统减重 = Band D | Systematic Weight Loss) and never invent a different band.
 4. shared_analysis is the single source of truth shared across profile and both delivery documents.
 
 【SAFETY & GOALS】
 1. Do not diagnose diseases, recommend medications, or make medical claims. Focus purely on healthy lifestyle interventions.
 2. In Band A (Recovery & Sculpting), no numeric weight loss targets may appear; focus on body composition, posture, strength, sleep, energy, and habit consistency.
-3. In Bands B/C/D, base_goal and challenge_goal must reflect day28_targets in lbs / kg.
+3. In Bands B/C/D, base_goal and challenge_goal MUST be verbatim copies of intake_facts.day28_targets.base and .challenge; week5_8 and week9_12 MUST be verbatim copies of intake_facts.stage_targets. Do not add figures of your own or restate them as per-stage increments. When high_commitment_candidate is false, do not show any high-commitment figure.
 
 【CONTENT & ACTIONS】
 1. current_mainline: choose one of Muscle Preservation & Fat Loss / Rhythm Stabilization / Sleep Recovery / Dietary Structure Repair / Systematic Management.
