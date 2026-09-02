@@ -203,7 +203,7 @@ def build_intake_fact_summary(
         high_commitment_candidate=high_commitment_candidate,
         language=language,
     )
-    # 展示上限跟着服务语言换单位（英文客户看 lbs）。字段名沿用 _jin 是内部键名，
+    # 展示上限跟着服务语言换单位（中文按斤、英文按公斤）。字段名沿用 _jin 是内部键名，
     # 模型只按 schema 里写明的单位照抄，不自己换算。
     display_cap_jin = (
         _display_cap_in_language(safe_reduction["day28_goal_cap_kg"], language)
@@ -405,7 +405,7 @@ def sanitize_profile_json(
     overview = profile.setdefault("overview", {})
     if isinstance(overview, dict):
         overview["gender_age"] = _join_non_empty([facts.get("gender"), facts.get("age")], " / ")
-        # 用户可见展示中文用「斤」、英文用 lbs；同时把结构化 kg 值单独存一份，供
+        # 用户可见展示中文用「斤」、英文用 kg；同时把结构化 kg 值单独存一份，供
         # _extract_initial_weight 等读取端稳定取数，不再依赖从展示串里按「kg」关键字
         # 解析（换单位会静默切断那条链路）。
         overview["height_weight"] = _join_non_empty(
@@ -633,18 +633,20 @@ _STAGE_TEXT_D_WEEK5_8_EN = (
 )
 _STAGE_TEXT_UNKNOWN_EN = "To be confirmed once height and weight are provided"
 
-# 1 斤 = 1.10231 lbs。和 document_templates 的换算率一致，改一处要同步另一处。
-_LBS_PER_JIN = 1.10231131
-
-
 def _jin_display(value: float, language: str = "zh") -> str:
-    """把内部按斤计算的数值渲染成用户可见的单位文本。"""
+    """把内部按斤计算的数值渲染成用户可见的单位文本。
+
+    英文文档统一用公斤，不用磅。英语客户不等于美制客户——澳洲、新西兰、爱尔兰、
+    新加坡、印度的英语客户量体重就是公斤；而且换成磅之后概览行会变成
+    「175cm / 143.3 lbs」这种公制身高配英制体重的组合，哪个国家都不这么用。
+    公斤是国际通用写法，美国客户看得懂，其余英语客户则是本地习惯。
+    """
 
     if language != "en":
         return f"{int(value)}斤"
-    lbs = round(value * _LBS_PER_JIN, 1)
-    text = f"{int(lbs)}" if lbs == int(lbs) else f"{lbs:.1f}"
-    return f"{text} lbs"
+    kg = round(value / 2, 1)
+    text = f"{int(kg)}" if kg == int(kg) else f"{kg:.1f}"
+    return f"{text} kg"
 
 
 def _target_rule_text(weight_loss_band: str, language: str = "zh") -> str:
@@ -666,19 +668,19 @@ def _target_rule_text(weight_loss_band: str, language: str = "zh") -> str:
 
 
 def _display_cap_in_language(goal_cap_kg: float, language: str = "zh") -> float | int:
-    """28天展示上限的数值：中文按斤、英文按 lbs，都从同一个公斤上限换算。"""
+    """28天展示上限的数值：中文按斤、英文按公斤，都从同一个公斤上限换算。"""
 
     cap_jin = int(goal_cap_kg * 2)
     if language != "en":
         return cap_jin
-    lbs = round(cap_jin * _LBS_PER_JIN, 1)
-    return int(lbs) if lbs == int(lbs) else lbs
+    kg = round(cap_jin / 2, 1)
+    return int(kg) if kg == int(kg) else kg
 
 
 def _jin_range_display(low: float, high: float, language: str = "zh") -> str:
     if language != "en":
         return f"{int(low)}-{int(high)}斤"
-    return f"{_jin_display(low, 'en').removesuffix(' lbs')}–{_jin_display(high, 'en')}"
+    return f"{_jin_display(low, 'en').removesuffix(' kg')}–{_jin_display(high, 'en')}"
 
 
 def _stage_targets(
@@ -791,7 +793,7 @@ def _day28_targets(
 ) -> tuple[dict[str, str], float | None]:
     """给出标准目标和条件性高承诺目标。
 
-    单位换算一次：cap 是公斤，用户可见文案中文用斤、英文用 lbs。cap 向下取整，
+    单位换算一次：cap 是公斤，用户可见文案中文用斤、英文用公斤。cap 向下取整，
     宁可少给。边界一律先按斤算再换算显示，两种语言说的是同一个安全上限。
     """
 
@@ -965,7 +967,7 @@ def _with_unit(value: Any, unit: str) -> str:
 
 
 def _weight_kg_to_display(value: Any, language: str = "zh") -> str:
-    """把 kg 体重录入值换算成用户展示的「斤」（中文）或「lbs」（英文）。
+    """把 kg 体重录入值换算成用户展示单位：中文用「斤」，英文直接用 kg。
 
     只做展示换算：内部计算与结构化字段仍用 kg，这里只影响文档/画像里给用户看的那一行。
     解析失败时回退成原 kg 展示，绝不吞掉数据或返回空造成体重丢失。
@@ -978,9 +980,8 @@ def _weight_kg_to_display(value: Any, language: str = "zh") -> str:
     except (TypeError, ValueError):
         return _with_unit(value, "kg")
     if language == "en":
-        lbs = round(val_f * 2.20462262, 1)
-        lbs_text = f"{int(lbs)}" if lbs == int(lbs) else f"{lbs:.1f}"
-        return f"{lbs_text} lbs"
+        kg_text = f"{int(val_f)}" if val_f == int(val_f) else f"{val_f:.1f}"
+        return f"{kg_text} kg"
     jin = val_f * 2
     text = f"{int(jin)}" if jin == int(jin) else f"{jin:.1f}"
     return f"{text}斤"

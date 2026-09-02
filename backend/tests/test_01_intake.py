@@ -3342,8 +3342,9 @@ def test_imperial_units_weight_and_waist_conversion():
     assert waist_explicit_unit_scale("28 inch") == 2.54
     assert waist_explicit_unit_scale("I think 80") is None
 
-    # Weight display formatting
-    assert _weight_kg_to_display(74.84, language="en") == "165 lbs"
+    # 展示单位：中文按斤，英文直接用公斤（英语客户不等于美制客户，见 _jin_display 注释）
+    assert _weight_kg_to_display(74.84, language="en") == "74.8 kg"
+    assert _weight_kg_to_display(75.0, language="en") == "75 kg"
     assert _weight_kg_to_display(74.84, language="zh") == "149.7斤"
 
 
@@ -3379,11 +3380,12 @@ def test_english_deterministic_targets_are_native_english():
     for value in facts_en["day28_targets"].values():
         assert not re.search(r"[一-鿿]", str(value)), value
 
-    # 英文用 lbs，中文用斤，但说的是同一个安全上限（1斤=1.10231 lbs）
-    assert "lbs" in facts_en["day28_targets"]["base"]
+    # 英文用 kg，中文用斤，但说的是同一个安全上限（1斤=0.5kg）
+    assert "kg" in facts_en["day28_targets"]["base"]
+    assert "lbs" not in facts_en["day28_targets"]["base"]
     assert "斤" in facts_zh["day28_targets"]["base"]
     assert facts_en["28_day_display_cap_jin"] == pytest.approx(
-        facts_zh["28_day_display_cap_jin"] * 1.10231, 0.01
+        facts_zh["28_day_display_cap_jin"] / 2, 0.01
     )
 
     # 带位标识仍是中文内部键：看板分类统计和阻塞判据都按它过滤
@@ -3490,8 +3492,10 @@ def test_english_document_template_localizes_bands_and_units():
     )
 
     assert _localize_band_and_units_en("B带｜轻盈启动") == "Band B | Gentle Energy Kickstart"
-    assert _localize_band_and_units_en("4–6斤") == "4.4–6.6 lbs"
-    assert _localize_band_and_units_en("8斤") == "8.8 lbs"
+    # 斤→kg 只是历史文档/模型没照抄时的兜底；1 斤 = 0.5 kg，换算无舍入误差
+    assert _localize_band_and_units_en("4–6斤") == "2–3 kg"
+    assert _localize_band_and_units_en("8斤") == "4 kg"
+    assert _localize_band_and_units_en("9斤") == "4.5 kg"
 
     summary_block = _execution_goal_summary_block(
         {
@@ -3505,7 +3509,7 @@ def test_english_document_template_localizes_bands_and_units():
         is_en=True,
     )
     assert "Band B | Gentle Energy Kickstart" in summary_block["content"]
-    assert "4.4–6.6 lbs" in summary_block["content"]
-    assert "8.8 lbs" in summary_block["content"]
+    assert "2–3 kg" in summary_block["content"]
+    assert "4 kg" in summary_block["content"]
     assert "B带" not in summary_block["content"]
     assert "斤" not in summary_block["content"]

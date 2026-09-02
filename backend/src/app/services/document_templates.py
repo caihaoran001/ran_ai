@@ -190,7 +190,7 @@ ENERGY_FIELD_SPEC_EN = {
     "overview": {
         "name": "User's full legal name",
         "gender_age": "Gender / Age (e.g. Male / 30)",
-        "height_weight": "Height / Weight (e.g. 175cm / 143.3 lbs)",
+        "height_weight": "Height / Weight (e.g. 175cm / 65 kg)",
         "bmi": "BMI & status (e.g. 21.2 Normal)",
         "waist_bodyfat": "Waist / Body Fat percentage (if missing, write 'Waist not provided' or 'Body fat not provided')",
         "recent_change": "Recent 3-Month Trend (e.g. Basically stable / Slowly increasing)",
@@ -215,8 +215,8 @@ ENERGY_FIELD_SPEC_EN = {
         "content": "A direct paragraph addressing the user's expectations, evaluation, standard goal, high commitment goal, and execution agreement in English.",
         "user_goal": "Summary of user's original goal",
         "judgement": "Direct assessment of goal feasibility",
-        "base_goal": "Verbatim copy of shared_analysis.base_goal (already English, figures in lbs) or habit focus",
-        "challenge_goal": "Verbatim copy of shared_analysis.challenge_goal (already English, figures in lbs) or review condition",
+        "base_goal": "Verbatim copy of shared_analysis.base_goal (already English, figures in kg) or habit focus",
+        "challenge_goal": "Verbatim copy of shared_analysis.challenge_goal (already English, figures in kg) or review condition",
         "conditions": "Standard tier 60% completion, high commitment 85% completion agreement",
     },
     "occupation_context": "Summary of actual work rhythm, physical activity, and stress based on questionnaire in English (<=100 words)",
@@ -784,25 +784,25 @@ def _length_checked(value: Any, *, max_len: int) -> str:
     return text_val
 
 
-def _jin_to_lbs_match(m: re.Match) -> str:
+def _jin_number_to_kg_text(value: str) -> str:
+    """把「斤」的数值文本换算成公斤文本；换算不了就原样返回。"""
+
+    try:
+        kg = round(float(value.strip()) / 2, 1)
+    except ValueError:
+        return value.strip()
+    return f"{int(kg)}" if kg == int(kg) else f"{kg:.1f}"
+
+
+def _jin_to_kg_match(m: re.Match) -> str:
     raw_range = m.group(1)
     sep = "–" if "–" in raw_range else ("-" if "-" in raw_range else ("~" if "~" in raw_range else None))
     if sep:
         parts = raw_range.split(sep)
-        try:
-            p1 = round(float(parts[0].strip()) * 1.10231131, 1)
-            p2 = round(float(parts[1].strip()) * 1.10231131, 1)
-            t1 = f"{int(p1)}" if p1 == int(p1) else f"{p1:.1f}"
-            t2 = f"{int(p2)}" if p2 == int(p2) else f"{p2:.1f}"
-            return f"{t1}–{t2} lbs"
-        except (ValueError, IndexError):
-            return f"{raw_range} lbs"
-    try:
-        val = round(float(raw_range.strip()) * 1.10231131, 1)
-        text = f"{int(val)}" if val == int(val) else f"{val:.1f}"
-        return f"{text} lbs"
-    except ValueError:
-        return f"{raw_range} lbs"
+        if len(parts) == 2:
+            return f"{_jin_number_to_kg_text(parts[0])}–{_jin_number_to_kg_text(parts[1])} kg"
+        return f"{raw_range} kg"
+    return f"{_jin_number_to_kg_text(raw_range)} kg"
 
 
 # 跨模块的中文哨兵值。看板分类统计和文档生成阻塞判据都按它们过滤，所以
@@ -844,10 +844,9 @@ def _localize_band_and_units_en(text: Any) -> str:
     val = val.replace("B带", "Band B")
     val = val.replace("C带", "Band C")
     val = val.replace("D带", "Band D")
-    # 单位兜底（1 斤 = 1.1023 lbs）。目标文案本身已由 intake_facts 按语言原生生成为
-    # lbs，这里只兜两种情况：历史英文文档里存的中文串，以及模型没照抄、自己写了中文。
-    # 换算率必须和 intake_facts._LBS_PER_JIN 一致，改一处要同步另一处。
-    val = re.sub(r"(\d+(?:\.\d+)?(?:[–\-~]\d+(?:\.\d+)?)?)\s*斤", _jin_to_lbs_match, val)
+    # 单位兜底（1 斤 = 0.5 kg）。目标文案本身已由 intake_facts 按语言原生生成为公斤，
+    # 这里只兜两种情况：历史英文文档里存的中文串，以及模型没照抄、自己写了中文。
+    val = re.sub(r"(\d+(?:\.\d+)?(?:[–\-~]\d+(?:\.\d+)?)?)\s*斤", _jin_to_kg_match, val)
     val = re.sub(r"(\d+(?:\.\d+)?(?:[–\-~]\d+(?:\.\d+)?)?)\s*公斤", r"\1 kg", val)
     return val
 

@@ -999,8 +999,8 @@ def _intake_package_schema(language: str = "zh") -> dict[str, object]:
                 "body_trend_confidence": "high / medium / low",
                 "core_problem": "Core problem identified purely from questionnaire facts in English",
                 "current_mainline": "Must be one of: Muscle Preservation & Fat Loss / Rhythm Stabilization / Sleep Recovery / Dietary Structure Repair / Systematic Management",
-                "base_goal": "Verbatim copy of intake_facts.day28_targets.base (already English, figures in lbs); for Band A no numeric weight loss is allowed",
-                "challenge_goal": "Verbatim copy of intake_facts.day28_targets.challenge (already English, figures in lbs)",
+                "base_goal": "Verbatim copy of intake_facts.day28_targets.base (already English, figures in kg); for Band A no numeric weight loss is allowed",
+                "challenge_goal": "Verbatim copy of intake_facts.day28_targets.challenge (already English, figures in kg)",
                 "high_commitment_candidate": "Copy from intake_facts.high_commitment_candidate",
                 "high_commitment_basis": ["Copy from system screening basis"],
                 "stretch_review_cap_kg": "Copy from intake_facts.stretch_review_cap_kg",
@@ -1010,9 +1010,9 @@ def _intake_package_schema(language: str = "zh") -> dict[str, object]:
                 "high_commitment_complete_rate": "Fixed 0.85",
                 "document_context": "Structured projection of questionnaire answers in English",
                 "28_day_auto_cap_kg": "Copy from intake_facts (kg)",
-                "28_day_display_cap_jin": "Copy from intake_facts as-is — the value is already in lbs for English cases despite the internal field name. Do not convert it.",
-                "basic_target_jin_or_range": "Verbatim copy from intake_facts (already English, figures in lbs)",
-                "challenge_target_jin_or_review_text": "Verbatim copy from intake_facts (already English, figures in lbs)",
+                "28_day_display_cap_jin": "Copy from intake_facts as-is — the value is already in kg for English cases despite the internal field name. Do not convert it.",
+                "basic_target_jin_or_range": "Verbatim copy from intake_facts (already English, figures in kg)",
+                "challenge_target_jin_or_review_text": "Verbatim copy from intake_facts (already English, figures in kg)",
                 "target_generation_rule_applied": "Verbatim copy from intake_facts",
                 "long_term_goal": "Long-term direction in English, must include non-scale outcomes; no numeric weight loss for Band A",
                 "day28_goal": "28-day goal in English; for Band A focus on stability, energy, sleep, habits",
@@ -1029,7 +1029,7 @@ def _intake_package_schema(language: str = "zh") -> dict[str, object]:
                 "tags": ["2-4 short English tags, e.g. Band B, Late Sleep Habit, Afternoon Fatigue, Sedentary Worker"],
                 "overview": {
                     "gender_age": "Gender / Age matching intake_facts (e.g. Male / 30)",
-                    "height_weight": "Height / Weight matching intake_facts (e.g. 175cm / 143.3 lbs)",
+                    "height_weight": "Height / Weight matching intake_facts (e.g. 175cm / 65 kg)",
                     "bmi": "BMI matching intake_facts.bmi",
                     "waist": "Waist matching intake_facts",
                     "weight_loss_band": "Management band consistent with shared_analysis.weight_band",
@@ -2059,8 +2059,8 @@ def _normalize_combined_document_payload(
 
 # 用户可见字段里的减重数字。业务判断仍以模型的 goal_type 为准，这个只做最后一道
 # 格式兜底：A带的整个话术契约存在的理由就是提示词封不住数字，所以放行前再查一次。
-# 必须同时认英制：英文服务单的目标文案本来就以 lbs 给出，只认中文单位等于对
-# 英文 A 带客户完全不设防（"Lose 5 lbs" 会被原样放过去）。
+# 必须同时认英制：英文文档虽然统一用公斤，但客户自己会按磅说，模型也可能跟着写，
+# 只认中文单位等于对英文 A 带客户完全不设防（"Lose 5 lbs" 会被原样放过去）。
 _WEIGHT_NUMBER_PATTERN = re.compile(
     r"\d+(?:\.\d+)?\s*(?:斤|公斤|千克|kg|lbs?|pounds?)",
     re.IGNORECASE,
@@ -2184,7 +2184,7 @@ def _apply_intake_facts_to_single_payload(
         overview = payload.get("overview")
         if isinstance(overview, dict):
             overview["bmi"] = bmi or str(overview.get("bmi") or ("N/A" if language == "en" else "暂无数据"))
-            # 用户可见展示：中文用「斤」，英文用「lbs」（内部计算与结构化字段仍用 kg）。
+            # 用户可见展示：中文用「斤」，英文直接用 kg（内部计算与结构化字段本来就是 kg）。
             overview["height_weight"] = _join_fact_values(
                 _with_unit(facts.get("height_cm"), "cm"),
                 _weight_kg_to_display(facts.get("weight_kg"), language=language),

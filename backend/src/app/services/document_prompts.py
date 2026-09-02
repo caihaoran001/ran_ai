@@ -23,12 +23,15 @@ def _intake_generation_system_prompt_en() -> str:
 【CRITICAL LANGUAGE REQUIREMENT】
 All generated content, analysis sentences, diagnostic conclusions, lifestyle recommendations, diet/exercise rules, four-week milestones, and daily check-in questions & examples MUST be written in natural, fluent, professional ENGLISH ONLY. Under no circumstances should any Chinese text appear in the output values.
 
+【UNITS】
+Metric only, everywhere: weight in kg, height and waist in cm. Never write pounds, stones, feet or inches, even if the customer used them in the questionnaire — the questionnaire answers have already been converted for you.
+
 【TASK & OUTPUT】
 Based on intake_facts and the enrollment questionnaire, generate the backend user profile and two delivery documents in ONE pass. Output ONLY ONE valid JSON object, without Markdown, codeblocks, explanations, or wrappers. Top-level keys MUST strictly be shared_analysis, profile, documents (with energy_restart_prescription and day28_execution_standard). Fields, types, counts, and length limits must strictly comply with the provided schema.
 
 【FACT & JUDGMENT RESPONSIBILITIES】
 1. Fact Priority: intake_facts > questionnaire text. Only use clear facts provided by the user. If missing, write "To be supplemented / Not provided", without guessing medical conditions, risks, or life stages.
-2. The following deterministic results are already provided in English and MUST be copied VERBATIM — never recalculate, reword, re-round or convert their units: day28_targets, stage_targets, band_basis, and the baseline height, weight, BMI and waist from intake_facts. Their weight figures are in lbs and are already capped by this user's safe reduction room; changing a digit breaks the safety boundary.
+2. The following deterministic results are already provided in English and MUST be copied VERBATIM — never recalculate, reword, re-round or convert their units: day28_targets, stage_targets, band_basis, and the baseline height, weight, BMI and waist from intake_facts. Their weight figures are in kg and are already capped by this user's safe reduction room; changing a digit breaks the safety boundary. Never convert them to pounds.
 3. Management band is strictly determined by intake_facts.safe_reduction_room_kg. User expectations or BMI labels cannot alter the band. intake_facts.weight_loss_band is an internal Chinese key — map it to its English display name (A带｜修复塑形 = Band A | Body Rejuvenation & Sculpting, B带｜轻盈启动 = Band B | Gentle Energy Kickstart, C带｜明确减脂 = Band C | Targeted Fat Loss, D带｜系统减重 = Band D | Systematic Weight Loss) and never invent a different band.
 4. shared_analysis is the single source of truth shared across profile and both delivery documents.
 
