@@ -5,6 +5,7 @@ import { formatChinaDateTime } from "@/lib/format";
 import { CaseActions } from "./case-actions";
 import { CaseRiskReset } from "./case-risk-reset";
 import { CaseGroupType } from "./case-group-type";
+import { CaseLanguage } from "./case-language";
 import { CaseRefundControls } from "./case-refund-controls";
 import { CaseGeneratingPoller } from "./case-generating-poller";
 import { ChatMessages } from "./chat-messages";
@@ -131,6 +132,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <CaseGroupType caseId={serviceCase.id} groupType={serviceCase.group_type ?? "legacy"} />
+              <CaseLanguage caseId={serviceCase.id} language={serviceCase.language ?? "zh"} />
               {serviceCase.member_left_at && (
                 <span className="status-pill border-amber-200 bg-amber-50 text-amber-700">
                   <LogOut className="h-3.5 w-3.5" />

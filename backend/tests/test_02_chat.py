@@ -96,17 +96,20 @@ async def _ingest_and_analyze(db_session, case_id, group_id, content, mock_ai):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("language", "expected_copy"),
+    ("command_text", "initial_case_lang", "expected_final_lang", "expected_copy"),
     [
-        ("zh", "已为本群生成专属入营问卷"),
-        ("en", "The enrollment questionnaire for this group is ready"),
+        ("发送入营问卷", "zh", "zh", "已为本群生成专属入营问卷"),
+        ("Send the group enrollment questionnaire", "zh", "en", "The enrollment questionnaire for this group is ready"),
+        ("发送入营问卷", "en", "en", "The enrollment questionnaire for this group is ready"),
     ],
 )
 async def test_questionnaire_link_reply_sends_short_link_in_case_language(
-    mock_message_channel, monkeypatch, language, expected_copy
+    mock_message_channel, monkeypatch, command_text, initial_case_lang, expected_final_lang, expected_copy
 ):
-    """问卷短链及文案必须随服务单语言一起进入实际发送路径。"""
+    """问卷短链及文案必须随服务单语言进入实际发送路径，英文指令自动将服务单设为 en。"""
     import app.services.ranren_ai.engine as engine_mod
+
+    db_case = SimpleNamespace(id=42, language=initial_case_lang)
 
     class FakeSession:
         async def __aenter__(self):
@@ -114,6 +117,9 @@ async def test_questionnaire_link_reply_sends_short_link_in_case_language(
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
+        async def get(self, model, ident):
+            return db_case
 
         async def commit(self):
             return None
@@ -134,12 +140,12 @@ async def test_questionnaire_link_reply_sends_short_link_in_case_language(
         channel="qiwe",
         chat_id="questionnaire-language-group",
         chat_type="group",
-        text="Send the group enrollment questionnaire",
+        text=command_text,
         message_id="questionnaire-command-1",
     )
     service_case = SimpleNamespace(
         id=42,
-        language=language,
+        language=initial_case_lang,
         questionnaire_token="intake-token-42",
     )
 
@@ -149,6 +155,7 @@ async def test_questionnaire_link_reply_sends_short_link_in_case_language(
     assert expected_link in str(sent["content"])
     assert expected_copy in str(sent["content"])
     assert sent["service_case_id"] == 42
+    assert service_case.language == expected_final_lang
     short_link.assert_awaited_once()
     _args, short_link_kwargs = short_link.await_args
     assert short_link_kwargs == {

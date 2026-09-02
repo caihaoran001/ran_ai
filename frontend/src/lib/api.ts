@@ -42,6 +42,7 @@ export type ServiceCase = {
   /** new_group=本系统入营问卷已提交(新群)；legacy=老群/未填问卷 */
   group_type: "new_group" | "legacy" | string;
   questionnaire_token: string;
+  language?: string;
   status: string;
   notes?: string | null;
   auto_send_documents: boolean;
