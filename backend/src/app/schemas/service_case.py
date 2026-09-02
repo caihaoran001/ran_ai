@@ -4,7 +4,11 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.service_case import ServiceCaseGroupType, ServiceCaseStatus
+from app.models.service_case import (
+    ServiceCaseGroupType,
+    ServiceCaseLanguage,
+    ServiceCaseStatus,
+)
 from app.schemas.common import Timestamped
 
 
@@ -25,7 +29,7 @@ class ServiceCaseUpdate(BaseModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
     notes: str | None = None
-    language: str | None = None
+    language: ServiceCaseLanguage | None = None
     auto_send_documents: bool | None = None
     ai_auto_reply_enabled: bool | None = None
     refund_pending_confirmation: bool | None = None  # 运营驳回退款候选(置 False)时用
@@ -42,7 +46,7 @@ class ServiceCaseRead(Timestamped):
     group_name: str | None = None
     group_type: ServiceCaseGroupType = ServiceCaseGroupType.NEW_GROUP
     questionnaire_token: str
-    language: str = "zh"
+    language: ServiceCaseLanguage = ServiceCaseLanguage.ZH
     status: ServiceCaseStatus
     started_at: datetime | None
     service_plan_start_date: date | None = None

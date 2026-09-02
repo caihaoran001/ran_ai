@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.models.service_case import ServiceCaseLanguage
 from app.schemas.common import Timestamped
 
 
@@ -11,7 +12,7 @@ class QuestionnairePublic(BaseModel):
     service_case_id: int
     token: str
     template_key: str = "intake"
-    language: str = "zh"
+    language: ServiceCaseLanguage = ServiceCaseLanguage.ZH
     title: str | None = None
     description: str | None = None
     allow_repeat: bool = False
@@ -23,7 +24,7 @@ class QuestionnairePublic(BaseModel):
 
 class QuestionnaireSubmit(BaseModel):
     answers: dict[str, Any] = Field(default_factory=dict)
-    language: str | None = None
+    language: ServiceCaseLanguage | None = None
 
 
 class QuestionnaireSubmissionRead(Timestamped):

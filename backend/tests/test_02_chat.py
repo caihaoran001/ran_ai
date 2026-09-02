@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from app.services.service_case_queries import checkin_day, effective_service_day
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.models.message import (
@@ -21,6 +22,8 @@ from app.models.message import (
 )
 from app.models.questionnaire import QuestionnaireSubmission
 from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.schemas.questionnaire import QuestionnaireSubmit
+from app.schemas.service_case import ServiceCaseUpdate
 from app.models.user import User
 from app.models.user_document import DocumentStatus, DocumentType, UserDocument
 from app.services.ranren_ai.engine import (
@@ -182,6 +185,17 @@ def test_format_chat_history_line_labels_bot_as_assistant():
 
     assert "助教: 排时间线是我刚才整理的" in line
     assert "营养师:" not in line
+
+
+def test_service_case_language_only_accepts_zh_or_en():
+    assert ServiceCaseUpdate(language="zh").language == "zh"
+    assert ServiceCaseUpdate(language="en").language == "en"
+    assert QuestionnaireSubmit(answers={}, language="en").language == "en"
+
+    with pytest.raises(ValidationError):
+        ServiceCaseUpdate(language="fr")
+    with pytest.raises(ValidationError):
+        QuestionnaireSubmit(answers={}, language="fr")
 
 
 def test_format_chat_history_line_labels_staff_with_group_nickname():

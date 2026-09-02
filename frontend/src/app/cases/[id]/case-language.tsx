@@ -15,7 +15,7 @@ export function CaseLanguage({
   language,
 }: {
   caseId: number;
-  language: string;
+  language: "zh" | "en";
 }) {
   const initialValue = language === "en" ? "en" : "zh";
   const [editing, setEditing] = useState(false);

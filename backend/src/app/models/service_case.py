@@ -4,7 +4,18 @@ import enum
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, JSON, String, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    JSON,
+    String,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -41,6 +52,11 @@ class ServiceCaseGroupType(str, enum.Enum):
     LEGACY = "legacy"
 
 
+class ServiceCaseLanguage(str, enum.Enum):
+    ZH = "zh"
+    EN = "en"
+
+
 class ServiceCase(TimestampMixin, Base):
     __tablename__ = "service_cases"
     __table_args__ = (
@@ -51,6 +67,10 @@ class ServiceCase(TimestampMixin, Base):
             "group_id",
             unique=True,
             postgresql_where=text("deleted_at IS NULL AND member_left_at IS NULL"),
+        ),
+        CheckConstraint(
+            "language IN ('zh', 'en')",
+            name="ck_service_cases_language",
         ),
     )
 
@@ -79,12 +99,12 @@ class ServiceCase(TimestampMixin, Base):
         index=True,
     )
     questionnaire_token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
-    # 服务语言：zh=中文，en=英文（由问卷指令、H5选语言或客户提交决定；用于文案、报告与提醒切换）
-    language: Mapped[str] = mapped_column(
+    # 服务语言只允许中文/英文两种，由运营配置决定并贯穿问卷、文案、报告与提醒。
+    language: Mapped[ServiceCaseLanguage] = mapped_column(
         String(10),
         nullable=False,
         server_default="zh",
-        default="zh",
+        default=ServiceCaseLanguage.ZH,
     )
     status: Mapped[ServiceCaseStatus] = mapped_column(
         Enum(ServiceCaseStatus, name="service_case_status"),
