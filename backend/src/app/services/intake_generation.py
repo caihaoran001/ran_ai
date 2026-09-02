@@ -16,6 +16,7 @@ from app.services.ai_service import AIService, RetryableAIContentError, parse_js
 from app.services.document_templates import combined_prompt_schema
 from app.services.intake_facts import (
     UNRESOLVED_BAND,
+    _weight_kg_to_display,
     _weight_kg_to_jin,
     build_intake_fact_summary,
     sanitize_profile_json,
@@ -928,7 +929,8 @@ def _normalize_intake_analysis_package(
         raise RetryableIntakePackageError(
             "intake analysis package must contain both delivery documents"
         )
-    _apply_intake_facts_to_document_payloads(document_payloads, intake_facts)
+    case_lang = getattr(service_case, "language", "zh") or "zh"
+    _apply_intake_facts_to_document_payloads(document_payloads, intake_facts, language=case_lang)
     _append_waist_remeasurement_note(document_payloads, intake_facts)
     _apply_shared_activity_frequency_to_documents(document_payloads, activity_frequency)
     consistency_errors = _document_consistency_errors(document_payloads, shared, intake_facts)
@@ -1928,20 +1930,25 @@ def _first_clean_item(value: object) -> str:
     return str(value or "").strip() if isinstance(value, str) else ""
 
 
-def _apply_intake_facts_to_document_payloads(payloads: dict[str, dict], facts: dict[str, object]) -> None:
+def _apply_intake_facts_to_document_payloads(
+    payloads: dict[str, dict],
+    facts: dict[str, object],
+    language: str = "zh",
+) -> None:
     for document_type, payload in list(payloads.items()):
         if isinstance(payload, dict):
             try:
                 enum_value = DocumentType(document_type)
             except ValueError:
                 continue
-            _apply_intake_facts_to_single_payload(payload, enum_value, facts)
+            _apply_intake_facts_to_single_payload(payload, enum_value, facts, language=language)
 
 
 def _apply_intake_facts_to_single_payload(
     payload: dict[str, object],
     document_type: DocumentType,
     facts: dict[str, object],
+    language: str = "zh",
 ) -> None:
     # facts 里存的是内部带位（可能是哨兵值），写进用户可见文档前翻译一次。
     weight_band = _user_visible_band(facts.get("weight_loss_band"))
@@ -1958,11 +1965,11 @@ def _apply_intake_facts_to_single_payload(
         success_path["weight_band"] = weight_band
         overview = payload.get("overview")
         if isinstance(overview, dict):
-            overview["bmi"] = bmi or str(overview.get("bmi") or "暂无数据")
-            # 用户可见展示统一用「斤」（内部计算与结构化字段仍用 kg）。
+            overview["bmi"] = bmi or str(overview.get("bmi") or ("N/A" if language == "en" else "暂无数据"))
+            # 用户可见展示：中文用「斤」，英文用「lbs」（内部计算与结构化字段仍用 kg）。
             overview["height_weight"] = _join_fact_values(
                 _with_unit(facts.get("height_cm"), "cm"),
-                _weight_kg_to_jin(facts.get("weight_kg")),
+                _weight_kg_to_display(facts.get("weight_kg"), language=language),
             ) or overview.get("height_weight")
             overview["waist_bodyfat"] = _format_waist_bodyfat(
                 facts.get("waist"),

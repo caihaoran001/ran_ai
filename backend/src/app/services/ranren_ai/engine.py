@@ -747,14 +747,6 @@ class RanrenAIEngine(InboundAttachmentProcessor):
         case_lang = getattr(service_case, "language", "zh") or "zh"
         lang = cmd_lang if cmd_lang == "en" else case_lang
 
-        if lang == "en" and getattr(service_case, "language", "zh") != "en":
-            async with SessionLocal() as lang_session:
-                db_case = await lang_session.get(ServiceCase, service_case.id)
-                if db_case:
-                    db_case.language = "en"
-                    await lang_session.commit()
-            service_case.language = "en"
-
         if lang == "en":
             reply = (
                 "Got it! The enrollment questionnaire for this group is ready.\n\n"

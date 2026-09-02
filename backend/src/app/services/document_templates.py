@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -621,6 +622,27 @@ def _length_checked(value: Any, *, max_len: int) -> str:
     return text_val
 
 
+def _localize_band_and_units_en(text: Any) -> str:
+    if not text:
+        return ""
+    val = _text(text)
+    if not val:
+        return ""
+    # Management band replacements
+    val = val.replace("A带｜修复塑形", "Band A | Body Rejuvenation & Sculpting")
+    val = val.replace("B带｜轻盈启动", "Band B | Gentle Energy Kickstart")
+    val = val.replace("C带｜明确减脂", "Band C | Targeted Fat Loss")
+    val = val.replace("D带｜系统减重", "Band D | Systematic Weight Loss")
+    val = val.replace("A带", "Band A")
+    val = val.replace("B带", "Band B")
+    val = val.replace("C带", "Band C")
+    val = val.replace("D带", "Band D")
+    # Unit replacements
+    val = re.sub(r"(\d+(?:\.\d+)?(?:[–\-~]\d+(?:\.\d+)?)?)\s*斤", r"\1 lbs", val)
+    val = re.sub(r"(\d+(?:\.\d+)?(?:[–\-~]\d+(?:\.\d+)?)?)\s*公斤", r"\1 kg", val)
+    return val
+
+
 def _non_negotiable_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = _dict(fields.get("non_negotiable"))
     title = _text(value.get("title"))
@@ -648,7 +670,7 @@ def _goal_response_block(fields: dict[str, Any], is_en: bool = False) -> dict[st
 
     content = _text(value.get("content"))
     if content:
-        return _text_block("goal_response", title, content)
+        return _text_block("goal_response", title, _localize_band_and_units_en(content) if is_en else content)
 
     goal_type = _text(value.get("goal_type"))
     judgement_type = _text(value.get("judgement_type"))
@@ -666,11 +688,11 @@ def _goal_response_block(fields: dict[str, Any], is_en: bool = False) -> dict[st
     if is_en:
         lines = [
             *meta,
-            f"User Goal: {_text(value.get('user_goal'))}",
-            f"Direct Response: {_text(value.get('judgement')) or ('Currently needs adjustment' if judgement_type == 'needs_adjustment' else '')}",
-            f"Standard Goal: {_text(value.get('base_goal'))}",
-            f"High Commitment Goal: {_text(value.get('challenge_goal'))}",
-            f"Execution Agreement: {_text(value.get('conditions'))}",
+            f"User Goal: {_localize_band_and_units_en(value.get('user_goal'))}",
+            f"Direct Response: {_localize_band_and_units_en(value.get('judgement')) or ('Currently needs adjustment' if judgement_type == 'needs_adjustment' else '')}",
+            f"Standard Goal: {_localize_band_and_units_en(value.get('base_goal'))}",
+            f"High Commitment Goal: {_localize_band_and_units_en(value.get('challenge_goal'))}",
+            f"Execution Agreement: {_localize_band_and_units_en(value.get('conditions'))}",
         ]
         return _text_block("goal_response", title, "\n".join(line for line in lines if not line.endswith(": ")))
 
@@ -689,7 +711,8 @@ def _core_conclusions_block(fields: dict[str, Any], is_en: bool = False) -> dict
     value = _dict(fields.get("core_conclusions"))
     success_path = _dict(fields.get("success_path"))
     overview = _dict(fields.get("overview"))
-    management_band = _text(value.get("management_band") or success_path.get("weight_band"))
+    raw_management_band = _text(value.get("management_band") or success_path.get("weight_band"))
+    management_band = _localize_band_and_units_en(raw_management_band) if is_en else raw_management_band
     body_trend = _text(value.get("body_trend") or overview.get("recent_change")) or ("Insufficient information" if is_en else "信息不足")
     direct_evidence = _clean_text(value.get("trend_direct_evidence"))
     support_signals = value.get("trend_support_signals")
@@ -823,12 +846,12 @@ def _execution_goal_summary_block(fields: dict[str, Any], is_en: bool = False) -
 
     if is_en:
         lines = [
-            f"Management Band: {_length_checked(fields.get('weight_band'), max_len=30)}",
-            f"Standard Goal: {_length_checked(fields.get('base_goal'), max_len=60)}",
-            f"High Commitment Goal: {_length_checked(fields.get('challenge_goal'), max_len=50)}",
-            f"Execution Agreement: {_length_checked(fields.get('commitment_rule'), max_len=100)}",
-            f"Long-term Direction: {_length_checked(fields.get('path_goal') or fields.get('long_term_goal'), max_len=70)}",
-            f"Current Mainline: {_length_checked(fields.get('current_mainline'), max_len=30)}",
+            f"Management Band: {_length_checked(_localize_band_and_units_en(fields.get('weight_band')), max_len=60)}",
+            f"Standard Goal: {_length_checked(_localize_band_and_units_en(fields.get('base_goal')), max_len=60)}",
+            f"High Commitment Goal: {_length_checked(_localize_band_and_units_en(fields.get('challenge_goal')), max_len=60)}",
+            f"Execution Agreement: {_length_checked(_localize_band_and_units_en(fields.get('commitment_rule')), max_len=120)}",
+            f"Long-term Direction: {_length_checked(_localize_band_and_units_en(fields.get('path_goal') or fields.get('long_term_goal')), max_len=80)}",
+            f"Current Mainline: {_length_checked(_localize_band_and_units_en(fields.get('current_mainline')), max_len=50)}",
         ]
         return _text_block(
             "goal_summary",
@@ -951,31 +974,36 @@ def _success_path_block(fields: dict[str, Any], is_en: bool = False) -> dict[str
     wb = _text(value.get("weight_band"))
     if wb:
         if not wb.startswith("•"):
-            wb = f"• {'Current Management Band: ' if is_en else '您当前管理带：'}{_clean_prefix(_clean_prefix(wb, '您当前管理带'), '您当前所属减重带')}"
+            cleaned_wb = _clean_prefix(_clean_prefix(wb, '您当前管理带'), '您当前所属减重带')
+            wb = f"• {'Current Management Band: ' if is_en else '您当前管理带：'}{_localize_band_and_units_en(cleaned_wb) if is_en else cleaned_wb}"
         bullets.append(wb)
         
     tg = _text(value.get("total_goal"))
     if tg:
         if not tg.startswith("•"):
-            tg = f"• {'Overall Path Target: ' if is_en else '您当前更适合的总路径目标：'}{_clean_prefix(tg, '您当前更适合的总路径目标')}"
+            cleaned_tg = _clean_prefix(tg, '您当前更适合的总路径目标')
+            tg = f"• {'Overall Path Target: ' if is_en else '您当前更适合的总路径目标：'}{_localize_band_and_units_en(cleaned_tg) if is_en else cleaned_tg}"
         bullets.append(tg)
         
     d28 = _text(value.get("day28_goal"))
     if d28:
         if not d28.startswith("•"):
-            d28 = f"• {'First 28 Days: ' if is_en else '第一个28天：'}{_clean_prefix(d28, '第一个28天')}"
+            cleaned_d28 = _clean_prefix(d28, '第一个28天')
+            d28 = f"• {'First 28 Days: ' if is_en else '第一个28天：'}{_localize_band_and_units_en(cleaned_d28) if is_en else cleaned_d28}"
         bullets.append(d28)
         
     w5_8 = _text(value.get("week5_8"))
     if w5_8:
         if not w5_8.startswith("•"):
-            w5_8 = f"• {'Weeks 5–8: ' if is_en else '第5–8周：'}{_clean_prefix(w5_8, '第5–8周')}"
+            cleaned_w5_8 = _clean_prefix(w5_8, '第5–8周')
+            w5_8 = f"• {'Weeks 5–8: ' if is_en else '第5–8周：'}{_localize_band_and_units_en(cleaned_w5_8) if is_en else cleaned_w5_8}"
         bullets.append(w5_8)
         
     w9_12 = _text(value.get("week9_12"))
     if w9_12:
         if not w9_12.startswith("•"):
-            w9_12 = f"• {'Weeks 9–12: ' if is_en else '第9–12周：'}{_clean_prefix(w9_12, '第9–12周')}"
+            cleaned_w9_12 = _clean_prefix(w9_12, '第9–12周')
+            w9_12 = f"• {'Weeks 9–12: ' if is_en else '第9–12周：'}{_localize_band_and_units_en(cleaned_w9_12) if is_en else cleaned_w9_12}"
         bullets.append(w9_12)
         
     lines = [intro] + bullets

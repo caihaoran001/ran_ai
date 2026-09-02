@@ -119,8 +119,6 @@ async def submit_questionnaire(
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnaireSubmission:
     service_case = await _case_by_token(session, token, include_deleted=False)
-    if payload.language in ("en", "zh"):
-        service_case.language = payload.language
     timezone = ZoneInfo(get_settings().reminder_timezone)
     if template != "intake" and service_window_ended(service_case, datetime.now(timezone), timezone):
         raise HTTPException(status_code=410, detail="28天服务已结束，无需继续打卡")

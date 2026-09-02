@@ -61,8 +61,25 @@ _FIELD_LABELS = {
     "product_schedule.night_a": "晚A",
 }
 
+_FIELD_LABELS_EN = {
+    "weight": "weight",
+    "waist": "waist measurement",
+    "water": "water intake",
+    "sleep": "sleep",
+    "diet": "diet",
+    "exercise": "exercise",
+    "bowel": "digestion/bowel movement",
+    "mood": "energy/mood",
+    "hunger": "appetite/hunger",
+    "product_schedule.morning_c": "Morning C",
+    "product_schedule.noon_b": "Noon B",
+    "product_schedule.night_a": "Evening A",
+}
 
-def _field_label(field_key: str) -> str:
+
+def _field_label(field_key: str, language: str = "zh") -> str:
+    if language == "en":
+        return _FIELD_LABELS_EN.get(field_key, field_key)
     return _FIELD_LABELS.get(field_key, field_key)
 
 
@@ -181,6 +198,7 @@ async def detect_followup(
 def compose_followup_message(
     *,
     confirmations: list[dict] | None = None,
+    language: str = "zh",
 ) -> str | None:
     """矛盾核对：把待确认项组织成一句自然语言核对；无内容返回 None。零 LLM。
 
@@ -189,16 +207,27 @@ def compose_followup_message(
     """
     parts: list[str] = []
     for c in confirmations or []:
-        label = c.get("label") or c.get("field")
+        field_key = str(c.get("field") or "")
+        label = _field_label(field_key, language=language) or c.get("label") or field_key
         chat_value = c.get("chat_value")
-        if chat_value:
-            parts.append(
-                f"对了{label}是{chat_value}吧？我先前记的跟你后面说的对不上，是的话我就按这个改哈。"
-            )
+        if language == "en":
+            if chat_value:
+                parts.append(
+                    f"By the way, is your {label} {chat_value}? Just wanted to double-check and keep your records accurate!"
+                )
+            else:
+                parts.append(
+                    f"By the way, what is your latest {label}? Just wanted to confirm so I can update your log!"
+                )
         else:
-            parts.append(
-                f"对了你{label}最新是多少呀？我这记的有点对不上，你说个准的我改一下哈。"
-            )
+            if chat_value:
+                parts.append(
+                    f"对了{label}是{chat_value}吧？我先前记的跟你后面说的对不上，是的话我就按这个改哈。"
+                )
+            else:
+                parts.append(
+                    f"对了你{label}最新是多少呀？我这记的有点对不上，你说个准的我改一下哈。"
+                )
     if not parts:
         return None
     return " ".join(parts)
@@ -402,7 +431,10 @@ async def plan_scheduled_followups(
     )
     candidates: list[ScheduledFollowupPlan] = []
     confirmations = detect.get("confirmations") or []
-    confirmation_text = compose_followup_message(confirmations=confirmations)
+    confirmation_text = compose_followup_message(
+        confirmations=confirmations,
+        language=case_lang,
+    )
     if confirmation_text and preferences["contradiction"]:
         candidates.append(
             ScheduledFollowupPlan(

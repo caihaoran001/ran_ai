@@ -3114,3 +3114,75 @@ def test_english_stage_report_and_followup_templates():
     )
     assert "Tomorrow is Day 7 of your program!" in milestone_text
     assert "record your weight and measure your waist" in milestone_text
+
+
+def test_imperial_units_weight_and_waist_conversion():
+    from app.services.intake_facts import _parse_weight_kg, _normalize_waist_cm, _weight_kg_to_display
+    from app.services.body_metrics import parse_weight_kg, waist_explicit_unit_scale
+
+    # 165 lbs should be ~74.84 kg, NOT 165.0 kg
+    assert _parse_weight_kg("165 lbs") == pytest.approx(74.84, 0.05)
+    assert _parse_weight_kg("165 kg") == 165.0
+    assert _parse_weight_kg("165斤") == 82.5
+    assert _parse_weight_kg("165") == 165.0
+
+    assert _normalize_waist_cm("28 inch") == pytest.approx(71.12, 0.05)
+    assert _normalize_waist_cm("28 inches") == pytest.approx(71.12, 0.05)
+    assert _normalize_waist_cm("70 cm") == 70.0
+
+    body_val = parse_weight_kg("165 lbs")
+    assert body_val.ok is True
+    assert body_val.value == pytest.approx(74.84, 0.05)
+
+    assert waist_explicit_unit_scale("28 inch") == 2.54
+
+    # Weight display formatting
+    assert _weight_kg_to_display(74.84, language="en") == "165 lbs"
+    assert _weight_kg_to_display(74.84, language="zh") == "149.7斤"
+
+
+def test_english_contradiction_followup_localization():
+    from app.services.archivist.followup import compose_followup_message
+
+    msg_en_chat = compose_followup_message(
+        confirmations=[{"field": "weight", "chat_value": "165 lbs"}],
+        language="en",
+    )
+    assert msg_en_chat is not None
+    assert "By the way, is your weight 165 lbs?" in msg_en_chat
+
+    msg_en_ask = compose_followup_message(
+        confirmations=[{"field": "waist"}],
+        language="en",
+    )
+    assert msg_en_ask is not None
+    assert "By the way, what is your latest waist measurement?" in msg_en_ask
+
+
+def test_english_document_template_localizes_bands_and_units():
+    from app.services.document_templates import (
+        _localize_band_and_units_en,
+        _execution_goal_summary_block,
+        _core_conclusions_block,
+    )
+
+    assert _localize_band_and_units_en("B带｜轻盈启动") == "Band B | Gentle Energy Kickstart"
+    assert _localize_band_and_units_en("4–6斤") == "4–6 lbs"
+    assert _localize_band_and_units_en("8斤") == "8 lbs"
+
+    summary_block = _execution_goal_summary_block(
+        {
+            "weight_band": "B带｜轻盈启动",
+            "base_goal": "4–6斤",
+            "challenge_goal": "8斤",
+            "commitment_rule": "85% check-in rate",
+            "path_goal": "Long term vitality",
+            "current_mainline": "Establish daily rhythm",
+        },
+        is_en=True,
+    )
+    assert "Band B | Gentle Energy Kickstart" in summary_block["content"]
+    assert "4–6 lbs" in summary_block["content"]
+    assert "8 lbs" in summary_block["content"]
+    assert "B带" not in summary_block["content"]
+    assert "斤" not in summary_block["content"]

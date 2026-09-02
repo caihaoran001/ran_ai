@@ -87,14 +87,21 @@ def first_number(text: str) -> float | None:
         return None
 
 
+_LBS_HINTS = ("lb", "lbs", "pound", "pounds", "磅")
+
+
 def has_explicit_kg(text: str) -> bool:
     return any(hint in text.lower() for hint in _KG_HINTS)
 
 
-def has_explicit_jin(text: str) -> bool:
-    """写了「斤」且没同时写公斤/千克/kg。"""
+def has_explicit_lbs(text: str) -> bool:
+    return any(hint in text.lower() for hint in _LBS_HINTS)
 
-    return _JIN_HINT in text and not has_explicit_kg(text)
+
+def has_explicit_jin(text: str) -> bool:
+    """写了「斤」且没同时写公斤/千克/kg/磅。"""
+
+    return _JIN_HINT in text and not has_explicit_kg(text) and not has_explicit_lbs(text)
 
 
 def waist_explicit_unit_scale(text: str) -> float | None:
@@ -108,6 +115,8 @@ def waist_explicit_unit_scale(text: str) -> float | None:
         return 0.1
     if "cm" in lower or "厘米" in lower or "公分" in lower:
         return 1.0
+    if any(unit in lower for unit in ("inch", "inches", "in")):
+        return 2.54
     if "m" in lower or "米" in lower:
         return 100.0
     return None
@@ -126,6 +135,9 @@ def parse_weight_kg(raw: object, *, baseline_kg: float | None = None) -> BodyVal
         return BodyValue(None, REASON_NO_NUMBER)
     if number <= 0:
         return BodyValue(None, REASON_OUT_OF_RANGE)
+
+    if has_explicit_lbs(text):
+        return _finish_weight(round(number * 0.45359237, 2), unit_verified=True, corrected_from="lbs")
 
     explicit_jin = has_explicit_jin(text)
     if explicit_jin or has_explicit_kg(text):

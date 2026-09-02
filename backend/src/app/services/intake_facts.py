@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.services.body_metrics import has_explicit_jin, parse_waist_cm
+from app.services.body_metrics import has_explicit_jin, has_explicit_lbs, parse_waist_cm
 
 CUSTOM_ANSWER_LABEL = "其他（用户补充）"
 
@@ -408,36 +408,40 @@ def _first_number(value: str) -> float | None:
 
 
 def _parse_weight_kg(value: str) -> float | None:
-    """把问卷里的 kg/公斤/斤统一成公斤。
+    """把问卷里的 kg/公斤/斤/lbs 统一成公斤。
 
-    输入框题面虽然标了 kg，但用户经常直接写「200斤」。旧逻辑只取首个数字，
-    会把它当成 200kg，进而把 BMI、管理带和目标全部放大一倍。
+    输入框题面虽然标了 kg，但用户经常直接写「200斤」或「165 lbs」。旧逻辑只取首个数字，
+    会把它当成 200kg 或 165kg，进而把 BMI、管理带和目标全部放大一倍。
     """
 
     number = _first_number(value)
     if number is None or number <= 0:
         return None
-    return number / 2 if has_explicit_jin(str(value or "")) else number
+    val_str = str(value or "")
+    if has_explicit_lbs(val_str):
+        return round(number * 0.45359237, 2)
+    if has_explicit_jin(val_str):
+        return round(number / 2, 2)
+    return number
 
 
 def _normalize_waist_cm(value: str) -> float | None:
     """腰围统一成厘米。单位规则统一由 ``body_metrics`` 定义，问卷与打卡共用一套。
 
-    相比历史实现多认了市尺（「2尺4」「24.5」按 33.3cm/尺 换算），问卷腰围会进腰高比
-    和交付文件，填 24.5 当成 24.5 厘米会让腰高比变成 0.15。
-
-    但换算不出可信值时**不能**当成"没填"：问卷侧的安全网是下游腰高比矛盾检查
-    （见 ``intake_generation._document_generation_block_reasons``），它靠一个离谱的
-    比值提醒运营复测。清成空值会让这条提示消失、脏数据反而绕过人工复核。
-    所以这里保留原始数字，把判断交还给那道检查。打卡统计侧相反——它直接丢弃，
-    因为统计不需要复核，只需要不被污染。
+    相比历史实现多认了市尺（「2尺4」「24.5」按 33.3cm/尺 换算）与英寸（「28 inch」换算），
+    问卷腰围会进腰高比和交付文件，填 24.5 当成 24.5 厘米会让腰高比变成 0.15。
     """
 
+    val_str = str(value or "").lower()
+    number = _first_number(val_str)
+    if number is None or number <= 0:
+        return None
+    if any(unit in val_str for unit in ("inch", "inches", "in")) and not any(u in val_str for u in ("cm", "厘米")):
+        return round(number * 2.54, 2)
     parsed = parse_waist_cm(value)
     if parsed.value is not None:
         return parsed.value
-    number = _first_number(str(value or ""))
-    return number if number and number > 0 else None
+    return number
 
 
 def _normalize_height_cm(value: float | None) -> float | None:
@@ -808,8 +812,8 @@ def _with_unit(value: Any, unit: str) -> str:
     return text if text.endswith(unit) else f"{text}{unit}"
 
 
-def _weight_kg_to_jin(value: Any) -> str:
-    """把 kg 体重录入值换算成用户展示的「斤」（1kg=2斤）。
+def _weight_kg_to_display(value: Any, language: str = "zh") -> str:
+    """把 kg 体重录入值换算成用户展示的「斤」（中文）或「lbs」（英文）。
 
     只做展示换算：内部计算与结构化字段仍用 kg，这里只影响文档/画像里给用户看的那一行。
     解析失败时回退成原 kg 展示，绝不吞掉数据或返回空造成体重丢失。
@@ -818,11 +822,20 @@ def _weight_kg_to_jin(value: Any) -> str:
     if not value or str(value) in {"未提供", "暂无数据"}:
         return ""
     try:
-        jin = float(str(value)) * 2
+        val_f = float(str(value))
     except (TypeError, ValueError):
         return _with_unit(value, "kg")
+    if language == "en":
+        lbs = round(val_f * 2.20462262, 1)
+        lbs_text = f"{int(lbs)}" if lbs == int(lbs) else f"{lbs:.1f}"
+        return f"{lbs_text} lbs"
+    jin = val_f * 2
     text = f"{int(jin)}" if jin == int(jin) else f"{jin:.1f}"
     return f"{text}斤"
+
+
+def _weight_kg_to_jin(value: Any) -> str:
+    return _weight_kg_to_display(value, language="zh")
 
 
 def _recipient_name(preferred_name: str, legal_name: str, gender: str) -> str:
