@@ -39,11 +39,11 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
 
     assert suite.suite_id == "reply-agent-core-v4"
     assert suite.version == 4
-    assert len(suite.cases) == 80
-    assert summary["retrieval_counts"] == {"retrieve": 43, "skip": 37}
-    assert summary["execution_counts"] == {"agent": 30, "handoff": 3, "rag": 47}
-    assert summary["metric_group_counts"]["M0"] == 80
-    assert summary["metric_group_counts"]["MR"] == 43
+    assert len(suite.cases) == 90
+    assert summary["retrieval_counts"] == {"retrieve": 50, "skip": 40}
+    assert summary["execution_counts"] == {"agent": 30, "handoff": 3, "rag": 57}
+    assert summary["metric_group_counts"]["M0"] == 90
+    assert summary["metric_group_counts"]["MR"] == 50
     assert REQUIRED_RETRIEVAL_FAMILIES <= set(summary["retrieval_family_counts"])
     # 覆盖度契约只约束核心产品检索族；饮食/服务规则是改判后新增的窄族，
     # 与套件模型的校验口径保持一致。
@@ -52,7 +52,7 @@ def test_fixed_reply_agent_suite_has_exact_contract() -> None:
         for family in REQUIRED_RETRIEVAL_FAMILIES
     )
     assert [case.case_id for case in suite.cases] == [
-        f"RA-{index:03d}" for index in range(1, 81)
+        f"RA-{index:03d}" for index in range(1, 91)
     ]
     source_ids = {source for case in suite.cases for source in case.source_case_ids}
     assert {
@@ -115,7 +115,7 @@ def test_every_recall_gated_case_scores_on_retrievable_clauses_only() -> None:
             if found:
                 offenders[f"{case.case_id}:{fact_id}"] = found
 
-    assert gated == 43
+    assert gated == 50
     assert offenders == {}
 
 
@@ -421,7 +421,10 @@ def test_unified_agent_stubs_match_runtime_tool_contracts() -> None:
         "晚间收口提醒也已取消"
     ]
 
-    dehydration = next(case for case in suite.cases if case.case_id == "RA-080")
+    # 按标题定位而不是按编号：编号随题库扩容顺移，锚在编号上会让加题变成改测试。
+    dehydration = next(
+        case for case in suite.cases if case.title == "上吐下泻虚脱转人工"
+    )
     assert dehydration.handoff.expected_risk_codes == [
         "physical_discomfort",
         "other_risk",
@@ -601,8 +604,8 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     assert report.summary.status == "completed"
     assert report.summary.diagnostic_rollups_recorded is True
     assert payload["summary"]["diagnostic_rollups_recorded"] is True
-    assert report.summary.counts.total == 80
-    assert report.summary.counts.completed == 80
+    assert report.summary.counts.total == 90
+    assert report.summary.counts.completed == 90
     assert report.summary.counts.errors == 0
     assert report.summary.usage.call_count == 0
     assert report.summary.usage.total_tokens == 0
@@ -610,10 +613,10 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     assert report.summary.metrics.rewrite_harm_rate.model_dump() == {
         "value": 0.0,
         "numerator": 0,
-        "denominator": 43,
+        "denominator": 50,
     }
-    assert report.summary.metrics.answer_relevancy_average.denominator == 43
-    assert report.summary.metrics.answer_correctness_observed.denominator == 47
+    assert report.summary.metrics.answer_relevancy_average.denominator == 50
+    assert report.summary.metrics.answer_correctness_observed.denominator == 57
     assert report.summary.metrics.handoff_accuracy.model_dump() == {
         "value": 1.0,
         "numerator": 3,
@@ -623,15 +626,15 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
     assert report.summary.metrics.judge_groundedness_observed.denominator == 30
     assert report.summary.metrics.judge_clarification_observed.denominator == 30
     assert report.summary.metrics.judge_expression_observed.denominator == 30
-    assert len(report.cases) == 80
-    assert len({case.case_id for case in report.cases}) == 80
+    assert len(report.cases) == 90
+    assert len({case.case_id for case in report.cases}) == 90
     assert Counter(case.execution_kind for case in report.cases) == {
-        "rag": 47,
+        "rag": 57,
         "agent": 30,
         "handoff": 3,
     }
     assert (
-        sum(case.actual.retrieval_decision == "retrieve" for case in report.cases) == 43
+        sum(case.actual.retrieval_decision == "retrieve" for case in report.cases) == 50
     )
     assert all(
         case.usage.get("total", {}).get("call_count") == 0 for case in report.cases
@@ -674,7 +677,7 @@ async def test_unified_mock_runs_80_once_with_zero_calls(tmp_path) -> None:
 
     store = ReplyAgentEvaluationReportStore(reports_root)
     assert [item.run_id for item in store.list_runs()] == ["reply-agent-mock-test"]
-    assert store.get_run("reply-agent-mock-test").summary.counts.total == 80
+    assert store.get_run("reply-agent-mock-test").summary.counts.total == 90
 
 
 def test_legacy_report_without_diagnostic_rollup_marker_stays_unknown(
@@ -794,8 +797,8 @@ async def test_saved_output_reanalysis_replays_80_cases_without_generation(
     assert report.summary.status == "completed"
     assert report.summary.score_source == "saved_output_reanalysis"
     assert report.summary.source_run_id == "reply-agent-reanalysis-source"
-    assert report.summary.counts.total == 80
-    assert report.summary.counts.completed == 80
+    assert report.summary.counts.total == 90
+    assert report.summary.counts.completed == 90
     assert report.summary.usage.call_count == 0
     assert report.summary.ruler_policy is not None
     assert report.summary.ruler_policy.task_completion_threshold == 0.9

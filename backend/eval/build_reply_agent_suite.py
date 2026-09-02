@@ -291,6 +291,197 @@ NEW_RETRIEVAL_CASES = (
 )
 
 
+# 执行承诺规则（完整打卡率、达标天数、断签容忍、D0 选档资格、复盘降档）在
+# 2026-09-01 才发布为权威 FAQ，v3 的冻结 RAG 题库里没有可复用的事实，因此这批
+# 题自带权威答案手抄件。出处写 FAQ 的业务来源标识而不是 faq_uid：uid 是入库时
+# 随机生成的，本地库和生产库各生成一次就是两个值，按 uid 引用会让生产侧评测把
+# 题库报成"FAQ 不存在"。
+EXECUTION_COMMITMENT_SOURCE = "knowledge_faqs:manual_curated"
+
+EXECUTION_COMMITMENT_RETRIEVAL_CASES = (
+    {
+        "source_id": "eval-commitment-complete-rate-definition",
+        "title": "完整打卡日与完整打卡率口径",
+        "faq_source_id": "execution_commitment_complete_rate_v1",
+        "history": [],
+        "user_query": "完整打卡率到底怎么算的，一天要做到什么程度才算完整打卡？",
+        "must_include": ["完整打卡率", "五项", "累计"],
+        "meaning": "询问完整打卡日的判定标准和打卡率的计算方式",
+        "families": ["service_rule"],
+        "statement": (
+            "完整打卡率=截至复盘节点的累计完整打卡日数÷该节点已服务天数。"
+            "当天必须在群内对五项打卡全部作答，完成、未完成或暂停都要如实填写，"
+            "五项齐全才计1个完整打卡日。"
+        ),
+        "retrieval_clauses": [
+            "完整打卡率等于截至复盘节点的累计完整打卡日数除以该节点已服务天数",
+            "当天需要在群内对五项打卡全部作答才计1个完整打卡日",
+            "完成、未完成或暂停都如实填写同样计入完整打卡日",
+        ],
+    },
+    {
+        "source_id": "eval-commitment-window-scope",
+        "title": "复盘节点统计的是累计而非最近七天",
+        "faq_source_id": "execution_commitment_complete_rate_v1",
+        "history": [
+            {"role": "user", "content": "我前两周打卡不太好，这周补回来了。"}
+        ],
+        "user_query": "D21是不是只看最近七天？前面拉胯的还算数吗？",
+        "must_include": ["D21", "累计", "D1"],
+        "meaning": "确认复盘节点按D1至该节点累计统计而不是只看最近七天",
+        "families": ["service_rule", "multi_turn_resolution"],
+        "statement": (
+            "D7统计D1–D7，D14统计D1–D14，D21统计D1–D21，D28统计D1–D28；"
+            "不是只看节点当天，也不是只看最近7天。"
+        ),
+        "retrieval_clauses": [
+            "D7统计D1至D7，D14统计D1至D14",
+            "D21统计D1至D21，D28统计D1至D28",
+            "复盘节点按累计区间统计，而不是只看节点当天或最近7天",
+        ],
+    },
+    {
+        "source_id": "eval-commitment-threshold-days",
+        "title": "高承诺档各节点的达标天数换算",
+        "faq_source_id": "execution_commitment_threshold_days_v1",
+        "history": [],
+        "user_query": "高承诺档85%，D14的时候我得打满几天才算够？",
+        "must_include": ["高承诺档", "D14", "12天"],
+        "meaning": "把85%的比例门槛换算成D14所需的完整打卡天数",
+        "families": ["service_rule", "dosage_scale"],
+        "statement": (
+            "门槛按复盘节点的累计比例计算，所需天数向上取整。"
+            "高承诺档：D7至少6天、D14至少12天、D21至少18天、D28至少24天。"
+        ),
+        "retrieval_clauses": [
+            "门槛按复盘节点的累计比例计算，所需天数向上取整",
+            "高承诺档D7至少6天、D14至少12天",
+            "高承诺档D21至少18天、D28至少24天",
+        ],
+    },
+    {
+        "source_id": "eval-commitment-standard-threshold",
+        "title": "标准档达标天数与高承诺档的差别",
+        "faq_source_id": "execution_commitment_threshold_days_v1",
+        "history": [
+            {"role": "user", "content": "我压力有点大，在想要不要选标准档。"}
+        ],
+        "user_query": "标准档的话D28要打几天？比高承诺档少多少？",
+        "must_include": ["标准档", "D28", "17天"],
+        "meaning": "把60%换算成标准档D28所需天数并与高承诺档对比",
+        "families": ["service_rule", "multi_turn_resolution"],
+        "statement": (
+            "标准档：D7至少5天、D14至少9天、D21至少13天、D28至少17天；"
+            "高承诺档：D7至少6天、D14至少12天、D21至少18天、D28至少24天。"
+        ),
+        "retrieval_clauses": [
+            "标准档D7至少5天、D14至少9天",
+            "标准档D21至少13天、D28至少17天",
+            "高承诺档D28至少24天",
+        ],
+    },
+    {
+        "source_id": "eval-commitment-missed-day",
+        "title": "断一天是否直接失败",
+        "faq_source_id": "execution_commitment_missed_day_v1",
+        "history": [],
+        "user_query": "昨天太忙一整天没打卡，我这是不是就算失败了？",
+        "must_include": ["断一天", "失败", "累计"],
+        "meaning": "确认漏打一天不等于失败且不要求连续打卡",
+        "families": ["service_rule", "retrieval_interference"],
+        "statement": (
+            "断一天不等于失败。是否达标只在D7、D14、D21、D28按累计完整打卡天数判断，"
+            "不要求连续不断。漏打的那天只是少计1个完整日，不会清零之前的记录，"
+            "也不会立刻降档。"
+        ),
+        "retrieval_clauses": [
+            "断一天不等于失败，达标只在复盘节点按累计完整打卡天数判断",
+            "达标判断依据累计完整打卡天数，允许中间有中断",
+            "漏打的那天只是少计1个完整日，之前的记录仍然保留",
+        ],
+    },
+    {
+        "source_id": "eval-commitment-missed-budget",
+        "title": "剩余可断天数需要按累计门槛推算",
+        "faq_source_id": "execution_commitment_missed_day_v1",
+        "history": [
+            {"role": "user", "content": "我选的是高承诺档。"},
+            {"role": "assistant", "content": "高承诺档按85%的累计完整打卡率复盘。"},
+        ],
+        "user_query": "那我到D7为止已经断了一天，还保得住吗？",
+        "must_include": ["高承诺档", "D7", "6天"],
+        "meaning": "把高承诺档D7需要6个完整日的门槛用到已断一天的情形",
+        "families": ["service_rule", "multi_turn_resolution", "retrieval_interference"],
+        "statement": (
+            "高承诺档D7需要至少6个完整日，中间断1天、其余6天五项答齐仍然达标；"
+            "标准档D14需要至少9个完整日，断5天仍在门槛内。"
+        ),
+        "retrieval_clauses": [
+            "高承诺档D7需要至少6个完整日",
+            "D7断1天但其余6天五项答齐仍然达标",
+            "标准档D14需要至少9个完整日",
+        ],
+    },
+    {
+        "source_id": "eval-commitment-checkpoint-downgrade",
+        "title": "打卡率不足时的降档处理",
+        "faq_source_id": "execution_commitment_checkpoint_actions_v1",
+        "history": [],
+        "user_query": "如果D14打卡率没到85%，我的高承诺档会怎么处理？",
+        "must_include": ["85%", "高承诺档", "标准档"],
+        "meaning": "询问高承诺档在复盘节点未达标时的降档规则",
+        "families": ["service_rule", "timing_missed"],
+        "statement": (
+            "每个节点都按D1至该节点的累计完整打卡率复盘。高承诺档达到85%则保留；"
+            "低于85%则不再保留高承诺档，达到60%时转为标准档，"
+            "低于60%时进入标准档重新确认并询问执行困难。"
+        ),
+        "retrieval_clauses": [
+            "每个节点按D1至该节点的累计完整打卡率复盘",
+            "高承诺档达到85%则保留",
+            "低于85%但达到60%时转为标准档",
+            "低于60%时进入标准档重新确认并询问执行困难",
+        ],
+    },
+)
+
+
+# 这三道问的是"我自己现在怎么样"，答案在服务单实时状态里，不是通用知识。
+# 上一轮刚把这条边界写进系统提示词，题库必须能压住它：一旦模型跑去检索通用
+# 规则并照着规则宣布用户的档位，用户拿到的就是与自己实际状态不符的结论。
+EXECUTION_COMMITMENT_RUNTIME_CASES = (
+    {
+        "source_id": "eval-commitment-my-current-tier",
+        "title": "询问自己当前档位走实时状态",
+        "history": [],
+        "user_query": "我现在是高承诺档还是标准档？",
+        "meaning": "用户在问自己的档位，属于个人实时状态而不是通用规则",
+        "response_mode": "use_runtime_data",
+        "tags": ["service_rule", "skip_retrieval", "runtime_state", "ambiguous"],
+    },
+    {
+        "source_id": "eval-commitment-my-current-rate",
+        "title": "询问自己已打卡天数走实时状态",
+        "history": [
+            {"role": "user", "content": "这周感觉打得还行。"}
+        ],
+        "user_query": "我到今天累计打了几个完整日了，比例多少？",
+        "meaning": "用户在问自己的累计打卡数据，需要读取本人执行记录",
+        "response_mode": "use_runtime_data",
+        "tags": ["service_rule", "skip_retrieval", "runtime_state", "number"],
+    },
+    {
+        "source_id": "eval-commitment-tier-selection-request",
+        "title": "未收到邀请时主动要求选高承诺档",
+        "history": [],
+        "user_query": "我想选高承诺档，现在就给我改成高承诺档吧。",
+        "meaning": "用户主动要求选档，是否可选取决于本人筛选与邀请状态",
+        "response_mode": "use_runtime_data",
+        "tags": ["service_rule", "skip_retrieval", "runtime_state", "authorization"],
+    },
+)
+
+
 HANDOFF_CASES = (
     {
         "source_id": "eval-handoff-chest-pain",
@@ -396,6 +587,76 @@ def _new_rag_case(spec: dict, source_by_id: dict[str, RagEvalCase]) -> RagEvalCa
             "answer": {
                 "response_mode": "answer",
                 "required_fact_ids": [fact_id],
+            },
+        }
+    )
+
+
+def _commitment_retrieval_case(spec: dict) -> RagEvalCase:
+    """执行承诺规则的检索题：权威答案是 FAQ 正文的手抄件。"""
+    suffix = spec["source_id"].removeprefix("eval-commitment-").replace("-", "_")
+    fact_id = f"eval_commitment_{suffix}"
+    return RagEvalCase.model_validate(
+        {
+            "case_id": f"rag-{spec['source_id']}",
+            "title": spec["title"],
+            "origin": {
+                "kind": "faq_rewrite",
+                "reference_id": f"eval:{spec['source_id']}",
+            },
+            "tags": ["execution_commitment", *spec["families"]],
+            "history": spec["history"],
+            "user_query": spec["user_query"],
+            "authoritative_facts": [
+                {
+                    "fact_id": fact_id,
+                    "statement": spec["statement"],
+                    "provenance": (
+                        f"{EXECUTION_COMMITMENT_SOURCE}:{spec['faq_source_id']}"
+                    ),
+                    "source_scope": "knowledge",
+                    "source_ids": [spec["faq_source_id"]],
+                    "retrieval_clauses": spec["retrieval_clauses"],
+                }
+            ],
+            "rewrite": {
+                "decision": "retrieve",
+                "must_include": spec["must_include"],
+                "must_preserve_meanings": [spec["meaning"]],
+            },
+            "retrieval": {"required_fact_ids": [fact_id]},
+            "answer": {
+                "response_mode": "answer",
+                "required_fact_ids": [fact_id],
+            },
+        }
+    )
+
+
+def _commitment_runtime_case(spec: dict) -> RagEvalCase:
+    """个人执行状态题：不检索通用知识，答案取自本人服务单。"""
+    return RagEvalCase.model_validate(
+        {
+            "case_id": f"rag-{spec['source_id']}",
+            "title": spec["title"],
+            "origin": {
+                "kind": "real_chat",
+                "reference_id": f"eval:{spec['source_id']}",
+            },
+            "tags": ["execution_commitment", *spec["tags"]],
+            "history": spec["history"],
+            "user_query": spec["user_query"],
+            "authoritative_facts": [],
+            "rewrite": {
+                "decision": "skip",
+                "must_include": [],
+                "must_preserve_meanings": [spec["meaning"]],
+            },
+            "retrieval": {"required_fact_ids": []},
+            "answer": {
+                "response_mode": spec["response_mode"],
+                "required_fact_ids": [],
+                "forbidden_fact_ids": [],
             },
         }
     )
@@ -1281,6 +1542,36 @@ def build_suite() -> ReplyAgentEvalSuite:
             }
         )
 
+    for spec in EXECUTION_COMMITMENT_RETRIEVAL_CASES:
+        case = _commitment_retrieval_case(spec)
+        append_case(
+            {
+                "title": case.title,
+                "source_case_ids": [spec["source_id"]],
+                "execution_kind": "rag",
+                "retrieval_decision": "retrieve",
+                "retrieval_families": spec["families"],
+                "metric_groups": ["M0", "MR"],
+                "tags": case.tags,
+                "rag_case": case.model_dump(mode="json"),
+            }
+        )
+
+    for spec in EXECUTION_COMMITMENT_RUNTIME_CASES:
+        case = _commitment_runtime_case(spec)
+        append_case(
+            {
+                "title": case.title,
+                "source_case_ids": [spec["source_id"]],
+                "execution_kind": "rag",
+                "retrieval_decision": "skip",
+                "retrieval_families": [],
+                "metric_groups": ["M0", "MB"],
+                "tags": case.tags,
+                "rag_case": case.model_dump(mode="json"),
+            }
+        )
+
     for spec in HANDOFF_CASES:
         append_case(
             {
@@ -1307,13 +1598,15 @@ def build_suite() -> ReplyAgentEvalSuite:
             "suite_id": "reply-agent-core-v4",
             "version": 4,
             "description": (
-                "回复 Agent 统一固定题库：80 道唯一题，43 道需要知识依据的检索，"
-                "37 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；"
+                "回复 Agent 统一固定题库：90 道唯一题，50 道需要知识依据的检索，"
+                "40 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；"
                 "v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、"
                 "冷水冲泡上限85℃、倒班晚A睡前1至2小时、早C午B优先随餐且"
                 "餐前5分钟或餐后30分钟内亦可、"
                 "旅游中断不顺延服务期，无红旗便秘改为先澄清；饭堂隐私场景若上下文涉及"
-                "随餐产品使用规则，也纳入检索并保留支持式回复。"
+                "随餐产品使用规则，也纳入检索并保留支持式回复；"
+                "2026-09-02 增补执行承诺档位与完整打卡日规则的检索题，"
+                "以及个人实时执行状态不得走通用知识库的跳过题。"
             ),
             "cases": cases,
         }

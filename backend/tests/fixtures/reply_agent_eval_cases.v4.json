@@ -1,7 +1,7 @@
 {
   "suite_id": "reply-agent-core-v4",
   "version": 4,
-  "description": "回复 Agent 统一固定题库：80 道唯一题，43 道需要知识依据的检索，37 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、冷水冲泡上限85℃、倒班晚A睡前1至2小时、早C午B优先随餐且餐前5分钟或餐后30分钟内亦可、旅游中断不顺延服务期，无红旗便秘改为先澄清；饭堂隐私场景若上下文涉及随餐产品使用规则，也纳入检索并保留支持式回复。",
+  "description": "回复 Agent 统一固定题库：90 道唯一题，50 道需要知识依据的检索，40 道跳过通用知识库并覆盖工具、澄清、沉默、授权和转人工；v4 继承v3契约，并落实2026-08-25业务确认的FAQ原子口径：晚A水量330ml、冷水冲泡上限85℃、倒班晚A睡前1至2小时、早C午B优先随餐且餐前5分钟或餐后30分钟内亦可、旅游中断不顺延服务期，无红旗便秘改为先澄清；饭堂隐私场景若上下文涉及随餐产品使用规则，也纳入检索并保留支持式回复；2026-09-02 增补执行承诺档位与完整打卡日规则的检索题，以及个人实时执行状态不得走通用知识库的跳过题。",
   "cases": [
     {
       "case_id": "RA-001",
@@ -6506,6 +6506,775 @@
     },
     {
       "case_id": "RA-078",
+      "title": "完整打卡日与完整打卡率口径",
+      "source_case_ids": [
+        "eval-commitment-complete-rate-definition"
+      ],
+      "execution_kind": "rag",
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "service_rule"
+      ],
+      "metric_groups": [
+        "M0",
+        "MR"
+      ],
+      "tags": [
+        "execution_commitment",
+        "service_rule"
+      ],
+      "rag_case": {
+        "case_id": "rag-eval-commitment-complete-rate-definition",
+        "title": "完整打卡日与完整打卡率口径",
+        "origin": {
+          "kind": "faq_rewrite",
+          "reference_id": "eval:eval-commitment-complete-rate-definition"
+        },
+        "tags": [
+          "execution_commitment",
+          "service_rule"
+        ],
+        "history": [],
+        "user_query": "完整打卡率到底怎么算的，一天要做到什么程度才算完整打卡？",
+        "authoritative_facts": [
+          {
+            "fact_id": "eval_commitment_complete_rate_definition",
+            "statement": "完整打卡率=截至复盘节点的累计完整打卡日数÷该节点已服务天数。当天必须在群内对五项打卡全部作答，完成、未完成或暂停都要如实填写，五项齐全才计1个完整打卡日。",
+            "provenance": "knowledge_faqs:manual_curated:execution_commitment_complete_rate_v1",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "execution_commitment_complete_rate_v1"
+            ],
+            "retrieval_clauses": [
+              "完整打卡率等于截至复盘节点的累计完整打卡日数除以该节点已服务天数",
+              "当天需要在群内对五项打卡全部作答才计1个完整打卡日",
+              "完成、未完成或暂停都如实填写同样计入完整打卡日"
+            ]
+          }
+        ],
+        "rewrite": {
+          "decision": "retrieve",
+          "must_include": [
+            "完整打卡率",
+            "五项",
+            "累计"
+          ],
+          "must_preserve_meanings": [
+            "询问完整打卡日的判定标准和打卡率的计算方式"
+          ]
+        },
+        "retrieval": {
+          "required_fact_ids": [
+            "eval_commitment_complete_rate_definition"
+          ],
+          "forbidden_source_types": [
+            "case"
+          ]
+        },
+        "answer": {
+          "response_mode": "answer",
+          "required_fact_ids": [
+            "eval_commitment_complete_rate_definition"
+          ],
+          "forbidden_fact_ids": []
+        }
+      },
+      "agent_case": null,
+      "handoff": null
+    },
+    {
+      "case_id": "RA-079",
+      "title": "复盘节点统计的是累计而非最近七天",
+      "source_case_ids": [
+        "eval-commitment-window-scope"
+      ],
+      "execution_kind": "rag",
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "service_rule",
+        "multi_turn_resolution"
+      ],
+      "metric_groups": [
+        "M0",
+        "MR"
+      ],
+      "tags": [
+        "execution_commitment",
+        "service_rule",
+        "multi_turn_resolution"
+      ],
+      "rag_case": {
+        "case_id": "rag-eval-commitment-window-scope",
+        "title": "复盘节点统计的是累计而非最近七天",
+        "origin": {
+          "kind": "faq_rewrite",
+          "reference_id": "eval:eval-commitment-window-scope"
+        },
+        "tags": [
+          "execution_commitment",
+          "service_rule",
+          "multi_turn_resolution"
+        ],
+        "history": [
+          {
+            "role": "user",
+            "content": "我前两周打卡不太好，这周补回来了。"
+          }
+        ],
+        "user_query": "D21是不是只看最近七天？前面拉胯的还算数吗？",
+        "authoritative_facts": [
+          {
+            "fact_id": "eval_commitment_window_scope",
+            "statement": "D7统计D1–D7，D14统计D1–D14，D21统计D1–D21，D28统计D1–D28；不是只看节点当天，也不是只看最近7天。",
+            "provenance": "knowledge_faqs:manual_curated:execution_commitment_complete_rate_v1",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "execution_commitment_complete_rate_v1"
+            ],
+            "retrieval_clauses": [
+              "D7统计D1至D7，D14统计D1至D14",
+              "D21统计D1至D21，D28统计D1至D28",
+              "复盘节点按累计区间统计，而不是只看节点当天或最近7天"
+            ]
+          }
+        ],
+        "rewrite": {
+          "decision": "retrieve",
+          "must_include": [
+            "D21",
+            "累计",
+            "D1"
+          ],
+          "must_preserve_meanings": [
+            "确认复盘节点按D1至该节点累计统计而不是只看最近七天"
+          ]
+        },
+        "retrieval": {
+          "required_fact_ids": [
+            "eval_commitment_window_scope"
+          ],
+          "forbidden_source_types": [
+            "case"
+          ]
+        },
+        "answer": {
+          "response_mode": "answer",
+          "required_fact_ids": [
+            "eval_commitment_window_scope"
+          ],
+          "forbidden_fact_ids": []
+        }
+      },
+      "agent_case": null,
+      "handoff": null
+    },
+    {
+      "case_id": "RA-080",
+      "title": "高承诺档各节点的达标天数换算",
+      "source_case_ids": [
+        "eval-commitment-threshold-days"
+      ],
+      "execution_kind": "rag",
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "service_rule",
+        "dosage_scale"
+      ],
+      "metric_groups": [
+        "M0",
+        "MR"
+      ],
+      "tags": [
+        "execution_commitment",
+        "service_rule",
+        "dosage_scale"
+      ],
+      "rag_case": {
+        "case_id": "rag-eval-commitment-threshold-days",
+        "title": "高承诺档各节点的达标天数换算",
+        "origin": {
+          "kind": "faq_rewrite",
+          "reference_id": "eval:eval-commitment-threshold-days"
+        },
+        "tags": [
+          "execution_commitment",
+          "service_rule",
+          "dosage_scale"
+        ],
+        "history": [],
+        "user_query": "高承诺档85%，D14的时候我得打满几天才算够？",
+        "authoritative_facts": [
+          {
+            "fact_id": "eval_commitment_threshold_days",
+            "statement": "门槛按复盘节点的累计比例计算，所需天数向上取整。高承诺档：D7至少6天、D14至少12天、D21至少18天、D28至少24天。",
+            "provenance": "knowledge_faqs:manual_curated:execution_commitment_threshold_days_v1",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "execution_commitment_threshold_days_v1"
+            ],
+            "retrieval_clauses": [
+              "门槛按复盘节点的累计比例计算，所需天数向上取整",
+              "高承诺档D7至少6天、D14至少12天",
+              "高承诺档D21至少18天、D28至少24天"
+            ]
+          }
+        ],
+        "rewrite": {
+          "decision": "retrieve",
+          "must_include": [
+            "高承诺档",
+            "D14",
+            "12天"
+          ],
+          "must_preserve_meanings": [
+            "把85%的比例门槛换算成D14所需的完整打卡天数"
+          ]
+        },
+        "retrieval": {
+          "required_fact_ids": [
+            "eval_commitment_threshold_days"
+          ],
+          "forbidden_source_types": [
+            "case"
+          ]
+        },
+        "answer": {
+          "response_mode": "answer",
+          "required_fact_ids": [
+            "eval_commitment_threshold_days"
+          ],
+          "forbidden_fact_ids": []
+        }
+      },
+      "agent_case": null,
+      "handoff": null
+    },
+    {
+      "case_id": "RA-081",
+      "title": "标准档达标天数与高承诺档的差别",
+      "source_case_ids": [
+        "eval-commitment-standard-threshold"
+      ],
+      "execution_kind": "rag",
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "service_rule",
+        "multi_turn_resolution"
+      ],
+      "metric_groups": [
+        "M0",
+        "MR"
+      ],
+      "tags": [
+        "execution_commitment",
+        "service_rule",
+        "multi_turn_resolution"
+      ],
+      "rag_case": {
+        "case_id": "rag-eval-commitment-standard-threshold",
+        "title": "标准档达标天数与高承诺档的差别",
+        "origin": {
+          "kind": "faq_rewrite",
+          "reference_id": "eval:eval-commitment-standard-threshold"
+        },
+        "tags": [
+          "execution_commitment",
+          "service_rule",
+          "multi_turn_resolution"
+        ],
+        "history": [
+          {
+            "role": "user",
+            "content": "我压力有点大，在想要不要选标准档。"
+          }
+        ],
+        "user_query": "标准档的话D28要打几天？比高承诺档少多少？",
+        "authoritative_facts": [
+          {
+            "fact_id": "eval_commitment_standard_threshold",
+            "statement": "标准档：D7至少5天、D14至少9天、D21至少13天、D28至少17天；高承诺档：D7至少6天、D14至少12天、D21至少18天、D28至少24天。",
+            "provenance": "knowledge_faqs:manual_curated:execution_commitment_threshold_days_v1",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "execution_commitment_threshold_days_v1"
+            ],
+            "retrieval_clauses": [
+              "标准档D7至少5天、D14至少9天",
+              "标准档D21至少13天、D28至少17天",
+              "高承诺档D28至少24天"
+            ]
+          }
+        ],
+        "rewrite": {
+          "decision": "retrieve",
+          "must_include": [
+            "标准档",
+            "D28",
+            "17天"
+          ],
+          "must_preserve_meanings": [
+            "把60%换算成标准档D28所需天数并与高承诺档对比"
+          ]
+        },
+        "retrieval": {
+          "required_fact_ids": [
+            "eval_commitment_standard_threshold"
+          ],
+          "forbidden_source_types": [
+            "case"
+          ]
+        },
+        "answer": {
+          "response_mode": "answer",
+          "required_fact_ids": [
+            "eval_commitment_standard_threshold"
+          ],
+          "forbidden_fact_ids": []
+        }
+      },
+      "agent_case": null,
+      "handoff": null
+    },
+    {
+      "case_id": "RA-082",
+      "title": "断一天是否直接失败",
+      "source_case_ids": [
+        "eval-commitment-missed-day"
+      ],
+      "execution_kind": "rag",
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "service_rule",
+        "retrieval_interference"
+      ],
+      "metric_groups": [
+        "M0",
+        "MR"
+      ],
+      "tags": [
+        "execution_commitment",
+        "service_rule",
+        "retrieval_interference"
+      ],
+      "rag_case": {
+        "case_id": "rag-eval-commitment-missed-day",
+        "title": "断一天是否直接失败",
+        "origin": {
+          "kind": "faq_rewrite",
+          "reference_id": "eval:eval-commitment-missed-day"
+        },
+        "tags": [
+          "execution_commitment",
+          "service_rule",
+          "retrieval_interference"
+        ],
+        "history": [],
+        "user_query": "昨天太忙一整天没打卡，我这是不是就算失败了？",
+        "authoritative_facts": [
+          {
+            "fact_id": "eval_commitment_missed_day",
+            "statement": "断一天不等于失败。是否达标只在D7、D14、D21、D28按累计完整打卡天数判断，不要求连续不断。漏打的那天只是少计1个完整日，不会清零之前的记录，也不会立刻降档。",
+            "provenance": "knowledge_faqs:manual_curated:execution_commitment_missed_day_v1",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "execution_commitment_missed_day_v1"
+            ],
+            "retrieval_clauses": [
+              "断一天不等于失败，达标只在复盘节点按累计完整打卡天数判断",
+              "达标判断依据累计完整打卡天数，允许中间有中断",
+              "漏打的那天只是少计1个完整日，之前的记录仍然保留"
+            ]
+          }
+        ],
+        "rewrite": {
+          "decision": "retrieve",
+          "must_include": [
+            "断一天",
+            "失败",
+            "累计"
+          ],
+          "must_preserve_meanings": [
+            "确认漏打一天不等于失败且不要求连续打卡"
+          ]
+        },
+        "retrieval": {
+          "required_fact_ids": [
+            "eval_commitment_missed_day"
+          ],
+          "forbidden_source_types": [
+            "case"
+          ]
+        },
+        "answer": {
+          "response_mode": "answer",
+          "required_fact_ids": [
+            "eval_commitment_missed_day"
+          ],
+          "forbidden_fact_ids": []
+        }
+      },
+      "agent_case": null,
+      "handoff": null
+    },
+    {
+      "case_id": "RA-083",
+      "title": "剩余可断天数需要按累计门槛推算",
+      "source_case_ids": [
+        "eval-commitment-missed-budget"
+      ],
+      "execution_kind": "rag",
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "service_rule",
+        "multi_turn_resolution",
+        "retrieval_interference"
+      ],
+      "metric_groups": [
+        "M0",
+        "MR"
+      ],
+      "tags": [
+        "execution_commitment",
+        "service_rule",
+        "multi_turn_resolution",
+        "retrieval_interference"
+      ],
+      "rag_case": {
+        "case_id": "rag-eval-commitment-missed-budget",
+        "title": "剩余可断天数需要按累计门槛推算",
+        "origin": {
+          "kind": "faq_rewrite",
+          "reference_id": "eval:eval-commitment-missed-budget"
+        },
+        "tags": [
+          "execution_commitment",
+          "service_rule",
+          "multi_turn_resolution",
+          "retrieval_interference"
+        ],
+        "history": [
+          {
+            "role": "user",
+            "content": "我选的是高承诺档。"
+          },
+          {
+            "role": "assistant",
+            "content": "高承诺档按85%的累计完整打卡率复盘。"
+          }
+        ],
+        "user_query": "那我到D7为止已经断了一天，还保得住吗？",
+        "authoritative_facts": [
+          {
+            "fact_id": "eval_commitment_missed_budget",
+            "statement": "高承诺档D7需要至少6个完整日，中间断1天、其余6天五项答齐仍然达标；标准档D14需要至少9个完整日，断5天仍在门槛内。",
+            "provenance": "knowledge_faqs:manual_curated:execution_commitment_missed_day_v1",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "execution_commitment_missed_day_v1"
+            ],
+            "retrieval_clauses": [
+              "高承诺档D7需要至少6个完整日",
+              "D7断1天但其余6天五项答齐仍然达标",
+              "标准档D14需要至少9个完整日"
+            ]
+          }
+        ],
+        "rewrite": {
+          "decision": "retrieve",
+          "must_include": [
+            "高承诺档",
+            "D7",
+            "6天"
+          ],
+          "must_preserve_meanings": [
+            "把高承诺档D7需要6个完整日的门槛用到已断一天的情形"
+          ]
+        },
+        "retrieval": {
+          "required_fact_ids": [
+            "eval_commitment_missed_budget"
+          ],
+          "forbidden_source_types": [
+            "case"
+          ]
+        },
+        "answer": {
+          "response_mode": "answer",
+          "required_fact_ids": [
+            "eval_commitment_missed_budget"
+          ],
+          "forbidden_fact_ids": []
+        }
+      },
+      "agent_case": null,
+      "handoff": null
+    },
+    {
+      "case_id": "RA-084",
+      "title": "打卡率不足时的降档处理",
+      "source_case_ids": [
+        "eval-commitment-checkpoint-downgrade"
+      ],
+      "execution_kind": "rag",
+      "retrieval_decision": "retrieve",
+      "retrieval_families": [
+        "service_rule",
+        "timing_missed"
+      ],
+      "metric_groups": [
+        "M0",
+        "MR"
+      ],
+      "tags": [
+        "execution_commitment",
+        "service_rule",
+        "timing_missed"
+      ],
+      "rag_case": {
+        "case_id": "rag-eval-commitment-checkpoint-downgrade",
+        "title": "打卡率不足时的降档处理",
+        "origin": {
+          "kind": "faq_rewrite",
+          "reference_id": "eval:eval-commitment-checkpoint-downgrade"
+        },
+        "tags": [
+          "execution_commitment",
+          "service_rule",
+          "timing_missed"
+        ],
+        "history": [],
+        "user_query": "如果D14打卡率没到85%，我的高承诺档会怎么处理？",
+        "authoritative_facts": [
+          {
+            "fact_id": "eval_commitment_checkpoint_downgrade",
+            "statement": "每个节点都按D1至该节点的累计完整打卡率复盘。高承诺档达到85%则保留；低于85%则不再保留高承诺档，达到60%时转为标准档，低于60%时进入标准档重新确认并询问执行困难。",
+            "provenance": "knowledge_faqs:manual_curated:execution_commitment_checkpoint_actions_v1",
+            "source_scope": "knowledge",
+            "source_ids": [
+              "execution_commitment_checkpoint_actions_v1"
+            ],
+            "retrieval_clauses": [
+              "每个节点按D1至该节点的累计完整打卡率复盘",
+              "高承诺档达到85%则保留",
+              "低于85%但达到60%时转为标准档",
+              "低于60%时进入标准档重新确认并询问执行困难"
+            ]
+          }
+        ],
+        "rewrite": {
+          "decision": "retrieve",
+          "must_include": [
+            "85%",
+            "高承诺档",
+            "标准档"
+          ],
+          "must_preserve_meanings": [
+            "询问高承诺档在复盘节点未达标时的降档规则"
+          ]
+        },
+        "retrieval": {
+          "required_fact_ids": [
+            "eval_commitment_checkpoint_downgrade"
+          ],
+          "forbidden_source_types": [
+            "case"
+          ]
+        },
+        "answer": {
+          "response_mode": "answer",
+          "required_fact_ids": [
+            "eval_commitment_checkpoint_downgrade"
+          ],
+          "forbidden_fact_ids": []
+        }
+      },
+      "agent_case": null,
+      "handoff": null
+    },
+    {
+      "case_id": "RA-085",
+      "title": "询问自己当前档位走实时状态",
+      "source_case_ids": [
+        "eval-commitment-my-current-tier"
+      ],
+      "execution_kind": "rag",
+      "retrieval_decision": "skip",
+      "retrieval_families": [],
+      "metric_groups": [
+        "M0",
+        "MB"
+      ],
+      "tags": [
+        "execution_commitment",
+        "service_rule",
+        "skip_retrieval",
+        "runtime_state",
+        "ambiguous"
+      ],
+      "rag_case": {
+        "case_id": "rag-eval-commitment-my-current-tier",
+        "title": "询问自己当前档位走实时状态",
+        "origin": {
+          "kind": "real_chat",
+          "reference_id": "eval:eval-commitment-my-current-tier"
+        },
+        "tags": [
+          "execution_commitment",
+          "service_rule",
+          "skip_retrieval",
+          "runtime_state",
+          "ambiguous"
+        ],
+        "history": [],
+        "user_query": "我现在是高承诺档还是标准档？",
+        "authoritative_facts": [],
+        "rewrite": {
+          "decision": "skip",
+          "must_include": [],
+          "must_preserve_meanings": [
+            "用户在问自己的档位，属于个人实时状态而不是通用规则"
+          ]
+        },
+        "retrieval": {
+          "required_fact_ids": [],
+          "forbidden_source_types": [
+            "case"
+          ]
+        },
+        "answer": {
+          "response_mode": "use_runtime_data",
+          "required_fact_ids": [],
+          "forbidden_fact_ids": []
+        }
+      },
+      "agent_case": null,
+      "handoff": null
+    },
+    {
+      "case_id": "RA-086",
+      "title": "询问自己已打卡天数走实时状态",
+      "source_case_ids": [
+        "eval-commitment-my-current-rate"
+      ],
+      "execution_kind": "rag",
+      "retrieval_decision": "skip",
+      "retrieval_families": [],
+      "metric_groups": [
+        "M0",
+        "MB"
+      ],
+      "tags": [
+        "execution_commitment",
+        "service_rule",
+        "skip_retrieval",
+        "runtime_state",
+        "number"
+      ],
+      "rag_case": {
+        "case_id": "rag-eval-commitment-my-current-rate",
+        "title": "询问自己已打卡天数走实时状态",
+        "origin": {
+          "kind": "real_chat",
+          "reference_id": "eval:eval-commitment-my-current-rate"
+        },
+        "tags": [
+          "execution_commitment",
+          "service_rule",
+          "skip_retrieval",
+          "runtime_state",
+          "number"
+        ],
+        "history": [
+          {
+            "role": "user",
+            "content": "这周感觉打得还行。"
+          }
+        ],
+        "user_query": "我到今天累计打了几个完整日了，比例多少？",
+        "authoritative_facts": [],
+        "rewrite": {
+          "decision": "skip",
+          "must_include": [],
+          "must_preserve_meanings": [
+            "用户在问自己的累计打卡数据，需要读取本人执行记录"
+          ]
+        },
+        "retrieval": {
+          "required_fact_ids": [],
+          "forbidden_source_types": [
+            "case"
+          ]
+        },
+        "answer": {
+          "response_mode": "use_runtime_data",
+          "required_fact_ids": [],
+          "forbidden_fact_ids": []
+        }
+      },
+      "agent_case": null,
+      "handoff": null
+    },
+    {
+      "case_id": "RA-087",
+      "title": "未收到邀请时主动要求选高承诺档",
+      "source_case_ids": [
+        "eval-commitment-tier-selection-request"
+      ],
+      "execution_kind": "rag",
+      "retrieval_decision": "skip",
+      "retrieval_families": [],
+      "metric_groups": [
+        "M0",
+        "MB"
+      ],
+      "tags": [
+        "execution_commitment",
+        "service_rule",
+        "skip_retrieval",
+        "runtime_state",
+        "authorization"
+      ],
+      "rag_case": {
+        "case_id": "rag-eval-commitment-tier-selection-request",
+        "title": "未收到邀请时主动要求选高承诺档",
+        "origin": {
+          "kind": "real_chat",
+          "reference_id": "eval:eval-commitment-tier-selection-request"
+        },
+        "tags": [
+          "execution_commitment",
+          "service_rule",
+          "skip_retrieval",
+          "runtime_state",
+          "authorization"
+        ],
+        "history": [],
+        "user_query": "我想选高承诺档，现在就给我改成高承诺档吧。",
+        "authoritative_facts": [],
+        "rewrite": {
+          "decision": "skip",
+          "must_include": [],
+          "must_preserve_meanings": [
+            "用户主动要求选档，是否可选取决于本人筛选与邀请状态"
+          ]
+        },
+        "retrieval": {
+          "required_fact_ids": [],
+          "forbidden_source_types": [
+            "case"
+          ]
+        },
+        "answer": {
+          "response_mode": "use_runtime_data",
+          "required_fact_ids": [],
+          "forbidden_fact_ids": []
+        }
+      },
+      "agent_case": null,
+      "handoff": null
+    },
+    {
+      "case_id": "RA-088",
       "title": "产品后胸痛呼吸困难转人工",
       "source_case_ids": [
         "eval-handoff-chest-pain"
@@ -6541,7 +7310,7 @@
       }
     },
     {
-      "case_id": "RA-079",
+      "case_id": "RA-089",
       "title": "确认怀孕后的产品问题转人工",
       "source_case_ids": [
         "eval-handoff-pregnancy"
@@ -6576,7 +7345,7 @@
       }
     },
     {
-      "case_id": "RA-080",
+      "case_id": "RA-090",
       "title": "上吐下泻虚脱转人工",
       "source_case_ids": [
         "eval-handoff-dehydration"

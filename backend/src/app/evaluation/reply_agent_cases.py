@@ -11,8 +11,8 @@ from app.evaluation.agent_cases import AgentEvalCase
 from app.evaluation.rag_cases import RagEvalCase, validate_retrieval_clause_contract
 
 
-FIXED_CASE_COUNT = 80
-FIXED_RETRIEVAL_COUNTS = {"retrieve": 43, "skip": 37}
+FIXED_CASE_COUNT = 90
+FIXED_RETRIEVAL_COUNTS = {"retrieve": 50, "skip": 40}
 REQUIRED_RETRIEVAL_FAMILIES = frozenset(
     {
         "dosage_scale",
@@ -137,13 +137,20 @@ class ReplyAgentEvalSuite(StrictModel):
             raise ValueError("suite contains duplicate case_id")
         expected_ids = [f"RA-{index:03d}" for index in range(1, FIXED_CASE_COUNT + 1)]
         if case_ids != expected_ids:
-            raise ValueError("suite case_ids must be the ordered range RA-001..RA-080")
+            raise ValueError(
+                "suite case_ids must be the ordered range "
+                f"RA-001..RA-{FIXED_CASE_COUNT:03d}"
+            )
         source_ids = [source for case in self.cases for source in case.source_case_ids]
         if len(source_ids) != len(set(source_ids)):
             raise ValueError("source_case_ids cannot be reused across unified cases")
         decision_counts = Counter(case.retrieval_decision for case in self.cases)
         if dict(decision_counts) != FIXED_RETRIEVAL_COUNTS:
-            raise ValueError("suite must contain exactly 43 retrieve and 37 skip cases")
+            raise ValueError(
+                "suite must contain exactly "
+                f"{FIXED_RETRIEVAL_COUNTS['retrieve']} retrieve and "
+                f"{FIXED_RETRIEVAL_COUNTS['skip']} skip cases"
+            )
         family_counts = Counter(
             family for case in self.cases for family in case.retrieval_families
         )
