@@ -33,3 +33,4 @@ class AgentRunContext:
     # 缺省 None 兼容非群聊/定时任务等无群上下文场景。
     group_id: str | None = None
     bot_user_id: str | None = None
+    language: str = "zh"

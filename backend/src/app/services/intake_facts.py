@@ -35,6 +35,8 @@ DOCUMENT_CONTEXT_QUESTION_KEYS = {
 _WEIGHT_RELATED_DAY28_EXPECTATIONS = {
     "身体更轻盈、腰腹部维度缩减",
     "体重/腰围出现让我满意的变化（可在“其他”填写数字目标）",
+    "Lighter body, reduced waist and abdominal size",
+    "Satisfying change in weight/waist",
 }
 
 # 保护性下限的上调档位。客户 V2.1 §6.5 只说了"可将该下限上调"，没有给幅度，
@@ -73,8 +75,8 @@ def structured_answer_values(
 
     for field in fields:
         key = str(field.get("key") or field.get("id") or "")
-        title = str(field.get("title") or field.get("label") or "")
-        if key not in answers or not all(part in title for part in title_parts):
+        title = str(field.get("title") or field.get("label") or "").casefold()
+        if key not in answers or not all(part.casefold() in title for part in title_parts):
             continue
 
         raw = answers.get(key)
@@ -89,7 +91,7 @@ def structured_answer_values(
         }
         normalized: list[str] = []
         for value in values:
-            if value == "其他":
+            if value in ("其他", "Other", "other"):
                 label = CUSTOM_ANSWER_LABEL
             elif options and value not in options:
                 label = CUSTOM_ANSWER_LABEL
@@ -121,26 +123,31 @@ def build_intake_fact_summary(
 
     def value_for(*title_parts: str) -> str:
         for key, title in title_by_key.items():
-            if key in answers and all(part in title for part in title_parts):
+            t = title.casefold()
+            if key in answers and all(part.casefold() in t for part in title_parts):
                 return _answer_text(answers.get(key))
         return ""
 
-    legal_name = value_for("真实姓名") or value_for("姓名")
-    preferred_name = value_for("抖音昵称") or value_for("常用称呼") or value_for("称呼")
-    gender = value_for("性别")
-    age = value_for("年龄")
-    city = value_for("所在的城市") or value_for("城市")
-    height_raw = value_for("身高")
-    weight_raw = value_for("当前体重") or value_for("体重")
-    waist_raw = value_for("腰围")
-    bodyfat = value_for("体脂率")
-    stable_comfort_weight_raw = value_for("成年后", "稳定")
-    health_note = value_for("健康情况") or value_for("病史")
-    main_needs = value_for("最想先解决")
-    day28_expectation = value_for("28 天后") or value_for("28天后")
-    adherence_worry = value_for("坚持不下来")
-    pressure_reaction = value_for("压力大时")
-    diet_pattern = value_for("长期饮食模式")
+    legal_name = (
+        value_for("真实姓名") or value_for("姓名") or value_for("full name") or value_for("legal name") or value_for("name")
+    )
+    preferred_name = (
+        value_for("抖音昵称") or value_for("常用称呼") or value_for("称呼") or value_for("preferred name") or value_for("nickname")
+    )
+    gender = value_for("性别") or value_for("gender")
+    age = value_for("年龄") or value_for("age")
+    city = value_for("所在的城市") or value_for("城市") or value_for("city")
+    height_raw = value_for("身高") or value_for("height")
+    weight_raw = value_for("当前体重") or value_for("体重") or value_for("current weight") or value_for("weight")
+    waist_raw = value_for("腰围") or value_for("waist")
+    bodyfat = value_for("体脂率") or value_for("body fat")
+    stable_comfort_weight_raw = value_for("成年后", "稳定") or value_for("comfort weight") or value_for("stable weight")
+    health_note = value_for("健康情况") or value_for("病史") or value_for("medical") or value_for("health condition")
+    main_needs = value_for("最想先解决") or value_for("primary goal") or value_for("main goal")
+    day28_expectation = value_for("28 天后") or value_for("28天后") or value_for("28 days") or value_for("28-day")
+    adherence_worry = value_for("坚持不下来") or value_for("adherence") or value_for("worry")
+    pressure_reaction = value_for("压力大时") or value_for("stress")
+    diet_pattern = value_for("长期饮食模式") or value_for("dietary pattern") or value_for("diet pattern")
 
     height = _normalize_height_cm(_first_number(height_raw))
     weight = _parse_weight_kg(weight_raw)
@@ -308,8 +315,8 @@ def _answer_values_for_title(
 ) -> list[str]:
     for field in fields:
         key = str(field.get("key") or field.get("id") or "")
-        title = str(field.get("title") or field.get("label") or "")
-        if key not in answers or not all(part in title for part in title_parts):
+        title = str(field.get("title") or field.get("label") or "").casefold()
+        if key not in answers or not all(part.casefold() in title for part in title_parts):
             continue
         raw = answers.get(key)
         if isinstance(raw, list):

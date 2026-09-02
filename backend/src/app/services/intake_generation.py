@@ -862,7 +862,9 @@ async def _generate_intake_analysis_package(
                 scenario="intake_doc",
                 temperature=0.3,
                 service_case_id=service_case.id,
-                system_prompt=_intake_generation_system_prompt(),
+                system_prompt=_intake_generation_system_prompt(
+                    language=getattr(service_case, "language", "zh") or "zh"
+                ),
                 user_prompt=base_user_prompt + retry_instruction,
             )
             return _normalize_intake_analysis_package(

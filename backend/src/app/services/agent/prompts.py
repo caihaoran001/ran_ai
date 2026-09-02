@@ -78,6 +78,7 @@ def build_agent_user_prompt(
     memory_context: str,
     knowledge_context: str,
     bot_nickname: str = "",
+    language: str = "zh",
 ) -> str:
     recent = "\n".join(f"- {item}" for item in recent_messages) if recent_messages else "无"
     current_query = user_query
@@ -90,9 +91,16 @@ def build_agent_user_prompt(
             "群里有人 @ 这个昵称、或提到这个名字，就是在叫你、对你说话，当成对你说的处理，"
             "不要把这个名字当成群里的第三方或别人。\n\n"
         )
+    language_block = ""
+    if language == "en":
+        language_block = (
+            "【语言要求】\n"
+            "用户的偏好语言为英文 (English)。本轮回复、提醒、追问或互动请全部使用地道、自然、专业的英文 (English)。\n\n"
+        )
     return (
         "以下是本轮群聊消息和可用 Skill。请根据需要自主调用工具，或直接回复。\n\n"
         f"{identity_block}"
+        f"{language_block}"
         f"【当前时间】\n{current_time_context}\n\n"
         f"【最近对话】\n{recent}\n\n"
         f"【隐性用户背景】\n{memory_context}\n\n"

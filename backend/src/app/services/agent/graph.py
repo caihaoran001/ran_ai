@@ -206,6 +206,7 @@ class RanrenAgentGraph:
                     memory_context=memory_context,
                     knowledge_context=knowledge_context,
                     bot_nickname=bot_nickname,
+                    language=self.context.language,
                 )
             ),
         ]
@@ -659,6 +660,7 @@ async def generate_agent_reply(
     settings: Settings | None = None,
     checkpoint_thread_id: str | None = None,
     agent_run_id: int | None = None,
+    language: str = "zh",
 ) -> AgentReplyResult:
     settings = settings or get_settings()
     checkpointer = get_agent_checkpointer() if checkpoint_thread_id else None
@@ -681,6 +683,7 @@ async def generate_agent_reply(
             channel=channel,
             group_id=group_id,
             bot_user_id=bot_user_id,
+            language=language,
         ),
         settings=settings,
         checkpointer=checkpointer,
@@ -706,6 +709,7 @@ async def generate_scheduled_reminder_reply(
     channel: str | None = None,
     settings: Settings | None = None,
     agent_run_id: int | None = None,
+    language: str = "zh",
 ) -> AgentReplyResult:
     settings = settings or get_settings()
     user_query = (
@@ -723,6 +727,7 @@ async def generate_scheduled_reminder_reply(
             agent_run_id=agent_run_id,
             run_kind="scheduled_reminder",
             channel=channel,
+            language=language,
         ),
         settings=settings,
         include_reminder_tools=False,
@@ -762,6 +767,7 @@ async def generate_churn_recall_reply(
     channel: str | None = None,
     settings: Settings | None = None,
     agent_run_id: int | None = None,
+    language: str = "zh",
 ) -> AgentReplyResult:
     """长期沉默用户的召回文案：一条消息里「一个极小的重启动作 + 约燃总聊一次」。
 
@@ -801,6 +807,7 @@ async def generate_churn_recall_reply(
             agent_run_id=agent_run_id,
             run_kind="churn_recall",
             channel=channel,
+            language=language,
         ),
         settings=settings,
         include_reminder_tools=False,

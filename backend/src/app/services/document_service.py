@@ -41,6 +41,7 @@ from app.services.execution_commitment import initialize_execution_commitment
 
 from app.services.document_common import (
     DOCUMENT_DEFINITIONS,
+    get_document_title,
     _latest_submission,
     _recipient_name_and_gender,
     _user_name,
@@ -163,7 +164,9 @@ async def generate_profile_and_documents(
     # （非人工决定）。这与新文档在同一事务里落库；已发送/归档/已替代的文件一律不碰。
     await _supersede_pending_delivery_documents(session, service_case.id)
     documents: list[UserDocument] = []
-    for document_type, title in DOCUMENT_DEFINITIONS.items():
+    case_lang = getattr(service_case, "language", "zh") or "zh"
+    for document_type in DOCUMENT_DEFINITIONS:
+        title = get_document_title(document_type, language=case_lang)
         fields_payload = package["document_payloads"].get(document_type.value) or {}
         content_json = build_document_content_json(
             document_type=document_type,
@@ -171,6 +174,7 @@ async def generate_profile_and_documents(
             user_name=legal_name,
             display_name=display_name,
             fields=fields_payload,
+            language=case_lang,
         )
         if internal_review:
             # 顶层非渲染元数据：docx/Markdown 只渲染 blocks，所以运营能在后台看到复核标记，

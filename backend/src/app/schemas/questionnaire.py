@@ -11,6 +11,7 @@ class QuestionnairePublic(BaseModel):
     service_case_id: int
     token: str
     template_key: str = "intake"
+    language: str = "zh"
     title: str | None = None
     description: str | None = None
     allow_repeat: bool = False
@@ -22,6 +23,7 @@ class QuestionnairePublic(BaseModel):
 
 class QuestionnaireSubmit(BaseModel):
     answers: dict[str, Any] = Field(default_factory=dict)
+    language: str | None = None
 
 
 class QuestionnaireSubmissionRead(Timestamped):

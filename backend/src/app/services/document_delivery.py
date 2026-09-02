@@ -296,7 +296,9 @@ async def _maybe_send_execution_commitment_invitation(
         session, service_case_id=service_case.id
     )
     content = render_commitment_invitation(
-        state, checkin_example_lines=example_lines or None
+        state,
+        checkin_example_lines=example_lines or None,
+        language=getattr(locked_case, "language", "zh") or "zh",
     )
     message = Message(
         service_case_id=service_case.id,

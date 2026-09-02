@@ -6,6 +6,7 @@ type Questionnaire = {
   service_case_id: number;
   token: string;
   template_key: string;
+  language?: string;
   title?: string | null;
   description?: string | null;
   allow_repeat: boolean;
@@ -49,6 +50,7 @@ export default async function QuestionnairePage({
   }
   const editMode = sp?.edit === "1" && Boolean(questionnaire.latest_submission);
   const isReadonly = Boolean(questionnaire.latest_submission && !questionnaire.allow_repeat) && !editMode;
+  const isEn = questionnaire.language === "en";
   const initialAnswers: Record<string, string> = {};
   if (editMode && questionnaire.latest_submission) {
     for (const [k, v] of Object.entries(questionnaire.latest_submission.answers_json)) {
@@ -56,21 +58,35 @@ export default async function QuestionnairePage({
     }
   }
 
+  const defaultTitle = isEn ? "HumanBurning Intake Assessment" : "燃人AI服务问卷";
+  const brandTitle = isEn ? "HumanBurning.AI · 28-Day Camp" : "燃人AI · 高燃人生";
+  const desc = isEn
+    ? (editMode
+        ? "Edit mode: modify answers and submit to regenerate your profile and reports."
+        : isReadonly
+        ? "Here are your submitted questionnaire responses."
+        : (questionnaire.description ?? "Please complete the information below."))
+    : (editMode
+        ? "编辑模式：修改答案后点击提交，系统会用新答案重新生成画像与报告。"
+        : isReadonly
+        ? "以下是您已提交的问卷内容。"
+        : (questionnaire.description ?? "请完成以下信息。"));
+
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="mx-auto max-w-2xl px-4 py-5 sm:py-8">
         <header className="mb-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm sm:mb-6">
           <div className="bg-cyan-700 px-4 py-4 text-white sm:px-5 sm:py-5">
             <div className="text-xs font-semibold text-cyan-100">
-              燃人AI · 高燃人生
+              {brandTitle}
             </div>
             <h1 className="text-break mt-1.5 text-xl font-bold leading-snug sm:text-2xl">
-              {questionnaire.title ?? "燃人AI服务问卷"}
+              {questionnaire.title ?? defaultTitle}
             </h1>
           </div>
           <p className="px-4 py-3.5 text-sm leading-6 text-slate-600 sm:px-5">
-            {questionnaire.user_name ? `${questionnaire.user_name}，` : ""}
-            {editMode ? "编辑模式：修改答案后点击提交，系统会用新答案重新生成画像与报告。" : isReadonly ? "以下是您已提交的问卷内容。" : (questionnaire.description ?? "请完成以下信息。")}
+            {questionnaire.user_name ? `${questionnaire.user_name}${isEn ? ', ' : '，'}` : ""}
+            {desc}
           </p>
         </header>
         {isReadonly ? (
@@ -95,9 +111,9 @@ function GraduatedCheckinPage() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-lg font-bold text-emerald-700">
             ✓
           </div>
-          <h1 className="mt-4 text-xl font-bold text-slate-950">28天服务已结束</h1>
+          <h1 className="mt-4 text-xl font-bold text-slate-950">28天服务已结束 / Service Cycle Completed</h1>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            您已完成本期服务，无需继续提交每日打卡。历史记录已保留，后续问题请在群内联系班主任。
+            您已完成本期服务，无需继续提交每日打卡。/ You have completed this 28-day service cycle.
           </p>
         </section>
       </div>
@@ -106,12 +122,15 @@ function GraduatedCheckinPage() {
 }
 
 function QuestionnaireReadonly({ questionnaire }: { questionnaire: Questionnaire }) {
+  const isEn = questionnaire.language === "en";
   const answers = questionnaire.latest_submission?.answers_json ?? {};
   const answeredFields = answerItems(questionnaire.fields, answers);
   return (
     <section className="space-y-3">
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm leading-6 text-emerald-800">
-        已于 {formatDateTime(questionnaire.latest_submission?.created_at)} 提交。该链接现在仅用于查看，不支持修改或重复提交。
+        {isEn
+          ? `Submitted on ${formatDateTime(questionnaire.latest_submission?.created_at)}. This page is currently read-only.`
+          : `已于 ${formatDateTime(questionnaire.latest_submission?.created_at)} 提交。该链接现在仅用于查看，不支持修改或重复提交。`}
       </div>
       {answeredFields.map((field) => (
         <div key={field.key} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

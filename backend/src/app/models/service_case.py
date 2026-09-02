@@ -79,6 +79,13 @@ class ServiceCase(TimestampMixin, Base):
         index=True,
     )
     questionnaire_token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    # 服务语言：zh=中文，en=英文（由问卷指令、H5选语言或客户提交决定；用于文案、报告与提醒切换）
+    language: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        server_default="zh",
+        default="zh",
+    )
     status: Mapped[ServiceCaseStatus] = mapped_column(
         Enum(ServiceCaseStatus, name="service_case_status"),
         default=ServiceCaseStatus.CREATED,

@@ -751,6 +751,7 @@ class ReminderService:
                         channel=getattr(current_channel, "name", None),
                         settings=self.settings,
                         agent_run_id=agent_run_id,
+                        language=getattr(service_case, "language", "zh") or "zh",
                     )
                     outbound_content = agent_result.reply.strip()
                     outbound_analysis = {
@@ -983,6 +984,7 @@ class ReminderService:
                 channel=getattr(current_channel, "name", None),
                 settings=self.settings,
                 agent_run_id=agent_run_id,
+                language=getattr(service_case, "language", "zh") or "zh",
             )
             outbound_content = agent_result.reply.strip()
         except Exception as exc:

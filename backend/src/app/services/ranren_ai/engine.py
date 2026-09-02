@@ -44,6 +44,7 @@ from app.services.service_case_activation import (
     restore_case_on_member_return,
 )
 from app.services.qiwe_service.non_text import TYPE_SYSTEM_NOTICE
+from app.services.ranren_ai.commands import questionnaire_command_language
 from app.services.short_link import get_or_create_short_link
 from app.services.message_insight_service import analyze_message_insight, merge_case_insight
 from app.services.service_case_queries import (
@@ -742,17 +743,42 @@ class RanrenAIEngine(InboundAttachmentProcessor):
             )
             await link_session.commit()
         link = f"{base_url}/s/{code}"
-        reply = (
-            "收到，已为本群生成专属入营问卷。\n\n"
-            "请点击下方链接完成测评：\n"
-            f"{link}\n\n"
-            "这份问卷大约需要 3–5 分钟，主要了解你的体重基础、作息节律、"
-            "饮食习惯、睡眠恢复、运动情况和阶段目标。\n\n"
-            "提交后，我们会基于你的填写结果生成两份专属文件：\n\n"
-            "1.《个人能量重启诊断报告》\n"
-            "2.《28天高燃人生执行建议书》\n\n"
-            "填得越真实，后面的建议越准确。"
-        )
+        cmd_lang = questionnaire_command_language(message.text)
+        case_lang = getattr(service_case, "language", "zh") or "zh"
+        lang = cmd_lang if cmd_lang == "en" else case_lang
+
+        if lang == "en" and getattr(service_case, "language", "zh") != "en":
+            async with SessionLocal() as lang_session:
+                db_case = await lang_session.get(ServiceCase, service_case.id)
+                if db_case:
+                    db_case.language = "en"
+                    await lang_session.commit()
+            service_case.language = "en"
+
+        if lang == "en":
+            reply = (
+                "Got it! The enrollment questionnaire for this group is ready.\n\n"
+                "Please click the link below to complete the assessment:\n"
+                f"{link}\n\n"
+                "This questionnaire takes about 3–5 minutes to understand your baseline weight, daily rhythm, "
+                "dietary habits, sleep recovery, exercise, and milestones.\n\n"
+                "Upon submission, we will generate two tailored documents for you:\n\n"
+                "1. 《Personal Energy Reboot Diagnostic Report》\n"
+                "2. 《28-Day HumanBurning Action Plan》\n\n"
+                "The more accurately you fill it out, the more precise our recommendations will be."
+            )
+        else:
+            reply = (
+                "收到，已为本群生成专属入营问卷。\n\n"
+                "请点击下方链接完成测评：\n"
+                f"{link}\n\n"
+                "这份问卷大约需要 3–5 分钟，主要了解你的体重基础、作息节律、"
+                "饮食习惯、睡眠恢复、运动情况和阶段目标。\n\n"
+                "提交后，我们会基于你的填写结果生成两份专属文件：\n\n"
+                "1.《个人能量重启诊断报告》\n"
+                "2.《28天高燃人生执行建议书》\n\n"
+                "填得越真实，后面的建议越准确。"
+            )
         result = await self._send_and_record(
             message=message,
             service_case_id=service_case.id,

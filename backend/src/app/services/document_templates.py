@@ -216,10 +216,11 @@ def build_document_content_json(
     user_name: str,
     display_name: str | None = None,
     fields: dict[str, Any],
+    language: str = "zh",
 ) -> dict[str, Any]:
     if document_type == DocumentType.ENERGY_RESTART_PRESCRIPTION:
-        return _build_energy(title, user_name, display_name, fields)
-    return _build_execution(title, user_name, display_name, fields)
+        return _build_energy(title, user_name, display_name, fields, language=language)
+    return _build_execution(title, user_name, display_name, fields, language=language)
 
 
 def build_stage_report_content_json(
@@ -282,8 +283,50 @@ def render_document_content(content_json: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
-def _build_energy(title: str, user_name: str, display_name: str | None, fields: dict[str, Any]) -> dict[str, Any]:
+def _build_energy(
+    title: str,
+    user_name: str,
+    display_name: str | None,
+    fields: dict[str, Any],
+    language: str = "zh",
+) -> dict[str, Any]:
     overview = _dict(fields.get("overview"))
+    is_en = language == "en"
+    if is_en:
+        blocks = [
+            {
+                "key": "overview",
+                "title": "1. User Profile Overview",
+                "kind": "table",
+                "rows": [
+                    [_label("Name"), _editable(overview.get("name") or user_name), _label("Gender / Age"), _editable(overview.get("gender_age"))],
+                    [_label("Height / Weight"), _editable(overview.get("height_weight")), _label("BMI"), _editable(overview.get("bmi"))],
+                    [_label("Waist / Body Fat"), _editable(overview.get("waist_bodyfat")), _label("Recent 3-Month Trend"), _editable(overview.get("recent_change"))],
+                    [_label("Daily Rhythm"), _editable(overview.get("schedule")), _label("Exercise Baseline"), _editable(overview.get("exercise"))],
+                    [_label("Main Goal"), _editable(overview.get("main_need")), _label("Current Focus"), _editable(overview.get("current_focus"))],
+                ],
+            },
+            _core_conclusions_block(fields, is_en=True),
+            _goal_response_block(fields, is_en=True),
+            _personal_execution_basis_block(fields, is_en=True),
+            _list_block("judgement_points", "5. Rationale & Evidence", fields.get("judgement_points")),
+            _success_path_block(fields, is_en=True),
+            _priority_items_block(fields, is_en=True),
+            _rhythm_recovery_block(fields, is_en=True),
+            _module_block(fields, is_en=True),
+            _product_block(fields, is_en=True),
+            _list_block("week_actions", "11. Actions for This Week", fields.get("week_actions"), limit=5),
+            _expected_block(fields, is_en=True),
+            _text_block("special_reminder", "13. Special Reminders", fields.get("special_reminder")),
+            _missing_information_block(fields, is_en=True),
+            _text_block(
+                "notice",
+                "15. Stop Immediately If You Experience",
+                "In case of chest pain, palpitations, shortness of breath, persistent dizziness, melena, severe abdominal pain, or continuous vomiting, stop immediately and seek medical attention.",
+            ),
+        ]
+        return _payload(title=title, recipient=fields.get("recipient") or display_name or user_name, blocks=blocks)
+
     blocks = [
         {
             "key": "overview",
@@ -322,20 +365,92 @@ def _build_energy(title: str, user_name: str, display_name: str | None, fields: 
     return _payload(title=title, recipient=fields.get("recipient") or display_name or user_name, blocks=blocks)
 
 
-def _build_execution(title: str, user_name: str, display_name: str | None, fields: dict[str, Any]) -> dict[str, Any]:
+def _build_execution(
+    title: str,
+    user_name: str,
+    display_name: str | None,
+    fields: dict[str, Any],
+    language: str = "zh",
+) -> dict[str, Any]:
     rows = fields.get("weekly_plan")
     if not isinstance(rows, list):
         rows = []
     rows_by_week = {str(row.get("week")): row for row in rows if isinstance(row, dict)}
-    table_rows = [[_label("周次"), _label("核心任务"), _label("验收标准")]]
+    is_en = language == "en"
 
+    if is_en:
+        table_rows = [[_label("Week"), _label("Core Focus"), _label("Completion Criteria")]]
+        fixed_focus_en = {
+            "Week 1": "Rhythm Stabilization / Foundation",
+            "Week 2": "Consistency in Key Habits",
+            "Week 3": "Tracking & Progress Evaluation",
+            "Week 4": "Sustainable Maintenance & Solidification",
+        }
+        fixed_actions_en = {
+            "Week 1": "Complete product protocol; eat 2 fists of vegetables daily; follow planned activity.",
+            "Week 2": "Maintain diet rules 5 days/wk; 2x15-min bodyweight strength; 15-20 min post-dinner walk.",
+            "Week 3": "Log weight & waist; brisk walk & light strength; observe sleep, energy & digestion.",
+            "Week 4": "Solidify nutrition & activity routines; reproduce effective habits sustainably.",
+        }
+        week_lookup = {
+            "Week 1": ["Week 1", "第1周", "1"],
+            "Week 2": ["Week 2", "第2周", "2"],
+            "Week 3": ["Week 3", "第3周", "3"],
+            "Week 4": ["Week 4", "第4周", "4"],
+        }
+        for week_label, aliases in week_lookup.items():
+            row = {}
+            for alias in aliases:
+                if alias in rows_by_week:
+                    row = rows_by_week[alias]
+                    break
+            focus_val = _execution_sentence(
+                row.get("core_task") or row.get("focus") or fixed_focus_en[week_label],
+                max_parts=1,
+                max_len=24,
+            )
+            actions_val = (
+                row.get("acceptance_standard")
+                or row.get("required_actions")
+                or row.get("standard")
+                or fixed_actions_en[week_label]
+            )
+            table_rows.append([_label(week_label), _editable(focus_val), _editable(actions_val)])
+
+        blocks = [
+            _execution_goal_summary_block(fields, is_en=True),
+            _text_block(
+                "current_phase_goal",
+                "2. Current Phase Goal",
+                _length_checked(fields.get("current_phase_goal"), max_len=60),
+            ),
+            _text_block(
+                "principle",
+                "3. Core Execution Principles",
+                _length_checked(fields.get("principle"), max_len=60)
+                or "Build baseline consistency first; add progression gradually.",
+            ),
+            _execution_product_block(fields, is_en=True),
+            _list_block("diet_rules", "5. Diet & Nutrition Rules", fields.get("diet_rules"), limit=3, max_item_len=60),
+            _list_block("exercise_rules", "6. Exercise & Physical Activity Rules", fields.get("exercise_rules"), limit=2, max_item_len=60),
+            _core_actions_block(fields.get("core_actions"), is_en=True),
+            {"key": "weekly_plan", "title": "7. 4-Week Action Schedule", "kind": "table", "rows": table_rows},
+            _daily_checkin_block(fields.get("daily_checkin"), is_en=True),
+            _text_block("weekly_standard", "9. Weekly Pass Criteria", _weekly_standard_text(fields.get("weekly_standard"))),
+            _text_block("adjust_stop_conditions", "10. Adjustment & Stopping Criteria", _adjust_stop_conditions_text(fields.get("adjust_stop_conditions"))),
+        ]
+        payload = _payload(title=f"{display_name or user_name} | {title}", recipient="", blocks=blocks)
+        payload["show_recipient"] = False
+        payload["show_footer_brand"] = False
+        return payload
+
+    table_rows = [[_label("周次"), _label("核心任务"), _label("验收标准")]]
     fixed_focus = {
         "第1周": "稳住节律 / 先守底盘",
         "第2周": "拉高关键动作一致性",
         "第3周": "开始抓结果指标",
         "第4周": "稳定复现 / 做实结果",
     }
-
     fixed_actions = {
         "第1周": "按个案产品排班完成；每天至少吃2拳蔬菜；完成计划内活动。",
         "第2周": "连续5天完成关键饮食动作；每周2次15分钟徒手力量；晚餐后步行15–20分钟。",
@@ -350,8 +465,6 @@ def _build_execution(title: str, user_name: str, display_name: str | None, field
             max_parts=1,
             max_len=18,
         )
-
-        # Backward compatibility for the old focus / required_actions shape.
         actions_val = (
             row.get("acceptance_standard")
             or row.get("required_actions")
@@ -495,42 +608,30 @@ def _length_checked(value: Any, *, max_len: int) -> str:
     return text_val
 
 
-def _non_negotiable_block(fields: dict[str, Any]) -> dict[str, Any]:
-    """生成第 10 节「您这 28 天最不能打折的一件事」。
-
-    旧版（已废弃）会把 LLM 给的具体动作拼到 title 末尾、再把 content 清空，
-    导致 block.title = "10. 您这28天最不能打折的一件事是：<答案>"，content 为空，
-    前端 StructuredEditor 把 title 当作 h3 渲染，content 渲染为空 Textarea，
-    用户详情页 blockText() 只读 content 也会显示为空。
-
-    新版语义统一：title 是章节名，content 是答案全文。
-    - 如果 LLM 同时给了 title（短标签）和 content（详细说明），合并为 content。
-    - 如果 LLM 只给了 title（短标签），用 title 作为 content。
-    - 如果 LLM 只给了 content（说明性文字），直接用 content。
-    """
+def _non_negotiable_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = _dict(fields.get("non_negotiable"))
     title = _text(value.get("title"))
     content = _text(value.get("content"))
 
     if title and content:
-        body = f"{title}。{content}".strip("。")
+        body = f"{title}. {content}" if is_en else f"{title}。{content}".strip("。")
     elif title:
         body = title
     elif content:
         body = content
     else:
-        body = "先守住最关键动作"
+        body = "Protect the core action first" if is_en else "先守住最关键动作"
 
     return _text_block(
         "non_negotiable",
-        "10. 您这28天最不能打折的一件事",
+        "10. The One Non-Negotiable Commitment" if is_en else "10. 您这28天最不能打折的一件事",
         body,
     )
 
 
-def _goal_response_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _goal_response_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = _dict(fields.get("goal_response"))
-    title = "3. 对您目标的直接回应"
+    title = "3. Direct Response to Your Target Goal" if is_en else "3. 对您目标的直接回应"
 
     content = _text(value.get("content"))
     if content:
@@ -540,9 +641,26 @@ def _goal_response_block(fields: dict[str, Any]) -> dict[str, Any]:
     judgement_type = _text(value.get("judgement_type"))
     meta = []
     if goal_type in {"specific", "general"}:
-        meta.append(f"目标类型：{'具体目标' if goal_type == 'specific' else '泛化期待'}")
+        if is_en:
+            meta.append(f"Goal Type: {'Specific Goal' if goal_type == 'specific' else 'General Expectation'}")
+        else:
+            meta.append(f"目标类型：{'具体目标' if goal_type == 'specific' else '泛化期待'}")
     if judgement_type in {"reasonable", "needs_adjustment"}:
-        meta.append(f"判断：{'需要调整' if judgement_type == 'needs_adjustment' else '当前合理'}")
+        if is_en:
+            meta.append(f"Assessment: {'Needs Adjustment' if judgement_type == 'needs_adjustment' else 'Reasonable Baseline'}")
+        else:
+            meta.append(f"判断：{'需要调整' if judgement_type == 'needs_adjustment' else '当前合理'}")
+    if is_en:
+        lines = [
+            *meta,
+            f"User Goal: {_text(value.get('user_goal'))}",
+            f"Direct Response: {_text(value.get('judgement')) or ('Currently needs adjustment' if judgement_type == 'needs_adjustment' else '')}",
+            f"Standard Goal: {_text(value.get('base_goal'))}",
+            f"High Commitment Goal: {_text(value.get('challenge_goal'))}",
+            f"Execution Agreement: {_text(value.get('conditions'))}",
+        ]
+        return _text_block("goal_response", title, "\n".join(line for line in lines if not line.endswith(": ")))
+
     lines = [
         *meta,
         f"用户目标：{_text(value.get('user_goal'))}",
@@ -554,32 +672,45 @@ def _goal_response_block(fields: dict[str, Any]) -> dict[str, Any]:
     return _text_block("goal_response", title, "\n".join(line for line in lines if not line.endswith("：")))
 
 
-def _core_conclusions_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _core_conclusions_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = _dict(fields.get("core_conclusions"))
     success_path = _dict(fields.get("success_path"))
     overview = _dict(fields.get("overview"))
     management_band = _text(value.get("management_band") or success_path.get("weight_band"))
-    body_trend = _text(value.get("body_trend") or overview.get("recent_change")) or "信息不足"
-    # 趋势依据分两层：直接趋势证据能证明变化方向，支持信号只是当前状态，不能互相冒充。
+    body_trend = _text(value.get("body_trend") or overview.get("recent_change")) or ("Insufficient information" if is_en else "信息不足")
     direct_evidence = _clean_text(value.get("trend_direct_evidence"))
     support_signals = value.get("trend_support_signals")
     if not isinstance(support_signals, list):
         support_signals = [support_signals] if _text(support_signals) else []
-    support_text = "；".join(_clean_text(item) for item in support_signals[:2] if _text(item))
+    sep = "; " if is_en else "；"
+    support_text = sep.join(_clean_text(item) for item in support_signals[:2] if _text(item))
     if not direct_evidence and not support_text:
         legacy = value.get("trend_evidence")
         if isinstance(legacy, list) and legacy:
             direct_evidence = _clean_text(legacy[0])
-            support_text = "；".join(_clean_text(item) for item in legacy[1:3] if _text(item))
-    # 干练版：趋势解释并进趋势行、直接依据与支持信号合并成一条「趋势依据」、
-    # 不再单列长期防线（长期方向见「成功路径」板块），整段从最多9行压到6行。
+            support_text = sep.join(_clean_text(item) for item in legacy[1:3] if _text(item))
     trend_explanation = _text(value.get("trend_explanation"))
-    trend_line = f"近3个月身体趋势：{body_trend}"
+    trend_prefix = "Recent 3-Month Body Trend: " if is_en else "近3个月身体趋势："
+    trend_line = f"{trend_prefix}{body_trend}"
     if trend_explanation:
-        trend_line = f"{trend_line}——{trend_explanation}"
+        trend_line = f"{trend_line} — {trend_explanation}" if is_en else f"{trend_line}——{trend_explanation}"
     trend_basis = direct_evidence
     if support_text:
-        trend_basis = f"{trend_basis}；{support_text}" if trend_basis else support_text
+        trend_basis = f"{trend_basis}{sep}{support_text}" if trend_basis else support_text
+    if is_en:
+        lines = [
+            _text(fields.get("one_sentence")),
+            f"Management Band: {management_band}" if management_band else "",
+            f"Band Rationale: {_text(value.get('band_explanation'))}" if _text(value.get("band_explanation")) else "",
+            trend_line,
+            f"Trend Evidence: {trend_basis}" if trend_basis else "",
+            f"First 28 Days Focus: {_text(value.get('day28_task'))}" if _text(value.get("day28_task")) else "",
+        ]
+        return _text_block(
+            "core_conclusions",
+            "2. Summary Conclusion & Core Assessments",
+            "\n".join(line for line in lines if line),
+        )
     lines = [
         _text(fields.get("one_sentence")),
         f"管理带：{management_band}" if management_band else "",
@@ -595,7 +726,7 @@ def _core_conclusions_block(fields: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _priority_items_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _priority_items_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     items = fields.get("priority_items")
     if not isinstance(items, list):
         items = []
@@ -610,13 +741,26 @@ def _priority_items_block(fields: dict[str, Any]) -> dict[str, Any]:
         items = [_text(item) for item in fallback if _text(item)]
     return _list_block(
         "priority_items",
-        "6. 您真正需要优先解决的三件事",
+        "7. Top 3 Priorities for You" if is_en else "6. 您真正需要优先解决的三件事",
         items,
         limit=3,
     )
 
 
-def _rhythm_recovery_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _rhythm_recovery_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
+    if is_en:
+        lines = [
+            _text(fields.get("current_state")),
+            f"Appetite & Post-Meal State: {_text(fields.get('insulin_resistance'))}" if _text(fields.get('insulin_resistance')) else "",
+            f"Satiety & Evening Wind-Down: {_text(fields.get('leptin_sensitivity'))}" if _text(fields.get('leptin_sensitivity')) else "",
+            f"Sleep, Stress & Recovery: {_text(fields.get('hormone_stage'))}" if _text(fields.get('hormone_stage')) else "",
+            f"Primary Recommended Direction: {_text(fields.get('priority_direction'))}" if _text(fields.get('priority_direction')) else "",
+        ]
+        return _text_block(
+            "rhythm_recovery",
+            "8. Metabolic Rhythm & Recovery Assessment",
+            "\n".join(line for line in lines if line),
+        )
     lines = [
         _text(fields.get("current_state")),
         (
@@ -647,7 +791,7 @@ def _rhythm_recovery_block(fields: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _missing_information_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _missing_information_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = fields.get("missing_information")
     if isinstance(value, list):
         items = value
@@ -656,13 +800,28 @@ def _missing_information_block(fields: dict[str, Any]) -> dict[str, Any]:
     else:
         overview = _dict(fields.get("overview"))
         items = []
-        if "未提供" in _text(overview.get("waist_bodyfat")) or "暂未测量" in _text(overview.get("waist_bodyfat")):
-            items.append("腰围或体脂率待补测")
-    return _list_block("missing_information", "13. 需要补充的信息", items)
+        if "未提供" in _text(overview.get("waist_bodyfat")) or "暂未测量" in _text(overview.get("waist_bodyfat")) or "Not provided" in _text(overview.get("waist_bodyfat")):
+            items.append("Waist circumference or body fat % to be measured" if is_en else "腰围或体脂率待补测")
+    return _list_block("missing_information", "14. Missing Information to Update" if is_en else "13. 需要补充的信息", items)
 
 
-def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _execution_goal_summary_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     """V2.2 要求执行文件也能独立核对管理带及三层目标，文案保持紧凑。"""
+
+    if is_en:
+        lines = [
+            f"Management Band: {_length_checked(fields.get('weight_band'), max_len=30)}",
+            f"Standard Goal: {_length_checked(fields.get('base_goal'), max_len=60)}",
+            f"High Commitment Goal: {_length_checked(fields.get('challenge_goal'), max_len=50)}",
+            f"Execution Agreement: {_length_checked(fields.get('commitment_rule'), max_len=100)}",
+            f"Long-term Direction: {_length_checked(fields.get('path_goal') or fields.get('long_term_goal'), max_len=70)}",
+            f"Current Mainline: {_length_checked(fields.get('current_mainline'), max_len=30)}",
+        ]
+        return _text_block(
+            "goal_summary",
+            "1. Target & Goal Summary",
+            "\n".join(line for line in lines if not line.endswith(": ")),
+        )
 
     lines = [
         f"管理带：{_length_checked(fields.get('weight_band'), max_len=18)}",
@@ -679,21 +838,21 @@ def _execution_goal_summary_block(fields: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _personal_execution_basis_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _personal_execution_basis_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     lines: list[str] = []
     occupation = _clean_text(fields.get("occupation_context"))
     history = _clean_text(fields.get("weight_loss_history"))
     if occupation:
-        lines.append(f"生活与工作场景：{occupation}")
+        lines.append(f"{'Lifestyle & Work Context: ' if is_en else '生活与工作场景：'}{occupation}")
     if history:
-        lines.append(f"既往经验：{history}")
+        lines.append(f"{'Past Experience: ' if is_en else '既往经验：'}{history}")
 
     chains = fields.get("key_influence_chains")
     if isinstance(chains, list):
         for index, item in enumerate(chains[:2], start=1):
             text = _clean_text(item)
             if text:
-                lines.append(f"关键影响{index}：{text}")
+                lines.append(f"{'Key Factor ' if is_en else '关键影响'}{index}：{text}")
 
     outcomes = fields.get("desired_outcomes")
     if isinstance(outcomes, list):
@@ -704,17 +863,18 @@ def _personal_execution_basis_block(fields: dict[str, Any]) -> dict[str, Any]:
             name = _clean_text(item.get("name"))
             method = _clean_text(item.get("tracking_method"))
             if name:
-                outcome_parts.append(f"{name}（{method}）" if method else name)
+                outcome_parts.append(f"{name} ({method})" if is_en and method else (f"{name}（{method}）" if method else name))
         if outcome_parts:
-            lines.append(f"本期成果：{'；'.join(outcome_parts)}")
+            sep = "; " if is_en else "；"
+            lines.append(f"{'Key Target Outcomes: ' if is_en else '本期成果：'}{sep.join(outcome_parts)}")
     return _text_block(
         "personal_execution_basis",
-        "与您生活相匹配的执行依据",
+        "4. Execution Basis Tailored to Your Life" if is_en else "与您生活相匹配的执行依据",
         "\n".join(lines),
     )
 
 
-def _core_actions_block(value: Any) -> dict[str, Any]:
+def _core_actions_block(value: Any, is_en: bool = False) -> dict[str, Any]:
     items: list[str] = []
     if isinstance(value, list):
         for action in value[:5]:
@@ -725,103 +885,101 @@ def _core_actions_block(value: Any) -> dict[str, Any]:
             fallback = _clean_text(action.get("fallback"))
             mapping = _clean_text(action.get("checkin_mapping"))
             parts = [part for part in (anchor, body) if part]
-            text = "：".join(parts)
+            text = (": " if is_en else "：").join(parts)
             if fallback:
-                text += f"；做不到时：{fallback}"
+                text += f"; If unable to complete: {fallback}" if is_en else f"；做不到时：{fallback}"
             if mapping:
-                text += f"；打卡：{mapping}"
+                text += f"; Check-in: {mapping}" if is_en else f"；打卡：{mapping}"
             if text:
                 items.append(text)
-    return _list_block("core_actions", "核心执行动作", items, limit=5)
+    return _list_block("core_actions", "7. Core Action Windows" if is_en else "核心执行动作", items, limit=5)
 
 
-def _execution_product_block(fields: dict[str, Any]) -> dict[str, Any]:
-    """产品排班一段一行。
-
-    早先压成一行（三段用竖线拼接），前提是每段限 22 字、整行约 66 字刚好。放宽到
-    用量+水量+时点写全之后整行涨到约 120 字，docx 会自动折行，折点不可控，
-    可能把"最晚睡前1小时完成"甩到孤立一行。改成三行后字数一样，换行位置由我们定，
-    反而更省版面也更好读。
-    """
-
+def _execution_product_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = _dict(fields.get("product_schedule"))
     parts = [
-        _product_slot_text("早C", value.get("morning_c")),
-        _product_slot_text("午B", value.get("noon_b")),
-        _product_slot_text("晚A", value.get("night_a")),
+        _product_slot_text("Morning C" if is_en else "早C", value.get("morning_c")),
+        _product_slot_text("Noon B" if is_en else "午B", value.get("noon_b")),
+        _product_slot_text("Evening A" if is_en else "晚A", value.get("night_a")),
     ]
-    # 不加「• 」项目符号：_clean_text 会 lstrip 掉行首的 -•*，加了等于没加
-    # （诊断报告那段的 "• " 前缀就是这么一直无效的）。分行靠换行本身。
     return _text_block(
         "product_schedule",
-        "4. 产品排班",
+        "4. Product Schedule & Protocol" if is_en else "4. 产品排班",
         "\n".join(part for part in parts if part),
     )
 
 
 def _product_slot_text(label: str, value: Any) -> str:
-    """渲染「早C 1标准份（3刻度）…」这类一段排班；模型自带前缀时不重复写标签。"""
-
     text_val = _clean_prefix(_clean_text(value), label)
     if not text_val:
         return ""
     return f"{label} {_length_checked(text_val, max_len=PRODUCT_SLOT_SOFT_LIMIT)}"
 
 
-def _first_week_signals_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _first_week_signals_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = fields.get("first_week_signals")
+    title = "14. Key Signals for First 7 Days" if is_en else "14. 前7天重点看4个信号"
     if isinstance(value, list):
         lines = [_clean_text(item) for item in value if _clean_text(item)]
-        return _list_block("first_week_signals", "14. 前7天重点看4个信号", lines, limit=4)
+        return _list_block("first_week_signals", title, lines, limit=4)
     text_val = _clean_text(value)
     if not text_val:
-        return _list_block("first_week_signals", "14. 前7天重点看4个信号", [], limit=4)
+        return _list_block("first_week_signals", title, [], limit=4)
     lines = [part.strip() for part in re_split_standard(text_val) if part.strip()]
-    return _list_block("first_week_signals", "14. 前7天重点看4个信号", lines or [text_val], limit=4)
+    return _list_block("first_week_signals", title, lines or [text_val], limit=4)
 
 
-def _success_path_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _success_path_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = _dict(fields.get("success_path"))
-    intro = _text(value.get("intro")) or "您的成功路径，不是只看这28天。"
+    intro = _text(value.get("intro")) or ("Your roadmap to success extends well beyond just these 28 days." if is_en else "您的成功路径，不是只看这28天。")
     
     bullets = []
     
     wb = _text(value.get("weight_band"))
     if wb:
         if not wb.startswith("•"):
-            wb = f"• 您当前管理带：{_clean_prefix(_clean_prefix(wb, '您当前管理带'), '您当前所属减重带')}"
+            wb = f"• {'Current Management Band: ' if is_en else '您当前管理带：'}{_clean_prefix(_clean_prefix(wb, '您当前管理带'), '您当前所属减重带')}"
         bullets.append(wb)
         
     tg = _text(value.get("total_goal"))
     if tg:
         if not tg.startswith("•"):
-            tg = f"• 您当前更适合的总路径目标：{_clean_prefix(tg, '您当前更适合的总路径目标')}"
+            tg = f"• {'Overall Path Target: ' if is_en else '您当前更适合的总路径目标：'}{_clean_prefix(tg, '您当前更适合的总路径目标')}"
         bullets.append(tg)
         
     d28 = _text(value.get("day28_goal"))
     if d28:
         if not d28.startswith("•"):
-            d28 = f"• 第一个28天：{_clean_prefix(d28, '第一个28天')}"
+            d28 = f"• {'First 28 Days: ' if is_en else '第一个28天：'}{_clean_prefix(d28, '第一个28天')}"
         bullets.append(d28)
         
     w5_8 = _text(value.get("week5_8"))
     if w5_8:
         if not w5_8.startswith("•"):
-            w5_8 = f"• 第5–8周：{_clean_prefix(w5_8, '第5–8周')}"
+            w5_8 = f"• {'Weeks 5–8: ' if is_en else '第5–8周：'}{_clean_prefix(w5_8, '第5–8周')}"
         bullets.append(w5_8)
         
     w9_12 = _text(value.get("week9_12"))
     if w9_12:
         if not w9_12.startswith("•"):
-            w9_12 = f"• 第9–12周：{_clean_prefix(w9_12, '第9–12周')}"
+            w9_12 = f"• {'Weeks 9–12: ' if is_en else '第9–12周：'}{_clean_prefix(w9_12, '第9–12周')}"
         bullets.append(w9_12)
         
     lines = [intro] + bullets
-    return _text_block("success_path", "5. 您的成功路径，不是只看这28天", "\n".join(line for line in lines if line))
+    return _text_block("success_path", "6. 28-Day Success Roadmap" if is_en else "5. 您的成功路径，不是只看这28天", "\n".join(line for line in lines if line))
 
 
-def _module_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _module_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = _dict(fields.get("module_diagnosis"))
+    if is_en:
+        lines = [
+            f"Rhythm: {_text(value.get('rhythm'))}",
+            f"Diet: {_text(value.get('diet'))}",
+            f"Sleep: {_text(value.get('sleep'))}",
+            f"Stress: {_text(value.get('pressure'))}",
+            f"Physical Activity: {_text(value.get('activity'))}",
+        ]
+        return _text_block("module_diagnosis", "9. Modular Lifestyle Analysis", "\n".join(line for line in lines if not line.endswith(": ")))
     lines = [
         f"节律：{_text(value.get('rhythm'))}",
         f"饮食：{_text(value.get('diet'))}",
@@ -832,7 +990,7 @@ def _module_block(fields: dict[str, Any]) -> dict[str, Any]:
     return _text_block("module_diagnosis", "8. 模块诊断：节律 / 饮食 / 睡眠 / 压力 / 身体活动", "\n".join(line for line in lines if not line.endswith("：")))
 
 
-def _expected_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _expected_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = _dict(fields.get("expected_changes"))
     lines = [
         _text(value.get("day7")),
@@ -840,13 +998,13 @@ def _expected_block(fields: dict[str, Any]) -> dict[str, Any]:
     ]
     labelled = []
     if lines[0]:
-        labelled.append(f"前7天先看：{lines[0]}")
+        labelled.append(f"{'First 7 Days: ' if is_en else '前7天先看：'}{lines[0]}")
     if lines[1]:
-        labelled.append(f"第14–28天再看：{lines[1]}")
-    return _text_block("expected_changes", "11. 您可能先看到的变化", "\n".join(labelled))
+        labelled.append(f"{'Days 14–28: ' if is_en else '第14–28天再看：'}{lines[1]}")
+    return _text_block("expected_changes", "12. Expected Milestones" if is_en else "11. 您可能先看到的变化", "\n".join(labelled))
 
 
-def _product_block(fields: dict[str, Any]) -> dict[str, Any]:
+def _product_block(fields: dict[str, Any], is_en: bool = False) -> dict[str, Any]:
     value = _dict(fields.get("product_schedule"))
     summary = _text(value.get("summary"))
     morning = _text(value.get("morning_c"))
@@ -856,15 +1014,15 @@ def _product_block(fields: dict[str, Any]) -> dict[str, Any]:
     bullets = []
     if morning:
         if not morning.startswith("•"):
-            morning = f"• 早C：{_clean_prefix(morning, '早C')}"
+            morning = f"• {'Morning C: ' if is_en else '早C：'}{_clean_prefix(morning, 'Morning C' if is_en else '早C')}"
         bullets.append(morning)
     if noon:
         if not noon.startswith("•"):
-            noon = f"• 午B：{_clean_prefix(noon, '午B')}"
+            noon = f"• {'Noon B: ' if is_en else '午B：'}{_clean_prefix(noon, 'Noon B' if is_en else '午B')}"
         bullets.append(noon)
     if night:
         if not night.startswith("•"):
-            night = f"• 晚A：{_clean_prefix(night, '晚A')}"
+            night = f"• {'Evening A: ' if is_en else '晚A：'}{_clean_prefix(night, 'Evening A' if is_en else '晚A')}"
         bullets.append(night)
         
     lines = []
@@ -872,14 +1030,14 @@ def _product_block(fields: dict[str, Any]) -> dict[str, Any]:
         lines.append(summary)
     lines.extend(bullets)
     
-    # 模型没写这一段时的兜底。缺个案信息，只能给通用机制句，但不退化成免责声明。
     meaning = _text(fields.get("product_meaning")) or (
+        ("Morning C, Noon B, and Evening A establish steady rhythm cues across the 28 days to energize mornings, sustain afternoons, and ease evening recovery. Diet and exercise remain foundational, while products support habit consistency." if is_en else
         "早C、午B、晚A 的作用是在连续28天里反复建立「启动—续航—收口」的节律信号，"
-        "帮助白天启动、午后平稳、晚间收口；饮食和运动仍是主力，产品负责让执行更容易稳住。"
+        "帮助白天启动、午后平稳、晚间收口；饮食和运动仍是主力，产品负责让执行更容易稳住。")
     )
     return _text_block(
         "product_schedule",
-        "9. 早C、午B、晚A对您的意义",
+        "10. Product Protocol (Morning C / Noon B / Evening A)" if is_en else "9. 早C、午B、晚A对您的意义",
         "\n".join([meaning, *[line for line in lines if line]]),
     )
 
@@ -1043,7 +1201,7 @@ def _default_week_standard(week: str) -> str:
     return defaults.get(week, "")
 
 
-def _daily_checkin_block(value: Any) -> dict[str, Any]:
+def _daily_checkin_block(value: Any, is_en: bool = False) -> dict[str, Any]:
     """每日打卡块：content 供 DOCX/Markdown 渲染，checkin_items 保留结构化定义。
 
     结构化项不参与正文渲染（渲染只读 content），但让 H5 每日行动问卷、五项追问清单和
@@ -1052,8 +1210,8 @@ def _daily_checkin_block(value: Any) -> dict[str, Any]:
 
     block = _text_block(
         "daily_checkin",
-        "8. 每日固定打卡（每天只打这5项）",
-        _daily_checkin_text(value),
+        "8. Daily Check-in Commitment (5 Items)" if is_en else "8. 每日固定打卡（每天只打这5项）",
+        _daily_checkin_text(value, is_en=is_en),
     )
     if isinstance(value, list):
         items = [
@@ -1073,8 +1231,16 @@ def _daily_checkin_block(value: Any) -> dict[str, Any]:
     return block
 
 
-def _daily_checkin_text(value: Any) -> str:
+def _daily_checkin_text(value: Any, is_en: bool = False) -> str:
     if not value:
+        if is_en:
+            return (
+                "1. Product protocol completed as planned\n"
+                "2. Ate at least 2 fists of vegetables\n"
+                "3. Completed planned brisk walk or strength training\n"
+                "4. Sleep routine wound down on schedule\n"
+                "5. Post-meal alertness score (1 = very sleepy, 5 = fully alert)"
+            )
         return (
             "1. 个案产品排班是否按方案完成\n"
             "2. 蔬菜总量是否至少2拳\n"

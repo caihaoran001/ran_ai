@@ -213,7 +213,7 @@ def render_template_markdown(content_json: dict[str, Any]) -> str:
 
 
 def safe_filename(value: str) -> str:
-    return re.sub(r'[\\/:*?"<>|\\n\\r]+', "_", value).strip() or "未命名"
+    return re.sub(r'[\\/:*?"<>|\n\r]+', "_", value).strip() or "未命名"
 
 
 def _string(value: Any) -> str:

@@ -76,11 +76,58 @@ def render_commitment_invitation(
     state: dict[str, Any],
     *,
     checkin_example_lines: list[str] | None = None,
+    language: str = "zh",
 ) -> str:
     """两份交付文件已发送后的固定邀请；不向用户暴露内部 D0 名称。
 
     若传入生成时保存的个性化打卡原题与示例，合并为单条引导发送，避免连续多条长消息刷屏。
     """
+
+    if language == "en":
+        standard_target = str(state.get("standard_target") or "Current Standard Target").strip()
+        lines = ["Your two tailored documents have been delivered to the group."]
+        if checkin_example_lines:
+            lines.extend(
+                [
+                    "",
+                    "Every day, simply copy the template below and update the part after '|' with your actual progress:",
+                    "",
+                    "【Daily Check-in】",
+                    "",
+                    *checkin_example_lines,
+                    "",
+                    "Be honest even if uncompleted—answering all 5 items counts as 1 full check-in day. Feel free to share photos of your meals and products in the group, and ask us anything anytime!",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "Starting now, please complete the 5 daily check-in items in the group. Answering all 5 items counts as 1 full check-in day.",
+                ]
+            )
+        lines.append("")
+        if state.get("high_commitment_candidate") is True and state.get(
+            "high_commitment_target"
+        ):
+            lines.extend(
+                [
+                    "Based on your assessment, you can choose from the following tracks:",
+                    f"1. High Commitment Track: {state['high_commitment_target']}, requiring an 85% cumulative full check-in rate;",
+                    f"2. Standard Track: {standard_target}, requiring a 60% cumulative full check-in rate;",
+                    "3. Current Pace Track: Follow your current manageable pace without enabling weight-loss targets for now.",
+                    "",
+                    "Please reply with 'High Commitment Track', 'Standard Track', or 'Current Pace Track'.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"You can currently choose the Standard Track: {standard_target}, requiring a 60% cumulative full check-in rate; or the Current Pace Track to build habits without enabling weight-loss targets.",
+                    "",
+                    "Please reply with 'Standard Track' or 'Current Pace Track'.",
+                ]
+            )
+        return "\n".join(lines)
 
     standard_target = str(state.get("standard_target") or "当前标准目标").strip()
     lines = ["两份专属文件已经发到群里了。"]

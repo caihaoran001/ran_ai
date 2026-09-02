@@ -21,6 +21,17 @@ DOCUMENT_DEFINITIONS = {
     DocumentType.DAY28_EXECUTION_STANDARD: "28天高燃人生执行建议书",
 }
 
+DOCUMENT_DEFINITIONS_EN = {
+    DocumentType.ENERGY_RESTART_PRESCRIPTION: "Personal Energy Reboot Diagnostic Report",
+    DocumentType.DAY28_EXECUTION_STANDARD: "28-Day HumanBurning Action Plan",
+}
+
+
+def get_document_title(doc_type: DocumentType, language: str = "zh") -> str:
+    if language == "en":
+        return DOCUMENT_DEFINITIONS_EN.get(doc_type, doc_type.value)
+    return DOCUMENT_DEFINITIONS.get(doc_type, doc_type.value)
+
 
 async def _user_name(session: AsyncSession, service_case: ServiceCase) -> str:
     submission = await _latest_submission(session, service_case.id)

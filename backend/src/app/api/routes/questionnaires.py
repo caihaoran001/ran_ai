@@ -96,6 +96,7 @@ async def get_questionnaire(
         service_case_id=service_case.id,
         token=token,
         template_key=template,
+        language=getattr(service_case, "language", "zh") or "zh",
         title=template_payload.get("title"),
         description=template_payload.get("description"),
         allow_repeat=_allow_repeat(template),
@@ -118,6 +119,8 @@ async def submit_questionnaire(
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnaireSubmission:
     service_case = await _case_by_token(session, token, include_deleted=False)
+    if payload.language in ("en", "zh"):
+        service_case.language = payload.language
     timezone = ZoneInfo(get_settings().reminder_timezone)
     if template != "intake" and service_window_ended(service_case, datetime.now(timezone), timezone):
         raise HTTPException(status_code=410, detail="28天服务已结束，无需继续打卡")
@@ -535,25 +538,45 @@ async def _send_intake_submit_reply(service_case_id: int) -> None:
         else:
             plan_start_date = ""
             plan_start_line = "收到文件后先好好看看内容，提前熟悉，有任何问题随时在群里问我们～"
-        rewards_enabled = get_settings().checkin_rewards_enabled
-        # 新默认话术通过变量控制奖励承诺；同时剔除已被运营静态粘进旧配置的标准奖励段，
-        # 保证日后关闭开关时不会继续向用户承诺发奖。
-        message_template = str(reply.get("message") or "")
-        if not rewards_enabled:
-            message_template = message_template.replace(CHECKIN_REWARD_RECEIPT_PARAGRAPH, "")
-        content = _format_template(
-            message_template,
-            {
-                "user_name": user.name if user else "",
-                "case_no": service_case.case_no,
-                "group_id": service_case.group_id,
-                "plan_start_date": plan_start_date,
-                "plan_start_line": plan_start_line,
-                "reward_intro": (
-                    CHECKIN_REWARD_RECEIPT_PARAGRAPH if rewards_enabled else ""
-                ),
-            },
-        ).strip()
+        is_en = getattr(service_case, "language", "zh") == "en"
+        if is_en:
+            if plan:
+                plan_start_date = plan.strftime("%B %d, %Y")
+                plan_start_line = (
+                    f"Your service plan is scheduled to officially start on {plan_start_date} (daily check-ins also begin then). "
+                    "Before that, we recommend reviewing your two tailored documents once they arrive to get familiar with your plan so you're ready to start smoothly!"
+                )
+            else:
+                plan_start_date = ""
+                plan_start_line = "Once you receive your documents, please take time to review them. Feel free to ask any questions in the group anytime!"
+            content = (
+                f"🎉 {user.name if user and user.name else 'Hi there'}, we have received your enrollment assessment!\n\n"
+                "Our team and AI assistant are analyzing your responses and generating your 2 tailored documents:\n"
+                "1.《Personal Energy Reboot Diagnostic Report》\n"
+                "2.《28-Day HumanBurning Action Plan》\n\n"
+                f"{plan_start_line}\n\n"
+                "Your tailored files will be delivered to this group shortly!"
+            )
+        else:
+            rewards_enabled = get_settings().checkin_rewards_enabled
+            # 新默认话术通过变量控制奖励承诺；同时剔除已被运营静态粘进旧配置的标准奖励段，
+            # 保证日后关闭开关时不会继续向用户承诺发奖。
+            message_template = str(reply.get("message") or "")
+            if not rewards_enabled:
+                message_template = message_template.replace(CHECKIN_REWARD_RECEIPT_PARAGRAPH, "")
+            content = _format_template(
+                message_template,
+                {
+                    "user_name": user.name if user else "",
+                    "case_no": service_case.case_no,
+                    "group_id": service_case.group_id,
+                    "plan_start_date": plan_start_date,
+                    "plan_start_line": plan_start_line,
+                    "reward_intro": (
+                        CHECKIN_REWARD_RECEIPT_PARAGRAPH if rewards_enabled else ""
+                    ),
+                },
+            ).strip()
         if not content:
             return
         result = await send_channel_text(service_case.group_id, content)

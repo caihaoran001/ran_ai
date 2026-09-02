@@ -1473,6 +1473,9 @@ class EngineGraph:
                 "settings": settings,
                 "agent_run_id": state.get("agent_run_id"),
             }
+            case_lang = getattr(state.get("service_case"), "language", None)
+            if case_lang and case_lang != "zh":
+                agent_kwargs["language"] = case_lang
             if self.checkpointer is not None and state.get("checkpoint_thread_id"):
                 agent_kwargs["checkpoint_thread_id"] = state["checkpoint_thread_id"]
             agent_result = await engine_mod.generate_agent_reply(

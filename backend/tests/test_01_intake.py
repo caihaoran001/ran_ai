@@ -2885,3 +2885,93 @@ def test_overview_measurements_only_get_units_when_numeric():
     assert _format_waist_bodyfat("87cm", "28%") == "腰围87cm / 体脂率28%"
     # 夹着说明的数值保留信息，只是不再拼单位
     assert _format_waist_bodyfat("未提供", "30 左右，去年测的") == "腰围未提供 / 体脂率30 左右，去年测的"
+
+
+def test_english_document_titles_and_filenames():
+    from app.services.document_common import get_document_title
+
+    assert get_document_title(DocumentType.ENERGY_RESTART_PRESCRIPTION, language="en") == "Personal Energy Reboot Diagnostic Report"
+    assert get_document_title(DocumentType.DAY28_EXECUTION_STANDARD, language="en") == "28-Day HumanBurning Action Plan"
+
+    assert _document_filename(
+        user_name="Alex",
+        document_type=DocumentType.ENERGY_RESTART_PRESCRIPTION,
+        title="Personal Energy Reboot Diagnostic Report",
+        gender="",
+    ) == "Alex_Personal Energy Reboot Diagnostic Report.docx"
+    assert _document_filename(
+        user_name="Alex",
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28-Day HumanBurning Action Plan",
+        gender="",
+    ) == "Alex_28-Day HumanBurning Action Plan.docx"
+
+
+def test_english_document_content_rendering():
+    from app.services.document_templates import build_document_content_json
+
+    energy_json = build_document_content_json(
+        document_type=DocumentType.ENERGY_RESTART_PRESCRIPTION,
+        title="Personal Energy Reboot Diagnostic Report",
+        user_name="Alex",
+        fields={"overview": {"name": "Alex", "height_weight": "180cm / 75kg"}},
+        language="en",
+    )
+    assert energy_json["blocks"][0]["title"] == "1. User Profile Overview"
+
+    execution_json = build_document_content_json(
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28-Day HumanBurning Action Plan",
+        user_name="Alex",
+        fields={
+            "weight_band": "Band B",
+            "overview": {"name": "Alex"},
+            "weekly_standards": {
+                "week1": "Follow morning C protocol",
+                "week2": "Consistent diet",
+            },
+        },
+        language="en",
+    )
+    assert execution_json["blocks"][0]["title"] == "1. Target & Goal Summary"
+    # Verify table headers in week blocks are localized
+    table_block = next((b for b in execution_json["blocks"] if b.get("kind") == "table"), None)
+    assert table_block is not None
+    assert table_block["rows"][0][0]["value"] == "Week"
+    assert table_block["rows"][1][0]["value"] == "Week 1"
+
+
+@pytest.mark.asyncio
+async def test_english_intake_submit_reply(db_session, monkeypatch):
+    from datetime import date
+    from app.api.routes import questionnaires
+    from app.models.message import Message, MessageDirection
+
+    service_case = ServiceCase(
+        case_no="CASE-EN-001",
+        group_id="group-en-intake",
+        questionnaire_token="token-en-001",
+        status=ServiceCaseStatus.QUESTIONNAIRE_SUBMITTED,
+        language="en",
+        service_plan_start_date=date(2026, 9, 10),
+    )
+    db_session.add(service_case)
+    await db_session.flush()
+
+    monkeypatch.setattr(
+        questionnaires,
+        "send_channel_text",
+        AsyncMock(return_value=SimpleNamespace(message_id="msg-en-123", error=None, success=True)),
+    )
+    await questionnaires._send_intake_submit_reply(service_case.id)
+
+    receipt = await db_session.scalar(
+        select(Message).where(
+            Message.service_case_id == service_case.id,
+            Message.direction == MessageDirection.OUTBOUND,
+        )
+    )
+    assert receipt is not None
+    assert "received your enrollment assessment" in receipt.content
+    assert "September 10, 2026" in receipt.content
+
