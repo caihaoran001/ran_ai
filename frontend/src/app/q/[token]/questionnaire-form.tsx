@@ -26,6 +26,7 @@ type BodyIssue = { key: string; level: "hard" | "soft"; msg: string };
 type Band = { hardLow: number; softLow: number; softHigh: number; hardHigh: number };
 // 换算过的体征值。converted=false 表示用户没写单位，我们只是按公制原样收下。
 type BodyMeasure = { key: string; num: number; raw: string; converted: boolean };
+type BodyKind = "height" | "weight" | "waist";
 
 // 仅把紧跟数值的独立单位认作英制，不能把 "I think 80" 里的 in 当成 inches。
 // 裸 in 是英语介词，后面还跟着单词就不算单位（"80 in the morning" 必须按厘米走）。
@@ -65,6 +66,82 @@ const DISSUADE = (label: string, v: number, unit: string, isEn: boolean) =>
   isEn
     ? `${label} is ${v}${unit}. This program is designed for general lifestyle intervention. We recommend consulting a healthcare provider or contacting your dedicated coach first.`
     : `${label}为 ${v}${unit}，本服务更适合常规减脂人群；您的情况建议先线下或专业医疗评估，请联系您的专属顾问`;
+
+// 三道体征题的识别关键词。界面上给哪几题配单位选择器、校验时按哪几题查单位，
+// 必须用同一份判据——两处不一致会出现"校验说少了单位、界面上却没有地方选"。
+const BODY_FIELD_MATCHERS: Record<BodyKind, readonly string[]> = {
+  height: ["身高", "height"],
+  weight: ["当前体重", "体重", "current weight", "weight"],
+  waist: ["腰围", "waist"],
+};
+
+// 每道题可选的单位。值就是拼进答案字符串里的写法，后端按同一套规则解析。
+const BODY_UNIT_OPTIONS: Record<BodyKind, readonly { value: string; label: string }[]> = {
+  height: [
+    { value: "cm", label: "cm" },
+    { value: "in", label: "inches" },
+    { value: "ft", label: "ft" },
+  ],
+  weight: [
+    { value: "kg", label: "kg" },
+    { value: "lbs", label: "lbs" },
+  ],
+  waist: [
+    { value: "cm", label: "cm" },
+    { value: "in", label: "inches" },
+  ],
+};
+
+// 占位文案不举具体数字：单位是客户自己选的，写 "e.g. 178" 会把人往厘米上引导。
+const BODY_VALUE_PLACEHOLDER: Record<BodyKind, string> = {
+  height: "Number only",
+  weight: "Number only",
+  waist: "Number only",
+};
+
+/** 按标题关键词认出身高/体重/腰围三题各自的字段。取第一个匹配，和校验一致。 */
+function resolveBodyFieldKinds(fields: Questionnaire["fields"]): Record<string, BodyKind> {
+  const byKey: Record<string, BodyKind> = {};
+  for (const kind of Object.keys(BODY_FIELD_MATCHERS) as BodyKind[]) {
+    for (const field of fields) {
+      const title = String(field.title ?? field.label ?? "").toLowerCase();
+      if (BODY_FIELD_MATCHERS[kind].some((part) => title.includes(part.toLowerCase()))) {
+        // 一道题只归一类：先匹配到的类别优先，避免"当前体重"同时被当成腰围之类。
+        if (!byKey[field.key]) byKey[field.key] = kind;
+        break;
+      }
+    }
+  }
+  return byKey;
+}
+
+/** 把 "70 in" 这样的答案拆回（数字, 单位）供控件回显；没写单位时单位为空。 */
+function splitMeasure(raw: string | undefined, kind: BodyKind): { amount: string; unit: string } {
+  const text = String(raw ?? "").trim();
+  if (!text) return { amount: "", unit: "" };
+  // 5'10" 这种写法本身就是英尺英寸，整串留在数字栏里，单位栏回显 ft。
+  if (kind === "height" && /['’′]/.test(text)) return { amount: text, unit: "ft" };
+  // 长写法排在前面，否则 "inches" 会先被 "in" 吃掉。
+  const known = ["inches", "inch", "pounds", "pound", "feet", "foot", "lbs", "lb", "cm", "kg", "in", "ft", "m"];
+  const matched = known.find((unit) =>
+    new RegExp(`${unit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i").test(text),
+  );
+  if (!matched) return { amount: text, unit: "" };
+  const amount = text.slice(0, text.length - matched.length).trim();
+  const canonical = BODY_UNIT_OPTIONS[kind].find(
+    (option) => option.value.toLowerCase() === matched.toLowerCase() || option.label.toLowerCase() === matched.toLowerCase(),
+  );
+  return { amount, unit: canonical?.value ?? matched.toLowerCase() };
+}
+
+function joinMeasure(amount: string, unit: string): string {
+  const value = amount.trim();
+  if (!value) return "";
+  if (!unit) return value;
+  // 客户在英尺那一栏直接写了 5'10"：本身已经带单位记号，再拼一个 ft 只会更难读。
+  if (/['’′"”″]/.test(value)) return value;
+  return `${value} ${unit}`;
+}
 
 function checkBodyMeasurements(
   fields: Questionnaire["fields"],
@@ -143,17 +220,17 @@ function checkBodyMeasurements(
     issues.push({
       key: value.key,
       level: "hard",
-      msg: `Please include the unit — e.g. ${hint}.`,
+      msg: `Please pick the unit (${hint}) next to the number.`,
     });
   };
-  const h = heightCm(find("身高", "height"));
-  const w = weightKg(find("当前体重", "体重", "weight", "current weight"));
-  const waist = waistCm(find("腰围", "waist"));
+  const h = heightCm(find(...BODY_FIELD_MATCHERS.height));
+  const w = weightKg(find(...BODY_FIELD_MATCHERS.weight));
+  const waist = waistCm(find(...BODY_FIELD_MATCHERS.waist));
   const a = find("年龄", "age");
 
-  requireUnit(h, `175 cm, 5'10" or 70 in`);
-  requireUnit(w, "70 kg or 154 lbs");
-  requireUnit(waist, "80 cm or 31 inches");
+  requireUnit(h, "cm, inches or ft");
+  requireUnit(w, "kg or lbs");
+  requireUnit(waist, "cm or inches");
   // 单位没写清时下面的范围、BMI 和腰高比判断都建立在错的数值上，提示会互相矛盾。
   if (issues.length) return issues;
 
@@ -283,6 +360,11 @@ export function QuestionnaireForm({
     () => questionnaire.fields.filter((field) => field.type !== "SEGMENTATION"),
     [questionnaire.fields],
   );
+  // 只有英文问卷配单位选择器：中文侧填 175 或 1.75 都判得准，没有歧义要解决。
+  const bodyKinds = useMemo(
+    () => (isEn ? resolveBodyFieldKinds(questionnaire.fields) : {}),
+    [isEn, questionnaire.fields],
+  ) as Record<string, BodyKind | undefined>;
   const answeredCount = answerableFields.filter(
     (field) => String(answers[field.key] ?? "").trim(),
   ).length;
@@ -439,6 +521,7 @@ export function QuestionnaireForm({
           key={field.key}
           field={field}
           isEn={isEn}
+          measureKind={bodyKinds[field.key]}
           value={answers[field.key]}
           issue={fieldIssues[field.key]}
           onChange={(value) => {
@@ -529,12 +612,14 @@ export function QuestionnaireForm({
 function FieldInput({
   field,
   isEn,
+  measureKind,
   value,
   onChange,
   issue,
 }: {
   field: Questionnaire["fields"][number];
   isEn: boolean;
+  measureKind?: BodyKind;
   value?: string;
   onChange: (value: string) => void;
   issue?: BodyIssue;
@@ -593,6 +678,18 @@ function FieldInput({
         </div>
       </label>
     );
+  } else if (measureKind && field.type === "SIMPLE") {
+    control = (
+      <MeasureField
+        field={field}
+        kind={measureKind}
+        label={label}
+        subtitle={subtitle}
+        required={required}
+        value={value}
+        onChange={onChange}
+      />
+    );
   } else if (field.type === "SIMPLE" || field.type === "FILE") {
     control = (
       <label className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -640,6 +737,66 @@ function FieldInput({
 
 const OTHER_OPTION = "其他";
 const OTHER_OPTION_EN = "Other";
+
+/** 体征题的「单位 + 数值」输入。单位选完拼进同一个答案字符串，不新增问卷字段。 */
+function MeasureField({
+  field,
+  kind,
+  label,
+  subtitle,
+  required,
+  value,
+  onChange,
+}: {
+  field: Questionnaire["fields"][number];
+  kind: BodyKind;
+  label: string;
+  subtitle?: string;
+  required: React.ReactNode;
+  value?: string;
+  onChange: (value: string) => void;
+}) {
+  const { amount, unit } = splitMeasure(value, kind);
+  const controlClass =
+    "h-10 shrink-0 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 shadow-[var(--shadow-xs)] outline-none transition-all duration-150 hover:border-slate-400 focus:border-cyan-600 focus:ring-4 focus:ring-cyan-500/15";
+  return (
+    <div className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-2 text-sm font-semibold text-slate-900">{label}{required}</div>
+      {subtitle && <div className="mb-2 text-xs leading-5 text-slate-500">{subtitle}</div>}
+      <div className="flex items-center gap-2">
+        <Input
+          aria-label={label}
+          required={field.required}
+          type="text"
+          inputMode="decimal"
+          placeholder={BODY_VALUE_PLACEHOLDER[kind]}
+          value={amount}
+          onChange={(event) => onChange(joinMeasure(event.target.value, unit))}
+        />
+        <select
+          aria-label="Unit"
+          className={`${controlClass} w-24`}
+          value={unit}
+          onChange={(event) => onChange(joinMeasure(amount, event.target.value))}
+        >
+          <option value="" disabled>
+            Unit
+          </option>
+          {BODY_UNIT_OPTIONS[kind].map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {kind === "height" && unit === "ft" && (
+        <div className="mt-2 text-xs leading-5 text-slate-500">
+          {"For 5 ft 10 in, type 5'10\" — or switch the unit to inches and enter 70."}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ChoiceField({
   field,

@@ -115,9 +115,9 @@
       "id": "SIMPLE1774104038286mn0fqky6",
       "key": "SIMPLE1774104038286mn0fqky6",
       "type": "SIMPLE",
-      "title": "Your Height (please include the unit)",
-      "label": "Your Height (please include the unit)",
-      "subtitle": "Always write the unit: 175 cm, 1.75 m, 5'10\" or 70 in are all fine. A number on its own cannot be read reliably.",
+      "title": "Your Height",
+      "label": "Your Height",
+      "subtitle": "Enter the number, then pick your unit (cm / inches / ft). For 5 ft 10 in you can also type 5'10\" directly.",
       "required": true,
       "options": []
     },
@@ -125,9 +125,9 @@
       "id": "SIMPLE1774104087629mn0frn0t",
       "key": "SIMPLE1774104087629mn0frn0t",
       "type": "SIMPLE",
-      "title": "Your Current Weight (please include the unit)",
-      "label": "Your Current Weight (please include the unit)",
-      "subtitle": "Always write the unit: 70 kg or 154 lbs. A number on its own cannot be read reliably. Recommended to weigh yourself now; if inconvenient, you can submit and update later.",
+      "title": "Your Current Weight",
+      "label": "Your Current Weight",
+      "subtitle": "Enter the number, then pick your unit (kg / lbs). Recommended to weigh yourself now; if inconvenient, you can submit and update later.",
       "required": true,
       "options": []
     },
@@ -137,7 +137,7 @@
       "type": "SIMPLE",
       "title": "Thinking back to your adult life, was there a weight where you felt energetic, light, eating normally, and that remained stable for over a year? If so, what was it?",
       "label": "Thinking back to your adult life, was there a weight where you felt energetic, light, eating normally, and that remained stable for over a year? If so, what was it?",
-      "subtitle": "You can enter in kg or lbs. If none or unsure, enter 'None' or 'Unsure'.",
+      "subtitle": "Please write the unit (kg or lbs) — a number on its own cannot be read reliably. If none or unsure, enter 'None' or 'Unsure'.",
       "required": true,
       "options": []
     },
@@ -157,7 +157,7 @@
       "type": "SIMPLE",
       "title": "Your Current Waist Circumference (Recommended, or provide later)",
       "label": "Your Current Waist Circumference (Recommended, or provide later)",
-      "subtitle": "Measured horizontally at navel level. Always write the unit: 80 cm or 31 inches. A number on its own cannot be read reliably.",
+      "subtitle": "Measured horizontally at navel level. Enter the number, then pick your unit (cm / inches).",
       "required": false,
       "options": []
     },
