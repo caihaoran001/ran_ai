@@ -1012,6 +1012,20 @@ def test_qiwe_system_command_bypasses_aggregator():
     assert _bypass_aggregator(explicit_query) is True
 
 
+def test_qiwe_english_questionnaire_command_bypasses_aggregator():
+    command = ChannelMessage(
+        channel="qiwe",
+        chat_id="room-1",
+        chat_type="group",
+        text="Send the group enrollment questionnaire",
+        message_id="english-command-1",
+        user_id="u1",
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    assert _bypass_aggregator(command) is True
+
+
 @pytest.mark.asyncio
 async def test_first_group_message_creates_case_but_stays_silent_before_introduction(
     db_session, monkeypatch
@@ -1352,7 +1366,7 @@ async def test_qiwe_questionnaire_command_skips_intervention_llm(monkeypatch):
         channel="qiwe",
         chat_id="room-fast-path",
         chat_type="group",
-        text="发送本群入营问卷",
+        text="Send the group enrollment questionnaire",
         message_id="fast-path-1",
         user_id="user-fast-path",
         timestamp=datetime.now(timezone.utc),

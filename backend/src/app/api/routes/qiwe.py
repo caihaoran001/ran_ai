@@ -20,6 +20,7 @@ from app.services.qiwe_service.inbox import (
     qiwe_spam_block_notice,
 )
 from app.services.qiwe_service.non_text import describe_non_text
+from app.services.ranren_ai.commands import is_questionnaire_command
 from app.services.qiwe_service.voice import (
     VOICE_TRANSCRIPT_FIELD,
     transcribe_and_dispatch,
@@ -161,7 +162,7 @@ def _bypass_aggregator(message: ChannelMessage) -> bool:
     at_list = msg_data.get("atList") if isinstance(msg_data, dict) else None
     if at_list and ("退下" in message.text or "回来" in message.text):
         return True
-    return "发送本群入营问卷" in message.text or "发送本群专属问卷" in message.text
+    return is_questionnaire_command(message.text)
 
 
 def _mentions_qiwe_bot(message: ChannelMessage) -> bool:

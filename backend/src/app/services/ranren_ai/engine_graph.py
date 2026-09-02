@@ -77,6 +77,7 @@ from app.services.ranren_ai.engine import (
     _sanitize_ai_reply,
     _segments_from_meta,
 )
+from app.services.ranren_ai.commands import is_questionnaire_command
 from app.services.service_case_queries import select_active_service_cases
 
 if TYPE_CHECKING:
@@ -2043,9 +2044,7 @@ async def run_handle_message(engine: "RanrenAIEngine", message: ChannelMessage) 
         "entry_mode": "fresh",
         "started_at": time.monotonic(),
         "checkpoint_thread_id": thread_id,
-        "should_send_questionnaire": (
-            "发送本群入营问卷" in message.text or "发送本群专属问卷" in message.text
-        ),
+        "should_send_questionnaire": is_questionnaire_command(message.text),
         "group_control_command": _group_bot_control_command(message),
         "explicit_bot_query_text": _explicit_bot_query_text(message),
     }
