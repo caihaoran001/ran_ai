@@ -661,11 +661,13 @@ def _mock_cases(cases: list[RagEvalCase]) -> list[RagEvaluationCaseResult]:
             )
         output.append(result)
 
-    if output:
-        failure = next(
-            (item for item in output if item.case_id == "rag-chat-cap-ambiguity"),
-            output[0],
-        )
+    # 这段低分样本的正文写死了瓶盖用量，只有目标题真的在本次选中范围内才注入；
+    # 跑子集时若退回 output[0]，会给无关题目扣一个对不上的低分和警告。
+    failure = next(
+        (item for item in output if item.case_id == "rag-chat-cap-ambiguity"),
+        None,
+    )
+    if failure is not None:
         # 分数低不再判死，所以这个样本保持 passed：它演示的是"忠实度低于参考线、
         # 出现在低分名单里"，而不是越界。越界样本由 agent 侧的禁用工具题演示。
         failure.status = "passed"
