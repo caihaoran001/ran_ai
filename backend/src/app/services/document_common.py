@@ -65,7 +65,8 @@ async def _recipient_name_and_gender(
     if submission:
         case_lang = getattr(service_case, "language", "zh") or "zh"
         fields = await get_active_questionnaire_fields(session, "intake", language=case_lang)
-        facts = build_intake_fact_summary(fields, submission.answers_json)
+        # 称呼要按服务单语言取：英文服务单不能拿到「NAR 先生（蔡浩然）」这种带中文敬称的串。
+        facts = build_intake_fact_summary(fields, submission.answers_json, language=case_lang)
         recipient = str(facts.get("recipient_name") or "").strip()
         gender = str(facts.get("gender") or "").strip() or "未提供"
         if recipient and recipient not in ("未提供", "N/A"):

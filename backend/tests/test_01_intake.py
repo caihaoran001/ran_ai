@@ -3004,6 +3004,146 @@ def test_english_document_content_rendering():
     assert table_block["rows"][1][0]["value"] == "Week 1"
 
 
+def test_english_documents_render_without_chinese_or_fullwidth_punctuation():
+    """英文交付文档的渲染层不得漏出中文或全角标点。
+
+    这些残留全是代码拼上去的，不是模型写的：兜底句、补回的安全边界、分句连接符、
+    「To：」和「Key Factor 1：」的冒号、标题里的「先生」。它们不受"输出必须全英文"
+    的提示词约束，所以只能在渲染层守住——英文客户拿到的文件里出现中文，
+    看起来就是没做完的半成品。
+    """
+    import re
+
+    from app.services.document_templates import (
+        build_document_content_json,
+        render_document_content,
+    )
+
+    cjk = re.compile(r"[一-鿿]")
+    fullwidth = "：；，。、（）"
+
+    # 模型这几栏留空 / 只给一句，正好逼出所有兜底与补句分支。
+    energy_json = build_document_content_json(
+        document_type=DocumentType.ENERGY_RESTART_PRESCRIPTION,
+        title="Personal Energy Reboot Diagnostic Report",
+        user_name="Alex",
+        display_name="Alex",
+        fields={
+            "recipient": "Alex",
+            "overview": {"name": "Alex", "height_weight": "180cm / 165 lbs"},
+            "personal_execution_basis": {},
+            "key_influence_chains": [
+                "Screen-heavy work -> low activity -> energy crash",
+                "Late dinner -> poor sleep -> low morning energy",
+            ],
+        },
+        language="en",
+    )
+    execution_json = build_document_content_json(
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28-Day HumanBurning Action Plan",
+        user_name="Alex",
+        display_name="Alex",
+        fields={
+            "weight_band": "Band B | Gentle Energy Kickstart",
+            "commitment_rule": "",
+            "weekly_standard": "Complete the protocol on 6 days; follow diet rules 5 days",
+            "adjust_stop_conditions": "Stop intense exercise if dizzy. Reassess weight weekly",
+        },
+        language="en",
+    )
+
+    for payload in (energy_json, execution_json):
+        assert payload["language"] == "en"
+        rendered = render_document_content(payload)
+        assert not cjk.search(rendered), f"chinese leaked: {cjk.findall(rendered)}"
+        assert not any(char in rendered for char in fullwidth), rendered
+
+    execution_md = render_document_content(execution_json)
+    # 被长度预算砍掉后必须用英文补回来，而不是中文
+    assert "log weight or waist/how you feel at least once." in execution_md
+    assert "seek medical care promptly" in execution_md
+
+
+def test_english_commitment_rule_is_forced_in_english():
+    """执行约定是强制覆写的固定口径，英文服务单不能被覆写成中文那句。"""
+
+    payload = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "one_sentence": (
+                "Stabilize your daily rhythm and daytime energy first, rather than "
+                "chasing fast weight loss."
+            ),
+            "success_path": {
+                "day28_goal": "Lose 4.4-6.6 lbs in 28 days",
+                "total_goal": "Build a sustainable rhythm with steady energy.",
+            },
+        },
+        DocumentType.DAY28_EXECUTION_STANDARD.value: {
+            "day28_goal": "Lose 4.4-6.6 lbs in 28 days",
+            "path_goal": "Build a sustainable rhythm with steady energy.",
+            "commitment_rule": "Whatever the model wrote",
+        },
+    }
+
+    normalized = _normalize_combined_document_payload(
+        payload, "Alex", shared_analysis={}, language="en"
+    )
+    rule = normalized[DocumentType.DAY28_EXECUTION_STANDARD.value]["commitment_rule"]
+    assert rule.startswith("Standard tier: 60% full check-in rate")
+    assert not re.search(r"[一-鿿]", rule)
+
+    zh_payload = {
+        DocumentType.ENERGY_RESTART_PRESCRIPTION.value: {
+            "one_sentence": "你需要先稳住全天节律和能量曲线，而不是追求快速掉秤。",
+            "success_path": {
+                "day28_goal": "28天减重4-6斤",
+                "total_goal": "建立稳定的三餐节律和精力曲线，减少午后困倦和晚餐后失控。",
+            },
+            "core_conclusions": {"day28_task": "先解决晚餐失控和白天精力波动。"},
+        },
+        DocumentType.DAY28_EXECUTION_STANDARD.value: {
+            "day28_goal": "28天减重4-6斤",
+            "path_goal": "建立稳定的三餐节律和精力曲线。",
+            "principle": "先守三餐节律和晚间收口，再放大运动和结果。",
+            "current_mainline": "节律稳定",
+        },
+    }
+    zh_normalized = _normalize_combined_document_payload(
+        zh_payload, "张三", shared_analysis={}
+    )
+    assert zh_normalized[DocumentType.DAY28_EXECUTION_STANDARD.value]["commitment_rule"] == (
+        "标准档累计完整打卡率60%；高承诺档85%，均在群内确认后生效；当天五项都有回答才计为1个完整打卡日。"
+    )
+
+
+def test_english_recipient_name_drops_chinese_honorific():
+    from app.services.intake_facts import _recipient_name
+
+    assert _recipient_name("NAR", "蔡浩然", "男", language="en") == "NAR (蔡浩然)"
+    assert _recipient_name("Alex", "Alex", "female", language="en") == "Alex"
+    # 缺名字仍然回中文哨兵，全系统按它判空
+    assert _recipient_name("", "", "", language="en") == "未提供"
+    # 中文侧字节级不变
+    assert _recipient_name("NAR", "蔡浩然", "男") == "NAR 先生（蔡浩然）"
+
+
+def test_english_document_filename_has_no_chinese_honorific():
+    assert _document_filename(
+        user_name="Alex",
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28-Day HumanBurning Action Plan",
+        gender="男",
+        language="en",
+    ) == "Alex_28-Day HumanBurning Action Plan.docx"
+    assert _document_filename(
+        user_name="张三",
+        document_type=DocumentType.DAY28_EXECUTION_STANDARD,
+        title="28天执行标准与打卡要求",
+        gender="男",
+    ) == "张三先生_28天执行标准与打卡要求.docx"
+
+
 @pytest.mark.asyncio
 async def test_english_intake_submit_reply(db_session, monkeypatch):
     from datetime import date

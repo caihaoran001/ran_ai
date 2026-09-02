@@ -215,7 +215,9 @@ def build_intake_fact_summary(
         "name": legal_name or "未提供",
         "legal_name": legal_name or "未提供",
         "preferred_name": preferred_name or legal_name or "未提供",
-        "recipient_name": _recipient_name(preferred_name or legal_name, legal_name, gender),
+        "recipient_name": _recipient_name(
+            preferred_name or legal_name, legal_name, gender, language=language
+        ),
         "gender": gender or "未提供",
         "age": age or "未提供",
         "city": city or "未提供",
@@ -988,9 +990,18 @@ def _weight_kg_to_jin(value: Any) -> str:
     return _weight_kg_to_display(value, language="zh")
 
 
-def _recipient_name(preferred_name: str, legal_name: str, gender: str) -> str:
+def _recipient_name(preferred_name: str, legal_name: str, gender: str, language: str = "zh") -> str:
     preferred = (preferred_name or "").strip()
     legal = (legal_name or "").strip()
+    # 英文侧不加敬称：中文靠「先生/女士」表尊重，英文交付文件直接称呼客户的常用名
+    # 才自然，硬翻成 Mr./Ms. 反而别扭，也不必再赌性别判断对不对。括号也要用半角，
+    # 否则英文标题里会出现「NAR 先生（蔡浩然）」这种中英混排。
+    if language == "en":
+        if preferred and legal and preferred != legal:
+            return f"{preferred} ({legal})"
+        # 缺名字仍然回中文哨兵：全系统按「未提供」判空（含渲染层的英文映射），
+        # 这里换成英文串会让判空逻辑把它当成真名字用。
+        return preferred or legal or "未提供"
     suffix = _gender_suffix(gender)
     if preferred and legal and preferred != legal:
         base = f"{preferred}{suffix}"

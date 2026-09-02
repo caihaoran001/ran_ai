@@ -100,10 +100,17 @@ def write_template_docx(content_json: dict[str, Any], output_path: Path) -> None
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
     title = str(content_json.get("title") or "交付文件")
+    # 英文执行单的标题不含中文关键词，漏掉它就会按宽松版式排版、顶到第二页。
     compact_execution = any(
         marker in title
-        for marker in ("28天高燃人生执行建议书", "28天执行标准与打卡要求")
+        for marker in (
+            "28天高燃人生执行建议书",
+            "28天执行标准与打卡要求",
+            "28-Day HumanBurning Action Plan",
+        )
     )
+    # 英文文档一律用半角标点，避免 .docx 里出现 "To：Alex" 这种中英混排。
+    label_sep = ": " if content_json.get("language") == "en" else "："
     section = doc.sections[0]
     section.page_width = Cm(21.0)
     section.page_height = Cm(29.7)
@@ -124,12 +131,18 @@ def write_template_docx(content_json: dict[str, Any], output_path: Path) -> None
     _add_paragraph(doc, title, bold=True, size=13 if compact_execution else 16, alignment=WD_ALIGN_PARAGRAPH.CENTER, compact=compact_execution, space_after=8)
     recipient = str(content_json.get("recipient") or "").strip()
     if recipient and content_json.get("show_recipient", True):
-        _add_paragraph(doc, f"To：{recipient}", bold=True, size=9 if compact_execution else 10, compact=compact_execution)
+        _add_paragraph(doc, f"To{label_sep}{recipient}", bold=True, size=9 if compact_execution else 10, compact=compact_execution)
 
     for block in content_json.get("blocks") or []:
         block_title = str(block.get("title") or "").strip()
         if block.get("display") == "inline":
-            _add_inline_paragraph(doc, block_title, str(block.get("content") or "").strip(), compact=compact_execution)
+            _add_inline_paragraph(
+                doc,
+                block_title,
+                str(block.get("content") or "").strip(),
+                compact=compact_execution,
+                label_sep=label_sep,
+            )
             continue
         if block_title:
             _add_paragraph(
@@ -276,12 +289,19 @@ def _add_paragraph(
     run.bold = bold
 
 
-def _add_inline_paragraph(doc: Document, title: str, content: str, *, compact: bool = False) -> None:
+def _add_inline_paragraph(
+    doc: Document,
+    title: str,
+    content: str,
+    *,
+    compact: bool = False,
+    label_sep: str = "：",
+) -> None:
     paragraph = doc.add_paragraph(style="Normal")
     paragraph.paragraph_format.space_after = Pt(2 if compact else 6)
     paragraph.paragraph_format.line_spacing = Pt(15 if compact else 18)
     if title:
-        title_run = paragraph.add_run(f"{title}：")
+        title_run = paragraph.add_run(f"{title}{label_sep}")
         title_run.font.name = "Microsoft YaHei"
         title_run._element.rPr.rFonts.set(qn("w:eastAsia"), "微软雅黑")
         title_run.font.size = Pt(9 if compact else 10)

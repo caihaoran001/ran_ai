@@ -365,8 +365,13 @@ def build_document_content_json(
     language: str = "zh",
 ) -> dict[str, Any]:
     if document_type == DocumentType.ENERGY_RESTART_PRESCRIPTION:
-        return _build_energy(title, user_name, display_name, fields, language=language)
-    return _build_execution(title, user_name, display_name, fields, language=language)
+        payload = _build_energy(title, user_name, display_name, fields, language=language)
+    else:
+        payload = _build_execution(title, user_name, display_name, fields, language=language)
+    # 落库带上语言：Markdown 与 .docx 都由 content_json 二次渲染，渲染层要靠它决定
+    # 用「To：」还是「To: 」这类标点。历史文档没有这个键，按中文渲染与原样一致。
+    payload["language"] = language
+    return payload
 
 
 def build_stage_report_content_json(
@@ -401,24 +406,27 @@ def build_stage_report_content_json(
         ]
     payload = _payload(title=title, recipient=user_name, blocks=blocks)
     payload["stage"] = stage
+    payload["language"] = language
     return payload
 
 
 def render_document_content(content_json: dict[str, Any]) -> str:
     lines = []
+    # 英文文档不能带全角标点：客户看到的是 "To：NAR"「Key Factor 1：」这种中英混排。
+    label_sep = ": " if content_json.get("language") == "en" else "："
     if content_json.get("show_header_brand", True):
         lines.append("Powered by HumanBurning.AI")
     lines.append(f"# {content_json.get('title') or '交付文件'}")
     recipient = _text(content_json.get("recipient"))
     if recipient and content_json.get("show_recipient", True):
-        lines.append(f"To：{recipient}")
+        lines.append(f"To{label_sep}{recipient}")
     for block in content_json.get("blocks") or []:
         title = _text(block.get("title"))
         kind = block.get("kind")
         if block.get("display") == "inline":
             content = _text(block.get("content"))
             if title and content:
-                lines.append(f"{title}：{content}")
+                lines.append(f"{title}{label_sep}{content}")
             elif content:
                 lines.append(content)
             continue
@@ -566,7 +574,8 @@ def _build_execution(
             focus_val = _execution_sentence(
                 row.get("core_task") or row.get("focus") or fixed_focus_en[week_label],
                 max_parts=1,
-                max_len=24,
+                max_len=48,
+                language="en",
             )
             actions_val = (
                 row.get("acceptance_standard")
@@ -595,8 +604,16 @@ def _build_execution(
             _core_actions_block(fields.get("core_actions"), is_en=True),
             {"key": "weekly_plan", "title": "7. 4-Week Action Schedule", "kind": "table", "rows": table_rows},
             _daily_checkin_block(fields.get("daily_checkin"), is_en=True),
-            _text_block("weekly_standard", "9. Weekly Pass Criteria", _weekly_standard_text(fields.get("weekly_standard"))),
-            _text_block("adjust_stop_conditions", "10. Adjustment & Stopping Criteria", _adjust_stop_conditions_text(fields.get("adjust_stop_conditions"))),
+            _text_block(
+                "weekly_standard",
+                "9. Weekly Pass Criteria",
+                _weekly_standard_text(fields.get("weekly_standard"), language="en"),
+            ),
+            _text_block(
+                "adjust_stop_conditions",
+                "10. Adjustment & Stopping Criteria",
+                _adjust_stop_conditions_text(fields.get("adjust_stop_conditions"), language="en"),
+            ),
         ]
         payload = _payload(title=f"{display_name or user_name} | {title}", recipient="", blocks=blocks)
         payload["show_recipient"] = False
@@ -1041,7 +1058,8 @@ def _execution_goal_summary_block(fields: dict[str, Any], is_en: bool = False) -
             f"Management Band: {_length_checked(_localize_band_and_units_en(fields.get('weight_band')), max_len=60)}",
             f"Standard Goal: {_length_checked(_localize_band_and_units_en(fields.get('base_goal')), max_len=60)}",
             f"High Commitment Goal: {_length_checked(_localize_band_and_units_en(fields.get('challenge_goal')), max_len=60)}",
-            f"Execution Agreement: {_length_checked(_localize_band_and_units_en(fields.get('commitment_rule')), max_len=120)}",
+            # 英文预算按中文的两倍给（中文 72）：同一句英文的字符数本来就是中文的 2 倍多。
+            f"Execution Agreement: {_length_checked(_localize_band_and_units_en(fields.get('commitment_rule')), max_len=150)}",
             f"Long-term Direction: {_length_checked(_localize_band_and_units_en(fields.get('path_goal') or fields.get('long_term_goal')), max_len=80)}",
             f"Current Mainline: {_length_checked(_localize_band_and_units_en(fields.get('current_mainline')), max_len=50)}",
         ]
@@ -1080,7 +1098,8 @@ def _personal_execution_basis_block(fields: dict[str, Any], is_en: bool = False)
         for index, item in enumerate(chains[:2], start=1):
             text = _clean_text(item)
             if text:
-                lines.append(f"{'Key Factor ' if is_en else '关键影响'}{index}：{text}")
+                label = f"Key Factor {index}: " if is_en else f"关键影响{index}："
+                lines.append(f"{label}{text}")
 
     outcomes = fields.get("desired_outcomes")
     if isinstance(outcomes, list):
@@ -1352,27 +1371,60 @@ def _compact_standard(value: Any) -> str:
     return compact[:90].rstrip("；，,。") + "。"
 
 
-def _execution_sentence(value: Any, *, max_parts: int, max_len: int) -> str:
+def _execution_sentence(value: Any, *, max_parts: int, max_len: int, language: str = "zh") -> str:
+    is_en = language == "en"
+    joiner = "; " if is_en else "；"
+    strip_chars = "；;，,。. " if is_en else "；，,。 "
     text_val = _clean_text(value)
     if not text_val:
         return ""
-    parts = [part.strip() for part in re_split_standard(text_val) if part.strip()]
+    parts = [part.strip() for part in re_split_standard(text_val, language=language) if part.strip()]
     if not parts:
         parts = [text_val]
     selected: list[str] = []
     for part in parts:
-        candidate = "；".join([*selected, part]).strip("；，,。 ")
+        candidate = joiner.join([*selected, part]).strip(strip_chars)
         if selected and len(candidate) > max_len:
             break
         selected.append(part)
         if len(selected) >= max_parts:
             break
-    compact = "；".join(selected or parts[:1]).strip("；，,。 ")
-    return compact + ("。" if compact and compact[-1] not in "。！？" else "")
+    compact = joiner.join(selected or parts[:1]).strip(strip_chars)
+    if not compact:
+        return ""
+    if is_en:
+        return compact + ("" if compact[-1] in ".!?" else ".")
+    return compact + ("" if compact[-1] in "。！？" else "")
 
 
-def _weekly_standard_text(value: Any) -> str:
-    text_val = _execution_sentence(value, max_parts=3, max_len=76)
+_WEEKLY_MEASURE_HINTS_EN = ("weight", "waist", "measure", "how you feel", "body feel")
+
+
+def _weekly_standard_text(value: Any, language: str = "zh") -> str:
+    """每周通过标准：英文侧的兜底与补句必须是英文，长度预算也要放宽。
+
+    英文表达同一件事的字符数约为中文的 2 倍多，沿用中文预算会把第三句（正好是
+    「记录体重/围度」那句）挤掉，然后又被下面的补句用中文加回来——客户看到的就是
+    一行英文后面跟一句中文。
+    """
+
+    is_en = language == "en"
+    text_val = _execution_sentence(
+        value,
+        max_parts=3,
+        max_len=170 if is_en else 76,
+        language=language,
+    )
+    if is_en:
+        if not text_val:
+            return (
+                "Complete the product protocol and key diet actions on at least 5 days each week; "
+                "hit the planned activity or step target; log weight, waist or how you feel at least once."
+            )
+        lowered = text_val.lower()
+        if not any(hint in lowered for hint in _WEEKLY_MEASURE_HINTS_EN):
+            text_val = text_val.rstrip(".") + "; log weight or waist/how you feel at least once."
+        return text_val
     if not text_val:
         return "每周至少5天完成个案产品排班和关键饮食动作；运动或步数达到计划；至少记录1次体重、围度或体感。"
     if "体重" not in text_val and "围度" not in text_val and "体感" not in text_val:
@@ -1380,16 +1432,49 @@ def _weekly_standard_text(value: Any) -> str:
     return text_val
 
 
-def _adjust_stop_conditions_text(value: Any) -> str:
+_MEDICAL_HINTS_EN = ("medical", "physician", "doctor", "emergency")
+_FALLBACK_MEDICAL_EN = (
+    "If discomfort persists, or you have chest pain, difficulty breathing or noticeable "
+    "palpitations, stop and seek medical care promptly."
+)
+
+
+def _adjust_stop_conditions_text(value: Any, language: str = "zh") -> str:
     """调整与停止条件：一页预算可以砍长度，但不能把「及时就医」砍掉。
 
     这一栏的分句天然按严重度递增排列（减量 → 前移 → 暂停 → 联系班主任 → 就医），
     所以固定只留前两句，丢掉的正好是最重的那句安全边界，而落库的 content_md
     看不出被砍过。做法与 _weekly_standard_text 一致：截断后缺就医就补回来。
+
+    英文侧同理，但补回来的必须是英文——这是安全边界，混排中文等于英文客户读不到。
     """
 
-    fallback_medical = "持续不适或出现胸痛、呼吸困难、明显心悸时，暂停执行并及时就医。"
-    text_val = _execution_sentence(value, max_parts=2, max_len=88)
+    is_en = language == "en"
+    fallback_medical = _FALLBACK_MEDICAL_EN if is_en else "持续不适或出现胸痛、呼吸困难、明显心悸时，暂停执行并及时就医。"
+    text_val = _execution_sentence(
+        value,
+        max_parts=2,
+        max_len=200 if is_en else 88,
+        language=language,
+    )
+    if is_en:
+        if not text_val:
+            return (
+                "If you feel palpitations, notably worse sleep or stomach discomfort, halve "
+                f"Morning C / Noon B and take them earlier. {fallback_medical}"
+            )
+        if any(hint in text_val.lower() for hint in _MEDICAL_HINTS_EN):
+            return text_val
+        medical = next(
+            (
+                part.strip()
+                for part in re_split_standard(_clean_text(value), language="en")
+                if any(hint in part.lower() for hint in _MEDICAL_HINTS_EN)
+            ),
+            "",
+        )
+        tail = medical.strip("；;，,。. ") or fallback_medical.rstrip(".")
+        return f"{text_val.rstrip('.')}; {tail}."
     if not text_val:
         return (
             "心慌、睡眠明显变差或胃部不适时，早C/午B先减半并前移；"
@@ -1418,9 +1503,13 @@ def _reminder_text(value: Any) -> str:
     return compact + ("。" if compact[-1] not in "。！？" else "")
 
 
-def re_split_standard(value: str) -> list[str]:
+def re_split_standard(value: str, language: str = "zh") -> list[str]:
     import re
 
+    if language == "en":
+        # 英文一句话用句号收尾，不切句号就整段算一句，长度预算一比就整段被丢。
+        # 小数点（0.5kg）和缩写（e.g.）不能切，所以只切「句号 + 空白/行尾」。
+        return re.split(r"[。；;\n]+|(?<!\d)\.(?=\s|$)", value)
     return re.split(r"[。；;\n]+", value)
 
 

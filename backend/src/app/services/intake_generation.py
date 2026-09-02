@@ -955,6 +955,7 @@ def _normalize_intake_analysis_package(
         document_root,
         user_name,
         shared_analysis=shared,
+        language=case_lang,
     )
     if not document_payloads:
         raise RetryableIntakePackageError(
@@ -1911,11 +1912,18 @@ def _text_from_payload(value: object) -> str:
     return str(value).strip()
 
 
+_COMMITMENT_RULE_EN = (
+    "Standard tier: 60% full check-in rate; high commitment: 85%. Both start once you "
+    "confirm in the group; a day counts as complete only when all five items are answered."
+)
+
+
 def _normalize_combined_document_payload(
     payload: dict,
     user_name: str,
     *,
     shared_analysis: dict[str, object] | None = None,
+    language: str = "zh",
 ) -> dict[str, dict]:
     energy_key = DocumentType.ENERGY_RESTART_PRESCRIPTION.value
     execution_key = DocumentType.DAY28_EXECUTION_STANDARD.value
@@ -2008,10 +2016,14 @@ def _normalize_combined_document_payload(
         (execution_payload, "base_goal", shared.get("base_goal")),
         (execution_payload, "challenge_goal", shared.get("challenge_goal")),
         (execution_payload, "execution_path", shared.get("execution_path")),
+        # 执行约定是强制覆写的固定口径，所以必须按服务单语言给两套原生文案——
+        # 沿用中文串会让英文执行单的目标摘要里夹一整句中文。
         (
             execution_payload,
             "commitment_rule",
-            "标准档累计完整打卡率60%；高承诺档85%，均在群内确认后生效；当天五项都有回答才计为1个完整打卡日。",
+            _COMMITMENT_RULE_EN
+            if language == "en"
+            else "标准档累计完整打卡率60%；高承诺档85%，均在群内确认后生效；当天五项都有回答才计为1个完整打卡日。",
         ),
         (shared_path, "day28_goal", shared.get("day28_goal")),
         (execution_payload, "day28_goal", shared.get("day28_goal")),

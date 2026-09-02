@@ -516,6 +516,7 @@ async def create_temporary_document_file(
         document_type=document.document_type,
         title=document.title,
         gender=gender,
+        language=getattr(service_case, "language", "zh") or "zh",
     )
     await _render_document_file(
         output_path=output_path,
@@ -625,10 +626,16 @@ def _document_filename(
     document_type: DocumentType,
     title: str,
     gender: str,
+    language: str = "zh",
 ) -> str:
     # 性别以入营问卷为准（男→先生 / 女→女士 / 未提供→不带后缀），
     # 不再靠扫描正文关键词猜，避免同一用户各文件称呼不一致。
-    suffix = {"男": "先生", "女": "女士"}.get((gender or "").strip(), "")
+    # 英文服务单不加中文敬称：客户收到的附件名不该写成「Alex 先生_...docx」。
+    suffix = (
+        ""
+        if language == "en"
+        else {"男": "先生", "女": "女士"}.get((gender or "").strip(), "")
+    )
     display_name = f"{user_name}{suffix}" if suffix else user_name
     return safe_filename(f"{display_name}_{title}.docx")
 
