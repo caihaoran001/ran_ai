@@ -314,7 +314,12 @@ def build_service_lifecycle_tools(
             }
 
     async def set_service_case_language(language: str) -> dict[str, Any]:
-        """由当前群内工作人员或用户切换本服务单的主服务语言（zh 或 en）。"""
+        """由当前群内工作人员切换本服务单的主服务语言（zh 或 en）。
+
+        限定工作人员的理由：语言切一次，问卷、交付文档、阶段报告、定时提醒和
+        群内回复全部跟着换。客户随口一句 "can you speak English?" 不该有这个权限，
+        那属于转达给班主任的诉求，和本文件里其他生命周期工具是同一条边界。
+        """
         target_lang = (language or "").strip().lower()
         if target_lang in ("chinese", "zh-cn", "zh_cn", "cn", "中文", "汉语", "普通话"):
             target_lang = "zh"
@@ -330,6 +335,17 @@ def build_service_lifecycle_tools(
         now = datetime.now(timezone.utc)
         async with SessionLocal() as session:
             source, meta = await _explicit_group_source(session, context)
+            if source is None:
+                return {
+                    "ok": False,
+                    "error": "切换服务语言必须由工作人员在当前群里明确 @ 机器人提出。",
+                }
+            if source.sender_type != MessageSenderType.STAFF:
+                return {
+                    "ok": False,
+                    "error": "只有已识别的班主任或运营人员可以切换服务语言；客户的语言诉求请转达班主任。",
+                }
+
             service_case = await session.scalar(
                 select_active_service_cases(
                     ServiceCase.id == context.service_case_id
@@ -346,15 +362,14 @@ def build_service_lifecycle_tools(
                 }
 
             service_case.language = target_lang
-            if source:
-                _append_event(
-                    service_case,
-                    action="set_service_case_language",
-                    occurred_at=now,
-                    source=source,
-                    meta=meta,
-                    details={"language": target_lang},
-                )
+            _append_event(
+                service_case,
+                action="set_service_case_language",
+                occurred_at=now,
+                source=source,
+                meta=meta,
+                details={"language": target_lang},
+            )
             await session.commit()
             return {
                 "ok": True,
@@ -398,8 +413,10 @@ def build_service_lifecycle_tools(
             name="set_service_case_language",
             description=(
                 "Set or switch the primary service language for THIS group (strictly 'zh' for Chinese or 'en' for English). "
-                "Use when staff or user explicitly @mentions the bot or clearly asks to speak/chat in English or Chinese in this group "
-                "(e.g. '请使用英文对话', '此专属群全程使用英文对话', 'switch to English', 'use English', '全程中文', '换回中文'). "
+                "Switching also changes the questionnaire, delivery documents, stage reports and reminders, so it is "
+                "restricted to identified staff: use it only when a staff member explicitly @mentions the bot in this group "
+                "and asks to switch the group's language (e.g. '请使用英文对话', '此专属群全程使用英文对话', 'switch to English', '换回中文'). "
+                "It must not act on a customer's request — reply to the customer and let staff decide instead. "
                 "Never use for general quotes or incidental English/Chinese words in normal conversation."
             ),
         ),

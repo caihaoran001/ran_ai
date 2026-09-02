@@ -62,6 +62,7 @@ STATE_CHANGING_TOOLS = frozenset(
         "manage_reward_shipping",
         "restore_default_checkin_checklist",
         "set_checkin_checklist",
+        "set_service_case_language",
         "set_service_start_date",
         "update_checkin_followup_preferences",
     }
