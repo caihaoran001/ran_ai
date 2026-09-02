@@ -34,6 +34,8 @@ WEIGHT_MIN_KG = 25.0
 WEIGHT_MAX_KG = 300.0
 WAIST_MIN_CM = 40.0
 WAIST_MAX_CM = 200.0
+HEIGHT_MIN_CM = 90.0
+HEIGHT_MAX_CM = 250.0
 
 # 市制换算：1 尺 = 10 寸 = 33.333 厘米。
 CM_PER_CHI = 100.0 / 3.0
@@ -88,7 +90,23 @@ def first_number(text: str) -> float | None:
 
 
 _LBS_HINTS = ("lb", "lbs", "pound", "pounds", "磅")
-_INCH_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?\s*(?:inch(?:es)?|in)\b|\b(?:inch(?:es)?|in)\b)", re.IGNORECASE)
+# 英寸只认「数字紧跟单位」。``inch``/``inches``/``英寸``/双引号无歧义，直接放行；
+# 裸 ``in`` 是英语介词，必须排除 "80 in the morning" 这类句子——后面还跟着单词就不算单位。
+# 宁可漏判 "36 in waist"（按厘米走，会被下游腰高比矛盾检查拦下来让运营复测），
+# 也不能把介词当单位，那会把 80 厘米算成 203 厘米。
+_INCH_PATTERN = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:inch(?:es)?\b|英寸|[\"”″]|in\b(?!\s*[a-z]))",
+    re.IGNORECASE,
+)
+# 英尺英寸连写：5'10"、5'10、5 ft 10 in、5ft10、5 feet 10 inches、5.9 ft。
+_FEET_INCH_PATTERN = re.compile(
+    # 单位后用 (?![a-z]) 而不是 \b：``5ft10`` 里 "t" 紧跟数字不构成词边界，用 \b 会整条漏判。
+    r"(\d+(?:\.\d+)?)\s*(?:['’′]|ft(?![a-z])|feet(?![a-z])|foot(?![a-z])|英尺)\s*"
+    r"(?:(\d+(?:\.\d+)?)\s*(?:inch(?:es)?\b|英寸|[\"”″]|in\b(?!\s*[a-z]))?)?",
+    re.IGNORECASE,
+)
+_CM_PER_INCH = 2.54
+_INCH_PER_FOOT = 12
 
 
 def has_explicit_kg(text: str) -> bool:
@@ -125,6 +143,71 @@ def waist_explicit_unit_scale(text: str) -> float | None:
     if "m" in lower or "米" in lower:
         return 100.0
     return None
+
+
+def parse_feet_inches_cm(raw: object) -> float | None:
+    """把英尺英寸写法换算成厘米；不是这种写法返回 None。
+
+    英文客户填身高几乎只会写 ``5'10"``、``5 ft 10``、``5.9 ft`` 这三类。
+    英尺部分必须出现单位记号，否则 ``5.9`` 到底是英尺还是米没法判——那种情况
+    交给下游的无单位启发式，不在这里猜。
+    """
+
+    text = normalize_decimal_text(raw)
+    match = _FEET_INCH_PATTERN.search(text)
+    if not match:
+        return None
+    try:
+        feet = float(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    inches = 0.0
+    if match.group(2):
+        try:
+            inches = float(match.group(2))
+        except ValueError:
+            inches = 0.0
+    if feet <= 0:
+        return None
+    return (feet * _INCH_PER_FOOT + inches) * _CM_PER_INCH
+
+
+def parse_height_cm(raw: object) -> BodyValue:
+    """把自由填写的身高解析成厘米。
+
+    问卷题面写的是厘米，但英文客户按本地习惯填英寸/英尺，中文客户会填「1.75」。
+    单位规则和体重、腰围放在同一层，问卷与打卡共用一套，不在业务代码里各写一份。
+
+    没写单位时保留原有启发式：1.2–2.3 之间的数不可能是厘米，按米换算。
+    刻意**不**按语言猜英制——同一个裸数字 ``70`` 对英文客户是英寸、对中文客户是笔误，
+    猜错会把 BMI 和管理带整档算错，不如让前端把人挡在提交前、让他写清单位。
+    """
+
+    text = normalize_decimal_text(raw)
+    number = first_number(text)
+    if number is None:
+        return BodyValue(None, REASON_NO_NUMBER)
+
+    feet_inches = parse_feet_inches_cm(text)
+    if feet_inches is not None:
+        return _finish_height(feet_inches, unit_verified=True, corrected_from="feet_inches")
+
+    if number <= 0:
+        return BodyValue(None, REASON_OUT_OF_RANGE)
+
+    lower = text.lower()
+    if has_explicit_inch(text):
+        return _finish_height(number * _CM_PER_INCH, unit_verified=True, corrected_from="inch")
+    if "cm" in lower or "厘米" in lower or "公分" in lower:
+        return _finish_height(number, unit_verified=True)
+    if "mm" in lower or "毫米" in lower:
+        return _finish_height(number / 10, unit_verified=True, corrected_from="millimeter")
+    if "m" in lower or "米" in lower:
+        return _finish_height(number * 100, unit_verified=True, corrected_from="meter")
+
+    if 1.2 <= number <= 2.3:
+        return _finish_height(number * 100, unit_verified=False, corrected_from="meter")
+    return _finish_height(number, unit_verified=False)
 
 
 def parse_weight_kg(raw: object, *, baseline_kg: float | None = None) -> BodyValue:
@@ -246,5 +329,13 @@ def _finish_waist(
     value: float, *, unit_verified: bool, corrected_from: str | None = None
 ) -> BodyValue:
     if not WAIST_MIN_CM <= value <= WAIST_MAX_CM:
+        return BodyValue(None, REASON_OUT_OF_RANGE)
+    return BodyValue(round(value, 2), REASON_OK, unit_verified, corrected_from)
+
+
+def _finish_height(
+    value: float, *, unit_verified: bool, corrected_from: str | None = None
+) -> BodyValue:
+    if not HEIGHT_MIN_CM <= value <= HEIGHT_MAX_CM:
         return BodyValue(None, REASON_OUT_OF_RANGE)
     return BodyValue(round(value, 2), REASON_OK, unit_verified, corrected_from)

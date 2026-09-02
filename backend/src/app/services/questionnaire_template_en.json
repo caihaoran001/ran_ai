@@ -115,9 +115,9 @@
       "id": "SIMPLE1774104038286mn0fqky6",
       "key": "SIMPLE1774104038286mn0fqky6",
       "type": "SIMPLE",
-      "title": "Your Height (cm)",
-      "label": "Your Height (cm)",
-      "subtitle": "e.g., 175 (or enter 1.75 for meters)",
+      "title": "Your Height (cm, or feet/inches)",
+      "label": "Your Height (cm, or feet/inches)",
+      "subtitle": "e.g., 175 cm, or 1.75 m. If you measure in feet or inches, please include the unit — e.g. 5'10\" or 70 in.",
       "required": true,
       "options": []
     },

@@ -3,7 +3,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.services.body_metrics import has_explicit_inch, has_explicit_jin, has_explicit_lbs, parse_waist_cm
+from app.services.body_metrics import (
+    has_explicit_inch,
+    has_explicit_jin,
+    has_explicit_lbs,
+    parse_height_cm,
+    parse_waist_cm,
+)
 
 CUSTOM_ANSWER_LABEL = "其他（用户补充）"
 
@@ -151,7 +157,7 @@ def build_intake_fact_summary(
     pressure_reaction = value_for("压力大时") or value_for("stress")
     diet_pattern = value_for("长期饮食模式") or value_for("dietary pattern") or value_for("diet pattern")
 
-    height = _normalize_height_cm(_first_number(height_raw))
+    height = _normalize_height_cm(height_raw)
     weight = _parse_weight_kg(weight_raw)
     waist = _normalize_waist_cm(waist_raw)
     stable_comfort_weight = _parse_weight_kg(stable_comfort_weight_raw)
@@ -456,19 +462,23 @@ def _normalize_waist_cm(value: str) -> float | None:
     return number
 
 
-def _normalize_height_cm(value: float | None) -> float | None:
-    """身高单位归一：问卷标题写了 cm，用户照样会填「1.65」。
+def _normalize_height_cm(value: Any) -> float | None:
+    """身高统一成厘米。单位规则统一由 ``body_metrics`` 定义，问卷与打卡共用一套。
 
-    1.2–2.3 之间的数不可能是厘米，按米换算。体重的斤/公斤没有这种不重叠区间
-    （110 既可能是斤也可能是大基数公斤），不可判就不猜，留给人工复核。
-    不做这一步的话，1.65 会让 BMI 变成 20 万，并被 _replace_bmi_text 覆写到全文每一处。
+    问卷标题写了 cm，用户照样会填「1.65」（米），英文客户则会填「5'10"」「70 inches」
+    （英尺英寸）。不做单位归一的话，1.65 会让 BMI 变成 20 万、70 英寸会被当成 70 厘米
+    把 BMI 算成 185，而 BMI 决定管理带、安全减重空间和 28 天目标，事后无法纠正。
+
+    换算不出可信值时**不能**当成"没填"：身高缺失会直接拦掉文档生成
+    （见 ``intake_generation._document_generation_block_reasons``）。这里保留原始数字，
+    让离谱值走腰高比矛盾检查那道人工复核，和腰围的处理保持一致。
     """
 
-    if value is None or value <= 0:
-        return None
-    if 1.2 <= value <= 2.3:
-        return value * 100
-    return value
+    parsed = parse_height_cm(value)
+    if parsed.value is not None:
+        return parsed.value
+    number = _first_number(str(value or ""))
+    return number if number and number > 0 else None
 
 
 def _protected_lower_uplift(

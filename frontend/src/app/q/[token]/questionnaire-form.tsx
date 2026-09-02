@@ -26,9 +26,15 @@ type BodyIssue = { key: string; level: "hard" | "soft"; msg: string };
 type Band = { hardLow: number; softLow: number; softHigh: number; hardHigh: number };
 
 // 仅把紧跟数值的独立单位认作英制，不能把 "I think 80" 里的 in 当成 inches。
+// 裸 in 是英语介词，后面还跟着单词就不算单位（"80 in the morning" 必须按厘米走）。
+// 这三条规则与后端 body_metrics.py 的单位识别保持一致，改一处要同步另一处。
 const EXPLICIT_LBS = /\d+(?:\.\d+)?\s*(?:lbs?|pounds?)\b/i;
-const EXPLICIT_INCHES = /\d+(?:\.\d+)?\s*(?:inches?|in)\b/i;
+const EXPLICIT_INCHES = /\d+(?:\.\d+)?\s*(?:inches?\b|英寸|["”″]|in\b(?!\s*[a-z]))/i;
 const EXPLICIT_METERS = /\d+(?:\.\d+)?\s*m\b/i;
+// 英尺英寸连写：5'10"、5'10、5 ft 10 in、5ft10、5 feet、5.9 ft。
+// 单位后用 (?![a-z]) 而不是 \b，否则 "5ft10" 里 t 紧跟数字不构成词边界会整条漏判。
+const EXPLICIT_FEET =
+  /(\d+(?:\.\d+)?)\s*(?:['’′]|ft(?![a-z])|feet(?![a-z])|foot(?![a-z])|英尺)\s*(?:(\d+(?:\.\d+)?)\s*(?:inches?\b|英寸|["”″]|in\b(?!\s*[a-z]))?)?/i;
 
 const BANDS: Record<"height" | "weight" | "age" | "bmi", Band> = {
   height: { hardLow: 120, softLow: 140, softHigh: 200, hardHigh: 220 },
@@ -82,6 +88,28 @@ function checkBodyMeasurements(
     const isJin = text.includes("斤") && !["公斤", "千克", "kg", "㎏"].some((unit) => text.includes(unit));
     return { ...value, num: isJin ? value.num / 2 : value.num };
   };
+  // 身高换算后要告诉下游"单位已明确"，否则 177.8 还会被"疑似填成米"那条规则再判一次。
+  const heightCm = (
+    value: { key: string; num: number; raw: string } | null,
+  ): { key: string; num: number; raw: string; converted: boolean } | null => {
+    if (!value) return null;
+    const text = value.raw;
+    const lower = text.toLowerCase();
+    const feet = text.match(EXPLICIT_FEET);
+    if (feet) {
+      const ft = parseFloat(feet[1]);
+      const inch = feet[2] ? parseFloat(feet[2]) : 0;
+      if (ft > 0) return { ...value, num: (ft * 12 + inch) * 2.54, converted: true };
+    }
+    if (EXPLICIT_INCHES.test(text)) return { ...value, num: value.num * 2.54, converted: true };
+    if (lower.includes("cm") || lower.includes("厘米") || lower.includes("公分")) {
+      return { ...value, converted: true };
+    }
+    if (EXPLICIT_METERS.test(text) || lower.includes("米")) {
+      return { ...value, num: value.num * 100, converted: true };
+    }
+    return { ...value, converted: false };
+  };
   const waistCm = (value: { key: string; num: number; raw: string } | null) => {
     if (!value) return null;
     const text = value.raw.toLowerCase();
@@ -94,19 +122,20 @@ function checkBodyMeasurements(
     return value;
   };
   const issues: BodyIssue[] = [];
-  const h = find("身高", "height");
+  const h = heightCm(find("身高", "height"));
   const w = weightKg(find("当前体重", "体重", "weight", "current weight"));
   const waist = waistCm(find("腰围", "waist"));
   const a = find("年龄", "age");
 
   if (h) {
-    if (h.num >= 1.2 && h.num <= 2.5) {
+    const shown = Number(h.num.toFixed(1));
+    if (!h.converted && h.num >= 1.2 && h.num <= 2.5) {
       issues.push({
         key: h.key,
         level: "hard",
         msg: isEn
-          ? `Height entered as ${h.num}. It appears to be in meters; please use centimeters (e.g., enter 170 for 1.7m).`
-          : `身高填写为 ${h.num}，疑似填成了“米”，请改用厘米（如 1.7 米应填 170）`,
+          ? `Height entered as ${shown}. It appears to be in meters; please use centimeters (e.g., enter 170 for 1.7m).`
+          : `身高填写为 ${shown}，疑似填成了“米”，请改用厘米（如 1.7 米应填 170）`,
       });
     } else {
       const lv = classifyBand(h.num, BANDS.height);
@@ -114,17 +143,19 @@ function checkBodyMeasurements(
         issues.push({
           key: h.key,
           level: "hard",
+          // 英文客户按本地习惯填的是英寸/英尺，只说"超出范围"会让人卡在这一题不知道怎么改，
+          // 必须把可接受的写法直接给出来。
           msg: isEn
-            ? `Height entered as ${h.num} cm is outside standard range. Please check for typos or unit errors.`
-            : `身高填写为 ${h.num} cm，明显超出常规范围，请检查是否填错或单位有误`,
+            ? `Height entered as ${shown} cm is outside standard range. If you measure in feet or inches, please write the unit — e.g. 5'10" or 70 in.`
+            : `身高填写为 ${shown} cm，明显超出常规范围，请检查是否填错或单位有误`,
         });
       } else if (lv === "soft") {
         issues.push({
           key: h.key,
           level: "soft",
           msg: isEn
-            ? `Height of ${h.num} cm deviates from typical range. Please confirm it is correct.`
-            : `身高 ${h.num} cm 偏离常见范围，请确认填写无误`,
+            ? `Height of ${shown} cm deviates from typical range. Please confirm it is correct.`
+            : `身高 ${shown} cm 偏离常见范围，请确认填写无误`,
         });
       }
     }

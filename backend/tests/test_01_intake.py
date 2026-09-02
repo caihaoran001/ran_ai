@@ -3144,6 +3144,42 @@ def test_imperial_units_weight_and_waist_conversion():
     assert _weight_kg_to_display(74.84, language="zh") == "149.7斤"
 
 
+def test_imperial_height_conversion():
+    """英文客户按本地习惯填英寸/英尺，必须换算成厘米。
+
+    不换算的话 70 会被当成 70 厘米，BMI 算成 185，管理带、安全减重空间和
+    28 天目标会整档算错，且生成后无法纠正。
+    """
+
+    from app.services.body_metrics import parse_height_cm
+    from app.services.intake_facts import _normalize_height_cm
+
+    # 英寸与英尺英寸的各种写法都要认
+    for raw in ('70 inches', '70 in', '70"', "5'10\"", "5'10", "5 ft 10 in", "5ft10"):
+        assert _normalize_height_cm(raw) == pytest.approx(177.8, 0.01), raw
+    assert _normalize_height_cm("5 feet") == pytest.approx(152.4, 0.01)
+    assert _normalize_height_cm("5.9 ft") == pytest.approx(179.8, 0.01)
+
+    # 原有中文/公制行为不能变
+    assert _normalize_height_cm("175") == 175.0
+    assert _normalize_height_cm("175cm") == 175.0
+    assert _normalize_height_cm("1.75") == 175.0
+    assert _normalize_height_cm("1.75m") == 175.0
+
+    # 无单位的裸数字不按语言猜英制：70 既可能是英寸也可能是笔误，
+    # 保留原值让前端拦在提交前、让下游腰高比矛盾检查兜住，不静默换算。
+    assert _normalize_height_cm("70") == 70.0
+    assert _normalize_height_cm("") is None
+    assert _normalize_height_cm("没量") is None
+
+    # 换算不出可信值时保留原始数字，不能清空——身高缺失会直接拦掉文档生成
+    assert _normalize_height_cm("500") == 500.0
+    assert parse_height_cm("500").value is None
+
+    # 英寸识别不能把英语介词当单位
+    assert _normalize_height_cm("80 in the morning") == 80.0
+
+
 def test_english_contradiction_followup_localization():
     from app.services.archivist.followup import compose_followup_message
 
