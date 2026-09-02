@@ -24,6 +24,8 @@ type Questionnaire = {
 
 type BodyIssue = { key: string; level: "hard" | "soft"; msg: string };
 type Band = { hardLow: number; softLow: number; softHigh: number; hardHigh: number };
+// 换算过的体征值。converted=false 表示用户没写单位，我们只是按公制原样收下。
+type BodyMeasure = { key: string; num: number; raw: string; converted: boolean };
 
 // 仅把紧跟数值的独立单位认作英制，不能把 "I think 80" 里的 in 当成 inches。
 // 裸 in 是英语介词，后面还跟着单词就不算单位（"80 in the morning" 必须按厘米走）。
@@ -80,18 +82,20 @@ function checkBodyMeasurements(
     }
     return null;
   };
-  const weightKg = (value: { key: string; num: number; raw: string } | null) => {
+  const weightKg = (value: { key: string; num: number; raw: string } | null): BodyMeasure | null => {
     if (!value) return null;
     const text = value.raw.toLowerCase();
     const isLbs = EXPLICIT_LBS.test(text) || text.includes("磅");
-    if (isLbs) return { ...value, num: value.num * 0.45359237 };
+    if (isLbs) return { ...value, num: value.num * 0.45359237, converted: true };
     const isJin = text.includes("斤") && !["公斤", "千克", "kg", "㎏"].some((unit) => text.includes(unit));
-    return { ...value, num: isJin ? value.num / 2 : value.num };
+    if (isJin) return { ...value, num: value.num / 2, converted: true };
+    const isKg = ["kg", "㎏", "公斤", "千克"].some((unit) => text.includes(unit));
+    return { ...value, converted: isKg };
   };
   // 身高换算后要告诉下游"单位已明确"，否则 177.8 还会被"疑似填成米"那条规则再判一次。
   const heightCm = (
     value: { key: string; num: number; raw: string } | null,
-  ): { key: string; num: number; raw: string; converted: boolean } | null => {
+  ): BodyMeasure | null => {
     if (!value) return null;
     const text = value.raw;
     const lower = text.toLowerCase();
@@ -110,22 +114,48 @@ function checkBodyMeasurements(
     }
     return { ...value, converted: false };
   };
-  const waistCm = (value: { key: string; num: number; raw: string } | null) => {
+  const waistCm = (value: { key: string; num: number; raw: string } | null): BodyMeasure | null => {
     if (!value) return null;
     const text = value.raw.toLowerCase();
-    if (EXPLICIT_INCHES.test(text) || text.includes("英寸")) return { ...value, num: value.num * 2.54 };
-    if (text.includes("mm") || text.includes("毫米")) return { ...value, num: value.num / 10 };
+    if (EXPLICIT_INCHES.test(text) || text.includes("英寸")) {
+      return { ...value, num: value.num * 2.54, converted: true };
+    }
+    if (text.includes("mm") || text.includes("毫米")) {
+      return { ...value, num: value.num / 10, converted: true };
+    }
     if ((EXPLICIT_METERS.test(text) && !text.includes("cm") && !text.includes("mm")) ||
         (text.includes("米") && !text.includes("厘米") && !text.includes("毫米"))) {
-      return { ...value, num: value.num * 100 };
+      return { ...value, num: value.num * 100, converted: true };
     }
-    return value;
+    const isCm = ["cm", "厘米", "公分"].some((unit) => text.includes(unit));
+    return { ...value, converted: isCm || text.includes("尺") || text.includes("寸") };
   };
   const issues: BodyIssue[] = [];
+  // 英文客户必须写单位。同一个裸数字在英制和公制里都成立——170 是厘米、70 是英寸、
+  // 5.9 是英尺；200 是磅还是公斤同样分不出来。猜错的代价极不对称：身高进 BMI 的分母
+  // 且要平方，体重错一倍 BMI 就错一倍，管理带、安全减重空间和 28 天目标会整档算错，
+  // 而文档一旦生成就没法纠正。体重尤其危险——它没有上限校验，200 磅当成 200 公斤
+  // 不会触发任何范围提示，会一路静默算进交付文件。相比之下让客户补一个单位只是一次提示。
+  //
+  // 中文侧刻意不强制：175 和 1.75 两个区间不重叠、判得准，给存量主客群加这道摩擦没有收益。
+  const requireUnit = (value: BodyMeasure | null, hint: string) => {
+    if (!isEn || !value || value.converted) return;
+    issues.push({
+      key: value.key,
+      level: "hard",
+      msg: `Please include the unit — e.g. ${hint}.`,
+    });
+  };
   const h = heightCm(find("身高", "height"));
   const w = weightKg(find("当前体重", "体重", "weight", "current weight"));
   const waist = waistCm(find("腰围", "waist"));
   const a = find("年龄", "age");
+
+  requireUnit(h, `175 cm, 5'10" or 70 in`);
+  requireUnit(w, "70 kg or 154 lbs");
+  requireUnit(waist, "80 cm or 31 inches");
+  // 单位没写清时下面的范围、BMI 和腰高比判断都建立在错的数值上，提示会互相矛盾。
+  if (issues.length) return issues;
 
   if (h) {
     const shown = Number(h.num.toFixed(1));

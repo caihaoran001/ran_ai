@@ -87,9 +87,9 @@ async def test_get_questionnaire_bilingual_by_case_language(
     assert len(data_en["fields"]) == 82
     titles_en = [f.get("title") or f.get("label") for f in data_en["fields"]]
     assert "Full Legal Name" in titles_en
-    # 题面文案会随英制单位提示调整，这里只锁"是英文身高题"，不锁具体措辞
+    # 题面文案会随英制单位提示调整，这里只锁"是英文体征题"，不锁具体措辞
     assert any(str(title).startswith("Your Height") for title in titles_en)
-    assert "Your Current Weight (kg or lbs)" in titles_en
+    assert any(str(title).startswith("Your Current Weight") for title in titles_en)
 
     # Request Chinese questionnaire
     res_zh = await public_client.get(f"/questionnaires/{token_zh}")
