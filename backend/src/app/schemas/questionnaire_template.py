@@ -4,11 +4,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.models.service_case import ServiceCaseLanguage
+
 
 class QuestionnaireTemplateRead(BaseModel):
     name: str
     template_key: str = "intake"
-    language: str = "zh"
+    language: ServiceCaseLanguage = ServiceCaseLanguage.ZH
     title: str | None = None
     description: str | None = None
     fields: list[dict[str, Any]]
@@ -17,7 +19,7 @@ class QuestionnaireTemplateRead(BaseModel):
 class QuestionnaireTemplateUpdate(BaseModel):
     name: str = "燃人AI 1.0 问卷"
     template_key: str = "intake"
-    language: str = "zh"
+    language: ServiceCaseLanguage = ServiceCaseLanguage.ZH
     title: str | None = None
     description: str | None = None
     fields: list[dict[str, Any]] = Field(default_factory=list)

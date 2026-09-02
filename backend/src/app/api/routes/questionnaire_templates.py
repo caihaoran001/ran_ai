@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
+from app.models.service_case import ServiceCaseLanguage
 from app.schemas.questionnaire_template import (
     QuestionnaireTemplateConfigRead,
     QuestionnaireTemplateConfigUpdate,
@@ -29,7 +30,7 @@ router = APIRouter()
 
 @router.get("", response_model=QuestionnaireTemplateRead)
 async def get_template(
-    language: str = Query(default="zh"),
+    language: ServiceCaseLanguage = Query(default=ServiceCaseLanguage.ZH),
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnaireTemplateRead:
     template = await get_active_questionnaire_template(session, language=language)
@@ -62,7 +63,7 @@ async def update_template(
 
 @router.get("/config", response_model=QuestionnaireTemplateConfigRead)
 async def get_template_config(
-    language: str = Query(default="zh"),
+    language: ServiceCaseLanguage = Query(default=ServiceCaseLanguage.ZH),
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnaireTemplateConfigRead:
     templates = [
@@ -76,7 +77,7 @@ async def get_template_config(
 @router.put("/config", response_model=QuestionnaireTemplateConfigRead)
 async def update_template_config(
     payload: QuestionnaireTemplateConfigUpdate,
-    language: str = Query(default="zh"),
+    language: ServiceCaseLanguage = Query(default=ServiceCaseLanguage.ZH),
     session: AsyncSession = Depends(get_session),
 ) -> QuestionnaireTemplateConfigRead:
     templates = [

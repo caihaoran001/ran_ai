@@ -19,6 +19,7 @@ import {
 
 type Template = {
   template_key: string;
+  language: "zh" | "en";
   name: string;
   title?: string | null;
   description?: string | null;
@@ -54,6 +55,8 @@ function templateLabel(template: { template_key: string; name: string }) {
 
 export function QuestionnaireConfigEditor({ config }: { config: Config }) {
   const [templates, setTemplates] = useState(config.templates);
+  const [templateLanguage, setTemplateLanguage] = useState<"zh" | "en">("zh");
+  const [loadingTemplateLanguage, setLoadingTemplateLanguage] = useState(false);
   const [activeKey, setActiveKey] = useState(config.templates[0]?.template_key ?? "intake");
   const [schedule, setSchedule] = useState<ScheduleConfig>(() => normalizeSchedule(config.schedule));
   const [message, setMessage] = useState("");
@@ -83,13 +86,36 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
     [activeKey, templates],
   );
 
+  async function changeTemplateLanguage(language: "zh" | "en") {
+    if (language === templateLanguage || loadingTemplateLanguage) return;
+    setLoadingTemplateLanguage(true);
+    setMessage("");
+    try {
+      const response = await fetch(
+        `${API_BASE}/questionnaire-template/config?language=${language}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) throw new Error(await response.text());
+      const data = await response.json() as Config;
+      setTemplateLanguage(language);
+      setTemplates(data.templates);
+      setActiveKey(data.templates[0]?.template_key ?? "intake");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "未知错误";
+      setMessage(detail);
+      showToast("error", `切换问卷语言失败: ${detail}`);
+    } finally {
+      setLoadingTemplateLanguage(false);
+    }
+  }
+
   async function save() {
     setMessage("");
     setSaveStatus("saving");
     const nextTemplates: Template[] = templates;
 
     try {
-      const response = await fetch(`${API_BASE}/questionnaire-template/config`, {
+      const response = await fetch(`${API_BASE}/questionnaire-template/config?language=${templateLanguage}`, {
         method: "PUT",
         headers: {"content-type": "application/json"},
         body: JSON.stringify({ templates: nextTemplates, schedule: serializeSchedule(schedule) }),
@@ -117,23 +143,24 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
   const [resetting, setResetting] = useState(false);
 
   async function resetTemplates(templateKey?: string) {
-    const label = templateKey
-      ? `确定要将「${TEMPLATE_LABELS[templateKey] || templateKey}」还原为默认内容吗？`
+    const targetTemplateKey = templateLanguage === "en" ? "intake" : templateKey;
+    const label = targetTemplateKey
+      ? `确定要将「${TEMPLATE_LABELS[targetTemplateKey] || targetTemplateKey}」还原为默认内容吗？`
       : "确定要将全部问卷还原为默认内容吗？当前修改将丢失。";
     if (!window.confirm(label)) return;
 
     setResetting(true);
     try {
-      const url = templateKey
-        ? `${API_BASE}/questionnaire-template/reset?template_key=${encodeURIComponent(templateKey)}`
-        : `${API_BASE}/questionnaire-template/reset`;
+      const url = targetTemplateKey
+        ? `${API_BASE}/questionnaire-template/reset?template_key=${encodeURIComponent(targetTemplateKey)}&language=${templateLanguage}`
+        : `${API_BASE}/questionnaire-template/reset?language=${templateLanguage}`;
       const response = await fetch(url, { method: "POST" });
       if (response.ok) {
         const data = await response.json();
         const newTemplates = data.templates as Template[];
         setTemplates(newTemplates);
         if (data.schedule) setSchedule(normalizeSchedule(data.schedule));
-        showToast("success", templateKey ? "该问卷已还原为默认内容" : "全部问卷已还原为默认内容");
+        showToast("success", targetTemplateKey ? "该问卷已还原为默认内容" : "全部问卷已还原为默认内容");
       } else {
         showToast("error", `还原失败: ${await response.text()}`);
       }
@@ -206,6 +233,18 @@ export function QuestionnaireConfigEditor({ config }: { config: Config }) {
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                模板语言
+                <select
+                  value={templateLanguage}
+                  disabled={loadingTemplateLanguage}
+                  onChange={(event) => changeTemplateLanguage(event.target.value as "zh" | "en")}
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm disabled:opacity-50"
+                >
+                  <option value="zh">中文</option>
+                  <option value="en">English</option>
+                </select>
+              </label>
               <SaveButton saveStatus={saveStatus} onClick={save} label="保存配置" />
               <Button
                 type="button"

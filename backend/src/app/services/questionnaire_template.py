@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.questionnaire_template import QuestionnaireTemplate
+from app.models.service_case import ServiceCaseLanguage
 from app.services.checkin_questionnaires import default_checkin_questionnaire_templates
 
 
@@ -21,19 +22,19 @@ def _load_template_json(filename: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def get_questionnaire_template(language: str = "zh") -> dict[str, Any]:
+def get_questionnaire_template(language: ServiceCaseLanguage | str = ServiceCaseLanguage.ZH) -> dict[str, Any]:
     filename = "questionnaire_template_en.json" if language == "en" else "questionnaire_template.json"
     return _load_template_json(filename)
 
 
-def get_questionnaire_fields(language: str = "zh") -> list[dict[str, Any]]:
+def get_questionnaire_fields(language: ServiceCaseLanguage | str = ServiceCaseLanguage.ZH) -> list[dict[str, Any]]:
     fields = get_questionnaire_template(language).get("fields", [])
     return fields if isinstance(fields, list) else []
 
 
 def default_questionnaire_template(
     template_key: str = INTAKE_TEMPLATE_KEY,
-    language: str = "zh",
+    language: ServiceCaseLanguage | str = ServiceCaseLanguage.ZH,
 ) -> dict[str, Any]:
     if template_key == INTAKE_TEMPLATE_KEY:
         template = get_questionnaire_template(language)
@@ -54,14 +55,23 @@ def default_questionnaire_template(
     raise KeyError(template_key)
 
 
-def default_questionnaire_templates(language: str = "zh") -> list[dict[str, Any]]:
-    return [default_questionnaire_template(INTAKE_TEMPLATE_KEY, language=language), *default_checkin_questionnaire_templates()]
+def default_questionnaire_templates(
+    language: ServiceCaseLanguage | str = ServiceCaseLanguage.ZH,
+) -> list[dict[str, Any]]:
+    intake = default_questionnaire_template(INTAKE_TEMPLATE_KEY, language=language)
+    # 只有入营问卷具备完整英文版本。日打卡 H5 已退役，不能把其中文配置伪装成英文模板。
+    if language == ServiceCaseLanguage.EN:
+        return [intake]
+    return [
+        intake,
+        *[{**template, "language": language} for template in default_checkin_questionnaire_templates()],
+    ]
 
 
 async def get_active_questionnaire_template(
     session: AsyncSession,
     template_key: str = INTAKE_TEMPLATE_KEY,
-    language: str = "zh",
+    language: ServiceCaseLanguage | str = ServiceCaseLanguage.ZH,
 ) -> dict[str, Any]:
     template = await session.scalar(
         select(QuestionnaireTemplate)
@@ -88,14 +98,14 @@ async def get_active_questionnaire_template(
 async def get_active_questionnaire_fields(
     session: AsyncSession,
     template_key: str = INTAKE_TEMPLATE_KEY,
-    language: str = "zh",
+    language: ServiceCaseLanguage | str = ServiceCaseLanguage.ZH,
 ) -> list[dict[str, Any]]:
     return list((await get_active_questionnaire_template(session, template_key, language=language)).get("fields") or [])
 
 
 async def get_all_active_questionnaire_templates(
     session: AsyncSession,
-    language: str = "zh",
+    language: ServiceCaseLanguage | str = ServiceCaseLanguage.ZH,
 ) -> list[dict[str, Any]]:
     templates = {item["template_key"]: item for item in default_questionnaire_templates(language=language)}
     active = list(
@@ -163,13 +173,14 @@ async def save_questionnaire_templates(
 ) -> list[dict[str, Any]]:
     for template in templates:
         template_key = str(template.get("template_key") or INTAKE_TEMPLATE_KEY)
-        tpl_lang = str(template.get("language") or language)
         await save_active_questionnaire_fields(
             session,
             list(template.get("fields") or []),
             name=str(template.get("name") or template_key),
             template_key=template_key,
-            language=tpl_lang,
+            # 批量编辑的语言由接口参数决定，不能让旧页面 payload 里的值把
+            # 英文模板写回中文分区，或跨语言覆盖另一份模板。
+            language=language,
             title=template.get("title"),
             description=template.get("description"),
         )

@@ -3,15 +3,18 @@ from __future__ import annotations
 from datetime import date
 import pytest
 from httpx import AsyncClient
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.service_case import ServiceCase, ServiceCaseStatus
+from app.schemas.questionnaire_template import QuestionnaireTemplateUpdate
 from app.models.user import User
 from app.services.intake_facts import build_intake_fact_summary
 from app.services.questionnaire_template import (
     get_active_questionnaire_fields,
     get_questionnaire_template,
     save_active_questionnaire_fields,
+    save_questionnaire_templates,
 )
 
 
@@ -34,6 +37,19 @@ def test_templates_have_identical_keys_and_structure():
         eopts = ef.get("options") or []
         assert len(zopts) == len(eopts), f"options count mismatch at index {i}"
         assert ef["title"] and ef["label"], f"missing English title/label at index {i}"
+
+
+def test_questionnaire_template_language_only_accepts_zh_or_en():
+    assert QuestionnaireTemplateUpdate(language="zh").language == "zh"
+    assert QuestionnaireTemplateUpdate(language="en").language == "en"
+    with pytest.raises(ValidationError):
+        QuestionnaireTemplateUpdate(language="fr")
+
+
+@pytest.mark.asyncio
+async def test_template_management_rejects_invalid_language(admin_client: AsyncClient):
+    response = await admin_client.get("/questionnaire-template/config?language=fr")
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -188,3 +204,20 @@ async def test_admin_saving_chinese_template_does_not_deactivate_english_templat
 
     assert zh_fields_new[0]["key"] == "test_zh_key_2"
     assert en_fields_new[0]["key"] == "test_en_key"
+
+
+@pytest.mark.asyncio
+async def test_batch_template_save_uses_requested_language_not_payload_language(db_session: AsyncSession):
+    await save_questionnaire_templates(
+        db_session,
+        [{
+            "template_key": "intake",
+            "language": "zh",
+            "name": "English Intake",
+            "title": "English title",
+            "fields": [{"key": "english_key", "type": "SIMPLE", "title": "English field"}],
+        }],
+        language="en",
+    )
+
+    assert (await get_active_questionnaire_fields(db_session, "intake", language="en"))[0]["key"] == "english_key"

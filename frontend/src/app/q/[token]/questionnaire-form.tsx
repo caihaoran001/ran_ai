@@ -25,6 +25,11 @@ type Questionnaire = {
 type BodyIssue = { key: string; level: "hard" | "soft"; msg: string };
 type Band = { hardLow: number; softLow: number; softHigh: number; hardHigh: number };
 
+// 仅把紧跟数值的独立单位认作英制，不能把 "I think 80" 里的 in 当成 inches。
+const EXPLICIT_LBS = /\d+(?:\.\d+)?\s*(?:lbs?|pounds?)\b/i;
+const EXPLICIT_INCHES = /\d+(?:\.\d+)?\s*(?:inches?|in)\b/i;
+const EXPLICIT_METERS = /\d+(?:\.\d+)?\s*m\b/i;
+
 const BANDS: Record<"height" | "weight" | "age" | "bmi", Band> = {
   height: { hardLow: 120, softLow: 140, softHigh: 200, hardHigh: 220 },
   weight: {
@@ -72,7 +77,7 @@ function checkBodyMeasurements(
   const weightKg = (value: { key: string; num: number; raw: string } | null) => {
     if (!value) return null;
     const text = value.raw.toLowerCase();
-    const isLbs = text.includes("lb") || text.includes("pound") || text.includes("磅");
+    const isLbs = EXPLICIT_LBS.test(text) || text.includes("磅");
     if (isLbs) return { ...value, num: value.num * 0.45359237 };
     const isJin = text.includes("斤") && !["公斤", "千克", "kg", "㎏"].some((unit) => text.includes(unit));
     return { ...value, num: isJin ? value.num / 2 : value.num };
@@ -80,9 +85,9 @@ function checkBodyMeasurements(
   const waistCm = (value: { key: string; num: number; raw: string } | null) => {
     if (!value) return null;
     const text = value.raw.toLowerCase();
-    if (text.includes("inch") || text.includes("in") || text.includes("英寸")) return { ...value, num: value.num * 2.54 };
+    if (EXPLICIT_INCHES.test(text) || text.includes("英寸")) return { ...value, num: value.num * 2.54 };
     if (text.includes("mm") || text.includes("毫米")) return { ...value, num: value.num / 10 };
-    if ((text.includes("m") && !text.includes("cm") && !text.includes("mm")) ||
+    if ((EXPLICIT_METERS.test(text) && !text.includes("cm") && !text.includes("mm")) ||
         (text.includes("米") && !text.includes("厘米") && !text.includes("毫米"))) {
       return { ...value, num: value.num * 100 };
     }

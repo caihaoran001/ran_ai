@@ -8,6 +8,7 @@ import { VideoPushConfig } from "./video-push-config";
 
 type Template = {
   template_key: string;
+  language: "zh" | "en";
   name: string;
   title?: string | null;
   description?: string | null;

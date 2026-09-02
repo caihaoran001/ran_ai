@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.models.mixins import TimestampMixin
+from app.models.service_case import ServiceCaseLanguage
 
 
 class QuestionnaireTemplate(TimestampMixin, Base):
@@ -14,7 +15,12 @@ class QuestionnaireTemplate(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     template_key: Mapped[str] = mapped_column(String(80), default="intake", nullable=False, index=True)
-    language: Mapped[str] = mapped_column(String(10), default="zh", nullable=False, server_default="zh")
+    language: Mapped[ServiceCaseLanguage] = mapped_column(
+        String(10),
+        default=ServiceCaseLanguage.ZH,
+        nullable=False,
+        server_default="zh",
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     title: Mapped[str | None] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(String(1000))
