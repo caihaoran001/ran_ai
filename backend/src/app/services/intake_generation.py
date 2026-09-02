@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from functools import lru_cache
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -963,7 +964,7 @@ def _normalize_intake_analysis_package(
     # 人工复核是内部运营状态，不是管理带：即使模型仍把内部标签写进正文，也要在落库前清出用户可见内容。
     _strip_internal_review_labels(document_payloads)
     # 五项打卡在这里收敛成严格 5 项结构化数组，之后画像、执行文档和 H5 问卷都读同一份结构。
-    _normalize_daily_checkin_in_payloads(document_payloads, intake_facts)
+    _normalize_daily_checkin_in_payloads(document_payloads, intake_facts, language=case_lang)
     profile_json = _normalize_profile_from_package(payload, document_payloads, intake_facts, language=case_lang)
     _apply_shared_activity_frequency_to_profile(profile_json, activity_frequency)
     summary = str(profile_json.get("summary") or _profile_summary_from_documents(document_payloads) or "")[:2000]
@@ -1163,8 +1164,8 @@ def _normalize_profile_from_package(
     tags = payload.get("profile", {}).get("tags") if isinstance(payload.get("profile"), dict) else None
     profile["tags"] = _clean_list(tags) if isinstance(tags, list) else []
     profile["personalized_checkin_fields"] = (
-        _personalized_checkin_fields_from_documents(document_payloads)
-        or _fallback_personalized_checkin_fields(intake_facts)
+        _personalized_checkin_fields_from_documents(document_payloads, language=language)
+        or _fallback_personalized_checkin_fields(intake_facts, language=language)
     )
     return profile
 
@@ -1286,7 +1287,10 @@ def _profile_summary_from_documents(document_payloads: dict[str, dict]) -> str:
     return str(profile.get("summary") or profile.get("main_problem") or "")
 
 
-def _fallback_personalized_checkin_fields(facts: dict[str, object]) -> list[dict[str, object]]:
+def _fallback_personalized_checkin_fields(
+    facts: dict[str, object],
+    language: str = "zh",
+) -> list[dict[str, object]]:
     weight = _blank_if_missing(facts.get("weight_kg"))
     weight_kg = None
     if weight:
@@ -1294,14 +1298,20 @@ def _fallback_personalized_checkin_fields(facts: dict[str, object]) -> list[dict
             weight_kg = float(weight)
         except (ValueError, TypeError):
             weight_kg = None
-    return personalized_checkin_fields_with_weight(weight_kg)
+    return personalized_checkin_fields_with_weight(weight_kg, language=language)
 
 
-def personalized_checkin_fields_from_document_payloads(document_payloads: dict[str, dict]) -> list[dict[str, object]]:
-    return _personalized_checkin_fields_from_documents(document_payloads)
+def personalized_checkin_fields_from_document_payloads(
+    document_payloads: dict[str, dict],
+    language: str = "zh",
+) -> list[dict[str, object]]:
+    return _personalized_checkin_fields_from_documents(document_payloads, language=language)
 
 
-def _personalized_checkin_fields_from_documents(document_payloads: dict[str, dict]) -> list[dict[str, object]]:
+def _personalized_checkin_fields_from_documents(
+    document_payloads: dict[str, dict],
+    language: str = "zh",
+) -> list[dict[str, object]]:
     """把执行建议书的五项打卡转成问卷字段。
 
     读取路径：不套用生成期的文风规则、也不补兜底题，拿不到完整 5 项就返回空列表，
@@ -1315,6 +1325,7 @@ def _personalized_checkin_fields_from_documents(document_payloads: dict[str, dic
         _daily_checkin_value_from_execution(execution),
         strict_style=False,
         allow_fallback=False,
+        language=language,
     )
     fields = []
     for index, item in enumerate(daily_items, start=1):
@@ -1329,7 +1340,7 @@ def _personalized_checkin_fields_from_documents(document_payloads: dict[str, dic
                 "label": title,
                 "subtitle": "",
                 "required": True,
-                "options": checkin_options_for(answer_type),
+                "options": checkin_options_for(answer_type, language=language),
                 "answer_type": answer_type,
                 "category": str(item.get("category") or ""),
                 "order": index,
@@ -1343,6 +1354,7 @@ DAILY_CHECKIN_SIZE = 5
 CHECKIN_ANSWER_TYPES = ("yes_no", "score_1_5", "number", "text")
 CHECKIN_CATEGORIES = ("product", "diet", "activity", "sleep", "state")
 CHECKIN_YES_NO_OPTIONS = ["是", "否"]
+CHECKIN_YES_NO_OPTIONS_EN = ["Yes", "No"]
 CHECKIN_SCORE_OPTIONS = ["1", "2", "3", "4", "5"]
 MAX_CHECKIN_TITLE_CHARS = 80
 
@@ -1350,7 +1362,21 @@ MAX_CHECKIN_TITLE_CHARS = 80
 # 这不是业务分类，只是把模型输出约束成可转成问卷字段的结构；类别一律由 category 字段承载。
 _JUDGEMENT_MARKERS = ("是否", "有无", "有没有", "did you", "have you", "are you", "is there", "were you", "whether")
 _SCORE_MARKERS = ("评分", "打分", "score", "rate", "rating", "1-5")
-_REQUEST_MARKERS = ("请", "多少", "几点", "几次", "几分", "how many", "what time", "how much", "please", "?", "？")
+# 问"多少"就是要填数字。英文题面里这类问法几乎一定同时带 "did you / have you"
+# （"How many minutes of walking did you complete?"），所以数量标记必须优先于判断标记，
+# 否则数字题会被判成是否题、或因"类型与题面不匹配"整条丢掉换成兜底题。
+_QUANTITY_MARKERS = (
+    "多少",
+    "几点",
+    "几次",
+    "几分",
+    "how many",
+    "how much",
+    "how long",
+    "what time",
+    "number of",
+)
+_REQUEST_MARKERS = ("请", *_QUANTITY_MARKERS, "please", "?", "？")
 # 一条题面里出现两个及以上回答意图就是复合问题，必须拆开或只留优先级更高的那个。
 _SECOND_INTENT_MARKERS = ("请记录", "请填写", "并填写", "并记录", "同时记录", "同时填写", "并写下")
 # 并列连词把两个独立动作串成一题（如「20点前完成并且主食≤1拳」同时问时间和饮食结构），
@@ -1358,6 +1384,34 @@ _SECOND_INTENT_MARKERS = ("请记录", "请填写", "并填写", "并记录", "�
 _COMPOSITE_CONJUNCTIONS = ("并且", "同时", "以及", "，并", ",并", "并且要", "而且")
 # 栏目标题/说明文字，不是题目。这是唯一需要显式识别的形状，其余判断都靠上面的回答意图标记。
 _CHECKIN_HEADING_MARKERS = ("每日固定打卡", "每日打卡", "打卡清单", "打卡内容", "打卡项", "项打卡", "打卡如下", "daily check-in", "daily checkin", "checkin list")
+
+
+@lru_cache(maxsize=512)
+def _marker_pattern(marker: str) -> re.Pattern[str]:
+    """英文标记词按整词匹配，中文按子串匹配。
+
+    英文必须带词边界：``rate`` 作为子串会命中 ``carbohydrates``，把
+    "Did you control dinner carbohydrates to at most 1 fist?" 判成评分题，
+    再因为「判断+评分双意图」整条丢掉换成兜底题——这道题正是提示词里给的示例。
+    边界只加在字母的那一头，``1-5``、``?`` 这类标记本来就没有词边界可言。
+    """
+
+    prefix = r"(?<![a-z])" if marker[:1].isalpha() else ""
+    suffix = r"(?![a-z])" if marker[-1:].isalpha() else ""
+    return re.compile(prefix + re.escape(marker) + suffix)
+
+
+def _has_marker(text: str, markers: tuple[str, ...]) -> bool:
+    """题面里是否出现任一标记词。``text`` 必须已 casefold。"""
+
+    for marker in markers:
+        if not marker.isascii():
+            if marker in text:
+                return True
+            continue
+        if _marker_pattern(marker).search(text):
+            return True
+    return False
 # 兜底题池是代码写死的默认五项，类别按 key 直接标注，不靠倒猜。
 _FALLBACK_CHECKIN_CATEGORIES = {
     "personalized_weight": "state",
@@ -1386,6 +1440,7 @@ _CHECKIN_NUMBER_UNIT_PATTERN = re.compile(
 def _normalize_daily_checkin_in_payloads(
     payloads: dict[str, dict],
     facts: dict[str, object],
+    language: str = "zh",
 ) -> None:
     execution = payloads.get(DocumentType.DAY28_EXECUTION_STANDARD.value)
     if not isinstance(execution, dict):
@@ -1393,6 +1448,7 @@ def _normalize_daily_checkin_in_payloads(
     normalized = normalize_daily_checkin_items(
         execution.get("daily_checkin"),
         facts=facts,
+        language=language,
     )
     errors = _generated_daily_checkin_errors(normalized)
     if errors:
@@ -1408,6 +1464,7 @@ def normalize_daily_checkin_items(
     facts: dict[str, object] | None = None,
     strict_style: bool = True,
     allow_fallback: bool = True,
+    language: str = "zh",
 ) -> list[dict[str, object]]:
     """把 daily_checkin 收敛成正好 5 项、order 1-5 的结构化数组。
 
@@ -1425,7 +1482,7 @@ def normalize_daily_checkin_items(
     rejected: list[str] = []
     duplicated: list[str] = []
     for candidate in _daily_checkin_candidates(value):
-        item = _validated_checkin_item(candidate, strict_style=strict_style)
+        item = _validated_checkin_item(candidate, strict_style=strict_style, language=language)
         if item is None:
             rejected.append(_candidate_title_for_log(candidate))
             continue
@@ -1440,7 +1497,7 @@ def normalize_daily_checkin_items(
 
     substituted: list[str] = []
     if allow_fallback and len(accepted) < DAILY_CHECKIN_SIZE:
-        for fallback in _fallback_checkin_items(facts or {}):
+        for fallback in _fallback_checkin_items(facts or {}, language=language):
             key = _checkin_dedupe_key(str(fallback["title"]))
             if key in seen:
                 continue
@@ -1497,7 +1554,12 @@ def _checkin_order_value(value: object) -> float:
         return float("inf")
 
 
-def _validated_checkin_item(candidate: object, *, strict_style: bool = True) -> dict[str, object] | None:
+def _validated_checkin_item(
+    candidate: object,
+    *,
+    strict_style: bool = True,
+    language: str = "zh",
+) -> dict[str, object] | None:
     if isinstance(candidate, dict):
         title = _clean_checkin_item_text(
             candidate.get("title") or candidate.get("label") or candidate.get("text")
@@ -1522,7 +1584,7 @@ def _validated_checkin_item(candidate: object, *, strict_style: bool = True) -> 
         "category": category if category in CHECKIN_CATEGORIES else _infer_checkin_category(answer_type),
         "title": title,
         "answer_type": answer_type,
-        "options": checkin_options_for(answer_type),
+        "options": checkin_options_for(answer_type, language=language),
     }
     if example_answer:
         item["example_answer"] = example_answer
@@ -1610,39 +1672,47 @@ def _generated_daily_checkin_errors(items: list[dict[str, object]]) -> list[str]
 def _is_valid_checkin_title(title: str, *, strict_style: bool = True) -> bool:
     if not title or len(title) > MAX_CHECKIN_TITLE_CHARS:
         return False
-    if any(marker in title for marker in _CHECKIN_HEADING_MARKERS):
+    title_lower = title.casefold()
+    if _has_marker(title_lower, _CHECKIN_HEADING_MARKERS):
         return False
-    if strict_style and any(word in title for word in _RELATIVE_TIME_WORDS):
+    if strict_style and _has_marker(title_lower, _RELATIVE_TIME_WORDS):
         return False
     # 分号说明这一项塞了两个独立句子，拆不开就丢弃。
     if "；" in title or ";" in title:
         return False
-    if any(conjunction in title for conjunction in _COMPOSITE_CONJUNCTIONS):
+    if _has_marker(title_lower, _COMPOSITE_CONJUNCTIONS):
         return False
     intents = sum(
         [
-            any(marker in title for marker in _JUDGEMENT_MARKERS),
-            any(marker in title for marker in _SCORE_MARKERS),
-            any(marker in title for marker in _SECOND_INTENT_MARKERS),
+            _has_marker(title_lower, _JUDGEMENT_MARKERS),
+            _has_marker(title_lower, _SCORE_MARKERS),
+            _has_marker(title_lower, _SECOND_INTENT_MARKERS),
         ]
     )
     return intents <= 1
 
 
 def _answer_type_matches_title(answer_type: str, title: str) -> bool:
-    """题面形状必须和答题类型对得上，否则转成问卷字段就会答非所问。"""
+    """题面形状必须和答题类型对得上，否则转成问卷字段就会答非所问。
 
+    刻意**不**用「以问号结尾就算是否题」：英文题面所有问法都以问号结尾，
+    那样 "How many minutes did you walk?" 会被判成是/否题，而正确标了 number
+    的同一道题反而被判不匹配、整条丢掉换成兜底题。
+    """
+
+    title_lower = title.casefold()
+    has_judgement = _has_marker(title_lower, _JUDGEMENT_MARKERS)
+    has_score = _has_marker(title_lower, _SCORE_MARKERS)
+    has_quantity = _has_marker(title_lower, _QUANTITY_MARKERS)
     if answer_type == "yes_no":
-        return any(marker in title for marker in _JUDGEMENT_MARKERS)
+        return has_judgement and not has_quantity
     if answer_type == "score_1_5":
-        return any(marker in title for marker in _SCORE_MARKERS)
+        return has_score
     if answer_type == "number":
-        # 填数字的题只要不和别的答题类型冲突就放行。曾经要求题面必须带单位括号，
-        # 结果把「夜间醒来次数」这类完全合法的题判废、换成通用兜底题，白丢个性化。
+        # 填数字的题只要问的是数量、或不和别的答题类型冲突就放行。曾经要求题面必须带
+        # 单位括号，结果把「夜间醒来次数」这类完全合法的题判废、换成通用兜底题，白丢个性化。
         # 单位该不该写、写什么由提示词管（体重题必须写清 kg），代码不做事后审核也不猜。
-        return not any(
-            marker in title for marker in (*_JUDGEMENT_MARKERS, *_SCORE_MARKERS)
-        )
+        return has_quantity or not (has_judgement or has_score)
     return _looks_like_question(title)
 
 
@@ -1651,9 +1721,19 @@ def _looks_like_question(title: str) -> bool:
         return True
     if "（" in title or "(" in title:
         return True
-    return any(
-        marker in title
-        for marker in (*_JUDGEMENT_MARKERS, *_SCORE_MARKERS, *_REQUEST_MARKERS)
+    title_lower = title.casefold()
+    return _has_marker(
+        title_lower,
+        (
+            *_JUDGEMENT_MARKERS,
+            *_SCORE_MARKERS,
+            *_REQUEST_MARKERS,
+            # 自由填写题的引导词。只收明确要求作答的动词，不收 "time"/"intake" 这类
+            # 名词——它们会命中 "sometimes" 之类的普通词，把栏目标题也放行。
+            "describe",
+            "list",
+            "notes",
+        ),
     )
 
 
@@ -1664,10 +1744,15 @@ def infer_checkin_answer_type(title: str) -> str:
 
 
 def _infer_checkin_answer_type(title: str) -> str:
-    if any(marker in title for marker in _JUDGEMENT_MARKERS):
-        return "yes_no"
-    if any(marker in title for marker in _SCORE_MARKERS):
+    title_lower = title.casefold()
+    if _has_marker(title_lower, _SCORE_MARKERS):
         return "score_1_5"
+    # 数量优先于判断：英文的数字题几乎都写成 "How many ... did you ...?"，
+    # 先看判断标记会把它们全推成是/否题。
+    if _has_marker(title_lower, _QUANTITY_MARKERS):
+        return "number"
+    if _has_marker(title_lower, _JUDGEMENT_MARKERS):
+        return "yes_no"
     if "（" in title or "(" in title:
         return "number"
     return "text"
@@ -1682,9 +1767,9 @@ def _infer_checkin_category(answer_type: str) -> str:
     return ""
 
 
-def checkin_options_for(answer_type: str) -> list[str]:
+def checkin_options_for(answer_type: str, language: str = "zh") -> list[str]:
     if answer_type == "yes_no":
-        return list(CHECKIN_YES_NO_OPTIONS)
+        return list(CHECKIN_YES_NO_OPTIONS_EN if language == "en" else CHECKIN_YES_NO_OPTIONS)
     if answer_type == "score_1_5":
         return list(CHECKIN_SCORE_OPTIONS)
     return []
@@ -1698,18 +1783,25 @@ def _checkin_dedupe_key(title: str) -> str:
     return re.sub(r"[\s，,。！？!?；;：:（）()]+", "", title).casefold()
 
 
-def _fallback_checkin_items(facts: dict[str, object]) -> list[dict[str, object]]:
-    """确定性兜底：沿用默认五项个性化打卡（含按体重换算的饮水量），并去掉相对时间词。"""
+def _fallback_checkin_items(
+    facts: dict[str, object],
+    language: str = "zh",
+) -> list[dict[str, object]]:
+    """确定性兜底：沿用默认五项个性化打卡（含按体重换算的饮水量），并去掉相对时间词。
+
+    ``language`` 必须跟着服务单走：模型题面一旦被判废就是这份题顶上去，
+    出错语言等于让英文客户每天面对一张中文打卡表。
+    """
 
     items: list[dict[str, object]] = []
-    for field in _fallback_personalized_checkin_fields(facts):
+    for field in _fallback_personalized_checkin_fields(facts, language=language):
         title = _clean_checkin_item_text(field.get("title") or field.get("label"))
         for word in _RELATIVE_TIME_WORDS:
             title = title.replace(word, "")
         title = title.strip(" ，,。")
         if not title:
             continue
-        answer_type = "yes_no" if any(marker in title for marker in _JUDGEMENT_MARKERS) else "number"
+        answer_type = "yes_no" if _has_marker(title.casefold(), _JUDGEMENT_MARKERS) else "number"
         items.append(
             {
                 "order": 0,
@@ -1718,7 +1810,7 @@ def _fallback_checkin_items(facts: dict[str, object]) -> list[dict[str, object]]
                 "category": _FALLBACK_CHECKIN_CATEGORIES.get(str(field.get("key") or ""), ""),
                 "title": title,
                 "answer_type": answer_type,
-                "options": checkin_options_for(answer_type),
+                "options": checkin_options_for(answer_type, language=language),
             }
         )
     return items

@@ -2021,6 +2021,69 @@ def test_daily_checkin_keeps_number_question_without_unit_bracket():
     assert conflicting == []
 
 
+def test_english_daily_checkin_items_keep_their_answer_type():
+    """英文题面必须按问法判类型，不能因为"以问号结尾"就一律当是/否题。
+
+    英文的数字题几乎都写成 "How many ... did you ...?"：既含数量问法也含判断词。
+    判错的后果不是显示瑕疵——题被判废后顶上来的是兜底题，个性化打卡被静默换掉。
+    """
+
+    items = normalize_daily_checkin_items(
+        [
+            {"order": 1, "category": "product", "title": "Did you complete Morning C, Noon B, and Evening A as planned?", "answer_type": "yes_no"},
+            # "carbohydrates" 里含 "rate"：按子串匹配会判成评分题，再因判断+评分双意图整条丢掉
+            {"order": 2, "category": "diet", "title": "Did you control dinner carbohydrates to at most 1 fist?", "answer_type": "yes_no"},
+            {"order": 3, "category": "activity", "title": "How many minutes of brisk walking did you complete?", "answer_type": "number"},
+            {"order": 4, "category": "sleep", "title": "Did you start sleep wind-down by 23:30?", "answer_type": "yes_no"},
+            {"order": 5, "category": "state", "title": "How would you rate your afternoon energy level (1-5)?", "answer_type": "score_1_5"},
+        ],
+        facts={"weight_kg": "90.7"},
+        language="en",
+    )
+
+    assert len(items) == 5
+    assert [item["answer_type"] for item in items] == [
+        "yes_no",
+        "yes_no",
+        "number",
+        "yes_no",
+        "score_1_5",
+    ]
+    # 没有一项被兜底题顶掉
+    assert all("Did you" in str(item["title"]) or "How " in str(item["title"]) for item in items)
+    # 判断题选项必须是英文
+    assert items[0]["options"] == ["Yes", "No"]
+
+    # 类型冲突仍要挡：题面问的是数量，就不能声明成是/否
+    conflicting = normalize_daily_checkin_items(
+        [{"order": 1, "category": "activity", "title": "How many minutes did you walk?", "answer_type": "yes_no"}],
+        allow_fallback=False,
+        language="en",
+    )
+    assert conflicting == []
+
+
+def test_english_daily_checkin_fallback_items_are_english():
+    """兜底题顶上来时也必须是英文，否则英文客户每天面对一张中文打卡表。"""
+
+    items = normalize_daily_checkin_items(
+        ["daily check-in list"],
+        facts={"weight_kg": "90.7"},
+        language="en",
+    )
+
+    assert len(items) == 5
+    assert all(item["category"] in CHECKIN_CATEGORIES for item in items)
+    for item in items:
+        title = str(item["title"])
+        assert not re.search(r"[一-鿿]", title), title
+        assert item["options"] in ([], ["Yes", "No"]), item
+
+    # 中文服务单不受影响
+    zh_items = normalize_daily_checkin_items(["每日固定打卡"], facts={"weight_kg": "70"})
+    assert any("体重" in str(item["title"]) for item in zh_items)
+
+
 def test_daily_checkin_fallback_items_carry_their_category():
     """兜底题是代码写死的，类别必须直接标注，不能留空。"""
 

@@ -516,6 +516,9 @@ async def _personalized_checkin_fields(session: AsyncSession, service_case: Serv
         service_case_id=service_case.id,
         sent_documents_only=False,
     )
+    case_lang = getattr(service_case, "language", "zh") or "zh"
+    if case_lang not in ("zh", "en"):
+        case_lang = "zh"
     fields: list[dict[str, Any]] = []
     for index, item in enumerate(checklist.resolved_items(), start=1):
         label = item["label"]
@@ -524,7 +527,12 @@ async def _personalized_checkin_fields(session: AsyncSession, service_case: Serv
         answer_type = str(item.get("answer_type") or "") or _infer_checkin_answer_type(label)
         options = item.get("options")
         if not (isinstance(options, list) and options):
-            options = checkin_options_for(answer_type)
+            options = checkin_options_for(answer_type, language=case_lang)
+        elif answer_type == "yes_no":
+            # 这是唯一真正渲染给客户的地方。清单里存的是生成当时的选项，服务单语言
+            # 后来被切换过、或历史文档存的是中文「是/否」时，英文客户会看到中文按钮，
+            # 所以判断题选项一律按当前服务单语言重建。
+            options = checkin_options_for(answer_type, language=case_lang)
         fields.append(
             {
                 "id": f"personalized_checkin_{index}",

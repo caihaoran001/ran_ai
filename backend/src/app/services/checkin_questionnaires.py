@@ -166,20 +166,91 @@ DEFAULT_PERSONALIZED_CHECKIN_FIELDS = [
     },
 ]
 
+# 英文兜底题池。key 与中文版逐项对齐（下游按 key 标注类别），题面刻意不写
+# "today"/"tonight"：这类相对时间词会被生成链路剥离，剥完英文句子会残缺。
+DEFAULT_PERSONALIZED_CHECKIN_FIELDS_EN = [
+    {
+        "id": "personalized_weight",
+        "key": "personalized_weight",
+        "type": "SIMPLE",
+        "title": "Morning weight (kg)",
+        "label": "Morning weight (kg)",
+        "subtitle": "",
+        "required": True,
+        "options": [],
+    },
+    {
+        "id": "personalized_water",
+        "key": "personalized_water",
+        "type": "RADIO",
+        "title": "Did you drink at least 2 liters of water?",
+        "label": "Did you drink at least 2 liters of water?",
+        "subtitle": "",
+        "required": True,
+        "options": ["Yes", "No"],
+    },
+    {
+        "id": "personalized_sleep",
+        "key": "personalized_sleep",
+        "type": "RADIO",
+        "title": "Did you wind down for sleep as planned?",
+        "label": "Did you wind down for sleep as planned?",
+        "subtitle": "",
+        "required": True,
+        "options": ["Yes", "No"],
+    },
+    {
+        "id": "personalized_diet",
+        "key": "personalized_diet",
+        "type": "RADIO",
+        "title": "Did you keep dinner carbs within your plan?",
+        "label": "Did you keep dinner carbs within your plan?",
+        "subtitle": "",
+        "required": True,
+        "options": ["Yes", "No"],
+    },
+    {
+        "id": "personalized_exercise",
+        "key": "personalized_exercise",
+        "type": "RADIO",
+        "title": "Did you complete your planned walk or light exercise?",
+        "label": "Did you complete your planned walk or light exercise?",
+        "subtitle": "",
+        "required": True,
+        "options": ["Yes", "No"],
+    },
+]
 
-def personalized_checkin_fields_with_weight(weight_kg: float | None = None) -> list[dict[str, Any]]:
+
+def personalized_checkin_fields_with_weight(
+    weight_kg: float | None = None,
+    language: str = "zh",
+) -> list[dict[str, Any]]:
+    """默认五项个性化打卡。
+
+    ``language`` 决定题面语言：英文服务单的模型生成题面一旦被校验判废，
+    顶上来的就是这份兜底题，出中文等于让英文客户每天面对一张中文打卡表。
+    两份题池的 key 必须完全一致，下游按 key 标注类别。
+    """
+
+    pool = DEFAULT_PERSONALIZED_CHECKIN_FIELDS_EN if language == "en" else DEFAULT_PERSONALIZED_CHECKIN_FIELDS
     if weight_kg is not None:
         try:
             water_liters = str(round((float(weight_kg) * 35 / 1000) * 2) / 2).rstrip("0").rstrip(".")
         except (ValueError, TypeError):
             water_liters = "2"
         fields = []
-        for field in DEFAULT_PERSONALIZED_CHECKIN_FIELDS:
+        for field in pool:
             if field["key"] == "personalized_water":
-                field = {**field, "title": f"今日饮水是否达到 {water_liters} 升？", "label": f"今日饮水是否达到 {water_liters} 升？"}
+                title = (
+                    f"Did you drink at least {water_liters} liters of water?"
+                    if language == "en"
+                    else f"今日饮水是否达到 {water_liters} 升？"
+                )
+                field = {**field, "title": title, "label": title}
             fields.append(field)
         return fields
-    return [dict(f) for f in DEFAULT_PERSONALIZED_CHECKIN_FIELDS]
+    return [dict(f) for f in pool]
 
 
 def _standard_fields() -> list[dict[str, Any]]:
