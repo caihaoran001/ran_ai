@@ -122,6 +122,20 @@ def test_mock_result_exposes_rewrite_expectations_and_grounded_hits():
     assert all(reason.severity != "critical" for reason in result.failure_reasons)
 
 
+def test_mock_low_score_injection_stays_with_its_target_case():
+    case = next(
+        item
+        for item in load_rag_eval_suite().cases
+        if item.case_id == "rag-faq-noon-boundary"
+    )
+
+    result = _mock_cases([case])[0]
+
+    assert result.case_id == "rag-faq-noon-boundary"
+    assert result.actual.response != "一大刻度不够一瓶盖。"
+    assert not result.failure_reasons
+
+
 def test_noon_boundary_uses_current_atomic_faq_truth():
     from eval.run_full_eval import _reference, _retrieval_reference
 

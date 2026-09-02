@@ -66,17 +66,20 @@ def test_execution_commitment_faq_specs_cover_approved_rules():
     )
 
     source_type, specs = load_execution_commitment_faq_specs()
-    combined = "\n".join(f"{item['question']}\n{item['answer']}" for item in specs)
+    user_visible = "\n".join(
+        f"{item['title']}\n{item['question']}\n{item['answer']}" for item in specs
+    )
 
     assert source_type == "manual_curated"
     assert len(specs) == 5
-    assert "标准档：D7至少5天、D14至少9天、D21至少13天、D28至少17天" in combined
-    assert "高承诺档：D7至少6天、D14至少12天、D21至少18天、D28至少24天" in combined
-    assert "D14统计D1–D14" in combined
-    assert "不是断一天就失败" in combined
-    assert "未收到邀请时机器人只能解释规则，不能催选" in combined
+    assert "标准档：服务第7天至少5天、第14天至少9天、第21天至少13天、第28天至少17天" in user_visible
+    assert "高承诺档：服务第7天至少6天、第14天至少12天、第21天至少18天、第28天至少24天" in user_visible
+    assert "服务第14天统计第1至第14天" in user_visible
+    assert "不是断一天就失败" in user_visible
+    assert "未收到邀请时机器人只能解释规则，不能催选" in user_visible
+    assert not any(alias in user_visible for alias in ("D0", "D1", "D7", "D14", "D21", "D28"))
     # 「断一天算不算失败」必须有独立问法承载：混进长问句会被语义稀释，检索不到。
-    assert "断一天不等于失败" in combined
+    assert "断一天不等于失败" in user_visible
     assert any("我断了一天是不是就失败了" in item["question"] for item in specs)
 
 
@@ -90,23 +93,35 @@ async def test_execution_commitment_faqs_retrieve_for_rule_followups(db_session)
         load_execution_commitment_faq_specs,
     )
     from app.services.knowledge_index import retrieve_indexed_knowledge_result
+    from sqlalchemy import select
 
     _, specs = load_execution_commitment_faq_specs()
-    for index, spec in enumerate(specs, start=1):
-        faq = KnowledgeFAQ(
-            faq_uid=f"execution-faq-{index}",
-            status="active",
-            title=spec["title"],
-            question=spec["question"],
-            answer=spec["answer"],
-            category=spec["category"],
-            tags=spec["tags"],
-            version=1,
+    active_faqs = list(
+        await db_session.scalars(
+            select(KnowledgeFAQ).where(KnowledgeFAQ.status == "active")
         )
-        db_session.add(faq)
-        await db_session.flush()
-        db_session.add(
-            KnowledgeChunk(
+    )
+    for faq in active_faqs:
+        faq.status = "disabled"
+
+    created_faqs: list[KnowledgeFAQ] = []
+    created_chunks: list[KnowledgeChunk] = []
+    try:
+        for index, spec in enumerate(specs, start=1):
+            faq = KnowledgeFAQ(
+                faq_uid=f"execution-faq-{index}",
+                status="active",
+                title=spec["title"],
+                question=spec["question"],
+                answer=spec["answer"],
+                category=spec["category"],
+                tags=spec["tags"],
+                version=1,
+            )
+            db_session.add(faq)
+            await db_session.flush()
+            created_faqs.append(faq)
+            chunk = KnowledgeChunk(
                 chunk_uid=f"faq:{faq.id}",
                 source_type="faq",
                 source_uri=f"knowledge_faq:{faq.id}",
@@ -115,24 +130,39 @@ async def test_execution_commitment_faqs_retrieve_for_rule_followups(db_session)
                 content_hash=f"{index:064x}",
                 status="active",
             )
-        )
-    await db_session.flush()
+            db_session.add(chunk)
+            created_chunks.append(chunk)
+        await db_session.flush()
 
-    settings = SimpleNamespace(embedding_api_key="", knowledge_base_top_k=3)
-    probes = {
-        "高承诺档能自由选吗": "高承诺档的筛选与D0确认",
-        "D14要完整打卡几天才达标": "标准档和高承诺档的达标天数",
-        "断一天是不是就不达标": "标准档和高承诺档的达标天数",
-        "D7打卡率不够会怎样": "复盘节点的保留与降档规则",
-    }
-    for query, expected_title in probes.items():
-        result = await retrieve_indexed_knowledge_result(
-            db_session,
-            query,
-            settings=settings,
-            exclude_source_types={"case"},
-        )
-        assert expected_title in {hit.title for hit in result.hits}
+        settings = SimpleNamespace(embedding_api_key="", knowledge_base_top_k=3)
+        probes = {
+            "高承诺档能自由选吗": "高承诺档的筛选、邀请与确认",
+            "服务第14天要完整打卡几天才达标": "标准档和高承诺档的达标天数",
+            "D14要完整打卡几天才达标": "标准档和高承诺档的达标天数",
+            "断一天是不是就不达标": "标准档和高承诺档的达标天数",
+            "服务第7天打卡率不够会怎样": "复盘节点的保留与降档规则",
+            "D7打卡率不够会怎样": "复盘节点的保留与降档规则",
+        }
+        for query, expected_title in probes.items():
+            result = await retrieve_indexed_knowledge_result(
+                db_session,
+                query,
+                settings=settings,
+                exclude_source_types={"case"},
+            )
+            assert expected_title in {hit.title for hit in result.hits}
+            assert all(
+                not any(alias in hit.content for alias in ("D0", "D1", "D7", "D14", "D21", "D28"))
+                for hit in result.hits
+            )
+    finally:
+        for chunk in created_chunks:
+            await db_session.delete(chunk)
+        for faq in created_faqs:
+            await db_session.delete(faq)
+        for faq in active_faqs:
+            faq.status = "active"
+        await db_session.flush()
 
 
 @pytest.mark.asyncio

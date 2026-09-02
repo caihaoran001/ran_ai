@@ -558,31 +558,30 @@ async def _retrieve_faqs_by_question(
 ) -> list[tuple[int, str]]:
     from functools import reduce
     import operator as _op
-    from sqlalchemy import case, or_, text as sa_text
+    from sqlalchemy import Text, case, cast, or_, text as sa_text
+
+    tag_text = cast(KnowledgeFAQ.tags, Text)
+
+    def matches(term: str):
+        pattern = f"%{term}%"
+        return or_(
+            KnowledgeFAQ.title.ilike(pattern),
+            KnowledgeFAQ.question.ilike(pattern),
+            # `tags` is metadata and never becomes the reference body injected
+            # into the Reply Agent. It can therefore carry legacy/internal
+            # aliases such as D14 without teaching that wording to users.
+            tag_text.ilike(pattern),
+        )
 
     score_parts = [
         case(
-            (
-                or_(
-                    KnowledgeFAQ.title.ilike(f"%{term}%"),
-                    KnowledgeFAQ.question.ilike(f"%{term}%"),
-                ),
-                1,
-            ),
+            (matches(term), 1),
             else_=0,
         )
         for term in query_terms
     ]
     score_expr = reduce(_op.add, score_parts)
-    any_match = or_(
-        *(
-            or_(
-                KnowledgeFAQ.title.ilike(f"%{term}%"),
-                KnowledgeFAQ.question.ilike(f"%{term}%"),
-            )
-            for term in query_terms
-        )
-    )
+    any_match = or_(*(matches(term) for term in query_terms))
     rows = list(
         await session.execute(
             select(KnowledgeFAQ.id, score_expr.label("score"))

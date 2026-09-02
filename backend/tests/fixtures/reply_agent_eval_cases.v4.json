@@ -6621,19 +6621,19 @@
             "content": "我前两周打卡不太好，这周补回来了。"
           }
         ],
-        "user_query": "D21是不是只看最近七天？前面拉胯的还算数吗？",
+        "user_query": "服务第21天是不是只看最近七天？前面拉胯的还算数吗？",
         "authoritative_facts": [
           {
             "fact_id": "eval_commitment_window_scope",
-            "statement": "D7统计D1–D7，D14统计D1–D14，D21统计D1–D21，D28统计D1–D28；不是只看节点当天，也不是只看最近7天。",
+            "statement": "服务第7天统计第1至第7天，服务第14天统计第1至第14天，服务第21天统计第1至第21天，服务第28天统计第1至第28天；不是只看节点当天，也不是只看最近7天。",
             "provenance": "knowledge_faqs:manual_curated:execution_commitment_complete_rate_v1",
             "source_scope": "knowledge",
             "source_ids": [
               "execution_commitment_complete_rate_v1"
             ],
             "retrieval_clauses": [
-              "D7统计D1至D7，D14统计D1至D14",
-              "D21统计D1至D21，D28统计D1至D28",
+              "服务第7天统计第1至第7天，服务第14天统计第1至第14天",
+              "服务第21天统计第1至第21天，服务第28天统计第1至第28天",
               "复盘节点按累计区间统计，而不是只看节点当天或最近7天"
             ]
           }
@@ -6641,12 +6641,12 @@
         "rewrite": {
           "decision": "retrieve",
           "must_include": [
-            "D21",
+            "服务第21天",
             "累计",
-            "D1"
+            "第1天"
           ],
           "must_preserve_meanings": [
-            "确认复盘节点按D1至该节点累计统计而不是只看最近七天"
+            "确认复盘节点从服务第1天累计至当前节点而不是只看最近七天"
           ]
         },
         "retrieval": {
@@ -6702,11 +6702,11 @@
           "dosage_scale"
         ],
         "history": [],
-        "user_query": "高承诺档85%，D14的时候我得打满几天才算够？",
+        "user_query": "高承诺档85%，到服务第14天我得完整打卡几天才算够？",
         "authoritative_facts": [
           {
             "fact_id": "eval_commitment_threshold_days",
-            "statement": "门槛按复盘节点的累计比例计算，所需天数向上取整。高承诺档：D7至少6天、D14至少12天、D21至少18天、D28至少24天。",
+            "statement": "门槛按复盘节点的累计比例计算，所需天数向上取整。高承诺档：服务第7天至少6天、第14天至少12天、第21天至少18天、第28天至少24天。",
             "provenance": "knowledge_faqs:manual_curated:execution_commitment_threshold_days_v1",
             "source_scope": "knowledge",
             "source_ids": [
@@ -6714,8 +6714,8 @@
             ],
             "retrieval_clauses": [
               "门槛按复盘节点的累计比例计算，所需天数向上取整",
-              "高承诺档D7至少6天、D14至少12天",
-              "高承诺档D21至少18天、D28至少24天"
+              "高承诺档服务第7天至少6天、第14天至少12天",
+              "高承诺档服务第21天至少18天、第28天至少24天"
             ]
           }
         ],
@@ -6723,11 +6723,11 @@
           "decision": "retrieve",
           "must_include": [
             "高承诺档",
-            "D14",
+            "服务第14天",
             "12天"
           ],
           "must_preserve_meanings": [
-            "把85%的比例门槛换算成D14所需的完整打卡天数"
+            "把85%的比例门槛换算成服务第14天所需的完整打卡天数"
           ]
         },
         "retrieval": {
@@ -6788,20 +6788,20 @@
             "content": "我压力有点大，在想要不要选标准档。"
           }
         ],
-        "user_query": "标准档的话D28要打几天？比高承诺档少多少？",
+        "user_query": "标准档到服务第28天要完整打卡几天？比高承诺档少多少？",
         "authoritative_facts": [
           {
             "fact_id": "eval_commitment_standard_threshold",
-            "statement": "标准档：D7至少5天、D14至少9天、D21至少13天、D28至少17天；高承诺档：D7至少6天、D14至少12天、D21至少18天、D28至少24天。",
+            "statement": "标准档：服务第7天至少5天、第14天至少9天、第21天至少13天、第28天至少17天；高承诺档：服务第7天至少6天、第14天至少12天、第21天至少18天、第28天至少24天。",
             "provenance": "knowledge_faqs:manual_curated:execution_commitment_threshold_days_v1",
             "source_scope": "knowledge",
             "source_ids": [
               "execution_commitment_threshold_days_v1"
             ],
             "retrieval_clauses": [
-              "标准档D7至少5天、D14至少9天",
-              "标准档D21至少13天、D28至少17天",
-              "高承诺档D28至少24天"
+              "标准档服务第7天至少5天、第14天至少9天",
+              "标准档服务第21天至少13天、第28天至少17天",
+              "高承诺档服务第28天至少24天"
             ]
           }
         ],
@@ -6809,11 +6809,11 @@
           "decision": "retrieve",
           "must_include": [
             "标准档",
-            "D28",
+            "服务第28天",
             "17天"
           ],
           "must_preserve_meanings": [
-            "把60%换算成标准档D28所需天数并与高承诺档对比"
+            "把60%换算成标准档服务第28天所需天数并与高承诺档对比"
           ]
         },
         "retrieval": {
@@ -6873,7 +6873,7 @@
         "authoritative_facts": [
           {
             "fact_id": "eval_commitment_missed_day",
-            "statement": "断一天不等于失败。是否达标只在D7、D14、D21、D28按累计完整打卡天数判断，不要求连续不断。漏打的那天只是少计1个完整日，不会清零之前的记录，也不会立刻降档。",
+            "statement": "断一天不等于失败。是否达标只在服务第7天、第14天、第21天、第28天按累计完整打卡天数判断，不要求连续不断。漏打的那天只是少计1个完整日，不会清零之前的记录，也不会立刻降档。",
             "provenance": "knowledge_faqs:manual_curated:execution_commitment_missed_day_v1",
             "source_scope": "knowledge",
             "source_ids": [
@@ -6962,20 +6962,20 @@
             "content": "高承诺档按85%的累计完整打卡率复盘。"
           }
         ],
-        "user_query": "那我到D7为止已经断了一天，还保得住吗？",
+        "user_query": "那我到服务第7天为止已经断了一天，还保得住吗？",
         "authoritative_facts": [
           {
             "fact_id": "eval_commitment_missed_budget",
-            "statement": "高承诺档D7需要至少6个完整日，中间断1天、其余6天五项答齐仍然达标；标准档D14需要至少9个完整日，断5天仍在门槛内。",
+            "statement": "高承诺档到服务第7天需要至少6个完整日，中间断1天、其余6天五项答齐仍然达标；标准档到服务第14天需要至少9个完整日，断5天仍在门槛内。",
             "provenance": "knowledge_faqs:manual_curated:execution_commitment_missed_day_v1",
             "source_scope": "knowledge",
             "source_ids": [
               "execution_commitment_missed_day_v1"
             ],
             "retrieval_clauses": [
-              "高承诺档D7需要至少6个完整日",
-              "D7断1天但其余6天五项答齐仍然达标",
-              "标准档D14需要至少9个完整日"
+              "高承诺档到服务第7天需要至少6个完整日",
+              "服务第7天前断1天但其余6天五项答齐仍然达标",
+              "标准档到服务第14天需要至少9个完整日"
             ]
           }
         ],
@@ -6983,11 +6983,11 @@
           "decision": "retrieve",
           "must_include": [
             "高承诺档",
-            "D7",
+            "服务第7天",
             "6天"
           ],
           "must_preserve_meanings": [
-            "把高承诺档D7需要6个完整日的门槛用到已断一天的情形"
+            "把高承诺档服务第7天需要6个完整日的门槛用到已断一天的情形"
           ]
         },
         "retrieval": {
@@ -7043,18 +7043,18 @@
           "timing_missed"
         ],
         "history": [],
-        "user_query": "如果D14打卡率没到85%，我的高承诺档会怎么处理？",
+        "user_query": "如果服务第14天打卡率没到85%，我的高承诺档会怎么处理？",
         "authoritative_facts": [
           {
             "fact_id": "eval_commitment_checkpoint_downgrade",
-            "statement": "每个节点都按D1至该节点的累计完整打卡率复盘。高承诺档达到85%则保留；低于85%则不再保留高承诺档，达到60%时转为标准档，低于60%时进入标准档重新确认并询问执行困难。",
+            "statement": "每个节点都按从服务第1天到当前节点的累计完整打卡率复盘。高承诺档达到85%则保留；低于85%则不再保留高承诺档，达到60%时转为标准档，低于60%时进入标准档重新确认并询问执行困难。",
             "provenance": "knowledge_faqs:manual_curated:execution_commitment_checkpoint_actions_v1",
             "source_scope": "knowledge",
             "source_ids": [
               "execution_commitment_checkpoint_actions_v1"
             ],
             "retrieval_clauses": [
-              "每个节点按D1至该节点的累计完整打卡率复盘",
+              "每个节点按从服务第1天到当前节点的累计完整打卡率复盘",
               "高承诺档达到85%则保留",
               "低于85%但达到60%时转为标准档",
               "低于60%时进入标准档重新确认并询问执行困难"
