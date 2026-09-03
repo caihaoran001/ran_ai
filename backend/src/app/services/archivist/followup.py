@@ -7,7 +7,7 @@ H5 永久下线后，聊天抽取 + 本模块的追问是打卡数据的**全部
 （`ReminderEvent(rule_id="checkin_followup:{kind}")`）后，再由 `render_scheduled_followup`
 填充固定模板。整条追问链路不调用 LLM，每天最多 3 条：
 
-- 五项清单（daily_checklist）：早上回顾**昨天**当前生效清单里尚未回答的项；第1项始终跟踪早C/午B/晚A，工作人员只能调整第2—5项。
+- 五项清单（daily_checklist）：**服务第 2 天起**每天早上回顾**昨天**当前生效清单里尚未回答的项（第 1 天的「昨天」还在服务期外，不追）；第1项始终跟踪早C/午B/晚A，工作人员只能调整第2—5项。
 - 矛盾核对（contradiction）：表单值≠聊天值时下午发一句自然核对。
 - 次晨空腹打卡提醒（milestone）：day3/7/14/21/28 前一晚提醒用户次日早起如厕后、空腹测量并打卡。
 
@@ -33,7 +33,7 @@ from app.services.checkin_checklists import (
     get_effective_daily_checklist,
 )
 from app.services.checkin_followup_preferences import get_followup_preference_states
-from app.services.service_case_queries import effective_service_day
+from app.services.service_case_queries import checkin_first_day, effective_service_day
 
 # 早C/午B/晚A 三段产品依从：最不会自然出现在聊天里、又是阶段报告核心指标。
 # （作矛盾核对/五项清单第1项判缺的字段标签来源，见 _FIELD_LABELS、_first_item_missing_label。）
@@ -465,13 +465,18 @@ async def plan_scheduled_followups(
             )
         )
     if preferences["daily_checklist"]:
-        daily = await plan_document_checklist_followup(
-            session,
-            service_case=service_case,
-            target_date=now.date() - timedelta(days=1),
-        )
-        if daily:
-            candidates.append(daily)
+        # 追问的是「昨天」：服务第 1 天没有可追的昨天(那天还在服务期外、客户也没有打卡
+        # 任务)，这条候选整条不生成——不查清单、不查打卡、不占当天的追问名额。
+        target_date = now.date() - timedelta(days=1)
+        first_day = checkin_first_day(service_case, tz)
+        if first_day is not None and target_date >= first_day:
+            daily = await plan_document_checklist_followup(
+                session,
+                service_case=service_case,
+                target_date=target_date,
+            )
+            if daily:
+                candidates.append(daily)
     # 体重不再单独一类主动追问，已并入里程碑前夜的次晨空腹打卡提醒。
     return candidates
 

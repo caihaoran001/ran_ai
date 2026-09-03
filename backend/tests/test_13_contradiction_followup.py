@@ -634,6 +634,54 @@ async def test_document_checklist_first_item_only_asks_missing_products(db_sessi
     assert "午B" in followup.text and "晚A" in followup.text
 
 
+async def _checklist_kinds(db_session, case, now) -> list[str]:
+    connection = await db_session.connection()
+    await connection.run_sync(
+        lambda sync_connection: CheckinFollowupPreference.__table__.create(
+            sync_connection, checkfirst=True
+        )
+    )
+    candidates = await compose_scheduled_followups(
+        db_session, service_case=case, now=now, tz=_TZ
+    )
+    return [item.kind for item in candidates]
+
+
+@pytest.mark.asyncio
+async def test_daily_checklist_not_asked_on_service_day_one(db_session):
+    """服务第1天没有可追的昨天：那天还在服务期外，客户也没有打卡任务。"""
+    case = await _case(db_session)
+    await _sent_execution_document(db_session, case)
+    now = datetime.now(_TZ)
+    case.service_plan_start_date = now.date()  # 今天是第 1 天
+    await db_session.flush()
+
+    assert "daily_checklist" not in await _checklist_kinds(db_session, case, now)
+
+
+@pytest.mark.asyncio
+async def test_daily_checklist_asked_from_service_day_two(db_session):
+    """第2天起正常追问，目标日就是服务第1天。"""
+    case = await _case(db_session)
+    await _sent_execution_document(db_session, case)
+    now = datetime.now(_TZ)
+    case.service_plan_start_date = now.date() - timedelta(days=1)  # 今天是第 2 天
+    await db_session.flush()
+
+    connection = await db_session.connection()
+    await connection.run_sync(
+        lambda sync_connection: CheckinFollowupPreference.__table__.create(
+            sync_connection, checkfirst=True
+        )
+    )
+    candidates = await compose_scheduled_followups(
+        db_session, service_case=case, now=now, tz=_TZ
+    )
+    daily = [item for item in candidates if item.kind == "daily_checklist"]
+    assert len(daily) == 1
+    assert daily[0].target_date == now.date() - timedelta(days=1)
+
+
 @pytest.mark.asyncio
 async def test_two_unanswered_cycles_pause_and_valid_answer_reopens(db_session):
     # The shared developer test database may lag Alembic head; CI applies migrations.
