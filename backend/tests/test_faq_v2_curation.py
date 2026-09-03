@@ -71,6 +71,13 @@ def test_rewritten_faq_answers_are_dense_and_free_of_scripted_chatter() -> None:
 
 
 def test_archivist_faq_prompt_no_longer_forces_empathy_praise_or_followup() -> None:
+    """FAQ 写法规则只许写在系统提示词一处，且不得回到共情/夸奖/追问那套。
+
+    原先这里要求 extract_agent 和 report_tools 两个文件同时包含同样的措辞，
+    等于把重复固化成制度——实际已经漂移（字段描述多出"动作"一词，
+    把"把截图发我看"这类只属于当次对话的临时动作写进了通用知识库）。
+    现在改成：写法规则只在系统提示词里断言，字段描述断言它不再重复正文规则。
+    """
     extract_source = (
         BACKEND_ROOT / "src" / "app" / "services" / "archivist" / "extract_agent.py"
     ).read_text(encoding="utf-8")
@@ -78,10 +85,16 @@ def test_archivist_faq_prompt_no_longer_forces_empathy_praise_or_followup() -> N
         BACKEND_ROOT / "src" / "app" / "services" / "archivist" / "report_tools.py"
     ).read_text(encoding="utf-8")
 
+    # 唯一权威写法：一问一答、先结论、多余的另开一条、有篇幅上限、禁一次性动作。
+    assert "只回答一个业务问题" in extract_source
+    assert "先给结论" in extract_source
+    assert "真能独立复用就另调一次" in extract_source
+    assert "80字上下" in extract_source
+    assert "临时动作" in extract_source
+
+    # 字段描述只约束字段本身，不再抄一遍写法规则（抄了就会各自漂移）。
+    assert "陪伴式收尾" not in tool_source
+    assert "只回答一个业务问题" not in tool_source
+
     for source in (extract_source, tool_source):
-        assert "直接给结论" in source
-        assert "必要事实" in source
-        assert "最小完整" in source
-        assert "独立业务问题" in source
-        assert "分别调用多次" in source
         assert "先承接情绪、找亮点" not in source
