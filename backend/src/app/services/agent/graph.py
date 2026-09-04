@@ -25,7 +25,7 @@ from app.services.agent.checkpoint import (
 from app.services.agent_observability import record_model_usage, record_tool_calls
 from app.services.agent.context_builder import build_agent_memory_context
 from app.services.agent.model import create_agent_chat_model
-from app.services.agent.prompts import AGENT_SYSTEM_PROMPT, build_agent_user_prompt
+from app.services.agent.prompts import build_agent_user_prompt, get_agent_system_prompt
 from app.services.agent.skill_registry import SkillRegistry
 from app.services.agent.state import AgentRunContext, AgentState
 from app.services.agent.tools import build_agent_tools
@@ -172,7 +172,8 @@ class RanrenAgentGraph:
         query_speaker: str = "用户",
         run_config: dict[str, Any] | None = None,
     ) -> AgentReplyResult:
-        memory_context = await self._build_memory_context()
+        language = await self._resolve_language()
+        memory_context = await self._build_memory_context(language=language)
         effective_knowledge_query = (
             user_query if knowledge_query is None else knowledge_query.strip()
         )
@@ -192,19 +193,11 @@ class RanrenAgentGraph:
                 and knowledge_query.strip() != user_query.strip()
                 else None
             ),
+            language=language,
         )
         bot_nickname = await self._resolve_bot_nickname()
-        language = self.context.language or "zh"
-        if language == "zh" and self.context.service_case_id:
-            try:
-                async with db_session_module.SessionLocal() as session:
-                    case_row = await session.get(ServiceCase, self.context.service_case_id)
-                    if case_row and getattr(case_row, "language", None):
-                        language = case_row.language
-            except Exception:
-                pass
         initial_messages: list[BaseMessage] = [
-            SystemMessage(content=AGENT_SYSTEM_PROMPT),
+            SystemMessage(content=get_agent_system_prompt(language)),
             HumanMessage(
                 content=build_agent_user_prompt(
                     user_query=user_query,
@@ -272,7 +265,20 @@ class RanrenAgentGraph:
         """Runtime clock hook; isolated evaluation overrides it with a fixed clock."""
         return _current_time_context()
 
-    async def _build_memory_context(self) -> str:
+    async def _resolve_language(self) -> str:
+        language = self.context.language or "zh"
+        if language == "zh" and self.context.service_case_id:
+            try:
+                async with db_session_module.SessionLocal() as session:
+                    case_row = await session.get(ServiceCase, self.context.service_case_id)
+                    if case_row and getattr(case_row, "language", None):
+                        language = case_row.language
+            except Exception:
+                pass
+        return language
+
+    async def _build_memory_context(self, *, language: str = "zh") -> str:
+        is_en = (language or "").strip().lower() == "en"
         try:
             async with db_session_module.SessionLocal() as session:
                 memory_scopes = _agent_memory_scopes(self.context.agent_context_plan)
@@ -286,16 +292,18 @@ class RanrenAgentGraph:
                         ServiceCase.id == self.context.service_case_id
                     )
                 )
-                return f"{memory}\n\n【执行约定】\n{agent_execution_context(commitment)}"
+                label = "[Execution Commitment]" if is_en else "【执行约定】"
+                return f"{memory}\n\n{label}\n{agent_execution_context(commitment)}"
         except Exception:
             logger.exception("Failed to build agent memory context service_case_id=%s", self.context.service_case_id)
-            return "暂无可用用户背景。"
+            return "No user background available." if is_en else "暂无可用用户背景。"
 
     async def _build_knowledge_context(
         self,
         query: str,
         *,
         fallback_query: str | None = None,
+        language: str = "zh",
     ) -> tuple[str, int | None, list[dict[str, Any]], str | None, bool, int | None]:
         """每轮按意图识别改写后的问题预检索知识库(FAQ/markdown)注入提示词。
 
@@ -310,9 +318,16 @@ class RanrenAgentGraph:
         None 表示没查(空查询=意图识别判定不需要检索)
         或检索抛异常, 0 表示查了但库里没有匹配——这两种是不同的病, 不能混成一个数。
         """
+        # 命中的 FAQ 正文本身是中文语料，无法按语言切换；占位串是我们自己写的，
+        # 英文服务单必须给英文，否则英文提示词里会凭空冒出一行中文。
+        empty_hint = (
+            "No relevant reference Q&A."
+            if (language or "").strip().lower() == "en"
+            else "暂无相关参考问答。"
+        )
         clean = (query or "").strip()
         if not clean:
-            return "暂无相关参考问答。", None, [], None, False, None
+            return empty_hint, None, [], None, False, None
         try:
             async with db_session_module.SessionLocal() as session:
                 result = await retrieve_indexed_knowledge_result(
@@ -339,14 +354,14 @@ class RanrenAgentGraph:
                         result = fallback_result
                         fallback_used = True
                 query_used = fallback_clean if fallback_used else clean
-            return result.context or "暂无相关参考问答。", len(result.hits), [
+            return result.context or empty_hint, len(result.hits), [
                 hit.observation() for hit in result.hits
             ], query_used, fallback_used, primary_hit_count
         except Exception:
             logger.exception(
                 "Failed to build agent knowledge context service_case_id=%s", self.context.service_case_id
             )
-            return "暂无相关参考问答。", None, [], clean, False, None
+            return empty_hint, None, [], clean, False, None
 
     async def _agent_node(self, state: AgentState) -> dict[str, Any]:
         llm_count = int(state.get("llm_call_count") or 0)

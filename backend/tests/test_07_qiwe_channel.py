@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -8,7 +9,12 @@ from types import SimpleNamespace
 import pytest
 
 from app.api.routes.qiwe import _bypass_aggregator, _channel_message_from_qiwe, _is_authorized_callback
-from app.services.agent.prompts import AGENT_SYSTEM_PROMPT, build_agent_user_prompt
+from app.services.agent.prompts import (
+    AGENT_SYSTEM_PROMPT,
+    AGENT_SYSTEM_PROMPT_EN,
+    build_agent_user_prompt,
+    get_agent_system_prompt,
+)
 from app.services.channels.base import ChannelMessage, ChannelSendResult
 from app.services.channels.qiwe import QiWeChannel
 from app.services.content_policy import (
@@ -685,6 +691,74 @@ def test_agent_prompt_does_not_repeat_staff_speaker_prefix():
     )
 
     assert prompt.count(f"{speaker}：") == 1
+
+
+def test_english_service_case_gets_a_native_english_system_prompt():
+    """英文服务单必须走整份英文提示词，中文路径一个字都不能变。
+
+    历史坑：英文只在用户消息里加一句“请用英文回复”，中文禁词（“……就行”）
+    映射不到英文，英文客服腔（nothing to adjust）全程不设防。
+    """
+    assert get_agent_system_prompt("en") is AGENT_SYSTEM_PROMPT_EN
+    for zh_like in ("zh", "", "ZH", None, "de"):
+        assert get_agent_system_prompt(zh_like) is AGENT_SYSTEM_PROMPT  # type: ignore[arg-type]
+
+    # 英文提示词里混进中文，模型就会把中文原样漏进回复
+    assert not re.search(r"[一-鿿]", AGENT_SYSTEM_PROMPT_EN)
+
+    # 英文客服腔黑名单：Lucy 2026-09-04 点名的就是 nothing to adjust
+    for banned in (
+        "nothing to adjust",
+        "you're good",
+        "just let me know",
+        "feel free to reach out",
+        "hope this helps",
+        "Let me check",
+    ):
+        assert banned in AGENT_SYSTEM_PROMPT_EN
+
+    # 术语必须与已交付的英文文件一致
+    assert "Morning C, Noon B, and Evening A" in AGENT_SYSTEM_PROMPT_EN
+    assert "your coach" in AGENT_SYSTEM_PROMPT_EN
+
+    # 业务规则不得在翻译中丢失
+    assert "Never mix Chinese words" in AGENT_SYSTEM_PROMPT_EN
+    assert "search_success_case" in AGENT_SYSTEM_PROMPT_EN
+    assert "get_recent_checkins(days=7)" in AGENT_SYSTEM_PROMPT_EN
+    assert "the number of write calls this turn must be zero" in AGENT_SYSTEM_PROMPT_EN
+    assert "seek medical care promptly" in AGENT_SYSTEM_PROMPT_EN
+    assert "pause that product for the day" in AGENT_SYSTEM_PROMPT_EN
+    assert "<no_reply>" in AGENT_SYSTEM_PROMPT_EN
+
+
+def test_english_user_prompt_uses_english_section_labels():
+    """段落标签必须跟着系统提示词一起切换，否则英文提示词引用的块在正文里不存在。"""
+    kwargs = dict(
+        user_query="how many days am I in?",
+        query_speaker="Lucy",
+        recent_messages=["Lucy: hi"],
+        skill_catalog="checkin_analysis",
+        current_time_context="2026-09-04 10:00",
+        memory_context="stable facts",
+        knowledge_context="No relevant reference Q&A.",
+        bot_nickname="燃人助教",
+    )
+    en_prompt = build_agent_user_prompt(**kwargs, language="en")
+    for label in (
+        "[Current Time]",
+        "[Recent Conversation]",
+        "[User Background]",
+        "[Reference Q&A]",
+        "[Available Skills]",
+        "[Current Message]",
+        "[Your Identity]",
+    ):
+        assert label in en_prompt
+    assert "【参考问答】" not in en_prompt
+
+    zh_prompt = build_agent_user_prompt(**kwargs, language="zh")
+    assert "【参考问答】" in zh_prompt
+    assert "[Reference Q&A]" not in zh_prompt
 
 
 def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain():
