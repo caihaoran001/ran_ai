@@ -536,6 +536,13 @@ class ArchivistPipeline:
         keys = set(progress.contact_preference_keys)
         if not keys:
             return
+        if "coach_once" in keys:
+            from app.services.reminder_service import (
+                alert_final_review_coach_request,
+            )
+
+            # 独立事务、失败只告警：通知运营是尽力而为的旁路，不能影响本批归档落库。
+            await alert_final_review_coach_request(self.service_case.id)
         topics_off: set[str] = set()
         if "no_product_rec" in keys:
             topics_off.add("product_recommendation")

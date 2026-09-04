@@ -1314,3 +1314,46 @@ def test_commercial_term_gate_is_unchanged():
         },
     )
     assert any("commercial" in reason for reason in reasons)
+
+
+@pytest.mark.asyncio
+async def test_coach_once_notifies_operations_only_once(
+    db_session, monkeypatch
+):
+    """「请班主任联系我一次」只授权一次：发一条内部提示，不转成持续跟进。"""
+    import app.services.reminder_service as reminder_service
+    from app.core.config import get_settings
+    from app.models.reminder import ReminderEvent, ReminderEventType
+
+    sent: list[tuple[str, str]] = []
+
+    async def fake_send(chat_id, content):
+        sent.append((chat_id, content))
+        return SimpleNamespace(success=True, message_id="m1", error=None)
+
+    monkeypatch.setattr(
+        reminder_service, "_send_channel_text_with_retries", fake_send
+    )
+    monkeypatch.setattr(
+        get_settings(), "ai_balance_alert_group_id", "ops-group", raising=False
+    )
+
+    case, message, progress = await _archivist_case(db_session, monkeypatch)
+    db_session.add(
+        ReminderEvent(
+            service_case_id=case.id,
+            rule_id="final_review:handoff",
+            event_date=datetime.now(timezone.utc).date(),
+            event_type=ReminderEventType.REMINDED,
+        )
+    )
+    await db_session.flush()
+    await db_session.commit()
+
+    await reminder_service.alert_final_review_coach_request(case.id)
+    await reminder_service.alert_final_review_coach_request(case.id)
+
+    assert len(sent) == 1
+    assert sent[0][0] == "ops-group"
+    assert "班主任联系一次" in sent[0][1]
+    assert "不需要转为持续跟进" in sent[0][1]

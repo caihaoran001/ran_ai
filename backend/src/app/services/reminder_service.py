@@ -2131,6 +2131,67 @@ async def alert_intake_generation_failure(service_case_id: int, exc: Exception) 
         )
 
 
+FINAL_REVIEW_COACH_REQUEST_RULE_ID = "final_review_coach_request"
+
+
+async def alert_final_review_coach_request(service_case_id: int) -> None:
+    """客户在结营复盘里选了「请班主任联系我一次」，通知运营群安排真人。
+
+    **只授权这一次**：他要的是一次人工沟通，不是被转成持续跟进，所以用天闸占位、
+    只发一条，不生成任何后续任务。告警失败只记日志并释放天闸，下一轮重来——
+    通知不能反过来影响业务判断。
+
+    复用低余额告警的运营群配置，不新增环境变量（加配置项要同时改 .env 和 compose
+    的引用，漏一处就不注入）。
+    """
+    settings = get_settings()
+    group_id = (settings.ai_balance_alert_group_id or "").strip()
+    if not group_id:
+        return
+    try:
+        async with SessionLocal() as session:
+            service_case = await session.scalar(
+                select_present_service_cases(ServiceCase.id == service_case_id).options(
+                    selectinload(ServiceCase.user)
+                )
+            )
+            if service_case is None:
+                return
+            today = datetime.now(ZoneInfo(settings.reminder_timezone)).date()
+            reserved = await _reserve_reminder_event(
+                session,
+                service_case_id,
+                rule_id=FINAL_REVIEW_COACH_REQUEST_RULE_ID,
+                event_date=today,
+                event_type=ReminderEventType.REMINDED,
+            )
+            if reserved is None:
+                return
+            user_name = service_case.user.name if service_case.user else "未知用户"
+            alert_text = (
+                "【客户要求班主任联系一次】\n"
+                f"服务单：{service_case.case_no}\n"
+                f"用户：{user_name}\n"
+                f"群：{service_case.group_name or service_case.group_id or '未知'}\n"
+                "来源：结营复盘的联系偏好。请安排真人联系一次即可，不需要转为持续跟进。"
+            )
+            result = await _send_channel_text_with_retries(group_id, alert_text)
+            if result is not None and result.success:
+                await session.commit()
+            else:
+                await session.rollback()
+                logger.warning(
+                    "final review coach request alert send failed service_case_id=%s: %s",
+                    service_case_id,
+                    getattr(result, "error", None),
+                )
+    except Exception:
+        logger.exception(
+            "final review coach request alert crashed service_case_id=%s",
+            service_case_id,
+        )
+
+
 async def _send_channel_text_with_retries(chat_id: str, content: str):
     last_result = None
     for attempt in range(1, CHANNEL_SEND_MAX_ATTEMPTS + 1):
