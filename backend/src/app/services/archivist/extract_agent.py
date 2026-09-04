@@ -35,6 +35,7 @@ _ALL_KINDS = [
     "faq",
     "memory",
     "case",
+    "final_review",
 ]
 _PRODUCT_SUBKEYS = ("morning_c", "noon_b", "night_a", "summary")
 
@@ -110,7 +111,12 @@ _SYSTEM_PROMPT = (
     "- report_case_candidate：一批最多调用一次。只有本批出现新的正向成效，而且结合"
     "case_material_summary、outcome_timeline 能确认变化显著、持续、不是一次性波动时才上报。"
     "正文必须完整脱敏，只使用抽象事实；existing_case_summaries 已覆盖的故事不得重复。"
-    "若证据链不完整就不调用，继续把有用信息保留在 case_material_summary，等待以后补足。\n\n"
+    "若证据链不完整就不调用，继续把有用信息保留在 case_material_summary，等待以后补足。\n"
+    "- report_final_review_answer：仅当输入里带 <final_review_pending> 时可用，"
+    "每道被回应的题调用一次。这些答案要拿去发券、决定后续联系方式，所以只记他真说过的："
+    "明确回答（含'不需要后续'这类否定回答）报 answered；他回了别的、绕开了报 skipped；"
+    "明确表示不想说报 refused；说了但对不上任何一项报 unclear。"
+    "没回复不等于不满意，也不等于拒答——他压根没提这题就不要调用这个工具。\n\n"
     "【角色边界】report_checkin/report_outcome/report_profile_fact/report_state_fact 只能提取【用户】本人表达的信息；"
     "不得把助教或班主任的话写成用户事实。班主任内容只可作为纠偏或个人指导的确认依据。\n"
     "【总纪律】只上报原话或上下文能直接支持的事实；宁缺毋滥；不确定是不是本人的/今天的就不报；"
@@ -187,6 +193,7 @@ async def run_extract_agent(
     settings: Settings | None = None,
     followup_context: list[dict[str, Any]] | None = None,
     checklist_context: list[dict[str, Any]] | None = None,
+    final_review_context: list[dict[str, Any]] | None = None,
     archive_context: dict[str, Any] | None = None,
     allowed_dates: list[str] | None = None,
     agent_run_id: int | None = None,
@@ -213,6 +220,7 @@ async def run_extract_agent(
         "faq": [],
         "memory": None,
         "case": [],
+        "final_review": [],
         # 观测留痕(R1):LLM 原始 emit + 过滤后存活 + 被丢弃及原因;
         # graph.commit 落 archivist_extract_traces。纯观测,不影响归桶。
         "_trace": {"emitted": [], "kept": {}, "dropped": []},
@@ -233,6 +241,7 @@ async def run_extract_agent(
         bound = chat_model.bind_tools(tools)
         followup_context = followup_context or []
         checklist_context = checklist_context or []
+        final_review_context = final_review_context or []
         archive_context = archive_context or {}
         allowed_dates = allowed_dates or []
         context_text = (
@@ -257,6 +266,16 @@ async def run_extract_agent(
                 "checklist_answers 上报；item_id 和 target_date 必须完全一致。"
                 "注意：同一句话既是自由打卡字段（如饮食/运动/睡眠），又能对应上面某道清单题时，"
                 "两者都要填——内容既写进对应字段，也随 checklist_answers 上报那道 item_id，不要二选一。"
+            )
+        if final_review_context:
+            context_text += (
+                "\n\n<final_review_pending>\n"
+                + json.dumps(final_review_context, ensure_ascii=False)
+                + "\n</final_review_pending>\n"
+                + "这些是已经问出口、还没记下回答的结营复盘题。用户只要回应了其中任何一道，"
+                "就调用 report_final_review_answer 上报一次；question_id 必须与上面完全一致，"
+                "option_keys 只能用上面给出的 key。用户绕开、拒答或说不清也要如实上报对应状态，"
+                "不要为了凑齐而猜。"
             )
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
@@ -396,6 +415,42 @@ async def run_extract_agent(
                 dropped.append({"bucket": "case", "reason": "duplicate_case_candidate"})
             else:
                 collector["case"].append(validated)
+        elif kind == "final_review":
+            question_id = str(validated.get("question_id") or "")
+            allowed_questions = {
+                str(item.get("question_id") or ""): {
+                    str(option.get("key") or "")
+                    for option in item.get("options") or []
+                    if isinstance(option, dict)
+                }
+                for item in (final_review_context or [])
+            }
+            if question_id not in allowed_questions:
+                # 没问出口的题不许"被回答"：否则模型会把闲聊里顺嘴一句当成正式答案，
+                # 而这些答案要拿去发券和停推送。
+                dropped.append(
+                    {
+                        "bucket": "final_review",
+                        "question_id": question_id,
+                        "reason": "final_review_not_in_whitelist",
+                    }
+                )
+            else:
+                unknown = [
+                    key
+                    for key in (validated.get("option_keys") or [])
+                    if key not in allowed_questions[question_id]
+                ]
+                if unknown:
+                    dropped.append(
+                        {
+                            "bucket": "final_review",
+                            "question_id": question_id,
+                            "reason": "final_review_unknown_option_key",
+                        }
+                    )
+                else:
+                    collector["final_review"].append(validated)
         else:
             collector[kind].append(validated)
 
@@ -415,5 +470,8 @@ async def run_extract_agent(
         "faq": len(collector["faq"]),
         "memory": 1 if collector["memory"] else 0,
         "case": len(collector["case"]),
+        "final_review": [
+            str(item.get("question_id") or "") for item in collector["final_review"]
+        ],
     }
     return collector

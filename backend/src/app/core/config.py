@@ -296,6 +296,16 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="CHECKIN_REWARDS_ENABLED",
     )
+    # 第26-30天结营复盘：会主动发真实群消息并发出券的领取入口，默认关闭。
+    # 先只在白名单服务单上开（留空=开关打开也一单都不跑），实验群验过再放开。
+    final_review_enabled: bool = Field(
+        default=False,
+        validation_alias="FINAL_REVIEW_ENABLED",
+    )
+    final_review_case_ids: str = Field(
+        default="",
+        validation_alias="FINAL_REVIEW_CASE_IDS",
+    )
     # 傍晚窗口[start,end)：① 不活跃兜底按 (case_id,日期) 在窗口内确定性伪随机落一个发送时刻(规避定点风控)；
     # ② 日常缺口追问的发送时间闸——仅当当前时刻落在此窗口内才发缺口追问(早C/午B 此时必已过点、晚A 未到点)。
     checkin_followup_window_start: str = Field(

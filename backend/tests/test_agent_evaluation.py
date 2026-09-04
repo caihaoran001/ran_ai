@@ -929,7 +929,8 @@ def test_every_registered_tool_is_classified_read_only_or_state_changing() -> No
     registered = {
         match
         for path in tools_dir.glob("*.py")
-        for match in re.findall(r'name="([a-z_]+)"', path.read_text(encoding="utf-8"))
+        # 名字里允许数字（get_day28_benefits）：漏掉带数字的工具等于让它绕过分类闸门。
+        for match in re.findall(r'name="([a-z0-9_]+)"', path.read_text(encoding="utf-8"))
     }
     assert registered, "没有扫到任何工具定义，说明扫描方式失效了"
 

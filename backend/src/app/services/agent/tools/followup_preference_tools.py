@@ -19,7 +19,13 @@ from app.services.checkin_followup_preferences import (
 from app.services.service_case_queries import select_active_service_cases
 
 FollowupTopic = Literal[
-    "daily_checklist", "weight", "waist", "milestone_review", "contradiction"
+    "daily_checklist",
+    "weight",
+    "waist",
+    "milestone_review",
+    "contradiction",
+    "product_recommendation",
+    "proactive_contact",
 ]
 
 
@@ -29,7 +35,10 @@ class UpdateFollowupPreferencesArgs(BaseModel):
         max_length=len(FOLLOWUP_TOPICS),
         description=(
             "Topics to change. daily_checklist=昨日五项回顾, weight=体重, waist=腰围, "
-            "milestone_review=次晨空腹打卡提醒, contradiction=打卡数据核对。可一次传多个。"
+            "milestone_review=次晨空腹打卡提醒, contradiction=打卡数据核对, "
+            "product_recommendation=产品与权益推荐, proactive_contact=全部主动联系。"
+            "可一次传多个。用户说『别再推荐产品了』关 product_recommendation；"
+            "说『先别主动找我了』关 proactive_contact。"
         ),
     )
     enabled: bool = Field(

@@ -429,6 +429,9 @@ async def plan_scheduled_followups(
     preferences = await get_followup_preference_states(
         session, service_case_id=service_case.id
     )
+    if not preferences["proactive_contact"]:
+        # 客户说过"暂停主动联系"：连数据核对都不发。风险相关提醒不走这条链路，不受影响。
+        return []
     candidates: list[ScheduledFollowupPlan] = []
     confirmations = detect.get("confirmations") or []
     confirmation_text = compose_followup_message(

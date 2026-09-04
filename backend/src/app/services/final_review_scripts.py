@@ -94,6 +94,20 @@ Q_REASON_CONTINUE = "R5C"
 Q_REASON_PAUSE = "R5P"
 Q_CONTACT_PREFERENCE = "R6"
 
+# 按提问顺序的全部题号。B0 在内——它虽然不是提问，但"权益有没有告知过"同样
+# 要能被查到，否则重启或补扫时会把同一条权益消息再发一遍。
+FINAL_REVIEW_QUESTION_IDS: tuple[str, ...] = (
+    Q_RESULT_CHANGES,
+    Q_RESULT_HABITS,
+    Q_NEXT_GOAL,
+    Q_OTHER_HEALTH,
+    Q_BENEFIT_NOTICE,
+    Q_SERVICE_INTENT,
+    Q_REASON_CONTINUE,
+    Q_REASON_PAUSE,
+    Q_CONTACT_PREFERENCE,
+)
+
 # 选项语义白名单：只有这里列出的 key 允许出现，且只允许出现在对应题目下。
 # 不在此表中的题目（R1/R2/R3C/B0）是开放题，一律不许带选项。
 OPTION_KEYS: dict[str, tuple[str, ...]] = {

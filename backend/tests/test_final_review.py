@@ -11,11 +11,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from langchain_core.messages import AIMessage
 
+from app.models.message import (
+    Message,
+    MessageDirection,
+    MessagePurpose,
+    MessageSenderType,
+    MessageStatus,
+)
+from app.services.archivist.graph import run_archivist
 from app.services.day28_benefit_grants import (
     benefits_to_grant,
     granted_codes,
@@ -34,6 +44,7 @@ from app.services.day28_benefit_settings import (
     set_benefit_config,
 )
 from app.services.final_review_answers import (
+    FinalReviewProgress,
     INTENT_CONTINUE,
     INTENT_PAUSE,
     STATUS_ANSWERED,
@@ -45,8 +56,19 @@ from app.services.final_review_answers import (
     record_answer,
     should_ask,
 )
+from app.services.final_review_runner import (
+    FINAL_REVIEW_WINDOW,
+    NodePlan,
+    deterministic_send_time,
+    ensure_benefit_links,
+    final_review_active_for,
+    select_node,
+    should_skip_daily_checklist,
+    trailing_silent_nodes,
+)
 from app.services.final_review_scripts import (
     ASK_INTENT_CONTINUE,
+    FinalReviewScript,
     ASK_INTENT_PAUSE,
     ASK_OTHER_HEALTH_NEED,
     NODE_BENEFIT,
@@ -866,3 +888,374 @@ async def test_grant_ledger_api_falls_back_to_the_code_when_the_benefit_is_gone(
 
     rows = (await admin_client.get("/day28-benefit-grants")).json()
     assert rows[0]["grants"][0]["benefit_name"] == "retired_coupon"
+
+
+# --------------------------------------------------------------------------
+# 节点调度：哪天问哪个节点、什么时候停
+# --------------------------------------------------------------------------
+
+
+def _seed_script(language: str = "zh") -> FinalReviewScript:
+    return FinalReviewScript(
+        language=language, version_no=1, nodes=seed_nodes(language)
+    )
+
+
+def _progress(**answers) -> FinalReviewProgress:
+    rows = {}
+    for question_id, (status, selected) in answers.items():
+        rows[question_id] = SimpleNamespace(
+            question_id=question_id,
+            answer_status=status,
+            normalized_value={"selected": selected} if selected else None,
+            raw_text="",
+        )
+    return FinalReviewProgress(answers=rows)
+
+
+@pytest.mark.parametrize(
+    "day,expected",
+    [
+        (25, None),
+        (26, NODE_RESULTS),
+        (27, NODE_RESULTS),  # 第26天没发出去（功能刚开），先补最早那个，一天只推一个
+        (36, None),  # 过了最后一天不再追
+    ],
+)
+def test_node_selection_follows_the_service_day(day, expected):
+    assert (
+        select_node(_seed_script(), day=day, asked_nodes=[], progress=_progress())
+        == expected
+    )
+
+
+def test_only_one_node_advances_per_day():
+    """功能中途开启时三个节点同时到期，也只能推进一个——不能当天连问四轮。"""
+    script = _seed_script()
+    first = select_node(script, day=30, asked_nodes=[], progress=_progress())
+    second = select_node(
+        script, day=30, asked_nodes=[first], progress=_progress()
+    )
+    assert first == NODE_RESULTS
+    assert second == NODE_GOAL
+
+
+def test_handoff_waits_for_the_service_intent_answer():
+    """承接必须建立在客户表达过的意愿上，没答就不问。"""
+    script = _seed_script()
+    asked = [NODE_RESULTS, NODE_GOAL, NODE_BENEFIT]
+    silent = _progress(**{Q_RESULT_CHANGES: (STATUS_ANSWERED, [])})
+    assert select_node(script, day=30, asked_nodes=asked, progress=silent) is None
+
+    answered = _progress(
+        **{
+            Q_RESULT_CHANGES: (STATUS_ANSWERED, []),
+            Q_SERVICE_INTENT: (STATUS_ANSWERED, ["continue_original"]),
+        }
+    )
+    assert (
+        select_node(script, day=30, asked_nodes=asked, progress=answered)
+        == NODE_HANDOFF
+    )
+
+
+def test_two_silent_nodes_stop_the_whole_round():
+    """连着两个节点一个字没回就整轮停止，不再继续追问。"""
+    script = _seed_script()
+    silent = _progress()
+    assert (
+        trailing_silent_nodes(
+            script, asked_nodes=[NODE_RESULTS, NODE_GOAL], progress=silent
+        )
+        == 2
+    )
+    assert (
+        select_node(
+            script, day=29, asked_nodes=[NODE_RESULTS, NODE_GOAL], progress=silent
+        )
+        is None
+    )
+
+
+def test_a_late_answer_resumes_the_round():
+    """迟到的回答要能解除暂停：第一个节点回了，就还没到"连续两个都没回"。"""
+    script = _seed_script()
+    progress = _progress(**{Q_RESULT_CHANGES: (STATUS_ANSWERED, [])})
+    assert (
+        trailing_silent_nodes(
+            script, asked_nodes=[NODE_RESULTS, NODE_GOAL], progress=progress
+        )
+        == 1
+    )
+    assert (
+        select_node(
+            script, day=29, asked_nodes=[NODE_RESULTS, NODE_GOAL], progress=progress
+        )
+        == NODE_BENEFIT
+    )
+
+
+def test_refused_answer_still_counts_as_an_answer_for_pausing():
+    """明确说'不想聊'是回应，不是沉默——不能因此把他判成失联。"""
+    script = _seed_script()
+    progress = _progress(**{Q_RESULT_CHANGES: (STATUS_REFUSED, [])})
+    assert (
+        trailing_silent_nodes(script, asked_nodes=[NODE_RESULTS], progress=progress)
+        == 0
+    )
+
+
+def test_send_window_is_staggered_within_the_hour():
+    """同一服务单每天固定时刻、不同服务单错峰，避免整点集中发送。"""
+    day = date(2026, 9, 20)
+    times = {deterministic_send_time(case_id, day, NODE_RESULTS) for case_id in range(1, 40)}
+    assert len(times) > 1
+    assert deterministic_send_time(7, day, NODE_RESULTS) == deterministic_send_time(
+        7, day, NODE_RESULTS
+    )
+    start, end = FINAL_REVIEW_WINDOW
+    assert all(start <= item < end for item in times)
+
+
+def test_whitelist_is_required_even_when_the_switch_is_on():
+    """开关开了但白名单为空 = 一单都不跑；误配不能变成全量群发券。"""
+    settings = SimpleNamespace(final_review_enabled=True, final_review_case_ids="")
+    assert final_review_active_for(settings, 534) is False
+    settings = SimpleNamespace(final_review_enabled=True, final_review_case_ids="534, 999")
+    assert final_review_active_for(settings, 534) is True
+    assert final_review_active_for(settings, 1) is False
+    off = SimpleNamespace(final_review_enabled=False, final_review_case_ids="534")
+    assert final_review_active_for(off, 534) is False
+
+
+def test_daily_checklist_yields_only_on_the_review_days():
+    settings = SimpleNamespace(final_review_enabled=True, final_review_case_ids="534")
+    assert should_skip_daily_checklist(settings, service_case_id=534, day=27) is True
+    assert should_skip_daily_checklist(settings, service_case_id=534, day=25) is False
+    assert should_skip_daily_checklist(settings, service_case_id=1, day=27) is False
+
+
+def test_benefit_links_are_appended_when_the_model_drops_them():
+    """模型漏掉链接就由代码补回：账上记了已发券，客户手里必须真有链接。"""
+    benefit = Day28Benefit(
+        code="product_200",
+        name="200元产品券",
+        face_value="200元",
+        claim_url="https://example.com/claim",
+        enabled=True,
+    )
+    plan = NodePlan(
+        node=NODE_BENEFIT,
+        text="",
+        reserved_benefits=[benefit],
+        reserved_grants=[],
+        benefits_text="",
+    )
+    dropped = ensure_benefit_links("你的权益已经可以领啦～", plan)
+    assert "https://example.com/claim" in dropped
+    kept = ensure_benefit_links(
+        "权益：200元产品券 https://example.com/claim", plan
+    )
+    assert kept.count("https://example.com/claim") == 1
+
+
+# --------------------------------------------------------------------------
+# 档案官侧：答案落库与联系偏好生效
+# --------------------------------------------------------------------------
+
+
+class _FakeReportingModel:
+    """假模型：bind_tools 返回自身，ainvoke 吐一条预设的 report tool_call。"""
+
+    def __init__(self, tool_calls):
+        self._tool_calls = tool_calls
+        self.bound_tool_names: list[str] = []
+        self.prompts: list[str] = []
+
+    def bind_tools(self, tools):
+        self.bound_tool_names = [tool.name for tool in tools]
+        return self
+
+    async def ainvoke(self, messages):
+        self.prompts.append(str(messages[-1].content))
+        return AIMessage(content="", tool_calls=list(self._tool_calls))
+
+
+async def _archivist_case(db_session, monkeypatch, *, whitelist: bool = True):
+    from app.core.config import get_settings
+    from app.models.archivist_progress import ArchivistProgress
+    from app.models.reminder import ReminderEvent, ReminderEventType
+    from app.models.service_case import ServiceCase, ServiceCaseStatus
+    from app.models.user import User
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "final_review_enabled", True, raising=False)
+    user = User(name="结营复盘测试用户")
+    db_session.add(user)
+    await db_session.flush()
+    case = ServiceCase(
+        case_no=f"TEST-FR-{uuid4().hex[:6].upper()}",
+        user_id=user.id,
+        group_id=f"fr-{uuid4().hex[:8]}",
+        questionnaire_token=uuid4().hex,
+        status=ServiceCaseStatus.IN_SERVICE,
+        started_at=datetime.now(timezone.utc) - timedelta(days=28),
+    )
+    db_session.add(case)
+    await db_session.flush()
+    monkeypatch.setattr(
+        settings,
+        "final_review_case_ids",
+        str(case.id) if whitelist else "",
+        raising=False,
+    )
+    # 已发出 benefit 节点：只有问出口的题才允许被"回答"。
+    db_session.add(
+        ReminderEvent(
+            service_case_id=case.id,
+            rule_id="final_review:benefit",
+            event_date=datetime.now(timezone.utc).date(),
+            event_type=ReminderEventType.REMINDED,
+        )
+    )
+    message = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="继续用原来的方案吧，另外别再给我推荐产品了",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    progress = ArchivistProgress(service_case_id=case.id, last_archived_message_id=0)
+    db_session.add(progress)
+    await db_session.flush()
+    return case, message, progress
+
+
+@pytest.mark.asyncio
+async def test_archivist_records_a_final_review_answer(db_session, monkeypatch):
+    case, message, progress = await _archivist_case(db_session, monkeypatch)
+    fake = _FakeReportingModel(
+        [
+            {
+                "name": "report_final_review_answer",
+                "args": {
+                    "question_id": Q_SERVICE_INTENT,
+                    "answer_status": STATUS_ANSWERED,
+                    "raw_text": "继续用原来的方案吧",
+                    "option_keys": ["continue_original"],
+                    "evidence_message_id": message.id,
+                },
+                "id": "call_1",
+            }
+        ]
+    )
+
+    await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+    await db_session.flush()
+
+    stored = await load_progress(db_session, service_case_id=case.id)
+    assert stored.selected_keys(Q_SERVICE_INTENT) == ["continue_original"]
+    assert stored.intent_bucket == INTENT_CONTINUE
+    # 待答清单确实注入了，模型才可能对上题号。
+    assert "final_review_pending" in fake.prompts[-1]
+
+
+@pytest.mark.asyncio
+async def test_archivist_drops_an_answer_to_a_question_never_asked(
+    db_session, monkeypatch
+):
+    """没问出口的题不许"被回答"——否则闲聊里顺嘴一句会被当成正式表态去发券。"""
+    case, message, progress = await _archivist_case(db_session, monkeypatch)
+    fake = _FakeReportingModel(
+        [
+            {
+                "name": "report_final_review_answer",
+                "args": {
+                    "question_id": Q_CONTACT_PREFERENCE,  # handoff 节点还没发
+                    "answer_status": STATUS_ANSWERED,
+                    "raw_text": "少打扰我",
+                    "option_keys": ["less_contact"],
+                    "evidence_message_id": message.id,
+                },
+                "id": "call_1",
+            }
+        ]
+    )
+
+    await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+    await db_session.flush()
+
+    stored = await load_progress(db_session, service_case_id=case.id)
+    assert stored.status(Q_CONTACT_PREFERENCE) is None
+
+
+@pytest.mark.asyncio
+async def test_final_review_context_is_not_injected_when_case_is_not_whitelisted(
+    db_session, monkeypatch
+):
+    case, message, progress = await _archivist_case(
+        db_session, monkeypatch, whitelist=False
+    )
+    fake = _FakeReportingModel([])
+
+    await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+
+    assert "final_review_pending" not in fake.prompts[-1]
+    assert "report_final_review_answer" in fake.bound_tool_names
+
+
+@pytest.mark.asyncio
+async def test_contact_preference_turns_off_proactive_contact(db_session, monkeypatch):
+    """R6 说了"暂停主动联系"就要真停：问了不执行比不问更伤。"""
+    from app.services.checkin_followup_preferences import (
+        get_followup_preference_states,
+    )
+    from app.models.reminder import ReminderEvent, ReminderEventType
+
+    case, message, progress = await _archivist_case(db_session, monkeypatch)
+    db_session.add(
+        ReminderEvent(
+            service_case_id=case.id,
+            rule_id="final_review:handoff",
+            event_date=datetime.now(timezone.utc).date(),
+            event_type=ReminderEventType.REMINDED,
+        )
+    )
+    await db_session.flush()
+    fake = _FakeReportingModel(
+        [
+            {
+                "name": "report_final_review_answer",
+                "args": {
+                    "question_id": Q_CONTACT_PREFERENCE,
+                    "answer_status": STATUS_ANSWERED,
+                    "raw_text": "暂停主动联系，我需要时再来找你",
+                    "option_keys": ["pause_contact"],
+                    "evidence_message_id": message.id,
+                },
+                "id": "call_1",
+            }
+        ]
+    )
+
+    await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+    await db_session.flush()
+
+    states = await get_followup_preference_states(db_session, service_case_id=case.id)
+    assert states["proactive_contact"] is False
+    assert states["product_recommendation"] is False
+    # 风险相关提醒不走追问链路，这里不该被牵连关掉。
+    assert states["contradiction"] is True

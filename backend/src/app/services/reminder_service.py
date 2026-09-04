@@ -189,6 +189,8 @@ class ReminderService:
                             await self.check_checkin_followup_v2_once()
                         if self.settings.churn_recall_enabled:
                             await self.check_churn_recall_once()
+                        if self.settings.final_review_enabled:
+                            await self.check_final_review_once()
                         # 群体洞察可能有一次较长的 LLM 调用，放到循环末尾，
                         # 避免延迟阶段完结、提醒、补发等时效性任务。
                         if self.settings.population_insight_enabled:
@@ -533,6 +535,7 @@ class ReminderService:
         from app.services.archivist.checkin_projection import (
             mark_contradictions_pending_confirmation,
         )
+        from app.services.final_review_runner import should_skip_daily_checklist
         from app.services.archivist.followup import (
             finalize_checkin_followup_cycles,
             is_followup_paused,
@@ -567,7 +570,8 @@ class ReminderService:
                     and service_settlement_ended(service_case, now, tz)
                 ):
                     continue
-                if checkin_day(service_case, now, tz) is None:
+                service_day = checkin_day(service_case, now, tz)
+                if service_day is None:
                     continue
                 if await is_followup_paused(session, service_case_id=service_case.id):
                     continue
@@ -583,6 +587,12 @@ class ReminderService:
                 )
                 if service_case.status == ServiceCaseStatus.COMPLETED:
                     plans = [plan for plan in plans if plan.kind == "daily_checklist"]
+                if should_skip_daily_checklist(
+                    self.settings, service_case_id=service_case.id, day=service_day
+                ):
+                    # 结营复盘的几天让位：同一天既问昨日五项又问结营复盘，客户只会回一个。
+                    # 体重矛盾核对与次晨空腹提醒不受影响，它们仍是当天必要的确认。
+                    plans = [plan for plan in plans if plan.kind != "daily_checklist"]
                 for plan in plans:
                     if len(sent_kinds) >= 3 or plan.kind in sent_kinds:
                         continue
@@ -667,6 +677,219 @@ class ReminderService:
                                 today_checkin, followup.confirmation_fields
                             )
             await session.commit()
+
+    async def check_final_review_once(self, now: datetime | None = None) -> None:
+        """结营复盘：第 26 天起按节点唤起助教，在群里问下一阶段并告知权益。
+
+        每个服务单单独一个事务：这条链路一次成功要同时落"券的发放名额、节点天闸、
+        发出的消息"三样，任何一步没成必须整笔撤回，不能连累同一轮里别的服务单。
+        """
+        from app.services.agent.graph import generate_final_review_reply
+        from app.services.checkin_followup_preferences import (
+            get_followup_preference_states,
+        )
+        from app.services.final_review_runner import (
+            FINAL_REVIEW_LAST_DAY,
+            FINAL_REVIEW_WINDOW,
+            NODE_EARLIEST_DAY,
+            NODE_RESULTS,
+            build_node_instruction,
+            ensure_benefit_links,
+            final_review_case_ids,
+            load_case_state,
+            plan_node,
+            rule_id_for,
+            select_node,
+            within_send_window,
+        )
+
+        case_ids = final_review_case_ids(self.settings)
+        if not case_ids:
+            # 开关开了但白名单是空的：一单都不跑。见 final_review_active_for。
+            return
+        tz = ZoneInfo(self.settings.reminder_timezone)
+        now = now or datetime.now(tz)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=tz)
+        today = now.date()
+        start, end = FINAL_REVIEW_WINDOW
+        if not (start <= now.time() < end):
+            return
+
+        async with SessionLocal() as session:
+            candidates = [
+                row.id
+                for row in await session.scalars(
+                    select_present_service_cases(
+                        ServiceCase.id.in_(case_ids),
+                        ServiceCase.ai_auto_reply_enabled.is_(True),
+                    )
+                )
+            ]
+
+        for case_id in candidates:
+            async with SessionLocal() as session:
+                service_case = await session.scalar(
+                    select_present_service_cases(
+                        ServiceCase.id == case_id,
+                        ServiceCase.ai_auto_reply_enabled.is_(True),
+                    )
+                )
+                if service_case is None:
+                    continue
+                day = checkin_day(service_case, now, tz)
+                if day is None or not (
+                    NODE_EARLIEST_DAY[NODE_RESULTS] <= day <= FINAL_REVIEW_LAST_DAY
+                ):
+                    continue
+                script, progress, asked = await load_case_state(
+                    session, service_case=service_case
+                )
+                node = select_node(
+                    script, day=day, asked_nodes=asked, progress=progress
+                )
+                if node is None:
+                    continue
+                if not within_send_window(now, service_case_id=case_id, node=node):
+                    continue
+                preferences = await get_followup_preference_states(
+                    session, service_case_id=case_id
+                )
+                if not preferences["proactive_contact"]:
+                    # 客户在上一个节点选了"暂停主动联系"：整轮复盘到此为止。
+                    continue
+                plan = await plan_node(
+                    session,
+                    service_case=service_case,
+                    script=script,
+                    node=node,
+                    progress=progress,
+                )
+                if plan is None:
+                    # 这轮没有可发内容（券配置坏了、或该节点的题已问完）。
+                    # 刻意不占天闸：问题修好后同一节点还要能发。
+                    continue
+                event = await _reserve_reminder_event(
+                    session,
+                    case_id,
+                    rule_id=rule_id_for(node),
+                    event_date=today,
+                    event_type=ReminderEventType.REMINDED,
+                )
+                if event is None:
+                    continue
+                language = getattr(service_case, "language", None) or "zh"
+                language = getattr(language, "value", language)
+                recent_messages = await _recent_chat_lines(session, case_id)
+                run_started_at = clock.monotonic()
+                agent_run_id = await ensure_agent_run(
+                    run_key=f"final_review:{case_id}:{node}:{today.isoformat()}",
+                    agent_type="reply",
+                    run_kind="final_review",
+                    service_case_id=case_id,
+                    trigger_reason="final_review",
+                    input_count=1,
+                    metadata={"node": node, "service_day": day},
+                )
+                try:
+                    current_channel = get_current_channel()
+                    agent_result = await generate_final_review_reply(
+                        service_case_id=case_id,
+                        node_instruction=build_node_instruction(
+                            plan,
+                            language=str(language),
+                            allow_product_recommendation=preferences[
+                                "product_recommendation"
+                            ],
+                        ),
+                        recent_messages=recent_messages,
+                        channel=getattr(current_channel, "name", None),
+                        settings=self.settings,
+                        agent_run_id=agent_run_id,
+                        language=str(language),
+                    )
+                    outbound_content = agent_result.reply.strip()
+                except Exception as exc:
+                    logger.exception(
+                        "Final review generation failed case_id=%s node=%s", case_id, node
+                    )
+                    await complete_agent_run(
+                        agent_run_id=agent_run_id,
+                        status=AGENT_RUN_FAILED,
+                        outcome="final_review_generation_failed",
+                        latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+                        error_type=type(exc).__name__,
+                    )
+                    continue
+                if not outbound_content:
+                    # 模型什么都没说：这个节点不能悄悄算问过了，整笔不提交，明天重来。
+                    await complete_agent_run(
+                        agent_run_id=agent_run_id,
+                        status=AGENT_RUN_FAILED,
+                        outcome="final_review_empty",
+                        latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+                        error_type="EmptyReply",
+                    )
+                    continue
+                outbound_content = ensure_benefit_links(
+                    outbound_content, plan, language=str(language)
+                )
+                message = Message(
+                    service_case_id=case_id,
+                    group_id=service_case.group_id,
+                    direction=MessageDirection.OUTBOUND,
+                    sender_type=MessageSenderType.SYSTEM,
+                    message_type="markdown",
+                    content=outbound_content,
+                    purpose=MessagePurpose.REMINDER,
+                    status=MessageStatus.PENDING,
+                    analysis_json={
+                        "final_review": {
+                            "node": node,
+                            "service_day": day,
+                            "script_version_no": script.version_no,
+                            "granted_benefit_codes": [
+                                benefit.code for benefit in plan.reserved_benefits
+                            ],
+                        }
+                    },
+                )
+                session.add(message)
+                await session.flush()
+                result = await _send_channel_text_with_retries(
+                    service_case.group_id, outbound_content
+                )
+                if not result.success:
+                    # 发送没成：整笔不提交——券的发放名额、节点天闸、消息记录一起撤掉，
+                    # 明天同一节点重来。留下天闸会变成"账上已发券、客户手里没有、
+                    # 而且再也不会重发"，比重复发一条消息严重得多。
+                    logger.warning(
+                        "Final review send failed, rolling back case_id=%s node=%s error=%s",
+                        case_id,
+                        node,
+                        result.error,
+                    )
+                    await complete_agent_run(
+                        agent_run_id=agent_run_id,
+                        status=AGENT_RUN_FAILED,
+                        outcome="final_review_send_failed",
+                        latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+                        error_type="ChannelSendFailed",
+                    )
+                    continue
+                message.status = MessageStatus.SENT
+                message.wecom_message_id = result.message_id
+                message.sent_at = datetime.now(timezone.utc)
+                for grant in plan.reserved_grants:
+                    grant.message_id = message.id
+                await complete_agent_run(
+                    agent_run_id=agent_run_id,
+                    status=AGENT_RUN_COMPLETED,
+                    outcome="final_review_sent",
+                    latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+                    output_count=1,
+                )
+                await session.commit()
 
     async def check_agent_reminder_tasks_once(
         self, now: datetime | None = None
@@ -927,6 +1150,17 @@ class ReminderService:
             service_case.id, today, CHURN_RECALL_RULE_ID, window_start, window_end
         )
         if now.time() < target:
+            return
+
+        from app.services.checkin_followup_preferences import (
+            get_followup_preference_states,
+        )
+
+        preferences = await get_followup_preference_states(
+            session, service_case_id=service_case.id
+        )
+        if not preferences["proactive_contact"]:
+            # 结营复盘里客户选过"暂停主动联系"：沉默是他要的，召回就是打扰。
             return
 
         # 本轮沉默内已发过几条：台账里晚于「最后一次用户发言」的召回才算数。

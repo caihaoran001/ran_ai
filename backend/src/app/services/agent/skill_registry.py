@@ -19,9 +19,18 @@ class SkillInfo:
 
 
 class SkillRegistry:
-    def __init__(self, base_dir: Path | None = None, *, max_file_bytes: int = 40_000):
+    def __init__(
+        self,
+        base_dir: Path | None = None,
+        *,
+        max_file_bytes: int = 40_000,
+        hidden_skills: frozenset[str] = frozenset(),
+    ):
         self.base_dir = base_dir or Path(__file__).resolve().parents[2] / "agent_skills"
         self.max_file_bytes = max_file_bytes
+        # 未开启的功能对应的技能整体隐藏：技能目录是每一轮都要注入的常驻篇幅，
+        # 而关着的功能连配套工具都没注册，让模型看见只会读到一份办不成的指令。
+        self.hidden_skills = hidden_skills
         self._skills_cache: list[SkillInfo] | None = None
 
     def list_skills(self) -> list[SkillInfo]:
@@ -32,7 +41,7 @@ class SkillRegistry:
         skills: list[SkillInfo] = []
         if self.base_dir.exists():
             for path in sorted(self.base_dir.iterdir()):
-                if not path.is_dir():
+                if not path.is_dir() or path.name in self.hidden_skills:
                     continue
                 skill_md = path / "SKILL.md"
                 if not skill_md.is_file():
@@ -59,6 +68,8 @@ class SkillRegistry:
     def _skill_dir(self, name: str) -> Path:
         if not name or "/" in name or "\\" in name or name.startswith("."):
             raise SkillNotFoundError("skill name is invalid")
+        if name in self.hidden_skills:
+            raise SkillNotFoundError(f"skill not found: {name}")
         skill_dir = (self.base_dir / name).resolve()
         base = self.base_dir.resolve()
         if not str(skill_dir).startswith(str(base)) or not skill_dir.is_dir():

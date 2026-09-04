@@ -58,7 +58,10 @@ _SHARED_SKILL_REGISTRY: SkillRegistry | None = None
 def _shared_skill_registry() -> SkillRegistry:
     global _SHARED_SKILL_REGISTRY
     if _SHARED_SKILL_REGISTRY is None:
-        _SHARED_SKILL_REGISTRY = SkillRegistry()
+        hidden: set[str] = set()
+        if not get_settings().final_review_enabled:
+            hidden.add("final_review")
+        _SHARED_SKILL_REGISTRY = SkillRegistry(hidden_skills=frozenset(hidden))
     return _SHARED_SKILL_REGISTRY
 
 
@@ -756,6 +759,40 @@ async def generate_scheduled_reminder_reply(
         settings=settings,
         include_reminder_tools=False,
     ).run(user_query=user_query, recent_messages=recent_messages, query_speaker="系统定时任务")
+
+
+async def generate_final_review_reply(
+    *,
+    service_case_id: int,
+    node_instruction: str,
+    recent_messages: list[str],
+    channel: str | None = None,
+    settings: Settings | None = None,
+    agent_run_id: int | None = None,
+    language: str = "zh",
+) -> AgentReplyResult:
+    """结营复盘节点到点：让助教按指令开口（题干已在指令里，逐字念）。
+
+    与定时提醒同样不带 checkpoint、不给提醒工具（防提醒套提醒），但**保留服务生命
+    周期与偏好工具**：客户很可能就在这几天说"别再推荐了"，那句话必须当场生效。
+    """
+    settings = settings or get_settings()
+    return await RanrenAgentGraph(
+        context=AgentRunContext(
+            service_case_id=service_case_id,
+            trigger_id=None,
+            agent_run_id=agent_run_id,
+            run_kind="final_review",
+            channel=channel,
+            language=language,
+        ),
+        settings=settings,
+        include_reminder_tools=False,
+    ).run(
+        user_query=node_instruction,
+        recent_messages=recent_messages,
+        query_speaker="系统定时任务",
+    )
 
 
 # 召回消息的「重新启动」动作候选。三件都是刻意压到最低门槛的单个动作，

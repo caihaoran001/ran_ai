@@ -9,6 +9,7 @@ from app.services.agent.tools.knowledge_tools import build_knowledge_tools
 from app.services.agent.tools.checkin_checklist_tools import build_checkin_checklist_tools
 from app.services.agent.tools.followup_preference_tools import build_followup_preference_tools
 from app.services.agent.tools.execution_commitment_tools import build_execution_commitment_tools
+from app.services.agent.tools.final_review_tools import build_final_review_tools
 from app.services.agent.tools.reminder_tools import build_reminder_tools
 from app.services.agent.tools.reward_shipping_tools import build_reward_shipping_tools
 from app.services.agent.tools.service_lifecycle_tools import build_service_lifecycle_tools
@@ -43,6 +44,10 @@ def build_agent_tools(
         )
     if include_service_lifecycle_tools:
         tools.extend(build_service_lifecycle_tools(context=context, settings=settings))
+    if settings.final_review_enabled:
+        # 功能关闭时连工具都不注册：多两个工具描述要占每一轮的提示词篇幅，
+        # 而这两个工具在第 26 天前也没有任何可读的内容。
+        tools.extend(build_final_review_tools(context=context))
     tools.extend(build_knowledge_tools(settings=settings))
     tools.extend(build_web_search_tools(settings=settings))
     return tools

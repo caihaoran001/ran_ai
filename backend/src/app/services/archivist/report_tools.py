@@ -16,6 +16,7 @@ from typing import Any, Literal
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from app.services.final_review_scripts import FINAL_REVIEW_QUESTION_IDS
 from app.services.user_state_profile import OUTCOME_FIELD_DOMAIN_MAP
 
 # 成效维度枚举。与入库闸门 outcome_engine.KNOWN_OUTCOME_FIELDS 同源，模型看得到全集。
@@ -32,6 +33,7 @@ REPORT_CORRECTION = "report_correction"
 REPORT_FAQ_CANDIDATE = "report_faq_candidate"
 REPORT_MEMORY = "report_memory"
 REPORT_CASE_CANDIDATE = "report_case_candidate"
+REPORT_FINAL_REVIEW_ANSWER = "report_final_review_answer"
 
 # report_* 工具对应 collector 的桶名。
 KIND_CHECKIN = "checkin"
@@ -42,6 +44,7 @@ KIND_CORRECTION = "correction"
 KIND_FAQ = "faq"
 KIND_MEMORY = "memory"
 KIND_CASE = "case"
+KIND_FINAL_REVIEW = "final_review"
 
 
 class ReportFollowupAnswerArgs(BaseModel):
@@ -346,6 +349,39 @@ class ReportCaseCandidateArgs(BaseModel):
     )
 
 
+class ReportFinalReviewAnswerArgs(BaseModel):
+    """上报客户对一道结营复盘题的回答。
+
+    `option_keys` 用语义 key 而不是选项文案：运营在后台改一个字，按文案匹配的分支
+    会静默失效（券不再发、"暂停联系"不再生效），而按 key 匹配的不受影响。
+    可选 key 由上下文给出，模型不许自造。
+    """
+
+    question_id: Literal[FINAL_REVIEW_QUESTION_IDS] = Field(  # type: ignore[valid-type]
+        description="上下文 final_review_pending 里给出的题号，不得自造"
+    )
+    answer_status: Literal["answered", "skipped", "refused", "unclear"] = Field(
+        description=(
+            "answered=明确回答了（含否定回答，如'不需要后续'也是回答）；"
+            "skipped=他回了别的、绕开了这题；refused=明确表示不想说；"
+            "unclear=说了但看不出对应哪一项。四种都要如实上报，不要把没答硬凑成答了"
+        )
+    )
+    raw_text: str = Field(
+        min_length=1, description="客户回答的原话，原样保留，不要改写或概括"
+    )
+    option_keys: list[str] | None = Field(
+        default=None,
+        description=(
+            "answered 时填他选中的选项 key（可多选），只能用上下文给出的 key；"
+            "开放题或无法对上任何选项时留空"
+        ),
+    )
+    evidence_message_id: int = Field(
+        gt=0, description="作为证据的用户消息数字 ID"
+    )
+
+
 # 工具名 → (Pydantic 模型, collector 桶名)。extract_agent 用它校验入参并归桶。
 REPORT_SPECS: dict[str, tuple[type[BaseModel], str]] = {
     REPORT_CHECKIN: (ReportCheckinArgs, KIND_CHECKIN),
@@ -356,6 +392,7 @@ REPORT_SPECS: dict[str, tuple[type[BaseModel], str]] = {
     REPORT_FAQ_CANDIDATE: (ReportFaqCandidateArgs, KIND_FAQ),
     REPORT_MEMORY: (ReportMemoryArgs, KIND_MEMORY),
     REPORT_CASE_CANDIDATE: (ReportCaseCandidateArgs, KIND_CASE),
+    REPORT_FINAL_REVIEW_ANSWER: (ReportFinalReviewAnswerArgs, KIND_FINAL_REVIEW),
 }
 
 
@@ -408,6 +445,12 @@ def build_report_tools(kinds: list[str]) -> list[StructuredTool]:
             KIND_CASE,
             ReportCaseCandidateArgs,
             "上报一条已具备完整稳定证据链、可进入人工审核的优秀案例候选。",
+        ),
+        (
+            REPORT_FINAL_REVIEW_ANSWER,
+            KIND_FINAL_REVIEW,
+            ReportFinalReviewAnswerArgs,
+            "上报客户对一道结营复盘题的回答（仅当上下文列出了待答题目）。",
         ),
     ]
     for name, kind, args_model, desc in specs:

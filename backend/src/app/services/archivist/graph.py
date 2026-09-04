@@ -76,6 +76,7 @@ class ArchivistPipelineState(TypedDict, total=False):
     case_candidates: list[dict]
     followup_answers: list[dict]
     checklist_answers: list[dict]
+    final_review_answers: list[dict]
     has_checkin_activity: bool
     # 抽取观测留痕(R1):每批一条 {target_date, emitted, kept, dropped}
     extract_traces: list[dict]
@@ -470,6 +471,139 @@ class ArchivistPipeline:
             ],
         }
 
+    async def _commit_final_review_answers(
+        self, state: ArchivistPipelineState
+    ) -> None:
+        """把模型上报的结营复盘回答确定性落库。
+
+        每条都是追加，不覆盖旧行：客户改口时两条都要在（"先说不续了"→"想想还是续"），
+        读取时按时间取最新。这里也顺手让 R6 的联系偏好真正生效——问了却不执行，
+        比不问更伤。
+        """
+        answers = state.get("final_review_answers") or []
+        if not answers:
+            return
+        from app.services.final_review_answers import record_answer
+        from app.services.final_review_scripts import get_active_script
+
+        language = getattr(self.service_case, "language", None) or "zh"
+        script = await get_active_script(
+            self.session, language=str(getattr(language, "value", language))
+        )
+        for answer in answers:
+            option_keys = [
+                str(key) for key in (answer.get("option_keys") or []) if str(key)
+            ]
+            await record_answer(
+                self.session,
+                service_case_id=self.service_case.id,
+                question_id=str(answer.get("question_id") or ""),
+                answer_status=str(answer.get("answer_status") or ""),
+                raw_text=str(answer.get("raw_text") or "") or None,
+                normalized_value={"selected": option_keys} if option_keys else None,
+                evidence_message_id=answer.get("evidence_message_id"),
+                script_version_no=script.version_no,
+            )
+            self.result.change_details.append(
+                {
+                    "kind": "final_review_answer",
+                    "action": "created",
+                    "title": f"结营复盘 {answer.get('question_id')}",
+                    "items": [
+                        {
+                            "field": str(answer.get("answer_status") or ""),
+                            "after": _audit_text(answer.get("raw_text")),
+                        }
+                    ],
+                }
+            )
+        await self._apply_contact_preferences()
+
+    async def _apply_contact_preferences(self) -> None:
+        """R6 的联系偏好落到真正的开关上。
+
+        "少打扰"只关掉日常追问与召回，**风险相关提醒照发**——他要的是少被推销，
+        不是出事也没人管。"暂停主动联系"才关掉全部主动触达。
+        """
+        from app.services.checkin_followup_preferences import (
+            set_followup_preference_states,
+        )
+        from app.services.final_review_answers import load_progress
+
+        progress = await load_progress(
+            self.session, service_case_id=self.service_case.id
+        )
+        keys = set(progress.contact_preference_keys)
+        if not keys:
+            return
+        topics_off: set[str] = set()
+        if "no_product_rec" in keys:
+            topics_off.add("product_recommendation")
+        if "pause_contact" in keys:
+            topics_off.update({"product_recommendation", "proactive_contact"})
+        if "less_contact" in keys or "self_serve" in keys:
+            topics_off.add("daily_checklist")
+        if not topics_off:
+            return
+        await set_followup_preference_states(
+            self.session,
+            service_case_id=self.service_case.id,
+            topics=sorted(topics_off),
+            enabled=False,
+            source_message_id=None,
+        )
+
+    async def _final_review_context(self) -> list[dict[str, Any]]:
+        """已经问出口、还没记下回答的结营复盘题。
+
+        只给"已发出的节点"里的题：没问过的题不该有答案，否则模型会把闲聊里顺嘴
+        一句当成正式表态——而这些答案要拿去发券和关掉主动推送。
+        功能没开或这个服务单不在白名单时返回空列表，连题目都不注入。
+        """
+        from app.services.final_review_answers import load_progress, should_ask
+        from app.services.final_review_runner import (
+            asked_nodes_for,
+            final_review_active_for,
+        )
+        from app.services.final_review_scripts import get_active_script
+
+        if not final_review_active_for(self.settings, self.service_case.id):
+            return []
+        asked = await asked_nodes_for(
+            self.session, service_case_id=self.service_case.id
+        )
+        if not asked:
+            return []
+        language = getattr(self.service_case, "language", None) or "zh"
+        script = await get_active_script(
+            self.session, language=str(getattr(language, "value", language))
+        )
+        progress = await load_progress(
+            self.session, service_case_id=self.service_case.id
+        )
+        from app.services.final_review_scripts import Q_BENEFIT_NOTICE
+
+        pending: list[dict[str, Any]] = []
+        for node in asked:
+            for question in script.questions_for(node):
+                if question.get("id") == Q_BENEFIT_NOTICE:
+                    # 权益告知是通知句，不是提问——列进待答清单会让模型给它编一个"回答"。
+                    continue
+                if not should_ask(question, progress):
+                    continue
+                pending.append(
+                    {
+                        "question_id": question.get("id"),
+                        "question": question.get("text"),
+                        "options": [
+                            {"key": option.get("key"), "text": option.get("text")}
+                            for option in question.get("options") or []
+                            if isinstance(option, dict)
+                        ],
+                    }
+                )
+        return pending
+
     async def _extract(self, state: ArchivistPipelineState) -> dict[str, Any]:
         """把整批增量交给模型一次，收集全部 report_* 产物。"""
         delta_by_date = state.get("delta_by_date") or {}
@@ -490,6 +624,7 @@ class ArchivistPipeline:
                 "case_candidates": [],
                 "followup_answers": [],
                 "checklist_answers": [],
+                "final_review_answers": [],
                 "extract_traces": [],
                 "has_checkin_activity": False,
             }
@@ -554,11 +689,13 @@ class ArchivistPipeline:
                 "faq",
                 "memory",
                 "case",
+                "final_review",
             ],
             chat_model=self.chat_model,
             settings=self.settings,
             followup_context=followup_context,
             checklist_context=checklist_context,
+            final_review_context=await self._final_review_context(),
             archive_context=state.get("archive_context") or {},
             allowed_dates=dates,
             agent_run_id=self.agent_run_id,
@@ -663,6 +800,11 @@ class ArchivistPipeline:
             "case_candidates": collector.get("case") or [],
             "followup_answers": followup_answers,
             "checklist_answers": checklist_answers,
+            "final_review_answers": [
+                answer
+                for answer in (collector.get("final_review") or [])
+                if answer.get("evidence_message_id") in user_message_ids
+            ],
             "extract_traces": extract_traces,
             "has_checkin_activity": has_checkin_activity,
         }
@@ -771,6 +913,8 @@ class ArchivistPipeline:
                 ]
                 or ["chat_checkin"],
             )
+
+        await self._commit_final_review_answers(state)
 
         # 成效/稳定画像/当前状态直写：用本批最后一条用户消息作 anchor。
         # **不再吞异常**：写库失败必须抛出，让 trigger 层回滚事务、不推进水位线、下轮重试，

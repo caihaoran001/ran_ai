@@ -38,6 +38,8 @@ READ_ONLY_TOOLS = frozenset(
         "get_checkin_checklist",
         "get_checkin_followup_preferences",
         "get_checkin_reward_status",
+        "get_day28_benefits",
+        "get_final_review_progress",
         "get_recent_checkins",
         "get_service_progress",
         "get_weight_trend",
