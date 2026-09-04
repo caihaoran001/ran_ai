@@ -65,6 +65,24 @@ class RewardAdminCaseRead(BaseModel):
     checkin_days: list[RewardCheckinDayRead]
 
 
+class Day28BenefitGrantRead(BaseModel):
+    id: int
+    benefit_code: str
+    # 券配置改过名或整条被删掉时退回展示 code，不让台账凭空少一行。
+    benefit_name: str
+    status: str
+    granted_at: datetime
+    message_id: int | None
+
+
+class Day28BenefitGrantCaseRead(BaseModel):
+    service_case_id: int
+    case_no: str
+    user_name: str
+    group_name: str | None
+    grants: list[Day28BenefitGrantRead]
+
+
 class MarkShipmentRead(BaseModel):
     ok: bool
     shipment_id: int

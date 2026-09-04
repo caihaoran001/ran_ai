@@ -15,9 +15,12 @@ from app.models.checkin_reward import (
     CheckinRewardShipment,
 )
 from app.models.checkin import Checkin
+from app.models.day28_benefit_grant import Day28BenefitGrant
 from app.models.message import Message, MessageDirection, MessageSenderType
 from app.models.service_case import ServiceCase
 from app.schemas.checkin_reward import (
+    Day28BenefitGrantCaseRead,
+    Day28BenefitGrantRead,
     MarkShipmentRead,
     RewardAdminCaseRead,
     RewardCheckinDayRead,
@@ -309,3 +312,74 @@ async def mark_reward_shipment_shipped(
         marked_by=operator,
         user_notification_sent=shipment.notification_status == "sent",
     )
+
+
+# --------------------------------------------------------------------------
+# 第28天权益发放台账
+#
+# 与打卡奖励同属"权益发放"，共用 /rewards 页面，所以放在同一个路由模块，
+# 但数据是完全独立的一张表：打卡奖励看的是达标与寄出，这里看的是券的领取
+# 入口有没有发出去。系统看不到客户领没领（商城未打通），台账只能到这一步。
+# --------------------------------------------------------------------------
+
+
+@router.get("/day28-benefit-grants", response_model=list[Day28BenefitGrantCaseRead])
+async def list_day28_benefit_grants(
+    session: AsyncSession = Depends(get_session),
+) -> list[Day28BenefitGrantCaseRead]:
+    from app.services.day28_benefit_settings import get_benefit_config
+
+    grants = list(
+        await session.scalars(
+            select(Day28BenefitGrant).order_by(
+                Day28BenefitGrant.granted_at.desc(), Day28BenefitGrant.id.desc()
+            )
+        )
+    )
+    if not grants:
+        return []
+
+    service_cases = {
+        row.id: row
+        for row in await session.scalars(
+            select(ServiceCase)
+            .where(ServiceCase.id.in_({row.service_case_id for row in grants}))
+            .options(selectinload(ServiceCase.user))
+        )
+    }
+    try:
+        names = {
+            benefit.code: benefit.name for benefit in (await get_benefit_config(session)).benefits
+        }
+    except ValueError:
+        # 券配置被改坏时台账仍要看得见（这里是发放事实，不是配置页），退回展示 code。
+        names = {}
+
+    grouped: dict[int, list[Day28BenefitGrantRead]] = {}
+    for grant in grants:
+        grouped.setdefault(grant.service_case_id, []).append(
+            Day28BenefitGrantRead(
+                id=grant.id,
+                benefit_code=grant.benefit_code,
+                benefit_name=names.get(grant.benefit_code, grant.benefit_code),
+                status=grant.status,
+                granted_at=grant.granted_at,
+                message_id=grant.message_id,
+            )
+        )
+
+    response: list[Day28BenefitGrantCaseRead] = []
+    for case_id, rows in grouped.items():
+        service_case = service_cases.get(case_id)
+        if service_case is None:
+            continue
+        response.append(
+            Day28BenefitGrantCaseRead(
+                service_case_id=case_id,
+                case_no=service_case.case_no,
+                user_name=service_case.user.name if service_case.user else "未绑定用户",
+                group_name=service_case.group_name,
+                grants=rows,
+            )
+        )
+    return response

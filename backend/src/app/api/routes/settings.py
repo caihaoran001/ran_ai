@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.db.session import get_session
@@ -263,3 +263,146 @@ async def update_curated_video_push_setting(
 
     saved = await set_curated_video_push_settings(payload.model_dump(), session)
     return CuratedVideoPushSetting(**saved)
+
+
+# --------------------------------------------------------------------------
+# 第28天结营复盘：话术与权益配置
+#
+# 这两组配置都由服务层只做 flush、由路由显式 commit。刻意不在服务层 commit：
+# 同一批函数还要被调度器复用在"占券发放名额 → 发消息 → 记账"的同一个事务里，
+# 发送失败必须能整笔回滚，服务层自己提交就把这条路堵死了。
+# --------------------------------------------------------------------------
+
+
+class FinalReviewScriptOption(BaseModel):
+    # key 是代码分支依赖的语义标识，前端只读展示、不给编辑；text 才是可改的文案。
+    key: str
+    text: str
+
+
+class FinalReviewScriptQuestion(BaseModel):
+    id: str
+    text: str
+    options: list[FinalReviewScriptOption] = []
+    ask_when: str = "always"
+
+
+class FinalReviewScriptNode(BaseModel):
+    questions: list[FinalReviewScriptQuestion] = []
+
+
+class FinalReviewScriptSetting(BaseModel):
+    language: str = "zh"
+    # None 表示库里还没有任何版本，当前展示的是代码种子——生产出现这个值说明
+    # 种子还没同步入库，运营改了也不会影响发送。
+    version_no: int | None = None
+    nodes: dict[str, FinalReviewScriptNode] = {}
+
+
+class FinalReviewScriptUpdate(BaseModel):
+    language: str = "zh"
+    nodes: dict[str, FinalReviewScriptNode]
+    changed_by_name: str | None = None
+    note: str | None = None
+
+
+@router.get("/settings/final-review-scripts", response_model=FinalReviewScriptSetting)
+async def get_final_review_scripts_api(
+    language: str = Query("zh"),
+    session: AsyncSession = Depends(get_session),
+) -> FinalReviewScriptSetting:
+    from app.services.final_review_scripts import get_active_script
+
+    script = await get_active_script(session, language=language)
+    return FinalReviewScriptSetting(
+        language=script.language,
+        version_no=script.version_no,
+        nodes=script.nodes,
+    )
+
+
+@router.post("/settings/final-review-scripts", response_model=FinalReviewScriptSetting)
+async def update_final_review_scripts_api(
+    payload: FinalReviewScriptUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> FinalReviewScriptSetting:
+    from app.services.final_review_scripts import save_script_version
+
+    try:
+        script = await save_script_version(
+            session,
+            language=payload.language,
+            nodes=payload.model_dump()["nodes"],
+            changed_by_name=payload.changed_by_name,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await session.commit()
+    return FinalReviewScriptSetting(
+        language=script.language,
+        version_no=script.version_no,
+        nodes=script.nodes,
+    )
+
+
+class Day28BenefitEntry(BaseModel):
+    code: str
+    name: str
+    kind: str = "coupon"
+    face_value: str = ""
+    scope: str = ""
+    threshold: str = ""
+    validity_days: int | None = None
+    claim_url: str = ""
+    enabled: bool = False
+    grant_when: str = "always"
+    # 只读：开着但没填领取链接就不可发，前端要能直接看出来是哪一张卡在这。
+    grantable: bool = False
+
+
+class Day28BenefitSetting(BaseModel):
+    benefits: list[Day28BenefitEntry] = []
+
+
+class Day28BenefitUpdate(BaseModel):
+    benefits: list[Day28BenefitEntry]
+
+
+def _benefit_setting(config) -> Day28BenefitSetting:
+    return Day28BenefitSetting(
+        benefits=[
+            Day28BenefitEntry(**benefit.to_dict(), grantable=benefit.grantable)
+            for benefit in config.benefits
+        ]
+    )
+
+
+@router.get("/settings/day28-benefits", response_model=Day28BenefitSetting)
+async def get_day28_benefits_api(
+    session: AsyncSession = Depends(get_session),
+) -> Day28BenefitSetting:
+    from app.services.day28_benefit_settings import get_benefit_config
+
+    try:
+        config = await get_benefit_config(session)
+    except ValueError as exc:
+        # 库里存着一份非法配置时明说，不静默回落到默认——那会让"我明明配了券"
+        # 变成"助教一个字不提"的哑谜。
+        raise HTTPException(status_code=500, detail=f"券配置无法解析：{exc}") from exc
+    return _benefit_setting(config)
+
+
+@router.post("/settings/day28-benefits", response_model=Day28BenefitSetting)
+async def update_day28_benefits_api(
+    payload: Day28BenefitUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> Day28BenefitSetting:
+    from app.services.day28_benefit_settings import set_benefit_config
+
+    try:
+        config = await set_benefit_config(session, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await session.commit()
+    return _benefit_setting(config)

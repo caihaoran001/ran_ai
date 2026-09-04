@@ -5,6 +5,8 @@ import { RiskReplyConfig } from "./risk-reply-config";
 import { StaffFilterConfig } from "./staff-filter-config";
 import { QiweAccountConfig } from "./qiwe-account-config";
 import { VideoPushConfig } from "./video-push-config";
+import { Day28BenefitConfig } from "./day28-benefit-config";
+import { FinalReviewScriptConfig } from "./final-review-script-config";
 
 type Template = {
   template_key: string;
@@ -37,6 +39,8 @@ export default async function QuestionnaireConfigPage() {
         <QiweAccountConfig />
         <StageReportConfig />
         <VideoPushConfig />
+        <Day28BenefitConfig />
+        <FinalReviewScriptConfig />
         <RiskReplyConfig />
         <StaffFilterConfig />
       </div>

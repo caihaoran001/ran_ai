@@ -157,6 +157,23 @@ export type RewardAdminCase = {
   checkin_days: RewardCheckinDay[];
 };
 
+export type Day28BenefitGrant = {
+  id: number;
+  benefit_code: string;
+  benefit_name: string;
+  status: string;
+  granted_at: string;
+  message_id?: number | null;
+};
+
+export type Day28BenefitGrantCase = {
+  service_case_id: number;
+  case_no: string;
+  user_name: string;
+  group_name?: string | null;
+  grants: Day28BenefitGrant[];
+};
+
 export type UserProfile = {
   id: number;
   service_case_id: number;

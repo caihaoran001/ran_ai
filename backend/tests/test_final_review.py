@@ -696,3 +696,173 @@ async def test_benefits_to_grant_excludes_already_sent(db_session, create_case):
         cross_product_intent=False,
     )
     assert [benefit.code for benefit in pending] == ["repurchase_gift"]
+
+
+# --------------------------------------------------------------------------
+# 后台 API：话术与券配置
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_script_api_returns_seed_before_anything_is_saved(admin_client):
+    response = await admin_client.get("/settings/final-review-scripts")
+    assert response.status_code == 200
+    body = response.json()
+    # version_no 为 null 就是"库里还没有版本、现在看的是代码种子"的信号：
+    # 生产上出现它说明种子没同步入库，运营改了也不影响发送。
+    assert body["version_no"] is None
+    assert body["language"] == "zh"
+    assert body["nodes"]["results"]["questions"]
+
+
+@pytest.mark.asyncio
+async def test_script_api_saves_and_reads_back(admin_client):
+    nodes = seed_nodes("zh")
+    nodes[NODE_RESULTS]["questions"][0]["text"] = "Lucy 改过的问法：这28天怎么样？"
+
+    saved = await admin_client.post(
+        "/settings/final-review-scripts",
+        json={"language": "zh", "nodes": nodes, "changed_by_name": "Lucy", "note": "试改"},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["version_no"] == 1
+
+    reread = await admin_client.get("/settings/final-review-scripts")
+    first = reread.json()["nodes"]["results"]["questions"][0]
+    assert first["text"] == "Lucy 改过的问法：这28天怎么样？"
+
+
+@pytest.mark.asyncio
+async def test_script_api_rejects_unknown_option_key(admin_client):
+    nodes = seed_nodes("zh")
+    nodes[NODE_GOAL]["questions"][0]["options"].append(
+        {"key": "buy_three_boxes", "text": "想一次囤三盒"}
+    )
+    response = await admin_client.post(
+        "/settings/final-review-scripts", json={"language": "zh", "nodes": nodes}
+    )
+    assert response.status_code == 400
+    assert "选项标识" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_script_api_rejects_deleting_a_branch_question(admin_client):
+    nodes = seed_nodes("zh")
+    nodes[NODE_HANDOFF]["questions"] = [
+        question
+        for question in nodes[NODE_HANDOFF]["questions"]
+        if question["id"] != Q_CONTACT_PREFERENCE
+    ]
+    response = await admin_client.post(
+        "/settings/final-review-scripts", json={"language": "zh", "nodes": nodes}
+    )
+    assert response.status_code == 400
+    assert "代码分支依赖" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_benefit_api_defaults_are_disabled_and_not_grantable(admin_client):
+    response = await admin_client.get("/settings/day28-benefits")
+    assert response.status_code == 200
+    benefits = response.json()["benefits"]
+    assert {item["code"] for item in benefits} == {
+        "product_200",
+        "repurchase_gift",
+        "member_fixed",
+    }
+    assert all(not item["grantable"] for item in benefits)
+
+
+@pytest.mark.asyncio
+async def test_benefit_api_marks_missing_link_as_not_grantable(admin_client):
+    """开着但没填链接：接口要把 grantable=false 亮出来，运营才知道卡在哪。"""
+    payload = {
+        "benefits": [
+            {
+                "code": "product_200",
+                "name": "200元产品券",
+                "kind": "coupon",
+                "face_value": "200元",
+                "enabled": True,
+                "claim_url": "",
+                "grant_when": "always",
+            }
+        ]
+    }
+    saved = await admin_client.post("/settings/day28-benefits", json=payload)
+    assert saved.status_code == 200
+    entry = saved.json()["benefits"][0]
+    assert entry["enabled"] is True
+    assert entry["grantable"] is False
+
+
+@pytest.mark.asyncio
+async def test_benefit_api_rejects_a_link_without_scheme(admin_client):
+    payload = {
+        "benefits": [
+            {
+                "code": "product_200",
+                "name": "200元产品券",
+                "claim_url": "example.com/claim",
+            }
+        ]
+    }
+    response = await admin_client.post("/settings/day28-benefits", json=payload)
+    assert response.status_code == 400
+    assert "http" in response.json()["detail"]
+
+
+# --------------------------------------------------------------------------
+# 发放台账接口
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_grant_ledger_api_is_empty_before_anything_is_sent(admin_client):
+    response = await admin_client.get("/day28-benefit-grants")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_grant_ledger_api_groups_by_case_and_names_the_benefit(
+    admin_client, db_session, create_case
+):
+    """台账按服务单归组，券名取自当前配置。"""
+    case_id = await _new_case(create_case)
+    await set_benefit_config(
+        db_session,
+        {
+            "benefits": [
+                {
+                    "code": "product_200",
+                    "name": "200元产品券",
+                    "claim_url": "https://example.com/claim",
+                    "enabled": True,
+                }
+            ]
+        },
+    )
+    await reserve_grant(db_session, service_case_id=case_id, benefit_code="product_200")
+    await db_session.commit()
+
+    response = await admin_client.get("/day28-benefit-grants")
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1
+    assert rows[0]["service_case_id"] == case_id
+    assert [item["benefit_name"] for item in rows[0]["grants"]] == ["200元产品券"]
+    assert rows[0]["grants"][0]["status"] == "link_sent"
+
+
+@pytest.mark.asyncio
+async def test_grant_ledger_api_falls_back_to_the_code_when_the_benefit_is_gone(
+    admin_client, db_session, create_case
+):
+    """券配置被删掉后，已发出的记录不能从台账里消失。"""
+    case_id = await _new_case(create_case)
+    await reserve_grant(db_session, service_case_id=case_id, benefit_code="retired_coupon")
+    await db_session.commit()
+
+    rows = (await admin_client.get("/day28-benefit-grants")).json()
+    assert rows[0]["grants"][0]["benefit_name"] == "retired_coupon"

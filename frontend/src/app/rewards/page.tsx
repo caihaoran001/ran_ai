@@ -1,6 +1,12 @@
 import Link from "next/link";
-import { CheckCircle2, ChevronDown, FileText, Gift, MapPin, MessageSquareQuote, PackageOpen, Truck } from "lucide-react";
-import { api, type RewardAdminCase, type RewardCheckinDay, type RewardShipment } from "@/lib/api";
+import { CheckCircle2, ChevronDown, FileText, Gift, MapPin, MessageSquareQuote, PackageOpen, Ticket, Truck } from "lucide-react";
+import {
+  api,
+  type Day28BenefitGrantCase,
+  type RewardAdminCase,
+  type RewardCheckinDay,
+  type RewardShipment,
+} from "@/lib/api";
 import { ShipmentAction } from "./shipment-action";
 
 const statusCopy: Record<string, { label: string; className: string }> = {
@@ -156,8 +162,63 @@ function CheckinEvidenceDay({ day }: { day: RewardCheckinDay }) {
   );
 }
 
+function Day28GrantLedger({ rows }: { rows: Day28BenefitGrantCase[] }) {
+  return (
+    <section className="panel overflow-hidden">
+      <div className="panel-header-clean">
+        <h2 className="flex items-center gap-2 text-lg font-extrabold text-slate-950">
+          <Ticket className="h-4 w-4 text-cyan-700" />
+          结营权益发放
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          客户走完 28 天后助教发出的券。这里记的是「领取入口已经发到群里」——商城还没打通，
+          系统看不到客户领没领、用没用，所以不会出现「已到账」。同一位客户的同一张券只会发一次。
+        </p>
+      </div>
+      {rows.length ? (
+        <ol className="border-t border-slate-200">
+          {rows.map((row) => (
+            <li key={row.service_case_id} className="border-t border-slate-200 px-4 py-4 first:border-t-0 sm:px-5">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="font-bold text-slate-950">{row.user_name}</span>
+                <span className="text-break text-xs text-slate-600">{row.group_name || "—"}</span>
+                <Link
+                  href={`/cases/${row.service_case_id}`}
+                  className="text-xs font-bold text-cyan-800 hover:underline"
+                >
+                  {row.case_no} · 查看服务单
+                </Link>
+              </div>
+              <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+                {row.grants.map((grant) => (
+                  <li
+                    key={grant.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"
+                  >
+                    <span className="font-semibold text-slate-900">{grant.benefit_name}</span>
+                    <span className="shrink-0 text-xs text-slate-500">
+                      已发出领取入口 · {formatDate(grant.granted_at)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="empty-state border-t border-slate-200 py-10">
+          还没有发出过结营权益。
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default async function RewardsPage() {
-  const rows = await api<RewardAdminCase[]>("/checkin-rewards").catch(() => []);
+  const [rows, day28Grants] = await Promise.all([
+    api<RewardAdminCase[]>("/checkin-rewards").catch(() => []),
+    api<Day28BenefitGrantCase[]>("/day28-benefit-grants").catch(() => []),
+  ]);
   const pendingShipments = rows.flatMap((row) => row.shipments).filter((row) => row.status === "pending_shipment").length;
   const missingAddress = rows.flatMap((row) => row.shipments).filter((row) => row.status === "missing_address").length;
   const waitingChoice = rows.filter((row) => row.operational_status === "waiting_choice").length;
@@ -282,6 +343,8 @@ export default async function RewardsPage() {
           </section>
         ) : null}
       </div>
+
+      <Day28GrantLedger rows={day28Grants} />
     </div>
   );
 }
