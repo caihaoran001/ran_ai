@@ -782,7 +782,10 @@ def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain
     assert "可依据真实事实和已注入执行约定给一个小调整" in AGENT_SYSTEM_PROMPT
     assert "连续出现至少3次" in AGENT_SYSTEM_PROMPT
     assert "连续7天执行与结果方向一致" in AGENT_SYSTEM_PROMPT
-    assert "回答完整后自然结束，不为延续对话机械追加“……就行”、“直接说就行”等口头禅" in AGENT_SYSTEM_PROMPT
+    # 收尾禁令必须是无条件的：旧版带“不为延续对话机械追加”这个前提，模型把嵌在动作句里的
+    # “……就行”判为不算追加而自我豁免，线上 9/1-9/4 有 27% 的回复仍以它收尾。
+    assert "结尾不出现“就行、就好、即可”，不论是否为延续对话" in AGENT_SYSTEM_PROMPT
+    assert "不为延续对话机械追加" not in AGENT_SYSTEM_PROMPT
     assert "通用规则只用【参考问答】" in AGENT_SYSTEM_PROMPT
     assert "只有状态显示待确认时才可追问选档" in AGENT_SYSTEM_PROMPT
     assert "不自创分档或连续打卡要求" in AGENT_SYSTEM_PROMPT
