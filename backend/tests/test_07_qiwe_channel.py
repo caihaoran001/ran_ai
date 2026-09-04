@@ -721,6 +721,11 @@ def test_english_service_case_gets_a_native_english_system_prompt():
     assert "Morning C, Noon B, and Evening A" in AGENT_SYSTEM_PROMPT_EN
     assert "your coach" in AGENT_SYSTEM_PROMPT_EN
 
+    # “收到”开头这条 2026-06-25 就写过（旧 engine 提示词），7-08 删 legacy chat reply path 时
+    # 随旧提示词一起漏迁，白丢两个月。补回来后钉住，别再随链路重构蒸发。
+    assert "不用“收到、收到哈、好的收到、明白了、没问题”开头应答" in AGENT_SYSTEM_PROMPT
+    assert '"Got it", "Sure", "Noted", "Understood"' in AGENT_SYSTEM_PROMPT_EN
+
     # 立场规则：中英必须同时在，只删“……就行”句式的话，模型会换成“完全不用管它”继续没立场
     assert "被问“要不要/该不该/选哪个/你建议呢”先给推荐" in AGENT_SYSTEM_PROMPT
     assert "“都行、随你、看你自己、不用勉强”只能跟在推荐后面当让步" in AGENT_SYSTEM_PROMPT
