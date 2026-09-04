@@ -721,6 +721,12 @@ def test_english_service_case_gets_a_native_english_system_prompt():
     assert "Morning C, Noon B, and Evening A" in AGENT_SYSTEM_PROMPT_EN
     assert "your coach" in AGENT_SYSTEM_PROMPT_EN
 
+    # 立场规则：中英必须同时在，只删“……就行”句式的话，模型会换成“完全不用管它”继续没立场
+    assert "被问“要不要/该不该/选哪个/你建议呢”先给推荐" in AGENT_SYSTEM_PROMPT
+    assert "“都行、随你、看你自己、不用勉强”只能跟在推荐后面当让步" in AGENT_SYSTEM_PROMPT
+    assert "your first sentence is your recommendation" in AGENT_SYSTEM_PROMPT_EN
+    assert "never stand alone as the answer to a question" in AGENT_SYSTEM_PROMPT_EN
+
     # 业务规则不得在翻译中丢失
     assert "Never mix Chinese words" in AGENT_SYSTEM_PROMPT_EN
     assert "search_success_case" in AGENT_SYSTEM_PROMPT_EN
@@ -762,7 +768,9 @@ def test_english_user_prompt_uses_english_section_labels():
 
 
 def test_agent_prompt_binds_images_and_short_replies_to_the_nearest_action_chain():
-    assert len(AGENT_SYSTEM_PROMPT) < 4_500
+    # 防膨胀线。2026-09-04 从 4500 上调到 4700，为的是加入“先给推荐、不许都行”的立场规则；
+    # 每次上调都要有这样一条明确的业务理由，不是塞不下就往上抬。
+    assert len(AGENT_SYSTEM_PROMPT) < 4_700
     assert "专业健康 Buddy" in AGENT_SYSTEM_PROMPT
     assert "事实承接 → 明确判断 → 一个下一步动作" in AGENT_SYSTEM_PROMPT
     assert "不评价人格" in AGENT_SYSTEM_PROMPT
