@@ -8,14 +8,15 @@ import {
 } from "@/components/inline-segmented-toggle";
 import { normalizeGroupType, type GroupType } from "@/components/group-type-badge";
 
-// 选中色沿用 GroupTypeBadge 的语义配色：新群青、老群琥珀，扫一眼仍能分辨。
+// 选中色沿用 GroupTypeBadge 的语义配色：新群青、老群琥珀，扫一眼就能分辨是哪一类群。
+// 取 700 档而非 500/600，是为了让滑块上的白字达到 4.5:1 对比度。
 const OPTIONS: SegmentedOption<GroupType>[] = [
   {
     value: "new_group",
     label: "新群",
     hint: "标记为新群",
     icon: Sparkles,
-    activeClassName: "text-cyan-800",
+    activeColor: "#0e7490", // cyan-700
     iconClassName: "text-cyan-600",
   },
   {
@@ -23,7 +24,7 @@ const OPTIONS: SegmentedOption<GroupType>[] = [
     label: "老群",
     hint: "标记为老群",
     icon: Archive,
-    activeClassName: "text-amber-800",
+    activeColor: "#b45309", // amber-700
     iconClassName: "text-amber-600",
   },
 ];

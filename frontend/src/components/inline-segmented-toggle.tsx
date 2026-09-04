@@ -11,11 +11,16 @@ export interface SegmentedOption<T extends string> {
   hint?: string;
   /** 该项左侧的语义图标；不给则沿用上一项，适合语义与取值无关的场景 */
   icon?: LucideIcon;
-  /** 选中时的文字色，用来保留原徽章的语义配色 */
-  activeClassName?: string;
-  /** 选中时左侧图标的颜色 */
+  /**
+   * 选中时滑块的实心底色（CSS 颜色值），承担"一眼看出选中哪边"。
+   * 必须足够深以承载白字（≥4.5:1），默认取品牌主色。
+   */
+  activeColor?: string;
+  /** 未选中时该项左侧图标的颜色 */
   iconClassName?: string;
 }
+
+const DEFAULT_ACTIVE_COLOR = "hsl(var(--brand-strong))";
 
 /**
  * 服务单头部的行内二选一开关：一次点击即切换并落库，滑块动画表达"切到哪一边"，
@@ -74,6 +79,7 @@ export function InlineSegmentedToggle<T extends string>({
 
   const current = options.find((option) => option.value === value) ?? options[0];
   const LeadingIcon = current.icon;
+  const activeColor = current.activeColor ?? DEFAULT_ACTIVE_COLOR;
 
   return (
     <span className="inline-flex items-center gap-2">
@@ -113,14 +119,15 @@ export function InlineSegmentedToggle<T extends string>({
           className="relative inline-grid"
           style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
         >
-          {/* 滑块：跟随选中项左右滑动 */}
+          {/* 滑块：实心底色 + 白字，跟随选中项滑动，底色同时渐变到该项的语义色 */}
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 left-0 rounded-full border border-white/70 bg-white transition-transform duration-300 will-change-transform"
+            className="pointer-events-none absolute inset-y-0 left-0 rounded-full transition-[transform,background-color] duration-300 will-change-transform"
             style={{
               width: `${100 / options.length}%`,
               transform: `translateX(${options.findIndex((option) => option.value === value) * 100}%)`,
-              boxShadow: "var(--shadow-sm)",
+              backgroundColor: activeColor,
+              boxShadow: `0 1px 2px 0 rgb(15 23 42 / 0.22), 0 0 0 3px color-mix(in srgb, ${activeColor} 16%, transparent), inset 0 1px 0 0 rgb(255 255 255 / 0.22)`,
               transitionTimingFunction: "var(--ease-out)",
             }}
           />
@@ -135,10 +142,8 @@ export function InlineSegmentedToggle<T extends string>({
                 title={option.hint}
                 disabled={pending}
                 onClick={() => select(option.value)}
-                className={`relative z-10 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold leading-4 outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-1 disabled:cursor-wait ${
-                  active
-                    ? option.activeClassName ?? "text-cyan-800"
-                    : "text-slate-500 hover:text-slate-800"
+                className={`relative z-10 whitespace-nowrap rounded-full px-3 py-0.5 text-xs font-semibold leading-4 outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-1 disabled:cursor-wait ${
+                  active ? "text-white" : "text-slate-600 hover:text-slate-900"
                 }`}
               >
                 {option.label}
