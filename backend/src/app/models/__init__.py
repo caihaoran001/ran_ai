@@ -26,6 +26,9 @@ from app.models.curated_video import (
 from app.models.ai_balance_alert import AIBalanceAlert
 from app.models.ai_usage import AIUsageLog
 from app.models.app_setting import AppSetting
+from app.models.day28_benefit_grant import Day28BenefitGrant
+from app.models.final_review_answer import FinalReviewAnswer
+from app.models.final_review_script_version import FinalReviewScriptVersion
 from app.models.inbound_event import InboundEvent
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.knowledge_dedupe_event import KnowledgeDedupeEvent
@@ -71,8 +74,11 @@ __all__ = [
     "AIBalanceAlert",
     "AIUsageLog",
     "AppSetting",
+    "Day28BenefitGrant",
     "DocumentStatus",
     "DocumentType",
+    "FinalReviewAnswer",
+    "FinalReviewScriptVersion",
     "InboundEvent",
     "KnowledgeChunk",
     "KnowledgeDedupeEvent",
