@@ -60,6 +60,16 @@ async def lifespan(app: FastAPI):
 
     async with SessionLocal() as _session:
         qiwe_account = await get_qiwe_account(_session)
+        if settings.final_review_enabled:
+            # 结营复盘话术以库为准；种子只在该语言还没有任何版本时写入，绝不覆盖运营改过的。
+            # 放在启动而不是留给人工脚本：本仓库在入营问卷模板上踩过"改了代码默认值、
+            # 线上毫无变化"，靠记得跑脚本迟早会漏，而漏了的表现是发出旧话术、不报错。
+            from app.services.final_review_scripts import ensure_seeded
+
+            written = await ensure_seeded(_session)
+            if written:
+                await _session.commit()
+                logger.info("Seeded final review scripts languages=%s", written)
     qiwe_guid = qiwe_account.get("guid", "")
     qiwe_token = qiwe_account.get("token", "")
     qiwe_should_start = settings.qiwei_enabled or bool(qiwe_token and qiwe_guid)

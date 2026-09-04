@@ -368,3 +368,43 @@ def within_send_window(now: datetime, *, service_case_id: int, node: str) -> boo
     if not (start <= now.time() < end):
         return False
     return now.time() >= deterministic_send_time(service_case_id, now.date(), node)
+
+
+async def answers_for_report(
+    session: AsyncSession, *, service_case: ServiceCase
+) -> list[dict[str, Any]]:
+    """已收到的结营复盘回答，整理成第28天报告能读的形式。
+
+    只给已经问过并有记录的题：报告要按客户"已经明确表达过"的方向写下一阶段，
+    没表达过必须写待确认，所以这里绝不补全、不推断、不给默认值。
+    """
+    script = await get_active_script(
+        session,
+        language=str(
+            getattr(
+                getattr(service_case, "language", "zh") or "zh", "value", None
+            )
+            or getattr(service_case, "language", "zh")
+            or "zh"
+        ),
+    )
+    progress = await load_progress(session, service_case_id=service_case.id)
+    rows: list[dict[str, Any]] = []
+    for question_id, answer in progress.answers.items():
+        question = script.question(question_id)
+        if question is None:
+            continue
+        selected = [
+            script.option_text(question_id, key, default=key)
+            for key in progress.selected_keys(question_id)
+        ]
+        rows.append(
+            {
+                "question_id": question_id,
+                "question": str(question.get("text") or ""),
+                "status": answer.answer_status,
+                "selected": selected,
+                "raw_text": answer.raw_text or "",
+            }
+        )
+    return rows

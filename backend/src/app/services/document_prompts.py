@@ -109,7 +109,26 @@ def _stage_report_method_prompt(stage: str, language: str = "zh") -> str:
             "4. If weight is plateaued or fluctuating, evaluate sleep, hydration, bowel movements, evening meal cutoffs, stress, and Morning C/Noon B/Evening A adherence. Do not simply blame user effort.\n"
             "5. Risk reminders: Base solely on real check-ins and chat logs. If chest tightness, palpitations, allergies, or medications are mentioned, prompt medical review without giving medical advice.\n"
             "6. Fine-tuning advice: Give 1-2 specific actions max, executable today (e.g. hydration volume, dinner portion, bedtime routine, step count).\n"
-            "7. Follow-up advice: Provide execution guidance strictly for the current program window; never mention repurchase or sales."
+            "7. Follow-up advice: "
+            + (
+                # 第28天是营期最后一天，"只写周期内"会把客户留在断点上：他已经在被问
+                # 下一阶段想做什么，报告却装作明天还有安排。所以这一天允许延伸到
+                # 下一阶段，但仍然只用健康语言——券和购买入口一律走独立消息。
+                (
+                    "this is the final day of the program, so you may extend into what comes "
+                    "next. Follow only what the customer has actually said they want: keep "
+                    "losing weight / maintain / work on another health concern / take a break. "
+                    "Maintaining is a legitimate goal in itself — never default to further "
+                    "weight loss. If they have not said, write that it is still to be "
+                    "confirmed; do not decide for them. Give lifestyle priorities and a "
+                    "re-measurement plan, never coupon values, gifts or purchase links."
+                )
+                if stage == "day28"
+                else (
+                    "Provide execution guidance strictly for the current program window; "
+                    "never mention repurchase or sales."
+                )
+            )
         )
     return (
         "【阶段报告数据解读方法】\n"
@@ -119,5 +138,19 @@ def _stage_report_method_prompt(stage: str, language: str = "zh") -> str:
         "4. 体重不降或波动时，必须同时查看睡眠、饮水、排便、晚餐收口、情绪压力和早C/午B/晚A执行，不得简单归因于用户不努力。\n"
         "5. 风险提醒只基于真实打卡和聊天记录；若出现胸闷、心悸、严重失眠、过敏、孕哺、慢病或用药相关表达，必须提示人工复核/就医，不给医疗建议。\n"
         "6. 微调建议每次最多给 1-2 个动作，必须具体到今天能做，例如饮水量、晚餐主食量、睡前时间、步数或产品饮用时间。\n"
-        "7. 阶段报告只给当前服务周期内的后续执行建议，不写复购、续购、购买、囤货、优惠等商业转化内容。"
+        "7. "
+        + (
+            # 见英文版同处注释：第28天是营期最后一天，只写"周期内"等于把客户留在断点上。
+            (
+                "第28天是本期最后一天，后续执行建议可以延伸到下一阶段，但必须按客户已经明确表达的"
+                "方向写：继续减重、维持现状、先改善其他健康困扰、暂时休息。维持本身就是有效目标，"
+                "不得默认他还要继续减重；客户没表达过就写「待确认」，不替他决定。只写生活方式重点和"
+                "复测计划，不写券额、赠品、购买入口等任何商业内容。"
+            )
+            if stage == "day28"
+            else (
+                "阶段报告只给当前服务周期内的后续执行建议，不写复购、续购、购买、囤货、优惠等"
+                "商业转化内容。"
+            )
+        )
     )

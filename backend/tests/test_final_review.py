@@ -26,6 +26,11 @@ from app.models.message import (
     MessageStatus,
 )
 from app.services.archivist.graph import run_archivist
+from app.services.document_prompts import _stage_report_method_prompt
+from app.services.stage_report import (
+    _followup_advice_requirement,
+    _invalid_stage_payload_reasons,
+)
 from app.services.day28_benefit_grants import (
     benefits_to_grant,
     granted_codes,
@@ -1259,3 +1264,53 @@ async def test_contact_preference_turns_off_proactive_contact(db_session, monkey
     assert states["product_recommendation"] is False
     # 风险相关提醒不走追问链路，这里不该被牵连关掉。
     assert states["contradiction"] is True
+
+
+# --------------------------------------------------------------------------
+# 第28天报告：分支措辞与商业词闸门
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_day28_report_may_extend_to_the_next_stage(language):
+    """第28天营期结束，报告要能接上"下一阶段想做什么"；之前的阶段仍只写周期内。"""
+    day21 = _followup_advice_requirement("day21", language=language)
+    day28 = _followup_advice_requirement("day28", language=language)
+    if language == "zh":
+        assert "只写当前28天服务内" in day21
+        assert "下一阶段" in day28
+        assert "维持本身就是有效目标" in day28
+        assert "待确认" in day28
+    else:
+        assert "within the" in day21
+        assert "next-stage" in day28
+        assert "Maintaining is a legitimate goal" in day28
+        assert "to be confirmed" in day28
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_day28_report_still_forbids_commercial_wording(language):
+    """允许写下一阶段 ≠ 允许卖东西：券和购买入口一律走独立消息。"""
+    day28 = _followup_advice_requirement("day28", language=language)
+    method = _stage_report_method_prompt("day28", language=language)
+    if language == "zh":
+        assert "严禁出现复购" in day28
+        assert "不写券额" in day28
+        assert "不写券额、赠品、购买入口" in method
+    else:
+        assert "strictly forbid repurchase" in day28.lower()
+        assert "never coupon values" in method
+
+
+def test_commercial_term_gate_is_unchanged():
+    """闸门不动：第28天的下一阶段建议全是健康语言，出现"优惠"仍要被拦回。"""
+    reasons = _invalid_stage_payload_reasons(
+        "day28",
+        {
+            "stage_summary": "执行稳定",
+            "risk_reminder": "无明显风险",
+            "adjustment_advice": "晚餐提前一小时",
+            "followup_advice": "下一阶段继续维持，另外这次有优惠可以复购",
+        },
+    )
+    assert any("commercial" in reason for reason in reasons)

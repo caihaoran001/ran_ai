@@ -29,6 +29,44 @@ _STAGE_REPORT_REQUIRED_FIELDS = {
 STAGE_REPORT_STAGES = frozenset({"day3", "day7", "day14", "day21", "day28"})
 
 
+def _followup_advice_requirement(stage: str, *, language: str = "zh") -> str:
+    """followup_advice 的写作要求。
+
+    第28天单独一条：那天营期结束，客户正在被问下一阶段想做什么，报告要能接上那个
+    答案；其余阶段仍然只写周期内。两处的商业禁令都不放松——权益和购买入口走独立
+    消息，报告里出现券额就等于把"无条件给"变成"买了才有"。
+    """
+    if language == "en":
+        if stage == "day28":
+            return (
+                "- followup_advice: This is the last day of the program. Write the next-stage "
+                "priorities that match what the customer actually asked for (keep losing "
+                "weight / maintain / another health concern / take a break), plus when to "
+                "re-measure. Maintaining is a legitimate goal; never default to further "
+                "weight loss. If they have not said yet, write that it is to be confirmed. "
+                "Still strictly forbid repurchase, renewal, discount, coupon or purchase "
+                "wording of any kind."
+            )
+        return (
+            "- followup_advice: Focus only on upcoming execution priorities within the "
+            "current 28-day program to solidify habits. Strictly forbid commercial "
+            "conversion terms like repurchasing, renewals, discounts, or next-phase sales."
+        )
+    if stage == "day28":
+        return (
+            "- followup_advice：第28天是本期最后一天。按客户已经明确表达的方向写下一阶段的"
+            "执行重点和复测节奏：继续减重、维持现状、先改善其他健康困扰、暂时休息。"
+            "维持本身就是有效目标，不得默认他还要继续减重；他还没表达过就写「下一阶段方向"
+            "待确认」，不替他决定。仍然严禁出现复购、续购、续费、续营、购买、囤货、补货、"
+            "下一期、报名、优惠、活动等商业转化表达，也不写券额和领取入口。"
+        )
+    return (
+        "- followup_advice：只写当前28天服务内的后续执行重点，帮助用户把现阶段动作做稳。"
+        "严禁出现复购、续购、续费、续营、购买、囤货、补货、下一期、报名、优惠、活动等"
+        "商业转化表达。"
+    )
+
+
 async def _generate_stage_payload(
     *,
     ai: AIService,
@@ -43,6 +81,7 @@ async def _generate_stage_payload(
     recipient_name: str | None = None,
     gender: str | None = None,
     language: str = "zh",
+    final_review_answers: list[dict] | None = None,
 ) -> dict:
     if stage not in STAGE_REPORT_STAGES:
         raise RuntimeError("invalid stage")
@@ -72,7 +111,8 @@ async def _generate_stage_payload(
             "- stage_summary: Summarize overall progress in this stage based on check-in records (weight trends, active check-in days, product adherence, sleep and hydration changes). Include specific highlights and areas for fine-tuning. Avoid empty generic praise.\n"
             "- risk_reminder: Check if physical discomforts (chest tightness, palpitations, severe insomnia, allergies) were mentioned. If yes, write specific reminders and advise consulting a physician; if no major risks, write a concise standard lifestyle safety reminder.\n"
             "- adjustment_advice: Provide 1-2 specific, actionable fine-tuning adjustments based on weakest dimensions (e.g. evening meal cutoff, sleep timing, hydration). Avoid vague statements like 'eat moderately'.\n"
-            "- followup_advice: Focus only on upcoming execution priorities within the current 28-day program to solidify habits. Strictly forbid commercial conversion terms like repurchasing, renewals, discounts, or next-phase sales.\n\n"
+            + _followup_advice_requirement(stage, language="en")
+            + "\n\n"
             + CONCISENESS_RULE
             + "\n\n"
             "【Safety Boundary】\n"
@@ -89,7 +129,8 @@ async def _generate_stage_payload(
             "- stage_summary：总结本阶段用户的整体执行情况。必须结合打卡记录中的真实数据（体重趋势、有打卡天数、产品执行率、睡眠和饮水变化），写出'做得好的地方'和'需要微调的地方'，禁止只写空泛的'执行不错继续加油'。\n"
             "- risk_reminder：检查用户打卡和聊天中是否出现过体感不适（胸闷、心悸、严重失眠、过敏等），如有则写出具体提醒并建议就医；如无明显风险，写一句通用安全提示即可。\n"
             "- adjustment_advice：基于用户当前最薄弱的1-2个维度（如晚餐收口、睡眠时间、饮水量），给出具体、量化、可执行的微调建议。禁止写'适当控制饮食'等模糊表达。\n"
-            "- followup_advice：只写当前28天服务内的后续执行重点，帮助用户把现阶段动作做稳。严禁出现复购、续购、续费、续营、购买、囤货、补货、下一期、报名、优惠、活动等商业转化表达。\n\n"
+            + _followup_advice_requirement(stage)
+            + "\n\n"
             + CONCISENESS_RULE
             + "\n\n"
             "【安全红线】\n"
@@ -113,6 +154,14 @@ async def _generate_stage_payload(
                     f"档案官当前状态：\n{json.dumps(_current_state_for_report(state_json), ensure_ascii=False, indent=2)}\n\n"
                     f"打卡记录：\n{json.dumps(checkin_summary, ensure_ascii=False, indent=2)}\n\n"
                     f"最近用户消息：\n{json.dumps(inbound_messages, ensure_ascii=False, indent=2)}"
+                    + (
+                        # 客户在第26-27天已经答过"下一阶段想做什么"，报告要接上那个答案。
+                        # 没有答案时整段不拼，让模型按提示词写「待确认」，而不是看到空列表自己发挥。
+                        "\n\n结营复盘客户已明确表达的意愿（只按这些写下一阶段，没有的写待确认）：\n"
+                        + json.dumps(final_review_answers, ensure_ascii=False, indent=2)
+                        if final_review_answers
+                        else ""
+                    )
                 ),
             )
             payload = parse_json_object(raw_text)

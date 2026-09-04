@@ -52,6 +52,7 @@ from app.services.intake_generation import (
     _generate_intake_analysis_package,
     personalized_checkin_fields_from_document_payloads,
 )
+from app.services.final_review_runner import answers_for_report
 from app.services.stage_report import (
     STAGE_REPORT_STAGES,
     _existing_stage_report,
@@ -295,6 +296,9 @@ async def generate_stage_report(
         recipient_name=recipient_name,
         gender=gender,
         language=case_lang,
+        final_review_answers=await answers_for_report(
+            session, service_case=service_case
+        ),
     )
     degraded = bool(fields_payload.pop("__degraded__", False)) if isinstance(fields_payload, dict) else False
     content_json = build_stage_report_content_json(
@@ -384,6 +388,9 @@ async def retry_degraded_stage_report(session: AsyncSession, document: UserDocum
         recipient_name=recipient_name,
         gender=gender,
         language=case_lang,
+        final_review_answers=await answers_for_report(
+            session, service_case=service_case
+        ),
     )
     still_degraded = isinstance(fields_payload, dict) and bool(fields_payload.pop("__degraded__", False))
     if still_degraded:
