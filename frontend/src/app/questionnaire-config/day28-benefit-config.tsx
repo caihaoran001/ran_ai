@@ -62,6 +62,16 @@ export function Day28BenefitConfig() {
     load();
   }, []);
 
+  const isDirty = JSON.stringify(benefits) !== initial;
+
+  useEffect(() => {
+    // 运营填完不点保存就刷新/关页，内容会全部白填——已经真实发生过一次。
+    if (!isDirty) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  });
+
   function update(code: string, patch: Partial<Benefit>) {
     setBenefits((prev) =>
       prev.map((item) => (item.code === code ? { ...item, ...patch } : item)),
@@ -104,8 +114,6 @@ export function Day28BenefitConfig() {
     );
   }
 
-  const isDirty = JSON.stringify(benefits) !== initial;
-
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-start justify-between gap-4">
@@ -115,7 +123,8 @@ export function Day28BenefitConfig() {
             客户走完 28 天后，助教会在群里告知权益并给出领取链接。
             <strong className="font-semibold text-slate-700">助教只会念这里填的内容</strong>
             ——没填的字段一个字都不会提，也不会自己编面额或链接。
-            开关打开但没填领取链接时，这张券不会发出去（下面会标出来）。
+            开关打开但没填领取入口时，这张券不会发出去（下面会标出来）。
+            领取入口可以是网址，也可以是微信小店那种 <code>#微信小店://…</code> 口令。
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -144,12 +153,19 @@ export function Day28BenefitConfig() {
               }`}
             >
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-slate-900">{benefit.name}</span>
-                  <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-500">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <input
+                    type="text"
+                    aria-label="券名称"
+                    className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-2 py-1 text-sm font-semibold text-slate-900 transition-all hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    value={benefit.name}
+                    onChange={(e) => update(benefit.code, { name: e.target.value })}
+                    disabled={busy}
+                  />
+                  <span className="shrink-0 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-500">
                     {benefit.kind === "gift" ? "赠品" : "优惠券"}
                   </span>
-                  <span className="text-xs text-slate-500">
+                  <span className="shrink-0 text-xs text-slate-500">
                     {GRANT_WHEN_LABEL[benefit.grant_when] ?? benefit.grant_when}
                   </span>
                 </div>
@@ -168,7 +184,7 @@ export function Day28BenefitConfig() {
               {missingLink && (
                 <p className="mb-3 flex items-start gap-1.5 text-sm font-medium text-amber-800">
                   <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                  已启用但没填领取链接，这张券不会发给客户（助教会改为通知班主任人工处理）。
+                  已启用但没填领取入口，这张券不会发给客户（助教会改为通知班主任人工处理）。
                 </p>
               )}
 
@@ -213,11 +229,11 @@ export function Day28BenefitConfig() {
                 </div>
                 <div className="grid gap-1 sm:col-span-2">
                   <label className="text-xs font-medium text-slate-600">
-                    领取链接（所有客户同一个）
+                    领取入口（所有客户同一个，网址或小店口令都行）
                   </label>
                   <input
-                    type="url"
-                    placeholder="https://…"
+                    type="text"
+                    placeholder="https://… 或 #微信小店://店铺/优惠券/编号"
                     className="rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     value={benefit.claim_url}
                     onChange={(e) => update(benefit.code, { claim_url: e.target.value })}

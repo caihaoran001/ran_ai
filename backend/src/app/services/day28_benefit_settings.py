@@ -128,13 +128,23 @@ def _clean_text(value: object, *, label: str, limit: int = MAX_TEXT_CHARS) -> st
 
 
 def _clean_url(value: object) -> str:
+    """领取入口：可以是网址，也可以是微信小店那种口令。
+
+    2026-09-05 上线当天被真实配置打脸：优惠券的领取入口是
+    `#微信小店://店铺/优惠券/xxxx` 这样的口令，运营复制进来直接被"必须 http 开头"
+    挡住。口令是要原样发到群里让客户点的，所以只要求"看得出是个入口"
+    （带 :// 的协议头），不再限定协议是什么。
+    """
     url = str(value or "").strip()
     if not url:
         return ""
     if len(url) > MAX_URL_CHARS:
-        raise ValueError(f"领取链接不能超过 {MAX_URL_CHARS} 个字符。")
-    if not url.startswith(("http://", "https://")):
-        raise ValueError("领取链接必须以 http:// 或 https:// 开头。")
+        raise ValueError(f"领取入口不能超过 {MAX_URL_CHARS} 个字符。")
+    if "://" not in url:
+        raise ValueError(
+            "领取入口要么是 http(s):// 开头的网址，"
+            "要么是小店口令（形如 #微信小店://店铺/优惠券/编号）。"
+        )
     return url
 
 

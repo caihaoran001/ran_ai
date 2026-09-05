@@ -836,7 +836,47 @@ async def test_benefit_api_rejects_a_link_without_scheme(admin_client):
     }
     response = await admin_client.post("/settings/day28-benefits", json=payload)
     assert response.status_code == 400
-    assert "http" in response.json()["detail"]
+    assert "领取入口" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_benefit_api_accepts_a_wechat_store_voucher_code(admin_client):
+    """真实的优惠券入口是微信小店口令，不是网址——2026-09-05 上线当天被它挡住过。"""
+    payload = {
+        "benefits": [
+            {
+                "code": "member_fixed",
+                "name": "40元会员券",
+                "claim_url": "#微信小店://Cephei奢啡加速燃/优惠券/ollsuN9mwGhdrZl",
+                "enabled": True,
+                "grant_when": "cross_product_intent",
+            }
+        ]
+    }
+    response = await admin_client.post("/settings/day28-benefits", json=payload)
+    assert response.status_code == 200
+    entry = response.json()["benefits"][0]
+    assert entry["claim_url"].startswith("#微信小店://")
+    assert entry["grantable"] is True
+
+
+@pytest.mark.asyncio
+async def test_benefit_name_can_be_renamed(admin_client):
+    """券名要能改：第一张实际做成了 240 元，名字还叫"200元产品券"就会被念错。"""
+    payload = {
+        "benefits": [
+            {
+                "code": "product_200",
+                "name": "240元复购券",
+                "face_value": "240元",
+                "claim_url": "#微信小店://Cephei奢啡加速燃/优惠券/kVQsb47P9dnOkEA",
+                "enabled": True,
+            }
+        ]
+    }
+    saved = await admin_client.post("/settings/day28-benefits", json=payload)
+    assert saved.status_code == 200
+    assert saved.json()["benefits"][0]["name"] == "240元复购券"
 
 
 # --------------------------------------------------------------------------

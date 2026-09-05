@@ -124,6 +124,14 @@ export function FinalReviewScriptConfig() {
   }
 
   const isDirty = script != null && JSON.stringify(script.nodes) !== initial;
+
+  useEffect(() => {
+    // 改完话术不点保存就离开会白改；这一页的券配置那边已经真实发生过一次。
+    if (!isDirty) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  });
   const nodeKeys = script
     ? Object.keys(script.nodes).sort(
         (a, b) =>
