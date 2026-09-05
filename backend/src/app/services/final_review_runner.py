@@ -163,6 +163,55 @@ async def asked_nodes_for(
     return [str(rule_id).split(":", 1)[1] for rule_id in rows.all()]
 
 
+# 入营那道「最希望 28 天后看到哪些变化」在中英模板里是同一道题、同一个 key，
+# 但标题文字不同，而 key 是模板生成的随机串不能写死；两组关键词都试一遍。
+_FOCUS_TITLE_PARTS: tuple[tuple[str, ...], ...] = (
+    ("最希望", "28"),
+    ("hope", "28 days"),
+)
+# 关注项要嵌进题干念出来，太长会把整句撑散。中文选项最长约 30 字，同一选项的
+# 英文写法约 60 字，留一倍余量给自填内容；只用来挡住"把一整段贴进来"。
+_FOCUS_ITEM_MAX_CHARS = 120
+# 只勾了"其他"却没写内容时它不携带任何信息，念出来是句废话，直接丢掉。
+_EMPTY_FOCUS_VALUES = frozenset({"其他", "Other", "other"})
+
+
+def _focus_answer_values(
+    fields: list[dict], answers: dict, title_parts: tuple[str, ...]
+) -> list[str]:
+    """按题目标题取这道题的答案原文，**不做统计折叠**。
+
+    这里刻意不复用 `intake_facts.structured_answer_values`：那个函数服务于人群
+    统计，凡是对不上标准选项的答案（英文问卷存的英文选项、客户在"其他"里自填的
+    数字目标）一律归成同一个桶名。2026-09-05 灰度实测时，客户勾的两项因此被压成
+    「其他（用户补充）」念进了群。复盘要还给客户的是他当时写下的原话，桶名对他
+    毫无意义。统计那边的折叠是对的，不要顺手改。
+    """
+    for field in fields:
+        key = str(field.get("key") or field.get("id") or "")
+        title = str(field.get("title") or field.get("label") or "").casefold()
+        if key not in answers:
+            continue
+        if not all(part.casefold() in title for part in title_parts):
+            continue
+        raw = answers.get(key)
+        if isinstance(raw, list):
+            values = [str(item).strip() for item in raw]
+        else:
+            text = str(raw or "").strip()
+            # 多选历史上用 `||` 分隔；中文顿号是选项文字的一部分，不能当分隔符。
+            values = [item.strip() for item in text.split("||")] if text else []
+        picked: list[str] = []
+        for value in values:
+            if not value or value in _EMPTY_FOCUS_VALUES or value in picked:
+                continue
+            if len(value) > _FOCUS_ITEM_MAX_CHARS:
+                value = value[: _FOCUS_ITEM_MAX_CHARS - 1] + "…"
+            picked.append(value)
+        return picked
+    return []
+
+
 async def focus_items_for(
     session: AsyncSession, *, service_case: ServiceCase
 ) -> list[str]:
@@ -171,7 +220,6 @@ async def focus_items_for(
     取不到就返回空列表，由渲染侧整句降级；绝不编一个"体重"塞进去。
     """
     from app.models.questionnaire import QuestionnaireSubmission
-    from app.services.intake_facts import structured_answer_values
     from app.services.questionnaire_template import get_active_questionnaire_fields
 
     submission = await session.scalar(
@@ -187,8 +235,11 @@ async def focus_items_for(
     fields = await get_active_questionnaire_fields(
         session, "intake", language=language or "zh"
     )
-    values = structured_answer_values(fields, answers, "最希望 28 天后")
-    return [value for value in values if value][:3]
+    for title_parts in _FOCUS_TITLE_PARTS:
+        values = _focus_answer_values(fields, answers, title_parts)
+        if values:
+            return values[:3]
+    return []
 
 
 @dataclass

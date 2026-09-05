@@ -64,6 +64,8 @@ from app.services.final_review_answers import (
 from app.services.final_review_runner import (
     FINAL_REVIEW_WINDOW,
     NodePlan,
+    _FOCUS_TITLE_PARTS,
+    _focus_answer_values,
     deterministic_send_time,
     ensure_benefit_links,
     final_review_active_for,
@@ -1397,3 +1399,77 @@ async def test_coach_once_notifies_operations_only_once(
     assert sent[0][0] == "ops-group"
     assert "班主任联系一次" in sent[0][1]
     assert "不需要转为持续跟进" in sent[0][1]
+
+
+def _focus_field(title: str) -> dict:
+    """入营那道多选题的模板片段（中英同 key、标题不同）。"""
+    return {
+        "key": "CHECKBOX_FOCUS",
+        "title": title,
+        "type": "CHECKBOX",
+        "options": [
+            "白天精力更稳，忙一天也不容易垮",
+            "每天节律更稳定、情绪更稳",
+            "其他",
+        ],
+    }
+
+
+def test_focus_items_keep_the_customer_own_wording():
+    """关注项按客户当时勾的原话念，多选按 `||` 拆、顿号不当分隔符。"""
+    fields = [_focus_field("您最希望 28 天后看到哪些变化？")]
+    answers = {"CHECKBOX_FOCUS": "白天精力更稳，忙一天也不容易垮||每天节律更稳定、情绪更稳"}
+
+    assert _focus_answer_values(fields, answers, ("最希望", "28")) == [
+        "白天精力更稳，忙一天也不容易垮",
+        "每天节律更稳定、情绪更稳",
+    ]
+
+
+def test_focus_items_do_not_collapse_unmatched_answers():
+    """回归 2026-09-05 灰度事故：英文问卷的答案对不上中文选项表，被统计口径
+    压成「其他（用户补充）」念进了群。复盘只念原话，不做统计折叠。"""
+    fields = [_focus_field("您最希望 28 天后看到哪些变化？")]
+    answers = {
+        "CHECKBOX_FOCUS": (
+            "More stable daytime energy, without crashing after a busy day"
+            "||More stable daily rhythm and emotional state"
+        )
+    }
+
+    values = _focus_answer_values(fields, answers, ("最希望", "28"))
+
+    assert values == [
+        "More stable daytime energy, without crashing after a busy day",
+        "More stable daily rhythm and emotional state",
+    ]
+    assert not any("其他（用户补充）" in value for value in values)
+
+
+def test_focus_items_drop_empty_other_and_truncate_long_free_text():
+    """只勾"其他"没写内容念出来是废话，丢掉；自填过长会撑散题干，截断。"""
+    fields = [_focus_field("您最希望 28 天后看到哪些变化？")]
+    long_text = "想" * 200
+    answers = {"CHECKBOX_FOCUS": ["其他", long_text, "其他"]}
+
+    values = _focus_answer_values(fields, answers, ("最希望", "28"))
+
+    assert len(values) == 1
+    assert len(values[0]) == 120
+    assert values[0].endswith("…")
+
+
+def test_focus_title_parts_match_both_language_templates():
+    """英文模板的标题是另一句话，必须也能命中，否则英文客户整句降级成没有关注项。"""
+    answers = {"CHECKBOX_FOCUS": "每天节律更稳定、情绪更稳"}
+    for title in (
+        "您最希望 28 天后看到哪些变化？",
+        "What changes do you most hope to see after 28 days?",
+    ):
+        fields = [_focus_field(title)]
+        matched = [
+            values
+            for parts in _FOCUS_TITLE_PARTS
+            if (values := _focus_answer_values(fields, answers, parts))
+        ]
+        assert matched, f"标题匹配不到：{title}"
