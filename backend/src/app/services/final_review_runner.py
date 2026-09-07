@@ -36,12 +36,16 @@ from app.services.final_review_answers import (
     pending_questions,
 )
 from app.services.final_review_scripts import (
+    ASK_INTENT_CONTINUE,
+    ASK_INTENT_PAUSE,
+    ASK_OTHER_HEALTH_NEED,
     FINAL_REVIEW_NODES,
     NODE_BENEFIT,
     NODE_GOAL,
     NODE_HANDOFF,
     NODE_LABELS,
     NODE_RESULTS,
+    Q_NEXT_GOAL,
     Q_SERVICE_INTENT,
     FinalReviewScript,
     format_question_for_send,
@@ -304,6 +308,12 @@ async def plan_node(
         if not benefits_text and _needs_benefits(question):
             # 没有可发的券就不念权益句：与"改说班主任稍后安排"的口径一致。
             continue
+        if await question_already_sent(
+            session, service_case_id=service_case.id, question=question
+        ):
+            # 助教已经在客户答完那一轮当场问过了（见 followup_prompt_block）。
+            # 客户还没答不代表要再问一遍——问过两次比没问更像没在听。
+            continue
         lines.append(
             format_question_for_send(
                 question,
@@ -394,6 +404,135 @@ def should_skip_daily_checklist(settings: Settings, *, service_case_id: int, day
     return (
         final_review_active_for(settings, service_case_id)
         and day in CHECKLIST_QUIET_DAYS
+    )
+
+
+# 条件题的触发题：这道题该不该问，取决于客户对触发题的回答，所以只有触发题
+# 已经问出去了，它才有可能轮到。
+_TRIGGER_QUESTION: dict[str, str] = {
+    ASK_OTHER_HEALTH_NEED: Q_NEXT_GOAL,
+    ASK_INTENT_CONTINUE: Q_SERVICE_INTENT,
+    ASK_INTENT_PAUSE: Q_SERVICE_INTENT,
+}
+
+_CONDITION_HINT: dict[str, dict[str, str]] = {
+    "zh": {
+        ASK_OTHER_HEALTH_NEED: "仅当客户表示想先改善其他健康困扰时问这道",
+        ASK_INTENT_CONTINUE: "仅当客户倾向继续原方案、或想看其他产品时问这道",
+        ASK_INTENT_PAUSE: "仅当客户倾向先用完现有的、暂不购买或不需要后续时问这道",
+    },
+    "en": {
+        ASK_OTHER_HEALTH_NEED: "Ask only if the customer wants to work on another health concern first",
+        ASK_INTENT_CONTINUE: "Ask only if the customer leans towards continuing or exploring other products",
+        ASK_INTENT_PAUSE: "Ask only if the customer leans towards finishing stock, not buying for now, or no follow-up",
+    },
+}
+
+# 题干指纹长度。太短会撞上别的题，太长会被一个改写字毁掉整段匹配。
+_FINGERPRINT_CHARS = 20
+
+
+def question_fingerprint(text: str) -> str:
+    """题干里用来判断"这题发出过没"的一段稳定原文。
+
+    占位符（关注项、权益清单）渲染后每位客户都不同，所以指纹只取占位符之外
+    最长的那段连续原文。
+    """
+    import re
+
+    stripped = re.sub(r"「?\{[^}]*\}」?", "\n", str(text or ""))
+    segments = [item.strip() for item in stripped.split("\n") if item.strip()]
+    if not segments:
+        return ""
+    return max(segments, key=len)[:_FINGERPRINT_CHARS]
+
+
+async def question_already_sent(
+    session: AsyncSession, *, service_case_id: int, question: dict[str, Any]
+) -> bool:
+    """这道题的题干在这个群里发出过吗。
+
+    刻意以"发出去的消息"为事实来源，而不是另记一本"已问"账：记了却没发出去
+    （生成成功、发送失败）会让客户永远等不到这道题，而账上显示问过了。
+    """
+    from app.models.message import Message, MessageDirection
+
+    fingerprint = question_fingerprint(question.get("text"))
+    if not fingerprint:
+        return False
+    hit = await session.scalar(
+        select(Message.id)
+        .where(
+            Message.service_case_id == service_case_id,
+            Message.direction == MessageDirection.OUTBOUND,
+            Message.content.contains(fingerprint),
+        )
+        .limit(1)
+    )
+    return hit is not None
+
+
+async def followup_prompt_block(
+    session: AsyncSession,
+    *,
+    settings: Settings,
+    service_case: ServiceCase,
+    language: str = "zh",
+) -> str:
+    """回复提示词里的【结营复盘待问】段；没有该问的题就返回空串。
+
+    为什么要注入而不是让助教自己调工具查：客户回一个"3"就等于选了「先改善其他
+    健康困扰」，紧接着那句"想改善哪方面"必须**当场**问出来，隔天再问这话已经凉了。
+    而"必须发生"的动作不能建立在"它会想起来去查"之上——2026-09-07 的复盘就是
+    这么漏的：那道追问题的条件要等答案入库才成立，可它所属的节点当天就已经关门，
+    结果一次也没问出去，还不报错。注入把它的活儿从"想起来+找到题+念对"压成"念对"。
+
+    触发条件（客户这句到底是不是在答上一题）只能由模型判断，所以条件说明一并给它。
+    """
+    if not final_review_active_for(settings, service_case.id):
+        return ""
+    script = await get_active_script(session, language=str(language))
+    progress = await load_progress(session, service_case_id=service_case.id)
+    hints = _CONDITION_HINT.get(language, _CONDITION_HINT["zh"])
+    blocks: list[str] = []
+    for node in FINAL_REVIEW_NODES:
+        for question in script.questions_for(node):
+            ask_when = str(question.get("ask_when") or "")
+            trigger_id = _TRIGGER_QUESTION.get(ask_when)
+            if trigger_id is None:
+                # 无条件题由节点自己按天发，不在这里抢跑。
+                continue
+            question_id = str(question.get("id") or "")
+            if progress.is_resolved(question_id):
+                continue
+            trigger = script.question(trigger_id)
+            if trigger is None:
+                continue
+            if not await question_already_sent(
+                session, service_case_id=service_case.id, question=trigger
+            ):
+                # 触发题还没问出口，这道题无从谈起。
+                continue
+            if await question_already_sent(
+                session, service_case_id=service_case.id, question=question
+            ):
+                continue
+            blocks.append(
+                f"- {hints.get(ask_when, '')}：\n"
+                + format_question_for_send(question, language=language)
+            )
+    if not blocks:
+        return ""
+    if (language or "").strip().lower() == "en":
+        return (
+            "The customer may be answering a final-review question in this message. "
+            "If they did, and the condition below holds, ask the matching question in "
+            "this same reply, word for word, options included:\n" + "\n".join(blocks)
+        )
+    return (
+        "客户这条消息可能是在回答结营复盘的题。如果是，且下面某道题的条件成立，"
+        "就在本轮回复里把那道题一字不改地问出来（连编号选项一起）：\n"
+        + "\n".join(blocks)
     )
 
 

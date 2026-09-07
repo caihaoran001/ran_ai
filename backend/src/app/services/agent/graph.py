@@ -199,6 +199,9 @@ class RanrenAgentGraph:
             language=language,
         )
         bot_nickname = await self._resolve_bot_nickname()
+        service_day_context, final_review_followup = await self._case_prompt_extras(
+            language=language
+        )
         initial_messages: list[BaseMessage] = [
             SystemMessage(content=get_agent_system_prompt(language)),
             HumanMessage(
@@ -207,11 +210,13 @@ class RanrenAgentGraph:
                     query_speaker=query_speaker,
                     recent_messages=recent_messages,
                     skill_catalog=self.skill_registry.catalog_text(),
-                    current_time_context=self._current_time_context(),
+                    current_time_context=self._current_time_context()
+                    + service_day_context,
                     memory_context=memory_context,
                     knowledge_context=knowledge_context,
                     bot_nickname=bot_nickname,
                     language=language,
+                    final_review_followup=final_review_followup,
                 )
             ),
         ]
@@ -267,6 +272,59 @@ class RanrenAgentGraph:
     def _current_time_context(self) -> str:
         """Runtime clock hook; isolated evaluation overrides it with a fixed clock."""
         return _current_time_context()
+
+    async def _case_prompt_extras(self, *, language: str) -> tuple[str, str]:
+        """返回（服务第几天那一句，结营复盘待问段）。一次查库出两段。
+
+        服务天数常驻而不留给工具去查：客户说"我才刚开始""都快结束了"，或者第 3 天
+        报了掉 5 斤（该警惕），几乎每轮都用得上。一行字约 25 个 token，换成调工具
+        是模型多一轮完整往返、上下文全量重发，差两个数量级，而且它可能压根不调。
+
+        复盘待问段只在普通回复轮次注入：复盘节点自己那轮走的是另一条生成入口。
+        任何一步取不到就当没有，绝不因为这两段拼不出来而让整轮回复失败。
+        """
+        if not self.context.service_case_id:
+            return "", ""
+        is_en = (language or "").strip().lower() == "en"
+        try:
+            from app.services.final_review_runner import followup_prompt_block
+            from app.services.service_case_activation import (
+                effective_service_day,
+                service_continuation_active,
+            )
+
+            async with db_session_module.SessionLocal() as session:
+                case_row = await session.get(ServiceCase, self.context.service_case_id)
+                if case_row is None:
+                    return "", ""
+                tz = ZoneInfo(self.settings.reminder_timezone)
+                day = effective_service_day(case_row, datetime.now(tz), tz)
+                day_text = ""
+                if day >= 1:
+                    continued = service_continuation_active(case_row)
+                    if is_en:
+                        day_text = (
+                            f" This customer is on day {day} of the service"
+                            + (" (continued service)." if continued else " (28 days in total).")
+                        )
+                    else:
+                        day_text = (
+                            f"今天是这位客户服务的第 {day} 天"
+                            + ("（续服中）。" if continued else "（共 28 天）。")
+                        )
+                followup = await followup_prompt_block(
+                    session,
+                    settings=self.settings,
+                    service_case=case_row,
+                    language=language,
+                )
+                return day_text, followup
+        except Exception:
+            logger.exception(
+                "Failed to build case prompt extras service_case_id=%s",
+                self.context.service_case_id,
+            )
+            return "", ""
 
     async def _resolve_language(self) -> str:
         language = self.context.language or "zh"

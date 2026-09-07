@@ -67,6 +67,8 @@ from app.services.final_review_runner import (
     _FOCUS_TITLE_PARTS,
     _focus_answer_values,
     deterministic_send_time,
+    followup_prompt_block,
+    question_fingerprint,
     ensure_benefit_links,
     final_review_active_for,
     select_node,
@@ -1627,3 +1629,150 @@ def json_dumps_for_assert(payload) -> str:
     import json
 
     return json.dumps(payload, ensure_ascii=False)
+
+
+# --------------------------------------------------------------------------
+# 追问题当场问：注入回复提示词
+# --------------------------------------------------------------------------
+
+
+async def _sent(db_session, case, text: str) -> None:
+    """模拟一条已经发到群里的助教消息。"""
+    db_session.add(
+        Message(
+            service_case_id=case.id,
+            group_id=case.group_id,
+            direction=MessageDirection.OUTBOUND,
+            sender_type=MessageSenderType.SYSTEM,
+            message_type="text",
+            content=text,
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.SENT,
+        )
+    )
+    await db_session.flush()
+
+
+def test_question_fingerprint_skips_the_placeholder():
+    """占位符渲染后每位客户都不同，指纹只能取占位符之外的原文。"""
+    text = "回看这28天，你最关注的「{关注项}」分别有什么变化？哪一点对你最有价值？"
+    fingerprint = question_fingerprint(text)
+    assert "{" not in fingerprint and "关注项" not in fingerprint
+    # 指纹必须是题干里的一段原文，否则匹配发出去的消息时对不上。
+    assert fingerprint and fingerprint in text
+
+
+@pytest.mark.asyncio
+async def test_followup_is_injected_once_the_trigger_question_went_out(
+    db_session, monkeypatch
+):
+    """回归 2026-09-07 的漏问。
+
+    那道"想改善哪方面"的条件要等答案入库才成立，而它所属的节点当天就关门了，
+    结果一次也没问出去、还不报错。现在只要目标题问出去了，它就进提示词，
+    客户回一个"3"助教当场就能接着问。
+    """
+    from app.core.config import get_settings
+
+    case, _, _ = await _archivist_case(db_session, monkeypatch)
+    script = await get_active_script(db_session, language="zh")
+    await _sent(db_session, case, format_question_for_send(script.question(Q_NEXT_GOAL)))
+
+    block = await followup_prompt_block(
+        db_session, settings=get_settings(), service_case=case, language="zh"
+    )
+
+    assert "想改善哪一项" in block or "改善哪" in block
+    assert "仅当客户表示想先改善其他健康困扰时问这道" in block
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_injected_before_the_trigger_question_went_out(
+    db_session, monkeypatch
+):
+    """目标题还没问出口，这道追问题无从谈起。"""
+    from app.core.config import get_settings
+
+    case, _, _ = await _archivist_case(db_session, monkeypatch)
+    block = await followup_prompt_block(
+        db_session, settings=get_settings(), service_case=case, language="zh"
+    )
+    assert block == ""
+
+
+@pytest.mark.asyncio
+async def test_followup_stops_once_it_has_been_asked(db_session, monkeypatch):
+    """问过就不再注入——客户没答不代表要再问一遍，问两遍比不问更像没在听。"""
+    from app.core.config import get_settings
+
+    case, _, _ = await _archivist_case(db_session, monkeypatch)
+    script = await get_active_script(db_session, language="zh")
+    await _sent(db_session, case, format_question_for_send(script.question(Q_NEXT_GOAL)))
+    await _sent(
+        db_session, case, format_question_for_send(script.question(Q_OTHER_HEALTH))
+    )
+
+    block = await followup_prompt_block(
+        db_session, settings=get_settings(), service_case=case, language="zh"
+    )
+    assert "改善哪" not in block
+
+
+@pytest.mark.asyncio
+async def test_followup_stops_once_answered(db_session, monkeypatch):
+    from app.core.config import get_settings
+
+    case, message, _ = await _archivist_case(db_session, monkeypatch)
+    script = await get_active_script(db_session, language="zh")
+    await _sent(db_session, case, format_question_for_send(script.question(Q_NEXT_GOAL)))
+    await record_answer(
+        db_session,
+        service_case_id=case.id,
+        question_id=Q_OTHER_HEALTH,
+        answer_status=STATUS_ANSWERED,
+        raw_text="睡眠",
+        normalized_value={"selected": ["sleep"]},
+        evidence_message_id=message.id,
+    )
+    await db_session.flush()
+
+    block = await followup_prompt_block(
+        db_session, settings=get_settings(), service_case=case, language="zh"
+    )
+    assert "改善哪" not in block
+
+
+@pytest.mark.asyncio
+async def test_followup_is_never_injected_outside_the_whitelist(
+    db_session, monkeypatch
+):
+    from app.core.config import get_settings
+
+    case, _, _ = await _archivist_case(db_session, monkeypatch, whitelist=False)
+    script = await get_active_script(db_session, language="zh")
+    await _sent(db_session, case, format_question_for_send(script.question(Q_NEXT_GOAL)))
+
+    block = await followup_prompt_block(
+        db_session, settings=get_settings(), service_case=case, language="zh"
+    )
+    assert block == ""
+
+
+@pytest.mark.asyncio
+async def test_both_reason_variants_are_offered_with_their_condition(
+    db_session, monkeypatch
+):
+    """意愿题问出口后，两套原因题都给它，附各自的条件——问错方向比不问更伤人。"""
+    from app.core.config import get_settings
+
+    case, _, _ = await _archivist_case(db_session, monkeypatch)
+    script = await get_active_script(db_session, language="zh")
+    await _sent(
+        db_session, case, format_question_for_send(script.question(Q_SERVICE_INTENT))
+    )
+
+    block = await followup_prompt_block(
+        db_session, settings=get_settings(), service_case=case, language="zh"
+    )
+    assert "仅当客户倾向继续原方案、或想看其他产品时问这道" in block
+    assert "仅当客户倾向先用完现有的、暂不购买或不需要后续时问这道" in block

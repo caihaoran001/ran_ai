@@ -170,8 +170,14 @@ def build_agent_user_prompt(
     knowledge_context: str,
     bot_nickname: str = "",
     language: str = "zh",
+    final_review_followup: str = "",
 ) -> str:
     is_en = (language or "").strip().lower() == "en"
+    # 没有该问的题时整段不出现——空标题会让模型以为漏发了内容。
+    followup_block = ""
+    if final_review_followup.strip():
+        label = "[Final Review Pending]" if is_en else "【结营复盘待问】"
+        followup_block = f"{label}\n{final_review_followup.strip()}\n\n"
     current_query = user_query
     if not current_query.lstrip().startswith((f"{query_speaker}：", "用户：", "系统定时任务：")):
         current_query = f"{query_speaker}：{user_query}"
@@ -195,6 +201,7 @@ def build_agent_user_prompt(
             f"[User Background]\n{memory_context}\n\n"
             f"[Reference Q&A]\n{knowledge_context}\n\n"
             f"[Available Skills]\n{skill_catalog}\n\n"
+            f"{followup_block}"
             f"[Current Message]\n{current_query}\n"
         )
     recent = "\n".join(f"- {item}" for item in recent_messages) if recent_messages else "无"
@@ -213,5 +220,6 @@ def build_agent_user_prompt(
         f"【隐性用户背景】\n{memory_context}\n\n"
         f"【参考问答】\n{knowledge_context}\n\n"
         f"【可用 Skill】\n{skill_catalog}\n\n"
+        f"{followup_block}"
         f"【本次提问】\n{current_query}\n"
     )
