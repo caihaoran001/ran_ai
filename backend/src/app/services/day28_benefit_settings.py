@@ -288,7 +288,9 @@ def describe_benefit(
             if item
         ]
         suffix = f" ({', '.join(details)})" if details else ""
-        return f"{benefit.name}{suffix}: {benefit.claim_url}"
+        # 领取入口自成一行：条件本来就长，链接接在同一行末尾会挤成一片，
+        # 客户在群里很难看出哪一段是可以点的。
+        return f"{benefit.name}{suffix}\n{benefit.claim_url}"
     details = [
         item
         for item in (
@@ -300,7 +302,7 @@ def describe_benefit(
         if item
     ]
     suffix = f"（{'，'.join(details)}）" if details else ""
-    return f"{benefit.name}{suffix}：{benefit.claim_url}"
+    return f"{benefit.name}{suffix}\n{benefit.claim_url}"
 
 
 def describe_benefits(
@@ -311,4 +313,5 @@ def describe_benefits(
     返回空串的含义是"这条权益消息不该发"，由调用方判断，不在这里替它决定。
     """
     lines = [describe_benefit(benefit, language=language) for benefit in benefits]
-    return "\n".join(lines)
+    # 券之间空一行：每张券自己已经占两行（条件 + 链接），不隔开就连成一片。
+    return "\n\n".join(lines)

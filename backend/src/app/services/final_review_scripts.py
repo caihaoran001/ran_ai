@@ -246,9 +246,12 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": Q_SERVICE_INTENT,
+                    # 原来写的是"围绕你刚才说的目标"——这条隔了两天才发，客户答的又
+                    # 只是一个编号，"刚才说的目标"指什么他自己也想不起来；他要是压根
+                    # 没答那道题，这半句更是悬空。
                     "text": (
-                        "另外想问一句，围绕你刚才说的目标，"
-                        "你目前更倾向哪种安排？可以多选，也可以先不决定："
+                        "另外想问一句，接下来这段你更倾向哪种安排？"
+                        "可以多选，也可以先不决定："
                     ),
                     "options": [
                         _option("continue_original", "继续了解／使用28日早C午B晚A及群内服务"),
@@ -386,9 +389,8 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 {
                     "id": Q_SERVICE_INTENT,
                     "text": (
-                        "One more thing — around the goal you just mentioned, which of these "
-                        "fits you best right now? You can pick more than one, or hold off "
-                        "deciding:"
+                        "One more thing — for the period ahead, which of these fits you "
+                        "best? You can pick more than one, or hold off deciding:"
                     ),
                     "options": [
                         _option(

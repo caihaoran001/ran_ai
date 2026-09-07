@@ -656,7 +656,7 @@ def test_describe_benefit_only_mentions_configured_fields():
         enabled=True,
         claim_url="https://example.com/a",
     )
-    assert describe_benefit(bare) == "200元产品券：https://example.com/a"
+    assert describe_benefit(bare) == "200元产品券\nhttps://example.com/a"
 
     full = Day28Benefit(
         code="product_200",
@@ -1911,9 +1911,13 @@ def test_benefit_list_keeps_one_coupon_per_line():
         "你这28天的权益已经可以领了：{权益清单}", benefits_text=benefits_text
     )
     lines = [line for line in rendered.splitlines() if line.strip()]
-    # 题干一行，两张券各一行——第一张不许挤在冒号后面。
-    assert len(lines) == 3
-    assert lines[0] == "你这28天的权益已经可以领了："
-    assert lines[1].startswith("240元复购券") and lines[1].endswith("kVQsb47P9dnOkEA")
-    assert lines[2].startswith("定额会员券")
+    # 题干一行，每张券两行（条件 + 链接），且第一张不许挤在冒号后面。
+    assert lines == [
+        "你这28天的权益已经可以领了：",
+        "240元复购券（240元，5天内有效，适用于高燃人生早C午B晚A28日套装，满600-240）",
+        "#微信小店://Cephei奢啡加速燃/优惠券/kVQsb47P9dnOkEA",
+        "定额会员券（40元，30天内有效）",
+        "#微信小店://店铺/优惠券/abc",
+    ]
     assert "\n\n240元复购券" in rendered  # 清单前留一个空行
+    assert "kVQsb47P9dnOkEA\n\n定额会员券" in rendered  # 两张券之间也隔一行
