@@ -224,7 +224,7 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": Q_OTHER_HEALTH,
-                    "text": "你更想改善哪一项？可选最多两项，并选出最重要的一项：",
+                    "text": "你最想先改善哪一项？",
                     "options": [
                         _option("digestion", "消化／餐后胀感"),
                         _option("sleep", "睡眠"),
@@ -363,10 +363,7 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": Q_OTHER_HEALTH,
-                    "text": (
-                        "Which would you most like to improve? Pick up to two and tell me "
-                        "the most important one:"
-                    ),
+                    "text": "Which would you most like to work on first?",
                     "options": [
                         _option("digestion", "Digestion / bloating after meals"),
                         _option("sleep", "Sleep"),
