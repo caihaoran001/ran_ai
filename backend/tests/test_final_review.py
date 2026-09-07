@@ -292,7 +292,7 @@ def test_send_format_numbers_options_and_invites_a_number():
         "接下来4周，你最想优先做什么？",
         "1. 继续减重／减脂",
         "2. 维持现在的状态",
-        "（直接回编号就行）",
+        "（回编号就行，也可以直接说你的情况）",
     ]
 
 
@@ -336,7 +336,7 @@ def test_send_format_numbers_english_options():
     }
     lines = format_question_for_send(question, language="en").splitlines()
     assert lines[1] == "1. Keep my current weight"
-    assert lines[2] == "(You can just reply with the number.)"
+    assert lines[2] == "(Just reply with the number, or tell me in your own words.)"
 
 
 # --------------------------------------------------------------------------
@@ -1776,3 +1776,43 @@ async def test_both_reason_variants_are_offered_with_their_condition(
     )
     assert "仅当客户倾向继续原方案、或想看其他产品时问这道" in block
     assert "仅当客户倾向先用完现有的、暂不购买或不需要后续时问这道" in block
+
+
+def test_other_health_question_is_now_a_numbered_choice():
+    """原稿把五项写在题干里当开放题问；改成选项后客户回一个编号就算答完。"""
+    for language in ("zh", "en"):
+        nodes = normalize_nodes(seed_nodes(language))
+        question = next(
+            item
+            for item in nodes[NODE_GOAL]["questions"]
+            if item["id"] == Q_OTHER_HEALTH
+        )
+        assert [option["key"] for option in question["options"]] == [
+            "digestion",
+            "sleep",
+            "less_sugar",
+            "energy",
+            "bowel",
+        ]
+        rendered = format_question_for_send(question, language=language)
+        assert "1. " in rendered
+        # 出口跟在每道选择题后面，不再逐题写进题干。
+        assert rendered.splitlines()[-1] == (
+            "（回编号就行，也可以直接说你的情况）"
+            if language == "zh"
+            else "(Just reply with the number, or tell me in your own words.)"
+        )
+
+
+def test_other_health_has_no_fake_other_option():
+    """不设"其他"选项：客户说别的走"答了但对不上任何一项"加原话，不被一个假选项吃掉。"""
+    from app.services.final_review_scripts import OPTION_KEYS
+
+    assert "other" not in OPTION_KEYS[Q_OTHER_HEALTH]
+    nodes = seed_nodes("zh")
+    question = next(
+        item for item in nodes[NODE_GOAL]["questions"] if item["id"] == Q_OTHER_HEALTH
+    )
+    question["options"].append({"key": "other", "text": "其他"})
+    with pytest.raises(ValueError, match="选项标识"):
+        normalize_nodes(nodes)

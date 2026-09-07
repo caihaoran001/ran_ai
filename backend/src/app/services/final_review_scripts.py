@@ -109,7 +109,7 @@ FINAL_REVIEW_QUESTION_IDS: tuple[str, ...] = (
 )
 
 # 选项语义白名单：只有这里列出的 key 允许出现，且只允许出现在对应题目下。
-# 不在此表中的题目（R1/R2/R3C/B0）是开放题，一律不许带选项。
+# 不在此表中的题目（R1/R2/B0）是开放题，一律不许带选项。
 OPTION_KEYS: dict[str, tuple[str, ...]] = {
     Q_NEXT_GOAL: (
         "lose_weight",
@@ -118,6 +118,16 @@ OPTION_KEYS: dict[str, tuple[str, ...]] = {
         "daily_product",
         "pause",
         "undecided",
+    ),
+    # 原稿把这五项写在题干里当开放题问。改成正规选项是为了让客户回一个编号就算答完，
+    # 也让"想改善哪方面"能统计。刻意不设 "other"：客户说别的走"答了但对不上任何一项"
+    # 这个状态加原话留存，不伪造一个假选项把他的话吃掉。
+    Q_OTHER_HEALTH: (
+        "digestion",
+        "sleep",
+        "less_sugar",
+        "energy",
+        "bowel",
     ),
     Q_SERVICE_INTENT: (
         "continue_original",
@@ -211,12 +221,14 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": Q_OTHER_HEALTH,
-                    "text": (
-                        "你更想改善哪一项？可选最多两项，并选出最重要的一项："
-                        "消化／餐后胀感、睡眠、减少糖摄入、精力、排便，"
-                        "也可以说别的，或者暂时说不清。"
-                    ),
-                    "options": [],
+                    "text": "你更想改善哪一项？可选最多两项，并选出最重要的一项：",
+                    "options": [
+                        _option("digestion", "消化／餐后胀感"),
+                        _option("sleep", "睡眠"),
+                        _option("less_sugar", "减少糖摄入"),
+                        _option("energy", "精力"),
+                        _option("bowel", "排便"),
+                    ],
                     "ask_when": ASK_OTHER_HEALTH_NEED,
                 },
             ]
@@ -349,12 +361,16 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 {
                     "id": Q_OTHER_HEALTH,
                     "text": (
-                        "Which would you most like to improve? Pick up to two and tell me the "
-                        "most important one: digestion / bloating after meals, sleep, cutting "
-                        "back on sugar, energy, bowel regularity — or something else, or you're "
-                        "not sure yet."
+                        "Which would you most like to improve? Pick up to two and tell me "
+                        "the most important one:"
                     ),
-                    "options": [],
+                    "options": [
+                        _option("digestion", "Digestion / bloating after meals"),
+                        _option("sleep", "Sleep"),
+                        _option("less_sugar", "Cutting back on sugar"),
+                        _option("energy", "Energy"),
+                        _option("bowel", "Bowel regularity"),
+                    ],
                     "ask_when": ASK_OTHER_HEALTH_NEED,
                 },
             ]
@@ -730,9 +746,11 @@ def render_question_text(
     return " ".join(rendered.split()).strip()
 
 
+# 每道选择题都跟这一句。出口写在这里而不是各题题干里：任何一道题都可能有客户
+# 想说的不在选项里，逐题写一遍既啰嗦又容易漏。
 ANSWER_BY_NUMBER_HINT: dict[str, str] = {
-    "zh": "（直接回编号就行）",
-    "en": "(You can just reply with the number.)",
+    "zh": "（回编号就行，也可以直接说你的情况）",
+    "en": "(Just reply with the number, or tell me in your own words.)",
 }
 
 
