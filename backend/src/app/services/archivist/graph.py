@@ -602,10 +602,23 @@ class ArchivistPipeline:
                     {
                         "question_id": question.get("id"),
                         "question": question.get("text"),
+                        # number 必须和发出去那条消息里的编号一致：客户很可能
+                        # 隔天才回一句"1"，那时提问原文已归档、不在这批增量里，
+                        # 只剩这份清单能把编号对回选项。
                         "options": [
-                            {"key": option.get("key"), "text": option.get("text")}
-                            for option in question.get("options") or []
-                            if isinstance(option, dict)
+                            {
+                                "number": index,
+                                "key": option.get("key"),
+                                "text": option.get("text"),
+                            }
+                            for index, option in enumerate(
+                                [
+                                    option
+                                    for option in question.get("options") or []
+                                    if isinstance(option, dict)
+                                ],
+                                start=1,
+                            )
                         ],
                     }
                 )

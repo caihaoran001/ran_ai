@@ -730,6 +730,12 @@ def render_question_text(
     return " ".join(rendered.split()).strip()
 
 
+ANSWER_BY_NUMBER_HINT: dict[str, str] = {
+    "zh": "（直接回编号就行）",
+    "en": "(You can just reply with the number.)",
+}
+
+
 def format_question_for_send(
     question: dict[str, Any],
     *,
@@ -737,8 +743,14 @@ def format_question_for_send(
     benefits_text: str | None = None,
     language: str = "zh",
 ) -> str:
-    """一道题渲染成发出去的样子：题干 + 选项逐行。选项不编号——群里客户回
-    "A" 还是回原话都得能对上，编号只会让"我选3"和后台改过顺序的清单错位。
+    """一道题渲染成发出去的样子：题干 + 编号选项 + 一句"回编号就行"。
+
+    编号在这里**按当前顺序现生成**，绝不能让运营手写进选项文案：手写的序号在
+    后台删掉或调换一项之后就和实际顺序错位（删掉第 2 项，剩下的还写着
+    1. 3. 4.），客户回"3"会被静默记成另一项。现生成则增删排序永远对得上。
+
+    编号本身是为了让客户回一个数字就算答完，也让"我选第4个"这种指代不必靠
+    数行数去猜；客户照旧可以回原话，答案回收认的是意思不是字面。
     """
     text = render_question_text(
         str(question.get("text") or ""),
@@ -753,4 +765,6 @@ def format_question_for_send(
     ]
     if not options:
         return text
-    return "\n".join([text, *options])
+    numbered = [f"{index}. {option}" for index, option in enumerate(options, start=1)]
+    hint = ANSWER_BY_NUMBER_HINT.get(language, ANSWER_BY_NUMBER_HINT["zh"])
+    return "\n".join([text, *numbered, hint])

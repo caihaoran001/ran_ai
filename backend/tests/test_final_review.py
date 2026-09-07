@@ -276,24 +276,65 @@ def test_focus_placeholder_takes_at_most_three_items():
     assert "排便" not in filled
 
 
-def test_send_format_lists_options_without_numbering():
-    """选项不编号：客户回"A"还是回原话都得能对上，编号会和运营改过的顺序错位。"""
+def test_send_format_numbers_options_and_invites_a_number():
+    """选项带编号发出，客户回一个数字就算答完。"""
     question = {
         "id": Q_NEXT_GOAL,
-        "text": "接下来你最想优先做什么？",
+        "text": "接下来4周，你最想优先做什么？",
         "options": [
             {"key": "lose_weight", "text": "继续减重／减脂"},
             {"key": "maintain", "text": "维持现在的状态"},
         ],
     }
-    rendered = format_question_for_send(question)
-    assert rendered.splitlines() == [
-        "接下来你最想优先做什么？",
-        "继续减重／减脂",
-        "维持现在的状态",
+    assert format_question_for_send(question).splitlines() == [
+        "接下来4周，你最想优先做什么？",
+        "1. 继续减重／减脂",
+        "2. 维持现在的状态",
+        "（直接回编号就行）",
     ]
-    assert "A." not in rendered
-    assert "1." not in rendered
+
+
+def test_numbering_is_generated_from_current_order():
+    """编号必须现生成。
+
+    运营在后台删掉中间一项后，手写的序号会留下 1. 3. 4. 这种断号，客户回"3"
+    就被静默记成另一项——所以钉住"删完仍然连续"。
+    """
+    question = {
+        "id": Q_NEXT_GOAL,
+        "text": "接下来4周，你最想优先做什么？",
+        "options": [
+            {"key": "lose_weight", "text": "继续减重／减脂"},
+            {"key": "other_health", "text": "先改善其他健康困扰"},
+            {"key": "undecided", "text": "还没想好"},
+        ],
+    }
+    # 运营删掉中间那一项。
+    question["options"] = [question["options"][0], question["options"][2]]
+
+    lines = format_question_for_send(question).splitlines()
+
+    assert lines[1] == "1. 继续减重／减脂"
+    assert lines[2] == "2. 还没想好"
+
+
+def test_open_questions_get_no_numbering_hint():
+    """开放题没有选项，跟着一句"回编号就行"会让客户以为漏发了选项。"""
+    rendered = format_question_for_send(
+        {"id": Q_RESULT_CHANGES, "text": "这28天你最大的变化是什么？", "options": []}
+    )
+    assert rendered == "这28天你最大的变化是什么？"
+
+
+def test_send_format_numbers_english_options():
+    question = {
+        "id": Q_NEXT_GOAL,
+        "text": "What matters most next?",
+        "options": [{"key": "maintain", "text": "Keep my current weight"}],
+    }
+    lines = format_question_for_send(question, language="en").splitlines()
+    assert lines[1] == "1. Keep my current weight"
+    assert lines[2] == "(You can just reply with the number.)"
 
 
 # --------------------------------------------------------------------------
@@ -1212,6 +1253,10 @@ async def test_archivist_records_a_final_review_answer(db_session, monkeypatch):
     assert stored.intent_bucket == INTENT_CONTINUE
     # 待答清单确实注入了，模型才可能对上题号。
     assert "final_review_pending" in fake.prompts[-1]
+    # 选项编号必须跟着清单一起给：客户隔天才回一句"1"时，提问原文已归档、
+    # 不在这批增量里，只剩这份清单能把编号对回选项。
+    assert '"number": 1' in fake.prompts[-1]
+    assert '"number": 2' in fake.prompts[-1]
 
 
 @pytest.mark.asyncio

@@ -274,8 +274,9 @@ async def run_extract_agent(
                 + "\n</final_review_pending>\n"
                 + "这些是已经问出口、还没记下回答的结营复盘题。用户只要回应了其中任何一道，"
                 "就调用 report_final_review_answer 上报一次；question_id 必须与上面完全一致，"
-                "option_keys 只能用上面给出的 key。用户绕开、拒答或说不清也要如实上报对应状态，"
-                "不要为了凑齐而猜。"
+                "option_keys 只能用上面给出的 key。选项发出去时是带编号的，"
+                "用户可能只回一个编号（如「1」「第4个」「3、5」），按 number 对回 key 即可。"
+                "用户绕开、拒答或说不清也要如实上报对应状态，不要为了凑齐而猜。"
             )
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
