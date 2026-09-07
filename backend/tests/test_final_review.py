@@ -1816,3 +1816,27 @@ def test_other_health_has_no_fake_other_option():
     question["options"].append({"key": "other", "text": "其他"})
     with pytest.raises(ValueError, match="选项标识"):
         normalize_nodes(nodes)
+
+
+@pytest.mark.asyncio
+async def test_a_version_that_no_longer_validates_falls_back_to_seed(db_session):
+    """回归 2026-09-07 生产事故：收紧校验让库里的历史版本当场变成非法。
+
+    那次把"想改善哪一项"从开放题改成选择题，旧版本随之缺了必需的选项，读话术
+    直接抛错、整条复盘链路瘫掉。读取必须能顶住——最坏是发上一版措辞，不能瘫。
+    """
+    from app.models.final_review_script_version import FinalReviewScriptVersion
+
+    nodes = seed_nodes("zh")
+    for question in nodes[NODE_GOAL]["questions"]:
+        if question["id"] == Q_OTHER_HEALTH:
+            question["options"] = []  # 模拟"按今天的校验已不合规"的历史版本
+    db_session.add(
+        FinalReviewScriptVersion(language="zh", version_no=1, nodes_json=nodes)
+    )
+    await db_session.flush()
+
+    script = await get_active_script(db_session, language="zh")
+
+    assert script.version_no is None  # 回落到了种子
+    assert script.question(Q_OTHER_HEALTH)["options"]  # 发出去的仍是合法话术

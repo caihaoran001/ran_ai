@@ -32,6 +32,7 @@ key 的取值由 `OPTION_KEYS` 白名单钉住，出现白名单外的 key 直�
 """
 
 import copy
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,6 +40,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.final_review_script_version import FinalReviewScriptVersion
+
+logger = logging.getLogger(__name__)
 
 # 四个节点，顺序即推进顺序。
 NODE_RESULTS = "results"
@@ -650,10 +653,25 @@ async def get_active_script(
     )
     if row is None:
         return FinalReviewScript(language=lang, version_no=None, nodes=seed_nodes(lang))
+    try:
+        nodes = normalize_nodes(row.nodes_json)
+    except ValueError:
+        # 库里存着的版本按当前校验已不合规——最常见的原因是代码收紧了校验（2026-09-07
+        # 把"想改善哪一项"从开放题改成选择题，历史版本立刻缺了必需的选项），生产上
+        # 当场表现为读话术直接抛错、整条复盘链路瘫掉。
+        # 话术回落种子是安全的：最坏是发出上一版措辞，客户仍拿到一句人话。这与券配置
+        # 刻意不回落相反——券错的是钱，宁可一个字不提。
+        logger.exception(
+            "Final review script version is no longer valid, falling back to seed "
+            "language=%s version_no=%s",
+            lang,
+            row.version_no,
+        )
+        return FinalReviewScript(language=lang, version_no=None, nodes=seed_nodes(lang))
     return FinalReviewScript(
         language=lang,
         version_no=row.version_no,
-        nodes=normalize_nodes(row.nodes_json),
+        nodes=nodes,
     )
 
 
