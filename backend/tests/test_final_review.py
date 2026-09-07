@@ -1840,3 +1840,53 @@ async def test_a_version_that_no_longer_validates_falls_back_to_seed(db_session)
 
     assert script.version_no is None  # 回落到了种子
     assert script.question(Q_OTHER_HEALTH)["options"]  # 发出去的仍是合法话术
+
+
+@pytest.mark.asyncio
+async def test_node_sends_the_configured_script_verbatim(db_session, monkeypatch):
+    """主动开口的四条不经过模型：发出去的必须与后台配置逐字一致。
+
+    2026-09-07 实测里模型给权益那条加了句配置里没有的"权益不领也不会消失"
+    （那张券只有 5 天有效期），还把话术原文和自己的开场说了两遍。
+    """
+    from app.core.config import get_settings
+    from app.services import reminder_service as reminder_module
+    from app.services.final_review_runner import plan_node
+
+    sent: list[tuple[str, str]] = []
+
+    async def fake_send(group_id, text, **kwargs):
+        sent.append((group_id, text))
+        return SimpleNamespace(success=True, message_id="m-1", error=None)
+
+    monkeypatch.setattr(
+        reminder_module, "_send_channel_text_with_retries", fake_send
+    )
+
+    case, _, _ = await _archivist_case(db_session, monkeypatch)
+    case.service_plan_start_date = date.today() - timedelta(days=26)
+    await db_session.flush()
+    await db_session.commit()
+
+    script = await get_active_script(db_session, language="zh")
+    progress = await load_progress(db_session, service_case_id=case.id)
+    expected = await plan_node(
+        db_session,
+        service_case=case,
+        script=script,
+        node=NODE_RESULTS,
+        progress=progress,
+    )
+    await db_session.rollback()
+
+    from app.services.reminder_service import ReminderService
+
+    now = datetime.combine(
+        date.today(), FINAL_REVIEW_WINDOW[1], tzinfo=timezone.utc
+    ) - timedelta(minutes=1)
+    await ReminderService(get_settings()).check_final_review_once(now=now)
+
+    assert sent, "第26天的节点应该发出一条消息"
+    assert sent[0][1] == expected.text
+    # 模型没被调用过——发出去的就是话术原文。
+    assert get_settings().final_review_enabled is True

@@ -684,7 +684,6 @@ class ReminderService:
         每个服务单单独一个事务：这条链路一次成功要同时落"券的发放名额、节点天闸、
         发出的消息"三样，任何一步没成必须整笔撤回，不能连累同一轮里别的服务单。
         """
-        from app.services.agent.graph import generate_final_review_reply
         from app.services.checkin_followup_preferences import (
             get_followup_preference_states,
         )
@@ -693,7 +692,6 @@ class ReminderService:
             FINAL_REVIEW_WINDOW,
             NODE_EARLIEST_DAY,
             NODE_RESULTS,
-            build_node_instruction,
             ensure_benefit_links,
             final_review_case_ids,
             load_case_state,
@@ -764,6 +762,9 @@ class ReminderService:
                     script=script,
                     node=node,
                     progress=progress,
+                    allow_product_recommendation=preferences[
+                        "product_recommendation"
+                    ],
                 )
                 if plan is None:
                     # 这轮没有可发内容（券配置坏了、或该节点的题已问完）。
@@ -780,7 +781,6 @@ class ReminderService:
                     continue
                 language = getattr(service_case, "language", None) or "zh"
                 language = getattr(language, "value", language)
-                recent_messages = await _recent_chat_lines(session, case_id)
                 run_started_at = clock.monotonic()
                 agent_run_id = await ensure_agent_run(
                     run_key=f"final_review:{case_id}:{node}:{today.isoformat()}",
@@ -791,44 +791,20 @@ class ReminderService:
                     input_count=1,
                     metadata={"node": node, "service_day": day},
                 )
-                try:
-                    current_channel = get_current_channel()
-                    agent_result = await generate_final_review_reply(
-                        service_case_id=case_id,
-                        node_instruction=build_node_instruction(
-                            plan,
-                            language=str(language),
-                            allow_product_recommendation=preferences[
-                                "product_recommendation"
-                            ],
-                        ),
-                        recent_messages=recent_messages,
-                        channel=getattr(current_channel, "name", None),
-                        settings=self.settings,
-                        agent_run_id=agent_run_id,
-                        language=str(language),
-                    )
-                    outbound_content = agent_result.reply.strip()
-                except Exception as exc:
-                    logger.exception(
-                        "Final review generation failed case_id=%s node=%s", case_id, node
-                    )
-                    await complete_agent_run(
-                        agent_run_id=agent_run_id,
-                        status=AGENT_RUN_FAILED,
-                        outcome="final_review_generation_failed",
-                        latency_ms=int((clock.monotonic() - run_started_at) * 1000),
-                        error_type=type(exc).__name__,
-                    )
-                    continue
+                # 主动开口这四条一律**原样发出后台配置的话术，不经过模型**。
+                # 内容 100% 来自配置（题干、选项、券的面额有效期链接），没有一个字
+                # 需要因人而异；让模型过一遍只会带来改写风险。2026-09-07 实测里
+                # 权益那条就被它加了句配置里没有的"权益不领也不会消失"（那张券只有
+                # 5 天有效期），还把话术原文和自己的开场说了两遍。钱相关的消息不该
+                # 经过一层会改写的东西。客户回复之后照旧走模型，那才是要接话的地方。
+                outbound_content = plan.text.strip()
                 if not outbound_content:
-                    # 模型什么都没说：这个节点不能悄悄算问过了，整笔不提交，明天重来。
                     await complete_agent_run(
                         agent_run_id=agent_run_id,
                         status=AGENT_RUN_FAILED,
                         outcome="final_review_empty",
                         latency_ms=int((clock.monotonic() - run_started_at) * 1000),
-                        error_type="EmptyReply",
+                        error_type="EmptyScript",
                     )
                     continue
                 outbound_content = ensure_benefit_links(

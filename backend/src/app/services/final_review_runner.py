@@ -266,6 +266,7 @@ async def plan_node(
     script: FinalReviewScript,
     node: str,
     progress: FinalReviewProgress,
+    allow_product_recommendation: bool = True,
 ) -> NodePlan | None:
     """把节点渲染成待发内容，并为权益节点先占下发放名额。
 
@@ -308,6 +309,13 @@ async def plan_node(
         if not benefits_text and _needs_benefits(question):
             # 没有可发的券就不念权益句：与"改说班主任稍后安排"的口径一致。
             continue
+        if (
+            not allow_product_recommendation
+            and str(question.get("id") or "") == Q_SERVICE_INTENT
+        ):
+            # 客户说过"暂不接收产品推荐"，就不该再问他想不想继续买。券照发——
+            # 那是走完 28 天挣来的权益，不是推荐。
+            continue
         if await question_already_sent(
             session, service_case_id=service_case.id, question=question
         ):
@@ -338,43 +346,6 @@ def _needs_benefits(question: dict[str, Any]) -> bool:
 
     text = str(question.get("text") or "")
     return any(placeholder in text for placeholder in BENEFIT_PLACEHOLDERS)
-
-
-def build_node_instruction(
-    plan: NodePlan, *, language: str = "zh", allow_product_recommendation: bool = True
-) -> str:
-    """给助教的唤起指令：办哪件事、逐字念什么。"""
-    label = NODE_LABELS.get(plan.node, plan.node)
-    no_product = "" if allow_product_recommendation else (
-        "\nThis customer asked not to receive product recommendations: do not mention any "
-        "product or coupon in your own words; close with health guidance only."
-        if language == "en"
-        else "\n这位客户说过暂不接收产品推荐：不要自己提任何产品或券，只做健康收尾。"
-    )
-    if language == "en":
-        return (
-            "[Final review task] Current node: "
-            f"{plan.node} — {label}\n"
-            "First call skill(\"final_review\") and follow that skill exactly.\n"
-            "Say the following to the customer word for word — do not reword the questions, "
-            "do not add or drop options, do not merge in questions from another node. "
-            "You may add a short natural lead-in and closing.\n"
-            "---\n"
-            f"{plan.text}\n"
-            "---\n"
-            "Call get_final_review_progress() first so nothing already answered gets asked again."
-            + no_product
-        )
-    return (
-        f"【结营复盘任务】当前节点：{plan.node} — {label}\n"
-        "先调用 skill(\"final_review\") 读完这项技能，严格照它办。\n"
-        "下面这些内容要逐字念给客户，题干不许改写、选项不许增删、不许把别的节点的题提前问。"
-        "过渡语和收尾可以自己说，自然一点。\n"
-        "---\n"
-        f"{plan.text}\n"
-        "---\n"
-        "开口前先调 get_final_review_progress()，已经答过的题不要再问。" + no_product
-    )
 
 
 def ensure_benefit_links(text: str, plan: NodePlan, *, language: str = "zh") -> str:
