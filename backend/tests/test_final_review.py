@@ -1890,3 +1890,27 @@ async def test_node_sends_the_configured_script_verbatim(db_session, monkeypatch
     assert sent[0][1] == expected.text
     # 模型没被调用过——发出去的就是话术原文。
     assert get_settings().final_review_enabled is True
+
+
+def test_benefit_list_keeps_one_coupon_per_line():
+    """券清单一张一行。压平成一行会让链接后面紧跟下一张券的名字，客户点错。"""
+    benefits_text = describe_benefits(
+        [
+            Day28Benefit(**_LIVE_COUPON),
+            Day28Benefit(
+                code="member_fixed",
+                name="定额会员券",
+                face_value="40元",
+                validity_days=30,
+                claim_url="#微信小店://店铺/优惠券/abc",
+                enabled=True,
+            ),
+        ]
+    )
+    rendered = render_question_text(
+        "你这28天的权益已经可以领了：{权益清单}", benefits_text=benefits_text
+    )
+    lines = [line for line in rendered.splitlines() if line.strip()]
+    assert len(lines) == 2
+    assert lines[0].endswith("kVQsb47P9dnOkEA")
+    assert lines[1].startswith("定额会员券")

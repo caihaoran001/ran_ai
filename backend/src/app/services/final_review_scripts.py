@@ -741,8 +741,12 @@ def render_question_text(
 
     取不到关注项时**整句降级**成"最在意的那几项"，而不是留个空壳：客户看到
     "你最关注的「」"像是系统出故障，看到"你最在意的那几项"仍是一句人话。
+
+    多余空白**只在题干上**规整。券清单是一张一行，替换完再压平就会把两张券连成
+    一行、链接后面紧跟下一张券的名字——2026-09-07 实测里客户收到的就是这样，
+    很容易看错、点错。
     """
-    rendered = text
+    rendered = " ".join(str(text or "").split()).strip()
     items = [str(item).strip() for item in (focus_items or []) if str(item).strip()]
     if items:
         joined = ", ".join(items[:3]) if language == "en" else "、".join(items[:3])
@@ -758,7 +762,7 @@ def render_question_text(
             rendered = rendered.replace(placeholder, fallback)
     for placeholder in BENEFIT_PLACEHOLDERS:
         rendered = rendered.replace(placeholder, (benefits_text or "").strip())
-    return " ".join(rendered.split()).strip()
+    return rendered.strip()
 
 
 # 每道选择题都跟这一句。出口写在这里而不是各题题干里：任何一道题都可能有客户
