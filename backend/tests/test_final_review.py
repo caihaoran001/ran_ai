@@ -1911,6 +1911,9 @@ def test_benefit_list_keeps_one_coupon_per_line():
         "你这28天的权益已经可以领了：{权益清单}", benefits_text=benefits_text
     )
     lines = [line for line in rendered.splitlines() if line.strip()]
-    assert len(lines) == 2
-    assert lines[0].endswith("kVQsb47P9dnOkEA")
-    assert lines[1].startswith("定额会员券")
+    # 题干一行，两张券各一行——第一张不许挤在冒号后面。
+    assert len(lines) == 3
+    assert lines[0] == "你这28天的权益已经可以领了："
+    assert lines[1].startswith("240元复购券") and lines[1].endswith("kVQsb47P9dnOkEA")
+    assert lines[2].startswith("定额会员券")
+    assert "\n\n240元复购券" in rendered  # 清单前留一个空行

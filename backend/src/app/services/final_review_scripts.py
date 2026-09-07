@@ -760,8 +760,15 @@ def render_question_text(
             # 中文题干把占位符包在书名号里，降级时要把括号一起吃掉。
             rendered = rendered.replace(f"「{placeholder}」", fallback)
             rendered = rendered.replace(placeholder, fallback)
+    benefits = (benefits_text or "").strip()
     for placeholder in BENEFIT_PLACEHOLDERS:
-        rendered = rendered.replace(placeholder, (benefits_text or "").strip())
+        if placeholder not in rendered:
+            continue
+        head, _, tail = rendered.partition(placeholder)
+        # 券清单自成一块：占位符常紧跟在"权益已经可以领了："后面，直接替换会把
+        # 第一张券挤在冒号同一行、只有第二张单独成行，读起来很乱。
+        separator = "\n\n" if benefits and head.strip() else ""
+        rendered = f"{head.rstrip()}{separator}{benefits}{tail}"
     return rendered.strip()
 
 
