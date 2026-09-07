@@ -588,20 +588,29 @@ class ArchivistPipeline:
         progress = await load_progress(
             self.session, service_case_id=self.service_case.id
         )
-        from app.services.final_review_scripts import Q_BENEFIT_NOTICE
+        from app.services.final_review_scripts import Q_BENEFIT_NOTICE, Q_NEXT_GOAL
 
         pending: list[dict[str, Any]] = []
         for node in asked:
             for question in script.questions_for(node):
-                if question.get("id") == Q_BENEFIT_NOTICE:
+                question_id = str(question.get("id") or "")
+                if question_id == Q_BENEFIT_NOTICE:
                     # 权益告知是通知句，不是提问——列进待答清单会让模型给它编一个"回答"。
                     continue
+                answered_before = False
                 if not should_ask(question, progress):
-                    continue
+                    if question_id != Q_NEXT_GOAL:
+                        continue
+                    # 下一阶段目标这一道**答过了也留在清单里**：它是唯一一道客户会
+                    # 主动改口的题（"其实我想找个日常喝的"），而改口后才出现的跨品
+                    # 意向要拿去补发那张会员券。别的题答过就不再提，避免模型把闲聊
+                    # 里顺嘴一句当成正式表态。
+                    answered_before = True
                 pending.append(
                     {
                         "question_id": question.get("id"),
                         "question": question.get("text"),
+                        "already_answered": answered_before,
                         # number 必须和发出去那条消息里的编号一致：客户很可能
                         # 隔天才回一句"1"，那时提问原文已归档、不在这批增量里，
                         # 只剩这份清单能把编号对回选项。

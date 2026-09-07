@@ -277,6 +277,9 @@ async def run_extract_agent(
                 "option_keys 只能用上面给出的 key。选项发出去时是带编号的，"
                 "用户可能只回一个编号（如「1」「第4个」「3、5」），按 number 对回 key 即可。"
                 "用户绕开、拒答或说不清也要如实上报对应状态，不要为了凑齐而猜。"
+                "already_answered 为 true 的题之前已经答过，只有用户明确改口"
+                "（说出与之前不同的打算）时才重报一次；随口一问、语气犹豫或只是"
+                "重复之前的意思，一律不要重报。"
             )
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),

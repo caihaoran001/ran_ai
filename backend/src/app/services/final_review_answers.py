@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.final_review_answer import FinalReviewAnswer
 from app.services.final_review_scripts import (
     ASK_ALWAYS,
+    ASK_BENEFIT_TOPUP,
     ASK_INTENT_CONTINUE,
     ASK_INTENT_PAUSE,
     ASK_OTHER_HEALTH_NEED,
@@ -94,11 +95,18 @@ class FinalReviewProgress:
     @property
     def intent_bucket(self) -> str | None:
         keys = set(self.selected_keys(Q_SERVICE_INTENT))
-        if keys & _CONTINUE_KEYS:
+        if not keys:
+            # R4 没答、跳过或答不清：两套原因问法都不适用，这一题就不问。
+            return None
+        if keys & _CONTINUE_KEYS or self.cross_product_intent:
+            # 想看别的产品也算"继续"。第27天说"主要找适合日常的饮品或产品"、
+            # 第29天又选"暂时不购买，先自己做习惯调整"的客户，只看 R4 会被归成
+            # 暂缓，第30天就去问他"是什么让你先缓一缓"——他要的其实是换个产品买，
+            # 问反了。与 finish_stock 同理：继续类信号一律优先于暂缓类。
             return INTENT_CONTINUE
         if keys & _PAUSE_KEYS:
             return INTENT_PAUSE
-        # 只选了"还没想好"或没答：两套原因问法都不适用，这一题就不问。
+        # 只选了"还没想好"：同样不问原因。
         return None
 
     @property
@@ -200,6 +208,10 @@ def should_ask(
         return progress.intent_bucket == INTENT_CONTINUE
     if ask_when == ASK_INTENT_PAUSE:
         return progress.intent_bucket == INTENT_PAUSE
+    if ask_when == ASK_BENEFIT_TOPUP:
+        # 补发权益不是提问，该不该发只看券的发放台账（`plan_benefit_topup`），
+        # 与答案状态无关；按天推进的节点一律不许把它当成一道待问的题发出去。
+        return False
     return False
 
 

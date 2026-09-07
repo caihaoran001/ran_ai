@@ -688,13 +688,15 @@ class ReminderService:
             get_followup_preference_states,
         )
         from app.services.final_review_runner import (
+            BENEFIT_TOPUP_RULE_ID,
             FINAL_REVIEW_LAST_DAY,
             FINAL_REVIEW_WINDOW,
+            NODE_BENEFIT_TOPUP,
             NODE_EARLIEST_DAY,
             NODE_RESULTS,
-            ensure_benefit_links,
             final_review_case_ids,
             load_case_state,
+            plan_benefit_topup,
             plan_node,
             rule_id_for,
             select_node,
@@ -746,9 +748,12 @@ class ReminderService:
                 node = select_node(
                     script, day=day, asked_nodes=asked, progress=progress
                 )
-                if node is None:
-                    continue
-                if not within_send_window(now, service_case_id=case_id, node=node):
+                # 节点推完了也要往下走：还有"权益消息发出后才出现的跨品意向"
+                # 要补一张券。错峰时刻按伪节点名算，和真节点用同一套散列。
+                window_node = node or NODE_BENEFIT_TOPUP
+                if not within_send_window(
+                    now, service_case_id=case_id, node=window_node
+                ):
                     continue
                 preferences = await get_followup_preference_states(
                     session, service_case_id=case_id
@@ -756,116 +761,171 @@ class ReminderService:
                 if not preferences["proactive_contact"]:
                     # 客户在上一个节点选了"暂停主动联系"：整轮复盘到此为止。
                     continue
-                plan = await plan_node(
+                plan = (
+                    await plan_node(
+                        session,
+                        service_case=service_case,
+                        script=script,
+                        node=node,
+                        progress=progress,
+                        allow_product_recommendation=preferences[
+                            "product_recommendation"
+                        ],
+                    )
+                    if node is not None
+                    else None
+                )
+                if plan is not None:
+                    await self._dispatch_final_review_plan(
+                        session,
+                        service_case=service_case,
+                        plan=plan,
+                        day=day,
+                        script_version_no=script.version_no,
+                        rule_id=rule_id_for(node),
+                        event_date=today,
+                    )
+                    continue
+                # 这轮没有节点要发（整轮已推完、券配置坏了、或该节点的题已问完）。
+                # 刻意不占天闸：问题修好后同一节点还要能发。
+                # 只在没有节点要发的那天补券，守住"一天一条主动消息"；代价是
+                # 客户恰好在承接那天才说想看别的产品时，券要等到次日上午。
+                topup = await plan_benefit_topup(
                     session,
                     service_case=service_case,
                     script=script,
-                    node=node,
                     progress=progress,
-                    allow_product_recommendation=preferences[
-                        "product_recommendation"
-                    ],
+                    asked_nodes=asked,
                 )
-                if plan is None:
-                    # 这轮没有可发内容（券配置坏了、或该节点的题已问完）。
-                    # 刻意不占天闸：问题修好后同一节点还要能发。
+                if topup is None:
                     continue
-                event = await _reserve_reminder_event(
+                await self._dispatch_final_review_plan(
                     session,
-                    case_id,
-                    rule_id=rule_id_for(node),
+                    service_case=service_case,
+                    plan=topup,
+                    day=day,
+                    script_version_no=script.version_no,
+                    rule_id=BENEFIT_TOPUP_RULE_ID,
                     event_date=today,
-                    event_type=ReminderEventType.REMINDED,
                 )
-                if event is None:
-                    continue
-                language = getattr(service_case, "language", None) or "zh"
-                language = getattr(language, "value", language)
-                run_started_at = clock.monotonic()
-                agent_run_id = await ensure_agent_run(
-                    run_key=f"final_review:{case_id}:{node}:{today.isoformat()}",
-                    agent_type="reply",
-                    run_kind="final_review",
-                    service_case_id=case_id,
-                    trigger_reason="final_review",
-                    input_count=1,
-                    metadata={"node": node, "service_day": day},
-                )
-                # 主动开口这四条一律**原样发出后台配置的话术，不经过模型**。
-                # 内容 100% 来自配置（题干、选项、券的面额有效期链接），没有一个字
-                # 需要因人而异；让模型过一遍只会带来改写风险。2026-09-07 实测里
-                # 权益那条就被它加了句配置里没有的"权益不领也不会消失"（那张券只有
-                # 5 天有效期），还把话术原文和自己的开场说了两遍。钱相关的消息不该
-                # 经过一层会改写的东西。客户回复之后照旧走模型，那才是要接话的地方。
-                outbound_content = plan.text.strip()
-                if not outbound_content:
-                    await complete_agent_run(
-                        agent_run_id=agent_run_id,
-                        status=AGENT_RUN_FAILED,
-                        outcome="final_review_empty",
-                        latency_ms=int((clock.monotonic() - run_started_at) * 1000),
-                        error_type="EmptyScript",
-                    )
-                    continue
-                outbound_content = ensure_benefit_links(
-                    outbound_content, plan, language=str(language)
-                )
-                message = Message(
-                    service_case_id=case_id,
-                    group_id=service_case.group_id,
-                    direction=MessageDirection.OUTBOUND,
-                    sender_type=MessageSenderType.SYSTEM,
-                    message_type="markdown",
-                    content=outbound_content,
-                    purpose=MessagePurpose.REMINDER,
-                    status=MessageStatus.PENDING,
-                    analysis_json={
-                        "final_review": {
-                            "node": node,
-                            "service_day": day,
-                            "script_version_no": script.version_no,
-                            "granted_benefit_codes": [
-                                benefit.code for benefit in plan.reserved_benefits
-                            ],
-                        }
-                    },
-                )
-                session.add(message)
-                await session.flush()
-                result = await _send_channel_text_with_retries(
-                    service_case.group_id, outbound_content
-                )
-                if not result.success:
-                    # 发送没成：整笔不提交——券的发放名额、节点天闸、消息记录一起撤掉，
-                    # 明天同一节点重来。留下天闸会变成"账上已发券、客户手里没有、
-                    # 而且再也不会重发"，比重复发一条消息严重得多。
-                    logger.warning(
-                        "Final review send failed, rolling back case_id=%s node=%s error=%s",
-                        case_id,
-                        node,
-                        result.error,
-                    )
-                    await complete_agent_run(
-                        agent_run_id=agent_run_id,
-                        status=AGENT_RUN_FAILED,
-                        outcome="final_review_send_failed",
-                        latency_ms=int((clock.monotonic() - run_started_at) * 1000),
-                        error_type="ChannelSendFailed",
-                    )
-                    continue
-                message.status = MessageStatus.SENT
-                message.wecom_message_id = result.message_id
-                message.sent_at = datetime.now(timezone.utc)
-                for grant in plan.reserved_grants:
-                    grant.message_id = message.id
-                await complete_agent_run(
-                    agent_run_id=agent_run_id,
-                    status=AGENT_RUN_COMPLETED,
-                    outcome="final_review_sent",
-                    latency_ms=int((clock.monotonic() - run_started_at) * 1000),
-                    output_count=1,
-                )
-                await session.commit()
+
+    async def _dispatch_final_review_plan(
+        self,
+        session,
+        *,
+        service_case: ServiceCase,
+        plan,
+        day: int,
+        script_version_no: int | None,
+        rule_id: str,
+        event_date: date,
+    ) -> None:
+        """把一条已渲染好的结营复盘消息发出去：占天闸 → 落消息 → 发送 → 记账。
+
+        成功才 commit；任何一步没成就直接返回不提交，由调用方关闭会话整笔撤回——
+        券的发放名额、天闸、消息记录必须同生共死，留下天闸会变成"账上已发券、
+        客户手里没有、而且再也不会重发"。
+        """
+        from app.services.final_review_runner import ensure_benefit_links
+
+        case_id = service_case.id
+        node = plan.node
+        event = await _reserve_reminder_event(
+            session,
+            case_id,
+            rule_id=rule_id,
+            event_date=event_date,
+            event_type=ReminderEventType.REMINDED,
+        )
+        if event is None:
+            return
+        language = getattr(service_case, "language", None) or "zh"
+        language = getattr(language, "value", language)
+        run_started_at = clock.monotonic()
+        agent_run_id = await ensure_agent_run(
+            run_key=f"final_review:{case_id}:{node}:{event_date.isoformat()}",
+            agent_type="reply",
+            run_kind="final_review",
+            service_case_id=case_id,
+            trigger_reason="final_review",
+            input_count=1,
+            metadata={"node": node, "service_day": day},
+        )
+        # 主动开口这几条一律**原样发出后台配置的话术，不经过模型**。
+        # 内容 100% 来自配置（题干、选项、券的面额有效期链接），没有一个字
+        # 需要因人而异；让模型过一遍只会带来改写风险。2026-09-07 实测里
+        # 权益那条就被它加了句配置里没有的"权益不领也不会消失"（那张券只有
+        # 5 天有效期），还把话术原文和自己的开场说了两遍。钱相关的消息不该
+        # 经过一层会改写的东西。客户回复之后照旧走模型，那才是要接话的地方。
+        outbound_content = plan.text.strip()
+        if not outbound_content:
+            await complete_agent_run(
+                agent_run_id=agent_run_id,
+                status=AGENT_RUN_FAILED,
+                outcome="final_review_empty",
+                latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+                error_type="EmptyScript",
+            )
+            return
+        outbound_content = ensure_benefit_links(
+            outbound_content, plan, language=str(language)
+        )
+        message = Message(
+            service_case_id=case_id,
+            group_id=service_case.group_id,
+            direction=MessageDirection.OUTBOUND,
+            sender_type=MessageSenderType.SYSTEM,
+            message_type="markdown",
+            content=outbound_content,
+            purpose=MessagePurpose.REMINDER,
+            status=MessageStatus.PENDING,
+            analysis_json={
+                "final_review": {
+                    "node": node,
+                    "service_day": day,
+                    "script_version_no": script_version_no,
+                    "granted_benefit_codes": [
+                        benefit.code for benefit in plan.reserved_benefits
+                    ],
+                }
+            },
+        )
+        session.add(message)
+        await session.flush()
+        result = await _send_channel_text_with_retries(
+            service_case.group_id, outbound_content
+        )
+        if not result.success:
+            # 发送没成：整笔不提交——券的发放名额、节点天闸、消息记录一起撤掉，
+            # 明天同一节点重来。留下天闸会变成"账上已发券、客户手里没有、
+            # 而且再也不会重发"，比重复发一条消息严重得多。
+            logger.warning(
+                "Final review send failed, rolling back case_id=%s node=%s error=%s",
+                case_id,
+                node,
+                result.error,
+            )
+            await complete_agent_run(
+                agent_run_id=agent_run_id,
+                status=AGENT_RUN_FAILED,
+                outcome="final_review_send_failed",
+                latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+                error_type="ChannelSendFailed",
+            )
+            return
+        message.status = MessageStatus.SENT
+        message.wecom_message_id = result.message_id
+        message.sent_at = datetime.now(timezone.utc)
+        for grant in plan.reserved_grants:
+            grant.message_id = message.id
+        await complete_agent_run(
+            agent_run_id=agent_run_id,
+            status=AGENT_RUN_COMPLETED,
+            outcome="final_review_sent",
+            latency_ms=int((clock.monotonic() - run_started_at) * 1000),
+            output_count=1,
+        )
+        await session.commit()
 
     async def check_agent_reminder_tasks_once(
         self, now: datetime | None = None

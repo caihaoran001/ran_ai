@@ -26,6 +26,7 @@ from app.models.reminder import ReminderEvent
 from app.models.service_case import ServiceCase
 from app.services.day28_benefit_grants import benefits_to_grant, reserve_grant
 from app.services.day28_benefit_settings import (
+    GRANT_CROSS_PRODUCT_INTENT,
     Day28Benefit,
     describe_benefits,
     get_benefit_config,
@@ -45,11 +46,13 @@ from app.services.final_review_scripts import (
     NODE_HANDOFF,
     NODE_LABELS,
     NODE_RESULTS,
+    Q_BENEFIT_TOPUP,
     Q_NEXT_GOAL,
     Q_SERVICE_INTENT,
     FinalReviewScript,
     format_question_for_send,
     get_active_script,
+    seed_nodes,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,6 +79,11 @@ CHECKLIST_QUIET_DAYS = frozenset({26, 27, 28, 29})
 SILENT_NODES_BEFORE_PAUSE = 2
 
 _RULE_PREFIX = "final_review"
+
+# 补发权益的伪节点名与天闸。**不带冒号**：`asked_nodes_for` 按冒号切出节点名，
+# 用 `final_review:...` 会让补发被当成一个节点混进"已发过的节点"清单里。
+NODE_BENEFIT_TOPUP = "benefit_topup"
+BENEFIT_TOPUP_RULE_ID = "final_review_benefit_topup"
 
 
 def rule_id_for(node: str) -> str:
@@ -346,6 +354,99 @@ def _needs_benefits(question: dict[str, Any]) -> bool:
 
     text = str(question.get("text") or "")
     return any(placeholder in text for placeholder in BENEFIT_PLACEHOLDERS)
+
+
+def _topup_question(script: FinalReviewScript, language: str) -> dict[str, Any] | None:
+    """补发那句话术；库里当前版本没有这道题时回落到代码种子。
+
+    回落是刻意的：这道题是 2026-09-07 才加的，库里已有的版本（运营改过措辞的那些）
+    都没有它。若因此不发，就正好是这次要修的那个 bug——券记在账上、客户手里没有、
+    而且不报错。宁可用种子那句话把入口发出去。
+    """
+    question = script.question(Q_BENEFIT_TOPUP)
+    if question is not None:
+        return question
+    for entry in (seed_nodes(language).get(NODE_BENEFIT) or {}).get("questions") or []:
+        if isinstance(entry, dict) and entry.get("id") == Q_BENEFIT_TOPUP:
+            logger.warning(
+                "Final review script has no benefit top-up wording, using seed language=%s",
+                language,
+            )
+            return entry
+    return None
+
+
+async def plan_benefit_topup(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    script: FinalReviewScript,
+    progress: FinalReviewProgress,
+    asked_nodes: list[str],
+) -> NodePlan | None:
+    """权益消息发出**之后**才出现的跨品意向，单独补一条把那张券发出去。
+
+    为什么需要这一步：跨品会员券的资格来自"客户说想看其他产品"，而这句话可能在
+    权益消息发出之后才说（第27天那道目标题他没答，或者他后来改口说想看别的，
+    档案官按最新的记）。权益节点当天就关门，于是那张券永远停在"有资格、没发出"
+    的状态——账上一条记录都没有，也不报错。2026-09-07 实测就撞到这一格。
+
+    只管发放条件是"跨品意向"的券。运营后来才启用的无条件券不在这里补——那种券
+    的措辞是"你这28天的权益"，隔几天单独冒出来一张会让客户以为之前那条漏发了。
+    """
+    if NODE_BENEFIT not in asked_nodes:
+        # 权益消息还没发过：照常由权益节点一次发全，不用补。
+        return None
+    if not progress.cross_product_intent:
+        return None
+    try:
+        config = await get_benefit_config(session)
+    except ValueError as exc:
+        # 券配置被改坏：不猜面额也不猜链接，等运营修好再补。
+        logger.warning(
+            "Final review benefit top-up skipped, coupon config is invalid case_id=%s: %s",
+            service_case.id,
+            exc,
+        )
+        return None
+    candidates = [
+        benefit
+        for benefit in await benefits_to_grant(
+            session,
+            service_case_id=service_case.id,
+            config=config,
+            cross_product_intent=True,
+        )
+        if benefit.grant_when == GRANT_CROSS_PRODUCT_INTENT
+    ]
+    if not candidates:
+        return None
+    language = getattr(service_case, "language", None) or "zh"
+    question = _topup_question(script, str(language))
+    if question is None:
+        return None
+    reserved: list[Day28Benefit] = []
+    reserved_grants: list[Day28BenefitGrant] = []
+    for benefit in candidates:
+        grant = await reserve_grant(
+            session, service_case_id=service_case.id, benefit_code=benefit.code
+        )
+        if grant is not None:
+            reserved.append(benefit)
+            reserved_grants.append(grant)
+    if not reserved:
+        # 名额都被抢过了（重放、并发）：这张券已经在账上，不再发第二遍。
+        return None
+    benefits_text = describe_benefits(reserved, language=str(language))
+    return NodePlan(
+        node=NODE_BENEFIT_TOPUP,
+        text=format_question_for_send(
+            question, benefits_text=benefits_text, language=str(language)
+        ),
+        reserved_benefits=reserved,
+        reserved_grants=reserved_grants,
+        benefits_text=benefits_text,
+    )
 
 
 def ensure_benefit_links(text: str, plan: NodePlan, *, language: str = "zh") -> str:

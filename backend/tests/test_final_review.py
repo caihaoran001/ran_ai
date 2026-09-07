@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import pytest
 from langchain_core.messages import AIMessage
+from sqlalchemy import select
 
 from app.models.message import (
     Message,
@@ -89,6 +90,7 @@ from app.services.final_review_scripts import (
     Q_OTHER_HEALTH,
     Q_REASON_CONTINUE,
     Q_REASON_PAUSE,
+    Q_BENEFIT_TOPUP,
     Q_RESULT_CHANGES,
     Q_SERVICE_INTENT,
     ensure_seeded,
@@ -225,8 +227,11 @@ def test_option_text_can_be_freely_rewritten():
         if question["id"] == Q_SERVICE_INTENT
     )
     for option in intent["options"]:
-        if option["key"] == "explore_other":
-            option["text"] = "想尝尝你们别的咖啡"
+        if option["key"] == "continue_original":
+            option["text"] = "接着用28日套装"
+    # `explore_other` 已从种子里去掉（和第27天那道目标题重复），但 key 仍然合法：
+    # 运营想把它加回来随时可以，加回来"发跨品会员券"那条分支照旧成立。
+    intent["options"].append({"key": "explore_other", "text": "想尝尝你们别的咖啡"})
 
     normalized = normalize_nodes(nodes)
     rewritten = next(
@@ -235,9 +240,8 @@ def test_option_text_can_be_freely_rewritten():
         if question["id"] == Q_SERVICE_INTENT
     )
     texts = {option["key"]: option["text"] for option in rewritten["options"]}
+    assert texts["continue_original"] == "接着用28日套装"
     assert texts["explore_other"] == "想尝尝你们别的咖啡"
-    # key 没变，所以"发跨品会员券"那条分支照旧成立。
-    assert "explore_other" in texts
 
 
 def test_questions_with_code_branches_cannot_be_deleted():
@@ -1921,3 +1925,409 @@ def test_benefit_list_keeps_one_coupon_per_line():
     ]
     assert "\n\n240元复购券" in rendered  # 清单前留一个空行
     assert "kVQsb47P9dnOkEA\n\n定额会员券" in rendered  # 两张券之间也隔一行
+
+
+# --------------------------------------------------------------------------
+# 两道题不再重叠 + 权益补发（2026-09-07 实测暴露的两个坑）
+# --------------------------------------------------------------------------
+
+
+def test_service_intent_no_longer_repeats_the_goal_question():
+    """第29天那题不再问"想看别的产品"——第27天的目标题已经问过同一件事。
+
+    实测里客户隔一天看到两组几乎一样的选项，会以为系统没记住他答过。
+    """
+    nodes = seed_nodes("zh")
+    intent = next(
+        item for item in nodes[NODE_BENEFIT]["questions"] if item["id"] == Q_SERVICE_INTENT
+    )
+    goal = next(
+        item for item in nodes[NODE_GOAL]["questions"] if item["id"] == Q_NEXT_GOAL
+    )
+    assert "explore_other" not in {option["key"] for option in intent["options"]}
+    assert "daily_product" in {option["key"] for option in goal["options"]}
+    # 题干也要划清范围：一道问健康目标，一道问下一期的产品与服务安排。
+    assert "下一期" in intent["text"]
+    assert "最想优先做" in goal["text"]
+
+
+def test_service_intent_english_seed_dropped_the_same_option():
+    intent = next(
+        item
+        for item in seed_nodes("en")[NODE_BENEFIT]["questions"]
+        if item["id"] == Q_SERVICE_INTENT
+    )
+    assert "explore_other" not in {option["key"] for option in intent["options"]}
+
+
+@pytest.mark.asyncio
+async def test_daily_product_goal_counts_as_continue(db_session, create_case):
+    """第27天说"主要找日常喝的"、第29天选"暂时不购买"：按继续处理。
+
+    只看第29天会把他归成暂缓，第30天就去问"是什么让你先缓一缓"——他要的其实是
+    换个产品买，问反了。
+    """
+    case_id = await _new_case(create_case)
+    await record_answer(
+        db_session,
+        service_case_id=case_id,
+        question_id=Q_NEXT_GOAL,
+        answer_status=STATUS_ANSWERED,
+        normalized_value={"selected": ["daily_product"]},
+    )
+    await record_answer(
+        db_session,
+        service_case_id=case_id,
+        question_id=Q_SERVICE_INTENT,
+        answer_status=STATUS_ANSWERED,
+        normalized_value={"selected": ["no_purchase_self"]},
+    )
+    progress = await load_progress(db_session, service_case_id=case_id)
+    assert progress.intent_bucket == INTENT_CONTINUE
+
+    script = await get_active_script(db_session, language="zh")
+    asked = {
+        question["id"]
+        for question in pending_questions(script.questions_for(NODE_HANDOFF), progress)
+    }
+    assert Q_REASON_CONTINUE in asked
+    assert Q_REASON_PAUSE not in asked
+
+
+@pytest.mark.asyncio
+async def test_pause_stays_pause_without_cross_product_intent(db_session, create_case):
+    """没有跨品意向时"暂时不购买"照旧归暂缓——上一条不能把暂缓桶清空。"""
+    case_id = await _new_case(create_case)
+    await record_answer(
+        db_session,
+        service_case_id=case_id,
+        question_id=Q_NEXT_GOAL,
+        answer_status=STATUS_ANSWERED,
+        normalized_value={"selected": ["maintain"]},
+    )
+    await record_answer(
+        db_session,
+        service_case_id=case_id,
+        question_id=Q_SERVICE_INTENT,
+        answer_status=STATUS_ANSWERED,
+        normalized_value={"selected": ["no_purchase_self"]},
+    )
+    progress = await load_progress(db_session, service_case_id=case_id)
+    assert progress.intent_bucket == INTENT_PAUSE
+
+
+@pytest.mark.asyncio
+async def test_cross_product_intent_alone_asks_no_reason_question(
+    db_session, create_case
+):
+    """第29天那题还没答时，两套原因问法都不问——不拿第27天的答案替他表态。"""
+    case_id = await _new_case(create_case)
+    await record_answer(
+        db_session,
+        service_case_id=case_id,
+        question_id=Q_NEXT_GOAL,
+        answer_status=STATUS_ANSWERED,
+        normalized_value={"selected": ["daily_product"]},
+    )
+    progress = await load_progress(db_session, service_case_id=case_id)
+    assert progress.cross_product_intent is True
+    assert progress.intent_bucket is None
+
+
+def test_topup_wording_is_never_offered_as_a_pending_question():
+    """补发那句话术不是提问：按天推进的节点和助教的进度工具都不许把它当题问。"""
+    from app.services.final_review_scripts import FINAL_REVIEW_QUESTION_IDS
+
+    assert Q_BENEFIT_TOPUP not in FINAL_REVIEW_QUESTION_IDS
+    script = FinalReviewScript(
+        language="zh", version_no=None, nodes=seed_nodes("zh")
+    )
+    progress = FinalReviewProgress(answers={})
+    asked = {
+        question["id"]
+        for question in pending_questions(script.questions_for(NODE_BENEFIT), progress)
+    }
+    assert Q_BENEFIT_TOPUP not in asked
+
+
+_TOPUP_CONFIG = {
+    "benefits": [
+        {
+            "code": "product_200",
+            "name": "240元复购券",
+            "face_value": "240元",
+            "validity_days": 5,
+            "claim_url": "#微信小店://店铺/优惠券/always",
+            "enabled": True,
+            "grant_when": GRANT_ALWAYS,
+        },
+        {
+            "code": "member_fixed",
+            "name": "定额会员券",
+            "face_value": "40元",
+            "validity_days": 30,
+            "claim_url": "#微信小店://店铺/优惠券/member",
+            "enabled": True,
+            "grant_when": GRANT_CROSS_PRODUCT_INTENT,
+        },
+    ]
+}
+
+
+async def _case_after_benefit_node(db_session, monkeypatch, *, cross_intent: bool):
+    """权益消息已发出、只发了无条件券的服务单。"""
+    case, _, _ = await _archivist_case(db_session, monkeypatch)
+    await set_benefit_config(db_session, _TOPUP_CONFIG)
+    await reserve_grant(
+        db_session, service_case_id=case.id, benefit_code="product_200"
+    )
+    if cross_intent:
+        # 权益消息发出后才出现的跨品意向（客户后来改口说想看别的）。
+        await record_answer(
+            db_session,
+            service_case_id=case.id,
+            question_id=Q_NEXT_GOAL,
+            answer_status=STATUS_ANSWERED,
+            normalized_value={"selected": ["daily_product"]},
+        )
+    await db_session.flush()
+    return case
+
+
+@pytest.mark.asyncio
+async def test_benefit_topup_sends_the_coupon_that_the_node_could_not(
+    db_session, monkeypatch
+):
+    """权益消息发出后才说想看别的产品：那张会员券要补发，不能烂在账上。"""
+    from app.services.final_review_runner import plan_benefit_topup
+
+    case = await _case_after_benefit_node(db_session, monkeypatch, cross_intent=True)
+    script = await get_active_script(db_session, language="zh")
+    progress = await load_progress(db_session, service_case_id=case.id)
+    plan = await plan_benefit_topup(
+        db_session,
+        service_case=case,
+        script=script,
+        progress=progress,
+        asked_nodes=[NODE_BENEFIT],
+    )
+    assert plan is not None
+    assert [benefit.code for benefit in plan.reserved_benefits] == ["member_fixed"]
+    assert "#微信小店://店铺/优惠券/member" in plan.text
+    # 无条件券已经发过，不许在补发里再出现一次。
+    assert "#微信小店://店铺/优惠券/always" not in plan.text
+    # 补发用自己的话术，不重复"你这28天的权益已经可以领了"。
+    assert "28天的权益" not in plan.text
+    assert await granted_codes(db_session, service_case_id=case.id) == {
+        "product_200",
+        "member_fixed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_benefit_topup_does_nothing_without_cross_product_intent(
+    db_session, monkeypatch
+):
+    from app.services.final_review_runner import plan_benefit_topup
+
+    case = await _case_after_benefit_node(db_session, monkeypatch, cross_intent=False)
+    script = await get_active_script(db_session, language="zh")
+    progress = await load_progress(db_session, service_case_id=case.id)
+    assert (
+        await plan_benefit_topup(
+            db_session,
+            service_case=case,
+            script=script,
+            progress=progress,
+            asked_nodes=[NODE_BENEFIT],
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_benefit_topup_waits_for_the_benefit_message(db_session, monkeypatch):
+    """权益消息还没发就不补——那张券本来就会跟着权益消息一起发出去。"""
+    from app.services.final_review_runner import plan_benefit_topup
+
+    case = await _case_after_benefit_node(db_session, monkeypatch, cross_intent=True)
+    script = await get_active_script(db_session, language="zh")
+    progress = await load_progress(db_session, service_case_id=case.id)
+    assert (
+        await plan_benefit_topup(
+            db_session,
+            service_case=case,
+            script=script,
+            progress=progress,
+            asked_nodes=[NODE_RESULTS, NODE_GOAL],
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_benefit_topup_never_sends_the_same_coupon_twice(
+    db_session, monkeypatch
+):
+    """台账唯一约束是防线：补过一次就再也不补，重复发券是直接的钱损失。"""
+    from app.services.final_review_runner import plan_benefit_topup
+
+    case = await _case_after_benefit_node(db_session, monkeypatch, cross_intent=True)
+    script = await get_active_script(db_session, language="zh")
+    progress = await load_progress(db_session, service_case_id=case.id)
+    first = await plan_benefit_topup(
+        db_session,
+        service_case=case,
+        script=script,
+        progress=progress,
+        asked_nodes=[NODE_BENEFIT],
+    )
+    assert first is not None
+    assert (
+        await plan_benefit_topup(
+            db_session,
+            service_case=case,
+            script=script,
+            progress=progress,
+            asked_nodes=[NODE_BENEFIT],
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_benefit_topup_falls_back_to_seed_wording(db_session, monkeypatch):
+    """库里的旧版本没有补发那句话术时用种子发出去。
+
+    宁可用种子那句话把领取入口发出去，也不能因为缺文案让券停在"有资格、没发出"
+    ——那正是这次要修的 bug：不报错、不入账、客户什么也没收到。
+    """
+    from app.services.final_review_runner import plan_benefit_topup
+
+    case = await _case_after_benefit_node(db_session, monkeypatch, cross_intent=True)
+    legacy = seed_nodes("zh")
+    legacy[NODE_BENEFIT]["questions"] = [
+        item
+        for item in legacy[NODE_BENEFIT]["questions"]
+        if item["id"] != Q_BENEFIT_TOPUP
+    ]
+    script = await save_script_version(db_session, language="zh", nodes=legacy)
+    assert script.question(Q_BENEFIT_TOPUP) is None
+    progress = await load_progress(db_session, service_case_id=case.id)
+    plan = await plan_benefit_topup(
+        db_session,
+        service_case=case,
+        script=script,
+        progress=progress,
+        asked_nodes=[NODE_BENEFIT],
+    )
+    assert plan is not None
+    assert "#微信小店://店铺/优惠券/member" in plan.text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_tops_up_the_coupon_after_the_round_is_over(
+    db_session, monkeypatch
+):
+    """整轮节点都推完之后，调度器仍会在次日窗口把漏掉的那张券补发出去。"""
+    from app.core.config import get_settings
+    from app.models.reminder import ReminderEvent, ReminderEventType
+    from app.services import reminder_service as reminder_module
+    from app.services.final_review_runner import (
+        BENEFIT_TOPUP_RULE_ID,
+        FINAL_REVIEW_NODES,
+        FINAL_REVIEW_WINDOW,
+    )
+    from app.services.reminder_service import ReminderService
+
+    sent: list[tuple[str, str]] = []
+
+    async def fake_send(group_id, text, **kwargs):
+        sent.append((group_id, text))
+        return SimpleNamespace(success=True, message_id="m-topup", error=None)
+
+    monkeypatch.setattr(reminder_module, "_send_channel_text_with_retries", fake_send)
+
+    case = await _case_after_benefit_node(db_session, monkeypatch, cross_intent=True)
+    case.service_plan_start_date = date.today() - timedelta(days=31)
+    for node in FINAL_REVIEW_NODES:
+        db_session.add(
+            ReminderEvent(
+                service_case_id=case.id,
+                rule_id=f"final_review:{node}",
+                event_date=date.today() - timedelta(days=1),
+                event_type=ReminderEventType.REMINDED,
+            )
+        )
+    await db_session.flush()
+    await db_session.commit()
+
+    now = datetime.combine(
+        date.today(), FINAL_REVIEW_WINDOW[1], tzinfo=timezone.utc
+    ) - timedelta(minutes=1)
+    await ReminderService(get_settings()).check_final_review_once(now=now)
+
+    assert len(sent) == 1
+    assert "#微信小店://店铺/优惠券/member" in sent[0][1]
+    assert await granted_codes(db_session, service_case_id=case.id) == {
+        "product_200",
+        "member_fixed",
+    }
+    gate = await db_session.scalar(
+        select(ReminderEvent.id).where(
+            ReminderEvent.service_case_id == case.id,
+            ReminderEvent.rule_id == BENEFIT_TOPUP_RULE_ID,
+        )
+    )
+    assert gate is not None
+
+    # 同一天再跑一次不会重发。
+    sent.clear()
+    await ReminderService(get_settings()).check_final_review_once(now=now)
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_the_goal_question_stays_reportable_after_it_was_answered(
+    db_session, monkeypatch
+):
+    """目标题答过了仍留在待答清单里——客户改口说想找日常喝的，那张券才补得出去。
+
+    别的题答过就移出清单，避免模型把闲聊里顺嘴一句当成正式表态。
+    """
+    from app.models.reminder import ReminderEvent, ReminderEventType
+    from app.services.archivist.graph import ArchivistPipeline
+
+    case, _, progress_row = await _archivist_case(db_session, monkeypatch)
+    db_session.add(
+        ReminderEvent(
+            service_case_id=case.id,
+            rule_id="final_review:goal",
+            event_date=date.today() - timedelta(days=2),
+            event_type=ReminderEventType.REMINDED,
+        )
+    )
+    await record_answer(
+        db_session,
+        service_case_id=case.id,
+        question_id=Q_NEXT_GOAL,
+        answer_status=STATUS_ANSWERED,
+        normalized_value={"selected": ["maintain"]},
+    )
+    await record_answer(
+        db_session,
+        service_case_id=case.id,
+        question_id=Q_SERVICE_INTENT,
+        answer_status=STATUS_ANSWERED,
+        normalized_value={"selected": ["continue_original"]},
+    )
+    await db_session.flush()
+
+    pipeline = ArchivistPipeline(
+        db_session, service_case=case, progress=progress_row
+    )
+    pending = await pipeline._final_review_context()
+    by_id = {item["question_id"]: item for item in pending}
+    assert by_id[Q_NEXT_GOAL]["already_answered"] is True
+    assert Q_SERVICE_INTENT not in by_id
+    assert Q_BENEFIT_TOPUP not in by_id

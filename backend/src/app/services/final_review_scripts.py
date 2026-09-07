@@ -68,11 +68,16 @@ ASK_ALWAYS = "always"
 ASK_OTHER_HEALTH_NEED = "other_health_need"  # R3 选了"其他健康困扰"或此前已提及
 ASK_INTENT_CONTINUE = "intent_continue"  # R4 倾向继续或探索
 ASK_INTENT_PAUSE = "intent_pause"  # R4 倾向暂缓或不购买
+# 补发权益：不是提问，也不看任何答案状态，只由券的发放台账决定（见
+# `final_review_runner.plan_benefit_topup`）。放进这套条件里只是为了让它的文案
+# 同样能被运营在后台改，同时永远不会被按天推进的节点顺手发出去。
+ASK_BENEFIT_TOPUP = "benefit_topup"
 ASK_CONDITIONS: tuple[str, ...] = (
     ASK_ALWAYS,
     ASK_OTHER_HEALTH_NEED,
     ASK_INTENT_CONTINUE,
     ASK_INTENT_PAUSE,
+    ASK_BENEFIT_TOPUP,
 )
 
 # 题干里允许出现的占位符。运营写了别的占位符会在校验时报错，
@@ -92,6 +97,7 @@ Q_RESULT_HABITS = "R2"
 Q_NEXT_GOAL = "R3"
 Q_OTHER_HEALTH = "R3C"
 Q_BENEFIT_NOTICE = "B0"
+Q_BENEFIT_TOPUP = "B1"
 Q_SERVICE_INTENT = "R4"
 Q_REASON_CONTINUE = "R5C"
 Q_REASON_PAUSE = "R5P"
@@ -99,6 +105,8 @@ Q_CONTACT_PREFERENCE = "R6"
 
 # 按提问顺序的全部题号。B0 在内——它虽然不是提问，但"权益有没有告知过"同样
 # 要能被查到，否则重启或补扫时会把同一条权益消息再发一遍。
+# **B1（补发权益）刻意不在内**：它永远不会有答案，列进来会让助教的进度工具把它
+# 报成"还没问的题"，助教就会去问一句谁也没设计过的话。补发过没有只看券的台账。
 FINAL_REVIEW_QUESTION_IDS: tuple[str, ...] = (
     Q_RESULT_CHANGES,
     Q_RESULT_HABITS,
@@ -132,6 +140,10 @@ OPTION_KEYS: dict[str, tuple[str, ...]] = {
         "energy",
         "bowel",
     ),
+    # `explore_other`（想看看其他适合日常的产品）2026-09-07 从种子选项里去掉了：
+    # 它和第27天那道目标题的"主要找适合日常的饮品或产品"问的是同一件事，客户在
+    # 隔天的两条消息里看到几乎一样的选项，会以为系统没记住他答过。key 保留不删——
+    # 历史答案里有人选过它，跨品意向和"继续"分桶都还要认得出来。
     Q_SERVICE_INTENT: (
         "continue_original",
         "explore_other",
@@ -245,17 +257,27 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                     "ask_when": ASK_ALWAYS,
                 },
                 {
+                    "id": Q_BENEFIT_TOPUP,
+                    # 补发专用的一句。刻意不复用上面那句"你这28天的权益已经可以领了"：
+                    # 客户两天前刚收过那条，再来一遍像是把整份权益重发，他会以为
+                    # 之前那条作废了。
+                    "text": "你说想看看适合日常的产品，这张券也给你留着了：{权益清单}",
+                    "options": [],
+                    "ask_when": ASK_BENEFIT_TOPUP,
+                },
+                {
                     "id": Q_SERVICE_INTENT,
-                    # 原来写的是"围绕你刚才说的目标"——这条隔了两天才发，客户答的又
-                    # 只是一个编号，"刚才说的目标"指什么他自己也想不起来；他要是压根
-                    # 没答那道题，这半句更是悬空。
+                    # 措辞两次返工都是同一个毛病：这条隔了两天才发，客户手里只有一个
+                    # 编号。①原稿"围绕你刚才说的目标"——他自己想不起来指什么，没答过
+                    # 那道题更是悬空；②改成"接下来这段你更倾向哪种安排"之后又和第27天
+                    # 的"接下来你最想优先做什么"撞了。所以这里必须把范围说死：问的是
+                    # 下一期的产品和群内服务怎么安排，不是再问一遍他的健康目标。
                     "text": (
-                        "另外想问一句，接下来这段你更倾向哪种安排？"
+                        "另外想问一句，下一期的产品和群内服务你打算怎么安排？"
                         "可以多选，也可以先不决定："
                     ),
                     "options": [
                         _option("continue_original", "继续了解／使用28日早C午B晚A及群内服务"),
-                        _option("explore_other", "想看看其他适合日常的咖啡或产品"),
                         _option("finish_stock", "先把现有产品用完，再决定"),
                         _option("no_purchase_self", "暂时不购买，先自己做习惯调整"),
                         _option("no_followup", "暂时不需要后续安排"),
@@ -387,18 +409,25 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                     "ask_when": ASK_ALWAYS,
                 },
                 {
+                    "id": Q_BENEFIT_TOPUP,
+                    "text": (
+                        "You mentioned you're looking for something for everyday use — "
+                        "this one is saved for you as well: {benefits}"
+                    ),
+                    "options": [],
+                    "ask_when": ASK_BENEFIT_TOPUP,
+                },
+                {
                     "id": Q_SERVICE_INTENT,
                     "text": (
-                        "One more thing — for the period ahead, which of these fits you "
-                        "best? You can pick more than one, or hold off deciding:"
+                        "One more thing — for the next cycle, what would you like to do "
+                        "about the products and the support in this group? You can pick "
+                        "more than one, or hold off deciding:"
                     ),
                     "options": [
                         _option(
                             "continue_original",
                             "Continue with the 28-day Morning C / Noon B / Evening A and this group",
-                        ),
-                        _option(
-                            "explore_other", "Take a look at other products for everyday use"
                         ),
                         _option("finish_stock", "Finish what I already have first, then decide"),
                         _option(
