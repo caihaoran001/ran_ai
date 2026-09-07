@@ -1518,3 +1518,112 @@ def test_focus_title_parts_match_both_language_templates():
             if (values := _focus_answer_values(fields, answers, parts))
         ]
         assert matched, f"标题匹配不到：{title}"
+
+
+# --------------------------------------------------------------------------
+# 券的答疑工具：只能谈规则，不能给入口
+# --------------------------------------------------------------------------
+
+
+_LIVE_COUPON = {
+    "code": "product_200",
+    "name": "240元复购券",
+    "kind": "coupon",
+    "face_value": "240元",
+    "scope": "高燃人生早C午B晚A28日套装",
+    "threshold": "满600-240",
+    "validity_days": 5,
+    "claim_url": "#微信小店://Cephei奢啡加速燃/优惠券/kVQsb47P9dnOkEA",
+    "enabled": True,
+    "grant_when": GRANT_ALWAYS,
+}
+
+
+def test_benefit_description_without_the_claim_entry_keeps_every_rule():
+    """答疑用的写法：面额、有效期、适用范围、门槛都在，入口没有。"""
+    benefit = Day28Benefit(**_LIVE_COUPON)
+
+    answerable = describe_benefit(benefit, include_claim_url=False)
+
+    assert answerable == "240元复购券（240元，5天内有效，适用于高燃人生早C午B晚A28日套装，满600-240）"
+    assert "://" not in answerable
+    # 权益消息那条路径照旧带完整入口，别把它一起弄坏。
+    assert _LIVE_COUPON["claim_url"] in describe_benefit(benefit)
+
+
+def test_english_benefit_description_without_the_claim_entry():
+    benefit = Day28Benefit(**{**_LIVE_COUPON, "name": "Repurchase coupon"})
+    answerable = describe_benefit(benefit, language="en", include_claim_url=False)
+    assert answerable.startswith("Repurchase coupon (")
+    assert "://" not in answerable
+
+
+@pytest.mark.asyncio
+async def test_benefit_tool_never_hands_out_a_claim_entry(db_session, create_case):
+    """回归 2026-09-07 灰度事故。
+
+    这个工具每轮普通聊天都挂在助教手上，纪律却只在它读技能文件时才看得见。
+    当时它顺手查了券、把入口提前两天念进群：账上没记这次发放（权益节点之后
+    还会再发一次），链接开头的井号还被抄丢了。所以入口不许从这里出去。
+    """
+    from app.services.agent.state import AgentRunContext
+    from app.services.agent.tools.final_review_tools import build_final_review_tools
+
+    case_id = await _new_case(create_case)
+    await set_benefit_config(db_session, {"benefits": [_LIVE_COUPON]})
+    await db_session.flush()
+
+    tool = next(
+        item
+        for item in build_final_review_tools(
+            context=AgentRunContext(service_case_id=case_id)
+        )
+        if item.name == "get_day28_benefits"
+    )
+    result = await tool.coroutine()
+
+    payload = json_dumps_for_assert(result)
+    assert result["ok"] is True
+    assert "://" not in payload
+    assert "kVQsb47P9dnOkEA" not in payload
+    # 规则照旧答得出来。
+    assert "240元" in payload and "满600-240" in payload
+    assert result["already_sent"] == []
+
+
+@pytest.mark.asyncio
+async def test_benefit_tool_can_still_answer_about_a_coupon_already_sent(
+    db_session, create_case
+):
+    """发出去之后客户必然追问"怎么用、什么时候过期"，那时也得答得上。"""
+    from app.services.agent.state import AgentRunContext
+    from app.services.agent.tools.final_review_tools import build_final_review_tools
+
+    case_id = await _new_case(create_case)
+    await set_benefit_config(db_session, {"benefits": [_LIVE_COUPON]})
+    await reserve_grant(
+        db_session,
+        service_case_id=case_id,
+        benefit_code=_LIVE_COUPON["code"],
+    )
+    await db_session.flush()
+
+    tool = next(
+        item
+        for item in build_final_review_tools(
+            context=AgentRunContext(service_case_id=case_id)
+        )
+        if item.name == "get_day28_benefits"
+    )
+    result = await tool.coroutine()
+
+    assert [item["code"] for item in result["already_sent"]] == ["product_200"]
+    # 已发过的券不再列进"还没告知"那一组，否则会被重复告知。
+    assert result["benefits"] == []
+    assert "://" not in json_dumps_for_assert(result)
+
+
+def json_dumps_for_assert(payload) -> str:
+    import json
+
+    return json.dumps(payload, ensure_ascii=False)

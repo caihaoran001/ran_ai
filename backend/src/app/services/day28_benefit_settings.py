@@ -237,8 +237,45 @@ async def set_benefit_config(
     return config
 
 
-def describe_benefit(benefit: Day28Benefit, *, language: str = "zh") -> str:
-    """把一张券写成给客户看的一行。只拼配置里真有的字段，缺的直接不提。"""
+def describe_benefit(
+    benefit: Day28Benefit, *, language: str = "zh", include_claim_url: bool = True
+) -> str:
+    """把一张券写成给客户看的一行。只拼配置里真有的字段，缺的直接不提。
+
+    `include_claim_url=False` 给"答疑用"的场合：助教在普通聊天里回答券的规则
+    （面额、有效期、适用范围、门槛）时不该拿到领取入口。2026-09-07 灰度实测踩过：
+    查券工具连链接一起返回，助教在普通对话里提前两天把入口念了出去，既绕过了
+    发放台账（台账上显示从没发过），又把链接开头的井号抄丢了。入口只能从权益
+    节点那条路径发出——那条路径有台账占位和链接原文校验。
+    """
+    if not include_claim_url:
+        details = [
+            item
+            for item in (
+                benefit.face_value,
+                (
+                    f"valid for {benefit.validity_days} days"
+                    if language == "en"
+                    else f"{benefit.validity_days}天内有效"
+                )
+                if benefit.validity_days
+                else "",
+                (
+                    f"for {benefit.scope}"
+                    if language == "en"
+                    else f"适用于{benefit.scope}"
+                )
+                if benefit.scope
+                else "",
+                benefit.threshold,
+            )
+            if item
+        ]
+        if language == "en":
+            suffix = f" ({', '.join(details)})" if details else ""
+            return f"{benefit.name}{suffix}"
+        suffix = f"（{'，'.join(details)}）" if details else ""
+        return f"{benefit.name}{suffix}"
     if language == "en":
         details = [
             item
