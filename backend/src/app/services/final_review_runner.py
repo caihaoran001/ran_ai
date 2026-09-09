@@ -598,12 +598,16 @@ async def followup_prompt_block(
     if (language or "").strip().lower() == "en":
         return (
             "The customer may be answering a final-review question in this message. "
-            "If they did, and the condition below holds, ask the matching question in "
-            "this same reply, word for word, options included:\n" + "\n".join(blocks)
+            "Use an existing clear answer instead of asking again. Ask about a reason only "
+            "when it is still unknown and useful for resolving the customer's current need; "
+            "it is optional, not a required survey. If a follow-up is needed and its condition "
+            "holds, use the matching wording and options verbatim:\n" + "\n".join(blocks)
         )
     return (
-        "客户这条消息可能是在回答结营复盘的题。如果是，且下面某道题的条件成立，"
-        "就在本轮回复里把那道题一字不改地问出来（连编号选项一起）：\n"
+        "客户这条消息可能是在回答结营复盘的题。已明确表达的目标、安排、原因或联系方式"
+        "直接采用，不要求重复选择。继续或暂缓的原因不是必答题，只在原因尚不明确且"
+        "有助于解决当前问题时按需了解；客户已说产品没用完等原因就不再问。"
+        "确实需要追问且条件成立时，原样使用对应题干和编号选项：\n"
         + "\n".join(blocks)
     )
 
