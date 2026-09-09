@@ -688,15 +688,19 @@ class ReminderService:
             get_followup_preference_states,
         )
         from app.services.final_review_runner import (
-            BENEFIT_TOPUP_RULE_ID,
+            BENEFIT_DELIVERY_RULE_ID,
+            FINAL_REVIEW_DAILY_RULE_ID,
             FINAL_REVIEW_LAST_DAY,
             FINAL_REVIEW_WINDOW,
             NODE_BENEFIT_TOPUP,
+            NODE_BENEFIT_NOTICE,
+            NODE_BENEFIT,
             NODE_EARLIEST_DAY,
             NODE_RESULTS,
             final_review_case_ids,
             load_case_state,
             plan_benefit_topup,
+            plan_benefit_notice,
             plan_node,
             rule_id_for,
             select_node,
@@ -745,69 +749,81 @@ class ReminderService:
                 script, progress, asked = await load_case_state(
                     session, service_case=service_case
                 )
-                node = select_node(
-                    script, day=day, asked_nodes=asked, progress=progress
-                )
-                # 节点推完了也要往下走：还有"权益消息发出后才出现的跨品意向"
-                # 要补一张券。错峰时刻按伪节点名算，和真节点用同一套散列。
-                window_node = node or NODE_BENEFIT_TOPUP
-                if not within_send_window(
-                    now, service_case_id=case_id, node=window_node
-                ):
-                    continue
                 preferences = await get_followup_preference_states(
                     session, service_case_id=case_id
                 )
                 if not preferences["proactive_contact"]:
-                    # 客户在上一个节点选了"暂停主动联系"：整轮复盘到此为止。
+                    # 明确暂停联系要尊重；沉默不等于暂停。
                     continue
-                plan = (
-                    await plan_node(
-                        session,
-                        service_case=service_case,
-                        script=script,
-                        node=node,
-                        progress=progress,
-                        allow_product_recommendation=preferences[
-                            "product_recommendation"
-                        ],
+                if (
+                    service_case.risk_level == "high"
+                    or service_case.refund_pending_confirmation
+                    or service_case.status == ServiceCaseStatus.REFUNDED
+                ):
+                    continue
+
+                # 权益独立判断，不要求回答、也不依赖任何问答节点已经完成。
+                # 29—35天只补未发出的入口；过期的问话永远不补。
+                if day >= NODE_EARLIEST_DAY[NODE_BENEFIT]:
+                    from app.services.day28_benefit_grants import granted_codes
+
+                    benefit_sent_today = await session.scalar(
+                        select(ReminderEvent.id).where(
+                            ReminderEvent.service_case_id == case_id,
+                            ReminderEvent.rule_id == BENEFIT_DELIVERY_RULE_ID,
+                            ReminderEvent.event_date == today,
+                        )
                     )
-                    if node is not None
-                    else None
+                    if not benefit_sent_today and within_send_window(
+                        now, service_case_id=case_id, node=NODE_BENEFIT_NOTICE
+                    ):
+                        grants = await granted_codes(session, service_case_id=case_id)
+                        if grants:
+                            benefit_plan = await plan_benefit_topup(
+                                session, service_case=service_case, script=script,
+                                progress=progress, asked_nodes=[NODE_BENEFIT],
+                            )
+                        else:
+                            benefit_plan = await plan_benefit_notice(
+                                session, service_case=service_case, script=script,
+                                progress=progress,
+                            )
+                        if benefit_plan is not None:
+                            await self._dispatch_final_review_plan(
+                                session, service_case=service_case, plan=benefit_plan,
+                                day=day, script_version_no=script.version_no,
+                                rule_id=BENEFIT_DELIVERY_RULE_ID, event_date=today,
+                            )
+                            continue
+
+                sent_today = await session.scalar(
+                    select(ReminderEvent.id).where(
+                        ReminderEvent.service_case_id == case_id,
+                        ReminderEvent.event_date == today,
+                        or_(
+                            ReminderEvent.rule_id == FINAL_REVIEW_DAILY_RULE_ID,
+                            ReminderEvent.rule_id.startswith("final_review:"),
+                        ),
+                    )
+                )
+                if sent_today:
+                    continue
+                node = select_node(script, day=day, asked_nodes=asked, progress=progress)
+                if node is None or not within_send_window(
+                    now, service_case_id=case_id, node=node
+                ):
+                    continue
+                plan = await plan_node(
+                    session, service_case=service_case, script=script, node=node,
+                    progress=progress,
+                    allow_product_recommendation=preferences["product_recommendation"],
                 )
                 if plan is not None:
                     await self._dispatch_final_review_plan(
-                        session,
-                        service_case=service_case,
-                        plan=plan,
-                        day=day,
-                        script_version_no=script.version_no,
-                        rule_id=rule_id_for(node),
+                        session, service_case=service_case, plan=plan, day=day,
+                        script_version_no=script.version_no, rule_id=rule_id_for(node),
                         event_date=today,
                     )
-                    continue
-                # 这轮没有节点要发（整轮已推完、券配置坏了、或该节点的题已问完）。
-                # 刻意不占天闸：问题修好后同一节点还要能发。
-                # 只在没有节点要发的那天补券，守住"一天一条主动消息"；代价是
-                # 客户恰好在承接那天才说想看别的产品时，券要等到次日上午。
-                topup = await plan_benefit_topup(
-                    session,
-                    service_case=service_case,
-                    script=script,
-                    progress=progress,
-                    asked_nodes=asked,
-                )
-                if topup is None:
-                    continue
-                await self._dispatch_final_review_plan(
-                    session,
-                    service_case=service_case,
-                    plan=topup,
-                    day=day,
-                    script_version_no=script.version_no,
-                    rule_id=BENEFIT_TOPUP_RULE_ID,
-                    event_date=today,
-                )
 
     async def _dispatch_final_review_plan(
         self,
@@ -826,10 +842,20 @@ class ReminderService:
         券的发放名额、天闸、消息记录必须同生共死，留下天闸会变成"账上已发券、
         客户手里没有、而且再也不会重发"。
         """
-        from app.services.final_review_runner import ensure_benefit_links
+        from app.services.final_review_runner import (
+            ensure_benefit_links, FINAL_REVIEW_DAILY_RULE_ID, FINAL_REVIEW_NODES,
+        )
 
         case_id = service_case.id
         node = plan.node
+        if node in FINAL_REVIEW_NODES:
+            daily = await _reserve_reminder_event(
+                session, case_id, rule_id=FINAL_REVIEW_DAILY_RULE_ID,
+                event_date=event_date, event_type=ReminderEventType.REMINDED,
+            )
+            if daily is None:
+                await session.rollback()
+                return
         event = await _reserve_reminder_event(
             session,
             case_id,
@@ -838,6 +864,7 @@ class ReminderService:
             event_type=ReminderEventType.REMINDED,
         )
         if event is None:
+            await session.rollback()
             return
         language = getattr(service_case, "language", None) or "zh"
         language = getattr(language, "value", language)
@@ -866,6 +893,7 @@ class ReminderService:
                 latency_ms=int((clock.monotonic() - run_started_at) * 1000),
                 error_type="EmptyScript",
             )
+            await session.rollback()
             return
         outbound_content = ensure_benefit_links(
             outbound_content, plan, language=str(language)
@@ -884,6 +912,7 @@ class ReminderService:
                     "node": node,
                     "service_day": day,
                     "script_version_no": script_version_no,
+                    "questions": plan.questions,
                     "granted_benefit_codes": [
                         benefit.code for benefit in plan.reserved_benefits
                     ],
@@ -912,6 +941,7 @@ class ReminderService:
                 latency_ms=int((clock.monotonic() - run_started_at) * 1000),
                 error_type="ChannelSendFailed",
             )
+            await session.rollback()
             return
         message.status = MessageStatus.SENT
         message.wecom_message_id = result.message_id

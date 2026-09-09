@@ -6,15 +6,15 @@ from __future__ import annotations
 
 1. **只在白名单服务单上跑。** 开关打开、白名单为空 = 一单都不跑。这条链路会向真实
    客户群发消息并发出券的领取入口，灰度不是可选项。
-2. **一天一个节点。** 功能中途开启时，第 26-28 天的节点可能同时待发；一次全发出去
-   等于当天连问四轮。所以每个服务单每天只推进一个节点。
+2. **不补过期的问题。** 每个服务单每天最多一轮计划问话；权益独立按资格发放，
+   不以回答为条件。明确暂停联系仍停止主动触达。
 3. **券的链接由确定性代码兜底。** 助教负责说人话，但每一张已占名额的券，其领取
    链接必须原样出现在发出去的文本里。模型漏了或改了就由代码补一段——面额和链接
    写错是直接的钱和信任损失，不能只靠提示词约束。
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from typing import Any
 from sqlalchemy import select
@@ -47,6 +47,8 @@ from app.services.final_review_scripts import (
     NODE_LABELS,
     NODE_RESULTS,
     Q_BENEFIT_TOPUP,
+    Q_BENEFIT_NOTICE,
+    Q_CONTACT_PREFERENCE,
     Q_NEXT_GOAL,
     Q_SERVICE_INTENT,
     FinalReviewScript,
@@ -66,7 +68,7 @@ NODE_EARLIEST_DAY: dict[str, int] = {
     NODE_HANDOFF: 30,
 }
 
-# 整轮复盘的最后一天。过了就不再追——客户已经离开服务语境，迟到的问卷只是打扰。
+# 权益失败重试/新增跨品意愿的截止日；计划问话只在26、27、29、30当天进行。
 FINAL_REVIEW_LAST_DAY = 35
 
 # 统一时间窗；窗口内的具体时刻按 (服务单, 日期, 节点) 稳定散列错峰。
@@ -75,8 +77,10 @@ FINAL_REVIEW_WINDOW: tuple[time, time] = (time(10, 0), time(11, 0))
 # 这几天让位给结营复盘，不再发每日五项清单追问——一天两问会让客户只回一个。
 CHECKLIST_QUIET_DAYS = frozenset({26, 27, 28, 29})
 
-# 连续这么多个已发出的节点没有任何回答就整轮停止。
-SILENT_NODES_BEFORE_PAUSE = 2
+# 回访问话仅在计划当天发送；35天窗口只用于权益补发，不补旧问题。
+FINAL_REVIEW_DAILY_RULE_ID = "final_review_daily"
+BENEFIT_DELIVERY_RULE_ID = "final_review_benefit_delivery"
+NODE_BENEFIT_NOTICE = "benefit_notice"
 
 _RULE_PREFIX = "final_review"
 
@@ -115,24 +119,6 @@ def node_question_ids(script: FinalReviewScript, node: str) -> list[str]:
     ]
 
 
-def trailing_silent_nodes(
-    script: FinalReviewScript,
-    *,
-    asked_nodes: list[str],
-    progress: FinalReviewProgress,
-) -> int:
-    """已发出的节点里，从最近往前数有几个一个字都没回。"""
-    silent = 0
-    for node in reversed([node for node in FINAL_REVIEW_NODES if node in asked_nodes]):
-        if any(
-            question_id in progress.answers
-            for question_id in node_question_ids(script, node)
-        ):
-            break
-        silent += 1
-    return silent
-
-
 def select_node(
     script: FinalReviewScript,
     *,
@@ -142,25 +128,25 @@ def select_node(
 ) -> str | None:
     """今天该推进哪个节点；没有就返回 None。
 
-    按顺序取第一个"到期、没发过、且还有题要问"的节点，一天只推一个。
+    只选今天的节点；沉默不取消后续计划，过期节点不补课。
     """
     if day < NODE_EARLIEST_DAY[NODE_RESULTS] or day > FINAL_REVIEW_LAST_DAY:
         return None
-    if trailing_silent_nodes(
-        script, asked_nodes=asked_nodes, progress=progress
-    ) >= SILENT_NODES_BEFORE_PAUSE:
-        return None
     for node in FINAL_REVIEW_NODES:
-        if node in asked_nodes or day < NODE_EARLIEST_DAY[node]:
+        if node in asked_nodes or day != NODE_EARLIEST_DAY[node]:
             continue
-        if node == NODE_HANDOFF and not progress.is_resolved(Q_SERVICE_INTENT):
-            # 承接必须建立在他表达过的意愿上；没答就等下一天，不替他假设。
-            continue
-        if not pending_questions(script.questions_for(node), progress):
+        questions = scheduled_questions(script, node)
+        if not pending_questions(questions, progress):
             # 整个节点的题都已问完（例如客户提前在别的节点一并答了），跳过并记账。
             continue
         return node
     return None
+
+
+def scheduled_questions(script: FinalReviewScript, node: str) -> list[dict[str, Any]]:
+    """固定回访与可选接话分开：29天只问安排，30天只落实联系方式。"""
+    ids = {NODE_BENEFIT: {Q_SERVICE_INTENT}, NODE_HANDOFF: {Q_CONTACT_PREFERENCE}}
+    return [q for q in script.questions_for(node) if node not in ids or q.get("id") in ids[node]]
 
 
 async def asked_nodes_for(
@@ -265,58 +251,67 @@ class NodePlan:
     # 否则会留下"账上已发出、客户手里没有、而且明天不再重试"的死账。
     reserved_grants: list[Day28BenefitGrant]
     benefits_text: str
+    questions: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def plan_benefit_notice(
+    session: AsyncSession, *, service_case: ServiceCase,
+    script: FinalReviewScript, progress: FinalReviewProgress,
+) -> NodePlan | None:
+    """独立发放符合资格的权益，不读取题目是否已答、拒答或沉默。"""
+    language = getattr(service_case, "language", None) or "zh"
+    reserved: list[Day28Benefit] = []
+    reserved_grants: list[Day28BenefitGrant] = []
+    try:
+        config = await get_benefit_config(session)
+    except ValueError as exc:
+        # 券配置被改坏：不猜、不发半句券，整个节点这轮不发，等运营修好。
+        logger.warning(
+            "Final review benefit node skipped, coupon config is invalid case_id=%s: %s",
+            service_case.id,
+            exc,
+        )
+        return None
+    candidates = await benefits_to_grant(
+        session,
+        service_case_id=service_case.id,
+        config=config,
+        cross_product_intent=progress.cross_product_intent,
+    )
+    for benefit in candidates:
+        grant = await reserve_grant(
+            session, service_case_id=service_case.id, benefit_code=benefit.code
+        )
+        if grant is not None:
+            reserved.append(benefit)
+            reserved_grants.append(grant)
+    benefits_text = describe_benefits(reserved, language=language)
+
+    if not reserved:
+        return None
+    question = script.question(Q_BENEFIT_NOTICE)
+    if question is None:
+        raise ValueError("Final review script is missing the benefit notice")
+    return NodePlan(
+        node=NODE_BENEFIT_NOTICE,
+        text=format_question_for_send(question, benefits_text=benefits_text, language=language),
+        reserved_benefits=reserved,
+        reserved_grants=reserved_grants,
+        benefits_text=benefits_text,
+    )
+
 
 
 async def plan_node(
-    session: AsyncSession,
-    *,
-    service_case: ServiceCase,
-    script: FinalReviewScript,
-    node: str,
-    progress: FinalReviewProgress,
-    allow_product_recommendation: bool = True,
+    session: AsyncSession, *, service_case: ServiceCase, script: FinalReviewScript,
+    node: str, progress: FinalReviewProgress, allow_product_recommendation: bool = True,
 ) -> NodePlan | None:
-    """把节点渲染成待发内容，并为权益节点先占下发放名额。
-
-    先占名额、后发消息是刻意的：反过来会在"发送成功但记账前崩溃"时重复发券。
-    发送失败由调用方回滚，名额随之释放。
-    """
+    """只渲染当天尚未问过、且没有明确答案的计划问题。"""
     language = getattr(service_case, "language", None) or "zh"
     focus_items = await focus_items_for(session, service_case=service_case)
-    reserved: list[Day28Benefit] = []
-    reserved_grants: list[Day28BenefitGrant] = []
-    benefits_text = ""
-    if node == NODE_BENEFIT:
-        try:
-            config = await get_benefit_config(session)
-        except ValueError as exc:
-            # 券配置被改坏：不猜、不发半句券，整个节点这轮不发，等运营修好。
-            logger.warning(
-                "Final review benefit node skipped, coupon config is invalid case_id=%s: %s",
-                service_case.id,
-                exc,
-            )
-            return None
-        candidates = await benefits_to_grant(
-            session,
-            service_case_id=service_case.id,
-            config=config,
-            cross_product_intent=progress.cross_product_intent,
-        )
-        for benefit in candidates:
-            grant = await reserve_grant(
-                session, service_case_id=service_case.id, benefit_code=benefit.code
-            )
-            if grant is not None:
-                reserved.append(benefit)
-                reserved_grants.append(grant)
-        benefits_text = describe_benefits(reserved, language=language)
-
     lines: list[str] = []
-    for question in pending_questions(script.questions_for(node), progress):
-        if not benefits_text and _needs_benefits(question):
-            # 没有可发的券就不念权益句：与"改说班主任稍后安排"的口径一致。
-            continue
+    questions: list[dict[str, Any]] = []
+    for question in pending_questions(scheduled_questions(script, node), progress):
         if (
             not allow_product_recommendation
             and str(question.get("id") or "") == Q_SERVICE_INTENT
@@ -334,26 +329,20 @@ async def plan_node(
             format_question_for_send(
                 question,
                 focus_items=focus_items,
-                benefits_text=benefits_text,
                 language=language,
             )
         )
+        questions.append(question)
     if not lines:
         return None
     return NodePlan(
         node=node,
         text="\n\n".join(lines),
-        reserved_benefits=reserved,
-        reserved_grants=reserved_grants,
-        benefits_text=benefits_text,
+        reserved_benefits=[],
+        reserved_grants=[],
+        benefits_text="",
+        questions=questions,
     )
-
-
-def _needs_benefits(question: dict[str, Any]) -> bool:
-    from app.services.final_review_scripts import BENEFIT_PLACEHOLDERS
-
-    text = str(question.get("text") or "")
-    return any(placeholder in text for placeholder in BENEFIT_PLACEHOLDERS)
 
 
 def _topup_question(script: FinalReviewScript, language: str) -> dict[str, Any] | None:
@@ -527,7 +516,11 @@ async def question_already_sent(
     刻意以"发出去的消息"为事实来源，而不是另记一本"已问"账：记了却没发出去
     （生成成功、发送失败）会让客户永远等不到这道题，而账上显示问过了。
     """
-    from app.models.message import Message, MessageDirection
+    from app.models.message import Message, MessageDirection, MessageStatus
+
+    snapshots = await sent_question_snapshots(session, service_case_id=service_case_id)
+    if str(question.get("id") or "") in snapshots:
+        return True
 
     fingerprint = question_fingerprint(question.get("text"))
     if not fingerprint:
@@ -537,11 +530,73 @@ async def question_already_sent(
         .where(
             Message.service_case_id == service_case_id,
             Message.direction == MessageDirection.OUTBOUND,
+            Message.status == MessageStatus.SENT,
             Message.content.contains(fingerprint),
         )
         .limit(1)
     )
     return hit is not None
+
+
+async def sent_question_snapshots(
+    session: AsyncSession, *, service_case_id: int
+) -> dict[str, dict[str, Any]]:
+    """只认成功发送记录；题号和当时选项随消息保存，运营改措辞不丢进度。"""
+    from app.models.message import Message, MessageDirection, MessageStatus
+    from app.models.final_review_script_version import FinalReviewScriptVersion
+
+    rows = await session.execute(
+        select(Message.analysis_json, Message.content)
+        .where(
+            Message.service_case_id == service_case_id,
+            Message.direction == MessageDirection.OUTBOUND,
+            Message.status == MessageStatus.SENT,
+            Message.analysis_json["final_review"].is_not(None),
+        )
+        .order_by(Message.id)
+    )
+    snapshots: dict[str, dict[str, Any]] = {}
+    for metadata, content in rows:
+        if not isinstance(metadata, dict):
+            continue
+        review = metadata.get("final_review") or {}
+        questions = review.get("questions")
+        if questions is None and review.get("script_version_no") and review.get("node"):
+            # 旧消息没有题目快照，但记录了版本号；按发送时的版本恢复选项，
+            # 不能拿今天改过顺序的新版本解释客户昨天回复的编号。
+            case = await session.get(ServiceCase, service_case_id)
+            version = await session.scalar(select(FinalReviewScriptVersion).where(
+                FinalReviewScriptVersion.language == (case.language or "zh"),
+                FinalReviewScriptVersion.version_no == review["script_version_no"],
+            )) if case is not None else None
+            if version is not None:
+                questions = [
+                    q for q in (version.nodes_json.get(review["node"]) or {}).get("questions") or []
+                    if (fingerprint := question_fingerprint(q.get("text"))) and fingerprint in content
+                ]
+        for question in questions or []:
+            if isinstance(question, dict) and question.get("id"):
+                snapshots[str(question["id"])] = question
+    return snapshots
+
+
+async def reply_question_metadata(
+    session: AsyncSession, *, settings: Settings, service_case_id: int, content: str
+) -> dict[str, Any]:
+    """普通回复中的可选追问也存题目快照；发送失败的记录不会被当成已问。"""
+    if not final_review_active_for(settings, service_case_id):
+        return {}
+    case = await session.get(ServiceCase, service_case_id)
+    if case is None:
+        return {}
+    script = await get_active_script(session, language=str(case.language or "zh"))
+    questions = [
+        q for node in FINAL_REVIEW_NODES for q in script.questions_for(node)
+        if q.get("id") not in {Q_BENEFIT_NOTICE, Q_BENEFIT_TOPUP}
+        and (fingerprint := question_fingerprint(q.get("text")))
+        and fingerprint in content
+    ]
+    return {"questions": questions, "script_version_no": script.version_no}
 
 
 async def followup_prompt_block(

@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -74,7 +74,6 @@ from app.services.final_review_runner import (
     final_review_active_for,
     select_node,
     should_skip_daily_checklist,
-    trailing_silent_nodes,
 )
 from app.services.final_review_scripts import (
     ASK_INTENT_CONTINUE,
@@ -1012,7 +1011,11 @@ def _progress(**answers) -> FinalReviewProgress:
     [
         (25, None),
         (26, NODE_RESULTS),
-        (27, NODE_RESULTS),  # 第26天没发出去（功能刚开），先补最早那个，一天只推一个
+        (27, NODE_GOAL),  # 只问今天的目标，不补昨天的结果回顾
+        (28, None),
+        (29, NODE_BENEFIT),
+        (30, NODE_HANDOFF),
+        (31, None),
         (36, None),  # 过了最后一天不再追
     ],
 )
@@ -1023,80 +1026,24 @@ def test_node_selection_follows_the_service_day(day, expected):
     )
 
 
-def test_only_one_node_advances_per_day():
-    """功能中途开启时三个节点同时到期，也只能推进一个——不能当天连问四轮。"""
+def test_late_enrollment_does_not_replay_old_questions():
     script = _seed_script()
-    first = select_node(script, day=30, asked_nodes=[], progress=_progress())
-    second = select_node(
-        script, day=30, asked_nodes=[first], progress=_progress()
-    )
-    assert first == NODE_RESULTS
-    assert second == NODE_GOAL
+    assert select_node(script, day=30, asked_nodes=[], progress=_progress()) == NODE_HANDOFF
+    assert select_node(script, day=30, asked_nodes=[NODE_HANDOFF], progress=_progress()) is None
+    assert select_node(script, day=31, asked_nodes=[], progress=_progress()) is None
 
 
-def test_handoff_waits_for_the_service_intent_answer():
-    """承接必须建立在客户表达过的意愿上，没答就不问。"""
+def test_handoff_confirms_contact_without_requiring_purchase_intent():
     script = _seed_script()
-    asked = [NODE_RESULTS, NODE_GOAL, NODE_BENEFIT]
-    silent = _progress(**{Q_RESULT_CHANGES: (STATUS_ANSWERED, [])})
-    assert select_node(script, day=30, asked_nodes=asked, progress=silent) is None
-
-    answered = _progress(
-        **{
-            Q_RESULT_CHANGES: (STATUS_ANSWERED, []),
-            Q_SERVICE_INTENT: (STATUS_ANSWERED, ["continue_original"]),
-        }
-    )
-    assert (
-        select_node(script, day=30, asked_nodes=asked, progress=answered)
-        == NODE_HANDOFF
-    )
+    assert select_node(script, day=30, asked_nodes=[], progress=_progress()) == NODE_HANDOFF
+    progress = _progress(**{Q_CONTACT_PREFERENCE: (STATUS_ANSWERED, ["self_serve"])})
+    assert select_node(script, day=30, asked_nodes=[], progress=progress) is None
 
 
-def test_two_silent_nodes_stop_the_whole_round():
-    """连着两个节点一个字没回就整轮停止，不再继续追问。"""
-    script = _seed_script()
-    silent = _progress()
-    assert (
-        trailing_silent_nodes(
-            script, asked_nodes=[NODE_RESULTS, NODE_GOAL], progress=silent
-        )
-        == 2
-    )
-    assert (
-        select_node(
-            script, day=29, asked_nodes=[NODE_RESULTS, NODE_GOAL], progress=silent
-        )
-        is None
-    )
-
-
-def test_a_late_answer_resumes_the_round():
-    """迟到的回答要能解除暂停：第一个节点回了，就还没到"连续两个都没回"。"""
-    script = _seed_script()
-    progress = _progress(**{Q_RESULT_CHANGES: (STATUS_ANSWERED, [])})
-    assert (
-        trailing_silent_nodes(
-            script, asked_nodes=[NODE_RESULTS, NODE_GOAL], progress=progress
-        )
-        == 1
-    )
-    assert (
-        select_node(
-            script, day=29, asked_nodes=[NODE_RESULTS, NODE_GOAL], progress=progress
-        )
-        == NODE_BENEFIT
-    )
-
-
-def test_refused_answer_still_counts_as_an_answer_for_pausing():
-    """明确说'不想聊'是回应，不是沉默——不能因此把他判成失联。"""
-    script = _seed_script()
-    progress = _progress(**{Q_RESULT_CHANGES: (STATUS_REFUSED, [])})
-    assert (
-        trailing_silent_nodes(script, asked_nodes=[NODE_RESULTS], progress=progress)
-        == 0
-    )
+def test_silence_does_not_cancel_planned_service_arrangement_question():
+    assert select_node(
+        _seed_script(), day=29, asked_nodes=[NODE_RESULTS, NODE_GOAL], progress=_progress()
+    ) == NODE_BENEFIT
 
 
 def test_send_window_is_staggered_within_the_hour():
@@ -1266,10 +1213,10 @@ async def test_archivist_records_a_final_review_answer(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_archivist_drops_an_answer_to_a_question_never_asked(
+async def test_archivist_records_explicit_contact_preference_before_question(
     db_session, monkeypatch
 ):
-    """没问出口的题不许"被回答"——否则闲聊里顺嘴一句会被当成正式表态去发券。"""
+    """客户明确说出的联系偏好不必等到第30天再回答一次。"""
     case, message, progress = await _archivist_case(db_session, monkeypatch)
     fake = _FakeReportingModel(
         [
@@ -1293,7 +1240,8 @@ async def test_archivist_drops_an_answer_to_a_question_never_asked(
     await db_session.flush()
 
     stored = await load_progress(db_session, service_case_id=case.id)
-    assert stored.status(Q_CONTACT_PREFERENCE) is None
+    assert stored.status(Q_CONTACT_PREFERENCE) == STATUS_ANSWERED
+    assert '"asked": false' in fake.prompts[-1]
 
 
 @pytest.mark.asyncio
@@ -1868,8 +1816,12 @@ async def test_node_sends_the_configured_script_verbatim(db_session, monkeypatch
     )
 
     case, _, _ = await _archivist_case(db_session, monkeypatch)
-    case.service_plan_start_date = date.today() - timedelta(days=26)
+    case.service_plan_start_date = date.today() - timedelta(days=25)
     await db_session.flush()
+    from app.models.reminder import ReminderEvent
+    events = await db_session.scalars(select(ReminderEvent).where(ReminderEvent.service_case_id == case.id))
+    for event in events:
+        event.event_date = date.today() - timedelta(days=1)
     await db_session.commit()
 
     script = await get_active_script(db_session, language="zh")
@@ -2234,7 +2186,7 @@ async def test_scheduler_tops_up_the_coupon_after_the_round_is_over(
     from app.models.reminder import ReminderEvent, ReminderEventType
     from app.services import reminder_service as reminder_module
     from app.services.final_review_runner import (
-        BENEFIT_TOPUP_RULE_ID,
+        BENEFIT_DELIVERY_RULE_ID,
         FINAL_REVIEW_NODES,
         FINAL_REVIEW_WINDOW,
     )
@@ -2276,7 +2228,7 @@ async def test_scheduler_tops_up_the_coupon_after_the_round_is_over(
     gate = await db_session.scalar(
         select(ReminderEvent.id).where(
             ReminderEvent.service_case_id == case.id,
-            ReminderEvent.rule_id == BENEFIT_TOPUP_RULE_ID,
+            ReminderEvent.rule_id == BENEFIT_DELIVERY_RULE_ID,
         )
     )
     assert gate is not None
@@ -2329,5 +2281,204 @@ async def test_the_goal_question_stays_reportable_after_it_was_answered(
     pending = await pipeline._final_review_context()
     by_id = {item["question_id"]: item for item in pending}
     assert by_id[Q_NEXT_GOAL]["already_answered"] is True
-    assert Q_SERVICE_INTENT not in by_id
+    assert by_id[Q_SERVICE_INTENT]["already_answered"] is True
     assert Q_BENEFIT_TOPUP not in by_id
+
+
+async def _scheduled_review_case(db_session, monkeypatch, *, day):
+    from app.core.config import get_settings
+    from app.models.service_case import ServiceCase, ServiceCaseStatus
+    from app.models.user import User
+    from app.services import reminder_service as module
+    from zoneinfo import ZoneInfo
+
+    settings = get_settings()
+    user = User(name="回访调度验收")
+    db_session.add(user)
+    await db_session.flush()
+    case = ServiceCase(
+        case_no=f"TEST-SCHEDULE-{uuid4().hex[:8]}", user_id=user.id,
+        group_id=f"local-review-{uuid4().hex}", questionnaire_token=uuid4().hex,
+        status=ServiceCaseStatus.COMPLETED,
+        service_plan_start_date=date.today() - timedelta(days=day - 1),
+        ai_auto_reply_enabled=True,
+    )
+    db_session.add(case)
+    await db_session.flush()
+    monkeypatch.setattr(settings, "final_review_enabled", True)
+    monkeypatch.setattr(settings, "final_review_case_ids", str(case.id))
+    sent = []
+
+    async def send(group_id, text):
+        sent.append(text)
+        return SimpleNamespace(success=True, message_id=f"sent-{len(sent)}", error=None)
+
+    monkeypatch.setattr(module, "_send_channel_text_with_retries", send)
+    # 本测试关注调度资格，不依赖随机case ID所决定的具体分钟。
+    monkeypatch.setattr("app.services.final_review_runner.within_send_window", lambda *a, **k: True)
+    now = datetime.combine(date.today(), time(10, 30), ZoneInfo(settings.reminder_timezone))
+    return case, module.ReminderService(settings), now, sent
+
+
+@pytest.mark.asyncio
+async def test_silent_customer_gets_benefit_and_today_question_once(db_session, monkeypatch):
+    from app.models.reminder import ReminderEvent, ReminderEventType
+    case, service, now, sent = await _scheduled_review_case(db_session, monkeypatch, day=29)
+    await set_benefit_config(db_session, _TOPUP_CONFIG)
+    for node in (NODE_RESULTS, NODE_GOAL):
+        db_session.add(ReminderEvent(service_case_id=case.id, rule_id=f"final_review:{node}",
+            event_date=date.today()-timedelta(days=2), event_type=ReminderEventType.REMINDED))
+    await db_session.commit()
+    for _ in range(4):
+        await service.check_final_review_once(now)
+    assert len(sent) == 2  # 一条权益通知 + 一轮当天问话，不因沉默停掉，也不重复。
+    assert "#微信小店://店铺/优惠券/always" in sent[0]
+    assert "下一期" not in sent[0]
+    assert "下一期" in sent[1]
+    assert "#微信小店" not in sent[1]
+    assert await granted_codes(db_session, service_case_id=case.id) == {"product_200"}
+
+
+@pytest.mark.asyncio
+async def test_answered_arrangement_does_not_block_benefit(db_session, monkeypatch):
+    case, service, now, sent = await _scheduled_review_case(db_session, monkeypatch, day=29)
+    await set_benefit_config(db_session, _TOPUP_CONFIG)
+    await record_answer(db_session, service_case_id=case.id, question_id=Q_SERVICE_INTENT,
+        answer_status=STATUS_ANSWERED, normalized_value={"selected": ["finish_stock"]})
+    await db_session.commit()
+    await service.check_final_review_once(now)
+    await service.check_final_review_once(now)
+    assert len(sent) == 1 and "#微信小店" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_late_day30_only_confirms_contact_not_old_questions_or_reasons(db_session, monkeypatch):
+    case, service, now, sent = await _scheduled_review_case(db_session, monkeypatch, day=30)
+    await record_answer(db_session, service_case_id=case.id, question_id=Q_SERVICE_INTENT,
+        answer_status=STATUS_ANSWERED, normalized_value={"selected": ["finish_stock"]})
+    await db_session.commit()
+    await service.check_final_review_once(now)
+    await service.check_final_review_once(now)
+    assert len(sent) == 1
+    assert "怎样联系" in sent[0]
+    assert "暂缓的主要原因" not in sent[0]
+    assert "分别有什么变化" not in sent[0]
+    assert "最想优先" not in sent[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preference", ["proactive_contact", "product_recommendation"])
+async def test_contact_opt_out_and_product_opt_out_have_different_scopes(db_session, monkeypatch, preference):
+    from app.services.checkin_followup_preferences import set_followup_preference_states
+    case, service, now, sent = await _scheduled_review_case(db_session, monkeypatch, day=29)
+    await set_benefit_config(db_session, _TOPUP_CONFIG)
+    await set_followup_preference_states(db_session, service_case_id=case.id,
+        topics=[preference], enabled=False, source_message_id=None)
+    await db_session.commit()
+    await service.check_final_review_once(now)
+    await service.check_final_review_once(now)
+    if preference == "proactive_contact":
+        assert sent == []
+        assert await granted_codes(db_session, service_case_id=case.id) == set()
+    else:
+        assert len(sent) == 1 and "#微信小店" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_failed_benefit_send_releases_grant_and_retries(db_session, monkeypatch):
+    from app.services import reminder_service as module
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    case, service, now, sent = await _scheduled_review_case(db_session, monkeypatch, day=29)
+    await set_benefit_config(db_session, _TOPUP_CONFIG)
+    await db_session.commit()
+    # 通用 fixture 的 rollback 是 no-op；此用例必须用真实 savepoint 事务验证释放名额。
+    monkeypatch.setattr(module, "SessionLocal", async_sessionmaker(
+        bind=await db_session.connection(), expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ))
+    good_send = module._send_channel_text_with_retries
+    async def fail(*args, **kwargs):
+        return SimpleNamespace(success=False, message_id=None, error="test transport failure")
+    monkeypatch.setattr(module, "_send_channel_text_with_retries", fail)
+    await service.check_final_review_once(now)
+    assert await granted_codes(db_session, service_case_id=case.id) == set()
+    monkeypatch.setattr(module, "_send_channel_text_with_retries", good_send)
+    await service.check_final_review_once(now)
+    assert len(sent) == 1 and "#微信小店" in sent[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("risk", ["high", "refund_pending"])
+async def test_review_does_not_interrupt_risk_or_refund_handling(db_session, monkeypatch, risk):
+    case, service, now, sent = await _scheduled_review_case(db_session, monkeypatch, day=29)
+    await set_benefit_config(db_session, _TOPUP_CONFIG)
+    if risk == "high":
+        case.risk_level = "high"
+    else:
+        case.refund_pending_confirmation = True
+    await db_session.commit()
+    await service.check_final_review_once(now)
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_question_snapshot_survives_wording_change_but_failed_message_does_not_count(db_session, monkeypatch):
+    from app.services.final_review_runner import question_already_sent, reply_question_metadata
+    from app.core.config import get_settings
+    case, _, _ = await _archivist_case(db_session, monkeypatch)
+    script = await get_active_script(db_session, language="zh")
+    question = script.question(Q_OTHER_HEALTH)
+    content = format_question_for_send(question)
+    metadata = await reply_question_metadata(db_session, settings=get_settings(),
+        service_case_id=case.id, content=content)
+    message = Message(service_case_id=case.id, group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.BOT,
+        message_type="text", content=content, status=MessageStatus.FAILED,
+        analysis_json={"final_review": metadata})
+    db_session.add(message)
+    await db_session.flush()
+    assert not await question_already_sent(db_session, service_case_id=case.id, question=question)
+    message.status = MessageStatus.SENT
+    await db_session.flush()
+    changed = dict(question, text="运营已经换成完全不同的一句话")
+    assert await question_already_sent(db_session, service_case_id=case.id, question=changed)
+
+
+@pytest.mark.asyncio
+async def test_unasked_goals_have_no_numbers_and_explicit_answer_skips_question(db_session, monkeypatch):
+    from app.services.archivist.graph import ArchivistPipeline
+    from app.services.final_review_runner import plan_node
+    case, _, progress_row = await _archivist_case(db_session, monkeypatch)
+    pending = await ArchivistPipeline(db_session, service_case=case, progress=progress_row)._final_review_context()
+    goal = next(q for q in pending if q["question_id"] == Q_NEXT_GOAL)
+    assert goal["asked"] is False
+    assert all(option["number"] is None for option in goal["options"])
+    await record_answer(db_session, service_case_id=case.id, question_id=Q_NEXT_GOAL,
+        answer_status=STATUS_ANSWERED, raw_text="接下来想再减2公斤", normalized_value={"selected": ["lose_weight"]})
+    script = await get_active_script(db_session, language="zh")
+    assert await plan_node(db_session, service_case=case, script=script, node=NODE_GOAL,
+        progress=await load_progress(db_session, service_case_id=case.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_old_question_numbers_survive_a_new_script_version(db_session, monkeypatch):
+    from app.services.archivist.graph import ArchivistPipeline
+    case, _, progress_row = await _archivist_case(db_session, monkeypatch)
+    old = await save_script_version(db_session, language="zh", nodes=seed_nodes("zh"))
+    question = old.question(Q_NEXT_GOAL)
+    message = Message(service_case_id=case.id, group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND, sender_type=MessageSenderType.SYSTEM,
+        message_type="text", status=MessageStatus.SENT,
+        content=format_question_for_send(question),
+        analysis_json={"final_review": {"node": NODE_GOAL, "script_version_no": old.version_no}})
+    db_session.add(message)
+    new_nodes = seed_nodes("zh")
+    new_nodes[NODE_GOAL]["questions"][0]["text"] = "新版下一阶段问题"
+    new_nodes[NODE_GOAL]["questions"][0]["options"].reverse()
+    await save_script_version(db_session, language="zh", nodes=new_nodes)
+    await db_session.flush()
+    pending = await ArchivistPipeline(db_session, service_case=case, progress=progress_row)._final_review_context()
+    goal = next(q for q in pending if q["question_id"] == Q_NEXT_GOAL)
+    assert goal["asked"] is True
+    assert goal["options"][0]["key"] == question["options"][0]["key"]
+    assert goal["options"][0]["number"] == 1

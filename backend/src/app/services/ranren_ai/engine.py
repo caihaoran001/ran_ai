@@ -876,6 +876,15 @@ class RanrenAIEngine(InboundAttachmentProcessor):
 
             now = datetime.now(timezone.utc)
             outbound_analysis = dict(analysis_json or {})
+            if service_case_id is not None:
+                from app.services.final_review_runner import reply_question_metadata
+
+                review_metadata = await reply_question_metadata(
+                    session, settings=self.settings, service_case_id=service_case_id,
+                    content=content,
+                )
+                if review_metadata:
+                    outbound_analysis["final_review"] = review_metadata
             outbound_analysis["_delivery"] = {
                 "state_machine": "agent_outbound_v1",
                 "queued_at": now.isoformat(),

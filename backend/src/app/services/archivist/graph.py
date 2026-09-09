@@ -561,26 +561,27 @@ class ArchivistPipeline:
         )
 
     async def _final_review_context(self) -> list[dict[str, Any]]:
-        """已经问出口、还没记下回答的结营复盘题。
+        """提供已问题的实际选项，以及允许提前明确表达的目标、安排和联系偏好。
 
-        只给"已发出的节点"里的题：没问过的题不该有答案，否则模型会把闲聊里顺嘴
-        一句当成正式表态——而这些答案要拿去发券和关掉主动推送。
-        功能没开或这个服务单不在白名单时返回空列表，连题目都不注入。
+        未问题不带编号，只接受用户主动说清的打算；已问题使用发送时快照。
+        功能没开或不在白名单时不注入，明确改口追加历史而非覆盖。
         """
         from app.services.final_review_answers import load_progress, should_ask
         from app.services.final_review_runner import (
             asked_nodes_for,
             final_review_active_for,
+            sent_question_snapshots,
         )
-        from app.services.final_review_scripts import get_active_script
+        from app.services.final_review_scripts import (
+            get_active_script, FINAL_REVIEW_NODES, Q_SERVICE_INTENT,
+            Q_CONTACT_PREFERENCE, Q_REASON_CONTINUE, Q_REASON_PAUSE,
+        )
 
         if not final_review_active_for(self.settings, self.service_case.id):
             return []
         asked = await asked_nodes_for(
             self.session, service_case_id=self.service_case.id
         )
-        if not asked:
-            return []
         language = getattr(self.service_case, "language", None) or "zh"
         script = await get_active_script(
             self.session, language=str(getattr(language, "value", language))
@@ -590,33 +591,43 @@ class ArchivistPipeline:
         )
         from app.services.final_review_scripts import Q_BENEFIT_NOTICE, Q_NEXT_GOAL
 
+        snapshots = await sent_question_snapshots(
+            self.session, service_case_id=self.service_case.id
+        )
+        explicit_plans = {Q_NEXT_GOAL, Q_SERVICE_INTENT, Q_CONTACT_PREFERENCE,
+                          Q_REASON_CONTINUE, Q_REASON_PAUSE}
+
         pending: list[dict[str, Any]] = []
-        for node in asked:
+        for node in FINAL_REVIEW_NODES:
             for question in script.questions_for(node):
                 question_id = str(question.get("id") or "")
                 if question_id == Q_BENEFIT_NOTICE:
                     # 权益告知是通知句，不是提问——列进待答清单会让模型给它编一个"回答"。
                     continue
-                answered_before = False
+                has_node_snapshots = any(
+                    str(q.get("id")) in snapshots for q in script.questions_for(node)
+                )
+                was_asked = question_id in snapshots or (node in asked and not has_node_snapshots)
+                if not was_asked and question_id not in explicit_plans:
+                    continue
+                question = snapshots.get(question_id, question)
+                answered_before = progress.is_resolved(question_id)
                 if not should_ask(question, progress):
-                    if question_id != Q_NEXT_GOAL:
+                    if question_id not in explicit_plans:
                         continue
-                    # 下一阶段目标这一道**答过了也留在清单里**：它是唯一一道客户会
-                    # 主动改口的题（"其实我想找个日常喝的"），而改口后才出现的跨品
-                    # 意向要拿去补发那张会员券。别的题答过就不再提，避免模型把闲聊
-                    # 里顺嘴一句当成正式表态。
-                    answered_before = True
+                    # 客户明确改口仍允许记录；是否真的改变打算交给抽取提示词判断。
                 pending.append(
                     {
                         "question_id": question.get("id"),
                         "question": question.get("text"),
                         "already_answered": answered_before,
+                        "asked": was_asked,
                         # number 必须和发出去那条消息里的编号一致：客户很可能
                         # 隔天才回一句"1"，那时提问原文已归档、不在这批增量里，
                         # 只剩这份清单能把编号对回选项。
                         "options": [
                             {
-                                "number": index,
+                                "number": index if was_asked else None,
                                 "key": option.get("key"),
                                 "text": option.get("text"),
                             }
