@@ -228,9 +228,8 @@ def test_option_text_can_be_freely_rewritten():
     for option in intent["options"]:
         if option["key"] == "continue_original":
             option["text"] = "接着用28日套装"
-    # `explore_other` 已从种子里去掉（和第27天那道目标题重复），但 key 仍然合法：
-    # 运营想把它加回来随时可以，加回来"发跨品会员券"那条分支照旧成立。
-    intent["options"].append({"key": "explore_other", "text": "想尝尝你们别的咖啡"})
+        if option["key"] == "explore_other":
+            option["text"] = "想尝尝你们别的咖啡"
 
     normalized = normalize_nodes(nodes)
     rewritten = next(
@@ -1885,10 +1884,7 @@ def test_benefit_list_keeps_one_coupon_per_line():
 
 
 def test_service_intent_no_longer_repeats_the_goal_question():
-    """第29天那题不再问"想看别的产品"——第27天的目标题已经问过同一件事。
-
-    实测里客户隔一天看到两组几乎一样的选项，会以为系统没记住他答过。
-    """
+    """第27天只问健康和习惯目标，日常产品统一放在第29天安排里。"""
     nodes = seed_nodes("zh")
     intent = next(
         item for item in nodes[NODE_BENEFIT]["questions"] if item["id"] == Q_SERVICE_INTENT
@@ -1896,20 +1892,20 @@ def test_service_intent_no_longer_repeats_the_goal_question():
     goal = next(
         item for item in nodes[NODE_GOAL]["questions"] if item["id"] == Q_NEXT_GOAL
     )
-    assert "explore_other" not in {option["key"] for option in intent["options"]}
-    assert "daily_product" in {option["key"] for option in goal["options"]}
+    assert "explore_other" in {option["key"] for option in intent["options"]}
+    assert "daily_product" not in {option["key"] for option in goal["options"]}
     # 题干也要划清范围：一道问健康目标，一道问下一期的产品与服务安排。
     assert "下一期" in intent["text"]
-    assert "最想优先做" in goal["text"]
+    assert "身体状态或日常习惯" in goal["text"]
 
 
-def test_service_intent_english_seed_dropped_the_same_option():
+def test_service_intent_english_seed_contains_product_choice():
     intent = next(
         item
         for item in seed_nodes("en")[NODE_BENEFIT]["questions"]
         if item["id"] == Q_SERVICE_INTENT
     )
-    assert "explore_other" not in {option["key"] for option in intent["options"]}
+    assert "explore_other" in {option["key"] for option in intent["options"]}
 
 
 @pytest.mark.asyncio
@@ -2483,6 +2479,23 @@ async def test_old_question_numbers_survive_a_new_script_version(db_session, mon
     assert goal["asked"] is True
     assert goal["options"][0]["key"] == question["options"][0]["key"]
     assert goal["options"][0]["number"] == 1
+
+
+def test_wording_update_preserves_custom_options_and_is_idempotent():
+    from scripts.update_final_review_flow import updated_nodes
+    for language in ("zh", "en"):
+        old = seed_nodes(language)
+        old[NODE_GOAL]["questions"][0]["options"].append({"key": "daily_product", "text": "旧日常产品选项"})
+        intent = next(q for q in old[NODE_BENEFIT]["questions"] if q["id"] == Q_SERVICE_INTENT)
+        intent["options"] = [q for q in intent["options"] if q["key"] != "explore_other"]
+        intent["options"][0]["text"] = "运营自定义继续选项"
+        changed = updated_nodes(old, language)
+        assert updated_nodes(changed, language) == changed
+        new_intent = next(q for q in changed[NODE_BENEFIT]["questions"] if q["id"] == Q_SERVICE_INTENT)
+        assert new_intent["options"][0]["text"] == "运营自定义继续选项"
+        assert any(q["key"] == "explore_other" for q in new_intent["options"])
+        assert "daily_product" not in {q["key"] for q in changed[NODE_GOAL]["questions"][0]["options"]}
+        assert old[NODE_GOAL]["questions"][0]["options"][-1]["key"] == "daily_product"
 
 
 @pytest.mark.asyncio

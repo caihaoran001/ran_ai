@@ -140,10 +140,8 @@ OPTION_KEYS: dict[str, tuple[str, ...]] = {
         "energy",
         "bowel",
     ),
-    # `explore_other`（想看看其他适合日常的产品）2026-09-07 从种子选项里去掉了：
-    # 它和第27天那道目标题的"主要找适合日常的饮品或产品"问的是同一件事，客户在
-    # 隔天的两条消息里看到几乎一样的选项，会以为系统没记住他答过。key 保留不删——
-    # 历史答案里有人选过它，跨品意向和"继续"分桶都还要认得出来。
+    # 日常产品归第29天产品服务安排；第27天旧版 daily_product 仍保留在白名单，
+    # 历史答案/历史题目快照需要继续识别，不能因搬动选项让客户失去会员券资格。
     Q_SERVICE_INTENT: (
         "continue_original",
         "explore_other",
@@ -199,7 +197,7 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 {
                     "id": Q_RESULT_CHANGES,
                     "text": (
-                        "回看这28天，你最关注的「{关注项}」分别有什么变化？"
+                        "回看这段时间，你最关注的「{关注项}」分别有什么变化？"
                         "哪一点对你最有价值，哪一点没有达到期待或者变差了？"
                     ),
                     "options": [],
@@ -221,14 +219,13 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 {
                     "id": Q_NEXT_GOAL,
                     "text": (
-                        "接下来你最想优先做什么？可以选一项，也可以有几个想法，"
-                        "告诉我第一优先的那个就好："
+                        "接下来4周，身体状态或日常习惯方面，你最想优先改善什么？"
+                        "可以有几个想法，也可以暂不决定："
                     ),
                     "options": [
                         _option("lose_weight", "继续减重／减脂"),
                         _option("maintain", "维持现在的体重、状态和习惯"),
                         _option("other_health", "先改善其他健康困扰"),
-                        _option("daily_product", "主要找适合日常的饮品或产品"),
                         _option("pause", "暂时休息／先不安排"),
                         _option("undecided", "还没想好"),
                     ],
@@ -273,11 +270,12 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                     # 的"接下来你最想优先做什么"撞了。所以这里必须把范围说死：问的是
                     # 下一期的产品和群内服务怎么安排，不是再问一遍他的健康目标。
                     "text": (
-                        "另外想问一句，下一期的产品和群内服务你打算怎么安排？"
+                        "关于下一期的产品和群内服务，你更倾向怎么安排？"
                         "可以多选，也可以先不决定："
                     ),
                     "options": [
                         _option("continue_original", "继续了解／使用28日早C午B晚A及群内服务"),
+                        _option("explore_other", "想看看适合日常的咖啡、饮品或其他产品"),
                         _option("finish_stock", "先把现有产品用完，再决定"),
                         _option("no_purchase_self", "暂时不购买，先自己做习惯调整"),
                         _option("no_followup", "暂时不需要后续安排"),
@@ -326,7 +324,7 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": Q_CONTACT_PREFERENCE,
-                    "text": "接下来怎样联系你最合适？",
+                    "text": "接下来怎样联系你最合适？也可以直接告诉我已经约好的安排。",
                     "options": [
                         _option("normal", "如继续服务，保持正常群内提醒与反馈"),
                         _option("less_contact", "少打扰，有关键情况再联系"),
@@ -346,7 +344,7 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 {
                     "id": Q_RESULT_CHANGES,
                     "text": (
-                        "Looking back on these 28 days, how did each of the things you cared "
+                        "Looking back on this period, how did each of the things you cared "
                         "most about — {focus_items} — actually change? Which one mattered most "
                         "to you, and which one fell short of what you hoped for or got worse?"
                     ),
@@ -370,17 +368,14 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 {
                     "id": Q_NEXT_GOAL,
                     "text": (
-                        "What would you most like to focus on next? Pick one, or tell me "
-                        "several and which comes first:"
+                        "Over the next 4 weeks, what would you most like to improve in your "
+                        "health, how you feel, or daily habits? You can share several ideas "
+                        "or leave it undecided:"
                     ),
                     "options": [
                         _option("lose_weight", "Keep losing weight / body fat"),
                         _option("maintain", "Maintain my current weight, condition and habits"),
                         _option("other_health", "Work on a different health concern first"),
-                        _option(
-                            "daily_product",
-                            "Mainly looking for a drink or product for everyday use",
-                        ),
                         _option("pause", "Take a break for now / nothing planned yet"),
                         _option("undecided", "Haven't decided"),
                     ],
@@ -420,7 +415,7 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 {
                     "id": Q_SERVICE_INTENT,
                     "text": (
-                        "One more thing — for the next cycle, what would you like to do "
+                        "For the next cycle, what would you like to do "
                         "about the products and the support in this group? You can pick "
                         "more than one, or hold off deciding:"
                     ),
@@ -429,6 +424,7 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                             "continue_original",
                             "Continue with the 28-day Morning C / Noon B / Evening A and this group",
                         ),
+                        _option("explore_other", "Explore a coffee, drink or other product for everyday use"),
                         _option("finish_stock", "Finish what I already have first, then decide"),
                         _option(
                             "no_purchase_self",
@@ -485,7 +481,7 @@ SEED_SCRIPTS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": Q_CONTACT_PREFERENCE,
-                    "text": "How would you prefer we stay in touch from here?",
+                    "text": "How would you prefer we stay in touch from here? You can also tell me what has already been arranged.",
                     "options": [
                         _option(
                             "normal",
