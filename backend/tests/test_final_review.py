@@ -2404,7 +2404,8 @@ async def test_failed_benefit_send_releases_grant_and_retries(db_session, monkey
     assert await granted_codes(db_session, service_case_id=case.id) == set()
     monkeypatch.setattr(module, "_send_channel_text_with_retries", good_send)
     await service.check_final_review_once(now)
-    assert len(sent) == 1 and "#微信小店" in sent[0]
+    assert len(sent) == 2 and "#微信小店" in sent[0]
+    assert "下一期" in sent[1]
 
 
 @pytest.mark.asyncio
@@ -2482,3 +2483,19 @@ async def test_old_question_numbers_survive_a_new_script_version(db_session, mon
     assert goal["asked"] is True
     assert goal["options"][0]["key"] == question["options"][0]["key"]
     assert goal["options"][0]["number"] == 1
+
+
+@pytest.mark.asyncio
+async def test_report_keeps_legacy_product_answer_wording(db_session, monkeypatch):
+    from app.services.final_review_runner import answers_for_report
+    case, _, _ = await _archivist_case(db_session, monkeypatch)
+    old_nodes = seed_nodes("zh")
+    old_nodes[NODE_GOAL]["questions"][0]["options"] = [q for q in old_nodes[NODE_GOAL]["questions"][0]["options"] if q["key"] != "daily_product"]
+    old_nodes[NODE_GOAL]["questions"][0]["options"].append({"key": "daily_product", "text": "想找日常饮品"})
+    old = await save_script_version(db_session, language="zh", nodes=old_nodes)
+    await record_answer(db_session, service_case_id=case.id, question_id=Q_NEXT_GOAL,
+        answer_status=STATUS_ANSWERED, normalized_value={"selected": ["daily_product"]},
+        script_version_no=old.version_no)
+    await save_script_version(db_session, language="zh", nodes=seed_nodes("zh"))
+    rows = await answers_for_report(db_session, service_case=case)
+    assert rows[0]["selected"] == ["想找日常饮品"]

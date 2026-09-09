@@ -794,7 +794,19 @@ class ReminderService:
                                 day=day, script_version_no=script.version_no,
                                 rule_id=BENEFIT_DELIVERY_RULE_ID, event_date=today,
                             )
-                            continue
+                            # 发券成功或失败都不挡住当天问话；发送事务已提交/回滚，
+                            # 重新读取，避免用已过期的 ORM 对象或刚变更的联系偏好。
+                            service_case = await session.get(ServiceCase, case_id, populate_existing=True)
+                            if service_case is None:
+                                continue
+                            script, progress, asked = await load_case_state(
+                                session, service_case=service_case
+                            )
+                            preferences = await get_followup_preference_states(
+                                session, service_case_id=case_id
+                            )
+                            if not preferences["proactive_contact"]:
+                                continue
 
                 sent_today = await session.scalar(
                     select(ReminderEvent.id).where(

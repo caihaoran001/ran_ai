@@ -576,7 +576,9 @@ async def sent_question_snapshots(
                 ]
         for question in questions or []:
             if isinstance(question, dict) and question.get("id"):
-                snapshots[str(question["id"])] = question
+                snapshots[str(question["id"])] = {
+                    **question, "_script_version_no": review.get("script_version_no")
+                }
     return snapshots
 
 
@@ -712,11 +714,23 @@ async def answers_for_report(
     progress = await load_progress(session, service_case_id=service_case.id)
     rows: list[dict[str, Any]] = []
     for question_id, answer in progress.answers.items():
-        question = script.question(question_id)
+        answer_script = script
+        if answer.script_version_no and answer.script_version_no != script.version_no:
+            from app.models.final_review_script_version import FinalReviewScriptVersion
+
+            version = await session.scalar(select(FinalReviewScriptVersion).where(
+                FinalReviewScriptVersion.language == script.language,
+                FinalReviewScriptVersion.version_no == answer.script_version_no,
+            ))
+            if version is not None:
+                answer_script = FinalReviewScript(
+                    language=version.language, version_no=version.version_no, nodes=version.nodes_json
+                )
+        question = answer_script.question(question_id)
         if question is None:
             continue
         selected = [
-            script.option_text(question_id, key, default=key)
+            answer_script.option_text(question_id, key, default=key)
             for key in progress.selected_keys(question_id)
         ]
         rows.append(

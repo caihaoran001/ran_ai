@@ -485,10 +485,14 @@ class ArchivistPipeline:
             return
         from app.services.final_review_answers import record_answer
         from app.services.final_review_scripts import get_active_script
+        from app.services.final_review_runner import sent_question_snapshots
 
         language = getattr(self.service_case, "language", None) or "zh"
         script = await get_active_script(
             self.session, language=str(getattr(language, "value", language))
+        )
+        snapshots = await sent_question_snapshots(
+            self.session, service_case_id=self.service_case.id
         )
         for answer in answers:
             option_keys = [
@@ -502,7 +506,10 @@ class ArchivistPipeline:
                 raw_text=str(answer.get("raw_text") or "") or None,
                 normalized_value={"selected": option_keys} if option_keys else None,
                 evidence_message_id=answer.get("evidence_message_id"),
-                script_version_no=script.version_no,
+                script_version_no=(
+                    snapshots.get(str(answer.get("question_id") or ""), {}).get("_script_version_no")
+                    or script.version_no
+                ),
             )
             self.result.change_details.append(
                 {
