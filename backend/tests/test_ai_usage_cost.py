@@ -7,6 +7,22 @@ from app.core.config import Settings
 from app.services.ai_service.client import _estimated_cost_yuan
 
 
+def test_default_settings_use_official_flash_and_current_idle_pricing():
+    settings = Settings(_env_file=None)
+
+    assert settings.ai_model == "deepseek-flash"
+    assert settings.ai_document_model == ""
+    assert settings.ai_document_fallback_model == ""
+    assert settings.ai_premium_models == ""
+    assert settings.ai_premium_prompt_cost_per_1m_tokens == 0.0
+    assert settings.ai_premium_completion_cost_per_1m_tokens == 0.0
+    assert settings.ai_premium_prompt_cache_hit_cost_per_1m_tokens == 0.0
+    assert settings.ai_prompt_cache_hit_cost_per_1m_tokens == 0.02
+    assert settings.ai_prompt_cost_per_1m_tokens == 1.0
+    assert settings.ai_completion_cost_per_1m_tokens == 4.0
+    assert settings.ai_peak_price_multiplier == 2.0
+
+
 def test_qwen_vl_translate_uses_qwen_tiered_pricing():
     settings = Settings(
         AI_PROMPT_COST_PER_1M_TOKENS=12.55,
@@ -82,10 +98,11 @@ def test_cache_hit_missing_falls_back_to_miss_price():
 
 
 def test_cache_hit_unconfigured_bills_at_miss_price():
-    # 未配置命中价(默认0) → 命中 token 也按未命中价，避免低估
+    # 显式未配置命中价(0) → 命中 token 也按未命中价，避免低估
     settings = Settings(
         AI_PROMPT_COST_PER_1M_TOKENS=1,
         AI_COMPLETION_COST_PER_1M_TOKENS=2,
+        AI_PROMPT_CACHE_HIT_COST_PER_1M_TOKENS=0,
         AI_PEAK_PRICE_MULTIPLIER=1,
     )
     cost = _estimated_cost_yuan(
@@ -120,8 +137,16 @@ def test_peak_multiplier_applies_only_in_peak_window():
         scenario="ai_reply",
         now=datetime(2026, 7, 31, 20, 0, tzinfo=bj),
     )
+    weekend = _estimated_cost_yuan(
+        prompt_tokens=1000,
+        completion_tokens=1000,
+        settings=settings,
+        scenario="ai_reply",
+        now=datetime(2026, 8, 1, 10, 0, tzinfo=bj),
+    )
     assert peak == round(base * 2, 8)
     assert offpeak == round(base, 8)
+    assert weekend == round(base, 8)
 
 
 def test_peak_multiplier_can_be_disabled():
@@ -178,7 +203,7 @@ def test_base_model_keeps_base_pricing():
         completion_tokens=3000,
         settings=settings,
         scenario="ai_reply",
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
     )
     expected = (6000 * 1.5 + 3000 * 4.5) / 1_000_000
     assert cost == round(expected, 8)
@@ -205,7 +230,7 @@ def test_document_fallback_to_base_model_bills_base_rate():
         completion_tokens=3000,
         settings=settings,
         scenario="intake_doc",
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
     )
     expected = (6000 * 1.5 + 3000 * 4.5) / 1_000_000
     assert cost == round(expected, 8)

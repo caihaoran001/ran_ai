@@ -157,19 +157,24 @@ def _peak_multiplier(
     scenario: str | None,
     now: datetime | None = None,
 ) -> float:
-    """DeepSeek 高峰时段(北京 9:00–12:00、14:00–18:00)价格倍率。
+    """DeepSeek 工作日高峰时段(北京 9:00–12:00、14:00–18:00)价格倍率。
 
-    倍率配置为 1.0(默认)或非 DeepSeek 场景时恒返回 1.0，不做任何时间判断。
-    官方正式启用高峰加价后把 AI_PEAK_PRICE_MULTIPLIER 改成 2.0 即生效。
+    这里只按周一至周五判断，不维护公共节假日日历；节假日例外由配置倍率关闭或人工处理。
+    倍率配置为 1.0或非 DeepSeek 场景时恒返回 1.0，不做任何时间判断。
     """
     if scenario == "qwen_vl_translate":
         return 1.0
     factor = float(settings.ai_peak_price_multiplier or 1.0)
     if factor == 1.0:
         return 1.0
-    current = now or datetime.now(ZoneInfo("Asia/Shanghai"))
+    timezone = ZoneInfo("Asia/Shanghai")
+    current = now or datetime.now(timezone)
     if current.tzinfo is not None:
-        current = current.astimezone(ZoneInfo("Asia/Shanghai"))
+        current = current.astimezone(timezone)
+    else:
+        current = current.replace(tzinfo=timezone)
+    if current.weekday() >= 5:
+        return 1.0
     hour = current.hour
     in_peak = (9 <= hour < 12) or (14 <= hour < 18)
     return factor if in_peak else 1.0
@@ -806,7 +811,10 @@ class AIService:
                 async with _get_limiter(self.settings.ai_max_concurrent_requests):
                     request_options: dict[str, Any] = {}
                     if scenario in _DOCUMENT_JSON_SCENARIOS:
-                        if model.startswith("deepseek-v4-"):
+                        normalized_model = model.strip().lower()
+                        if normalized_model == "deepseek-flash" or normalized_model.startswith(
+                            "deepseek-v4-"
+                        ):
                             request_options["extra_body"] = {"thinking": {"type": "enabled"}}
                             request_options["reasoning_effort"] = "high"
                     response = await self._client.chat.completions.create(

@@ -40,8 +40,8 @@ def _response(*, content: str, reasoning: str = "", finish_reason: str = "stop")
 def _service(response: object | list[object], **settings_overrides: object) -> tuple[AIService, _FakeCompletions]:
     settings_values = {
         "AI_API_KEY": "test-key",
-        "AI_MODEL": "deepseek-v4-flash",
-        "AI_DOCUMENT_MODEL": "deepseek-v4-flash",
+        "AI_MODEL": "deepseek-flash",
+        "AI_DOCUMENT_MODEL": "",
         "AI_DOCUMENT_FALLBACK_MODEL": "",
         "AI_MAX_TOKENS": 1234,
         "AI_DOCUMENT_MAX_TOKENS": 50000,
@@ -68,6 +68,7 @@ async def test_document_generation_keeps_thinking_without_json_mode_and_50000_bu
 
     assert result == '{"documents": {}}'
     request = completions.calls[0]
+    assert request["model"] == "deepseek-flash"
     assert request["max_tokens"] == 50000
     assert "response_format" not in request
     assert request["extra_body"] == {"thinking": {"type": "enabled"}}
@@ -199,16 +200,15 @@ async def test_document_success_does_not_call_fallback_model() -> None:
     )
 
     assert result == '{"documents": {}}'
-    assert [call["model"] for call in completions.calls] == ["deepseek-v4-flash"]
-    assert service.last_model_for("intake_doc") == "deepseek-v4-flash"
+    assert [call["model"] for call in completions.calls] == ["deepseek-flash"]
+    assert service.last_model_for("intake_doc") == "deepseek-flash"
 
 
 @pytest.mark.asyncio
 async def test_empty_content_does_not_switch_model() -> None:
     """空正文是内容质量问题，必须留在原模型重试，不能换到备用模型。
 
-    线上主模型是 pro、备用是 flash；一次空正文就永久钉到 flash 上，会把偶发问题
-    换成高发问题（生产统计：pro 空正文 0 次，flash 22 次）。
+    线上主模型和备用模型应按配置独立；一次空正文不能把后续尝试切到备用模型。
     """
     service, completions = _service(
         [
@@ -225,7 +225,7 @@ async def test_empty_content_does_not_switch_model() -> None:
             user_prompt="build documents",
         )
 
-    assert [call["model"] for call in completions.calls] == ["deepseek-v4-flash"]
+    assert [call["model"] for call in completions.calls] == ["deepseek-flash"]
 
 
 @pytest.mark.asyncio
@@ -246,7 +246,7 @@ async def test_truncation_does_not_switch_model() -> None:
             user_prompt="build documents",
         )
 
-    assert [call["model"] for call in completions.calls] == ["deepseek-v4-flash"]
+    assert [call["model"] for call in completions.calls] == ["deepseek-flash"]
 
 
 @pytest.mark.asyncio
@@ -273,9 +273,9 @@ async def test_availability_failure_still_switches_model() -> None:
 
     assert result == '{"documents": {}}'
     assert [call["model"] for call in completions.calls] == [
-        "deepseek-v4-flash",
-        "deepseek-v4-flash",
-        "deepseek-v4-flash",
+        "deepseek-flash",
+        "deepseek-flash",
+        "deepseek-flash",
         "deepseek-v4-pro",
     ]
     assert service.last_model_for("intake_doc") == "deepseek-v4-pro"

@@ -41,7 +41,7 @@ class Settings(BaseSettings):
         validation_alias="AI_BASE_URL",
     )
     ai_api_key: str = Field(default="", validation_alias="AI_API_KEY")
-    ai_model: str = Field(default="deepseek-v4-pro", validation_alias="AI_MODEL")
+    ai_model: str = Field(default="deepseek-flash", validation_alias="AI_MODEL")
     # 交付文档/阶段报告专用模型；留空则回退 ai_model，避免聊天回复和风控被一起切到更慢模型。
     ai_document_model: str = Field(default="", validation_alias="AI_DOCUMENT_MODEL")
     # 文档主模型在网络重试耗尽、空正文、截断或结构校验失败时切换到该模型。
@@ -112,47 +112,47 @@ class Settings(BaseSettings):
     tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")
     web_search_timeout_seconds: float = Field(default=8.0, validation_alias="WEB_SEARCH_TIMEOUT_SECONDS")
     web_search_max_results: int = Field(default=5, validation_alias="WEB_SEARCH_MAX_RESULTS")
-    # 基础档模型(默认 deepseek-v4-flash)的**空闲时段**单价，元/百万 token。
+    # 基础档模型(默认 deepseek-flash)的**空闲时段**单价，元/百万 token。
     # 高峰时段由 AI_PEAK_PRICE_MULTIPLIER 自动翻倍，不要在这里填高峰价。
-    # 数值为 2026-08-17 涨价后的官方 V4-Flash 空闲价。
+    # 数值为 V4.1 Flash 官方空闲价，自 2026-09-10 12:00（北京时间）生效。
     ai_prompt_cost_per_1m_tokens: float = Field(
-        default=1.5,
+        default=1.0,
         validation_alias="AI_PROMPT_COST_PER_1M_TOKENS",
     )
     ai_completion_cost_per_1m_tokens: float = Field(
-        default=4.5,
+        default=4.0,
         validation_alias="AI_COMPLETION_COST_PER_1M_TOKENS",
     )
-    # DeepSeek 硬盘缓存命中的输入单价（元/百万 token），远低于未命中价(flash 空闲 0.05 / pro 空闲 0.15)。
+    # DeepSeek 硬盘缓存命中的输入单价（元/百万 token），远低于未命中价。
     # <=0 视为未配置：命中 token 回退按未命中价计，即保持历史行为不打折。
     ai_prompt_cache_hit_cost_per_1m_tokens: float = Field(
-        default=0.0,
+        default=0.02,
         validation_alias="AI_PROMPT_CACHE_HIT_COST_PER_1M_TOKENS",
     )
     # 高价档模型名前缀清单（逗号分隔，大小写不敏感）。命中的调用按下面的 premium 单价计费，
     # 其余按上面的基础单价。按**实际调用的模型名**匹配，因此文档模型 fallback 到 flash 时会
     # 自动落回基础单价，不会误记高价。留空 = 不启用分档，全部按基础单价。
     ai_premium_models: str = Field(
-        default="deepseek-v4-pro",
+        default="",
         validation_alias="AI_PREMIUM_MODELS",
     )
-    # 高价档模型(默认 deepseek-v4-pro，仅用于生成交付文件)的**空闲时段**单价，元/百万 token。
+    # 高价档模型(若显式配置)的**空闲时段**单价，元/百万 token。
     # 同样由 AI_PEAK_PRICE_MULTIPLIER 在高峰时段翻倍。
     # <=0 视为未配置：该档回退按基础单价计，行为等同未分档。
     ai_premium_prompt_cost_per_1m_tokens: float = Field(
-        default=4.5,
+        default=0.0,
         validation_alias="AI_PREMIUM_PROMPT_COST_PER_1M_TOKENS",
     )
     ai_premium_completion_cost_per_1m_tokens: float = Field(
-        default=13.5,
+        default=0.0,
         validation_alias="AI_PREMIUM_COMPLETION_COST_PER_1M_TOKENS",
     )
     ai_premium_prompt_cache_hit_cost_per_1m_tokens: float = Field(
         default=0.0,
         validation_alias="AI_PREMIUM_PROMPT_CACHE_HIT_COST_PER_1M_TOKENS",
     )
-    # DeepSeek 高峰时段(北京 9:00–12:00、14:00–18:00)价格倍率。官方自 2026-08-17 起
-    # 正式启用"高峰 = 空闲 2×"，故默认 2.0；填 1.0 可整体关闭时段加价。仅作用于 DeepSeek(非 Qwen)。
+    # DeepSeek 工作日高峰时段(北京 9:00–12:00、14:00–18:00)价格倍率。V4.1 Flash
+    # 自 2026-09-10 12:00 起高峰 = 空闲 2×；填 1.0 可整体关闭时段加价。仅作用于 DeepSeek(非 Qwen)。
     ai_peak_price_multiplier: float = Field(
         default=2.0,
         validation_alias="AI_PEAK_PRICE_MULTIPLIER",

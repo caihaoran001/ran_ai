@@ -135,9 +135,9 @@ uv run alembic upgrade head
 ```bash
 AI_BASE_URL=https://api.deepseek.com
 AI_API_KEY=your-ai-api-key
-AI_MODEL=deepseek-v4-pro
+AI_MODEL=deepseek-flash
 # 交付文档/阶段报告专用模型，留空则回退 AI_MODEL。
-AI_DOCUMENT_MODEL=deepseek-v4-pro
+AI_DOCUMENT_MODEL=
 AI_MAX_TOKENS=8000
 ```
 
