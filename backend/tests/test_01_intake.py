@@ -41,6 +41,7 @@ from app.services.intake_generation import (
     _document_model_readable_answers,
     _document_generation_block_reasons,
     _document_consistency_errors,
+    _delivery_instruction_consistency_errors,
     _extract_safety_factors,
     _force_high_risk_manual_review,
     _apply_shared_activity_frequency_to_documents,
@@ -2020,6 +2021,166 @@ def test_daily_checkin_keeps_number_question_without_unit_bracket():
         allow_fallback=False,
     )
     assert conflicting == []
+
+
+def test_structured_text_checkins_accept_answerable_field_labels_only_with_context():
+    """结构化模型项可用简短字段名，但历史字符串和栏目标题仍要拒绝。"""
+
+    product_titles = (
+        "早C、午B、晚A完成情况",
+        "早C、午B、晚A的完成状态分别是什么",
+        "早C、午B、晚A的完成情况",
+        "早C、午B、晚A完成情况如何",
+        "早C、午B、晚A的服用状态",
+    )
+    for title in product_titles:
+        items = normalize_daily_checkin_items(
+            [
+                {
+                    "order": 1,
+                    "category": "product",
+                    "title": title,
+                    "answer_type": "text",
+                    "example_answer": "早C已完成；午B未完成；晚A已完成",
+                }
+            ],
+            allow_fallback=False,
+        )
+        assert len(items) == 1, title
+        assert items[0]["title"] == title
+
+    sleep_item = normalize_daily_checkin_items(
+        [
+            {
+                "order": 1,
+                "category": "sleep",
+                "title": "实际入睡时间",
+                "answer_type": "text",
+                "example_answer": "23:45，关灯后很快睡着",
+            }
+        ],
+        allow_fallback=False,
+    )
+    assert len(sleep_item) == 1
+
+    # 没有结构化上下文的历史字符串，仍不能凭栏目名进入问卷。
+    assert normalize_daily_checkin_items(["实际入睡时间"], allow_fallback=False) == []
+    assert normalize_daily_checkin_items(["早C、午B、晚A完成情况"], allow_fallback=False) == []
+    # 即使有结构化上下文，已知栏目标题、相对日期和复合题仍被拦截。
+    for title in (
+        "每日固定打卡",
+        "今天早C、午B、晚A完成情况",
+        "早C、午B、晚A完成情况，同时记录蔬菜",
+    ):
+        assert normalize_daily_checkin_items(
+            [
+                {
+                    "order": 1,
+                    "category": "product",
+                    "title": title,
+                    "answer_type": "text",
+                    "example_answer": "早C已完成；午B未完成；晚A已完成",
+                }
+            ],
+            allow_fallback=False,
+        ) == [], title
+
+    # text 字段没有实际示例答案时，不能靠结构化字段名绕过完整答案校验。
+    assert normalize_daily_checkin_items(
+        [
+            {
+                "order": 1,
+                "category": "sleep",
+                "title": "实际入睡时间",
+                "answer_type": "text",
+            }
+        ],
+        allow_fallback=False,
+    ) == []
+
+
+def test_daily_checkin_substitution_preserves_other_answers_and_leaves_fallback_empty():
+    """只替换坏题时保留四道原答案，不为兜底题编造答案，继续触发重试。"""
+
+    items = normalize_daily_checkin_items(
+        [
+            {
+                "order": 1,
+                "category": "product",
+                "title": "早C、午B、晚A完成情况",
+                "answer_type": "text",
+                "example_answer": "早C已完成；午B未完成；晚A已完成",
+            },
+            {
+                "order": 2,
+                "category": "diet",
+                "title": "蔬菜总量是否至少2拳",
+                "answer_type": "yes_no",
+                "example_answer": "是，完成2拳以上",
+            },
+            {
+                "order": 3,
+                "category": "activity",
+                "title": "是否完成30分钟快走",
+                "answer_type": "yes_no",
+                "example_answer": "是，晚饭后快走30分钟",
+            },
+            {
+                "order": 4,
+                "category": "sleep",
+                "title": "实际入睡时间",
+                "answer_type": "text",
+                "example_answer": "23:45，关灯后很快睡着",
+            },
+            {
+                "order": 5,
+                "category": "state",
+                "title": "每日固定打卡",
+                "answer_type": "score_1_5",
+                "example_answer": "4分，整体较稳",
+            },
+        ],
+        facts={"weight_kg": "70"},
+    )
+
+    assert len(items) == 5
+    assert [item["example_answer"] for item in items[:4]] == [
+        "早C已完成；午B未完成；晚A已完成",
+        "是，完成2拳以上",
+        "是，晚饭后快走30分钟",
+        "23:45，关灯后很快睡着",
+    ]
+    fallback = items[4]
+    assert fallback["title"] == "晨起体重（kg）"
+    assert "example_answer" not in fallback
+    errors = _generated_daily_checkin_errors(items)
+    assert sum("缺少已填写答案" in error for error in errors) == 1
+
+
+def test_delivery_instruction_consistency_separates_staple_and_vegetable_meal_scopes():
+    daily_total = {
+        "execution": {"diet_rules": ["主食每餐≤1拳，蔬菜全天总量≥2拳"]}
+    }
+    daily_total_with_list_separator = {
+        "execution": {"diet_rules": ["主食每餐≤1拳、蔬菜全天总量≥2拳"]}
+    }
+    daily_total_with_conjunction = {
+        "execution": {"weekly_standard": "主食每餐≤1拳且蔬菜总量≥2拳≥5天"}
+    }
+    per_meal_vegetables = {"execution": {"diet_rules": ["每餐蔬菜≥2拳"]}}
+
+    assert "交付文件将蔬菜份量写成每餐口径" not in _delivery_instruction_consistency_errors(
+        daily_total
+    )
+    assert "交付文件将蔬菜份量写成每餐口径" not in _delivery_instruction_consistency_errors(
+        daily_total_with_list_separator
+    )
+    assert "交付文件将蔬菜份量写成每餐口径" not in _delivery_instruction_consistency_errors(
+        daily_total_with_conjunction
+    )
+    assert "交付文件将蔬菜份量写成每餐口径" in _delivery_instruction_consistency_errors(
+        per_meal_vegetables
+    )
 
 
 def test_english_daily_checkin_items_keep_their_answer_type():

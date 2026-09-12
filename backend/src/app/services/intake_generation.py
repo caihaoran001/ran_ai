@@ -538,7 +538,9 @@ def _document_consistency_errors(
 
 _UNSUPPORTED_SPECIAL_STAGE_MARKERS = ("围绝经", "更年期", "绝经")
 _PER_MEAL_VEGETABLE_AMOUNT_PATTERN = re.compile(
-    r"每餐(?=[^。；\n]{0,24}蔬菜)(?=[^。；\n]{0,24}[一二三四五六七八九十\d]+拳)"
+    # 「每餐」必须和「蔬菜」及其份量处在同一小句内。若不排除逗号，
+    # 「主食每餐≤1拳，蔬菜全天总量≥2拳」会被误看成每餐蔬菜口径。
+    r"每餐(?=[^。；\n，,、且]{0,24}蔬菜)(?=[^。；\n，,、且]{0,24}[一二三四五六七八九十\d]+拳)"
 )
 _BEDTIME_TARGET_PATTERN = re.compile(
     r"(?P<hour>[01]?\d|2[0-3])\s*(?:[:：]\s*(?P<minute>[0-5]\d))?\s*前\s*(?:上床|躺下|关灯|闭眼)"
@@ -1530,11 +1532,9 @@ def normalize_daily_checkin_items(
             if len(accepted) >= DAILY_CHECKIN_SIZE:
                 break
 
-    # 新生成文件的答案必须来自同一次模型输出。题面被兜底替换时，原答案已经不再
-    # 对应新题；将其清空让生成契约触发整包重试，绝不能把答非所问的组合落库。
-    if substituted:
-        for item in accepted:
-            item.pop("example_answer", None)
+    # 新生成文件的答案必须来自同一次模型输出。被兜底替换的题没有答案，
+    # 由生成契约单独拦住并触发整包重试；其它仍与原题对应的答案必须保留，
+    # 不能因为只换了一题就把四道有效答案一并清空。
 
     # 换题必须留痕：兜底题一顶上来，个性化打卡就被通用题替掉了，
     # 而后台只看得到最终这 5 项，看不出哪一项不是模型挑的。
@@ -1596,11 +1596,25 @@ def _validated_checkin_item(
         category = ""
         example_answer = ""
 
+    # 短字段名（例如「实际入睡时间」）只有在模型明确给出合法的类别、text
+    # 类型和已填写示例时才放行。历史字符串清单没有这些结构化上下文，继续要求
+    # 它本身像问题，避免把任意栏目标题都放进个性化打卡。
+    structured_field_label = (
+        isinstance(candidate, dict)
+        and category in CHECKIN_CATEGORIES
+        and answer_type == "text"
+        and bool(example_answer)
+    )
+
     if not _is_valid_checkin_title(title, strict_style=strict_style):
         return None
     if answer_type not in CHECKIN_ANSWER_TYPES:
         answer_type = _infer_checkin_answer_type(title)
-    if not _answer_type_matches_title(answer_type, title):
+    if not _answer_type_matches_title(
+        answer_type,
+        title,
+        allow_structured_field_label=structured_field_label,
+    ):
         return None
     item: dict[str, object] = {
         "order": 0,
@@ -1745,7 +1759,12 @@ def _is_valid_checkin_title(title: str, *, strict_style: bool = True) -> bool:
     return intents <= 1
 
 
-def _answer_type_matches_title(answer_type: str, title: str) -> bool:
+def _answer_type_matches_title(
+    answer_type: str,
+    title: str,
+    *,
+    allow_structured_field_label: bool = False,
+) -> bool:
     """题面形状必须和答题类型对得上，否则转成问卷字段就会答非所问。
 
     刻意**不**用「以问号结尾就算是否题」：英文题面所有问法都以问号结尾，
@@ -1766,7 +1785,7 @@ def _answer_type_matches_title(answer_type: str, title: str) -> bool:
         # 单位括号，结果把「夜间醒来次数」这类完全合法的题判废、换成通用兜底题，白丢个性化。
         # 单位该不该写、写什么由提示词管（体重题必须写清 kg），代码不做事后审核也不猜。
         return has_quantity or not (has_judgement or has_score)
-    return _looks_like_question(title)
+    return allow_structured_field_label or _looks_like_question(title)
 
 
 def _looks_like_question(title: str) -> bool:
