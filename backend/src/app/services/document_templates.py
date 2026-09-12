@@ -143,7 +143,7 @@ EXECUTION_FIELD_SPEC = {
         "noon_b": "午B：同上，用量+水量+时点三样写全，≤44字；需要减量、前移或暂停时明确写",
         "night_a": "晚A：同上，用量+水量+时点写全，最晚时间统一写「最晚睡前1小时完成」不换算钟点，≤44字；需要暂停时明确写",
     },
-    "diet_rules": ["对应用户真实生活场景的饮食规则，最多3条，每条≤34字；涉及蔬菜时统一写一句简短正向动作，如「蔬菜全天至少2拳，先守住每日最低门槛」；不得写成每餐2拳，也不得与「每餐主食」写在同一句"],
+    "diet_rules": ["对应用户真实生活场景的饮食规则，最多3条，每条≤34字；涉及蔬菜时写「全天至少2拳」；主食和蔬菜可在同一条规则中，但必须分别写清「每餐主食」与「全天蔬菜」范围；不得写成每餐蔬菜2拳"],
     "exercise_rules": ["运动频率只能使用 shared_analysis.activity_plan.sessions_per_week；再写单次时长、强度、动作和替代方案，最多2条，每条≤44字"],
     "core_actions": [
         {
@@ -169,7 +169,7 @@ EXECUTION_FIELD_SPEC = {
             "不含「今天/今日/今早/今晚/昨天/昨日/昨晚/当天/本日」等相对时间词。"
             "每项只能有一个回答意图：禁止「是否……并填写……」「是否……同时记录……」，"
             "也禁止一道题同时问时间和饮食结构；情绪稳定度评分和饭后困评分是两个独立问题，严禁合并成一项综合评分。"
-            "涉及蔬菜只能写每日总量（如「全天蔬菜总量是否至少2拳」）；禁止写「每餐蔬菜至少2拳」，也不得与「每餐主食」写在同一句",
+            "涉及蔬菜只能写每日总量（如「全天蔬菜总量是否至少2拳」）；主食和蔬菜可合并为一道题，但必须分别写清「每餐主食」与「全天蔬菜」范围（如「每餐主食控制在1拳内，且全天蔬菜至少2拳」）；禁止写「每餐蔬菜至少2拳」",
             "answer_type": "只能取 yes_no / score_1_5 / number / text，且必须与 title 匹配："
             "yes_no 对应「是否……」判断题；score_1_5 对应「……评分（1-5）」评分题；"
             "number 对应必须写明单位的填数题（如「晨起体重（kg）」）；text 对应必须用户描述的情况",
@@ -291,7 +291,7 @@ EXECUTION_FIELD_SPEC_EN = {
         "noon_b": "Noon B: 1 sachet + 300-330ml water with lunch or within 30 min",
         "night_a": "Evening A: 1 sachet + 300-330ml warm water, at latest 1 hour before sleep",
     },
-    "diet_rules": ["Diet rules tailored to user's real context in English, max 3 items, each <=25 words; when vegetables are included, state the minimum daily action target as 'at least 2 fists of vegetables in total per day'; keep it separate from any per-meal staple portion and never write 2 fists per meal"],
+    "diet_rules": ["Diet rules tailored to user's real context in English, max 3 items, each <=25 words; state vegetables as 'at least 2 fists total per day'; one rule may combine this with per-meal staples when both scopes are explicit; never write 2 fists per meal"],
     "exercise_rules": ["Exercise rules specifying frequency, duration, intensity and action in English, max 2 items, each <=30 words"],
     "core_actions": [
         {
@@ -311,7 +311,7 @@ EXECUTION_FIELD_SPEC_EN = {
         {
             "order": "Integer 1-5, unique and strictly increasing; exactly 5 items total",
             "category": "Must be one of: product / diet / activity / sleep / state. Item 1 must be product, exactly 1 item must be activity",
-            "title": "Clear English question targeting user's specific friction point (e.g. 'Did you complete Morning C, Noon B, and Evening A?' for product; 'Did you control dinner carbohydrates to at most 1 fist?' for diet; 'How many minutes of brisk walking did you complete?' for activity; 'Did you start sleep wind-down by 23:30?' for sleep; 'Afternoon energy level rating (1-5)' for state). No leading numbers, no relative words like 'today/tonight'.",
+            "title": "Clear English question targeting user's specific friction point (e.g. 'Did you complete Morning C, Noon B, and Evening A?' for product; 'Did you keep staples to 1 fist per meal and vegetables to at least 2 fists total per day?' for diet; 'How many minutes of brisk walking did you complete?' for activity; 'Did you start sleep wind-down by 23:30?' for sleep; 'Afternoon energy level rating (1-5)' for state). No leading numbers, no relative words like 'today/tonight'.",
             "answer_type": "One of: yes_no / score_1_5 / number / text matching the question format",
             "options": "[\"Yes\", \"No\"] for yes_no; [\"1\", \"2\", \"3\", \"4\", \"5\"] for score_1_5; [] for number and text",
             "example_answer": "Realistic filled answer in English matching title. Item 1 MUST explicitly write Morning C, Noon B, and Evening A with one status for each; statuses may only be 'completed' or 'not completed', and at least one must be 'not completed'. The product example answer must contain only the three products and their statuses; do not add 'as planned', parenthetical explanations, or any other text. One-shot: 'Morning C completed; Noon B not completed; Evening A completed'. This is a copy-and-edit teaching example, not the user's actual completion record. For yes_no write 'Yes, completed'; for score_1_5 write '4 points, felt energetic'; for number include units like '25 minutes'.",

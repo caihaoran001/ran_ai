@@ -372,9 +372,9 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "week5_8、week9_12 必须逐字复制 intake_facts.stage_targets" in prompt
     assert "adult_stable_comfort_weight_kg" in prompt
     assert "当前 BMI、体重、腰围只是单点状态" in prompt
-    assert "「每餐」不得与蔬菜份量同句出现" in prompt
+    assert "主食和蔬菜可放在同一道饮食题或同一句" in prompt
+    assert "每餐主食控制在1拳内，且全天蔬菜至少2拳" in prompt
     assert "蔬菜统一写「全天至少2拳」" in prompt
-    assert "蔬菜目标不得与「每餐主食」同句" in prompt
     assert "产品答案只包含早C、午B、晚A及各自一个状态" in prompt
 
     assert "priority_items 严格3项" in prompt
@@ -420,7 +420,7 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "早C、午B、晚A" in item_spec["example_answer"]
     assert "早C已完成；午B未完成；晚A已完成" in item_spec["example_answer"]
     assert "不是用户实际完成记录" in item_spec["example_answer"]
-    assert "涉及蔬菜时统一写一句简短正向动作" in execution_spec["diet_rules"][0]
+    assert "主食和蔬菜可在同一条规则中" in execution_spec["diet_rules"][0]
 
     fallback = _daily_checkin_text(None)
     assert "个案产品排班是否按方案完成" in fallback
