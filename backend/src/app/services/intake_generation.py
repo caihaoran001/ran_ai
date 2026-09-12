@@ -1443,6 +1443,21 @@ _CHECKIN_NUMBER_UNIT_PATTERN = re.compile(
     r"kg|公斤|斤|lbs?|pounds?|cm|厘米|inch|inches|mm|毫米|ml|毫升|l|升|步|steps?|次|times?|分钟|mins?|minutes?|小时|hours?|hrs?|克|g|拳|份|点",
     re.IGNORECASE,
 )
+_PRODUCT_CHECKIN_SLOTS_ZH = ("早C", "午B", "晚A")
+_PRODUCT_CHECKIN_SLOTS_EN = ("morning c", "noon b", "evening a")
+_PRODUCT_CHECKIN_STATUSES_ZH = ("已完成", "未完成")
+_PRODUCT_CHECKIN_STATUSES_EN = ("not completed", "completed")
+_PRODUCT_CHECKIN_INVALID_STATUS_MARKERS = (
+    "暂停",
+    "按方案",
+    "paused",
+    "as planned",
+    "done",
+    "incomplete",
+    "missed",
+    "skipped",
+    "finished",
+)
 
 
 def _normalize_daily_checkin_in_payloads(
@@ -1607,6 +1622,52 @@ def _clean_checkin_example_answer(value: object) -> str:
     return " ".join(text.split())
 
 
+def _product_checkin_statuses(answer: str) -> tuple[str, ...] | None:
+    """提取产品三段各自的明确状态，只接受已完成/未完成两种状态。"""
+
+    answer_lower = answer.casefold()
+    for slots, statuses, is_english in (
+        (_PRODUCT_CHECKIN_SLOTS_ZH, _PRODUCT_CHECKIN_STATUSES_ZH, False),
+        (_PRODUCT_CHECKIN_SLOTS_EN, _PRODUCT_CHECKIN_STATUSES_EN, True),
+    ):
+        slot_positions: list[tuple[int, int]] = []
+        for slot_index, slot in enumerate(slots):
+            if is_english:
+                match = re.search(rf"(?<![a-z]){re.escape(slot)}(?![a-z])", answer_lower)
+                position = match.start() if match else -1
+            else:
+                position = answer_lower.find(slot.casefold())
+            if position < 0:
+                break
+            slot_positions.append((position, slot_index))
+        if len(slot_positions) != len(slots):
+            continue
+        if any(marker in answer_lower for marker in _PRODUCT_CHECKIN_INVALID_STATUS_MARKERS):
+            continue
+
+        status_pattern = re.compile(
+            "|".join(re.escape(status) for status in sorted(statuses, key=len, reverse=True)),
+            re.IGNORECASE if is_english else 0,
+        )
+        extracted: list[str | None] = [None] * len(slots)
+        ordered_positions = sorted(slot_positions)
+        for slot_offset, (position, slot_index) in enumerate(ordered_positions):
+            end = (
+                ordered_positions[slot_offset + 1][0]
+                if slot_offset + 1 < len(ordered_positions)
+                else len(answer_lower)
+            )
+            segment = answer_lower[position + len(slots[slot_index].casefold()) : end]
+            matches = status_pattern.findall(segment)
+            if len(matches) != 1:
+                break
+            extracted[slot_index] = matches[0].casefold()
+        else:
+            if all(status is not None for status in extracted):
+                return tuple(status for status in extracted if status is not None)
+    return None
+
+
 def _generated_daily_checkin_errors(items: list[dict[str, object]]) -> list[str]:
     """新生成文件的打卡契约；历史读取不经过这道闸门。"""
 
@@ -1630,31 +1691,15 @@ def _generated_daily_checkin_errors(items: list[dict[str, object]]) -> list[str]
         title = str(item.get("title") or "")
         answer_lower = answer.lower()
         if category == "product":
-            has_chinese_slots = all(name in answer for name in ("早C", "午B", "晚A"))
-            has_english_slots = (
-                ("morning" in answer_lower or "early" in answer_lower or "breakfast" in answer_lower or " c" in answer_lower or answer_lower.startswith("c"))
-                and ("noon" in answer_lower or "lunch" in answer_lower or "midday" in answer_lower or " b" in answer_lower)
-                and ("evening" in answer_lower or "night" in answer_lower or "dinner" in answer_lower or " a" in answer_lower)
-            ) or ("morning c" in answer_lower or "noon b" in answer_lower or "evening a" in answer_lower)
+            has_chinese_slots = all(name in answer for name in _PRODUCT_CHECKIN_SLOTS_ZH)
+            has_english_slots = all(name in answer_lower for name in _PRODUCT_CHECKIN_SLOTS_EN)
             if not (has_chinese_slots or has_english_slots):
                 errors.append(f"第{index}项答案没有分别写清早C、午B、晚A")
-            has_chinese_status = any(marker in answer for marker in ("未完成", "暂停", "已完成", "按方案"))
-            has_english_status = any(
-                marker in answer_lower
-                for marker in (
-                    "incomplete",
-                    "paused",
-                    "skipped",
-                    "missed",
-                    "not completed",
-                    "completed",
-                    "done",
-                    "as planned",
-                    "finished",
-                )
-            )
-            if not (has_chinese_status or has_english_status):
-                errors.append(f"第{index}项答案没有展示未完成或按方案暂停")
+            statuses = _product_checkin_statuses(answer)
+            if statuses is None:
+                errors.append(f"第{index}项答案必须分别标明早C、午B、晚A为已完成或未完成")
+            elif "未完成" not in statuses and "not completed" not in statuses:
+                errors.append(f"第{index}项答案至少要有一项未完成")
         elif answer_type == "yes_no" and not (
             answer.startswith(("是", "否"))
             or answer_lower.startswith(("yes", "no", "y", "n", "true", "false"))

@@ -268,7 +268,7 @@ def _make_intake_mock_response(
                     "daily_checkin": [
                         {"order": 1, "category": "product", "title": "个案产品排班是否按方案完成",
                          "answer_type": "yes_no", "options": ["是", "否"],
-                         "example_answer": "早C已完成；午B未完成；晚A按方案暂停"},
+                         "example_answer": "早C已完成；午B未完成；晚A已完成"},
                         {"order": 2, "category": "sleep", "title": "是否在23:30前上床",
                          "answer_type": "yes_no", "options": ["是", "否"],
                          "example_answer": "是，已完成"},
@@ -414,7 +414,8 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "禁止写「每餐蔬菜至少2拳」" in item_spec["title"]
     assert "只能取 yes_no / score_1_5 / number / text" in item_spec["answer_type"]
     assert "早C、午B、晚A" in item_spec["example_answer"]
-    assert "示例回答" in item_spec["example_answer"]
+    assert "早C已完成；午B未完成；晚A已完成" in item_spec["example_answer"]
+    assert "不是用户实际完成记录" in item_spec["example_answer"]
 
     fallback = _daily_checkin_text(None)
     assert "个案产品排班是否按方案完成" in fallback
@@ -2116,7 +2117,7 @@ def test_generated_daily_checkin_examples_match_answer_contract():
                 "title": "早C随早餐、午B随午餐、晚A最晚睡前1小时是否按方案完成？",
                 "answer_type": "yes_no",
                 "options": ["是", "否"],
-                "example_answer": "早C已完成；午B未完成；晚A按方案暂停",
+                "example_answer": "早C已完成；午B未完成；晚A已完成",
             },
             {
                 "order": 2,
@@ -2155,6 +2156,25 @@ def test_generated_daily_checkin_examples_match_answer_contract():
     )
 
     assert _generated_daily_checkin_errors(items) == []
+    items[0]["example_answer"] = "早C已完成；午B已完成；晚A已完成"
+    assert any("至少要有一项未完成" in error for error in _generated_daily_checkin_errors(items))
+
+
+def test_product_checkin_statuses_are_explicit_and_limited_to_completed_states():
+    from app.services.intake_generation import _product_checkin_statuses
+
+    assert _product_checkin_statuses("早C已完成；午B未完成；晚A已完成") == (
+        "已完成",
+        "未完成",
+        "已完成",
+    )
+    assert _product_checkin_statuses("早C、午B、晚A") is None
+    assert _product_checkin_statuses("早C已完成；午B未完成；晚A按方案暂停") is None
+    assert _product_checkin_statuses("早C已完成；午B已完成；晚A已完成") == (
+        "已完成",
+        "已完成",
+        "已完成",
+    )
 
 
 def test_generated_daily_checkin_examples_reject_empty_or_mismatched_answers():
@@ -2209,7 +2229,7 @@ def test_execution_document_keeps_single_page_content_budget(caplog):
                 [
                     {"order": 1, "category": "product", "title": "个案产品排班是否按方案完成",
                      "answer_type": "yes_no", "options": ["是", "否"],
-                     "example_answer": "早C已完成；午B未完成；晚A按方案暂停"},
+                     "example_answer": "早C已完成；午B未完成；晚A已完成"},
                     {"order": 2, "category": "diet", "title": "蔬菜总量是否至少2拳",
                      "answer_type": "yes_no", "options": ["是", "否"],
                      "example_answer": "是，已完成"},
@@ -3187,7 +3207,7 @@ def test_english_daily_checkin_validation_rules():
             "category": "product",
             "title": "Morning C, Noon B, Evening A product protocol",
             "answer_type": "text",
-            "example_answer": "Morning C completed, Noon B completed, Evening A paused as planned",
+            "example_answer": "Morning C completed, Noon B not completed, Evening A completed",
         },
         {
             "category": "diet",

@@ -176,8 +176,9 @@ EXECUTION_FIELD_SPEC = {
             "options": "answer_type=yes_no 固定 [\"是\",\"否\"]；score_1_5 固定 [\"1\",\"2\",\"3\",\"4\",\"5\"]；number 和 text 为空数组 []",
             "example_answer": "与本项 title、answer_type 和 options 同时生成的一条简短已填写答案。"
             "yes_no 写「是，已完成」或与真实题意匹配的否定答案；score_1_5 写「4分，……」；"
-            "number 必须带 title 要求的单位；text 直接写具体情况。第1项必须分别写清早C、午B、晚A，"
-            "并至少展示一个未完成或按方案暂停的情况。不得出现「示例回答」「请填写」「按实际情况填写」「答：」",
+            "number 必须带 title 要求的单位；text 直接写具体情况。第1项必须分别写清早C、午B、晚A的状态，"
+            "状态只允许「已完成」或「未完成」，并至少包含一项「未完成」。one-shot示例：「早C已完成；午B未完成；晚A已完成」。"
+            "这是可直接复制后改成当天实况的教学示例，不是用户实际完成记录。不得出现「示例回答」「请填写」「按实际情况填写」「答：」",
         }
     ],
     "weekly_standard": "每周通过标准，1句 ≤76字，必须包含4要素：个案产品排班完成情况 + 关键饮食动作 + 运动/步数达标 + 至少1次体重/围度/体感记录。减量或暂停用户不得写三杯完成要求。",
@@ -313,7 +314,7 @@ EXECUTION_FIELD_SPEC_EN = {
             "title": "Clear English question targeting user's specific friction point (e.g. 'Did you complete Morning C, Noon B, and Evening A as planned?' for product; 'Did you control dinner carbohydrates to at most 1 fist?' for diet; 'How many minutes of brisk walking did you complete?' for activity; 'Did you start sleep wind-down by 23:30?' for sleep; 'Afternoon energy level rating (1-5)' for state). No leading numbers, no relative words like 'today/tonight'.",
             "answer_type": "One of: yes_no / score_1_5 / number / text matching the question format",
             "options": "[\"Yes\", \"No\"] for yes_no; [\"1\", \"2\", \"3\", \"4\", \"5\"] for score_1_5; [] for number and text",
-            "example_answer": "Realistic filled answer in English matching title. Item 1 MUST explicitly write Morning C, Noon B, and Evening A respectively with at least one status (e.g. 'Morning C: completed; Noon B: completed; Evening A: paused'). For yes_no write 'Yes, completed'; for score_1_5 write '4 points, felt energetic'; for number include units like '25 minutes'.",
+            "example_answer": "Realistic filled answer in English matching title. Item 1 MUST explicitly write Morning C, Noon B, and Evening A with one status for each; statuses may only be 'completed' or 'not completed', and at least one must be 'not completed'. One-shot: 'Morning C completed; Noon B not completed; Evening A completed'. This is a copy-and-edit teaching example, not the user's actual completion record. For yes_no write 'Yes, completed'; for score_1_5 write '4 points, felt energetic'; for number include units like '25 minutes'.",
         }
     ],
     "weekly_standard": "Weekly completion criteria in English (<=50 words)",

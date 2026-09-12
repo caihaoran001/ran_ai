@@ -43,7 +43,7 @@ Based on intake_facts and the enrollment questionnaire, generate the backend use
 
 【CONTENT & ACTIONS】
 1. current_mainline: choose one of Muscle Preservation & Fat Loss / Rhythm Stabilization / Sleep Recovery / Dietary Structure Repair / Systematic Management.
-2. 5 daily check-in items tailored to the user, with realistic, ready-to-use example answers in English.
+2. 5 daily check-in items tailored to the user, with realistic, ready-to-use example answers in English. For the product item, explicitly write Morning C, Noon B, and Evening A with one status for each; statuses may only be "completed" or "not completed", and at least one must be "not completed". One-shot: "Morning C completed; Noon B not completed; Evening A completed". This is a copy-and-edit teaching example, not the user's actual completion record.
 3. Product Protocol: Standard serving for Morning C (with breakfast or within 30 min, 300–330ml water), Noon B (with lunch, 300–330ml water), Evening A (after dinner / 1 hour before bedtime, 300–330ml warm water).
 
 【STYLE】
@@ -79,7 +79,7 @@ def _intake_generation_system_prompt(language: str = "zh") -> str:
 2. body_trend 只描述入营前近3个月。direct_evidence 必须是明确前后变化；当前 BMI、体重、腰围只是单点状态，只能作为 support_signals，不能单独证明上升或下降。core_conclusions 保持干练：只给一句话结论、管理带判断、趋势判断和28天任务，每项直给结论不展开、不铺陈；趋势依据最多1条，不再写长期防线（长期方向放在 success_path）。
 3. priority_items 严格3项，回答“为什么优先”，不得写份量、次数、时长或时间点；week_actions 写4-5条当天可执行的量化动作，回答“具体怎么做”，两处不复述。
 4. 饮食、运动、睡眠建议必须贴合问卷场景。蔬菜统一为每日总量；「每餐」不得与蔬菜份量同句出现。若蔬菜总量或上床时间在多个字段、两份文件或打卡项中出现，必须逐字使用同一个量和时间，不能各自另定。运动写清类型、频率、时长、强度和替代方案。运动频次只能使用 shared_analysis.activity_plan，且只取每周2、3或4次：结合当前运动基础选一个，28天内不分阶段；profile和两份文件不得另定次数。
-5. core_actions 输出3-5项，每项含相对事件锚点、动作、简化替代和对应打卡题，不让用户另选“三个执行窗口”。daily_checkin 严格5项且因人而异，禁止所有用户都输出同一套固定五题，并尽量对应核心动作。第1项对应产品；恰好 1 项 category=activity；至少2项设计成正向动作；禁止把两个问题合并成一项来腾名额。「情绪稳定度评分」与「饭后困评分」是两个独立候选问题；若两项同时入选 daily_checkin，必须各占 1 项。example_answer 必须是可直接修改的已填答案；产品项写清早C、午B、晚A，并展示未完成或按方案暂停。答案中不写填写提示。
+5. core_actions 输出3-5项，每项含相对事件锚点、动作、简化替代和对应打卡题，不让用户另选“三个执行窗口”。daily_checkin 严格5项且因人而异，禁止所有用户都输出同一套固定五题，并尽量对应核心动作。第1项对应产品；恰好 1 项 category=activity；至少2项设计成正向动作；禁止把两个问题合并成一项来腾名额。「情绪稳定度评分」与「饭后困评分」是两个独立候选问题；若两项同时入选 daily_checkin，必须各占 1 项。example_answer 是可复制改成当天实况的教学示例，非实际记录；产品项写清早C、午B、晚A，标“已完成”或“未完成”，至少一项未完成。例：“早C已完成；午B未完成；晚A已完成”。答案中不写提示。
 6. 机制解释全文最多1句，只基于问卷生活方式表现，不写疾病、治疗、用药或疗效承诺；禁止用“首周水分/糖原不等于减脂”等解释。
 7. 【不做自我声明】边界靠不写越界内容来守，不靠声明。严禁在用户可见正文里说明本文件不做什么，禁止出现「不代表疾病诊断」「不做激素诊断」「不构成医疗建议」「仅供参考」「不替代医生诊断」这类免责句——用户不会因为少看到这句话就以为我们在给他看病，写了只会让文件显得心虚。安全边界只写成用户能照着做的动作，例如「出现胸痛、呼吸困难、黑便时立刻停下并就医」。「饮食和运动是主力，产品负责让执行更容易稳住」这层定位按客户规范必须表达，但要融进产品那段的正面陈述，不写成免责句，全文只说一次。
 
