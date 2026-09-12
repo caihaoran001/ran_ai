@@ -143,7 +143,7 @@ EXECUTION_FIELD_SPEC = {
         "noon_b": "午B：同上，用量+水量+时点三样写全，≤44字；需要减量、前移或暂停时明确写",
         "night_a": "晚A：同上，用量+水量+时点写全，最晚时间统一写「最晚睡前1小时完成」不换算钟点，≤44字；需要暂停时明确写",
     },
-    "diet_rules": ["对应用户真实生活场景的饮食规则，最多3条，每条≤34字"],
+    "diet_rules": ["对应用户真实生活场景的饮食规则，最多3条，每条≤34字；涉及蔬菜时统一写一句简短正向动作，如「蔬菜全天至少2拳，先守住每日最低门槛」；不得写成每餐2拳，也不得与「每餐主食」写在同一句"],
     "exercise_rules": ["运动频率只能使用 shared_analysis.activity_plan.sessions_per_week；再写单次时长、强度、动作和替代方案，最多2条，每条≤44字"],
     "core_actions": [
         {
@@ -169,7 +169,7 @@ EXECUTION_FIELD_SPEC = {
             "不含「今天/今日/今早/今晚/昨天/昨日/昨晚/当天/本日」等相对时间词。"
             "每项只能有一个回答意图：禁止「是否……并填写……」「是否……同时记录……」，"
             "也禁止一道题同时问时间和饮食结构；情绪稳定度评分和饭后困评分是两个独立问题，严禁合并成一项综合评分。"
-            "涉及蔬菜只能写每日总量（如「蔬菜总量是否至少2拳」），禁止写「每餐蔬菜至少2拳」",
+            "涉及蔬菜只能写每日总量（如「全天蔬菜总量是否至少2拳」）；禁止写「每餐蔬菜至少2拳」，也不得与「每餐主食」写在同一句",
             "answer_type": "只能取 yes_no / score_1_5 / number / text，且必须与 title 匹配："
             "yes_no 对应「是否……」判断题；score_1_5 对应「……评分（1-5）」评分题；"
             "number 对应必须写明单位的填数题（如「晨起体重（kg）」）；text 对应必须用户描述的情况",
@@ -177,7 +177,7 @@ EXECUTION_FIELD_SPEC = {
             "example_answer": "与本项 title、answer_type 和 options 同时生成的一条简短已填写答案。"
             "yes_no 写「是，已完成」或与真实题意匹配的否定答案；score_1_5 写「4分，……」；"
             "number 必须带 title 要求的单位；text 直接写具体情况。第1项必须分别写清早C、午B、晚A的状态，"
-            "状态只允许「已完成」或「未完成」，并至少包含一项「未完成」。one-shot示例：「早C已完成；午B未完成；晚A已完成」。"
+            "状态只允许「已完成」或「未完成」，并至少包含一项「未完成」。产品项 example_answer 只包含早C、午B、晚A及各自一个状态，不得附加「按方案」、括号解释或其他文字。one-shot示例：「早C已完成；午B未完成；晚A已完成」。"
             "这是可直接复制后改成当天实况的教学示例，不是用户实际完成记录。不得出现「示例回答」「请填写」「按实际情况填写」「答：」",
         }
     ],
@@ -291,7 +291,7 @@ EXECUTION_FIELD_SPEC_EN = {
         "noon_b": "Noon B: 1 sachet + 300-330ml water with lunch or within 30 min",
         "night_a": "Evening A: 1 sachet + 300-330ml warm water, at latest 1 hour before sleep",
     },
-    "diet_rules": ["Diet rules tailored to user's real context in English, max 3 items, each <=25 words"],
+    "diet_rules": ["Diet rules tailored to user's real context in English, max 3 items, each <=25 words; when vegetables are included, state the minimum daily action target as 'at least 2 fists of vegetables in total per day'; keep it separate from any per-meal staple portion and never write 2 fists per meal"],
     "exercise_rules": ["Exercise rules specifying frequency, duration, intensity and action in English, max 2 items, each <=30 words"],
     "core_actions": [
         {
@@ -302,7 +302,7 @@ EXECUTION_FIELD_SPEC_EN = {
         }
     ],
     "weekly_plan": [
-        {"week": "Week 1", "core_task": "Rhythm Stabilization / Foundation", "acceptance_standard": "Complete product protocol; eat 2 fists of vegetables daily; follow planned activity."},
+        {"week": "Week 1", "core_task": "Rhythm Stabilization / Foundation", "acceptance_standard": "Complete product protocol; eat at least 2 fists of vegetables in total per day; follow planned activity."},
         {"week": "Week 2", "core_task": "Consistency in Key Habits", "acceptance_standard": "Maintain diet rules 5 days/wk; 2x15-min bodyweight strength; 15-20 min post-dinner walk."},
         {"week": "Week 3", "core_task": "Tracking & Progress Evaluation", "acceptance_standard": "Log weight & waist; brisk walk & light strength; observe sleep, energy & digestion."},
         {"week": "Week 4", "core_task": "Sustainable Maintenance & Solidification", "acceptance_standard": "Solidify nutrition & activity routines; reproduce effective habits sustainably."},
@@ -311,10 +311,10 @@ EXECUTION_FIELD_SPEC_EN = {
         {
             "order": "Integer 1-5, unique and strictly increasing; exactly 5 items total",
             "category": "Must be one of: product / diet / activity / sleep / state. Item 1 must be product, exactly 1 item must be activity",
-            "title": "Clear English question targeting user's specific friction point (e.g. 'Did you complete Morning C, Noon B, and Evening A as planned?' for product; 'Did you control dinner carbohydrates to at most 1 fist?' for diet; 'How many minutes of brisk walking did you complete?' for activity; 'Did you start sleep wind-down by 23:30?' for sleep; 'Afternoon energy level rating (1-5)' for state). No leading numbers, no relative words like 'today/tonight'.",
+            "title": "Clear English question targeting user's specific friction point (e.g. 'Did you complete Morning C, Noon B, and Evening A?' for product; 'Did you control dinner carbohydrates to at most 1 fist?' for diet; 'How many minutes of brisk walking did you complete?' for activity; 'Did you start sleep wind-down by 23:30?' for sleep; 'Afternoon energy level rating (1-5)' for state). No leading numbers, no relative words like 'today/tonight'.",
             "answer_type": "One of: yes_no / score_1_5 / number / text matching the question format",
             "options": "[\"Yes\", \"No\"] for yes_no; [\"1\", \"2\", \"3\", \"4\", \"5\"] for score_1_5; [] for number and text",
-            "example_answer": "Realistic filled answer in English matching title. Item 1 MUST explicitly write Morning C, Noon B, and Evening A with one status for each; statuses may only be 'completed' or 'not completed', and at least one must be 'not completed'. One-shot: 'Morning C completed; Noon B not completed; Evening A completed'. This is a copy-and-edit teaching example, not the user's actual completion record. For yes_no write 'Yes, completed'; for score_1_5 write '4 points, felt energetic'; for number include units like '25 minutes'.",
+            "example_answer": "Realistic filled answer in English matching title. Item 1 MUST explicitly write Morning C, Noon B, and Evening A with one status for each; statuses may only be 'completed' or 'not completed', and at least one must be 'not completed'. The product example answer must contain only the three products and their statuses; do not add 'as planned', parenthetical explanations, or any other text. One-shot: 'Morning C completed; Noon B not completed; Evening A completed'. This is a copy-and-edit teaching example, not the user's actual completion record. For yes_no write 'Yes, completed'; for score_1_5 write '4 points, felt energetic'; for number include units like '25 minutes'.",
         }
     ],
     "weekly_standard": "Weekly completion criteria in English (<=50 words)",
