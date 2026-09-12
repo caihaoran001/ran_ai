@@ -365,6 +365,10 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "禁止把两个问题合并成一项来腾名额" in prompt
     assert "「情绪稳定度评分」与「饭后困评分」是两个独立候选问题" in prompt
     assert "若两项同时入选 daily_checkin，必须各占 1 项" in prompt
+    assert "评分题必须写明「1分=」和「5分=」各自含义" in prompt
+
+    english_prompt = _intake_generation_system_prompt(language="en")
+    assert "Any score_1_5 item must state what 1 and 5 mean" in english_prompt
 
     assert "weight_band 永远只能逐字复制系统算好的业务带位" in prompt
     assert "不得用 BMI、用户期待或生活方式事实改带" in prompt
@@ -417,10 +421,15 @@ def test_intake_prompt_requires_five_independent_daily_checkin_questions():
     assert "严禁合并成一项综合评分" in item_spec["title"]
     assert "禁止写「每餐蔬菜至少2拳」" in item_spec["title"]
     assert "只能取 yes_no / score_1_5 / number / text" in item_spec["answer_type"]
+    assert "title 必须写明「1分=」和「5分=」各自含义" in item_spec["answer_type"]
     assert "早C、午B、晚A" in item_spec["example_answer"]
     assert "早C已完成；午B未完成；晚A已完成" in item_spec["example_answer"]
     assert "不是用户实际完成记录" in item_spec["example_answer"]
     assert "主食和蔬菜可在同一条规则中" in execution_spec["diet_rules"][0]
+
+    english_schema = combined_prompt_schema(language="en")
+    english_execution_spec = english_schema[DocumentType.DAY28_EXECUTION_STANDARD.value]
+    assert "Score titles must state what 1 and 5 mean" in english_execution_spec["daily_checkin"][0]["title"]
 
     fallback = _daily_checkin_text(None)
     assert "个案产品排班是否按方案完成" in fallback

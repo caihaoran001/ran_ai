@@ -171,7 +171,7 @@ EXECUTION_FIELD_SPEC = {
             "也禁止一道题同时问时间和饮食结构；情绪稳定度评分和饭后困评分是两个独立问题，严禁合并成一项综合评分。"
             "涉及蔬菜只能写每日总量（如「全天蔬菜总量是否至少2拳」）；主食和蔬菜可合并为一道判断题，但必须分别写清「每餐主食」与「全天蔬菜」范围（如「是否做到每餐主食控制在1拳内，且全天蔬菜至少2拳？」）；禁止写「每餐蔬菜至少2拳」",
             "answer_type": "只能取 yes_no / score_1_5 / number / text，且必须与 title 匹配："
-            "yes_no 对应「是否……」判断题；score_1_5 对应「……评分（1-5）」评分题；"
+            "yes_no 对应「是否……」判断题；score_1_5 对应「……评分（1-5）」评分题，title 必须写明「1分=」和「5分=」各自含义，不能只写「（1-5）」；"
             "number 对应必须写明单位的填数题（如「晨起体重（kg）」）；text 对应必须用户描述的情况",
             "options": "answer_type=yes_no 固定 [\"是\",\"否\"]；score_1_5 固定 [\"1\",\"2\",\"3\",\"4\",\"5\"]；number 和 text 为空数组 []",
             "example_answer": "与本项 title、answer_type 和 options 同时生成的一条简短已填写答案。"
@@ -311,7 +311,7 @@ EXECUTION_FIELD_SPEC_EN = {
         {
             "order": "Integer 1-5, unique and strictly increasing; exactly 5 items total",
             "category": "Must be one of: product / diet / activity / sleep / state. Item 1 must be product, exactly 1 item must be activity",
-            "title": "Clear English question targeting user's specific friction point (e.g. 'Did you complete Morning C, Noon B, and Evening A?' for product; 'Did you keep staples to 1 fist per meal and vegetables to at least 2 fists total per day?' for diet; 'How many minutes of brisk walking did you complete?' for activity; 'Did you start sleep wind-down by 23:30?' for sleep; 'Afternoon energy level rating (1-5)' for state). No leading numbers, no relative words like 'today/tonight'.",
+            "title": "Clear English question targeting user's specific friction point (e.g. 'Did you complete Morning C, Noon B, and Evening A?' for product; 'Did you keep staples to 1 fist per meal and vegetables to at least 2 fists total per day?' for diet; 'How many minutes of brisk walking did you complete?' for activity; 'Did you start sleep wind-down by 23:30?' for sleep; 'Afternoon energy level rating (1=very low, 5=very high)' for state). No leading numbers, no relative words like 'today/tonight'. Score titles must state what 1 and 5 mean; never use a bare '(1-5)'.",
             "answer_type": "One of: yes_no / score_1_5 / number / text matching the question format",
             "options": "[\"Yes\", \"No\"] for yes_no; [\"1\", \"2\", \"3\", \"4\", \"5\"] for score_1_5; [] for number and text",
             "example_answer": "Realistic filled answer in English matching title. Item 1 MUST explicitly write Morning C, Noon B, and Evening A with one status for each; statuses may only be 'completed' or 'not completed', and at least one must be 'not completed'. The product example answer must contain only the three products and their statuses; do not add 'as planned', parenthetical explanations, or any other text. One-shot: 'Morning C completed; Noon B not completed; Evening A completed'. This is a copy-and-edit teaching example, not the user's actual completion record. For yes_no write 'Yes, completed'; for score_1_5 write '4 points, felt energetic'; for number include units like '25 minutes'.",
