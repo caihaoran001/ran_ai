@@ -72,10 +72,10 @@ npm run test:e2e     # Playwright
 ## DEBUGGING & DIAGNOSTICS (调试与排查指南)
 - **查看实时运行日志**：在排查消息收发、大模型调用、企微回调等问题时，**必须**在项目根目录运行 `docker logs -f --tail 100 ran-ai-backend` 查看最新日志。
 - **查真实数据/配置一律以线上为准，禁止拿本地推断**：排查任何真实业务数据（聊天记录、服务单、消息 payload、画像等）或线上配置/运行状态时，**必须查生产**，严禁用本地 `.env`、本地 DB、`.env.example` 或代码默认值推断。原因：本地库是种子/测试数据，且**阿里云 RDS 只在 ECS 的 VPC 内可达，本地连不到 RDS**。
-  - **查数据（RDS）**：SSH 进 ECS（`43.98.170.61`，见 `scratch/*remote*.py` 的 paramiko 写法或 `docs/qiwe_debugging_guide.md`）后 `docker exec -i ran_ai-backend-1 uv run python -` 跑查询脚本——只有容器内 `DATABASE_URL` 指向 RDS。
+  - **查数据（RDS）**：复用 `scratch/local_prebuilt_deploy.py` 中的 SSH 连接配置进入 ECS（`43.98.170.61`），**只借连接方式，不运行部署流程**。再用 `docker exec -i ran_ai-backend-1 uv run python -` 在后端容器内按服务单或群 ID 执行只读查询；只有容器内 `DATABASE_URL` 指向线上 RDS。
   - **查配置/运行状态**：读 ECS 上 `/root/ran_ai/.env`、`docker compose -f docker-compose.prod.yml config`、运行中容器环境或容器内 `get_settings()`；只输出目标非密钥字段，避免打印完整 `.env`。
   - 本机运行的脚本若直连 `SessionLocal()`，连的是**本地库**，仅用于纯本地开发自测，不能当线上真实记录。
-- **企微接口调试指南**：关于 QiWe API 网关、凭证与远程数据库诊断的详细指引，见 [docs/qiwe_debugging_guide.md](docs/qiwe_debugging_guide.md)。
+- **企微接口排查**：群成员和联系人昵称等接口的请求与响应，以 `backend/src/app/services/channels/qiwe.py` 当前实现为准；线上凭证按上述生产配置规则核对。
 - **修改后端代码后必须重启**：修改 `backend/src/` 下的 Python 文件后，**必须**运行 `docker restart ran-ai-backend` 重启后端服务，否则改动不会生效。这是最容易忘记的步骤，每次修改后端代码后都要检查是否需要重启。
 - **企微媒体下载单次限 512KB，必须 Range 续传**：企微媒体网关(`tpdownloadmedia`)单次响应最多返回 512KB，以 `206 Partial Content` + `Content-Range: bytes 0-524287/<total>` 分片返回（`206` 是成功码，`raise_for_status()` 不拦，截断会静默发生）。下载入站图片/文件必须按 `Range` 循环续传拼齐整份（见 `ranren_ai/attachments.py::_download_media_bytes`），否则大于 512KB 的图片（≈每张手机照片）只下到开头一截，解码后下半部渲染成灰块，视觉模型会误判"图片没传完整"。
 
