@@ -63,34 +63,29 @@ Used to retrieve WeCom global nicknames and avatar URLs for a list of `userId`s.
 
 ## 📂 3. Diagnosing Chat History & Database Records
 
-To inspect chat histories and verify if DND exclusion rules are working:
+Production data is stored in Aliyun RDS and is reachable from the ECS backend container. Use the configured SSH authentication; do not put passwords or access tokens in this guide or shell commands. The following read-only example lists recent message IDs and times without printing message content:
 
-### A. Query Remote Production Database
-Production data is stored in Aliyun RDS. To query it from the local machine:
-1. Connect via SSH to the remote ECS instance:
-   * **Host**: `43.98.170.61`
-   * **Username**: `root`
-   * **Password**: `ranAI3621715280`
-2. Execute a Python script inside the production Docker container `ran_ai-backend-1`.
-   For example, run this command to inspect the latest messages:
-   ```bash
-   sshpass -p 'ranAI3621715280' ssh -o StrictHostKeyChecking=no root@43.98.170.61 "docker exec ran_ai-backend-1 uv run python -c \"
-   import asyncio
-   from sqlalchemy import select
-   from app.db.session import SessionLocal
-   from app.models.message import Message
-   async def run():
-       async with SessionLocal() as session:
-           stmt = select(Message).order_by(Message.id.desc()).limit(10)
-           res = await session.execute(stmt)
-           for m in res.scalars().all():
-               print(f'MsgID: {m.id} | SenderID: {m.analysis_json.get(\\\"_qiwe_meta\\\", {}).get(\\\"sender_id\\\")} | SenderName: {m.analysis_json.get(\\\"_qiwe_meta\\\", {}).get(\\\"sender_name\\\")} | Content: {m.content}')
-   asyncio.run(run())
-   \""
-   ```
+```bash
+ssh root@43.98.170.61
 
-### B. Use Pre-written Scratch Scripts
-Several scripts exist in the [scratch/](file:///home/chr/桌面/ran_ai/scratch/) directory to help check logs and database states:
-* [check_all_messages_names.py](file:///home/chr/桌面/ran_ai/scratch/check_all_messages_names.py): Connects to remote ECS and prints the last 50 messages with their sender IDs and nicknames.
-* [query_remote_db.py](file:///home/chr/桌面/ran_ai/scratch/query_remote_db.py): Connects to remote ECS and queries both the DND settings and the messages within Case `RAI-20260611-024A7F`.
-* [query_latest_messages.py](file:///home/chr/桌面/ran_ai/scratch/query_latest_messages.py): Run this locally inside the `backend/` folder (`uv run python ../scratch/query_latest_messages.py`) to query the local development SQLite/PostgreSQL database.
+docker exec -i ran_ai-backend-1 uv run python - <<'PYCODE'
+import asyncio
+from sqlalchemy import select
+from app.db.session import SessionLocal
+from app.models.message import Message
+
+async def main():
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(Message.id, Message.created_at)
+            .order_by(Message.id.desc())
+            .limit(10)
+        )
+        for message_id, created_at in result.all():
+            print(message_id, created_at)
+
+asyncio.run(main())
+PYCODE
+```
+
+Check actual model fields and the relevant service-case scope before adapting the query. Local `SessionLocal()` scripts use the local development database and cannot verify production records.

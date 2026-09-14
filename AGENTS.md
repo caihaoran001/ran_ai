@@ -6,10 +6,10 @@ Stack: **FastAPI + SQLAlchemy 2.0 (async) + Alembic + PostgreSQL** (backend), **
 
 ## Companion docs — read these too
 
-This file is the primary knowledge base. Three detailed companion docs (in Chinese) hold additional context; read the relevant one before changing code:
+This file is the primary knowledge base. Read the relevant companion docs before changing code:
 
-- `backend/AGENTS.md` — backend structure + a "WHERE TO LOOK" table mapping tasks to files.
-- `frontend/AGENTS.md` — frontend structure, API endpoints, conventions.
+- `backend/AGENTS.md` — backend code map and architecture invariants.
+- `frontend/AGENTS.md` — frontend code map and architecture boundaries.
 - `docs/testing/README.md` + `docs/testing/TEST_CASES.md` — **the only entry point** when the user says "测试 / test". See Testing below.
 
 ## CONVENTIONS
@@ -49,18 +49,9 @@ npm run lint
 npm run test:e2e     # Playwright
 ```
 
-## Architecture — 子系统索引（按需细读）
+## Architecture — 按需阅读
 
-系统全景与各子系统的"为什么这么设计"已下沉到 **`backend/AGENTS.md` 的 Architecture 节**（消息分层、回复 Agent、RAG、文档/画像、档案官/成效、风控）。改动相关代码前先读那一节。这里只留一句话导航：
-
-- **消息分层**（channel-agnostic）：常驻 `ingress` 接 QiWe 回调并先落 RDS `inbound_events` → 可重启 `backend` 持续消费 → `ChannelMessage` → ~8s 聚合 → `RanrenAIEngine`（风控/入库/守卫）。发消息一律走 `channels` 抽象，不直连通道 API。
-- **回复生成**：持久化 `EngineGraph` 平铺风险/回复守卫/发送编排，内部只保留可循环复用的 **LangGraph ReAct Agent**（`agent/graph.py::generate_agent_reply` + `agent/tools/`）；两层 Graph 拓扑均在进程启动时预编译并由全部服务单共享（ReAct 按普通回复有 checkpoint、定时提醒无 checkpoint 预编译两个运行变体，不是新增一层），请求级 engine/服务单/工具绑定通过 LangGraph `Runtime.context` 隔离。每个入站 turn 使用稳定哈希 `thread_id` 写 PostgreSQL checkpoint，中断后从未完成节点恢复。聚合窗口 `inbound_events` 与外部发送 `SENDING/SENT/FAILED` 账本仍分别承担传输边界可靠性，不能被 checkpoint 替代。
-- **知识检索 / RAG**：普通用户消息的意图识别会结合近期对话产出 nullable `knowledge_query`（指代消解、补全省略、去口语化，不增加独立模型调用）：仅健康服务通用知识、产品规则、饮食/运动/执行方法问题返回字符串并检索 DB `knowledge_chunks`（排除 `source_type='case'`），实时数据/系统操作/纯上报/确认收尾/普通闲聊返回 `null` 并跳过检索；字段缺失、空字符串或非法类型才回退本轮原问题。优秀案例仅在用户明显受挫/想放弃时由 Agent 调 `search_success_case`，并在生成工具 `query` 时按同一规则改写，只查 `source_type='case'` 的向量索引。原始 `user_query` 始终保留给回复 Agent。当前没有未命中后直接读取本地 Markdown 的运行时 fallback；本地文件还必须列入 `knowledge_base/knowledge_sources.json` 的 `active` 清单并同步成 `markdown` chunk 才参与检索，历史文件只保留不默认启用。
-- **文档 / 画像**：LLM 出结构化 JSON → 模板渲 Markdown → 落库 → 下载/发送时才临时渲 `.docx`。每份新生成文件会在同一事务写入不可变的 `user_document_originals` 首稿快照（结构化 JSON + Markdown）；`user_documents` 只代表运营编辑后的当前稿，首稿不在前端展示但用于问题回溯。运行时系统提示词以 `document_service.py` 为准。
-- **成效 / 结构化抽取（档案官）**：**不在消息路径实时跑**。`archivist/` 在 scheduler 里周期扫描（DB 派生 + 行锁，去抖 ~3min）；每批未归档 delta 只调用一次 tool-calling 模型（非 LangGraph/ReAct），同一响应上报打卡/画像/成效/状态/FAQ/用户小结/优秀案例素材小结/案例候选，随后与水位线在同一事务确定性落库。历史只传结构化事实和滚动小结，不重复传已归档聊天原文；`outcome_engine.py` 退为其调用的抽取工具，`user_state_profile.py` 投影 JSONB 画像。
-- **Agent 运行观测**：回复轮次、Agent 定时提醒与档案官批次统一写 `agent_runs`；裸 `ChatOpenAI` 的每次模型调用补写 `ai_usage_logs.agent_run_id`，回复 ReAct 工具调用写 `agent_tool_calls`。观测账本用独立事务尽力保留成本和失败终态，不参与业务判断；后台 `/agent-operations` 只展示启用后的当前数据，不回填或伪造历史运行。
-- **风控**：LLM 识别风险（非关键词），高风险强制人工审核；策略见 `content_policy.py`。
-- **退群收口**：「服务中」与「客户在场」是绑定不变量——`member_left_at` 非空的服务单状态必然已完结（2026-08-21 起）。服务单的状态收口/接回恢复只能走 `service_case_activation.py` 的 `close_case_on_member_left` / `restore_case_on_member_return`（实时退群通知、进群核查、6h 对账自愈三处都挂它），严禁在别处直接赋值 `status`/`ended_at` 绕开生命周期审计判据，否则接回恢复会失灵、看板在服人数会失真。
+后端的代码入口和架构不变量统一见 `backend/AGENTS.md` 的「代码地图与任务定位」「架构不变量」；消息可靠性、回复 Agent、知识检索、文档与画像、档案官、服务单生命周期和风控都按相关小节核对。前端的布局、公开路由与请求边界见 `frontend/AGENTS.md`。改动前再以实际调用链确认当前行为。
 
 **鉴权（跨栈安全红线）**：后端 `/api/*` 需 `X-Admin-API-Key`（`BACKEND_ADMIN_API_KEY`），`/health` 与公开问卷（token）例外。该 key **只**存在于 Next 服务端 ↔ FastAPI 之间，**严禁**暴露到 `NEXT_PUBLIC_*` 或浏览器；前端同源代理后端 API。
 
@@ -75,7 +66,7 @@ npm run test:e2e     # Playwright
 - **关键词白名单局限**：Fallback 检索仅限使用 `keyword_whitelist.json` 的业务白名单。
 - **FAQ 与 Chunk 同步**：审核通过/人工维护的 FAQ 必须保存到 `knowledge_faqs` 并同步至 `knowledge_chunks`，严禁只追加到 Markdown 文件。
 - **打卡解析原则**：打卡结构化完全以问卷/表单提交的结构化字段为主，不再新增 `#打卡` 文本正则解析。
-- **提示词来源**：系统提示词完全以 `backend/src/app/services/document_service.py` 内部定义的为准，原 `手动版提示词.md` 仅为参考，不得参与运行时 LLM 呼叫。
+- **提示词来源**：系统提示词按业务场景在源码中维护，常用入口见 `backend/AGENTS.md` 的代码地图；其他场景改动前核对实际调用链。原 `手动版提示词.md` 仅供参考，不参与运行时 LLM 调用。
 - **数据库枚举按大写成员名落库**：SQLAlchemy Enum 默认存成员名（如 `REVIEWING`），API 序列化才是小写 value；新增枚举值的 Alembic 迁移必须 `ADD VALUE '大写名'`，写小写等于白加且测试测不出（生产已因此留下 `archived`/`ARCHIVED` 双值残留，2026-08-21 加 SUPERSEDED 时又踩一次）。
 
 ## DEBUGGING & DIAGNOSTICS (调试与排查指南)
@@ -83,8 +74,8 @@ npm run test:e2e     # Playwright
 - **查真实数据/配置一律以线上为准，禁止拿本地推断**：排查任何真实业务数据（聊天记录、服务单、消息 payload、画像等）或线上配置/运行状态时，**必须查生产**，严禁用本地 `.env`、本地 DB、`.env.example` 或代码默认值推断。原因：本地库是种子/测试数据，且**阿里云 RDS 只在 ECS 的 VPC 内可达，本地连不到 RDS**。
   - **查数据（RDS）**：SSH 进 ECS（`43.98.170.61`，见 `scratch/*remote*.py` 的 paramiko 写法或 `docs/qiwe_debugging_guide.md`）后 `docker exec -i ran_ai-backend-1 uv run python -` 跑查询脚本——只有容器内 `DATABASE_URL` 指向 RDS。
   - **查配置/运行状态**：读 ECS 上 `/root/ran_ai/.env`、`docker compose -f docker-compose.prod.yml config`、运行中容器环境或容器内 `get_settings()`；只输出目标非密钥字段，避免打印完整 `.env`。
-  - `scratch/query_latest_messages.py` 等直连 `SessionLocal()` 的脚本连的是**本地库**，仅用于纯本地开发自测，不能当线上真实记录。
-- **企微接口调试指南**：关于如何与 QiWe API 网关交互（包括拉取群成员、获取用户昵称等）、排查 `QIWEI_GUID` 等凭证问题、以及连接远程数据库运行诊断脚本的详细指引，请参考文档 [docs/qiwe_debugging_guide.md](file:///home/chr/桌面/ran_ai/docs/qiwe_debugging_guide.md)。
+  - 本机运行的脚本若直连 `SessionLocal()`，连的是**本地库**，仅用于纯本地开发自测，不能当线上真实记录。
+- **企微接口调试指南**：关于 QiWe API 网关、凭证与远程数据库诊断的详细指引，见 [docs/qiwe_debugging_guide.md](docs/qiwe_debugging_guide.md)。
 - **修改后端代码后必须重启**：修改 `backend/src/` 下的 Python 文件后，**必须**运行 `docker restart ran-ai-backend` 重启后端服务，否则改动不会生效。这是最容易忘记的步骤，每次修改后端代码后都要检查是否需要重启。
 - **企微媒体下载单次限 512KB，必须 Range 续传**：企微媒体网关(`tpdownloadmedia`)单次响应最多返回 512KB，以 `206 Partial Content` + `Content-Range: bytes 0-524287/<total>` 分片返回（`206` 是成功码，`raise_for_status()` 不拦，截断会静默发生）。下载入站图片/文件必须按 `Range` 循环续传拼齐整份（见 `ranren_ai/attachments.py::_download_media_bytes`），否则大于 512KB 的图片（≈每张手机照片）只下到开头一截，解码后下半部渲染成灰块，视觉模型会误判"图片没传完整"。
 

@@ -17,11 +17,13 @@
 | 渠道抽象 | `src/app/services/channels/base.py`、`registry.py` | `MessageChannel` 协议和当前渠道注册 |
 | QiWe 入站与聚合 | `src/app/services/qiwe_service/` | 回调入库、消息聚合、发送对账及非文本消息 |
 | 回复 Agent | `src/app/services/agent/graph.py` | LangGraph ReAct 回复生成与 checkpoint |
+| 回复提示词 | `src/app/services/agent/prompts.py` | 群聊回复的系统提示词与用户提示词 |
 | Agent 工具 | `src/app/services/agent/tools/factory.py`、`agent/tools/` | 工具按服务数据、提醒、生命周期、技能、知识和联网等类别注册；不要在此维护工具数量或逐项名单 |
 | 档案官 | `src/app/services/archivist/trigger.py`、`graph.py` | 调度扫描增量并写入打卡、画像、成效、FAQ 和案例相关产物 |
 | 知识检索与发布 | `src/app/services/knowledge_index.py`、`knowledge_evolution.py`、`knowledge_faq_service.py` | `knowledge_chunks` 检索、草稿审核及 FAQ 同步 |
 | 知识素材 | `src/app/services/knowledge_base/` | Markdown 素材、来源清单和关键词白名单；素材是否启用以数据库索引为准 |
 | 入营事实与文档 | `src/app/services/intake_generation.py`、`intake_facts.py`、`document_service.py` | 问卷安全信息、确定性计算、画像和交付文件生成 |
+| 文档与归档提示词 | `src/app/services/document_prompts.py`、`stage_report.py`、`archivist/extract_agent.py` | 分别定位入营文档、阶段报告与档案官的运行时提示词；改动前核对实际调用处 |
 | 文档交付 | `src/app/services/document_templates.py`、`document_delivery.py`、`docx_service.py` | 文档结构、发送审核和临时 DOCX 渲染 |
 | 定时任务 | `src/app/services/reminder_service.py` | 提醒、阶段报告和档案官扫描调度 |
 | 风控与发送策略 | `src/app/services/risk_service.py`、`content_policy.py` | 风险判断及人工审核/自动发送策略 |
@@ -42,6 +44,7 @@
 
 ### 知识检索（RAG）
 
+- 普通消息的意图分析会结合近期对话给出可空的 `knowledge_query`：知识问题改写后检索，非知识问题跳过检索；字段缺失、空字符串或类型不合法时才回退本轮原问题。回复 Agent 始终保留原始用户消息，不用改写结果替代对话内容。
 - 普通参考问答和优秀案例是两条隔离的检索语义：普通知识检索 `knowledge_chunks` 时排除 `source_type='case'`；优秀案例只在回复 Agent 判断用户明显受挫、想放弃等场景时通过 `search_success_case` 查询案例索引。两类内容不能混合返回。
 - 本地 Markdown 不是检索未命中后的运行时 fallback。素材必须先列入 `knowledge_base/knowledge_sources.json` 的启用清单，再通过 `/knowledge-base/index/sync` 同步为数据库中的 Markdown chunk，之后才参与参考问答检索；旧素材留存不等于已启用。
 - FAQ 的业务记录与检索 chunk 必须保持同步。关键词候选只能使用业务白名单；不能把任意分词结果当成业务规则或检索条件。
@@ -51,6 +54,10 @@
 - 问卷提交后，先提取安全相关信息并完成确定性事实计算，再让模型生成画像和交付文档。安全边界、目标和审核标记不能依赖模型自由发挥，也不能在文档生成完成后才补算。
 - 需要人工复核的风险标记必须阻止文档自动发送；`auto_send` 不能绕过人工复核闸门。文档模型只接收可交付的安全事实，不应把运营内部审核信息当作用户可见正文。
 - 模型输出结构化数据，由后端模板生成 Markdown 并持久化；下载或发送时才渲染临时 DOCX。每次新生成文档都要在同一事务保留不可变的首稿快照（`user_document_originals`），运营编辑只改变当前稿，不能覆盖首稿。
+
+### 服务单生命周期
+
+- 客户退群后，`member_left_at` 非空的服务单不能仍处于服务中。退群收口和回群恢复统一调用 `service_case_activation.py` 的 `close_case_on_member_left` / `restore_case_on_member_return`；实时通知、进群核查和定时对账都不能绕过生命周期审计直接改状态或结束时间。
 
 ### 档案官与实时回复解耦
 
