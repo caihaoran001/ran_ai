@@ -117,7 +117,7 @@ npm run test:e2e     # Playwright
 ## ENGINEERING PRINCIPLES (工程化纪律)
 - **死代码提醒**：本仓重构遗留死代码多，过时注释/docstring 会带偏，改前必须先 grep 确认真被调用，从严执行全局工程纪律。
 - **及时提交**：完成修复或小功能后，必须立即主动 commit，不需要等待用户确认。按逻辑拆分提交，避免大量改动堆积在工作区。
-- **提交必须署名工具+模型**：每次 commit 末尾紧挨加两行 trailer、中间不留空行：`Agent-Tool: <claude-code|codex-cli|opencode-Ox Alpha Free三选一>`（按实际所属 CLI，禁自创禁照抄，人工提交不带此行；`opencode-v4f`仅查历史用，不再用于新提交）+ `Agent-Model: <当下实际模型ID>`（填系统告知的真实值，不编）。新工具加新值先报批。查询：`git log --format='%h %s | %(trailers:key=Agent-Tool,valueonly)'`。
+- **提交必须署名工具+模型**：每次 commit 末尾紧挨加两行 trailer、中间不留空行：`Agent-Tool: <claude-code|codex-cli|opencode三选一>`（按实际所属 CLI，禁自创禁照抄，人工提交不带此行）+ `Agent-Model: <当下实际模型ID>`（填系统告知的真实值，不编）。新工具加新值先报批。查询：`git log --format='%h %s | %(trailers:key=Agent-Tool,valueonly)'`。
 - **提示词与代码改动的优先级**：业务规则默认**先改系统提示词、跑测试看效果**；提示词优化空间用尽或效果不达标，再上代码硬约束。**禁止软硬并行提交**，避免调试时无法定位是提示词没写对还是代码逻辑没走对。例外仅限风控编码解析、文档强一致性约束等必须代码兜底的场景。
 - **经验沉淀**：本文件即本项目的 `CLAUDE.md`；项目专属经验才写这里，通用写法归全局 `AGENTS.md`，写入前必须先提议并经确认。
 
