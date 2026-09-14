@@ -27,7 +27,7 @@ OpenCode 执行测试时必须覆盖三类自动化：
 - L1 必跑，除非环境阻塞。
 - L2 必跑，使用 OpenCode 自带 Playwright MCP；不得让人手工点页面代替。
 - L3 默认不跑，只有用户明确授权真实 E2E 时才跑。
-- 每个用例报告必须标明执行方式：`repo-spec`、`opencode-mcp`、`api-db-check`、`real-e2e`、`未执行` 或 `环境阻塞`。
+- 每个用例都必须按 `README.md` 的测试报告要求记录执行方式和状态；执行方式为 `repo-spec`、`opencode-mcp`、`api-db-check` 或 `real-e2e`，状态为通过 / 失败 / 跳过 / 未执行 / 环境阻塞。
 - 页面测试必须区分“页面加载成功”和“交互流程成功”。
 
 ---
@@ -39,7 +39,7 @@ OpenCode 执行测试时必须覆盖三类自动化：
 | ID | 命令/入口 | 覆盖范围 | 最低验收 |
 |---|---|---|---|
 | SPEC-01 | `cd backend && PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache uv run python -m compileall src scripts` | 后端语法与导入 | 命令通过 |
-| SPEC-02 | `cd backend && uv run pytest tests -q` | 后端 01-08 套件 | 全部通过；失败时记录具体测试名和输出 |
+| SPEC-02 | `cd backend && uv run pytest tests -q --junitxml=../docs/reviews/artifacts/<时间>-pytest.xml` | 后端 01-08 套件 | 全部通过；失败时记录具体测试名和输出 |
 | SPEC-03 | `cd frontend && npx tsc --noEmit --incremental false` | 前端类型检查 | 命令通过 |
 | SPEC-04 | `cd frontend && npm run test:e2e -- --list` | repo Playwright spec 可发现 | 能列出 `frontend/e2e/admin-smoke.spec.ts` 中的测试 |
 | SPEC-05 | `cd frontend && npm run test:e2e` | repo Playwright 基线 | 若前端服务和浏览器依赖可用则运行；否则标记环境阻塞 |
@@ -113,7 +113,7 @@ OpenCode 执行测试时必须覆盖三类自动化：
 
 - 页面加载通过和交互通过必须分开记录。
 - 若缺少特定数据，先构造可回滚测试数据；不能简单标记“未测但应可用”。
-- 截图或 trace 保存到本次执行报告引用的位置。
+- 截图或 trace 保存到 `README.md` 规定的 `-checks.txt` 中引用的位置。
 
 ---
 
@@ -158,12 +158,15 @@ OpenCode 执行测试时必须覆盖三类自动化：
 RAG-01 零费用入口：
 
 ```bash
+RAG_TEST_TS="$(date +%Y-%m-%d-%H%M%S)"
 cd backend
+mkdir -p ../docs/reviews/artifacts
 UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache \
   uv run python scripts/validate_rag_eval_cases.py
 UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache \
   uv run pytest tests/test_rag_eval_cases.py tests/test_rag_eval_runtime.py \
-  tests/test_rag_evaluation_reports.py -q
+  tests/test_rag_evaluation_reports.py -q \
+  --junitxml="../docs/reviews/artifacts/${RAG_TEST_TS}-rag-pytest.xml"
 
 cd ..
 docker compose \

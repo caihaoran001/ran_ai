@@ -26,7 +26,7 @@
 - 默认不自由调用真实 LLM；所有常规测试均使用 Mock 机制。
 - 不永久保留测试数据；自动化测试应回滚或清理数据。
 - 不把历史 `docs/reviews/` 文件中的“通过”当作本次测试结果。
-- 发现失败后继续执行其他可独立测试项，并在报告中如实记录。
+- 发现失败后继续执行其他可独立测试项，并在本次测试记录中如实记录。
 
 以下操作必须先获得用户明确授权：
 
@@ -123,9 +123,12 @@ docker compose ps
 ### 2. 后端静态与自动化测试
 
 ```bash
+TEST_TS="$(date +%Y-%m-%d-%H%M%S)"
+mkdir -p docs/reviews/artifacts
 cd backend
 PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache uv run python -m compileall src scripts
-uv run pytest tests -q
+uv run pytest tests -q \
+  --junitxml="../docs/reviews/artifacts/${TEST_TS}-pytest.xml"
 ```
 
 必须记录：
@@ -155,7 +158,7 @@ npm run test:e2e
 - `PLAYWRIGHT_BASE_URL`，默认 `http://127.0.0.1:3002`
 - `ADMIN_USERNAME` / `ADMIN_PASSWORD`，用于后台 Basic Auth
 
-若未安装浏览器或前端服务未启动，必须在报告中标记为“环境阻塞”，不得把 `--list` 写成完整浏览器交互通过。
+若未安装浏览器或前端服务未启动，必须在检查记录中标记为“环境阻塞”，不得把 `--list` 写成完整浏览器交互通过。
 
 ### 4. 契约与内容准确性检查
 
@@ -175,7 +178,7 @@ npm run test:e2e
 
 ### 5. 浏览器检查
 
-若浏览器工具可用，执行与本次改动相关的核心页面检查。测试报告必须区分：
+若浏览器工具可用，执行与本次改动相关的核心页面检查。检查记录必须区分：
 
 - 页面加载通过。
 - 交互操作通过。
@@ -185,28 +188,48 @@ npm run test:e2e
 
 ## 四、测试报告要求
 
-每次测试必须在 `docs/reviews/` 新建两个文件：
+本节是项目测试报告格式的唯一来源。每次按本文执行测试时，`docs/reviews/` 只新建一个三行 Markdown 索引；测试产物和执行明细统一放在 `docs/reviews/artifacts/`。历史报告不修改。
+
+### 1. 后端 pytest XML
+
+默认完整测试的后端 pytest 必须生成 JUnit XML，文件名为 `docs/reviews/artifacts/<时间>-pytest.xml`。本规范的完整测试命令会先进入 `backend/`，因此必须使用上一级路径：
 
 ```text
-test-execution-YYYY-MM-DD-HHMM.md
-test-summary-YYYY-MM-DD-HHMM.md
+cd backend
+mkdir -p ../docs/reviews/artifacts
+uv run pytest tests -q \
+  --junitxml=../docs/reviews/artifacts/<时间>-pytest.xml
 ```
 
-### 执行记录必须包含
+`<时间>` 在实际执行前替换为本次执行时间，例如 `2026-09-14-153000`。如果从项目根目录执行等价命令，路径应改为 `docs/reviews/artifacts/<时间>-pytest.xml`。专项 pytest 可使用带场景后缀的独立 XML 文件，避免覆盖同一批次的结果。XML 只记录 pytest 结果，不能用它代替其他检查的结果，也不能伪造 XML。
 
-- 当前 commit 和工作区状态。
-- 实际运行的每条命令。
-- 每项测试的状态：通过 / 失败 / 跳过 / 未执行 / 环境阻塞。
-- 关键输出、失败证据和可复现步骤。
-- 是否调用真实 LLM、是否产生费用、是否保留数据。
+### 2. 非 pytest 检查记录
 
-### 总结报告必须包含
+编译检查、前端类型检查、Playwright、OpenCode MCP 以及 API/数据库核对等非 pytest 检查，统一写入一个简短的文本制品：
 
-- 本次测试范围与明确未覆盖范围。
-- 发现的问题，按严重程度排序。
-- 流程通畅性结论。
-- 内容正确性与业务合理性结论。
-- 是否建议发布，以及该建议依赖哪些尚未验证的假设。
+```text
+docs/reviews/artifacts/<时间>-checks.txt
+```
+
+该记录必须包含执行前的 commit、工作区状态和服务状态，以及实际运行的每条命令、执行方式、每项的状态（通过 / 失败 / 跳过 / 未执行 / 环境阻塞）和关键证据；失败要留下可复现信息，页面加载与交互结果要分开写。截图、trace 等文件的路径也写在这里。还要注明是否调用真实 LLM、是否产生费用、是否保留数据。没有执行的检查也要写明原因，不得把检查结果写成不存在的 XML。
+
+### 3. 三行 Markdown 索引
+
+每次测试在 `docs/reviews/` 只新建一个索引文件，例如：
+
+```text
+test-index-YYYY-MM-DD-HHMMSS.md
+```
+
+索引必须严格只有三行：
+
+```text
+提交：<git commit>
+结论：通过 <数量>；失败 <数量>；跳过 <数量>；未执行 <数量>；环境阻塞 <数量>；关键失败：<没有则写“无”>
+制品：<按实际生成填写，例如 docs/reviews/artifacts/<时间>-pytest.xml；docs/reviews/artifacts/<时间>-checks.txt；其他截图或 trace 路径>
+```
+
+第二行必须包含全部五种状态和关键失败；没有对应制品时不填写虚假路径。详细命令、范围、未覆盖内容、根因判断、影响范围和发布建议写入 `-checks.txt`，不再创建旧的两份长 Markdown 报告。
 
 禁止：
 
@@ -219,7 +242,7 @@ test-summary-YYYY-MM-DD-HHMM.md
 
 1. 保留失败现场并继续执行其他独立测试。
 2. 不修改业务代码或测试预期。
-3. 在报告中写明根因判断、影响范围和建议修法。
+3. 在 `-checks.txt` 中写明根因判断、影响范围和建议修法。
 4. 向用户汇报测试结论，等待用户明确要求修复。
 
 只有用户明确说“修复”“改吧”“实现修复”后，才能进入代码修改流程。
