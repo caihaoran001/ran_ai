@@ -117,7 +117,7 @@ npm run test:e2e     # Playwright
 ## ENGINEERING PRINCIPLES (工程化纪律)
 - **死代码提醒**：本仓重构遗留死代码多，过时注释/docstring 会带偏，改前必须先 grep 确认真被调用，从严执行全局工程纪律。
 - **及时提交**：完成修复或小功能后，必须立即主动 commit，不需要等待用户确认。按逻辑拆分提交，避免大量改动堆积在工作区。
-- **提交必须署名工具**：每次 commit 的信息末尾必须单独加一行 `Agent-Tool: <值>`，取值**只能**是 `claude-code`、`codex-cli`、`opencode-v4f`、`opencode-Ox Alpha Free` 四选一（固定字面量，禁止自创 `codex`/`Codex CLI`/`gpt-5`/`opencode` 等写法，否则按工具统计时会漏）。按**你自己实际所属的 CLI** 填（2026-08-21 起本机 opencode 环境一律 `opencode-Ox Alpha Free`，此前历史用 `opencode-v4f`），**严禁照抄** git log 里历史提交的署名行（历史里有 Claude 的 `Co-Authored-By`，别跟着模仿）。用户手工提交不带此行——**缺这行即代表人工改动**，故也严禁替人工提交补写。**该行必须与末尾其它署名行（如 `Co-Authored-By`）紧挨成同一段、中间不留空行**：git 只解析提交信息**最后一个段落**为 trailer，被空行隔开就退化成正文，`--format` 查不到、统计全落空（首次落地即踩此坑）。查询：`git log --format='%h %s | %(trailers:key=Agent-Tool,valueonly)'`。**新工具想加新值，必须先向用户提出并得到确认，再登记到本行**——严禁先按自己想的署上、再回头把规则改成允许（那样统计口径由工具单方面改写，用户不看 diff 就不知道多了一类）。
+- **提交必须署名工具+模型**：每次 commit 末尾紧挨加两行 trailer、中间不留空行：`Agent-Tool: <claude-code|codex-cli|opencode-Ox Alpha Free三选一>`（按实际所属 CLI，禁自创禁照抄，人工提交不带此行；`opencode-v4f`仅查历史用，不再用于新提交）+ `Agent-Model: <当下实际模型ID>`（填系统告知的真实值，不编）。新工具加新值先报批。查询：`git log --format='%h %s | %(trailers:key=Agent-Tool,valueonly)'`。
 - **提示词与代码改动的优先级**：业务规则默认**先改系统提示词、跑测试看效果**；提示词优化空间用尽或效果不达标，再上代码硬约束。**禁止软硬并行提交**，避免调试时无法定位是提示词没写对还是代码逻辑没走对。例外仅限风控编码解析、文档强一致性约束等必须代码兜底的场景。
 - **经验沉淀**：本文件即本项目的 `CLAUDE.md`；项目专属经验才写这里，通用写法归全局 `AGENTS.md`，写入前必须先提议并经确认。
 
