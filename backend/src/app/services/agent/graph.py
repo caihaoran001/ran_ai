@@ -13,6 +13,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import Settings, get_settings
 from app.db import session as db_session_module
@@ -31,8 +32,10 @@ from app.services.agent.state import AgentRunContext, AgentState
 from app.services.agent.tools import build_agent_tools
 from app.services.channels.registry import get_current_channel
 from app.services.content_policy import get_qiwe_group_nickname, get_qiwe_nickname
+from app.services.final_review_runner import followup_prompt_block
 from app.services.knowledge_index import retrieve_indexed_knowledge_result
 from app.services.execution_commitment import agent_execution_context
+from app.services.service_case_queries import effective_service_day, service_continuation_active
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -281,23 +284,18 @@ class RanrenAgentGraph:
         是模型多一轮完整往返、上下文全量重发，差两个数量级，而且它可能压根不调。
 
         复盘待问段只在普通回复轮次注入：复盘节点自己那轮走的是另一条生成入口。
-        任何一步取不到就当没有，绝不因为这两段拼不出来而让整轮回复失败。
+        服务单不存在或数据库暂时不可用时，这两段降级为空，绝不因为背景查询失败而让
+        整轮回复失败；代码接线错误则直接暴露，避免把程序错误伪装成没有背景。
         """
         if not self.context.service_case_id:
             return "", ""
         is_en = (language or "").strip().lower() == "en"
+        tz = ZoneInfo(self.settings.reminder_timezone)
         try:
-            from app.services.final_review_runner import followup_prompt_block
-            from app.services.service_case_activation import (
-                effective_service_day,
-                service_continuation_active,
-            )
-
             async with db_session_module.SessionLocal() as session:
                 case_row = await session.get(ServiceCase, self.context.service_case_id)
                 if case_row is None:
                     return "", ""
-                tz = ZoneInfo(self.settings.reminder_timezone)
                 day = effective_service_day(case_row, datetime.now(tz), tz)
                 day_text = ""
                 if day >= 1:
@@ -319,9 +317,9 @@ class RanrenAgentGraph:
                     language=language,
                 )
                 return day_text, followup
-        except Exception:
+        except SQLAlchemyError:
             logger.exception(
-                "Failed to build case prompt extras service_case_id=%s",
+                "Database unavailable while building case prompt extras service_case_id=%s",
                 self.context.service_case_id,
             )
             return "", ""

@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import secrets
 from io import BytesIO
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -1952,6 +1953,105 @@ async def test_graph_runs_agent_tools_loop(db_session):
     assert model.calls[0][1].content.rfind("【本次提问】") > model.calls[0][1].content.rfind("【可用 Skill】")
     assert "今天没排便体重还涨了" not in model.calls[0][0].content
     assert "晚餐能吃荞麦面吗" not in model.calls[0][0].content
+
+
+@pytest.mark.asyncio
+async def test_case_prompt_extras_include_service_day_and_final_review_followup(
+    db_session, monkeypatch
+):
+    """完整走过普通回复背景查询，确保服务阶段和待问追问都能注入。"""
+    from app.core.config import get_settings
+    from app.services.final_review_runner import format_question_for_send
+    from app.services.final_review_scripts import Q_NEXT_GOAL, get_active_script
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "final_review_enabled", True, raising=False)
+    case = await _case(db_session)
+    tz = ZoneInfo(settings.reminder_timezone)
+    case.service_plan_start_date = datetime.now(tz).date() - timedelta(days=25)
+    monkeypatch.setattr(settings, "final_review_case_ids", str(case.id), raising=False)
+    await db_session.flush()
+
+    script = await get_active_script(db_session, language="zh")
+    trigger_question = script.question(Q_NEXT_GOAL)
+    assert trigger_question is not None
+    db_session.add(
+        Message(
+            service_case_id=case.id,
+            group_id=case.group_id,
+            direction=MessageDirection.OUTBOUND,
+            sender_type=MessageSenderType.SYSTEM,
+            message_type="text",
+            content=format_question_for_send(trigger_question, language="zh"),
+            purpose=MessagePurpose.CHAT,
+            status=MessageStatus.SENT,
+        )
+    )
+    await db_session.flush()
+
+    graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=case.id, trigger_id=127),
+        settings=settings,
+        chat_model=FakeToolCallingModel([]),
+    )
+    service_day_context, final_review_followup = await graph._case_prompt_extras(
+        language="zh"
+    )
+
+    assert "第 26 天" in service_day_context
+    assert "改善哪" in final_review_followup
+
+
+@pytest.mark.asyncio
+async def test_case_prompt_extras_only_swallows_database_errors(db_session, monkeypatch):
+    """数据库短暂不可用可以降级，但程序错误必须继续抛出。"""
+    import app.services.agent.graph as graph_module
+    from app.core.config import get_settings
+    from sqlalchemy.exc import SQLAlchemyError
+
+    settings = get_settings()
+    case = await _case(db_session)
+    graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=case.id, trigger_id=128),
+        settings=settings,
+        chat_model=FakeToolCallingModel([]),
+    )
+
+    class FailingSession:
+        async def __aenter__(self):
+            raise SQLAlchemyError("database unavailable")
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+    monkeypatch.setattr(
+        graph_module.db_session_module,
+        "SessionLocal",
+        lambda: FailingSession(),
+    )
+    assert await graph._case_prompt_extras(language="zh") == ("", "")
+
+
+@pytest.mark.asyncio
+async def test_case_prompt_extras_does_not_hide_programming_errors(db_session, monkeypatch):
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    case = await _case(db_session)
+    graph = RanrenAgentGraph(
+        context=AgentRunContext(service_case_id=case.id, trigger_id=129),
+        settings=settings,
+        chat_model=FakeToolCallingModel([]),
+    )
+
+    async def broken_followup(*args, **kwargs):
+        raise RuntimeError("broken final review wiring")
+
+    monkeypatch.setattr(
+        "app.services.agent.graph.followup_prompt_block", broken_followup
+    )
+    with pytest.raises(RuntimeError, match="broken final review wiring"):
+        await graph._case_prompt_extras(language="zh")
 
 
 @pytest.mark.asyncio
