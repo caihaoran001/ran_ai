@@ -26,7 +26,7 @@ from app.models.message import (
     MessageSenderType,
     MessageStatus,
 )
-from app.services.archivist.graph import run_archivist
+from app.services.archivist.graph import ArchivistPipeline, run_archivist
 from app.services.document_prompts import _stage_report_method_prompt
 from app.services.stage_report import (
     _followup_advice_requirement,
@@ -1209,6 +1209,229 @@ async def test_archivist_records_a_final_review_answer(db_session, monkeypatch):
     # 不在这批增量里，只剩这份清单能把编号对回选项。
     assert '"number": 1' in fake.prompts[-1]
     assert '"number": 2' in fake.prompts[-1]
+
+
+@pytest.mark.asyncio
+async def test_archivist_restores_final_review_order_with_interleaved_benefit_notice(
+    db_session, monkeypatch
+):
+    """跨批次的 R4→权益通知→用户编号回复要按真实发送顺序还原给模型。"""
+    from app.services.final_review_scripts import get_active_script
+
+    case, message, progress = await _archivist_case(db_session, monkeypatch)
+    base = datetime(2026, 9, 15, 2, 39, tzinfo=timezone.utc)
+    message.content = "6"
+    message.created_at = base + timedelta(minutes=5)
+    script = await get_active_script(db_session, language="zh")
+    question = script.question(Q_SERVICE_INTENT)
+    assert question is not None
+    r4 = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content=f"{question['text']}\n1—6 请回复编号",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.SENT,
+        created_at=base,
+        sent_at=base + timedelta(seconds=22),
+        analysis_json={
+            "final_review": {
+                "node": "benefit",
+                "questions": [question],
+                "script_version_no": script.version_no,
+            }
+        },
+    )
+    benefit = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content="你这28天的权益已经可以领了：240元复购券（240元，5天内有效，满600-240）",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.SENT,
+        created_at=base + timedelta(minutes=4),
+        sent_at=base + timedelta(minutes=4, seconds=19),
+        analysis_json={
+            "final_review": {
+                "node": "benefit_notice",
+                "questions": [],
+                "script_version_no": script.version_no,
+            }
+        },
+    )
+    db_session.add_all([r4, benefit])
+    await db_session.flush()
+
+    fake = _FakeReportingModel(
+        [
+            {
+                "name": "report_final_review_answer",
+                "args": {
+                    "question_id": Q_SERVICE_INTENT,
+                    "answer_status": STATUS_ANSWERED,
+                    "raw_text": "6",
+                    "option_keys": ["undecided"],
+                    "evidence_message_id": message.id,
+                },
+                "id": "r4-answer",
+            }
+        ]
+    )
+    result = await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+
+    prompt = fake.prompts[-1]
+    r4_pos = prompt.index(f"[{r4.id}] 系统提醒")
+    benefit_pos = prompt.index(f"[{benefit.id}] 系统提醒")
+    user_pos = prompt.index(f"[{message.id}] 用户：6")
+    assert r4_pos < benefit_pos < user_pos
+    assert "系统提醒：可回答题" in prompt[r4_pos:benefit_pos]
+    assert "系统提醒：通知、无需回答" in prompt[benefit_pos:user_pos]
+    assert "仅供上下文" in prompt[r4_pos:benefit_pos]
+    assert "权益通知（无需回答）" not in prompt[benefit_pos:user_pos]
+    # 系统提醒进入模型文本，但不进入输入账本或推动水位线。
+    assert result.input_message_ids == [message.id]
+    assert progress.last_archived_message_id == message.id
+    stored = await load_progress(db_session, service_case_id=case.id)
+    assert stored.selected_keys(Q_SERVICE_INTENT) == ["undecided"]
+
+
+@pytest.mark.asyncio
+async def test_archivist_system_context_cannot_be_user_checkin_evidence(
+    db_session, monkeypatch
+):
+    """模型误把系统提醒 ID 当打卡证据时，系统文案不能变成用户事实。"""
+    from app.models.checkin import Checkin
+
+    case, message, progress = await _archivist_case(db_session, monkeypatch)
+    message.content = "6"
+    message.created_at = datetime(2026, 9, 15, 2, 44, tzinfo=timezone.utc)
+    system = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content="系统提醒：请回复编号",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.SENT,
+        created_at=datetime(2026, 9, 15, 2, 39, tzinfo=timezone.utc),
+        sent_at=datetime(2026, 9, 15, 2, 39, 22, tzinfo=timezone.utc),
+    )
+    db_session.add(system)
+    await db_session.flush()
+    target_date = "2026-09-15"
+    fake = _FakeReportingModel(
+        [
+            {
+                "name": "report_checkin",
+                "args": {
+                    "target_date": target_date,
+                    "weight": "6斤",
+                    "evidence_message_ids": [system.id],
+                },
+                "id": "system-evidence",
+            }
+        ]
+    )
+
+    result = await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+    checkin = await db_session.scalar(
+        select(Checkin).where(
+            Checkin.service_case_id == case.id,
+            Checkin.deleted_at.is_(None),
+        )
+    )
+    assert checkin is None
+    assert result.input_message_ids == [message.id]
+    assert progress.last_archived_message_id == message.id
+
+
+@pytest.mark.asyncio
+async def test_archivist_keeps_an_earlier_question_for_a_delayed_reply(
+    db_session, monkeypatch
+):
+    """提问已在前一批过水位线时，有限上下文仍能带上它的旧时间。"""
+    from app.services.final_review_scripts import get_active_script
+
+    case, _old_message, progress = await _archivist_case(db_session, monkeypatch)
+    base = datetime(2026, 9, 15, 2, 44, tzinfo=timezone.utc)
+    script = await get_active_script(db_session, language="zh")
+    question = script.question(Q_SERVICE_INTENT)
+    assert question is not None
+    r4 = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content=f"{question['text']}\n1—6 请回复编号",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.SENT,
+        # 历史记录没有 sent_at，必须谨慎回退到 created_at。
+        created_at=base - timedelta(hours=20),
+        sent_at=None,
+        analysis_json={
+            "final_review": {
+                "node": "benefit",
+                "questions": [question],
+                "script_version_no": script.version_no,
+            }
+        },
+    )
+    db_session.add(r4)
+    await db_session.flush()
+    reply = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="6",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        created_at=base,
+    )
+    db_session.add(reply)
+    await db_session.flush()
+    progress.last_archived_message_id = r4.id
+    await db_session.flush()
+
+    fake = _FakeReportingModel(
+        [
+            {
+                "name": "report_final_review_answer",
+                "args": {
+                    "question_id": Q_SERVICE_INTENT,
+                    "answer_status": STATUS_ANSWERED,
+                    "raw_text": "6",
+                    "option_keys": ["undecided"],
+                    "evidence_message_id": reply.id,
+                },
+                "id": "delayed-r4-answer",
+            }
+        ]
+    )
+    result = await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+
+    prompt = fake.prompts[-1]
+    assert prompt.index(f"[{r4.id}] 系统提醒") < prompt.index(
+        f"[{reply.id}] 用户：6"
+    )
+    assert "北京时间 2026-09-14 14:44:00" in prompt
+    assert result.input_message_ids == [reply.id]
+    assert progress.last_archived_message_id == reply.id
+    stored = await load_progress(db_session, service_case_id=case.id)
+    assert stored.selected_keys(Q_SERVICE_INTENT) == ["undecided"]
 
 
 @pytest.mark.asyncio
