@@ -1,0 +1,10 @@
+提交：7c8dbe11bd4d69aaaf3b5f2be0f8374b8dbc4d11；执行前提交：b4ccb94。
+执行前工作区：仅本任务3个后端文件待提交；另有用户原有 .omo、PRD、历史 reviews/artifacts 等未跟踪文件。执行前 docker compose ps：本地 backend、frontend、postgres 均运行。
+范围：档案官恢复成功发送的系统提醒上下文、消息顺序、用户证据及水位线，专项 Mock 回归与生产只读重建；未执行项目完整测试/真实模型质量评估。
+通过：/home/chr/.local/bin/uv run --with asyncpg --with python-dotenv --with sqlalchemy python /tmp/ran_ai_archivist_regression_181824.py；临时脚本由 scratch/run_review_regression.py 派生，仅固定项目根目录并加入 --junitxml。隔离本地 ran_ai_test 数据库先 alembic upgrade head，再运行七套相关测试，结果 320 passed、0 failed、0 skipped，XML 为 docs/reviews/artifacts/2026-09-15-181824-archivist-pytest.xml；测试用例清理业务记录，保留本地测试库结构。
+通过：PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache uv run --frozen python -m compileall src/app/services/archivist/graph.py src/app/services/archivist/extract_agent.py；git diff --check。
+通过：docker restart ran-ai-backend；重启后 docker exec ran-ai-backend python -c 访问 http://localhost:8000/health 返回 200。实时日志按 timeout 5s docker logs -f --tail 100 ran-ai-backend 查看，启动阶段后恢复正常。首次健康请求恰逢启动，连接拒绝；复查返回 200。
+通过：scratch/local_prebuilt_deploy.py 派生的临时部署脚本只补排除 ./docs、./scratch 两个本地非运行目录；npm run build 本地成功，部署包 29.1MB，上传前后 SHA256 一致，生产 backend/frontend 构建、迁移、checkpoint、容器切换及对外健康检查均通过，后端/前端最终均 200；停机窗口约 150 秒。未改生产 .env/docker-compose.prod.yml。/root/ran_ai/DEPLOYED_VERSION 截止 7c8dbe1，容器代码含上下文恢复标记。
+通过：复用 scratch/local_prebuilt_deploy.py 的 SSH 方式，在生产 backend 容器内以 uv run python - 只读执行 ArchivistPipeline._load_context()，临时将服务单388水位设为62087、批次限制1。模型输入重建为 62088助教→62722(10:39:22可回答题，选项6=还没想好)→62724(10:43:19通知、无需回答)→62725用户6；input_message_ids=[62088,62725]，watermark_to=62725，系统消息没有推进水位或进入聊天输入账本。未调用 run_extract_agent、未运行 _commit。
+通过：生产只读确认 388 的既有错误打卡 checkin_id=2373 仍含 document:1048:4='6'，证据消息62725；该消息尚无 final_review_answers 记录。历史错误需要单独的数据修正方案，当前代码发布不会回写旧记录。
+未执行：真实 LLM 质量评估、向真实群发消息、修改生产业务数据；本次没有付费 API 调用、没有费用、没有新生产数据。没有运行完整后端/前端/浏览器测试，因为此次为后端档案官专项修复。
