@@ -406,3 +406,54 @@ async def update_day28_benefits_api(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await session.commit()
     return _benefit_setting(config)
+
+
+class CheckinRewardTierEntry(BaseModel):
+    days: int
+    reward_code: str
+    reward_name: str
+    quantity: int
+    unit: str
+    enabled: bool = True
+
+
+class CheckinRewardTierSetting(BaseModel):
+    tiers: list[CheckinRewardTierEntry] = []
+
+
+class CheckinRewardTierUpdate(BaseModel):
+    tiers: list[CheckinRewardTierEntry]
+
+
+def _checkin_reward_tier_setting(config) -> CheckinRewardTierSetting:
+    return CheckinRewardTierSetting(
+        tiers=[CheckinRewardTierEntry(**tier.to_dict()) for tier in config.tiers]
+    )
+
+
+@router.get("/settings/checkin-reward-tiers", response_model=CheckinRewardTierSetting)
+async def get_checkin_reward_tiers_api(
+    session: AsyncSession = Depends(get_session),
+) -> CheckinRewardTierSetting:
+    from app.services.checkin_reward_settings import get_reward_tier_config
+
+    try:
+        config = await get_reward_tier_config(session)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=f"打卡奖励档位配置无法解析：{exc}") from exc
+    return _checkin_reward_tier_setting(config)
+
+
+@router.post("/settings/checkin-reward-tiers", response_model=CheckinRewardTierSetting)
+async def update_checkin_reward_tiers_api(
+    payload: CheckinRewardTierUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> CheckinRewardTierSetting:
+    from app.services.checkin_reward_settings import set_reward_tier_config
+
+    try:
+        config = await set_reward_tier_config(session, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await session.commit()
+    return _checkin_reward_tier_setting(config)

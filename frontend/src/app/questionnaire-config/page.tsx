@@ -5,6 +5,7 @@ import { RiskReplyConfig } from "./risk-reply-config";
 import { StaffFilterConfig } from "./staff-filter-config";
 import { QiweAccountConfig } from "./qiwe-account-config";
 import { VideoPushConfig } from "./video-push-config";
+import { CheckinRewardTierConfig } from "./checkin-reward-tier-config";
 import { Day28BenefitConfig } from "./day28-benefit-config";
 import { FinalReviewScriptConfig } from "./final-review-script-config";
 
@@ -39,6 +40,7 @@ export default async function QuestionnaireConfigPage() {
         <QiweAccountConfig />
         <StageReportConfig />
         <VideoPushConfig />
+        <CheckinRewardTierConfig />
         <Day28BenefitConfig />
         <FinalReviewScriptConfig />
         <RiskReplyConfig />

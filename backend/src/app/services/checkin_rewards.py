@@ -71,6 +71,52 @@ REWARD_TIER_BY_DAYS = {tier.days: tier for tier in REWARD_TIERS}
 PROGRESS_THRESHOLDS = {2: 3, 6: 7, 13: 14, 27: 28}
 
 
+async def _configured_reward_tiers(session: AsyncSession) -> tuple[RewardTier, ...]:
+    """读后台档位配置（含关闭的档位）；非法时回落到默认常量，缺配置由 get 兜底。"""
+    try:
+        from app.services.checkin_reward_settings import get_reward_tier_config
+
+        config = await get_reward_tier_config(session)
+    except ValueError:
+        logger.warning("打卡奖励档位配置非法，已回落到默认四档。", exc_info=True)
+        return REWARD_TIERS
+    return tuple(
+        RewardTier(
+            days=tier.days,
+            reward_code=tier.reward_code,
+            reward_name=tier.reward_name,
+            quantity=tier.quantity,
+            unit=tier.unit,
+        )
+        for tier in config.tiers
+    )
+
+
+async def _active_reward_tiers(session: AsyncSession) -> tuple[RewardTier, ...]:
+    """只返回开关打开的档位；已获资格不受开关影响由调用方保证。"""
+    try:
+        from app.services.checkin_reward_settings import get_reward_tier_config
+
+        config = await get_reward_tier_config(session)
+    except ValueError:
+        logger.warning("打卡奖励档位配置非法，已回落到默认四档。", exc_info=True)
+        return REWARD_TIERS
+    return tuple(
+        RewardTier(
+            days=tier.days,
+            reward_code=tier.reward_code,
+            reward_name=tier.reward_name,
+            quantity=tier.quantity,
+            unit=tier.unit,
+        )
+        for tier in config.active_tiers()
+    )
+
+
+async def _reward_tier_map(session: AsyncSession) -> dict[int, RewardTier]:
+    return {tier.days: tier for tier in await _configured_reward_tiers(session)}
+
+
 @dataclass(frozen=True, slots=True)
 class RewardReconciliation:
     complete_checkin_days: int
@@ -306,7 +352,8 @@ async def reconcile_case_rewards(
     for row in stale_progress:
         row.notification_status = "skipped"
     new_rows: list[CheckinRewardQualification] = []
-    for tier in REWARD_TIERS:
+    active_tiers = await _active_reward_tiers(session)
+    for tier in active_tiers:
         if complete_checkin_days < tier.days or tier.days in existing:
             continue
         row = CheckinRewardQualification(
@@ -331,7 +378,13 @@ async def reconcile_case_rewards(
         program.choice_updated_at = datetime.now(timezone.utc)
 
     new_progress_threshold = None
-    next_tier_days = PROGRESS_THRESHOLDS.get(complete_checkin_days)
+    # 进度提醒只面向仍开着的档位：threshold = tier.days - 1，即"再完成 1 天"。
+    # 已产生的进度提醒不受开关影响（stale 逻辑在上文只按天数收敛）。
+    active_days = {tier.days for tier in active_tiers}
+    candidate_next = complete_checkin_days + 1
+    next_tier_days = (
+        candidate_next if candidate_next in active_days and candidate_next not in existing else None
+    )
     if next_tier_days is not None and next_tier_days not in existing:
         progress = await session.scalar(
             select(CheckinRewardProgressNotice).where(
@@ -403,6 +456,10 @@ async def render_qualification_notice(
     unsent = [row for row in all_rows if row.shipment_id not in shipped_ids]
     active_shipment = await _open_shipment(session, service_case_id=service_case_id)
     highest = max(row.tier_days for row in newly_qualified)
+    active_tiers = await _active_reward_tiers(session)
+    max_active_days = (
+        max(tier.days for tier in active_tiers) if active_tiers else highest
+    )
     lines = [
         f"🎉 恭喜你累计完成 {highest} 天完整打卡！",
         f"本次新获得：{_qualification_display(newly_qualified)}",
@@ -411,7 +468,7 @@ async def render_qualification_notice(
     ]
     if active_shipment is not None:
         lines.append("新奖励已加入你当前待寄出的包裹，由班主任统一安排。")
-    elif highest < 28:
+    elif highest < max_active_days:
         lines.extend(
             [
                 "请选择奖励怎么寄：",
@@ -427,8 +484,16 @@ async def render_qualification_notice(
     return "\n".join(lines)
 
 
-def render_progress_notice(row: CheckinRewardProgressNotice) -> str:
-    tier = REWARD_TIER_BY_DAYS[row.next_tier_days]
+async def render_progress_notice(
+    session: AsyncSession, row: CheckinRewardProgressNotice
+) -> str:
+    tier_map = await _reward_tier_map(session)
+    tier = tier_map.get(row.next_tier_days) or REWARD_TIER_BY_DAYS.get(row.next_tier_days)
+    if tier is None:
+        return (
+            f"你已经累计完成 {row.threshold_days} 天完整打卡，"
+            "再完成 1 天，就能获得下一档奖励～"
+        )
     return (
         f"你已经累计完成 {row.threshold_days} 天完整打卡，"
         f"再完成 1 天，就能获得 {tier.display}～"
@@ -636,7 +701,7 @@ async def _deliver_pending_progress_notices(
             )
             if row is None:
                 return sent
-            content = render_progress_notice(row)
+            content = await render_progress_notice(session, row)
             message = await _begin_notice_send(
                 session,
                 service_case=service_case,

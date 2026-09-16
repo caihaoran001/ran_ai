@@ -165,7 +165,18 @@ async def _reward_status(session, *, service_case_id: int) -> dict[str, Any]:
     }
 
 
-def _public_payload(status: dict[str, Any]) -> dict[str, Any]:
+async def _display_reward_tiers(session) -> list:
+    try:
+        from app.services.checkin_reward_settings import get_reward_tier_config
+
+        config = await get_reward_tier_config(session)
+        tiers = list(config.tiers)
+    except ValueError:
+        tiers = list(REWARD_TIERS)
+    return tiers or list(REWARD_TIERS)
+
+
+async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
     program: CheckinRewardProgram | None = status["program"]
     active: CheckinRewardShipment | None = status["active_shipment"]
     qualifications: list[CheckinRewardQualification] = status["qualifications"]
@@ -202,7 +213,7 @@ def _public_payload(status: dict[str, Any]) -> dict[str, Any]:
         "no_reward": "尚未获得奖品",
     }[operational_status]
     reward_tiers = []
-    for tier in REWARD_TIERS:
+    for tier in await _display_reward_tiers(session):
         qualification = qualifications_by_tier.get(tier.days)
         shipment = (
             shipments_by_id.get(qualification.shipment_id)
@@ -292,8 +303,9 @@ def build_reward_shipping_tools(
             )
             if service_case is None:
                 return {"ok": False, "error": "当前服务单不存在或已删除。"}
-            return _public_payload(
-                await _reward_status(session, service_case_id=service_case.id)
+            return await _public_payload(
+                session,
+                await _reward_status(session, service_case_id=service_case.id),
             )
 
     async def manage_reward_shipping(
@@ -326,7 +338,7 @@ def build_reward_shipping_tools(
 
             status = await _reward_status(session, service_case_id=service_case.id)
             if action == "get_status":
-                return _public_payload(status)
+                return await _public_payload(session, status)
 
             source = await _current_user_source(session, context)
             if source is None:
@@ -356,8 +368,9 @@ def build_reward_shipping_tools(
                 program.choice_updated_at = now
                 await session.commit()
                 return {
-                    **_public_payload(
-                        await _reward_status(session, service_case_id=service_case.id)
+                    **await _public_payload(
+                        session,
+                        await _reward_status(session, service_case_id=service_case.id),
                     ),
                     "recorded": "accumulate",
                     "reply_instruction": "已记下继续累积，告诉用户等下一阶段达标后再一起确认寄送。",
@@ -427,7 +440,7 @@ def build_reward_shipping_tools(
                     session, service_case_id=service_case.id
                 )
                 return {
-                    **_public_payload(refreshed),
+                    **await _public_payload(session, refreshed),
                     "recorded": "save_shipping_info",
                     "reply_instruction": "完整收件信息已保存；未明确要求立即寄出时，不要声称已经申请发货。",
                 }
@@ -477,7 +490,7 @@ def build_reward_shipping_tools(
             await session.commit()
             refreshed = await _reward_status(session, service_case_id=service_case.id)
             return {
-                **_public_payload(refreshed),
+                **await _public_payload(session, refreshed),
                 "recorded": "ship_now",
                 "reply_instruction": "收件信息已齐，告诉用户已记下，等待班主任安排寄出。",
             }
