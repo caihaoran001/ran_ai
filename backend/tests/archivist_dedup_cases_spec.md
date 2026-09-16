@@ -70,6 +70,8 @@
 | B2 | outcome_events（sleep_change / weight_change 任何 event_type） | MUST_NOT_DUPLICATE | 历史事实在 archive_context 中，模型不得重报；DB 去重键 anchor 不同故拦不住，靠模型纪律 |
 | B2 | profile/state 事实 | MUST_NOT_DUPLICATE | 同上 |
 | B2 | user_summary（memory） | MUST_NOT_DUPLICATE | 无新事实不得重写相同文本；文本相同则 commit 本来也不写 |
+| B2 | state(user_commitment, 如“我会继续坚持”) | ALLOWED（允许 0-or-1 行） | 感谢批中的新用户承诺是 report_state_fact 规则内合法事实，报恰好一行 active 不算噪音 |
+| B2 | correction（staff 对助教回答的展开补充） | ALLOWED（本批无 staff 消息时期望 0 行） | 若批内出现 staff 展开补充助教回答，属 report_correction 规则内可报情形，不得判噪音；本批无 staff 消息故实际 0 行 |
 | B2 | 水位线 | MUST_UPDATE | 即使零产物也推进到 103，避免下轮重复处理 |
 
 ---
@@ -90,9 +92,9 @@
 | 批次 | 表 / 事实 | 期望 | 说明 |
 | --- | --- | --- | --- |
 | B1 | checkins(2026-09-03: weight=172斤) | MUST_ADD | |
-| B1 | outcome_events(weight_change, anchor=201) | MUST_ADD | |
+| B1 | outcome_events(weight_change, anchor=201) | MUST_NOT_DUPLICATE | 首个无基线裸体重数不是维度变化（report_outcome 只记变化），不得报；checkin 行仍 MUST_ADD，体重趋势读 checkins 故安全 |
 | B2 | checkins(2026-09-03: weight) | MUST_UPDATE | chat-over-chat 最新值赢 → 168斤，不新增行；`evidence_message_ids` 追加 203 |
-| B2 | outcome_events(weight_change, anchor=203) | MUST_ADD | 新事件行（不同 anchor），value=168斤；旧 172斤行保留作账本历史 |
+| B2 | outcome_events(weight_change, anchor=203) | MUST_NOT_DUPLICATE | 读数纠偏（秤没放平 172→168）不是身体变化，不得报新事件；checkin MUST_UPDATE 到 168 不变 |
 | B2 | state 事实（心态崩 active） | MUST_UPDATE | 203 明确解除 → 同 state_type 报 status=resolved；投影只留最新 |
 | B2 | B1 的 172斤 checkin 值 | MUST_NOT_MISS | 不得保留 172斤为当前值（会被误判反弹） |
 
@@ -138,9 +140,9 @@
 | 批次 | 表 / 事实 | 期望 | 说明 |
 | --- | --- | --- | --- |
 | B1 | checkins(2026-09-06: weight/sleep) | MUST_ADD | |
-| B1 | outcome_events(weight_change, anchor=401) | MUST_ADD | |
+| B1 | outcome_events(weight_change, anchor=401) | MUST_NOT_DUPLICATE | 首个无基线裸体重数不是维度变化（report_outcome 只记变化），不得报；checkin 行仍 MUST_ADD，体重趋势读 checkins 故安全 |
 | B2 | checkins(2026-09-07: weight=168斤) | MUST_ADD（新日期行） | 跨天是不同行；行内是新建 |
-| B2 | outcome_events(weight_change, anchor=402) | MUST_NOT_DUPLICATE | 无变化的重复数值不是“变化账本”事件；模型不得报 unchanged 以外的任何新事件；若报 unchanged 则允许恰好一行（runner 断言：weight_change 在 B2 至多新增 0 行，推荐 0 行） |
+| B2 | outcome_events(weight_change, anchor=402, event_type=unchanged) | 允许新增 0-or-1 行（推荐 1 行） | 次日同值上报属于“明确的没变化”，是合法新观察，可报恰好一行 unchanged；除 unchanged 外不得报其他方向 |
 | B2 | B1 的 outcome 行 | MUST_NOT_DUPLICATE | 不得复制 B1 事件（不同 anchor 下靠模型纪律） |
 
 ---
@@ -257,6 +259,7 @@
 | B1 | checkins(2026-09-14: product_schedule.night_a=未喝) | MUST_ADD | |
 | B2 | state(同 state_type, status=resolved) | MUST_UPDATE | 投影终态为 resolved；不得新增第二个 active |
 | B2 | checkins(2026-09-16: product_schedule.night_a=已喝) | MUST_ADD | 新日期行 |
+| B2 | checkins(2026-09-16: night_a=已喝 ← “昨天晚A正常喝了”) | 待产品决策（record-vs-drop，自动评分必须 flag） | 明确归属昨天的事实不得记到今天作 taken-today；是回补昨天行还是丢弃待产品决策，与上一行 MUST_ADD 冲突，特此 flag 而非静默通过 |
 | B2 | outcome 胃胀 worsened 重报 | MUST_NOT_DUPLICATE | 已归档的负向事件不得复制 |
 | B3 | 任何 state/profile/outcome 新行 | MUST_NOT_DUPLICATE | 无新信息；水位线仍推进到 903 |
 
@@ -307,7 +310,7 @@
 | 批次 | 表 / 事实 | 期望 | 说明 |
 | --- | --- | --- | --- |
 | B1 | FAQ 草稿（general：午B随餐口径） | MUST_ADD | 一问一答、结论先行；staff_message_id=1103 本批合法 |
-| B2 | FAQ 草稿（personal：该用户出差安排） | MUST_ADD | 只适用当前用户 → scope=personal，直接写用户档案，不进通用审核 |
+| B2 | FAQ 草稿（出差午B安排：保温杯温水口径） | MUST_ADD（general/personal 任一 scope 均通过，不得因 general 判失败） | 触发虽个人，但答案文本可被任何人复用（保温杯温水喝），属可通用答案；任一 scope 通过即可 |
 | B2 | B1 通用稿复制 | MUST_NOT_DUPLICATE | 不得把 B1 问答复制成第二稿 |
 | B3 | 任何 FAQ/个人指导新行 | MUST_NOT_DUPLICATE | 无班主任新回答；水位线推进到 1106 |
 
@@ -336,6 +339,8 @@
 | B1 | user_summary + case_material_summary | MUST_ADD | 首次沉淀；融合新事实 |
 | B1 | case 候选草稿 | MUST_ADD 允许（显著持续+证据链完整时） | 需本批正向成效 + source IDs 合法（1201 本批）；`existing_case_summaries` 为空故不判重复 |
 | B2 | user_summary / case_material_summary | MUST_NOT_DUPLICATE | 无新事实；即使模型上报相同文本 commit 也不写（文本相等） |
+| B2 | state(user_commitment, 如“我会继续坚持”) | ALLOWED（允许 0-or-1 行） | 同 G01-B2：感谢批新承诺可报一行 active，不算噪音 |
+| B2 | correction（staff 对助教回答的展开补充） | ALLOWED（本批无 staff 消息时期望 0 行） | 同 G01-B2：规则内可报情形不得判噪音；本批实际 0 行 |
 | B2 | outcome / case 新行 | MUST_NOT_DUPLICATE | 感谢批；历史成效在 timeline 中不得重报；无本批正向成效 → case 门禁（`positive_outcome_written==0`）直接拦 |
 | B3 | outcome（weight_result/positive_body_signal 等新进展） | MUST_ADD | 新数值+新行动，是新事件 |
 | B3 | case_material_summary | MUST_UPDATE | 融合 B3 新进展后的完整文本（覆盖旧文本，不断链） |
@@ -356,3 +361,13 @@
 5. correction/faq/case/memory 断言查对应表行数变化量（delta），不要查全量。
 6. 每个 Batch 跑完后显式推进水位线并重建 `archive_context`，再跑下一批，
    以真实 exercise 水位线推进逻辑。
+
+---
+
+## Changelog（冻结后修正）
+
+1. 2026-09-16：G02-B1 outcome(weight_change/201) 与 G04-B1 outcome(weight_change/401) 由 MUST_ADD 改为 MUST_NOT_DUPLICATE——首个无基线裸体重数不是维度变化（report_outcome 只记变化）；checkin 行仍 MUST_ADD，体重趋势读 checkins 故安全。
+2. 2026-09-16：G02-B2 outcome(weight_change/203) 由 MUST_ADD 改为 MUST_NOT_DUPLICATE——读数纠偏（秤没放平 172→168）不是身体变化；checkin MUST_UPDATE 到 168 不变。
+3. 2026-09-16：G04-B2 outcome(weight_change/402) 由 at-most-0（推荐 0 行）改为允许 0-or-1 行（推荐 1 行 unchanged）——次日同值上报是合法新观察。
+4. 2026-09-16：G11-B2 FAQ 由 personal-only 改为 general ACCEPTED（general/personal 任一 scope 均通过）——触发虽个人，但答案文本可被任何人复用（保温杯温水口径）。
+5. 2026-09-16：G01-B2 / G12-B2 新增 ALLOWED 行——感谢批新用户承诺（user_commitment）可报一行，staff 对助教回答的展开补充可报 correction，均为规则内情形，不得判噪音；G09-B2 新增回溯事实规则——明确归属昨天的事实不得记作今天已喝，record-vs-drop 待产品决策，自动评分 flag 而非静默通过。

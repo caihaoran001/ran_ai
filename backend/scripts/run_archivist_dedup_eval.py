@@ -483,6 +483,53 @@ def _jsonable(value):
         return str(value)
 
 
+def _draft_scope(draft) -> str:
+    """KnowledgeDraft 的 general-vs-personal 口径（content_json.scope 优先， draft_type 兜底）。"""
+    try:
+        content = draft.content_json or {}
+    except Exception:
+        content = {}
+    if isinstance(content, dict):
+        scope = str(content.get("scope") or "").strip().lower()
+        if scope in ("general", "personal"):
+            return scope
+    draft_type = str(getattr(draft, "draft_type", "") or "").strip().lower()
+    if draft_type == "qa":
+        return "general"  # 通用 FAQ 才建稿；personal 走用户档案不建稿
+    return draft_type or "unknown"
+
+
+def _flatten_checkin_parsed(parsed) -> dict:
+    """打卡 parsed_json 展平：product_schedule 子键与 custom_checkin 答案打散成点分字段。"""
+    flat: dict = {}
+    if not isinstance(parsed, dict):
+        return flat
+    for key, val in parsed.items():
+        if key == "product_schedule" and isinstance(val, dict):
+            for sub, subv in val.items():
+                flat[f"product_schedule.{sub}"] = _jsonable(subv)
+        elif key == "custom_checkin" and isinstance(val, dict):
+            for item_id, ans in val.items():
+                if isinstance(ans, dict):
+                    flat[f"custom_checkin.{item_id}"] = _jsonable(ans.get("answer", ans))
+                else:
+                    flat[f"custom_checkin.{item_id}"] = _jsonable(ans)
+        elif key == "_meta":
+            continue  # 来源/矛盾另行记录，不污染业务字段 diff
+        else:
+            flat[key] = _jsonable(val)
+    return flat
+
+
+def _meta_contradictions(parsed) -> list:
+    try:
+        meta = (parsed or {}).get("_meta") or {}
+        items = meta.get("contradictions") or []
+        return list(items) if isinstance(items, list) else [items]
+    except Exception:
+        return []
+
+
 async def snapshot_case(session, case_id: int) -> dict:
     checkins = list(
         (
@@ -569,7 +616,8 @@ async def snapshot_case(session, case_id: int) -> dict:
             else None
         ),
         "knowledge_drafts": [
-            {"id": d.id, "draft_type": d.draft_type, "title": d.title} for d in drafts
+            {"id": d.id, "draft_type": d.draft_type, "title": d.title,
+             "question": d.question, "scope": _draft_scope(d)} for d in drafts
         ],
         "traces": [
             {
@@ -608,17 +656,69 @@ def diff_snapshots(before: dict, after: dict) -> dict:
             "after": len(after[key]),
             "added": added,
         }
+    # 同 (service_case, date) 两边都存在的打卡行：逐字段 before/after（展平 parsed_json）。
+    before_by_date = {r["date"]: r for r in before["checkins"]}
+    after_by_date = {r["date"]: r for r in after["checkins"]}
+    updated: list[dict] = []
+    for date_iso in sorted(set(before_by_date) & set(after_by_date)):
+        b_parsed = before_by_date[date_iso].get("parsed_json") or {}
+        a_parsed = after_by_date[date_iso].get("parsed_json") or {}
+        b_flat, a_flat = _flatten_checkin_parsed(b_parsed), _flatten_checkin_parsed(a_parsed)
+        changes = {
+            field: {"before": b_flat.get(field), "after": a_flat.get(field)}
+            for field in sorted(set(b_flat) | set(a_flat))
+            if _jsonable(b_flat.get(field)) != _jsonable(a_flat.get(field))
+        }
+        b_contra, a_contra = _meta_contradictions(b_parsed), _meta_contradictions(a_parsed)
+        meta_changed = _jsonable(b_contra) != _jsonable(a_contra)
+        if changes or meta_changed:
+            updated.append({
+                "date": date_iso,
+                "id_before": before_by_date[date_iso]["id"],
+                "id_after": after_by_date[date_iso]["id"],
+                "changes": changes,
+                "meta_changed": meta_changed,
+                "contradictions_before": _jsonable(b_contra),
+                "contradictions_after": _jsonable(a_contra),
+                "before": b_flat,
+                "after": a_flat,
+            })
+    out["checkins"]["updated"] = updated
     out["user_state_profile"] = {
         "changed": before["user_state_profile"] != after["user_state_profile"],
         "before": before["user_state_profile"],
         "after": after["user_state_profile"],
     }
+    mem_before, mem_after = before["archivist_case_memory"], after["archivist_case_memory"]
     out["archivist_case_memory"] = {
-        "changed": before["archivist_case_memory"] != after["archivist_case_memory"],
-        "before": before["archivist_case_memory"],
-        "after": after["archivist_case_memory"],
+        "changed": mem_before != mem_after,
+        "before": mem_before,
+        "after": mem_after,
+        "summary_before_len": len(str((mem_before or {}).get("summary") or "")),
+        "summary_after_len": len(str((mem_after or {}).get("summary") or "")),
+        "case_material_before_len": len(str((mem_before or {}).get("case_material_summary") or "")),
+        "case_material_after_len": len(str((mem_after or {}).get("case_material_summary") or "")),
     }
     return out
+
+
+def _faq_scopes_from_emitted(emitted) -> list[str]:
+    """每次 report_faq_candidate emit 的 scope 实参（缺省 general）。"""
+    scopes: list[str] = []
+    for call in emitted or []:
+        if (call.get("name") or "") != "report_faq_candidate":
+            continue
+        args = call.get("args") or {}
+        scopes.append(str(args.get("scope") or "general").strip().lower() or "general")
+    return scopes
+
+
+def _draft_scopes_from_added(diff: dict) -> list[str]:
+    """本批新建 KnowledgeDraft 的 general-vs-personal 口径。"""
+    return [
+        str(r.get("scope") or "unknown")
+        for r in (diff.get("knowledge_drafts") or {}).get("added", [])
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -884,6 +984,8 @@ async def run_group(spec: dict, *, real: bool, ai_settings: dict) -> dict:
                             }]
 
                     new_traces = after["traces"][len(before["traces"]):]
+                    batch_diff = diff_snapshots(before, after)
+                    emitted_calls = emitted or recorder.get("raw_tool_calls", [])
                     group_result["batches"].append(
                         {
                             "batch_index": bi,
@@ -893,9 +995,11 @@ async def run_group(spec: dict, *, real: bool, ai_settings: dict) -> dict:
                             "watermark_to": progress.last_archived_message_id,
                             "model_input_content": model_input,
                             "model": (batch_usage[-1]["model"] if batch_usage else ai_settings.get("ai_model")),
-                            "emitted_tool_calls": emitted or recorder.get("raw_tool_calls", []),
+                            "emitted_tool_calls": emitted_calls,
                             "kept": new_traces[-1]["kept"] if new_traces else {},
                             "dropped": new_traces[-1]["dropped"] if new_traces else [],
+                            "faq_scopes_emitted": _faq_scopes_from_emitted(emitted_calls),
+                            "faq_scopes_created": _draft_scopes_from_added(batch_diff),
                             "result": {
                                 "delta_count": result.delta_count,
                                 "days_processed": result.days_processed,
@@ -907,7 +1011,7 @@ async def run_group(spec: dict, *, real: bool, ai_settings: dict) -> dict:
                                 "emitted_count": result.emitted_count,
                                 "dropped_count": result.dropped_count,
                             },
-                            "db_diff": diff_snapshots(before, after),
+                            "db_diff": batch_diff,
                             "usage": batch_usage,
                         }
                     )
@@ -956,6 +1060,331 @@ async def _cleanup_case(session, case_id: int, user_id: int | None) -> None:
 
 
 _KEEP = False
+
+
+def _emitted_args(batch: dict, name: str) -> list[dict]:
+    return [
+        (c.get("args") or {}) for c in (batch.get("emitted_tool_calls") or [])
+        if (c.get("name") or "") == name
+    ]
+
+
+def _outcome_added(batch: dict, field_key=None, event_type=None) -> list[dict]:
+    rows = ((batch.get("db_diff") or {}).get("outcome_events") or {}).get("added", [])
+    return [
+        r for r in rows
+        if (field_key is None or r.get("field_key") == field_key)
+        and (event_type is None or r.get("event_type") == event_type)
+    ]
+
+
+def _checkin_added(batch: dict) -> dict:
+    return {
+        r.get("date"): (r.get("parsed_json") or {})
+        for r in ((batch.get("db_diff") or {}).get("checkins") or {}).get("added", [])
+    }
+
+
+def _checkin_updated(batch: dict) -> dict:
+    return {
+        r.get("date"): r
+        for r in ((batch.get("db_diff") or {}).get("checkins") or {}).get("updated", [])
+    }
+
+
+def _drafts_added(batch: dict) -> list[dict]:
+    return ((batch.get("db_diff") or {}).get("knowledge_drafts") or {}).get("added", [])
+
+
+def _mem_changed(batch: dict) -> bool:
+    return bool(((batch.get("db_diff") or {}).get("archivist_case_memory") or {}).get("changed"))
+
+
+def _profile_changed(batch: dict) -> bool:
+    return bool(((batch.get("db_diff") or {}).get("user_state_profile") or {}).get("changed"))
+
+
+def _wm_advanced(batch: dict) -> bool:
+    try:
+        return int(batch.get("watermark_to") or 0) > int(batch.get("watermark_from") or 0)
+    except Exception:
+        return False
+
+
+def _kept_count(batch: dict, bucket: str) -> int:
+    try:
+        return int((batch.get("kept") or {}).get(bucket) or 0)
+    except Exception:
+        return 0
+
+
+def _grade_g01(b):
+    fails, flags = [], []
+    b1, b2 = b[0], b[1]
+    if "2026-09-01" not in _checkin_added(b1):
+        fails.append("B1: checkins(2026-09-01) MUST_ADD 缺失")
+    if not _outcome_added(b1, "sleep_change", "worsened"):
+        fails.append("B1: outcome sleep_change/worsened MUST_ADD 缺失")
+    if not [r for r in _outcome_added(b1, "weight_change") if "168" in str(r.get("value_text") or "")]:
+        fails.append("B1: outcome weight_change 含168斤 MUST_ADD 缺失")
+    if not _profile_changed(b1):
+        fails.append("B1: state 画像 MUST_ADD 未落库")
+    if _checkin_added(b2) or _checkin_updated(b2):
+        fails.append("B2: checkins(2026-09-02) MUST_NOT_DUPLICATE 被写")
+    if _outcome_added(b2):
+        fails.append("B2: outcome MUST_NOT_DUPLICATE 被新增")
+    if not _mem_changed(b1) and _mem_changed(b2):
+        fails.append("B2: 无新事实 memory MUST_NOT_DUPLICATE 被重写")
+    if len([a for a in _emitted_args(b2, "report_state_fact")
+            if str(a.get("state_type") or "") == "user_commitment"]) > 1:
+        fails.append("B2: user_commitment ALLOWED 0-or-1 超限")
+    if not _wm_advanced(b2):
+        fails.append("B2: 水位线 MUST_UPDATE 未推进")
+    return fails, flags
+
+
+def _grade_g02(b):
+    fails, flags = [], []
+    b1, b2 = b[0], b[1]
+    if "2026-09-03" not in _checkin_added(b1):
+        fails.append("B1: checkins(2026-09-03) weight=172斤 MUST_ADD 缺失")
+    if _outcome_added(b1, "weight_change"):
+        fails.append("B1: 首个无基线裸体重 MUST_NOT_DUPLICATE 报了 outcome")
+    if "2026-09-03" in _checkin_added(b2):
+        fails.append("B2: 同日行 MUST_UPDATE 却新增了第二行")
+    upd = _checkin_updated(b2).get("2026-09-03")
+    if upd is None:
+        fails.append("B2: checkins(2026-09-03) MUST_UPDATE 缺失")
+    elif "168" not in str((upd.get("after") or {}).get("weight") or ""):
+        fails.append("B2: 当前值 MUST_NOT_MISS 仍不是168斤")
+    if _outcome_added(b2, "weight_change"):
+        fails.append("B2: 读数纠偏 172->168 不是身体变化 MUST_NOT_DUPLICATE")
+    if not _profile_changed(b2):
+        fails.append("B2: 心态 state MUST_UPDATE resolved 未落库")
+    return fails, flags
+
+
+def _grade_g03(b):
+    fails, flags = [], []
+    b1 = b[0]
+    added = _checkin_added(b1)
+    if set(added) != {"2026-09-04", "2026-09-05"}:
+        fails.append(f"B1: 必须恰好两行 09-04/09-05，实际 {sorted(added)}")
+    if "170" in str(_flatten_checkin_parsed(added.get("2026-09-05", {})).get("weight") or ""):
+        fails.append("B1: 昨天体重170斤不得记到今天行")
+    return fails, flags
+
+
+def _grade_g04(b):
+    fails, flags = [], []
+    b1, b2 = b[0], b[1]
+    if "2026-09-06" not in _checkin_added(b1):
+        fails.append("B1: checkins(2026-09-06) MUST_ADD 缺失")
+    if _outcome_added(b1, "weight_change"):
+        fails.append("B1: 首个无基线裸体重 MUST_NOT_DUPLICATE 报了 outcome")
+    if "2026-09-07" not in _checkin_added(b2):
+        fails.append("B2: checkins(2026-09-07) 跨天新行 MUST_ADD 缺失")
+    wo = _outcome_added(b2, "weight_change")
+    if len(wo) > 1 or any(r.get("event_type") != "unchanged" for r in wo):
+        fails.append("B2: 次日同值只允许 0-or-1 行 unchanged")
+    return fails, flags
+
+
+def _grade_g05(b):
+    fails, flags = [], []
+    b1, b2 = b[0], b[1]
+    f1 = _flatten_checkin_parsed(_checkin_added(b1).get("2026-09-08", {}))
+    if "6" not in str(f1.get("sleep") or ""):
+        fails.append("B1: checkins(2026-09-08) sleep 含6 MUST_ADD 缺失")
+    f2 = _flatten_checkin_parsed(_checkin_added(b2).get("2026-09-09", {}))
+    if not str(f2.get("water") or ""):
+        fails.append("B2: checkins(2026-09-09) water MUST_ADD 缺失")
+    if str(f2.get("sleep") or ""):
+        fails.append("B2: 不得把 B1 sleep 语义复制过来")
+    if "2026-09-08" in _checkin_added(b2) or "2026-09-08" in _checkin_updated(b2):
+        fails.append("B2: 不得改写 09-08 行")
+    return fails, flags
+
+
+def _grade_g06(b):
+    fails, flags = [], []
+    b1, b2 = b[0], b[1]
+    a1 = _checkin_added(b1)
+    if "2026-07-29" not in a1:
+        fails.append("B1: 补卡 target 必须 2026-07-29 MUST_ADD 缺失")
+    if "2026-07-30" in a1:
+        fails.append("B1: 不得建 07-30 行")
+    a2 = _checkin_added(b2)
+    if not str(_flatten_checkin_parsed(a2.get("2026-07-30", {})).get("product_schedule.morning_c") or ""):
+        fails.append("B2: checkins(2026-07-30) morning_c MUST_ADD 缺失")
+    if "2026-07-29" in a2 or "2026-07-29" in _checkin_updated(b2):
+        fails.append("B2: 不得重报 07-29 已归档事实")
+    return fails, flags
+
+
+def _grade_g07(b):
+    fails, flags = [], []
+    b1, b2 = b[0], b[1]
+    upd = _checkin_updated(b1).get("2026-09-10")
+    if upd is None:
+        fails.append("B1: checkins(2026-09-10) 矛盾行 MUST_NOT_MISS 缺失")
+    else:
+        if "100" not in str((upd.get("after") or {}).get("weight") or ""):
+            fails.append("B1: 表单 100 MUST_NOT_DUPLICATE 被聊天值覆盖")
+        if not upd.get("contradictions_after"):
+            fails.append("B1: weight 矛盾 MUST_NOT_MISS 未留痕")
+        if "未喝" not in str((upd.get("after") or {}).get("product_schedule.night_a") or ""):
+            fails.append("B1: night_a=未喝 MUST_ADD 缺失")
+    a2 = _checkin_added(b2)
+    if "168" not in str(_flatten_checkin_parsed(a2.get("2026-09-11", {})).get("weight") or ""):
+        fails.append("B2: checkins(2026-09-11) weight=168斤 MUST_ADD 缺失")
+    if "2026-09-10" in a2 or "2026-09-10" in _checkin_updated(b2):
+        fails.append("B2: 不得改写 09-10 行")
+    return fails, flags
+
+
+def _grade_g08(b):
+    fails, flags = [], []
+    b1, b2 = b[0], b[1]
+    if not _profile_changed(b1):
+        fails.append("B1: profile 习惯 MUST_ADD 未落库")
+    if not str(_flatten_checkin_parsed(
+            _checkin_added(b2).get("2026-09-13", {})).get("water") or ""):
+        fails.append("B2: checkins(2026-09-13) water MUST_ADD 缺失")
+    v1 = {str(a.get("value") or "") for a in _emitted_args(b1, "report_profile_fact") if a.get("value")}
+    dup = [str(a.get("value") or "") for a in _emitted_args(b2, "report_profile_fact") if str(a.get("value") or "") in v1]
+    if dup:
+        fails.append(f"B2: profile 重复 B1 习惯 MUST_NOT_DUPLICATE: {dup[:2]}")
+    return fails, flags
+
+
+def _grade_g09(b):
+    fails, flags = [], []
+    b1, b2, b3 = b[0], b[1], b[2]
+    if not _outcome_added(b1, event_type="worsened"):
+        fails.append("B1: 不适 outcome worsened MUST_ADD 缺失")
+    if "未喝" not in str(_flatten_checkin_parsed(
+            _checkin_added(b1).get("2026-09-14", {})).get("product_schedule.night_a") or ""):
+        fails.append("B1: checkins(2026-09-14) night_a=未喝 MUST_ADD 缺失")
+    if not _profile_changed(b1):
+        fails.append("B1: discomfort active MUST_ADD 未落库")
+    if not _profile_changed(b2):
+        fails.append("B2: 同 state_type MUST_UPDATE resolved 未落库")
+    if "2026-09-16" not in _checkin_added(b2):
+        fails.append("B2: checkins(2026-09-16) 新日期行 MUST_ADD 缺失")
+    if _outcome_added(b2, event_type="worsened"):
+        fails.append("B2: 胃胀 worsened MUST_NOT_DUPLICATE 被重报")
+    flags.append("B2 昨天晚A回溯事实 record-vs-drop 待产品决策：不得记作今天已喝，不得静默通过")
+    if _outcome_added(b3) or _profile_changed(b3) or _mem_changed(b3):
+        fails.append("B3: 无新信息 MUST_NOT_DUPLICATE 被新增")
+    if not _wm_advanced(b3):
+        fails.append("B3: 水位线 MUST_UPDATE 未推进到 903")
+    return fails, flags
+
+
+def _grade_g10(b):
+    fails, flags = [], []
+    b1, b2 = b[0], b[1]
+    if not [a for a in _emitted_args(b1, "report_correction")
+            if str(a.get("scope") or "") == "general"]:
+        fails.append("B1: correction general MUST_ADD 缺失")
+    if len(_drafts_added(b1)) > 1:
+        fails.append("B1: FAQ 候选 ALLOWED 0-or-1 超限")
+    if _kept_count(b2, "correction") > 0:
+        fails.append("B2: correction MUST_NOT_DUPLICATE 被新建")
+    if _drafts_added(b2):
+        fails.append("B2: FAQ MUST_NOT_DUPLICATE 被新建")
+    return fails, flags
+
+
+def _grade_g11(b):
+    fails, flags = [], []
+    b1, b2, b3 = b[0], b[1], b[2]
+    if "general" not in [str(d.get("scope") or "") for d in _drafts_added(b1)]:
+        fails.append("B1: FAQ general 草稿 MUST_ADD 缺失")
+    d2 = _drafts_added(b2)
+    if not [d for d in d2 if str(d.get("scope") or "") in ("general", "personal")]:
+        fails.append("B2: 出差问答 general/personal 任一 scope MUST_ADD 缺失")
+    q1 = {str(d.get("question") or "") for d in _drafts_added(b1) if d.get("question")}
+    if len(d2) > 1 or any(str(d.get("question") or "") in q1 for d in d2 if d.get("question")):
+        fails.append("B2: 不得复制 B1 通用稿")
+    if _drafts_added(b3):
+        fails.append("B3: 无新回答 MUST_NOT_DUPLICATE 被新建")
+    if not _wm_advanced(b3):
+        fails.append("B3: 水位线 MUST_UPDATE 未推进到 1106")
+    return fails, flags
+
+
+def _grade_g12(b):
+    fails, flags = [], []
+    b1, b2, b3 = b[0], b[1], b[2]
+    if not [r for r in _outcome_added(b1) if str(r.get("event_type") or "") in ("improved", "completed")]:
+        fails.append("B1: 正向 outcome MUST_ADD 缺失")
+    if not _mem_changed(b1):
+        fails.append("B1: 小结 MUST_ADD 未落库")
+    if len([d for d in _drafts_added(b1) if str(d.get("draft_type") or "") == "case"]) > 1:
+        fails.append("B1: case 候选 ALLOWED 最多一稿")
+    if _mem_changed(b2):
+        fails.append("B2: 无新事实小结 MUST_NOT_DUPLICATE 被重写")
+    if _outcome_added(b2) or [d for d in _drafts_added(b2) if str(d.get("draft_type") or "") == "case"]:
+        fails.append("B2: 感谢批 outcome/case MUST_NOT_DUPLICATE 被新增")
+    if len([a for a in _emitted_args(b2, "report_state_fact")
+            if str(a.get("state_type") or "") == "user_commitment"]) > 1:
+        fails.append("B2: user_commitment ALLOWED 0-or-1 超限")
+    if not _outcome_added(b3):
+        fails.append("B3: 新进展 outcome MUST_ADD 缺失")
+    if not _mem_changed(b3):
+        fails.append("B3: case_material MUST_UPDATE 未落库")
+    c1 = [d for d in _drafts_added(b1) if str(d.get("draft_type") or "") == "case"]
+    c3 = [d for d in _drafts_added(b3) if str(d.get("draft_type") or "") == "case"]
+    if len(c3) > 1:
+        fails.append("B3: case 最多一稿")
+    t1 = {str(d.get("question") or d.get("title") or "") for d in c1}
+    if c3 and any(str(d.get("question") or d.get("title") or "") in t1 for d in c3):
+        fails.append("B3: 不得重复 B1 旧故事建稿")
+    return fails, flags
+
+
+_GRADERS = {
+    "G01": _grade_g01, "G02": _grade_g02, "G03": _grade_g03, "G04": _grade_g04,
+    "G05": _grade_g05, "G06": _grade_g06, "G07": _grade_g07, "G08": _grade_g08,
+    "G09": _grade_g09, "G10": _grade_g10, "G11": _grade_g11, "G12": _grade_g12,
+}
+
+
+def grade_group(group_result: dict) -> dict:
+    code = str(group_result.get("group_code") or "")
+    batches = group_result.get("batches") or []
+    entry: dict = {
+        "group_code": code,
+        "repeat_index": group_result.get("repeat_index"),
+        "verdict": "FLAG",
+        "failed_assertions": [],
+        "flags": [],
+    }
+    fn = _GRADERS.get(code)
+    if fn is None:
+        entry["failed_assertions"] = [f"未知组 {code}，无冻结期望可评"]
+        return entry
+    want = len((DEDUP12_GROUPS.get(code) or {}).get("batches", []))
+    if len(batches) != want:
+        entry["failed_assertions"] = [f"批数 {len(batches)} != 冻结 {want}"]
+        return entry
+    fails, flags = fn(batches)
+    entry["failed_assertions"] = fails
+    entry["flags"] = flags
+    entry["verdict"] = "FLAG" if flags else ("FAIL" if fails else "PASS")
+    return entry
+
+
+def _print_grading_table(grading: list[dict]) -> None:
+    print("group  repeat  verdict  issues")
+    totals = {"PASS": 0, "FAIL": 0, "FLAG": 0}
+    for g in grading:
+        totals[str(g.get("verdict"))] = totals.get(str(g.get("verdict")), 0) + 1
+        n = len(g.get("failed_assertions") or []) + len(g.get("flags") or [])
+        print(f"{g.get('group_code'):5}  {g.get('repeat_index'):6}  {g.get('verdict'):7}  {n}")
+    print(f"TOTAL PASS={totals.get('PASS', 0)} FAIL={totals.get('FAIL', 0)} FLAG={totals.get('FLAG', 0)}")
 
 
 # --------------------------------------------------------------------------
@@ -1043,16 +1472,25 @@ async def amain(args: argparse.Namespace) -> int:
     total_tokens = 0
     total_cost = 0.0
     n_batches = 0
+    grading: list[dict] = []
+    scope_emitted_total: dict[str, int] = {}
+    scope_created_total: dict[str, int] = {}
     with open(jsonl_path, "w", encoding="utf-8") as fh:
         for spec in specs:
             result = await run_group(spec, real=args.real, ai_settings=ai_settings)
             fh.write(json.dumps(result, ensure_ascii=False, default=str) + "\n")
             fh.flush()
+            if args.suite == "dedup12":
+                grading.append(grade_group(result))
             for b in result["batches"]:
                 n_batches += 1
                 for u in b.get("usage") or []:
                     total_tokens += int(u.get("total_tokens") or 0)
                     total_cost += float(u.get("estimated_cost_yuan") or 0.0)
+                for s in b.get("faq_scopes_emitted") or []:
+                    scope_emitted_total[s] = scope_emitted_total.get(s, 0) + 1
+                for s in b.get("faq_scopes_created") or []:
+                    scope_created_total[s] = scope_created_total.get(s, 0) + 1
 
     summary = {
         "stamp": stamp,
@@ -1065,11 +1503,15 @@ async def amain(args: argparse.Namespace) -> int:
         "total_tokens": total_tokens,
         "total_cost_yuan": round(total_cost, 6),
         "ai_settings": ai_settings,
+        "faq_scope_totals": {"emitted": scope_emitted_total, "created": scope_created_total},
+        "grading": grading,
         "evidence_jsonl": str(jsonl_path),
     }
     with open(summary_path, "w", encoding="utf-8") as fh:
         json.dump(summary, fh, ensure_ascii=False, indent=2)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if grading:
+        _print_grading_table(grading)
     return 0
 
 
