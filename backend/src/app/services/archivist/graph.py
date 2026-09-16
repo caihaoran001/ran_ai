@@ -173,20 +173,6 @@ def _message_event_at(message: Message) -> datetime | None:
     return event_at.astimezone(timezone.utc)
 
 
-def _system_context_label(message: Message) -> str:
-    """根据发送时元数据标出系统提醒是可回答题还是无需回答的通知。"""
-    analysis = message.analysis_json if isinstance(message.analysis_json, dict) else {}
-    final_review = analysis.get("final_review")
-    if isinstance(final_review, dict):
-        questions = final_review.get("questions")
-        node = str(final_review.get("node") or "")
-        if node == "benefit_notice" and questions == []:
-            return "系统提醒：通知、无需回答"
-        if isinstance(questions, list) and questions:
-            return "系统提醒：可回答题"
-    return "系统提醒"
-
-
 def _extract_message_line(item: dict[str, Any]) -> str:
     """格式化档案官输入中的一条消息，显式标出系统提醒仅为上下文。"""
     event_at = item.get("_event_at")
@@ -463,7 +449,7 @@ class ArchivistPipeline:
                 "context_label": (
                     f"历史{role_labels[message.sender_type]}"
                     if historical and not is_system
-                    else _system_context_label(message)
+                    else "系统提醒"
                     if is_system
                     else None
                 ),

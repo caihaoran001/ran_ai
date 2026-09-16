@@ -1303,10 +1303,15 @@ async def test_archivist_restores_final_review_order_with_interleaved_benefit_no
     benefit_pos = prompt.index(f"[{benefit.id}] 系统提醒")
     user_pos = prompt.index(f"[{reply.id}] 用户（北京时间")
     assert r4_pos < benefit_pos < user_pos
-    assert "系统提醒：可回答题" in prompt[r4_pos:benefit_pos]
-    assert "系统提醒：通知、无需回答" in prompt[benefit_pos:user_pos]
+    assert "系统提醒：可回答题" not in prompt
+    assert "系统提醒：通知、无需回答" not in prompt
+    assert f"{question['text']}\n1—6 请回复编号" in prompt[r4_pos:benefit_pos]
+    assert "北京时间 2026-09-15 10:39:22" in prompt[r4_pos:benefit_pos]
+    assert "你这28天的权益已经可以领了：240元复购券（240元，5天内有效，满600-240）" in prompt[
+        benefit_pos:user_pos
+    ]
+    assert "北京时间 2026-09-15 10:43:19" in prompt[benefit_pos:user_pos]
     assert "仅供上下文" in prompt[r4_pos:benefit_pos]
-    assert "权益通知（无需回答）" not in prompt[benefit_pos:user_pos]
     # 系统提醒进入模型文本，但不进入输入账本或推动水位线。
     assert result.input_message_ids == [reply.id]
     assert progress.last_archived_message_id == reply.id
