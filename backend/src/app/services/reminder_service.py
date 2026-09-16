@@ -129,7 +129,6 @@ class ReminderService:
             and not self.settings.agent_reminders_enabled
             and not self.settings.outcome_snapshots_enabled
             and not self.settings.checkin_followup_enabled
-            and not self.settings.checkin_rewards_enabled
             and not self.settings.population_insight_enabled
         )
         if optional_services_disabled:
@@ -183,8 +182,7 @@ class ReminderService:
                         if self.settings.archivist_enabled:
                             await self.check_archivist_once()
                         # 先等档案官把本轮补问/图片投影到指定日期，再重算奖励。
-                        if self.settings.checkin_rewards_enabled:
-                            await check_checkin_rewards_once()
+                        await check_checkin_rewards_once()
                         if self.settings.checkin_followup_enabled:
                             await self.check_checkin_followup_v2_once()
                         if self.settings.churn_recall_enabled:

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import select
 
-from app.core.config import get_settings
 from app.models.checkin import Checkin
 from app.models.checkin_reward import (
     CheckinRewardProgram,
@@ -24,12 +25,34 @@ from app.models.message import (
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.agent.state import AgentRunContext
 from app.services.agent.tools.reward_shipping_tools import build_reward_shipping_tools
+from app.services.checkin_reward_settings import (
+    DEFAULT_REWARD_TIERS,
+    set_reward_tier_config,
+)
 from app.services.checkin_rewards import (
     is_effective_reward_checkin,
     reconcile_case_rewards,
     render_qualification_notice,
     reward_checkin_evidence_message_ids,
 )
+
+PROGRAM_START = "2026-08-01"
+
+
+@pytest_asyncio.fixture(autouse=True, loop_scope="session")
+async def _reward_program_enabled(db_session):
+    """默认开启奖励并让本文件的服务单参与；需要停用/不参与的用例在正文覆盖。"""
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "program_start_date": PROGRAM_START,
+            "tiers": [
+                {"days": tier.days, "reward_text": tier.reward_text, "enabled": True}
+                for tier in DEFAULT_REWARD_TIERS
+            ],
+        },
+    )
 
 
 def _case() -> ServiceCase:
@@ -569,12 +592,14 @@ async def test_reward_shipping_tool_does_not_treat_unrelated_one_as_choice(db_se
 
 
 @pytest.mark.asyncio
-async def test_reward_tools_return_pause_copy_and_reject_all_writes() -> None:
+async def test_reward_tools_return_pause_copy_and_reject_all_writes(
+    db_session,
+) -> None:
+    await set_reward_tier_config(db_session, {"enabled": False})
     tools = {
         tool.name: tool
         for tool in build_reward_shipping_tools(
             context=AgentRunContext(service_case_id=999),
-            rewards_enabled=False,
         )
     }
 
@@ -796,9 +821,8 @@ async def test_reward_admin_lists_each_counted_day_with_five_items_and_original_
 
 @pytest.mark.asyncio
 async def test_admin_marks_complete_shipment_as_shipped_and_notifies(
-    db_session, admin_client, monkeypatch
+    db_session, admin_client
 ) -> None:
-    monkeypatch.setattr(get_settings(), "checkin_rewards_enabled", True)
     service_case = _case()
     db_session.add(service_case)
     await db_session.flush()
@@ -840,10 +864,11 @@ async def test_admin_marks_complete_shipment_as_shipped_and_notifies(
 
 
 @pytest.mark.asyncio
-async def test_admin_cannot_mark_reward_shipped_while_program_is_paused(
-    db_session, admin_client, monkeypatch
+async def test_admin_can_mark_reward_shipped_while_program_is_off(
+    db_session, admin_client
 ) -> None:
-    monkeypatch.setattr(get_settings(), "checkin_rewards_enabled", False)
+    """停用只停新奖励，已获得的奖励照常可兑现。"""
+    await set_reward_tier_config(db_session, {"enabled": False})
     service_case = _case()
     db_session.add(service_case)
     await db_session.flush()
@@ -863,7 +888,67 @@ async def test_admin_cannot_mark_reward_shipped_while_program_is_paused(
         headers={"x-admin-operator": "ops-a"},
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "check-in reward program is paused"
-    assert shipment.status == "pending_shipment"
-    assert shipment.shipped_at is None
+    assert response.status_code == 200, response.text
+    assert shipment.status == "shipped"
+
+
+@pytest.mark.asyncio
+async def test_case_started_before_program_start_does_not_accrue(db_session) -> None:
+    await set_reward_tier_config(
+        db_session, {"enabled": True, "program_start_date": "2026-08-10"}
+    )
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    for offset in range(3):
+        db_session.add(
+            Checkin(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                content="完整打卡",
+                parsed_json=_parsed(),
+            )
+        )
+    await db_session.flush()
+
+    result = await reconcile_case_rewards(db_session, service_case_id=service_case.id)
+
+    assert result.new_qualification_days == ()
+    assert result.new_progress_threshold is None
+
+    tools = {
+        tool.name: tool
+        for tool in build_reward_shipping_tools(
+            context=AgentRunContext(service_case_id=service_case.id),
+        )
+    }
+    payload = await tools["get_checkin_reward_status"].ainvoke({})
+    assert payload["participating"] is False
+    assert payload["complete_checkin_days"] == 0
+    assert "不参与" in payload["reply_instruction"]
+
+
+@pytest.mark.asyncio
+async def test_reopen_moves_program_start_and_keeps_it_until_next_off(
+    db_session,
+) -> None:
+    first = await set_reward_tier_config(
+        db_session, {"enabled": True, "program_start_date": "2026-08-01"}
+    )
+    assert first.program_start_date == date(2026, 8, 1)
+
+    edited = await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "tiers": [{"days": 5, "reward_text": "改后的奖励", "enabled": True}],
+        },
+    )
+    assert edited.program_start_date == date(2026, 8, 1)
+
+    await set_reward_tier_config(db_session, {"enabled": False})
+    reopened = await set_reward_tier_config(db_session, {"enabled": True})
+
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    assert reopened.program_start_date == today

@@ -14,14 +14,18 @@ import json
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from zoneinfo import ZoneInfo
 
+from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.checkin_reward_settings import (
     DEFAULT_REWARD_TIERS,
+    CheckinRewardTierConfig,
     get_reward_tier_config,
 )
 from app.services.checkin_rewards import valid_reward_checkin_dates
+from app.services.service_case_queries import checkin_first_day
 
 
 async def main(*, apply: bool) -> None:
@@ -38,23 +42,40 @@ async def main(*, apply: bool) -> None:
             )
         )
         details = []
+        config: CheckinRewardTierConfig | None = None
         try:
-            tier_days = [tier.days for tier in (await get_reward_tier_config(session)).tiers]
+            config = await get_reward_tier_config(session)
         except ValueError:
-            tier_days = [tier.days for tier in DEFAULT_REWARD_TIERS]
+            config = None
+        tier_days = (
+            [tier.days for tier in config.tiers]
+            if config is not None
+            else [tier.days for tier in DEFAULT_REWARD_TIERS]
+        )
+        tz = ZoneInfo(get_settings().reminder_timezone)
         for service_case in cases:
-            valid_dates = await valid_reward_checkin_dates(
-                session,
-                service_case=service_case,
+            participating = (
+                config.participates(checkin_first_day(service_case, tz))
+                if config is not None
+                else False
+            )
+            valid_dates = (
+                await valid_reward_checkin_dates(
+                    session,
+                    service_case=service_case,
+                )
+                if participating
+                else []
             )
             earned = [days for days in tier_days if len(valid_dates) >= days]
-            if valid_dates or earned:
+            if participating or valid_dates or earned:
                 details.append(
                     {
                         "service_case_id": service_case.id,
                         "case_no": service_case.case_no,
                         "user_name": service_case.user.name if service_case.user else None,
                         "group_id": service_case.group_id,
+                        "participating": participating,
                         "complete_checkin_days": len(valid_dates),
                         "valid_dates": [item.isoformat() for item in valid_dates],
                         "earned_tiers": earned,

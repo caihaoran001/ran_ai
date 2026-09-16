@@ -3071,10 +3071,7 @@ async def test_submit_receipt_is_sent_before_generation(
 async def test_intake_receipt_only_promises_rewards_when_enabled(
     db_session, monkeypatch, enabled, expects_reward
 ):
-    from types import SimpleNamespace
-
     from app.api.routes import questionnaires
-    from app.core.config import get_settings
     from app.models.message import Message, MessageDirection
     from app.models.service_case import ServiceCase
     from app.models.user import User
@@ -3082,6 +3079,9 @@ async def test_intake_receipt_only_promises_rewards_when_enabled(
         CHECKIN_REWARD_RECEIPT_PARAGRAPH,
         default_checkin_schedule,
     )
+    from app.services.checkin_reward_settings import set_reward_tier_config
+
+    await set_reward_tier_config(db_session, {"enabled": enabled})
 
     user = User(name="奖励回执用户")
     db_session.add(user)
@@ -3095,16 +3095,6 @@ async def test_intake_receipt_only_promises_rewards_when_enabled(
     )
     db_session.add(service_case)
     await db_session.flush()
-
-    settings = get_settings()
-    monkeypatch.setattr(
-        questionnaires,
-        "get_settings",
-        lambda: SimpleNamespace(
-            checkin_rewards_enabled=enabled,
-            reminder_timezone=settings.reminder_timezone,
-        ),
-    )
 
     async def fake_schedule(session):
         schedule = default_checkin_schedule()

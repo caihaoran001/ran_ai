@@ -587,20 +587,19 @@ async def _send_intake_submit_reply(service_case_id: int) -> None:
                 "Your tailored files will be delivered to this group shortly!"
             )
         else:
-            rewards_enabled = get_settings().checkin_rewards_enabled
-            if rewards_enabled:
-                try:
-                    from app.services.checkin_reward_settings import (
-                        get_reward_tier_config,
-                    )
+            rewards_enabled = False
+            try:
+                from app.services.checkin_reward_settings import (
+                    get_reward_tier_config,
+                )
 
-                    rewards_enabled = (await get_reward_tier_config(session)).enabled
-                except ValueError:
-                    logger.warning(
-                        "打卡奖励档位配置非法，收据话术按启用处理。", exc_info=True
-                    )
+                rewards_enabled = (await get_reward_tier_config(session)).enabled
+            except ValueError:
+                logger.warning(
+                    "打卡奖励档位配置非法，收据话术按停用处理。", exc_info=True
+                )
             # 新默认话术通过变量控制奖励承诺；同时剔除已被运营静态粘进旧配置的标准奖励段，
-            # 保证日后关闭开关时不会继续向用户承诺发奖。
+            # 保证关闭开关时不会继续向用户承诺发奖。
             message_template = str(reply.get("message") or "")
             if not rewards_enabled:
                 message_template = message_template.replace(CHECKIN_REWARD_RECEIPT_PARAGRAPH, "")

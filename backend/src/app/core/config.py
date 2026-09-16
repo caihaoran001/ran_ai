@@ -290,12 +290,6 @@ class Settings(BaseSettings):
     #  - 日五项：次日早上回顾昨日执行单中尚未回答的项。
     # 会发送真实群消息，默认 False=不追问；设 CHECKIN_FOLLOWUP_ENABLED=true 开启。
     checkin_followup_enabled: bool = Field(default=False, validation_alias="CHECKIN_FOLLOWUP_ENABLED")
-    # 打卡奖励会主动发真实群消息，默认关闭以便先预览历史补算名单，
-    # 确认后再在生产配置 CHECKIN_REWARDS_ENABLED=true 正式开启。
-    checkin_rewards_enabled: bool = Field(
-        default=False,
-        validation_alias="CHECKIN_REWARDS_ENABLED",
-    )
     # 第26-30天结营复盘：会主动发真实群消息并发出券的领取入口，默认关闭。
     # 先只在白名单服务单上开（留空=开关打开也一单都不跑），实验群验过再放开。
     final_review_enabled: bool = Field(

@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.checkin_reward import (
     CheckinRewardProgram,
@@ -29,9 +31,13 @@ from app.services.checkin_rewards import (
 )
 from app.services.checkin_reward_settings import (
     DEFAULT_REWARD_TIERS,
+    CheckinRewardTierConfig,
     get_reward_tier_config,
 )
-from app.services.service_case_queries import select_active_service_cases
+from app.services.service_case_queries import (
+    checkin_first_day,
+    select_active_service_cases,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -110,12 +116,16 @@ async def _current_user_source(session, context: AgentRunContext) -> Message | N
     )
 
 
-async def _reward_status(session, *, service_case_id: int) -> dict[str, Any]:
+async def _reward_status(
+    session, *, service_case_id: int, config: CheckinRewardTierConfig
+) -> dict[str, Any]:
     service_case = await session.scalar(
         select_active_service_cases(ServiceCase.id == service_case_id)
     )
     if service_case is None:
         raise ValueError("当前服务单不存在或已删除。")
+    tz = ZoneInfo(get_settings().reminder_timezone)
+    participating = config.participates(checkin_first_day(service_case, tz))
     program = await session.scalar(
         select(CheckinRewardProgram).where(
             CheckinRewardProgram.service_case_id == service_case_id
@@ -154,13 +164,19 @@ async def _reward_status(session, *, service_case_id: int) -> dict[str, Any]:
             missing_fields.append("手机号")
         if not _clean(active.shipping_address):
             missing_fields.append("详细地址")
-    complete_checkins = await valid_reward_checkins(
-        session,
-        service_case=service_case,
+    complete_checkins = (
+        await valid_reward_checkins(
+            session,
+            service_case=service_case,
+        )
+        if participating
+        else []
     )
     return {
         "service_case": service_case,
         "complete_checkin_days": len(complete_checkins),
+        "participating": participating,
+        "program_start_date": config.program_start_date,
         "program": program,
         "qualifications": qualifications,
         "shipments": shipments,
@@ -181,13 +197,13 @@ async def _display_reward_tiers(session) -> list:
     return tiers or list(DEFAULT_REWARD_TIERS)
 
 
-async def _config_enabled(session) -> bool:
-    """后台总开关；配置损坏时按启用处理，不把奖励问答整体打死。"""
+async def _load_reward_config(session) -> CheckinRewardTierConfig | None:
+    """后台奖励配置；损坏时按"本轮停用"处理，不猜规则。"""
     try:
-        return (await get_reward_tier_config(session)).enabled
+        return await get_reward_tier_config(session)
     except ValueError:
-        logger.warning("打卡奖励档位配置非法，按启用处理。", exc_info=True)
-        return True
+        logger.warning("打卡奖励档位配置非法，按本轮停用处理。", exc_info=True)
+        return None
 
 
 def _paused_write_result() -> dict[str, Any]:
@@ -278,6 +294,12 @@ async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "rewards_enabled": True,
         "program_paused": False,
+        "participating": status["participating"],
+        "program_start_date": (
+            status["program_start_date"].isoformat()
+            if status["program_start_date"] is not None
+            else None
+        ),
         "complete_checkin_days": status["complete_checkin_days"],
         "reward_tiers": reward_tiers,
         "has_earned_rewards": bool(qualifications),
@@ -309,20 +331,28 @@ async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
             and _clean(program.shipping_address)
         ),
     }
+    if not status["participating"]:
+        start_text = (
+            f"（活动自 {status['program_start_date'].isoformat()} 日起对新开启的服务单生效）"
+            if status["program_start_date"] is not None
+            else ""
+        )
+        payload["reply_instruction"] = (
+            f"本服务单不参与本轮打卡奖励{start_text}；"
+            "只告知已获得的奖励，不要承诺或计算新的奖励进度。"
+        )
     return payload
 
 
 def build_reward_shipping_tools(
     *,
     context: AgentRunContext,
-    rewards_enabled: bool = True,
 ) -> list[BaseTool]:
     async def get_checkin_reward_status() -> dict[str, Any]:
         """Read the current user's complete-checkin and reward/shipping status."""
-        if not rewards_enabled:
-            return _paused_reward_payload()
         async with SessionLocal() as session:
-            if not await _config_enabled(session):
+            config = await _load_reward_config(session)
+            if config is None or not config.enabled:
                 return _paused_reward_payload()
             service_case = await session.scalar(
                 select_active_service_cases(ServiceCase.id == context.service_case_id)
@@ -331,7 +361,9 @@ def build_reward_shipping_tools(
                 return {"ok": False, "error": "当前服务单不存在或已删除。"}
             return await _public_payload(
                 session,
-                await _reward_status(session, service_case_id=service_case.id),
+                await _reward_status(
+                    session, service_case_id=service_case.id, config=config
+                ),
             )
 
     async def manage_reward_shipping(
@@ -342,13 +374,10 @@ def build_reward_shipping_tools(
         reuse_saved_address: bool = False,
     ) -> dict[str, Any]:
         """Read or update the current service user's earned-reward shipping decision."""
-        if not rewards_enabled:
-            if action == "get_status":
-                return _paused_reward_payload()
-            return _paused_write_result()
         now = datetime.now(timezone.utc)
         async with SessionLocal() as session:
-            if not await _config_enabled(session):
+            config = await _load_reward_config(session)
+            if config is None or not config.enabled:
                 if action == "get_status":
                     return _paused_reward_payload()
                 return _paused_write_result()
@@ -360,7 +389,9 @@ def build_reward_shipping_tools(
             if service_case is None:
                 return {"ok": False, "error": "当前服务单不存在或已删除。"}
 
-            status = await _reward_status(session, service_case_id=service_case.id)
+            status = await _reward_status(
+                session, service_case_id=service_case.id, config=config
+            )
             if action == "get_status":
                 return await _public_payload(session, status)
 
@@ -394,7 +425,9 @@ def build_reward_shipping_tools(
                 return {
                     **await _public_payload(
                         session,
-                        await _reward_status(session, service_case_id=service_case.id),
+                        await _reward_status(
+                            session, service_case_id=service_case.id, config=config
+                        ),
                     ),
                     "recorded": "accumulate",
                     "reply_instruction": "已记下继续累积，告诉用户等下一阶段达标后再一起确认寄送。",
@@ -461,7 +494,7 @@ def build_reward_shipping_tools(
                     active.status = "pending_shipment"
                 await session.commit()
                 refreshed = await _reward_status(
-                    session, service_case_id=service_case.id
+                    session, service_case_id=service_case.id, config=config
                 )
                 return {
                     **await _public_payload(session, refreshed),
@@ -512,7 +545,9 @@ def build_reward_shipping_tools(
             program.current_choice = "ship_now"
             program.choice_updated_at = now
             await session.commit()
-            refreshed = await _reward_status(session, service_case_id=service_case.id)
+            refreshed = await _reward_status(
+                session, service_case_id=service_case.id, config=config
+            )
             return {
                 **await _public_payload(session, refreshed),
                 "recorded": "ship_now",

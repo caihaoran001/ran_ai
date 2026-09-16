@@ -35,6 +35,7 @@ from app.services.checkin_completion import complete_checkin_item_prefix
 from app.services.checkin_reward_settings import (
     DEFAULT_REWARD_TIERS,
     CheckinRewardTier,
+    CheckinRewardTierConfig,
     get_reward_tier_config,
 )
 from app.services.service_case_queries import (
@@ -61,28 +62,31 @@ class RewardReconciliation:
     new_progress_threshold: int | None
 
 
+async def load_reward_program(
+    session: AsyncSession,
+) -> CheckinRewardTierConfig | None:
+    """读奖励配置；非法配置按"本轮停用"处理并告警，不静默回落。"""
+    try:
+        return await get_reward_tier_config(session)
+    except ValueError:
+        logger.warning("打卡奖励档位配置非法，本轮不结算。", exc_info=True)
+        return None
+
+
 async def _configured_reward_tiers(
     session: AsyncSession,
 ) -> tuple[CheckinRewardTier, ...]:
-    """读后台档位配置（含关闭的档位）；非法时回落到默认四档。"""
-    try:
-        config = await get_reward_tier_config(session)
-    except ValueError:
-        logger.warning("打卡奖励档位配置非法，已回落到默认四档。", exc_info=True)
-        return DEFAULT_REWARD_TIERS
-    return config.tiers
+    """展示用：读全部档位（含关闭的）；非法时回落到默认四档。"""
+    config = await load_reward_program(session)
+    return config.tiers if config is not None else DEFAULT_REWARD_TIERS
 
 
 async def _active_reward_tiers(
     session: AsyncSession,
 ) -> tuple[CheckinRewardTier, ...]:
-    """只返回开关打开的档位；已获资格不受开关影响由调用方保证。"""
-    try:
-        config = await get_reward_tier_config(session)
-    except ValueError:
-        logger.warning("打卡奖励档位配置非法，已回落到默认四档。", exc_info=True)
-        return DEFAULT_REWARD_TIERS
-    return config.active_tiers()
+    """展示用：只返回开关打开的档位；非法配置按"全部关闭"处理。"""
+    config = await load_reward_program(session)
+    return config.active_tiers() if config is not None else ()
 
 
 async def _reward_tier_map(session: AsyncSession) -> dict[int, CheckinRewardTier]:
@@ -287,6 +291,12 @@ async def reconcile_case_rewards(
     if service_case.status not in allowed_statuses:
         return RewardReconciliation(0, (), (), None)
 
+    config = await load_reward_program(session)
+    tz = ZoneInfo(timezone_name or get_settings().reminder_timezone)
+    if config is None or not config.participates(checkin_first_day(service_case, tz)):
+        # 总开关关闭、配置非法，或服务单在活动起始日之前开始：本轮不结算。
+        return RewardReconciliation(0, (), (), None)
+
     valid_dates = await valid_reward_checkin_dates(
         session,
         service_case=service_case,
@@ -316,7 +326,7 @@ async def reconcile_case_rewards(
     for row in stale_progress:
         row.notification_status = "skipped"
     new_rows: list[CheckinRewardQualification] = []
-    active_tiers = await _active_reward_tiers(session)
+    active_tiers = config.active_tiers()
     for tier in active_tiers:
         if complete_checkin_days < tier.days or tier.days in existing:
             continue

@@ -43,6 +43,7 @@ function normalizeTiers(list: unknown): RewardTier[] {
 
 export function CheckinRewardTierConfig() {
   const [enabled, setEnabled] = useState(false);
+  const [programStartDate, setProgramStartDate] = useState<string | null>(null);
   const [tiers, setTiers] = useState<RewardTier[]>([]);
   const [initial, setInitial] = useState("");
   const [busy, setBusy] = useState(false);
@@ -59,6 +60,9 @@ export function CheckinRewardTierConfig() {
         const nextEnabled = data?.enabled === true;
         const list = normalizeTiers(data?.tiers);
         setEnabled(nextEnabled);
+        setProgramStartDate(
+          typeof data?.program_start_date === "string" ? data.program_start_date : null,
+        );
         setTiers(list);
         setInitial(JSON.stringify({ enabled: nextEnabled, tiers: list }));
       } catch (err) {
@@ -144,6 +148,9 @@ export function CheckinRewardTierConfig() {
       const nextEnabled = data?.enabled === true;
       const list = normalizeTiers(data?.tiers);
       setEnabled(nextEnabled);
+      setProgramStartDate(
+        typeof data?.program_start_date === "string" ? data.program_start_date : null,
+      );
       setTiers(list);
       setInitial(JSON.stringify({ enabled: nextEnabled, tiers: list }));
       setShowSuccess(true);
@@ -193,7 +200,7 @@ export function CheckinRewardTierConfig() {
         </div>
       </div>
 
-      <label className="mb-4 flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm text-slate-700">
+      <label className="mb-2 flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm text-slate-700">
         <input
           type="checkbox"
           className="h-4 w-4 rounded border-slate-300 accent-cyan-700"
@@ -203,6 +210,13 @@ export function CheckinRewardTierConfig() {
         />
         启用整套奖励机制
       </label>
+
+      <p className="mb-4 text-xs leading-relaxed text-slate-500">
+        {programStartDate
+          ? `活动自 ${programStartDate} 起对新开启的服务单生效；早于该日开始服务的客户不参与本轮。`
+          : "尚未开启过；首次开启当天会记为活动起始日，之前的服务单不参与。"}
+        关闭再打开视为新一轮，起始日会更新为新的开启日；已经获得的奖励不受影响。
+      </p>
 
       <div className="grid gap-4">
         {tiers.map((tier, index) => {

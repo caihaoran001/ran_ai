@@ -39,7 +39,6 @@ def build_agent_tools(
         tools.extend(
             build_reward_shipping_tools(
                 context=context,
-                rewards_enabled=settings.checkin_rewards_enabled,
             )
         )
     if include_service_lifecycle_tools:
