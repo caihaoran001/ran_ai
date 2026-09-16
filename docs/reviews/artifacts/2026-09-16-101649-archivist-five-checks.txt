@@ -1,0 +1,26 @@
+Commit under review: 6a2af39ff43e4bbdd754327306dea1288334ad02
+
+Mock regression (local isolated ran_ai_test, AI_API_KEY=local-mock-only-not-a-real-key, QiWei disabled):
+  /home/chr/.local/bin/uv run --with asyncpg --with python-dotenv --with sqlalchemy python /tmp/ran_ai_archivist_five_regression.py
+  Runner uses uv run --frozen alembic upgrade head then pytest tests/test_final_review.py tests/test_02_chat.py tests/test_07_qiwe_channel.py tests/test_12_archivist_shadow.py tests/test_16_archivist_quarantine.py tests/test_17_archivist_recovery.py tests/test_agent_checkpoint.py -q --junitxml=<XML artifact>
+  Exit 0. JUnit: 322 passed, 0 failed, 0 errors, 0 skipped, 22.789s.
+
+Backend static and local runtime:
+  PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache uv run --frozen python -m compileall -q src/app/services/archivist : exit 0.
+  git diff --check : exit 0.
+  docker restart ran-ai-backend : exit 0. Latest docker logs startup complete; local /health HTTP 200.
+
+Production deployment (code only):
+  Temporary copy of scratch/local_prebuilt_deploy.py rooted at repository; excludes ./docs and ./scratch in addition to .env and docker-compose.prod.yml; diagnostics history clearing command removed.
+  npm run build : exit 0. .next/standalone/server.js served /login locally : success.
+  Archive 29.1MB; local/remote sha256 matched (prefix fa371cd0195f5438); remote build, Alembic upgrade, checkpoint setup and backend/frontend reload : exit 0.
+  Public backend/frontend endpoints final HTTP 200/200; script reported 149.79s until recovery. Deployed commit file: 6a2af39ff43e4bbdd754327306dea1288334ad02.
+  Container internal health: backend HTTP 200, frontend HTTP 307 (login redirect). Deployed graph has ARCHIVIST_HISTORY_CONTEXT_MAX_MESSAGES = 5.
+
+Production read-only reconstruction of case 388 old batch (no _extract, no _commit, no real LLM, no DB changes):
+  Temporary progress watermark 62087 and batch_cap=1.
+  Historical context IDs [61816,61817,61818,62065,62087]; current context IDs [62088,62197,62722,62724,62725].
+  Actual chronological order places R4 62722 at 10:39:22, no-answer benefit 62724 at 10:43:19, user 62725 "6" at 10:44:38 Beijing time.
+  Input message IDs [62088,62725]; delta IDs [62725]; watermark 62087->62725; business dates [2026-09-15].
+
+Not executed: real-model content-quality judgment (requires paid API authorization); existing wrong check-in 2373 was not changed. Fixed-five context can miss an older question if more than five visible messages intervene.
