@@ -1138,8 +1138,8 @@ def _grade_g01(b):
         fails.append("B1: checkins(2026-09-01) MUST_ADD 缺失")
     if not _outcome_added(b1, "sleep_change", "worsened"):
         fails.append("B1: outcome sleep_change/worsened MUST_ADD 缺失")
-    if not [r for r in _outcome_added(b1, "weight_change") if "168" in str(r.get("value_text") or "")]:
-        fails.append("B1: outcome weight_change 含168斤 MUST_ADD 缺失")
+    if _outcome_added(b1, "weight_change"):
+        fails.append("B1: 首个无基线裸体重 MUST_NOT_DUPLICATE 报了 outcome")
     if not _profile_changed(b1):
         fails.append("B1: state 画像 MUST_ADD 未落库")
     if _checkin_added(b2) or _checkin_updated(b2):
@@ -1294,8 +1294,18 @@ def _grade_g09(b):
         fails.append("B2: 昨天剂量不得记到 09-16 MUST_NOT_DUPLICATE")
     if _outcome_added(b2, event_type="worsened"):
         fails.append("B2: 胃胀 worsened MUST_NOT_DUPLICATE 被重报")
-    if _outcome_added(b3) or _profile_changed(b3) or _mem_changed(b3):
-        fails.append("B3: 无新信息 MUST_NOT_DUPLICATE 被新增")
+    if len([a for a in _emitted_args(b3, "report_state_fact")
+            if str(a.get("state_type") or "") == "user_commitment"]) > 1:
+        fails.append("B3: user_commitment ALLOWED 0-or-1 超限")
+    if [a for a in _emitted_args(b3, "report_state_fact")
+            if str(a.get("state_type") or "") != "user_commitment"]:
+        fails.append("B3: 非承诺类 state MUST_NOT_DUPLICATE 被新增")
+    if _emitted_args(b3, "report_profile_fact"):
+        fails.append("B3: profile 事实 MUST_NOT_DUPLICATE 被上报")
+    if _outcome_added(b3):
+        fails.append("B3: 无新信息 outcome MUST_NOT_DUPLICATE 被新增")
+    if _mem_changed(b3):
+        fails.append("B3: 无新事实小结 MUST_NOT_DUPLICATE 被重写")
     if not _wm_advanced(b3):
         fails.append("B3: 水位线 MUST_UPDATE 未推进到 903")
     return fails, flags

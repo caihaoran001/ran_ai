@@ -65,7 +65,7 @@
 | --- | --- | --- | --- |
 | B1 | checkins(2026-09-01: product_schedule.morning_c=已喝/noon_b=已喝、water、sleep) | MUST_ADD | 空表填入，`sources.*=chat` |
 | B1 | outcome_events(field_key=sleep_change, event_type=worsened) | MUST_ADD | 持续负向体感必须报 worsened |
-| B1 | outcome_events(field_key=weight_change, value 含 168斤) | MUST_ADD | 体重事实 |
+| B1 | outcome_events(field_key=weight_change) | MUST_NOT_DUPLICATE | 首个无基线裸体重数不是维度变化（与 G02-B1/G04-B1 同一原则，2026-09-16 修正）；checkin 行仍 MUST_ADD，体重趋势读 checkins 故安全 |
 | B1 | user_state_profiles state 事实（睡眠差 active） | MUST_ADD | 与 outcome 同报，不二选一 |
 | B2 | checkins(2026-09-02) | MUST_NOT_DUPLICATE | 无打卡字段，不得建空行 |
 | B2 | outcome_events（sleep_change / weight_change 任何 event_type） | MUST_NOT_DUPLICATE | 历史事实在 archive_context 中，模型不得重报；DB 去重键 anchor 不同故拦不住，靠模型纪律 |
@@ -262,7 +262,8 @@
 | B2 | checkins(2026-09-15: product_schedule.night_a=已喝 ← “昨天晚A正常喝了”) | MUST_ADD | 用户明确归属昨天；两天规则（消息日 09-16＋前一天 09-15，按消息日期锚定）允许回补；三保险：仅明确日期、仅本批证据 902、不追更早 |
 | B2 | checkins(2026-09-16: product_schedule.night_a) | MUST_NOT_DUPLICATE | 不得把昨天剂量记到今天作 taken-today；本批无今日晚A证据，不得建 09-16 行或在 09-16 行含昨天剂量 |
 | B2 | outcome 胃胀 worsened 重报 | MUST_NOT_DUPLICATE | 已归档的负向事件不得复制 |
-| B3 | 任何 state/profile/outcome 新行 | MUST_NOT_DUPLICATE | 无新信息；水位线仍推进到 903 |
+| B3 | state(user_commitment, 如“继续坚持”) | ALLOWED（允许 0-or-1 行） | 同 G01-B2/G12-B2：感谢批新承诺可报一行 active，不算噪音 |
+| B3 | outcome/profile/memory 其他新行 | MUST_NOT_DUPLICATE | 无新信息，小结无新事实不得重写；水位线仍推进到 903 |
 
 ---
 
@@ -399,3 +400,5 @@
 5. 2026-09-16：G01-B2 / G12-B2 新增 ALLOWED 行——感谢批新用户承诺（user_commitment）可报一行，staff 对助教回答的展开补充可报 correction，均为规则内情形，不得判噪音；G09-B2 新增回溯事实规则——明确归属昨天的事实不得记作今天已喝，record-vs-drop 待产品决策，自动评分 flag 而非静默通过。
 6. 2026-09-16：G09-B2 回溯冲突按决策 A 落定——删除待产品决策 FLAG 行；“昨天晚A正常喝了”回补记到 2026-09-15（MUST_ADD，证据 902），09-16 行不得含昨天剂量（MUST_NOT_DUPLICATE）；依据两天规则（消息日＋前一天、按消息日期锚定、用户明确说昨天）＋三保险（仅明确日期、仅本批证据、不追更早）；同步更新首部 allowed_dates 语义的两天回补例外。
 7. 2026-09-16：新增 G13 睡眠时间点组（3 批）——B1 睡前宣告不填时长、不编睡眠问卷答案（防幻觉）；B2 次晨“昨晚11点睡”记 10-01 为 23点睡（MUST_ADD，证据 1302），不得记成睡了 11 小时；B3“昨晚23点睡”记 10-02 为 23点睡（MUST_ADD），“11”与“23”各记各日期且不得重写 10-01 行；含 03:00 规则的 allowed_dates 推导与本批合法证据集。
+8. 2026-09-16：G01-B1 outcome(weight_change) 由 MUST_ADD 改为 MUST_NOT_DUPLICATE——首个无基线裸体重数不是维度变化，与已修正的 G02-B1/G04-B1 属同一原则（真模型重跑 3/3 未报该事件，修正后判分与模型行为一致；checkin 行不变）。
+9. 2026-09-16：G09-B3 增补 ALLOWED 行（state/user_commitment 允许 0-or-1）——“一切正常，继续坚持”同 G01-B2/G12-B2 的“感谢＋新承诺”，属规则内可报；其余 outcome/profile/memory 仍 MUST_NOT_DUPLICATE。
