@@ -1,11 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Archive, BookOpenCheck, Bot } from "lucide-react";
+import { Archive, BookOpenCheck, Bot, ClipboardCheck } from "lucide-react";
 import {
   AgentEvaluationsClient,
   type AgentEvaluationSummary,
 } from "@/components/agent-evaluations/agent-evaluations-client";
+import {
+  ArchivistEvaluationsClient,
+  type ArchivistEvaluationSummary,
+} from "@/components/archivist-evaluations/archivist-evaluations-client";
 import {
   RagEvaluationsClient,
   type AnswerRelevancyCalibrationReport,
@@ -17,23 +21,31 @@ import {
   type ReplyAgentEvaluationSummary,
 } from "@/components/reply-agent-evaluations/reply-agent-evaluations-client";
 
-type QualityTab = "unified" | "rag" | "agent";
+type QualityTab = "unified" | "rag" | "agent" | "archivist";
 
 export function ReplyQualityClient({
   replyAgentRuns,
   ragRuns,
   agentRuns,
+  archivistRuns,
   initialCalibration,
   initialFaithfulnessCalibration,
 }: {
   replyAgentRuns: ReplyAgentEvaluationSummary[] | null;
   ragRuns: RagEvaluationSummary[] | null;
   agentRuns: AgentEvaluationSummary[] | null;
+  archivistRuns: ArchivistEvaluationSummary[] | null;
   initialCalibration: AnswerRelevancyCalibrationReport | null;
   initialFaithfulnessCalibration: FaithfulnessCalibrationReport | null;
 }) {
   const [tab, setTab] = useState<QualityTab>(
-    replyAgentRuns ? "unified" : ragRuns ? "rag" : "agent",
+    replyAgentRuns
+      ? "unified"
+      : ragRuns
+        ? "rag"
+        : agentRuns
+          ? "agent"
+          : "archivist",
   );
 
   return (
@@ -45,10 +57,10 @@ export function ReplyQualityClient({
         <div className="min-w-0 px-1">
           <p className="text-sm font-extrabold text-slate-900">回复质量评测</p>
           <p className="mt-0.5 text-xs leading-5 text-slate-500">
-            一套题库覆盖回复、知识检索、工具任务和安全边界；旧批次保留供历史对照。
+            一套题库覆盖回复、知识检索、工具任务、安全边界与档案官归档；旧批次保留供历史对照。
           </p>
         </div>
-        <div className="segmented-control grid-cols-3" role="tablist">
+        <div className="segmented-control grid-cols-4" role="tablist">
           <button
             type="button"
             role="tab"
@@ -79,6 +91,16 @@ export function ReplyQualityClient({
             <Archive className="h-4 w-4" />
             历史 Agent
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "archivist"}
+            onClick={() => setTab("archivist")}
+            className={`segmented-item flex items-center justify-center gap-2 whitespace-nowrap px-2 text-xs sm:px-3.5 sm:text-sm ${tab === "archivist" ? "segmented-item-active" : ""}`}
+          >
+            <ClipboardCheck className="h-4 w-4" />
+            档案官
+          </button>
         </div>
       </nav>
 
@@ -99,10 +121,16 @@ export function ReplyQualityClient({
           ) : (
             <UnavailableReport kind="知识问答" />
           )
-        ) : agentRuns ? (
-          <AgentEvaluationsClient initialRuns={agentRuns} />
+        ) : tab === "agent" ? (
+          agentRuns ? (
+            <AgentEvaluationsClient initialRuns={agentRuns} />
+          ) : (
+            <UnavailableReport kind="Agent 任务" />
+          )
+        ) : archivistRuns ? (
+          <ArchivistEvaluationsClient initialRuns={archivistRuns} />
         ) : (
-          <UnavailableReport kind="Agent 任务" />
+          <UnavailableReport kind="档案官归档" />
         )}
       </div>
     </div>
