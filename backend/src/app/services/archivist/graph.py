@@ -59,10 +59,9 @@ _SH_TZ = ZoneInfo("Asia/Shanghai")
 # 避免存量单第一次被触发就把整段聊天史一次性喂抽取（海量 LLM 调用）。稳态下增量本就很小。
 INITIAL_BACKFILL_DAYS = 3
 
-# 档案官只补本批增量附近已经成功发出的系统提醒，帮助模型还原“题目→通知→用户回复”
-# 的顺序。窗口和条数都有限，避免把历史提醒重新喂回每一批抽取。
-ARCHIVIST_SYSTEM_CONTEXT_LOOKBACK = timedelta(hours=48)
-ARCHIVIST_SYSTEM_CONTEXT_MAX_MESSAGES = 24
+# 档案官在当前增量之前只带固定数量的连续聊天背景，避免用水位线把理解上下文切断，
+# 也避免把整段历史重新喂给模型。当前批内的消息不受此条数限制。
+ARCHIVIST_HISTORY_CONTEXT_MAX_MESSAGES = 5
 
 
 class ArchivistPipelineState(TypedDict, total=False):
@@ -70,6 +69,7 @@ class ArchivistPipelineState(TypedDict, total=False):
     watermark_to: int | None
     # {date_iso: [{"id": int, "text": str, "role": str, "sender_type": str}]}
     delta_by_date: dict[str, list[dict]]
+    delta_dates: list[str]
     # 本轮推动水位线的用户/员工入站消息，以及成效 anchor 专用用户消息。
     delta_message_ids: list[int]
     delta_user_message_ids: list[int]
@@ -77,6 +77,8 @@ class ArchivistPipelineState(TypedDict, total=False):
     archive_context: dict[str, Any]
     # {date_iso: {"fields": {...}, "evidence_ids": [int]}}
     day_candidates: dict[str, dict]
+    # 全局按真实事件时间排列的当前批消息与最多五条历史背景。
+    chat_context: list[dict]
     # 模型抽出的成效事件/稳定画像/当前状态（累计跨整批，commit 里一次性写真表）
     outcome_candidates: list[dict]
     profile_candidates: list[dict]
@@ -151,14 +153,14 @@ def _sh_date(dt: datetime) -> date:
 def _message_event_at(message: Message) -> datetime | None:
     """返回用于还原聊天顺序的时间。
 
-    入站和普通聊天消息以 created_at 为准；成功发送的系统提醒优先使用真实确认发送时间，
+    入站消息以 created_at 为准；所有成功发送的出站消息优先使用真实确认发送时间，
     只有历史记录没有 sent_at 时才回退到 created_at。数据库中的 naive 时间按 UTC 解释，
     与 `_sh_date` 的既有约定一致。
     """
     event_at = (
         message.sent_at
         if (
-            message.sender_type == MessageSenderType.SYSTEM
+            message.direction == MessageDirection.OUTBOUND
             and message.status == MessageStatus.SENT
             and message.sent_at is not None
         )
@@ -187,19 +189,27 @@ def _system_context_label(message: Message) -> str:
 
 def _extract_message_line(item: dict[str, Any]) -> str:
     """格式化档案官输入中的一条消息，显式标出系统提醒仅为上下文。"""
+    event_at = item.get("_event_at")
+    timestamp = (
+        event_at.astimezone(_SH_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        if isinstance(event_at, datetime)
+        else "时间未知"
+    )
     if item.get("context_only"):
-        event_at = item.get("_event_at")
-        context_label = str(item.get("context_label") or "系统提醒")
-        timestamp = (
-            event_at.astimezone(_SH_TZ).strftime("%Y-%m-%d %H:%M:%S")
-            if isinstance(event_at, datetime)
-            else "时间未知"
-        )
+        context_label = str(item.get("context_label") or "历史上下文")
+        history_suffix = "已归档，仅供理解，不得上报" if item.get("historical") else "仅供上下文"
+        if item.get("historical") and item.get("sender_type") != "system":
+            # 保留原有“[id] 角色”可检索前缀，同时明确这条是历史角色，避免模型把背景当新消息。
+            context_label = f"{item['role']}（{context_label}"
+            return (
+                f"[{item['id']}] {context_label}，北京时间 {timestamp}，{history_suffix}）："
+                f"{item['text']}"
+            )
         return (
-            f"[{item['id']}] {context_label}（已成功发送，北京时间 {timestamp}，仅供上下文）："
+            f"[{item['id']}] {context_label}（北京时间 {timestamp}，{history_suffix}）："
             f"{item['text']}"
         )
-    return f"[{item['id']}] {item['role']}：{item['text']}"
+    return f"[{item['id']}] {item['role']}（北京时间 {timestamp}）：{item['text']}"
 
 
 def _audit_text(value: Any, *, limit: int = 2000) -> str | None:
@@ -317,65 +327,8 @@ class ArchivistPipeline:
 
     # --- 流水线阶段 ---
 
-    async def _load_system_context_messages(
-        self, anchor_rows: list[Message]
-    ) -> list[Message]:
-        """加载本批增量附近的系统提醒，供模型还原真实消息顺序。
-
-        系统提醒不属于档案官本批增量：它们不能推进水位线，也不能成为用户事实的证据。
-        这里只查同一服务单、已成功发送的 REMINDER，并以本批消息的时间形成有界窗口；
-        这样客户隔天回答时仍能看到附近的题目，而不会每轮重喂全部历史提醒。
-        """
-        anchor_times = [
-            event_at
-            for message in anchor_rows
-            if (event_at := _message_event_at(message)) is not None
-        ]
-        if not anchor_times:
-            return []
-        window_start = min(anchor_times) - ARCHIVIST_SYSTEM_CONTEXT_LOOKBACK
-        window_end = max(anchor_times)
-        sent_at_in_window = and_(
-            Message.sent_at.is_not(None),
-            Message.sent_at >= window_start,
-            Message.sent_at <= window_end,
-        )
-        legacy_created_at_in_window = and_(
-            Message.sent_at.is_(None),
-            Message.created_at >= window_start,
-            Message.created_at <= window_end,
-        )
-        rows = list(
-            await self.session.scalars(
-                select(Message)
-                .where(
-                    Message.service_case_id == self.service_case.id,
-                    Message.direction == MessageDirection.OUTBOUND,
-                    Message.sender_type == MessageSenderType.SYSTEM,
-                    Message.purpose == MessagePurpose.REMINDER,
-                    Message.status == MessageStatus.SENT,
-                    or_(sent_at_in_window, legacy_created_at_in_window),
-                )
-                # 先取实际事件时间最近的有限条数，再在内存中恢复正序。
-                .order_by(
-                    func.coalesce(Message.sent_at, Message.created_at).desc(),
-                    Message.id.desc(),
-                )
-                .limit(ARCHIVIST_SYSTEM_CONTEXT_MAX_MESSAGES)
-            )
-        )
-        return sorted(
-            (
-                message
-                for message in rows
-                if (event_at := _message_event_at(message)) is not None
-                and window_start <= event_at <= window_end
-            ),
-            key=lambda message: (_message_event_at(message), message.id),
-        )
-
     async def _load_context(self) -> dict[str, Any]:
-        """读水位线，拉增量，并补入附近系统提醒作为有限顺序上下文。"""
+        """读水位线，拉增量，并补入当前批前最多五条连续可见聊天背景。"""
         watermark = self.progress.last_archived_message_id or 0
         delta_stmt = (
             select(Message)
@@ -395,145 +348,177 @@ class ArchivistPipeline:
         delta_rows = (await self.session.execute(delta_stmt)).scalars().all()
 
         watermark_to = max((m.id for m in delta_rows), default=watermark)
-        if watermark_to > watermark:
-            rows = (
+        if watermark_to <= watermark:
+            return {
+                "watermark_from": watermark or None,
+                "watermark_to": watermark or None,
+                "delta_by_date": {},
+                "delta_dates": [],
+                "delta_message_ids": [],
+                "delta_user_message_ids": [],
+                "followup_context_by_date": {},
+                "chat_context": [],
+                "archive_context": await self._load_archive_context(),
+            }
+
+        chat_or_system = or_(
+            and_(
+                Message.sender_type.in_(
+                    [MessageSenderType.USER, MessageSenderType.STAFF, MessageSenderType.BOT]
+                ),
+                Message.purpose == MessagePurpose.CHAT,
+                Message.message_type != TYPE_SYSTEM_NOTICE,
+                or_(
+                    Message.direction == MessageDirection.INBOUND,
+                    Message.status == MessageStatus.SENT,
+                ),
+            ),
+            and_(
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.sender_type == MessageSenderType.SYSTEM,
+                Message.purpose == MessagePurpose.REMINDER,
+                Message.status == MessageStatus.SENT,
+            ),
+        )
+        # 本批边界由 USER/STAFF 增量决定，但模型可见消息包含边界内的助教和系统提醒。
+        current_rows = list(
+            (
                 await self.session.execute(
                     select(Message)
                     .where(
                         Message.service_case_id == self.service_case.id,
                         Message.id > watermark,
                         Message.id <= watermark_to,
-                        Message.sender_type.in_(
-                            [MessageSenderType.USER, MessageSenderType.STAFF, MessageSenderType.BOT]
-                        ),
-                        Message.message_type != TYPE_SYSTEM_NOTICE,
-                        Message.purpose == MessagePurpose.CHAT,
+                        chat_or_system,
                     )
                     .order_by(Message.id.asc())
                 )
-            ).scalars().all()
-        else:
-            rows = []
-
-        # 员工消息可能晚于上一轮水位线，而被纠正的助教回复位于水位线之前。
-        # 仅补最近 48 小时内、员工消息之前的最后一条助教回复作为有界上下文；是否构成纠正仍由模型判断。
-        staff_rows = [m for m in delta_rows if m.sender_type == MessageSenderType.STAFF]
-        if staff_rows:
-            first_staff = min(staff_rows, key=lambda item: item.id)
-            if not any(m.sender_type == MessageSenderType.BOT and m.id < first_staff.id for m in rows):
-                staff_at = first_staff.created_at or datetime.now(timezone.utc)
-                context_bot = await self.session.scalar(
-                    select(Message)
-                    .where(
-                        Message.service_case_id == self.service_case.id,
-                        Message.id < first_staff.id,
-                        Message.sender_type == MessageSenderType.BOT,
-                        Message.purpose == MessagePurpose.CHAT,
-                        Message.created_at >= staff_at - timedelta(hours=48),
-                    )
-                    .order_by(Message.id.desc())
-                    .limit(1)
-                )
-                if context_bot is not None:
-                    rows.append(context_bot)
-                    rows.sort(key=lambda item: item.id)
-
-        system_context_rows = await self._load_system_context_messages(delta_rows)
-        known_row_ids = {message.id for message in rows}
-        rows.extend(
-            message
-            for message in system_context_rows
-            if message.id not in known_row_ids
+            )
+            .scalars()
+            .all()
         )
+        # 在当前批第一条可见消息之前补最多五条，查询仍按 ID 找相邻记录，最后统一按真实事件时间排序。
+        earliest_current_id = min((message.id for message in current_rows), default=None)
+        history_rows: list[Message] = []
+        if earliest_current_id is not None:
+            history_rows = list(
+                (
+                    await self.session.execute(
+                        select(Message)
+                        .where(
+                            Message.service_case_id == self.service_case.id,
+                            Message.id < earliest_current_id,
+                            chat_or_system,
+                        )
+                        .order_by(Message.id.desc())
+                        .limit(ARCHIVIST_HISTORY_CONTEXT_MAX_MESSAGES)
+                    )
+                )
+                .scalars()
+                .all()
+            )
 
         delta_by_date: dict[str, list[dict]] = {}
         delta_message_ids = [m.id for m in delta_rows]
-        delta_user_message_ids = [m.id for m in delta_rows if m.sender_type == MessageSenderType.USER]
+        delta_user_message_ids = [
+            m.id for m in delta_rows if m.sender_type == MessageSenderType.USER
+        ]
+        delta_dates = sorted(
+            {
+                _sh_date(event_at).isoformat()
+                for message in delta_rows
+                if (event_at := _message_event_at(message)) is not None
+            }
+        )
         role_labels = {
             MessageSenderType.USER: "用户",
             MessageSenderType.STAFF: "班主任",
             MessageSenderType.BOT: "助教",
             MessageSenderType.SYSTEM: "系统提醒",
         }
-        # 系统提醒可能比本批用户回复早一天，不能让它自己制造一个新的业务日期；
-        # 将其挂到时间上紧随其后的本批增量消息所在日期，同时保留实际事件时间供排序和展示。
-        anchor_events = sorted(
-            (
-                (event_at, _sh_date(event_at))
-                for message in delta_rows
-                if (event_at := _message_event_at(message)) is not None
-            ),
-            key=lambda item: item[0],
-        )
-        for m in rows:
-            event_at = _message_event_at(m)
+
+        def as_context_item(message: Message, *, historical: bool) -> dict[str, Any] | None:
+            event_at = _message_event_at(message)
             if event_at is None:
-                continue
-            aj = m.analysis_json if isinstance(m.analysis_json, dict) else {}
-            # 图片解析失败的消息内容只是占位符（"用户发来一张图片（图片解析失败）。"），
-            # 无信息量，跳过不喂抽取。成功解析的图片描述已写进 content，正常纳入。
-            if m.sender_type == MessageSenderType.USER and aj.get("image_parse_status") == "failed":
-                continue
-            text = (m.content or "").strip()
+                return None
+            analysis = message.analysis_json if isinstance(message.analysis_json, dict) else {}
+            # 图片解析失败的消息只是占位符，无信息量，不喂抽取；成功解析的图片描述正常纳入。
+            if (
+                message.sender_type == MessageSenderType.USER
+                and analysis.get("image_parse_status") == "failed"
+            ):
+                return None
+            text = (message.content or "").strip()
             if not text:
-                continue
-            if m.sender_type == MessageSenderType.SYSTEM and anchor_events:
-                following_anchor = next(
-                    (item for item in anchor_events if item[0] >= event_at),
-                    anchor_events[-1],
-                )
-                key = following_anchor[1].isoformat()
-            else:
-                key = _sh_date(event_at).isoformat()
-            delta_by_date.setdefault(key, []).append(
-                {
-                    "id": m.id,
-                    "text": text,
-                    "role": role_labels[m.sender_type],
-                    "sender_type": m.sender_type.value,
-                    "_event_at": event_at,
-                    "context_only": m.sender_type == MessageSenderType.SYSTEM,
-                    "context_label": (
-                        _system_context_label(m)
-                        if m.sender_type == MessageSenderType.SYSTEM
-                        else None
-                    ),
-                }
-            )
+                return None
+            is_system = message.sender_type == MessageSenderType.SYSTEM
+            return {
+                "id": message.id,
+                "text": text,
+                "role": role_labels[message.sender_type],
+                "sender_type": message.sender_type.value,
+                "_event_at": event_at,
+                "context_only": historical or is_system,
+                "historical": historical,
+                "context_label": (
+                    f"历史{role_labels[message.sender_type]}"
+                    if historical and not is_system
+                    else _system_context_label(message)
+                    if is_system
+                    else None
+                ),
+            }
 
+        current_items = [
+            item
+            for message in current_rows
+            if (item := as_context_item(message, historical=False)) is not None
+        ]
+        history_items = [
+            item
+            for message in history_rows
+            if (item := as_context_item(message, historical=True)) is not None
+        ]
+        chat_context = sorted(
+            [*history_items, *current_items],
+            key=lambda item: (item["_event_at"], item["id"]),
+        )
+
+        delta_row_ids = {message.id for message in delta_rows}
+        # 日期分组只保存本批 USER/STAFF 增量，历史消息、当前批助教消息和系统提醒
+        # 都只进入全局聊天上下文，不会制造新的业务日期或改变 allowed_dates。
+        for item in current_items:
+            if (
+                item["id"] not in delta_row_ids
+                or item["sender_type"] == MessageSenderType.SYSTEM
+            ):
+                continue
+            key = _sh_date(item["_event_at"]).isoformat()
+            delta_by_date.setdefault(key, []).append(item)
         for messages in delta_by_date.values():
             messages.sort(key=lambda item: (item["_event_at"], item["id"]))
 
-        # 跨午夜的“助教回复→班主任纠正”仍需在同一次 extract 输入中出现。
-        bot_rows = [m for m in rows if m.sender_type == MessageSenderType.BOT]
-        for staff in staff_rows:
-            preceding = [bot for bot in bot_rows if bot.id < staff.id]
-            if not preceding or not staff.created_at:
-                continue
-            bot = max(preceding, key=lambda item: item.id)
-            staff_key = _sh_date(staff.created_at).isoformat()
-            if any(item["id"] == bot.id for item in delta_by_date.get(staff_key, [])):
-                continue
-            delta_by_date.setdefault(staff_key, []).insert(
-                0,
-                {
-                    "id": bot.id,
-                    "text": (bot.content or "").strip(),
-                    "role": "助教",
-                    "sender_type": bot.sender_type.value,
-                    "_event_at": _message_event_at(bot) or _message_event_at(staff),
-                    "context_only": False,
-                },
-            )
-
-        for messages in delta_by_date.values():
-            messages.sort(key=lambda item: (item["_event_at"], item["id"]))
+        current_chat_ids = [
+            int(item["id"])
+            for item in current_items
+            if item["sender_type"] in {"user", "staff", "bot"}
+        ]
+        current_user_ids = [
+            int(item["id"])
+            for item in current_items
+            if item["sender_type"] == "user"
+        ]
+        current_staff_ids = [
+            int(item["id"])
+            for item in current_items
+            if item["sender_type"] == "staff"
+        ]
 
         self.result.watermark_from = watermark or None
         self.result.watermark_to = watermark_to or None
         followup_context_by_date: dict[str, list[dict]] = {}
-        if delta_by_date:
-            first_day = min(date.fromisoformat(value) for value in delta_by_date)
+        if delta_dates:
+            first_day = min(date.fromisoformat(value) for value in delta_dates)
             reminder_rows = list(
                 await self.session.scalars(
                     select(Message).where(
@@ -545,7 +530,7 @@ class ArchivistPipeline:
                     )
                 )
             )
-            for date_iso in delta_by_date:
+            for date_iso in delta_dates:
                 day = date.fromisoformat(date_iso)
                 for reminder in reminder_rows:
                     meta = reminder.analysis_json if isinstance(reminder.analysis_json, dict) else {}
@@ -557,22 +542,20 @@ class ArchivistPipeline:
                         followup_context_by_date.setdefault(date_iso, []).append(context)
 
         self.result.delta_count = len(delta_rows)
-        self.result.input_message_ids = sorted(
-            {
-                int(item["id"])
-                for messages in delta_by_date.values()
-                for item in messages
-                if item.get("id") and item.get("sender_type") in {"user", "staff", "bot"}
-            }
-        )
+        self.result.input_message_ids = sorted(current_chat_ids)
         archive_context = await self._load_archive_context()
         return {
             "watermark_from": watermark or None,
             "watermark_to": watermark_to or None,
             "delta_by_date": delta_by_date,
+            "delta_dates": delta_dates,
             "delta_message_ids": delta_message_ids,
             "delta_user_message_ids": delta_user_message_ids,
             "followup_context_by_date": followup_context_by_date,
+            "chat_context": chat_context,
+            "current_chat_message_ids": current_chat_ids,
+            "current_user_message_ids": current_user_ids,
+            "current_staff_message_ids": current_staff_ids,
             "archive_context": archive_context,
         }
 
@@ -848,17 +831,20 @@ class ArchivistPipeline:
             str(item["id"]): str(item["label"])
             for item in (checklist[1] if checklist is not None else [])
         }
-        dates = sorted(delta_by_date)
+        # 业务日期只来自本批真实 USER/STAFF 增量；消息正文则使用包含前五条历史背景的
+        # 全局时间序列，避免按日期分组把跨日对话重新排序。
+        dates = list(state.get("delta_dates") or sorted(delta_by_date))
         content_parts: list[str] = []
-        user_message_ids: set[int] = set()
+        context_date: str | None = None
+        for item in state.get("chat_context") or []:
+            item_date = _sh_date(item["_event_at"]).isoformat()
+            if item_date != context_date:
+                content_parts.append(f"【日期 {item_date}】")
+                context_date = item_date
+            content_parts.append(_extract_message_line(item))
+        user_message_ids = set(state.get("current_user_message_ids") or [])
         user_message_date_by_id: dict[int, str] = {}
-        for date_iso in dates:
-            msgs = delta_by_date[date_iso]
-            content_parts.append(f"【日期 {date_iso}】")
-            content_parts.extend(_extract_message_line(item) for item in msgs)
-            user_message_ids.update(
-                item["id"] for item in msgs if item["sender_type"] == "user"
-            )
+        for date_iso, msgs in delta_by_date.items():
             user_message_date_by_id.update(
                 {
                     item["id"]: date_iso
@@ -912,9 +898,6 @@ class ArchivistPipeline:
         )
         trace = collector.get("_trace") or {}
         self.result.emitted_count = len(trace.get("emitted") or [])
-        self.result.dropped_count = len(trace.get("dropped") or [])
-        if trace.get("emitted") or trace.get("dropped"):
-            extract_traces.append({"target_date": dates[-1], **trace})
 
         for date_iso, fields in (collector.get("checkins") or {}).items():
             if fields:
@@ -1004,13 +987,46 @@ class ArchivistPipeline:
             for key, payload in day_candidates.items()
             if payload.get("fields") or payload.get("custom_answers")
         }
+        current_staff_ids = set(state.get("current_staff_message_ids") or [])
+        correction_candidates = []
+        for candidate in collector.get("correction") or []:
+            staff_message_id = candidate.get("staff_message_id")
+            if staff_message_id not in current_staff_ids:
+                trace.setdefault("dropped", []).append(
+                    {
+                        "bucket": "correction",
+                        "reason": "historical_staff_message",
+                        "staff_message_id": staff_message_id,
+                    }
+                )
+                continue
+            correction_candidates.append(candidate)
+        faq_candidates = []
+        for candidate in collector.get("faq") or []:
+            staff_message_id = candidate.get("staff_message_id")
+            if staff_message_id not in current_staff_ids:
+                trace.setdefault("dropped", []).append(
+                    {
+                        "bucket": "faq",
+                        "reason": "historical_staff_message",
+                        "staff_message_id": staff_message_id,
+                    }
+                )
+                continue
+            faq_candidates.append(candidate)
+        kept_trace = trace.setdefault("kept", {})
+        kept_trace["correction"] = len(correction_candidates)
+        kept_trace["faq"] = len(faq_candidates)
+        self.result.dropped_count = len(trace.get("dropped") or [])
+        if trace.get("emitted") or trace.get("dropped"):
+            extract_traces.append({"target_date": dates[-1], **trace})
         return {
             "day_candidates": kept_day_candidates,
             "outcome_candidates": collector.get("outcome") or [],
             "profile_candidates": collector.get("profile") or [],
             "state_candidates": collector.get("state") or [],
-            "correction_candidates": collector.get("correction") or [],
-            "faq_candidates": collector.get("faq") or [],
+            "correction_candidates": correction_candidates,
+            "faq_candidates": faq_candidates,
             "memory_candidate": collector.get("memory"),
             "case_candidates": collector.get("case") or [],
             "followup_answers": followup_answers,

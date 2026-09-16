@@ -1220,8 +1220,8 @@ async def test_archivist_restores_final_review_order_with_interleaved_benefit_no
 
     case, message, progress = await _archivist_case(db_session, monkeypatch)
     base = datetime(2026, 9, 15, 2, 39, tzinfo=timezone.utc)
-    message.content = "6"
-    message.created_at = base + timedelta(minutes=5)
+    # 让系统题目和通知位于本轮水位线之后、客户回复之前，模拟线上消息 ID 顺序。
+    progress.last_archived_message_id = message.id
     script = await get_active_script(db_session, language="zh")
     question = script.question(Q_SERVICE_INTENT)
     assert question is not None
@@ -1265,6 +1265,19 @@ async def test_archivist_restores_final_review_order_with_interleaved_benefit_no
     )
     db_session.add_all([r4, benefit])
     await db_session.flush()
+    reply = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="6",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        created_at=base + timedelta(minutes=5),
+    )
+    db_session.add(reply)
+    await db_session.flush()
 
     fake = _FakeReportingModel(
         [
@@ -1275,7 +1288,7 @@ async def test_archivist_restores_final_review_order_with_interleaved_benefit_no
                     "answer_status": STATUS_ANSWERED,
                     "raw_text": "6",
                     "option_keys": ["undecided"],
-                    "evidence_message_id": message.id,
+                    "evidence_message_id": reply.id,
                 },
                 "id": "r4-answer",
             }
@@ -1288,15 +1301,15 @@ async def test_archivist_restores_final_review_order_with_interleaved_benefit_no
     prompt = fake.prompts[-1]
     r4_pos = prompt.index(f"[{r4.id}] 系统提醒")
     benefit_pos = prompt.index(f"[{benefit.id}] 系统提醒")
-    user_pos = prompt.index(f"[{message.id}] 用户：6")
+    user_pos = prompt.index(f"[{reply.id}] 用户（北京时间")
     assert r4_pos < benefit_pos < user_pos
     assert "系统提醒：可回答题" in prompt[r4_pos:benefit_pos]
     assert "系统提醒：通知、无需回答" in prompt[benefit_pos:user_pos]
     assert "仅供上下文" in prompt[r4_pos:benefit_pos]
     assert "权益通知（无需回答）" not in prompt[benefit_pos:user_pos]
     # 系统提醒进入模型文本，但不进入输入账本或推动水位线。
-    assert result.input_message_ids == [message.id]
-    assert progress.last_archived_message_id == message.id
+    assert result.input_message_ids == [reply.id]
+    assert progress.last_archived_message_id == reply.id
     stored = await load_progress(db_session, service_case_id=case.id)
     assert stored.selected_keys(Q_SERVICE_INTENT) == ["undecided"]
 
@@ -1309,8 +1322,7 @@ async def test_archivist_system_context_cannot_be_user_checkin_evidence(
     from app.models.checkin import Checkin
 
     case, message, progress = await _archivist_case(db_session, monkeypatch)
-    message.content = "6"
-    message.created_at = datetime(2026, 9, 15, 2, 44, tzinfo=timezone.utc)
+    progress.last_archived_message_id = message.id
     system = Message(
         service_case_id=case.id,
         group_id=case.group_id,
@@ -1324,6 +1336,19 @@ async def test_archivist_system_context_cannot_be_user_checkin_evidence(
         sent_at=datetime(2026, 9, 15, 2, 39, 22, tzinfo=timezone.utc),
     )
     db_session.add(system)
+    await db_session.flush()
+    reply = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="6",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        created_at=datetime(2026, 9, 15, 2, 44, tzinfo=timezone.utc),
+    )
+    db_session.add(reply)
     await db_session.flush()
     target_date = "2026-09-15"
     fake = _FakeReportingModel(
@@ -1350,8 +1375,8 @@ async def test_archivist_system_context_cannot_be_user_checkin_evidence(
         )
     )
     assert checkin is None
-    assert result.input_message_ids == [message.id]
-    assert progress.last_archived_message_id == message.id
+    assert result.input_message_ids == [reply.id]
+    assert progress.last_archived_message_id == reply.id
 
 
 @pytest.mark.asyncio
@@ -1425,13 +1450,228 @@ async def test_archivist_keeps_an_earlier_question_for_a_delayed_reply(
 
     prompt = fake.prompts[-1]
     assert prompt.index(f"[{r4.id}] 系统提醒") < prompt.index(
-        f"[{reply.id}] 用户：6"
+        f"[{reply.id}] 用户（北京时间"
     )
     assert "北京时间 2026-09-14 14:44:00" in prompt
     assert result.input_message_ids == [reply.id]
     assert progress.last_archived_message_id == reply.id
     stored = await load_progress(db_session, service_case_id=case.id)
     assert stored.selected_keys(Q_SERVICE_INTENT) == ["undecided"]
+
+
+@pytest.mark.asyncio
+async def test_archivist_limits_history_to_five_messages_and_keeps_it_out_of_evidence(
+    db_session, monkeypatch
+):
+    """连续上下文只回看五条，历史消息不能变成新一轮打卡证据。"""
+    from app.models.checkin import Checkin
+
+    case, seed_message, progress = await _archivist_case(db_session, monkeypatch)
+    base = datetime(2026, 9, 15, 2, 30, tzinfo=timezone.utc)
+    history_rows = []
+    history_senders = [
+        MessageSenderType.USER,
+        MessageSenderType.BOT,
+        MessageSenderType.STAFF,
+        MessageSenderType.USER,
+        MessageSenderType.BOT,
+        MessageSenderType.STAFF,
+    ]
+    for index, sender_type in enumerate(history_senders, start=1):
+        history_rows.append(
+            Message(
+                service_case_id=case.id,
+                group_id=case.group_id,
+                direction=(
+                    MessageDirection.OUTBOUND
+                    if sender_type == MessageSenderType.BOT
+                    else MessageDirection.INBOUND
+                ),
+                sender_type=sender_type,
+                message_type="text",
+                content=f"历史第{index}条",
+                purpose=MessagePurpose.CHAT,
+                status=(
+                    MessageStatus.SENT
+                    if sender_type == MessageSenderType.BOT
+                    else MessageStatus.RECEIVED
+                ),
+                created_at=base + timedelta(minutes=index),
+                sent_at=(
+                    base + timedelta(minutes=index, seconds=10)
+                    if sender_type == MessageSenderType.BOT
+                    else None
+                ),
+            )
+        )
+    db_session.add_all(history_rows)
+    await db_session.flush()
+    historical_system = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content="历史系统提醒",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.SENT,
+        created_at=base + timedelta(minutes=7),
+        sent_at=None,
+    )
+    db_session.add(historical_system)
+    await db_session.flush()
+    progress.last_archived_message_id = historical_system.id
+
+    failed_reminder = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content="发送失败的提醒",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.FAILED,
+        created_at=base + timedelta(minutes=7, seconds=30),
+    )
+    reminder = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.OUTBOUND,
+        sender_type=MessageSenderType.SYSTEM,
+        message_type="markdown",
+        content="本批问题",
+        purpose=MessagePurpose.REMINDER,
+        status=MessageStatus.SENT,
+        created_at=base + timedelta(minutes=8),
+        sent_at=base + timedelta(minutes=8, seconds=5),
+    )
+    reply = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="当前回复",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        created_at=base + timedelta(minutes=9),
+    )
+    db_session.add_all([failed_reminder, reminder, reply])
+    await db_session.flush()
+
+    fake = _FakeReportingModel(
+        [
+            {
+                "name": "report_checkin",
+                "args": {
+                    "target_date": "2026-09-15",
+                    "weight": "历史体重",
+                    "evidence_message_ids": [history_rows[-1].id],
+                },
+                "id": "historical-evidence",
+            }
+        ]
+    )
+    result = await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+
+    prompt = fake.prompts[-1]
+    assert f"[{history_rows[0].id}]" not in prompt
+    for row in history_rows[2:]:
+        row_pos = prompt.index(f"[{row.id}]")
+        assert "历史" in prompt[row_pos : row_pos + 40]
+    assert f"[{history_rows[0].id}]" not in prompt
+    assert f"[{history_rows[1].id}]" not in prompt
+    assert f"[{historical_system.id}] 系统提醒" in prompt
+    assert f"[{failed_reminder.id}]" not in prompt
+    assert f"[{reminder.id}] 系统提醒" in prompt
+    assert prompt.index(f"[{history_rows[-1].id}]") < prompt.index(
+        f"[{reminder.id}] 系统提醒"
+    ) < prompt.index(f"[{reply.id}] 用户（北京时间")
+    assert f"[{seed_message.id}]" not in prompt
+    assert result.input_message_ids == [reply.id]
+    assert result.upserts == []
+    assert progress.last_archived_message_id == reply.id
+    assert (
+        await db_session.scalar(
+            select(Checkin).where(
+                Checkin.service_case_id == case.id,
+                Checkin.deleted_at.is_(None),
+            )
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_archivist_drops_faq_and_correction_from_historical_staff(
+    db_session, monkeypatch
+):
+    """历史班主任消息可帮助理解，但不能在新批重复生成 FAQ 或纠偏。"""
+    case, seed_message, progress = await _archivist_case(db_session, monkeypatch)
+    historical_staff = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.STAFF,
+        message_type="text",
+        content="历史答复",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        created_at=datetime(2026, 9, 15, 2, 35, tzinfo=timezone.utc),
+    )
+    db_session.add(historical_staff)
+    await db_session.flush()
+    progress.last_archived_message_id = historical_staff.id
+    reply = Message(
+        service_case_id=case.id,
+        group_id=case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="新消息",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+        created_at=datetime(2026, 9, 15, 2, 36, tzinfo=timezone.utc),
+    )
+    db_session.add(reply)
+    await db_session.flush()
+    fake = _FakeReportingModel(
+        [
+            {
+                "name": "report_correction",
+                "args": {
+                    "scope": "general",
+                    "summary": "历史纠偏",
+                    "applicability": "历史场景",
+                    "bot_message_id": seed_message.id,
+                    "staff_message_id": historical_staff.id,
+                },
+                "id": "historical-correction",
+            },
+            {
+                "name": "report_faq_candidate",
+                "args": {
+                    "scope": "general",
+                    "question": "历史问题",
+                    "answer": "历史回答",
+                    "category": "规则咨询",
+                    "evidence_text": "历史提问",
+                    "staff_message_id": historical_staff.id,
+                },
+                "id": "historical-faq",
+            },
+        ]
+    )
+    result = await run_archivist(
+        db_session, service_case=case, progress=progress, chat_model=fake
+    )
+
+    assert result.corrections_recorded == 0
+    assert result.faq_candidates == []
+    assert result.dropped_count == 2
+    assert progress.last_archived_message_id == reply.id
 
 
 @pytest.mark.asyncio
