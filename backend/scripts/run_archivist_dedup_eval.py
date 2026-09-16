@@ -331,6 +331,22 @@ DEDUP12_GROUPS: dict[str, dict] = {
 
 DEDUP12_CODES = ["G%02d" % i for i in range(1, 14)]
 
+GROUP_META: dict[str, dict[str, str]] = {
+    "G01": {"title": "感谢批不重报", "expectation": "旧批已有打卡/成效，新批只说谢谢：不得重复上报、不得重复入库；水位线照常推进"},
+    "G02": {"title": "修正旧事实", "expectation": "用户先报数后纠正（读数纠偏）：打卡原地更新到新值，不新建成效事件"},
+    "G03": {"title": "跨天一批", "expectation": "一批消息跨两个业务日：每天各记一行；昨天的体重不得记到今天行"},
+    "G04": {"title": "次日同值", "expectation": "连续两天同一体重：首报只记打卡；次日可记一条 unchanged"},
+    "G05": {"title": "短回复靠历史", "expectation": "只回数字（6）：靠历史提问理解是睡眠还是饮水；证据只能用本批消息"},
+    "G06": {"title": "凌晨补卡", "expectation": "01:50 补昨天的卡：业务日归前一天；当日行不得重复"},
+    "G07": {"title": "表单权威", "expectation": "聊天值与表单值冲突：保留表单值、留痕矛盾；空字段正常补空"},
+    "G08": {"title": "画像去重", "expectation": "稳定习惯只记一次；感谢批不得重报画像；当日新打卡正常记"},
+    "G09": {"title": "状态恢复＋昨天回补", "expectation": "胃不适进成效账本（worsened）、好转记 resolved；明确归属昨天的产品补记到昨天、不得记到今天"},
+    "G10": {"title": "纠偏去重", "expectation": "班主任纠偏只记一次；复用历史消息 ID 的纠偏必须被丢弃；感谢批不新建"},
+    "G11": {"title": "FAQ 分流", "expectation": "通用问答进审核队列、个人安排进用户档案；感谢批不建稿"},
+    "G12": {"title": "小结与案例", "expectation": "小结只在出现新事实时更新；案例草稿需要新的正向成效与合法证据链"},
+    "G13": {"title": "睡眠时间点", "expectation": "睡前宣告不填时长；回 11 与回 23 都记 23 点睡、记到晨报当日；不得记成睡了 11 小时"},
+}
+
 
 def build_dedup12_spec(group_code: str, repeat_index: int) -> dict:
     """Frozen G01-G12 spec: exact messages, absolute Shanghai datetimes, preconditions."""
@@ -1451,6 +1467,173 @@ def _print_grading_table(grading: list[dict]) -> None:
     print(f"TOTAL PASS={totals.get('PASS', 0)} FAIL={totals.get('FAIL', 0)} FLAG={totals.get('FLAG', 0)}")
 
 
+def _time_label(at) -> str:
+    year, month, day, hour, minute = at
+    return f"{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}"
+
+
+def _batch_db_changes(batch: dict) -> dict:
+    diff = batch.get("db_diff") or {}
+    checkins = diff.get("checkins") or {}
+    outcomes = (diff.get("outcome_events") or {}).get("added") or []
+    memory = diff.get("archivist_case_memory") or {}
+    profile = diff.get("user_state_profile") or {}
+    drafts = (diff.get("knowledge_drafts") or {}).get("added") or []
+    return {
+        "checkins_added": [
+            {"date": item.get("date"), "parsed": item.get("parsed_json") or {}}
+            for item in (checkins.get("added") or [])
+        ],
+        "checkins_updated": [
+            {"date": item.get("date"), "changes": item.get("changes") or {}}
+            for item in (checkins.get("updated") or [])
+        ],
+        "outcomes_added": [
+            {
+                "field_key": item.get("field_key"),
+                "event_type": item.get("event_type"),
+                "value_text": item.get("value_text"),
+                "message_id": item.get("message_id"),
+            }
+            for item in outcomes
+        ],
+        "state_changed": bool(profile.get("changed")),
+        "memory_changed": bool(memory.get("changed")),
+        "drafts_added": [
+            {
+                "draft_type": item.get("draft_type"),
+                "title": item.get("title"),
+                "scope": item.get("scope"),
+            }
+            for item in drafts
+        ],
+    }
+
+
+def build_display_report(
+    *,
+    run_id: str,
+    label: str | None,
+    started_at: str,
+    mode: str,
+    model: str,
+    repeats: int,
+    group_results: list[dict],
+    grading: list[dict],
+    total_tokens: int,
+    total_cost_yuan: float,
+) -> dict:
+    grading_by_key = {
+        (item.get("group_code"), item.get("repeat_index")): item for item in grading
+    }
+    rows_by_code: dict[str, list[dict]] = {}
+    for row in group_results:
+        rows_by_code.setdefault(str(row.get("group_code") or ""), []).append(row)
+    cases: list[dict] = []
+    for code in DEDUP12_CODES:
+        rows = rows_by_code.get(code)
+        if not rows:
+            continue
+        meta = GROUP_META.get(code) or {}
+        frozen = DEDUP12_GROUPS.get(code) or {}
+        batches = [
+            {
+                "label": batch.get("label") or f"B{index + 1}",
+                "messages": [
+                    {
+                        "sender": message.get("sender"),
+                        "content": message.get("content"),
+                        "time": _time_label(message["at"]) if message.get("at") else "",
+                    }
+                    for message in (batch.get("messages") or [])
+                ],
+            }
+            for index, batch in enumerate(frozen.get("batches") or [])
+        ]
+        repeat_payload: list[dict] = []
+        for row in sorted(rows, key=lambda item: item.get("repeat_index") or 0):
+            grade = grading_by_key.get((code, row.get("repeat_index"))) or {}
+            batch_results: list[dict] = []
+            for batch in row.get("batches") or []:
+                usage_items = batch.get("usage") or []
+                usage = usage_items[0] if usage_items else None
+                usage_payload = (
+                    {
+                        "model": usage.get("model"),
+                        "total_tokens": usage.get("total_tokens"),
+                        "estimated_cost_yuan": usage.get("estimated_cost_yuan"),
+                    }
+                    if isinstance(usage, dict)
+                    else None
+                )
+                batch_results.append(
+                    {
+                        "batch_index": batch.get("batch_index"),
+                        "label": batch.get("batch_label") or "",
+                        "watermark_from": batch.get("watermark_from"),
+                        "watermark_to": batch.get("watermark_to"),
+                        "emitted": batch.get("emitted_tool_calls") or [],
+                        "kept": batch.get("kept") or {},
+                        "dropped": batch.get("dropped") or [],
+                        "usage": usage_payload,
+                        "db_changes": _batch_db_changes(batch),
+                    }
+                )
+            repeat_payload.append(
+                {
+                    "repeat_index": row.get("repeat_index"),
+                    "verdict": grade.get("verdict") or "FLAG",
+                    "failed_assertions": grade.get("failed_assertions") or [],
+                    "flags": grade.get("flags") or [],
+                    "batch_results": batch_results,
+                }
+            )
+        cases.append(
+            {
+                "group_code": code,
+                "title": meta.get("title") or code,
+                "expectation": meta.get("expectation") or "",
+                "batches": batches,
+                "repeats": repeat_payload,
+            }
+        )
+    return {
+        "summary": {
+            "schema_version": 1,
+            "run_id": run_id,
+            "label": label,
+            "started_at": started_at,
+            "mode": mode,
+            "model": model,
+            "suite": "dedup12",
+            "groups": len(cases),
+            "repeats": repeats,
+            "group_runs": len(grading),
+            "passed": sum(1 for item in grading if item.get("verdict") == "PASS"),
+            "failed": sum(1 for item in grading if item.get("verdict") == "FAIL"),
+            "flagged": sum(1 for item in grading if item.get("verdict") == "FLAG"),
+            "batches": sum(len(row.get("batches") or []) for row in group_results),
+            "total_tokens": int(total_tokens or 0),
+            "total_cost_yuan": round(float(total_cost_yuan or 0.0), 6),
+        },
+        "cases": cases,
+    }
+
+
+def write_display_report(report: dict, report_dir: Path) -> Path:
+    run_dir = report_dir / str(report["summary"]["run_id"])
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / "report.json"
+    path.write_text(
+        json.dumps(report, ensure_ascii=False, default=str), encoding="utf-8"
+    )
+    return path
+
+
+def default_report_dir() -> Path:
+    return BACKEND_DIR.parents[0] / "diagnostics" / "archivist-evaluations"
+
+
 # --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
@@ -1465,6 +1648,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--real", action="store_true", help="真实 LLM（需 REAL_ARCHIVIST_EVAL=1）")
     parser.add_argument("--keep", action="store_true", help="保留测试数据不清（默认清理）")
     parser.add_argument("--ai-base-url", default=None, help="覆盖 AI_BASE_URL（不写 .env）")
+    parser.add_argument("--label", default=None, help="评测批次展示标签（写入页面报告）")
+    parser.add_argument("--report-dir", default=None, help="页面报告输出目录（默认 diagnostics/archivist-evaluations）")
     parser.add_argument("--out-dir", default=str(ARTIFACTS_DIR))
     return parser.parse_args(argv)
 
@@ -1472,6 +1657,7 @@ def parse_args(argv=None) -> argparse.Namespace:
 async def amain(args: argparse.Namespace) -> int:
     global _KEEP
     _KEEP = args.keep
+    run_started_at = datetime.now(SH).isoformat()
 
     if args.ai_base_url:
         os.environ["AI_BASE_URL"] = args.ai_base_url
@@ -1537,11 +1723,13 @@ async def amain(args: argparse.Namespace) -> int:
     total_cost = 0.0
     n_batches = 0
     grading: list[dict] = []
+    results: list[dict] = []
     scope_emitted_total: dict[str, int] = {}
     scope_created_total: dict[str, int] = {}
     with open(jsonl_path, "w", encoding="utf-8") as fh:
         for spec in specs:
             result = await run_group(spec, real=args.real, ai_settings=ai_settings)
+            results.append(result)
             fh.write(json.dumps(result, ensure_ascii=False, default=str) + "\n")
             fh.flush()
             if args.suite == "dedup12":
@@ -1573,6 +1761,22 @@ async def amain(args: argparse.Namespace) -> int:
     }
     with open(summary_path, "w", encoding="utf-8") as fh:
         json.dump(summary, fh, ensure_ascii=False, indent=2)
+    if grading:
+        report_dir = Path(args.report_dir) if args.report_dir else default_report_dir()
+        display_report = build_display_report(
+            run_id=f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}-{stamp[9:]}",
+            label=args.label,
+            started_at=run_started_at,
+            mode="real" if args.real else "fake",
+            model=str(ai_settings.get("ai_model") or "unknown"),
+            repeats=args.repeats,
+            group_results=results,
+            grading=grading,
+            total_tokens=total_tokens,
+            total_cost_yuan=total_cost,
+        )
+        report_path = write_display_report(display_report, report_dir)
+        print(f"display report: {report_path}")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     if grading:
         _print_grading_table(grading)
