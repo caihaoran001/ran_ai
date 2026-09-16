@@ -1,0 +1,29 @@
+Code commit: 09837c3dfd1185ee1b2560e7d084cb66d8384444
+Scope: remove only archivist SYSTEM REMINDER answerable/no-answer classification; retain source text, sent time, fixed-five context, numerical-answer interpretation and evidence guards.
+
+Initial local whole-file pytest (existing development DB):
+  cd backend && uv run pytest tests/test_final_review.py -q
+  Result reported by worker: 128 passed, 7 failed. Failures were test_script_falls_back_to_seed_when_db_empty, test_script_reads_from_db_not_code_default, test_saving_again_appends_a_new_version, test_ensure_seeded_is_idempotent_and_never_overwrites, test_script_api_returns_seed_before_anything_is_saved, test_script_api_saves_and_reads_back, test_a_version_that_no_longer_validates_falls_back_to_seed.
+  Exact cause: local final_review_script_versions already contained versions 1+, while these tests expect an empty table/version 1. Observed version 1 vs None, 2 vs 1, 3 vs 2, and (zh,1) unique-key conflict. No test assertion/data or implementation was changed to make these pass.
+
+Valid fresh local isolated Mock regression:
+  /home/chr/.local/bin/uv run --with asyncpg --with python-dotenv --with sqlalchemy python /tmp/ran_ai_label_removal_regression.py
+  Runner asserted .env DATABASE_URL host localhost/127.0.0.1; created ran_ai_label_0916104721, ran Alembic upgrade head, then uv run --frozen pytest tests/test_final_review.py tests/test_02_chat.py tests/test_07_qiwe_channel.py tests/test_12_archivist_shadow.py tests/test_16_archivist_quarantine.py tests/test_17_archivist_recovery.py tests/test_agent_checkpoint.py -q --junitxml=<XML artifact>.
+  Exit 0; JUnit 322 passed, 0 failed, 0 errors, 0 skipped, 22.041s. Task-created test DB dropped after run.
+  Existing R4 question -> benefit notice -> user "6" test now asserts plain reminder role, raw question/coupon text, Beijing 10:39:22/10:43:19, and chronological order.
+
+Static/local runtime:
+  PYTHONPYCACHEPREFIX=/tmp/ran_ai_pycache uv run --frozen python -m compileall -q src/app/services/archivist : exit 0.
+  git diff --check : exit 0. Runtime archivist source no longer contains _system_context_label or special label literals.
+  docker restart ran-ai-backend : exit 0. First immediate /health probe returned transient 502 before startup completed; next probe HTTP 200. Latest docker logs show startup complete.
+
+Production code deployment:
+  Temporary copy of scratch/local_prebuilt_deploy.py, excludes ./docs and ./scratch plus existing .env/docker-compose.prod.yml; diagnostic-history clearing command removed; tracked-worktree version check used.
+  npm run build exit 0; real .next/standalone/server.js served /login locally. Archive 29.1MB; local/remote SHA256 matched (prefix bd1b97d05ba3371b); ECS business images built, Alembic/checkpoint checks exit 0, backend/frontend reload exit 0.
+  Public backend/frontend final HTTP 200/200, deployment script measured 189.79s until recovery. Deployed code commit 09837c3dfd1185ee1b2560e7d084cb66d8384444. Internal backend 200, frontend 307 (login redirect).
+
+Production case 388 read-only reconstruction (temporary watermark=62087 and batch_cap=1; _load_context only, no _extract/_commit):
+  Historical IDs [61816,61817,61818,62065,62087]; current IDs [62088,62197,62722,62724,62725]. SYSTEM REMINDER IDs 62065,62197,62722,62724 all render plain "系统提醒" with original Beijing time; no answerable/no-answer label.
+  R4 62722 10:39:22 -> coupon 62724 10:43:19 -> user 62725 "6" 10:44:38 order preserved. Input IDs [62088,62725], delta IDs [62725], watermark 62087->62725, business date [2026-09-15]. No production data writes.
+
+Not executed: real-model content judgment (paid API not authorized). Removing the explicit notice label may affect model classification when future notice wording is ambiguous; Mock tests cannot measure that. Historical wrong check-in 2373 was not changed.
