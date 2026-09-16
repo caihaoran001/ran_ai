@@ -129,7 +129,7 @@ export function CheckinRewardTierConfig() {
       const payload = {
         enabled,
         tiers: tiers.map((tier) => ({
-          days: typeof tier.days === "number" ? tier.days : tier.days,
+          days: tier.days,
           reward_text: tier.reward_text,
           enabled: tier.enabled,
         })),
