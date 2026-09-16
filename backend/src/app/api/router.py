@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     agent_evaluations,
     agent_operations,
+    archivist_evaluations,
     checkins,
     checkin_rewards,
     dashboard,
@@ -46,6 +47,11 @@ api_router.include_router(
     reply_agent_evaluations.router,
     prefix="/reply-agent-evaluations",
     tags=["reply-agent-evaluations"],
+)
+api_router.include_router(
+    archivist_evaluations.router,
+    prefix="/archivist-evaluations",
+    tags=["archivist-evaluations"],
 )
 api_router.include_router(service_cases.router, prefix="/service-cases", tags=["service-cases"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
