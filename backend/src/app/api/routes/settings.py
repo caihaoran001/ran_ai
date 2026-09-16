@@ -410,24 +410,24 @@ async def update_day28_benefits_api(
 
 class CheckinRewardTierEntry(BaseModel):
     days: int
-    reward_code: str
-    reward_name: str
-    quantity: int
-    unit: str
+    reward_text: str
     enabled: bool = True
 
 
 class CheckinRewardTierSetting(BaseModel):
+    enabled: bool = True
     tiers: list[CheckinRewardTierEntry] = []
 
 
 class CheckinRewardTierUpdate(BaseModel):
+    enabled: bool = True
     tiers: list[CheckinRewardTierEntry]
 
 
 def _checkin_reward_tier_setting(config) -> CheckinRewardTierSetting:
     return CheckinRewardTierSetting(
-        tiers=[CheckinRewardTierEntry(**tier.to_dict()) for tier in config.tiers]
+        enabled=config.enabled,
+        tiers=[CheckinRewardTierEntry(**tier.to_dict()) for tier in config.tiers],
     )
 
 

@@ -17,7 +17,11 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import SessionLocal
 from app.models.service_case import ServiceCase, ServiceCaseStatus
-from app.services.checkin_rewards import REWARD_TIERS, valid_reward_checkin_dates
+from app.services.checkin_reward_settings import (
+    DEFAULT_REWARD_TIERS,
+    get_reward_tier_config,
+)
+from app.services.checkin_rewards import valid_reward_checkin_dates
 
 
 async def main(*, apply: bool) -> None:
@@ -34,12 +38,16 @@ async def main(*, apply: bool) -> None:
             )
         )
         details = []
+        try:
+            tier_days = [tier.days for tier in (await get_reward_tier_config(session)).tiers]
+        except ValueError:
+            tier_days = [tier.days for tier in DEFAULT_REWARD_TIERS]
         for service_case in cases:
             valid_dates = await valid_reward_checkin_dates(
                 session,
                 service_case=service_case,
             )
-            earned = [tier.days for tier in REWARD_TIERS if len(valid_dates) >= tier.days]
+            earned = [days for days in tier_days if len(valid_dates) >= days]
             if valid_dates or earned:
                 details.append(
                     {

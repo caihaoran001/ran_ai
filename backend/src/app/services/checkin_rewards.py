@@ -32,6 +32,11 @@ from app.services.channels import send_channel_text
 from app.services.channels.base import ChannelSendResult
 from app.services.checkin_completion import is_complete_checkin
 from app.services.checkin_completion import complete_checkin_item_prefix
+from app.services.checkin_reward_settings import (
+    DEFAULT_REWARD_TIERS,
+    CheckinRewardTier,
+    get_reward_tier_config,
+)
 from app.services.service_case_queries import (
     SERVICE_CASE_SETTLEMENT_GRACE,
     checkin_first_day,
@@ -49,80 +54,39 @@ OPEN_SHIPMENT_STATUSES = ("missing_address", "pending_shipment")
 
 
 @dataclass(frozen=True, slots=True)
-class RewardTier:
-    days: int
-    reward_code: str
-    reward_name: str
-    quantity: int
-    unit: str
-
-    @property
-    def display(self) -> str:
-        return f"{self.quantity} {self.unit}{self.reward_name}"
-
-
-REWARD_TIERS: tuple[RewardTier, ...] = (
-    RewardTier(3, "coffee_tube", "咖啡", 1, "管"),
-    RewardTier(7, "key_box", "钥匙", 1, "盒"),
-    RewardTier(14, "c8_bottle", "C8", 1, "瓶"),
-    RewardTier(28, "coffee_tube", "咖啡", 3, "管"),
-)
-REWARD_TIER_BY_DAYS = {tier.days: tier for tier in REWARD_TIERS}
-PROGRESS_THRESHOLDS = {2: 3, 6: 7, 13: 14, 27: 28}
-
-
-async def _configured_reward_tiers(session: AsyncSession) -> tuple[RewardTier, ...]:
-    """读后台档位配置（含关闭的档位）；非法时回落到默认常量，缺配置由 get 兜底。"""
-    try:
-        from app.services.checkin_reward_settings import get_reward_tier_config
-
-        config = await get_reward_tier_config(session)
-    except ValueError:
-        logger.warning("打卡奖励档位配置非法，已回落到默认四档。", exc_info=True)
-        return REWARD_TIERS
-    return tuple(
-        RewardTier(
-            days=tier.days,
-            reward_code=tier.reward_code,
-            reward_name=tier.reward_name,
-            quantity=tier.quantity,
-            unit=tier.unit,
-        )
-        for tier in config.tiers
-    )
-
-
-async def _active_reward_tiers(session: AsyncSession) -> tuple[RewardTier, ...]:
-    """只返回开关打开的档位；已获资格不受开关影响由调用方保证。"""
-    try:
-        from app.services.checkin_reward_settings import get_reward_tier_config
-
-        config = await get_reward_tier_config(session)
-    except ValueError:
-        logger.warning("打卡奖励档位配置非法，已回落到默认四档。", exc_info=True)
-        return REWARD_TIERS
-    return tuple(
-        RewardTier(
-            days=tier.days,
-            reward_code=tier.reward_code,
-            reward_name=tier.reward_name,
-            quantity=tier.quantity,
-            unit=tier.unit,
-        )
-        for tier in config.active_tiers()
-    )
-
-
-async def _reward_tier_map(session: AsyncSession) -> dict[int, RewardTier]:
-    return {tier.days: tier for tier in await _configured_reward_tiers(session)}
-
-
-@dataclass(frozen=True, slots=True)
 class RewardReconciliation:
     complete_checkin_days: int
     valid_dates: tuple[date, ...]
     new_qualification_days: tuple[int, ...]
     new_progress_threshold: int | None
+
+
+async def _configured_reward_tiers(
+    session: AsyncSession,
+) -> tuple[CheckinRewardTier, ...]:
+    """读后台档位配置（含关闭的档位）；非法时回落到默认四档。"""
+    try:
+        config = await get_reward_tier_config(session)
+    except ValueError:
+        logger.warning("打卡奖励档位配置非法，已回落到默认四档。", exc_info=True)
+        return DEFAULT_REWARD_TIERS
+    return config.tiers
+
+
+async def _active_reward_tiers(
+    session: AsyncSession,
+) -> tuple[CheckinRewardTier, ...]:
+    """只返回开关打开的档位；已获资格不受开关影响由调用方保证。"""
+    try:
+        config = await get_reward_tier_config(session)
+    except ValueError:
+        logger.warning("打卡奖励档位配置非法，已回落到默认四档。", exc_info=True)
+        return DEFAULT_REWARD_TIERS
+    return config.active_tiers()
+
+
+async def _reward_tier_map(session: AsyncSession) -> dict[int, CheckinRewardTier]:
+    return {tier.days: tier for tier in await _configured_reward_tiers(session)}
 
 
 def is_effective_reward_checkin(checkin: Checkin) -> bool:
@@ -359,9 +323,10 @@ async def reconcile_case_rewards(
         row = CheckinRewardQualification(
             service_case_id=service_case_id,
             tier_days=tier.days,
-            reward_code=tier.reward_code,
-            reward_name=tier.reward_name,
-            quantity=tier.quantity,
+            # 新资格编码固定 day_N：奖励是一句话自由文本，整段存进 reward_name。
+            reward_code=f"day_{tier.days}",
+            reward_name=tier.reward_text,
+            quantity=1,
             qualified_on=valid_dates[tier.days - 1],
             shipment_id=shipment.id if shipment is not None else None,
         )
@@ -411,25 +376,47 @@ async def reconcile_case_rewards(
     )
 
 
+_LEGACY_REWARD_UNITS = {
+    "coffee_tube": "管",
+    "key_box": "盒",
+    "c8_bottle": "瓶",
+}
+
+
 def _qualification_display(rows: list[CheckinRewardQualification]) -> str:
-    quantities: dict[str, int] = defaultdict(int)
-    templates: dict[str, CheckinRewardQualification] = {}
-    for row in rows:
-        quantities[row.reward_code] += row.quantity
-        templates.setdefault(row.reward_code, row)
-    order: dict[str, int] = {}
-    for index, tier in enumerate(REWARD_TIERS):
-        order.setdefault(tier.reward_code, index)
-    parts = []
-    for code, quantity in sorted(quantities.items(), key=lambda item: order[item[0]]):
-        sample = templates[code]
-        unit = {
-            "coffee_tube": "管",
-            "key_box": "盒",
-            "c8_bottle": "瓶",
-        }[code]
-        parts.append(f"{quantity} {unit}{sample.reward_name}")
-    return "、".join(parts) or "暂无"
+    """老资格按旧格式聚合展示（如 3 管咖啡）；v2 资格直接展示配置的一句话奖励。"""
+
+    legacy_quantities: dict[str, int] = defaultdict(int)
+    legacy_templates: dict[str, CheckinRewardQualification] = {}
+    legacy_first_days: dict[str, int] = {}
+    modern: list[tuple[int, str]] = []
+    seen_texts: set[str] = set()
+    for row in sorted(rows, key=lambda item: item.tier_days):
+        code = row.reward_code or ""
+        if code in _LEGACY_REWARD_UNITS:
+            legacy_quantities[code] += row.quantity
+            legacy_templates.setdefault(code, row)
+            legacy_first_days[code] = min(
+                legacy_first_days.get(code, row.tier_days), row.tier_days
+            )
+            continue
+        text = row.reward_name or ""
+        if row.quantity > 1:
+            text = f"{text}×{row.quantity}"
+        if not text or text in seen_texts:
+            continue
+        seen_texts.add(text)
+        modern.append((row.tier_days, text))
+    parts: list[tuple[int, str]] = [
+        (
+            legacy_first_days[code],
+            f"{quantity} {_LEGACY_REWARD_UNITS[code]}{legacy_templates[code].reward_name}",
+        )
+        for code, quantity in legacy_quantities.items()
+    ]
+    parts.extend(modern)
+    parts.sort(key=lambda item: item[0])
+    return "、".join(text for _, text in parts) or "暂无"
 
 
 async def render_qualification_notice(
@@ -488,7 +475,7 @@ async def render_progress_notice(
     session: AsyncSession, row: CheckinRewardProgressNotice
 ) -> str:
     tier_map = await _reward_tier_map(session)
-    tier = tier_map.get(row.next_tier_days) or REWARD_TIER_BY_DAYS.get(row.next_tier_days)
+    tier = tier_map.get(row.next_tier_days)
     if tier is None:
         return (
             f"你已经累计完成 {row.threshold_days} 天完整打卡，"

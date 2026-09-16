@@ -6,11 +6,14 @@ import { Button } from "@/components/ui/button";
 import { AlertCircle, LoaderCircle, TriangleAlert } from "lucide-react";
 
 type RewardTier = {
+  days: number | "";
+  reward_text: string;
+  enabled: boolean;
+};
+
+type SavedTier = {
   days: number;
-  reward_code: string;
-  reward_name: string;
-  quantity: number;
-  unit: string;
+  reward_text: string;
   enabled: boolean;
 };
 
@@ -25,7 +28,21 @@ async function readError(res: Response) {
   return raw || "请求失败";
 }
 
+function normalizeTiers(list: unknown): RewardTier[] {
+  if (!Array.isArray(list)) return [];
+  return list.map((item) => {
+    const raw = item as Partial<SavedTier>;
+    return {
+      days:
+        typeof raw.days === "number" && Number.isInteger(raw.days) ? raw.days : "",
+      reward_text: typeof raw.reward_text === "string" ? raw.reward_text : "",
+      enabled: raw.enabled !== false,
+    };
+  });
+}
+
 export function CheckinRewardTierConfig() {
+  const [enabled, setEnabled] = useState(false);
   const [tiers, setTiers] = useState<RewardTier[]>([]);
   const [initial, setInitial] = useState("");
   const [busy, setBusy] = useState(false);
@@ -39,9 +56,11 @@ export function CheckinRewardTierConfig() {
         const res = await fetch(`${API_BASE}/settings/checkin-reward-tiers`);
         if (!res.ok) throw new Error(await readError(res));
         const data = await res.json();
-        const list: RewardTier[] = data?.tiers ?? [];
+        const nextEnabled = data?.enabled === true;
+        const list = normalizeTiers(data?.tiers);
+        setEnabled(nextEnabled);
         setTiers(list);
-        setInitial(JSON.stringify(list));
+        setInitial(JSON.stringify({ enabled: nextEnabled, tiers: list }));
       } catch (err) {
         console.error(err);
         setError(err instanceof Error ? `配置加载失败：${err.message}` : "配置加载失败，请刷新重试。");
@@ -52,7 +71,8 @@ export function CheckinRewardTierConfig() {
     load();
   }, []);
 
-  const isDirty = JSON.stringify(tiers) !== initial;
+  const snapshot = JSON.stringify({ enabled, tiers });
+  const isDirty = snapshot !== initial;
 
   useEffect(() => {
     // 运营填完不点保存就刷新/关页，内容会全部白填——已经真实发生过一次。
@@ -62,26 +82,70 @@ export function CheckinRewardTierConfig() {
     return () => window.removeEventListener("beforeunload", warn);
   });
 
-  function update(code: string, patch: Partial<RewardTier>) {
-    setTiers((prev) =>
-      prev.map((item) => (item.reward_code === code ? { ...item, ...patch } : item)),
-    );
+  // 前端只做空值/重复等输入校验，发放资格仍以服务端判定为准。
+  const dayCounts = new Map<number, number>();
+  for (const tier of tiers) {
+    if (typeof tier.days === "number" && Number.isInteger(tier.days)) {
+      dayCounts.set(tier.days, (dayCounts.get(tier.days) ?? 0) + 1);
+    }
+  }
+  const rowErrors = tiers.map((tier) => {
+    const daysInvalid =
+      typeof tier.days !== "number" ||
+      !Number.isInteger(tier.days) ||
+      tier.days < 1 ||
+      tier.days > 28;
+    const duplicate =
+      typeof tier.days === "number" &&
+      Number.isInteger(tier.days) &&
+      (dayCounts.get(tier.days) ?? 0) > 1;
+    const emptyReward = tier.reward_text.trim() === "";
+    return { daysInvalid, duplicate, emptyReward, invalid: daysInvalid || duplicate || emptyReward };
+  });
+  const hasErrors = rowErrors.some((row) => row.invalid);
+
+  function update(index: number, patch: Partial<RewardTier>) {
+    setTiers((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  }
+
+  function remove(index: number) {
+    setTiers((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function add() {
+    const numbers = tiers.filter(
+      (tier): tier is RewardTier & { days: number } =>
+        typeof tier.days === "number" && Number.isInteger(tier.days),
+    ).map((tier) => tier.days);
+    const max = numbers.length > 0 ? Math.max(...numbers) : 0;
+    const next = max + 7;
+    setTiers((prev) => [...prev, { days: next <= 28 ? next : "", reward_text: "", enabled: true }]);
   }
 
   async function save() {
     setBusy(true);
     setError(null);
     try {
+      const payload = {
+        enabled,
+        tiers: tiers.map((tier) => ({
+          days: typeof tier.days === "number" ? tier.days : tier.days,
+          reward_text: tier.reward_text,
+          enabled: tier.enabled,
+        })),
+      };
       const res = await fetch(`${API_BASE}/settings/checkin-reward-tiers`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tiers }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await readError(res));
       const data = await res.json();
-      const list: RewardTier[] = data?.tiers ?? [];
+      const nextEnabled = data?.enabled === true;
+      const list = normalizeTiers(data?.tiers);
+      setEnabled(nextEnabled);
       setTiers(list);
-      setInitial(JSON.stringify(list));
+      setInitial(JSON.stringify({ enabled: nextEnabled, tiers: list }));
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 2000);
     } catch (err) {
@@ -110,10 +174,8 @@ export function CheckinRewardTierConfig() {
         <div>
           <h3 className="text-base font-semibold text-slate-900">打卡实物奖励档位</h3>
           <p className="mt-1 text-sm leading-relaxed text-slate-500">
-            客户累计打卡满指定天数后可领取对应实物奖励。
-            <strong className="font-semibold text-slate-700">档位天数和编码由系统固定</strong>
-            ——这里只填每档发什么、发多少、用什么单位。开关打开但没填奖励名称、数量或单位时，
-            该档不会进入发放候选（下面会标出来）。关闭的档位整行置灰，不参与发放。
+            客户累计打卡满指定天数后可领取对应实物奖励。总开关关闭时整套奖励机制停用；
+            打开后按下表档位发放，发放资格仍以服务端判定为准。
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -122,7 +184,7 @@ export function CheckinRewardTierConfig() {
             type="button"
             className="shrink-0 bg-cyan-700 font-medium text-white shadow-sm transition-all hover:bg-cyan-800 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50"
             onClick={save}
-            disabled={!isDirty}
+            disabled={!isDirty || hasErrors}
             loading={busy}
             loadingText="保存中…"
           >
@@ -131,95 +193,131 @@ export function CheckinRewardTierConfig() {
         </div>
       </div>
 
+      <label className="mb-4 flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm text-slate-700">
+        <input
+          type="checkbox"
+          className="h-4 w-4 rounded border-slate-300 accent-cyan-700"
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+          disabled={busy}
+        />
+        启用整套奖励机制
+      </label>
+
       <div className="grid gap-4">
-        {tiers.map((tier) => {
-          const missing =
-            tier.enabled &&
-            (!tier.reward_name.trim() || !tier.unit.trim() || !(Number(tier.quantity) > 0));
+        {tiers.map((tier, index) => {
+          const rowError = rowErrors[index];
+          const closed = !tier.enabled;
           return (
             <div
-              key={tier.reward_code}
+              key={index}
               className={`rounded-lg border p-4 transition-colors ${
-                missing
-                  ? "border-amber-300 bg-amber-50/50"
-                  : tier.enabled
-                    ? "border-slate-200 bg-slate-50/50"
-                    : "border-slate-200 bg-slate-100/70"
+                rowError.invalid
+                  ? "border-rose-300 bg-rose-50/50"
+                  : closed
+                    ? "border-slate-200 bg-slate-100/70"
+                    : "border-slate-200 bg-slate-50/50"
               }`}
             >
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <span className="shrink-0 rounded-md bg-cyan-700/10 px-2 py-1 text-sm font-semibold text-cyan-800">
-                    满 {tier.days} 天
-                  </span>
-                  <span className="shrink-0 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-500">
-                    {tier.reward_code}
-                  </span>
-                  {!tier.enabled && (
-                    <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-500">
-                      已关闭
-                    </span>
-                  )}
-                </div>
-                <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300 accent-cyan-700"
-                    checked={tier.enabled}
-                    onChange={(e) => update(tier.reward_code, { enabled: e.target.checked })}
-                    disabled={busy}
-                  />
-                  启用
-                </label>
-              </div>
-
-              {missing && (
-                <p className="mb-3 flex items-start gap-1.5 text-sm font-medium text-amber-800">
-                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                  已启用但奖励名称、数量或单位没填完整，该档不会进入发放候选（请补齐后再保存）。
-                </p>
-              )}
-
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Field
-                  label="奖励名称"
-                  placeholder="如：咖啡 1 管"
-                  value={tier.reward_name}
-                  onChange={(value) => update(tier.reward_code, { reward_name: value })}
-                  disabled={busy}
-                />
+              <div className="flex flex-wrap items-center gap-3">
                 <div className="grid gap-1">
-                  <label className="text-xs font-medium text-slate-600">数量</label>
+                  <label className="text-xs font-medium text-slate-600">满多少天</label>
                   <input
                     type="number"
-                    min={0}
+                    min={1}
+                    max={28}
                     step={1}
-                    placeholder="如：1"
-                    className="rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                    value={Number.isFinite(tier.quantity) ? tier.quantity : 0}
+                    aria-label={`第${index + 1}档天数`}
+                    placeholder="1..28"
+                    className={`w-24 rounded-md border px-3 py-1.5 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${
+                      rowError.daysInvalid || rowError.duplicate
+                        ? "border-rose-400 bg-white"
+                        : "border-slate-300"
+                    }`}
+                    value={tier.days}
                     onChange={(e) =>
-                      update(tier.reward_code, {
-                        quantity: e.target.value === "" ? 0 : Number(e.target.value),
+                      update(index, {
+                        days: e.target.value === "" ? "" : Number(e.target.value),
                       })
                     }
                     disabled={busy}
                   />
                 </div>
-                <Field
-                  label="单位"
-                  placeholder="如：管 / 盒 / 份"
-                  value={tier.unit}
-                  onChange={(value) => update(tier.reward_code, { unit: value })}
+                <div className="grid min-w-0 flex-1 gap-1">
+                  <label className="text-xs font-medium text-slate-600">奖励（一句话）</label>
+                  <input
+                    type="text"
+                    aria-label={`第${index + 1}档奖励`}
+                    placeholder="如：咖啡1管"
+                    className={`rounded-md border px-3 py-1.5 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${
+                      rowError.emptyReward ? "border-rose-400 bg-white" : "border-slate-300"
+                    }`}
+                    value={tier.reward_text}
+                    onChange={(e) => update(index, { reward_text: e.target.value })}
+                    disabled={busy}
+                  />
+                </div>
+                {!tier.enabled && (
+                  <span className="mt-5 shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-500">
+                    已关闭
+                  </span>
+                )}
+                <label className="mt-5 flex shrink-0 cursor-pointer items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300 accent-cyan-700"
+                    checked={tier.enabled}
+                    onChange={(e) => update(index, { enabled: e.target.checked })}
+                    disabled={busy}
+                  />
+                  启用
+                </label>
+                <button
+                  type="button"
+                  onClick={() => remove(index)}
                   disabled={busy}
-                />
+                  className="mt-5 shrink-0 rounded-md border border-slate-300 px-2.5 py-1.5 text-sm text-slate-600 transition-all hover:border-rose-300 hover:text-rose-600 disabled:pointer-events-none disabled:opacity-50"
+                >
+                  删除
+                </button>
               </div>
+
+              {rowError.invalid && (
+                <p className="mt-3 flex items-start gap-1.5 text-sm font-medium text-rose-700">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  {rowError.duplicate
+                    ? "天数与其他档位重复，请改成 1..28 内不重复的天数。"
+                    : rowError.daysInvalid
+                      ? "天数请填写 1..28 的整数。"
+                      : "奖励不能为空，请填写一句话奖励。"}
+                </p>
+              )}
             </div>
           );
         })}
       </div>
 
+      {tiers.length === 0 && (
+        <p className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50/50 px-4 py-3 text-sm text-slate-500">
+          还没有档位，点击下方「新增一档」添加第一档。
+        </p>
+      )}
+
+      <div className="mt-4">
+        <Button
+          type="button"
+          variant="secondary"
+          className="shrink-0 font-medium shadow-sm transition-all active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50"
+          onClick={add}
+          disabled={busy}
+        >
+          新增一档
+        </Button>
+      </div>
+
       <p className="mt-4 text-xs leading-relaxed text-slate-500">
-        档位天数与编码不可编辑，由后端统一维护；发放资格仍以服务端判定为准，这里只维护发什么、发多少。
+        天数取 1..28 的整数且不可重复，奖励为一句话描述；校验不通过时会标红并禁用保存。
+        后端仍会整份校验并拒收，不合规时错误信息会直接显示在下方。
       </p>
 
       {error && (
@@ -228,34 +326,6 @@ export function CheckinRewardTierConfig() {
           {error}
         </p>
       )}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  placeholder,
-  value,
-  onChange,
-  disabled,
-}: {
-  label: string;
-  placeholder?: string;
-  value: string;
-  onChange: (value: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="grid gap-1">
-      <label className="text-xs font-medium text-slate-600">{label}</label>
-      <input
-        type="text"
-        placeholder={placeholder}
-        className="rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -23,12 +24,17 @@ from app.models.service_case import ServiceCase
 from app.services.agent.state import AgentRunContext
 from app.services.checkin_rewards import (
     OPEN_SHIPMENT_STATUSES,
-    REWARD_TIERS,
     _qualification_display,
     valid_reward_checkins,
 )
+from app.services.checkin_reward_settings import (
+    DEFAULT_REWARD_TIERS,
+    get_reward_tier_config,
+)
 from app.services.service_case_queries import select_active_service_cases
 
+
+logger = logging.getLogger(__name__)
 
 RewardShippingAction = Literal[
     "get_status",
@@ -167,13 +173,31 @@ async def _reward_status(session, *, service_case_id: int) -> dict[str, Any]:
 
 async def _display_reward_tiers(session) -> list:
     try:
-        from app.services.checkin_reward_settings import get_reward_tier_config
-
         config = await get_reward_tier_config(session)
         tiers = list(config.tiers)
     except ValueError:
-        tiers = list(REWARD_TIERS)
-    return tiers or list(REWARD_TIERS)
+        logger.warning("打卡奖励档位配置非法，展示已回落到默认四档。", exc_info=True)
+        tiers = list(DEFAULT_REWARD_TIERS)
+    return tiers or list(DEFAULT_REWARD_TIERS)
+
+
+async def _config_enabled(session) -> bool:
+    """后台总开关；配置损坏时按启用处理，不把奖励问答整体打死。"""
+    try:
+        return (await get_reward_tier_config(session)).enabled
+    except ValueError:
+        logger.warning("打卡奖励档位配置非法，按启用处理。", exc_info=True)
+        return True
+
+
+def _paused_write_result() -> dict[str, Any]:
+    return {
+        "ok": False,
+        "rewards_enabled": False,
+        "program_paused": True,
+        "error": "奖励计划已暂停，不记录发货、累积或收件信息。",
+        "reply_instruction": REWARD_PROGRAM_PAUSED_REPLY,
+    }
 
 
 async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
@@ -298,6 +322,8 @@ def build_reward_shipping_tools(
         if not rewards_enabled:
             return _paused_reward_payload()
         async with SessionLocal() as session:
+            if not await _config_enabled(session):
+                return _paused_reward_payload()
             service_case = await session.scalar(
                 select_active_service_cases(ServiceCase.id == context.service_case_id)
             )
@@ -319,15 +345,13 @@ def build_reward_shipping_tools(
         if not rewards_enabled:
             if action == "get_status":
                 return _paused_reward_payload()
-            return {
-                "ok": False,
-                "rewards_enabled": False,
-                "program_paused": True,
-                "error": "奖励计划已暂停，不记录发货、累积或收件信息。",
-                "reply_instruction": REWARD_PROGRAM_PAUSED_REPLY,
-            }
+            return _paused_write_result()
         now = datetime.now(timezone.utc)
         async with SessionLocal() as session:
+            if not await _config_enabled(session):
+                if action == "get_status":
+                    return _paused_reward_payload()
+                return _paused_write_result()
             service_case = await session.scalar(
                 select_active_service_cases(
                     ServiceCase.id == context.service_case_id
