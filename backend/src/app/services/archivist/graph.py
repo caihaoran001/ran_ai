@@ -838,6 +838,18 @@ class ArchivistPipeline:
                     if item["sender_type"] == "user"
                 }
             )
+        # 冻结的两天回补窗口：固定打卡字段允许 target_date 取本批业务日，
+        # 或任一条本批用户消息业务日的前一天（今天报昨天，如 09-16 说“昨天晚A正常”
+        # 落到 09-15）。按每条消息各锚定一天、绝不扩展到更早；再早的一律丢弃。
+        backdate_dates = set()
+        for msg_date in user_message_date_by_id.values():
+            try:
+                backdate_dates.add(
+                    (date.fromisoformat(msg_date) - timedelta(days=1)).isoformat()
+                )
+            except ValueError:
+                continue
+        allowed_checkin_dates = sorted(set(dates) | backdate_dates)
 
         followup_context = [
             context
@@ -878,7 +890,7 @@ class ArchivistPipeline:
             checklist_context=checklist_context,
             final_review_context=await self._final_review_context(),
             archive_context=state.get("archive_context") or {},
-            allowed_dates=dates,
+            allowed_dates=allowed_checkin_dates,
             agent_run_id=self.agent_run_id,
             usage_message_id=state.get("watermark_to"),
         )
@@ -890,10 +902,26 @@ class ArchivistPipeline:
                 claimed_evidence_ids = list(
                     collector.get("checkin_evidence_ids", {}).get(date_iso) or []
                 )
+                try:
+                    next_day_iso = (
+                        date.fromisoformat(date_iso) + timedelta(days=1)
+                    ).isoformat()
+                except ValueError:
+                    next_day_iso = None
+                # 回补证据：今天报昨天时，证据消息落在 target_date 的后一天
+                # （target 当天业务日 + 1）同样视为精确证据；其余一律拒绝。
+                # 有声明证据但一条精确都没有时整天丢弃（行为不变）。
                 exact_evidence_ids = [
                     message_id
                     for message_id in claimed_evidence_ids
-                    if user_message_date_by_id.get(message_id) == date_iso
+                    if (
+                        user_message_date_by_id.get(message_id) == date_iso
+                        or (
+                            next_day_iso is not None
+                            and user_message_date_by_id.get(message_id)
+                            == next_day_iso
+                        )
+                    )
                 ]
                 # 模型若把仅供上下文的系统提醒 ID 当成打卡证据，不能让它变成用户事实。
                 # 兼容历史模型未填写 evidence_message_ids 的调用；一旦模型声明了证据，
@@ -945,6 +973,9 @@ class ArchivistPipeline:
             item_id = str(raw_answer.get("item_id") or "")
             target_date = str(raw_answer.get("target_date") or "")
             evidence_message_id = raw_answer.get("evidence_message_id")
+            # 追问/清单答案严格同日：checklist_context 只按本批业务日构建，
+            # 昨天没有清单上下文，回补仅覆盖固定打卡字段（体重/睡眠/产品/饮食等），
+            # 不覆盖清单题——此处故意不放宽到 target_date+1。
             if user_message_date_by_id.get(evidence_message_id) != target_date:
                 continue
             answer = {
