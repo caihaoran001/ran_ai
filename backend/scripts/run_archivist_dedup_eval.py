@@ -19,7 +19,7 @@ Evidence: JSONL + summary JSON under ``docs/reviews/artifacts/``.
 Re-runnable: every run uses fresh uuid group_ids and timestamped outputs.
 
 Usage (from backend/, zero-cost default -- FakeToolCallingModel, no LLM):
-  uv run python scripts/run_archivist_dedup_eval.py --dry-run   # validate all 12 G-specs, no DB, no LLM
+  uv run python scripts/run_archivist_dedup_eval.py --dry-run   # validate all 13 G-specs, no DB, no LLM
   uv run python scripts/run_archivist_dedup_eval.py --suite dedup12 --only G01,G06 --repeats 1
   uv run python scripts/run_archivist_dedup_eval.py --suite generic --groups 2 --repeats 3
   REAL_ARCHIVIST_EVAL=1 uv run python scripts/run_archivist_dedup_eval.py --real \\
@@ -161,7 +161,7 @@ def build_group_spec(group_index: int, repeat_index: int) -> dict:
 
 
 # --------------------------------------------------------------------------
-# Frozen dedup12 suite (G01-G12) from backend/tests/archivist_dedup_cases_spec.md.
+# Frozen dedup12 suite (G01-G13) from backend/tests/archivist_dedup_cases_spec.md.
 # Exact Chinese messages + absolute Shanghai datetimes; expectations frozen.
 # Each message uses "at": [y, mo, d, H, M] (Asia/Shanghai) -> UTC created_at.
 # --------------------------------------------------------------------------
@@ -314,9 +314,22 @@ DEDUP12_GROUPS: dict[str, dict] = {
             ]},
         ],
     },
+    "G13": {
+        "batches": [
+            {"label": "B1 2026-09-30", "messages": [
+                _m("user", "太困了先睡了，晚安", [2026, 9, 30, 23, 40]),
+            ]},
+            {"label": "B2 2026-10-01", "messages": [
+                _m("user", "昨晚11点睡的，睡得还行", [2026, 10, 1, 7, 30]),
+            ]},
+            {"label": "B3 2026-10-02", "messages": [
+                _m("user", "昨晚23点睡的", [2026, 10, 2, 7, 30]),
+            ]},
+        ],
+    },
 }
 
-DEDUP12_CODES = ["G%02d" % i for i in range(1, 13)]
+DEDUP12_CODES = ["G%02d" % i for i in range(1, 14)]
 
 
 def build_dedup12_spec(group_code: str, repeat_index: int) -> dict:
@@ -1270,11 +1283,17 @@ def _grade_g09(b):
         fails.append("B1: discomfort active MUST_ADD 未落库")
     if not _profile_changed(b2):
         fails.append("B2: 同 state_type MUST_UPDATE resolved 未落库")
-    if "2026-09-16" not in _checkin_added(b2):
-        fails.append("B2: checkins(2026-09-16) 新日期行 MUST_ADD 缺失")
+    added2 = _checkin_added(b2)
+    night15 = str(_flatten_checkin_parsed(
+            added2.get("2026-09-15", {})).get("product_schedule.night_a") or "")
+    if "已喝" not in night15:
+        fails.append("B2: 昨天晚A回补 09-15 night_a=已喝 MUST_ADD 缺失")
+    night16 = str(_flatten_checkin_parsed(
+            added2.get("2026-09-16", {})).get("product_schedule.night_a") or "")
+    if "已喝" in night16:
+        fails.append("B2: 昨天剂量不得记到 09-16 MUST_NOT_DUPLICATE")
     if _outcome_added(b2, event_type="worsened"):
         fails.append("B2: 胃胀 worsened MUST_NOT_DUPLICATE 被重报")
-    flags.append("B2 昨天晚A回溯事实 record-vs-drop 待产品决策：不得记作今天已喝，不得静默通过")
     if _outcome_added(b3) or _profile_changed(b3) or _mem_changed(b3):
         fails.append("B3: 无新信息 MUST_NOT_DUPLICATE 被新增")
     if not _wm_advanced(b3):
@@ -1345,10 +1364,45 @@ def _grade_g12(b):
     return fails, flags
 
 
+def _looks_like_bedtime(text) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    if any(bad in value for bad in ("11小时", "11 小时", "11h", "11 h")):
+        return False
+    return any(mark in value for mark in ("23", "11点", "11:00", "晚11"))
+
+
+def _grade_g13(b):
+    fails, flags = [], []
+    b1, b2, b3 = b[0], b[1], b[2]
+    flat1 = _flatten_checkin_parsed(_checkin_added(b1).get("2026-09-30", {}))
+    if str(flat1.get("sleep") or "").strip():
+        fails.append("B1: 睡前宣告无时长，不得填 sleep 时长")
+    if any(k.startswith("custom_checkin.") and str(v or "").strip() for k, v in flat1.items()):
+        fails.append("B1: 无时长证据不得编睡眠清单答案")
+    for args in _emitted_args(b1, "report_checkin"):
+        if str(args.get("sleep") or "").strip() or args.get("checklist_answers"):
+            fails.append("B1: 模型上报 sleep 时长/清单答案属幻觉")
+            break
+    sleep2 = str(_flatten_checkin_parsed(
+            _checkin_added(b2).get("2026-10-01", {})).get("sleep") or "")
+    if not _looks_like_bedtime(sleep2):
+        fails.append(f"B2: checkins(2026-10-01) sleep 应为23点睡，实际 {sleep2!r}")
+    sleep3 = str(_flatten_checkin_parsed(
+            _checkin_added(b3).get("2026-10-02", {})).get("sleep") or "")
+    if not _looks_like_bedtime(sleep3):
+        fails.append(f"B3: checkins(2026-10-02) sleep 应为23点睡，实际 {sleep3!r}")
+    if "2026-10-01" in _checkin_added(b3) or "2026-10-01" in _checkin_updated(b3):
+        fails.append("B3: 不得重写 10-01 行")
+    return fails, flags
+
+
 _GRADERS = {
     "G01": _grade_g01, "G02": _grade_g02, "G03": _grade_g03, "G04": _grade_g04,
     "G05": _grade_g05, "G06": _grade_g06, "G07": _grade_g07, "G08": _grade_g08,
     "G09": _grade_g09, "G10": _grade_g10, "G11": _grade_g11, "G12": _grade_g12,
+    "G13": _grade_g13,
 }
 
 
@@ -1394,7 +1448,7 @@ def _print_grading_table(grading: list[dict]) -> None:
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", choices=["dedup12", "generic"], default="dedup12")
-    parser.add_argument("--groups", type=int, default=None, help="dedup12 下截取前 N 组（默认全 12 组）；generic 下为组数（默认 2）")
+    parser.add_argument("--groups", type=int, default=None, help="dedup12 下截取前 N 组（默认全 13 组）；generic 下为组数（默认 2）")
     parser.add_argument("--only", default=None, help="仅跑指定组，逗号分隔，如 G01,G04（仅 dedup12）")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--dry-run", action="store_true", help="只校验 group spec，不碰 DB、不调 LLM")
