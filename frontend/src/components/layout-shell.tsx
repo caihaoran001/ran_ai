@@ -22,7 +22,7 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/users?active=1", label: "用户管理", icon: Users },
       { href: "/documents", label: "审核控制台", icon: ShieldCheck },
-      { href: "/rewards", label: "奖励发货", icon: Gift },
+      { href: "/rewards", label: "奖励与权益", icon: Gift },
       { href: "/questionnaire-config", label: "运营规则配置", icon: Settings },
     ],
   },

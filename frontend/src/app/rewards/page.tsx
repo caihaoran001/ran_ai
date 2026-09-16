@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { CheckCircle2, ChevronDown, FileText, Gift, MapPin, MessageSquareQuote, PackageOpen, Ticket, Truck } from "lucide-react";
+import type { ReactNode } from "react";
+import { CheckCircle2, ChevronDown, FileText, Gift, MapPin, MessageSquareQuote, PackageOpen, Settings, Ticket, Truck } from "lucide-react";
 import {
   api,
   type Day28BenefitGrantCase,
@@ -8,6 +9,8 @@ import {
   type RewardShipment,
 } from "@/lib/api";
 import { ShipmentAction } from "./shipment-action";
+import { CheckinRewardTierConfig } from "./checkin-reward-tier-config";
+import { Day28BenefitConfig } from "./day28-benefit-config";
 
 const statusCopy: Record<string, { label: string; className: string }> = {
   pending_shipment: {
@@ -168,7 +171,7 @@ function Day28GrantLedger({ rows }: { rows: Day28BenefitGrantCase[] }) {
       <div className="panel-header-clean">
         <h2 className="flex items-center gap-2 text-lg font-extrabold text-slate-950">
           <Ticket className="h-4 w-4 text-cyan-700" />
-          结营权益发放
+          发放记录
         </h2>
         <p className="mt-1 text-sm text-slate-600">
           客户走完 28 天后助教发出的券。这里记的是「领取入口已经发到群里」——商城还没打通，
@@ -214,6 +217,23 @@ function Day28GrantLedger({ rows }: { rows: Day28BenefitGrantCase[] }) {
   );
 }
 
+function RulesDisclosure({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details className="panel group/rules overflow-hidden">
+      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden sm:px-5">
+        <span className="flex items-center gap-2 text-sm font-bold text-slate-900">
+          <Settings className="h-4 w-4 text-cyan-700" />
+          {title}
+        </span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform duration-200 group-open/rules:rotate-180 motion-reduce:transition-none" />
+      </summary>
+      <div className="border-t border-slate-200 p-4 sm:p-5">
+        {children}
+      </div>
+    </details>
+  );
+}
+
 export default async function RewardsPage() {
   const [rows, day28Grants] = await Promise.all([
     api<RewardAdminCase[]>("/checkin-rewards").catch(() => []),
@@ -228,8 +248,8 @@ export default async function RewardsPage() {
       <header className="page-header">
         <div className="page-header-row">
           <div>
-            <h1 className="page-heading">奖励发货</h1>
-            <p className="page-subtitle">达标资格由系统累计，地址由群内 Agent 记录；运营实际寄出后在这里确认。</p>
+            <h1 className="page-heading">奖励与权益</h1>
+            <p className="page-subtitle">打卡实物奖励与结营券都在这一页：规则在上方配置，达标与发放记录在下方查看，寄出后在这里确认。</p>
           </div>
           <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">
             {rows.length} 位已达标用户
@@ -237,7 +257,18 @@ export default async function RewardsPage() {
         </div>
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-3" aria-label="奖励发货概览">
+      <div>
+        <h2 className="text-xl font-extrabold text-slate-950">打卡奖励（实物）</h2>
+        <p className="mt-1 text-sm leading-6 text-slate-600">
+          累计完整打卡达标后寄出的实物奖励；达标资格由系统累计，收件信息由群内 Agent 记录，运营寄出后在这里确认。
+        </p>
+      </div>
+
+      <RulesDisclosure title="奖励规则配置（总开关与档位）">
+        <CheckinRewardTierConfig />
+      </RulesDisclosure>
+
+      <section className="grid gap-3 sm:grid-cols-3" aria-label="打卡奖励概览">
         {[
           { label: "待发货", value: pendingShipments, icon: Truck, tone: "text-amber-700 bg-amber-50" },
           { label: "待补地址", value: missingAddress, icon: MapPin, tone: "text-rose-700 bg-rose-50" },
@@ -343,6 +374,17 @@ export default async function RewardsPage() {
           </section>
         ) : null}
       </div>
+
+      <div className="border-t border-slate-200 pt-7">
+        <h2 className="text-xl font-extrabold text-slate-950">结营券</h2>
+        <p className="mt-1 text-sm leading-6 text-slate-600">
+          客户走完 28 天后助教在群里发出的领取入口；商城未打通，系统只记录「入口已发出」，同一位客户的同一张券只会发一次。
+        </p>
+      </div>
+
+      <RulesDisclosure title="券配置（面额、链接与启停）">
+        <Day28BenefitConfig />
+      </RulesDisclosure>
 
       <Day28GrantLedger rows={day28Grants} />
     </div>
