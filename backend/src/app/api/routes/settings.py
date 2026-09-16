@@ -416,6 +416,7 @@ class CheckinRewardTierEntry(BaseModel):
 
 class CheckinRewardTierSetting(BaseModel):
     enabled: bool = True
+    program_start_date: str | None = None
     tiers: list[CheckinRewardTierEntry] = []
 
 
@@ -427,6 +428,11 @@ class CheckinRewardTierUpdate(BaseModel):
 def _checkin_reward_tier_setting(config) -> CheckinRewardTierSetting:
     return CheckinRewardTierSetting(
         enabled=config.enabled,
+        program_start_date=(
+            config.program_start_date.isoformat()
+            if config.program_start_date is not None
+            else None
+        ),
         tiers=[CheckinRewardTierEntry(**tier.to_dict()) for tier in config.tiers],
     )
 
