@@ -171,6 +171,31 @@ def parse_reward_tiers_config(payload: object) -> CheckinRewardTierConfig:
 parse_checkin_reward_tiers = parse_reward_tiers_config
 
 
+def build_reward_receipt_paragraph(config: CheckinRewardTierConfig | None) -> str:
+    """按当前档位配置生成入营回执里的奖励介绍段；关闭或无有效档位时返回空串。
+
+    文案与历史默认四档保持同一种说法，档位增删改后自动跟着变：
+    多档时“满3、7天，依次可获得A、再得B”；只有一档时“满X天，可获得Y”。
+    奖励文字按后台配置原样输出。
+    """
+    if config is None or not config.enabled:
+        return ""
+    tiers = config.active_tiers()
+    if not tiers:
+        return ""
+    days_part = "、".join(str(tier.days) for tier in tiers)
+    if len(tiers) == 1:
+        rewards_part = f"可获得{tiers[0].reward_text}"
+    else:
+        rewards_part = f"依次可获得{tiers[0].reward_text}" + "".join(
+            f"、再得{tier.reward_text}" for tier in tiers[1:]
+        )
+    return (
+        "从服务第1天起，每天完成专属五项打卡。"
+        f"累计完整打卡满{days_part}天，{rewards_part}；奖励可以叠加，不要求连续。"
+    )
+
+
 async def get_reward_tier_config(session: AsyncSession) -> CheckinRewardTierConfig:
     """取当前档位配置；没配过就返回默认（总开关关闭、四档待用）。"""
     setting = await session.get(AppSetting, SETTING_KEY)

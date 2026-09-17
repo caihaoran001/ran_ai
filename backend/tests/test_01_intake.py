@@ -3079,9 +3079,16 @@ async def test_intake_receipt_only_promises_rewards_when_enabled(
         CHECKIN_REWARD_RECEIPT_PARAGRAPH,
         default_checkin_schedule,
     )
-    from app.services.checkin_reward_settings import set_reward_tier_config
+    from app.services.checkin_reward_settings import (
+        build_reward_receipt_paragraph,
+        get_reward_tier_config,
+        set_reward_tier_config,
+    )
 
     await set_reward_tier_config(db_session, {"enabled": enabled})
+    expected_paragraph = build_reward_receipt_paragraph(
+        await get_reward_tier_config(db_session)
+    )
 
     user = User(name="奖励回执用户")
     db_session.add(user)
@@ -3114,7 +3121,9 @@ async def test_intake_receipt_only_promises_rewards_when_enabled(
         )
     )
     assert receipt is not None
-    assert (CHECKIN_REWARD_RECEIPT_PARAGRAPH in receipt.content) is expects_reward
+    # 奖励介绍以档位配置动态生成；旧固定段只做老模板兼容，不应再出现在回执里。
+    assert (expected_paragraph != "" and expected_paragraph in receipt.content) is expects_reward
+    assert CHECKIN_REWARD_RECEIPT_PARAGRAPH not in receipt.content
     assert "{reward_intro}" not in receipt.content
     assert "{plan_start_line}" not in receipt.content
     assert "2026年08月20日" in receipt.content

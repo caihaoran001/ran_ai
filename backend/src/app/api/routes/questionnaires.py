@@ -587,22 +587,33 @@ async def _send_intake_submit_reply(service_case_id: int) -> None:
                 "Your tailored files will be delivered to this group shortly!"
             )
         else:
-            rewards_enabled = False
+            reward_paragraph = ""
             try:
                 from app.services.checkin_reward_settings import (
+                    build_reward_receipt_paragraph,
                     get_reward_tier_config,
                 )
 
-                rewards_enabled = (await get_reward_tier_config(session)).enabled
+                reward_paragraph = build_reward_receipt_paragraph(
+                    await get_reward_tier_config(session)
+                )
             except ValueError:
                 logger.warning(
                     "打卡奖励档位配置非法，收据话术按停用处理。", exc_info=True
                 )
-            # 新默认话术通过变量控制奖励承诺；同时剔除已被运营静态粘进旧配置的标准奖励段，
-            # 保证关闭开关时不会继续向用户承诺发奖。
+            # 奖励介绍以档位配置为唯一来源，动态生成；已被运营静态粘进旧配置的
+            # 标准奖励段在这里归一：模板里有占位符就删掉防重复，没有占位符就
+            # 换成占位符再走动态，保证改了档位不再说老话。
             message_template = str(reply.get("message") or "")
-            if not rewards_enabled:
-                message_template = message_template.replace(CHECKIN_REWARD_RECEIPT_PARAGRAPH, "")
+            if CHECKIN_REWARD_RECEIPT_PARAGRAPH in message_template:
+                if "{reward_intro}" in message_template:
+                    message_template = message_template.replace(
+                        CHECKIN_REWARD_RECEIPT_PARAGRAPH, ""
+                    )
+                else:
+                    message_template = message_template.replace(
+                        CHECKIN_REWARD_RECEIPT_PARAGRAPH, "{reward_intro}"
+                    )
             content = _format_template(
                 message_template,
                 {
@@ -611,9 +622,7 @@ async def _send_intake_submit_reply(service_case_id: int) -> None:
                     "group_id": service_case.group_id,
                     "plan_start_date": plan_start_date,
                     "plan_start_line": plan_start_line,
-                    "reward_intro": (
-                        CHECKIN_REWARD_RECEIPT_PARAGRAPH if rewards_enabled else ""
-                    ),
+                    "reward_intro": reward_paragraph,
                 },
             ).strip()
         if not content:

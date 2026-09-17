@@ -83,3 +83,52 @@ def test_default_receipt_renders_the_final_enabled_copy():
         f"{CHECKIN_REWARD_RECEIPT_PARAGRAPH}\n\n"
         "你的服务计划于 2026年08月20日 正式开始（打卡也从那天开始）。"
     )
+
+
+def test_reward_receipt_paragraph_follows_tier_config():
+    """入营奖励介绍必须跟随档位配置动态生成，关闭或无有效档位时为空。"""
+    from app.services.checkin_reward_settings import (
+        CheckinRewardTier,
+        CheckinRewardTierConfig,
+        build_reward_receipt_paragraph,
+    )
+
+    assert build_reward_receipt_paragraph(None) == ""
+    assert (
+        build_reward_receipt_paragraph(
+            CheckinRewardTierConfig(
+                enabled=False,
+                tiers=(CheckinRewardTier(days=3, reward_text="1 管咖啡"),),
+            )
+        )
+        == ""
+    )
+    assert (
+        build_reward_receipt_paragraph(
+            CheckinRewardTierConfig(enabled=True, tiers=())
+        )
+        == ""
+    )
+
+    multi = build_reward_receipt_paragraph(
+        CheckinRewardTierConfig(
+            enabled=True,
+            tiers=(
+                CheckinRewardTier(days=3, reward_text="1 管咖啡"),
+                CheckinRewardTier(days=7, reward_text="1 盒钥匙", enabled=False),
+                CheckinRewardTier(days=14, reward_text="1 瓶C8"),
+            ),
+        )
+    )
+    assert "满3、14天" in multi
+    assert "依次可获得1 管咖啡、再得1 瓶C8" in multi
+    assert "钥匙" not in multi
+
+    single = build_reward_receipt_paragraph(
+        CheckinRewardTierConfig(
+            enabled=True,
+            tiers=(CheckinRewardTier(days=28, reward_text="3 管咖啡"),),
+        )
+    )
+    assert "满28天" in single
+    assert "可获得3 管咖啡" in single
