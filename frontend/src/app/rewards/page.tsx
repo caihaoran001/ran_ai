@@ -290,8 +290,8 @@ export default async function RewardsPage() {
         {rows.map((row) => {
           const status = statusCopy[row.operational_status] ?? statusCopy.qualified;
           return (
-            <section key={row.service_case_id} className="panel overflow-hidden">
-              <div className="panel-header-clean flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <details key={row.service_case_id} className="panel group/case overflow-hidden">
+              <summary className="panel-header-clean flex cursor-pointer list-none flex-col gap-4 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-lg font-extrabold text-slate-950">{row.user_name}</h2>
@@ -302,22 +302,25 @@ export default async function RewardsPage() {
                     {row.case_no} · 查看服务单
                   </Link>
                 </div>
-                <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm lg:text-right">
-                  <div>
-                    <span className="block text-xs font-semibold text-slate-500">完整打卡</span>
-                    <span className="font-extrabold text-slate-950">{row.complete_checkin_days} 天</span>
-                    {row.participating ? null : (
-                      <span className="block text-xs font-medium text-slate-500">
-                        本单不参与本轮，只算到已发奖励需要的那几天
-                      </span>
-                    )}
+                <div className="flex items-start gap-3">
+                  <div className="grid flex-1 grid-cols-2 gap-x-8 gap-y-2 text-sm lg:text-right">
+                    <div>
+                      <span className="block text-xs font-semibold text-slate-500">完整打卡</span>
+                      <span className="font-extrabold text-slate-950">{row.complete_checkin_days} 天</span>
+                      {row.participating ? null : (
+                        <span className="block text-xs font-medium text-slate-500">
+                          本单不参与本轮，只算到已发奖励需要的那几天
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="block text-xs font-semibold text-slate-500">尚未寄出</span>
+                      <span className="font-extrabold text-slate-950">{row.unshipped_rewards}</span>
+                    </div>
                   </div>
-                  <div>
-                    <span className="block text-xs font-semibold text-slate-500">尚未寄出</span>
-                    <span className="font-extrabold text-slate-950">{row.unshipped_rewards}</span>
-                  </div>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform duration-200 group-open/case:rotate-180 motion-reduce:transition-none" />
                 </div>
-              </div>
+              </summary>
 
               <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(15rem,0.7fr)_minmax(24rem,1.3fr)]">
                 <div>
@@ -352,10 +355,7 @@ export default async function RewardsPage() {
               </div>
 
               <div className="border-t border-slate-200 px-4 py-4 sm:px-5 sm:py-5">
-                <details
-                  className="group/evidence"
-                  open={row.operational_status === "pending_shipment"}
-                >
+                <details className="group/evidence">
                   <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden">
                     <span className="min-w-0">
                       <span className="block text-sm font-bold text-slate-950">完整打卡证据</span>
@@ -372,7 +372,7 @@ export default async function RewardsPage() {
                   </ol>
                 </details>
               </div>
-            </section>
+            </details>
           );
         })}
         {rows.length === 0 ? (
