@@ -7,6 +7,9 @@
 要修改【生产配置】（.env 里的数据库/密钥/QiWe guid，或 docker-compose.prod.yml 结构），
 请单独运行：uv run --with paramiko python scratch/configure_remote_files.py
 （compose 取仓库当前文件，.env 取该脚本内模板；运行会覆盖服务器对应文件。）
+
+硬闸：部署开始、打包前、打包后各查一次 git 受管文件是否有未提交改动，有则本地中止；
+2026-09-16 曾因打包窗口内两个受管文件被并发会话回退为旧版，导致生产误发客户消息。
 """
 import paramiko
 import sys
@@ -106,9 +109,46 @@ def run_local_command(cmd, cwd=None):
     print("  ✅ Success")
     return res.stdout
 
+
+def tracked_file_changes(project_root):
+    """返回受版本管理文件的未提交改动（不含未跟踪文件）；git 不可用时返回 None。"""
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def ensure_tracked_files_clean(project_root, stage):
+    """部署硬闸：受管文件必须无未提交改动，否则在本地阶段中止部署。
+
+    2026-09-16 事故：打包窗口内另一个会话把两个受管文件回退成旧版，
+    导致“半新半旧”代码上线并误发客户消息。此后在部署开始、打包前、
+    打包后各检查一次；一旦发现脏改动就中止，生产不受任何影响。
+    """
+    changes = tracked_file_changes(project_root)
+    if changes is None:
+        print(f"  ⚠️ [{stage}] 无法读取 git 状态，跳过受管文件检查")
+        return
+    if changes:
+        print(f"❌ [{stage}] 拒绝部署：以下受版本管理的文件有未提交改动")
+        for line in changes[:20]:
+            print(f"     {line}")
+        if len(changes) > 20:
+            print(f"     … 共 {len(changes)} 项")
+        print("    请先提交或恢复这些文件再重新部署；若是另一会话正在编辑，先与其协调。")
+        sys.exit(1)
+    print(f"  ✅ [{stage}] 受管文件无未提交改动")
+
+
 def main():
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     archive_path = os.path.join(project_root, "ran_ai_deploy.tar.gz")
+
+    # 0. 硬闸：受管文件必须干净（2026-09-16 事故防再发）。
+    ensure_tracked_files_clean(project_root, "部署开始")
 
     # 0. Capture the git commit being deployed (记录本次上线截止到哪个 commit)。
     #    .git 不进 tar 包，服务器上无 git 历史，故在本地取好版本信息，
@@ -127,7 +167,7 @@ def main():
     )
     print(f"🏷️ Deploying commit {git_sha[:12]} ({git_branch}) — {git_subject}")
     if git_dirty:
-        print("  ⚠️ 警告：工作区有未提交改动，本次上线的代码与该 commit 不完全一致。")
+        print("  ⚠️ 提示：工作区存在未跟踪文件（受管文件已通过硬闸检查）。")
 
     # 1. Compile Next.js locally
     print("🛠️ Step 1: Compiling Next.js frontend locally...")
@@ -150,6 +190,7 @@ def main():
         "--exclude='frontend/.next/cache' --exclude='diagnostics/diagnostics_history.json' "
         "--warning=no-file-changed -czf ran_ai_deploy.tar.gz ."
     )
+    ensure_tracked_files_clean(project_root, "打包前")
     res = subprocess.run(tar_cmd, shell=True, cwd=project_root, capture_output=True, text=True)
     if res.returncode not in (0, 1):
         print(f"❌ Local tar failed (exit code {res.returncode}): {res.stderr}")
@@ -159,6 +200,7 @@ def main():
         if res.stderr:
             print(res.stderr)
         sys.exit(1)
+    ensure_tracked_files_clean(project_root, "打包后")
     print("  ✅ Success (warnings ignored)")
     
     # 3. SSH Connect to Aliyun ECS
