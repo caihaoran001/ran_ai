@@ -8,13 +8,11 @@ import { AlertCircle, LoaderCircle, TriangleAlert } from "lucide-react";
 type RewardTier = {
   days: number | "";
   reward_text: string;
-  enabled: boolean;
 };
 
 type SavedTier = {
   days: number;
   reward_text: string;
-  enabled: boolean;
 };
 
 async function readError(res: Response) {
@@ -36,7 +34,6 @@ function normalizeTiers(list: unknown): RewardTier[] {
       days:
         typeof raw.days === "number" && Number.isInteger(raw.days) ? raw.days : "",
       reward_text: typeof raw.reward_text === "string" ? raw.reward_text : "",
-      enabled: raw.enabled !== false,
     };
   });
 }
@@ -116,7 +113,7 @@ export function CheckinRewardTierConfig() {
     ).map((tier) => tier.days);
     const max = numbers.length > 0 ? Math.max(...numbers) : 0;
     const next = max + 7;
-    setTiers((prev) => [...prev, { days: next <= 28 ? next : "", reward_text: "", enabled: true }]);
+    setTiers((prev) => [...prev, { days: next <= 28 ? next : "", reward_text: "" }]);
   }
 
   async function save() {
@@ -132,7 +129,6 @@ export function CheckinRewardTierConfig() {
         tiers: tiers.map((tier) => ({
           days: tier.days,
           reward_text: tier.reward_text,
-          enabled: tier.enabled,
         })),
       };
       const res = await fetch(`${API_BASE}/settings/checkin-reward-tiers`, {
@@ -195,16 +191,13 @@ export function CheckinRewardTierConfig() {
       <div className="grid gap-4">
         {tiers.map((tier, index) => {
           const rowError = rowErrors[index];
-          const closed = !tier.enabled;
           return (
             <div
               key={index}
               className={`rounded-lg border p-4 transition-colors ${
                 rowError.invalid
                   ? "border-rose-300 bg-rose-50/50"
-                  : closed
-                    ? "border-slate-200 bg-slate-100/70"
-                    : "border-slate-200 bg-slate-50/50"
+                  : "border-slate-200 bg-slate-50/50"
               }`}
             >
               <div className="flex flex-wrap items-center gap-3">
@@ -245,21 +238,6 @@ export function CheckinRewardTierConfig() {
                     disabled={busy}
                   />
                 </div>
-                {!tier.enabled && (
-                  <span className="mt-5 shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-500">
-                    已关闭
-                  </span>
-                )}
-                <label className="mt-5 flex shrink-0 cursor-pointer items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300 accent-cyan-700"
-                    checked={tier.enabled}
-                    onChange={(e) => update(index, { enabled: e.target.checked })}
-                    disabled={busy}
-                  />
-                  启用
-                </label>
                 <button
                   type="button"
                   onClick={() => remove(index)}

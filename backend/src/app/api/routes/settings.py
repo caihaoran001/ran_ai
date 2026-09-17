@@ -411,7 +411,6 @@ async def update_day28_benefits_api(
 class CheckinRewardTierEntry(BaseModel):
     days: int
     reward_text: str
-    enabled: bool = True
 
 
 class CheckinRewardTierSetting(BaseModel):

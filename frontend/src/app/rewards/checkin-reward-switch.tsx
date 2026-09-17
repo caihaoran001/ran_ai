@@ -9,7 +9,6 @@ import { AlertCircle, LoaderCircle, RefreshCw } from "lucide-react";
 type RewardTierEntry = {
   days: number;
   reward_text: string;
-  enabled: boolean;
 };
 
 type CheckinRewardConfig = {
@@ -41,7 +40,6 @@ function parseConfig(data: unknown): CheckinRewardConfig {
       return {
         days: typeof tier.days === "number" && Number.isInteger(tier.days) ? tier.days : 0,
         reward_text: typeof tier.reward_text === "string" ? tier.reward_text : "",
-        enabled: tier.enabled !== false,
       };
     }),
   };

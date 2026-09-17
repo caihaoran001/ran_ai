@@ -115,14 +115,27 @@ def test_reward_receipt_paragraph_follows_tier_config():
             enabled=True,
             tiers=(
                 CheckinRewardTier(days=3, reward_text="1 管咖啡"),
-                CheckinRewardTier(days=7, reward_text="1 盒钥匙", enabled=False),
+                CheckinRewardTier(days=7, reward_text="1 盒钥匙"),
                 CheckinRewardTier(days=14, reward_text="1 瓶C8"),
             ),
         )
     )
-    assert "满3、14天" in multi
-    assert "依次可获得1 管咖啡、再得1 瓶C8" in multi
-    assert "钥匙" not in multi
+    assert "满3、7、14天" in multi
+    assert "依次可获得1 管咖啡、再得1 盒钥匙、再得1 瓶C8" in multi
+
+    # 档位删掉就等于不要这一档：剩下的档位照常拼接，被删的名字不再出现。
+    trimmed = build_reward_receipt_paragraph(
+        CheckinRewardTierConfig(
+            enabled=True,
+            tiers=(
+                CheckinRewardTier(days=3, reward_text="1 管咖啡"),
+                CheckinRewardTier(days=14, reward_text="1 瓶C8"),
+            ),
+        )
+    )
+    assert "满3、14天" in trimmed
+    assert "依次可获得1 管咖啡、再得1 瓶C8" in trimmed
+    assert "钥匙" not in trimmed
 
     single = build_reward_receipt_paragraph(
         CheckinRewardTierConfig(
