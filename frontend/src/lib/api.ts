@@ -156,6 +156,27 @@ export type RewardAdminCase = {
   qualifications: RewardQualification[];
   shipments: RewardShipment[];
   checkin_days: RewardCheckinDay[];
+  /** 该单归属的奖励批次：current / round:<id> / legacy:<YYYY-MM-DD> */
+  batch_key: string;
+};
+
+export type RewardAdminBatch = {
+  /** "current" | "round:<id>" | "legacy:<YYYY-MM-DD>" */
+  key: string;
+  kind: "current" | "round" | "legacy";
+  /** "YYYY-MM-DD"；legacy 恒为空，current 在开关关闭时为空 */
+  started_on: string | null;
+  /** ISO 时间；仅 kind="round" 有值 */
+  closed_at: string | null;
+  /** "YYYY-MM-DD"；仅 kind="legacy" 有值 */
+  reward_created_on: string | null;
+  case_count: number;
+};
+
+export type RewardAdminList = {
+  rewards_enabled: boolean;
+  batches: RewardAdminBatch[];
+  cases: RewardAdminCase[];
 };
 
 export type Day28BenefitGrant = {

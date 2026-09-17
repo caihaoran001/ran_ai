@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -13,6 +13,7 @@ from app.db.session import get_session
 from app.models.checkin_reward import (
     CheckinRewardProgram,
     CheckinRewardQualification,
+    CheckinRewardRound,
     CheckinRewardShipment,
 )
 from app.models.checkin import Checkin
@@ -23,7 +24,9 @@ from app.schemas.checkin_reward import (
     Day28BenefitGrantCaseRead,
     Day28BenefitGrantRead,
     MarkShipmentRead,
+    RewardAdminBatchRead,
     RewardAdminCaseRead,
+    RewardAdminListRead,
     RewardCheckinDayRead,
     RewardCheckinItemRead,
     RewardCheckinSourceMessageRead,
@@ -68,10 +71,10 @@ def _operational_status(
     return "qualified"
 
 
-@router.get("/checkin-rewards", response_model=list[RewardAdminCaseRead])
+@router.get("/checkin-rewards", response_model=RewardAdminListRead)
 async def list_checkin_rewards(
     session: AsyncSession = Depends(get_session),
-) -> list[RewardAdminCaseRead]:
+) -> RewardAdminListRead:
     service_cases = list(
         await session.scalars(
             select(ServiceCase)
@@ -81,10 +84,19 @@ async def list_checkin_rewards(
         )
     )
     case_ids = [row.id for row in service_cases]
-    if not case_ids:
-        return []
     config = await load_reward_program(session)
     tz = ZoneInfo(get_settings().reminder_timezone)
+    rounds = list(
+        await session.scalars(
+            select(CheckinRewardRound).order_by(
+                CheckinRewardRound.started_on, CheckinRewardRound.id
+            )
+        )
+    )
+    open_round = next((row for row in rounds if row.closed_at is None), None)
+    rounds_newest_first = sorted(
+        rounds, key=lambda row: (row.started_on, row.id), reverse=True
+    )
     programs = {
         row.service_case_id: row
         for row in await session.scalars(
@@ -180,6 +192,30 @@ async def list_checkin_rewards(
             item_ids=case_item_ids,
         )
 
+    def _attributed_round(first_day: date | None) -> CheckinRewardRound | None:
+        if first_day is None:
+            return None
+        for row in rounds_newest_first:
+            if row.started_on <= first_day:
+                return row
+        return None
+
+    def _legacy_created_on(
+        qualifications: list[CheckinRewardQualification],
+        shipments: list[CheckinRewardShipment],
+    ) -> date | None:
+        moments = [row.created_at for row in qualifications if row.created_at]
+        if not moments:
+            moments = [row.created_at for row in shipments if row.created_at]
+        if not moments:
+            return None
+        earliest = min(moments)
+        if earliest.tzinfo is None:
+            earliest = earliest.replace(tzinfo=timezone.utc)
+        return earliest.astimezone(tz).date()
+
+    batch_case_ids: dict[str, list[int]] = {}
+    legacy_dates: dict[str, date] = {}
     response: list[RewardAdminCaseRead] = []
     for service_case in service_cases:
         qualifications = qualifications_by_case.get(service_case.id, [])
@@ -187,12 +223,28 @@ async def list_checkin_rewards(
         program = programs.get(service_case.id)
         if not qualifications and not shipments:
             continue
+        attributed = _attributed_round(checkin_first_day(service_case, tz))
+        if attributed is None:
+            legacy_created_on = _legacy_created_on(qualifications, shipments)
+            batch_key = (
+                f"legacy:{legacy_created_on.isoformat()}"
+                if legacy_created_on is not None
+                else "legacy:unknown"
+            )
+            if legacy_created_on is not None:
+                legacy_dates[batch_key] = legacy_created_on
+        elif open_round is not None and attributed.id == open_round.id:
+            batch_key = "current"
+        else:
+            batch_key = f"round:{attributed.id}"
+        batch_case_ids.setdefault(batch_key, []).append(service_case.id)
         shipped_ids = {row.id for row in shipments if row.status == "shipped"}
         unshipped = [row for row in qualifications if row.shipment_id not in shipped_ids]
         valid_checkins = valid_checkins_by_case.get(service_case.id, [])
         labels_by_id = labels_by_id_by_case.get(service_case.id, {})
         response.append(
             RewardAdminCaseRead(
+                batch_key=batch_key,
                 service_case_id=service_case.id,
                 case_no=service_case.case_no,
                 user_name=service_case.user.name if service_case.user else "未绑定用户",
@@ -275,9 +327,70 @@ async def list_checkin_rewards(
                 ],
             )
         )
+
+    rewards_enabled = config is not None and config.enabled
+    if not rewards_enabled:
+        current_started_on = None
+    elif open_round is not None:
+        current_started_on = open_round.started_on
+    else:
+        current_started_on = config.program_start_date if config is not None else None
+
+    batches: list[RewardAdminBatchRead] = [
+        RewardAdminBatchRead(
+            key="current",
+            kind="current",
+            started_on=current_started_on,
+            closed_at=None,
+            reward_created_on=None,
+            case_count=len(batch_case_ids.get("current", [])),
+        )
+    ]
+    for row in rounds_newest_first:
+        if row.closed_at is None:
+            continue
+        key = f"round:{row.id}"
+        batches.append(
+            RewardAdminBatchRead(
+                key=key,
+                kind="round",
+                started_on=row.started_on,
+                closed_at=row.closed_at,
+                reward_created_on=None,
+                case_count=len(batch_case_ids.get(key, [])),
+            )
+        )
+    legacy_keys = sorted(
+        (key for key in batch_case_ids if key.startswith("legacy:")),
+        key=lambda key: legacy_dates.get(key) or date.min,
+        reverse=True,
+    )
+    for key in legacy_keys:
+        batches.append(
+            RewardAdminBatchRead(
+                key=key,
+                kind="legacy",
+                started_on=None,
+                closed_at=None,
+                reward_created_on=legacy_dates.get(key),
+                case_count=len(batch_case_ids[key]),
+            )
+        )
+
     status_order = {"pending_shipment": 0, "missing_address": 1, "waiting_choice": 2, "accumulating": 3, "shipped": 4}
-    response.sort(key=lambda row: (status_order.get(row.operational_status, 9), row.user_name))
-    return response
+    batch_order = {batch.key: index for index, batch in enumerate(batches)}
+    response.sort(
+        key=lambda row: (
+            batch_order.get(row.batch_key, len(batch_order)),
+            status_order.get(row.operational_status, 9),
+            row.user_name,
+        )
+    )
+    return RewardAdminListRead(
+        rewards_enabled=rewards_enabled,
+        batches=batches,
+        cases=response,
+    )
 
 
 @router.post(

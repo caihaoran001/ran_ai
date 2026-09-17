@@ -102,6 +102,20 @@ class CheckinRewardQualification(TimestampMixin, Base):
     )
 
 
+class CheckinRewardRound(TimestampMixin, Base):
+    """奖励轮次：总开关每从"关"变"开"记一轮，关回去时记下关闭时刻。
+
+    `started_on` 就是那一轮写入的活动起始日；`closed_at` 为空表示当前轮仍在
+    进行。历史上没有轮次记账的旧奖励不在这里，页面按"更早批次"单独展示。
+    """
+
+    __tablename__ = "checkin_reward_rounds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    started_on: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class CheckinRewardProgressNotice(TimestampMixin, Base):
     """2/6/13/27 天进度提醒去重账本。"""
 

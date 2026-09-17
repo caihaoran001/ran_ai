@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -64,6 +65,24 @@ class RewardAdminCaseRead(BaseModel):
     qualifications: list[RewardQualificationRead]
     shipments: list[RewardShipmentRead]
     checkin_days: list[RewardCheckinDayRead]
+    # 该单归属的批次：current / round:<id> / legacy:<YYYY-MM-DD>
+    batch_key: str
+
+
+class RewardAdminBatchRead(BaseModel):
+    key: str
+    kind: Literal["current", "round", "legacy"]
+    started_on: date | None
+    closed_at: datetime | None
+    # 仅 legacy 批次：该批奖励生成当天（北京日期）
+    reward_created_on: date | None
+    case_count: int
+
+
+class RewardAdminListRead(BaseModel):
+    rewards_enabled: bool
+    batches: list[RewardAdminBatchRead]
+    cases: list[RewardAdminCaseRead]
 
 
 class Day28BenefitGrantRead(BaseModel):

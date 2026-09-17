@@ -19,14 +19,16 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.app_setting import AppSetting
+from app.models.checkin_reward import CheckinRewardRound
 
 logger = logging.getLogger(__name__)
 
@@ -225,4 +227,31 @@ async def set_reward_tier_config(
     else:
         setting.value_json = stored.to_dict()
     await session.flush()
+
+    # 轮次记账：只在开关状态真正翻转时写，改奖品/改档位不动轮次。
+    was_enabled = previous is not None and previous.enabled
+    if config.enabled and not was_enabled:
+        # 关→开：开一轮，日期取本次落库的活动起始日（没有就用当天）。
+        # 已存在未关闭的轮次时不重复开，避免出现两条"当前轮"。
+        if await _open_round(session) is None:
+            session.add(
+                CheckinRewardRound(started_on=stored.program_start_date or _today())
+            )
+            await session.flush()
+    elif was_enabled and not config.enabled:
+        # 开→关：给当前未关闭的轮次补上关闭时刻；没有就跳过。
+        open_round = await _open_round(session)
+        if open_round is not None:
+            open_round.closed_at = datetime.now(timezone.utc)
+            await session.flush()
     return stored
+
+
+async def _open_round(session: AsyncSession) -> CheckinRewardRound | None:
+    """当前未关闭的奖励轮次；正常情况下最多一条。"""
+    return await session.scalar(
+        select(CheckinRewardRound)
+        .where(CheckinRewardRound.closed_at.is_(None))
+        .order_by(CheckinRewardRound.id)
+        .limit(1)
+    )

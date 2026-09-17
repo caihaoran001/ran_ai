@@ -4,7 +4,9 @@ import { CheckCircle2, ChevronDown, FileText, Gift, MapPin, MessageSquareQuote, 
 import {
   api,
   type Day28BenefitGrantCase,
+  type RewardAdminBatch,
   type RewardAdminCase,
+  type RewardAdminList,
   type RewardCheckinDay,
   type RewardShipment,
 } from "@/lib/api";
@@ -50,6 +52,120 @@ function formatDate(value?: string | null) {
     hour12: false,
     timeZone: "Asia/Shanghai",
   }).format(new Date(value));
+}
+
+function formatDateOnly(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Shanghai",
+  }).format(new Date(value));
+}
+
+function batchLabel(batch: RewardAdminBatch) {
+  if (batch.kind === "current") {
+    return batch.started_on ? `当前批次（${batch.started_on} 开启）` : "当前批次（未开启）";
+  }
+  if (batch.kind === "round") {
+    const closedOn = batch.closed_at ? formatDateOnly(batch.closed_at) : "—";
+    return `历史批次（${batch.started_on ?? "—"} 开启 · ${closedOn} 关闭）`;
+  }
+  return batch.reward_created_on
+    ? `更早批次（系统未记录开启/关闭时间 · 奖励产生于 ${batch.reward_created_on}）`
+    : "更早批次（系统未记录开启/关闭时间）";
+}
+
+function batchPlaceholder(batch: RewardAdminBatch, rewardsEnabled: boolean) {
+  if (batch.kind !== "current") return "本批暂无记录";
+  if (!batch.started_on || !rewardsEnabled) return "当前未开启；开启后新达标客户会显示在这里";
+  return "本轮还没有客户达标";
+}
+
+function RewardCaseCard({ row, batchClosed }: { row: RewardAdminCase; batchClosed: boolean }) {
+  const status = statusCopy[row.operational_status] ?? statusCopy.qualified;
+  return (
+    <section className="panel overflow-hidden">
+      <div className="panel-header-clean flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-extrabold text-slate-950">{row.user_name}</h2>
+            <span className={`status-pill ${status.className}`}>{status.label}</span>
+          </div>
+          <p className="text-break mt-1 text-sm text-slate-600">{row.group_name || row.group_id}</p>
+          <Link href={`/cases/${row.service_case_id}`} className="mt-2 inline-block text-xs font-bold text-cyan-800 hover:underline">
+            {row.case_no} · 查看服务单
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm lg:text-right">
+          <div>
+            <span className="block text-xs font-semibold text-slate-500">完整打卡</span>
+            <span className="font-extrabold text-slate-950">{row.complete_checkin_days} 天</span>
+            {row.participating ? null : (
+              <span className="block text-xs font-medium text-slate-500">
+                {batchClosed ? "所属批次已关闭，只算到已发奖励需要的那几天" : "本单不参与本轮，只算到已发奖励需要的那几天"}
+              </span>
+            )}
+          </div>
+          <div>
+            <span className="block text-xs font-semibold text-slate-500">尚未寄出</span>
+            <span className="font-extrabold text-slate-950">{row.unshipped_rewards}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(15rem,0.7fr)_minmax(24rem,1.3fr)]">
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+            <Gift className="h-4 w-4 text-cyan-700" />
+            已获得奖励
+          </h3>
+          <ol className="mt-3 grid gap-2">
+            {row.qualifications.map((qualification) => (
+              <li key={qualification.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+                <span className="font-semibold text-slate-900">{qualification.reward}</span>
+                <span className="shrink-0 text-xs text-slate-500">满 {qualification.tier_days} 天 · {qualification.qualified_on}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+            <Truck className="h-4 w-4 text-cyan-700" />
+            寄送批次
+          </h3>
+          <div className="mt-3 grid gap-3">
+            {row.shipments.length ? row.shipments.map((shipment) => (
+              <ShipmentCard key={shipment.id} shipment={shipment} />
+            )) : (
+              <div className="empty-state rounded-xl border border-dashed border-slate-300 py-8">
+                用户尚未选择立即寄出，当前奖励继续保留在该服务单下。
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-slate-200 px-4 py-4 sm:px-5 sm:py-5">
+        <details className="group/evidence">
+          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden">
+            <span className="min-w-0">
+              <span className="block text-sm font-bold text-slate-950">完整打卡证据</span>
+              <span className="mt-0.5 block text-xs leading-5 text-slate-600">
+                {row.participating
+                  ? `共 ${row.checkin_days.length} 天；展开后可核对日期、五项答案和用户原话`
+                  : `共 ${row.checkin_days.length} 天（已发奖励对应部分）；${batchClosed ? "所属批次已关闭" : "本单不参与本轮"}，之后的完整打卡不再计入`}
+              </span>
+            </span>
+            <ChevronDown className="h-5 w-5 shrink-0 text-slate-500 transition-transform duration-200 group-open/evidence:rotate-180 motion-reduce:transition-none" />
+          </summary>
+          <ol className="border-t border-slate-200">
+            {row.checkin_days.map((day) => <CheckinEvidenceDay key={day.checkin_id} day={day} />)}
+          </ol>
+        </details>
+      </div>
+    </section>
+  );
 }
 
 function ShipmentCard({ shipment }: { shipment: RewardShipment }) {
@@ -238,13 +354,21 @@ function RulesDisclosure({ title, children }: { title: string; children: ReactNo
 }
 
 export default async function RewardsPage() {
-  const [rows, day28Grants] = await Promise.all([
-    api<RewardAdminCase[]>("/checkin-rewards").catch(() => []),
+  const [rewardList, day28Grants] = await Promise.all([
+    api<RewardAdminList>("/checkin-rewards").catch(() => null),
     api<Day28BenefitGrantCase[]>("/day28-benefit-grants").catch(() => []),
   ]);
-  const pendingShipments = rows.flatMap((row) => row.shipments).filter((row) => row.status === "pending_shipment").length;
-  const missingAddress = rows.flatMap((row) => row.shipments).filter((row) => row.status === "missing_address").length;
-  const waitingChoice = rows.filter((row) => row.operational_status === "waiting_choice").length;
+  const cases = rewardList?.cases ?? [];
+  const batches = rewardList?.batches ?? [];
+  const rewardsEnabled = rewardList?.rewards_enabled ?? false;
+  const batchesWithCases: Array<{ batch: RewardAdminBatch | null; cases: RewardAdminCase[] }> = batches.length
+    ? batches.map((batch) => ({ batch, cases: cases.filter((row) => row.batch_key === batch.key) }))
+    : cases.length
+      ? [{ batch: null, cases }]
+      : [];
+  const pendingShipments = cases.flatMap((row) => row.shipments).filter((row) => row.status === "pending_shipment").length;
+  const missingAddress = cases.flatMap((row) => row.shipments).filter((row) => row.status === "missing_address").length;
+  const waitingChoice = cases.filter((row) => row.operational_status === "waiting_choice").length;
 
   return (
     <div className="page-stack">
@@ -255,7 +379,7 @@ export default async function RewardsPage() {
             <p className="page-subtitle">打卡实物奖励与结营券都在这一页：规则在上方配置，达标与发放记录在下方查看，寄出后在这里确认。</p>
           </div>
           <span className="status-pill border-cyan-200 bg-cyan-50 text-cyan-800">
-            {rows.length} 位已达标用户
+            {cases.length} 位已达标用户
           </span>
         </div>
       </header>
@@ -290,93 +414,33 @@ export default async function RewardsPage() {
       </section>
 
       <RulesDisclosure title="已达标客户明细">
-        <div className="grid gap-4">
-          {rows.map((row) => {
-            const status = statusCopy[row.operational_status] ?? statusCopy.qualified;
+        <div className="grid gap-6">
+          {batchesWithCases.map((group, index) => {
+            const batch = group.batch;
+            const batchClosed = batch ? batch.kind !== "current" : false;
             return (
-              <section key={row.service_case_id} className="panel overflow-hidden">
-                <div className="panel-header-clean flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-lg font-extrabold text-slate-950">{row.user_name}</h2>
-                      <span className={`status-pill ${status.className}`}>{status.label}</span>
-                    </div>
-                    <p className="text-break mt-1 text-sm text-slate-600">{row.group_name || row.group_id}</p>
-                    <Link href={`/cases/${row.service_case_id}`} className="mt-2 inline-block text-xs font-bold text-cyan-800 hover:underline">
-                      {row.case_no} · 查看服务单
-                    </Link>
+              <section key={batch?.key ?? `ungrouped-${index}`} className="grid gap-3">
+                {batch ? (
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <h3 className="text-sm font-bold text-slate-900">{batchLabel(batch)}</h3>
+                    <span className="status-pill pill-neutral tabular-nums">{group.cases.length} 位</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm lg:text-right">
-                    <div>
-                      <span className="block text-xs font-semibold text-slate-500">完整打卡</span>
-                      <span className="font-extrabold text-slate-950">{row.complete_checkin_days} 天</span>
-                      {row.participating ? null : (
-                        <span className="block text-xs font-medium text-slate-500">
-                          本单不参与本轮，只算到已发奖励需要的那几天
-                        </span>
-                      )}
-                    </div>
-                    <div>
-                      <span className="block text-xs font-semibold text-slate-500">尚未寄出</span>
-                      <span className="font-extrabold text-slate-950">{row.unshipped_rewards}</span>
-                    </div>
+                ) : null}
+                {group.cases.length ? (
+                  <div className="grid gap-4">
+                    {group.cases.map((row) => (
+                      <RewardCaseCard key={row.service_case_id} row={row} batchClosed={batchClosed} />
+                    ))}
                   </div>
-                </div>
-
-                <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(15rem,0.7fr)_minmax(24rem,1.3fr)]">
-                  <div>
-                    <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-                      <Gift className="h-4 w-4 text-cyan-700" />
-                      已获得奖励
-                    </h3>
-                    <ol className="mt-3 grid gap-2">
-                      {row.qualifications.map((qualification) => (
-                        <li key={qualification.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
-                          <span className="font-semibold text-slate-900">{qualification.reward}</span>
-                          <span className="shrink-0 text-xs text-slate-500">满 {qualification.tier_days} 天 · {qualification.qualified_on}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-                  <div>
-                    <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-                      <Truck className="h-4 w-4 text-cyan-700" />
-                      寄送批次
-                    </h3>
-                    <div className="mt-3 grid gap-3">
-                      {row.shipments.length ? row.shipments.map((shipment) => (
-                        <ShipmentCard key={shipment.id} shipment={shipment} />
-                      )) : (
-                        <div className="empty-state rounded-xl border border-dashed border-slate-300 py-8">
-                          用户尚未选择立即寄出，当前奖励继续保留在该服务单下。
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="border-t border-slate-200 px-4 py-4 sm:px-5 sm:py-5">
-                  <details className="group/evidence">
-                    <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden">
-                      <span className="min-w-0">
-                        <span className="block text-sm font-bold text-slate-950">完整打卡证据</span>
-                        <span className="mt-0.5 block text-xs leading-5 text-slate-600">
-                          {row.participating
-                            ? `共 ${row.checkin_days.length} 天；展开后可核对日期、五项答案和用户原话`
-                            : `共 ${row.checkin_days.length} 天（已发奖励对应部分）；本单不参与本轮，之后的完整打卡不再计入`}
-                        </span>
-                      </span>
-                      <ChevronDown className="h-5 w-5 shrink-0 text-slate-500 transition-transform duration-200 group-open/evidence:rotate-180 motion-reduce:transition-none" />
-                    </summary>
-                    <ol className="border-t border-slate-200">
-                      {row.checkin_days.map((day) => <CheckinEvidenceDay key={day.checkin_id} day={day} />)}
-                    </ol>
-                  </details>
-                </div>
+                ) : batch ? (
+                  <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-4 text-sm font-medium text-slate-600">
+                    {batchPlaceholder(batch, rewardsEnabled)}
+                  </p>
+                ) : null}
               </section>
             );
           })}
-          {rows.length === 0 ? (
+          {cases.length === 0 ? (
             <section className="panel empty-state py-14">
               目前还没有达标奖励记录。
             </section>

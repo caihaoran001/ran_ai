@@ -6,13 +6,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.models.checkin import Checkin
 from app.models.checkin_reward import (
     CheckinRewardProgram,
     CheckinRewardProgressNotice,
     CheckinRewardQualification,
+    CheckinRewardRound,
     CheckinRewardShipment,
 )
 from app.models.message import (
@@ -796,7 +797,7 @@ async def test_reward_admin_lists_each_counted_day_with_five_items_and_original_
     assert response.status_code == 200, response.text
     row = next(
         item
-        for item in response.json()
+        for item in response.json()["cases"]
         if item["service_case_id"] == service_case.id
     )
     assert row["complete_checkin_days"] == 3
@@ -852,7 +853,9 @@ async def test_reward_admin_freezes_evidence_when_case_not_in_current_round(
     response = await admin_client.get("/checkin-rewards")
     assert response.status_code == 200, response.text
     row = next(
-        item for item in response.json() if item["service_case_id"] == service_case.id
+        item
+        for item in response.json()["cases"]
+        if item["service_case_id"] == service_case.id
     )
     assert row["participating"] is False
     assert row["complete_checkin_days"] == 3
@@ -868,7 +871,9 @@ async def test_reward_admin_freezes_evidence_when_case_not_in_current_round(
     response = await admin_client.get("/checkin-rewards")
     assert response.status_code == 200, response.text
     row = next(
-        item for item in response.json() if item["service_case_id"] == service_case.id
+        item
+        for item in response.json()["cases"]
+        if item["service_case_id"] == service_case.id
     )
     assert row["participating"] is True
     assert row["complete_checkin_days"] == 5
@@ -1007,3 +1012,160 @@ async def test_reopen_moves_program_start_and_keeps_it_until_next_off(
 
     today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
     assert reopened.program_start_date == today
+
+
+async def _rounds(db_session) -> list[CheckinRewardRound]:
+    return list(
+        await db_session.scalars(
+            select(CheckinRewardRound).order_by(CheckinRewardRound.id)
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_switch_off_to_on_records_one_round_and_stays_single_while_enabled(
+    db_session,
+) -> None:
+    # autouse fixture 已经开着；清空轮次记录并先关一次，制造干净的关→开。
+    await db_session.execute(delete(CheckinRewardRound))
+    await db_session.flush()
+    await set_reward_tier_config(db_session, {"enabled": False})
+
+    await set_reward_tier_config(
+        db_session, {"enabled": True, "program_start_date": "2026-08-01"}
+    )
+    rounds = await _rounds(db_session)
+    assert len(rounds) == 1
+    assert rounds[0].started_on == date(2026, 8, 1)
+    assert rounds[0].closed_at is None
+
+    # 保持开启再保存一次（改奖品、改档位）不应再开第二轮。
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "tiers": [{"days": 5, "reward_text": "改后的奖励", "enabled": True}],
+        },
+    )
+    rounds = await _rounds(db_session)
+    assert len(rounds) == 1
+    assert rounds[0].closed_at is None
+
+
+@pytest.mark.asyncio
+async def test_switch_on_to_off_closes_open_round_without_creating_new_round(
+    db_session,
+) -> None:
+    await db_session.execute(delete(CheckinRewardRound))
+    await db_session.flush()
+    await set_reward_tier_config(db_session, {"enabled": False})
+    await set_reward_tier_config(
+        db_session, {"enabled": True, "program_start_date": "2026-08-01"}
+    )
+    assert [row.closed_at for row in await _rounds(db_session)] == [None]
+
+    await set_reward_tier_config(db_session, {"enabled": False})
+    rounds = await _rounds(db_session)
+    assert len(rounds) == 1
+    assert rounds[0].closed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_reward_admin_groups_case_under_current_then_closed_round(
+    db_session, admin_client
+) -> None:
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    db_session.add(
+        CheckinRewardQualification(
+            service_case_id=service_case.id,
+            tier_days=3,
+            reward_code="coffee_tube",
+            reward_name="咖啡",
+            quantity=1,
+            qualified_on=date(2026, 8, 3),
+        )
+    )
+    await db_session.flush()
+
+    payload = (await admin_client.get("/checkin-rewards")).json()
+    assert payload["rewards_enabled"] is True
+    assert payload["batches"][0] == {
+        "key": "current",
+        "kind": "current",
+        "started_on": PROGRAM_START,
+        "closed_at": None,
+        "reward_created_on": None,
+        "case_count": sum(
+            1 for item in payload["cases"] if item["batch_key"] == "current"
+        ),
+    }
+    row = next(
+        item for item in payload["cases"] if item["service_case_id"] == service_case.id
+    )
+    assert row["batch_key"] == "current"
+
+    await set_reward_tier_config(db_session, {"enabled": False})
+    payload = (await admin_client.get("/checkin-rewards")).json()
+    assert payload["rewards_enabled"] is False
+    assert payload["batches"][0]["key"] == "current"
+    assert payload["batches"][0]["started_on"] is None
+    assert payload["batches"][0]["case_count"] == 0
+
+    row = next(
+        item for item in payload["cases"] if item["service_case_id"] == service_case.id
+    )
+    assert row["batch_key"].startswith("round:")
+    batch = next(b for b in payload["batches"] if b["key"] == row["batch_key"])
+    assert batch["kind"] == "round"
+    assert batch["closed_at"] is not None
+    assert batch["case_count"] >= 1
+    assert payload["batches"][0]["key"] == "current"
+    assert payload["batches"][1]["key"] == row["batch_key"]
+
+
+@pytest.mark.asyncio
+async def test_reward_admin_puts_reward_without_matching_round_into_legacy_batch(
+    db_session, admin_client
+) -> None:
+    service_case = _case()
+    service_case.service_plan_start_date = date(2026, 7, 1)
+    db_session.add(service_case)
+    await db_session.flush()
+    db_session.add(
+        CheckinRewardQualification(
+            service_case_id=service_case.id,
+            tier_days=3,
+            reward_code="coffee_tube",
+            reward_name="咖啡",
+            quantity=1,
+            qualified_on=date(2026, 7, 3),
+            # 北京 2026-08-13 12:00；该单早于所有已记录轮次，只能落到 legacy。
+            created_at=datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc),
+        )
+    )
+    await db_session.flush()
+
+    payload = (await admin_client.get("/checkin-rewards")).json()
+    row = next(
+        item for item in payload["cases"] if item["service_case_id"] == service_case.id
+    )
+    assert row["batch_key"] == "legacy:2026-08-13"
+    batch = next(b for b in payload["batches"] if b["key"] == row["batch_key"])
+    assert batch["kind"] == "legacy"
+    assert batch["started_on"] is None
+    assert batch["closed_at"] is None
+    assert batch["reward_created_on"] == "2026-08-13"
+    assert batch["case_count"] >= 1
+
+    assert payload["batches"][0]["key"] == "current"
+    legacy_dates = [
+        b["reward_created_on"] for b in payload["batches"] if b["kind"] == "legacy"
+    ]
+    assert legacy_dates == sorted(legacy_dates, reverse=True)
+
+    # cases 必须按 batches 顺序成段排列，批次内不打散。
+    batch_order = {b["key"]: index for index, b in enumerate(payload["batches"])}
+    order_seq = [batch_order[item["batch_key"]] for item in payload["cases"]]
+    assert order_seq == sorted(order_seq)

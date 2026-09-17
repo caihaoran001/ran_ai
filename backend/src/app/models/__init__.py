@@ -11,6 +11,7 @@ from app.models.checkin_reward import (
     CheckinRewardProgram,
     CheckinRewardProgressNotice,
     CheckinRewardQualification,
+    CheckinRewardRound,
     CheckinRewardShipment,
 )
 from app.models.checkin_checklist_version import CheckinChecklistVersion
@@ -53,6 +54,7 @@ __all__ = [
     "CheckinRewardProgram",
     "CheckinRewardProgressNotice",
     "CheckinRewardQualification",
+    "CheckinRewardRound",
     "CheckinRewardShipment",
     "CheckinChecklistVersion",
     "CheckinFollowupCycle",

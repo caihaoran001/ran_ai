@@ -510,6 +510,7 @@ async def db_session():
         CheckinRewardProgram,
         CheckinRewardProgressNotice,
         CheckinRewardQualification,
+        CheckinRewardRound,
         CheckinRewardShipment,
     )
     from app.models.curated_video import (
@@ -532,6 +533,7 @@ async def db_session():
             CheckinRewardShipment.__table__,
             CheckinRewardQualification.__table__,
             CheckinRewardProgressNotice.__table__,
+            CheckinRewardRound.__table__,
             CuratedVideoSourceCursor.__table__,
             CuratedVideoItem.__table__,
             CuratedVideoDailyRun.__table__,
