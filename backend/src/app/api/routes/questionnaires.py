@@ -591,15 +591,21 @@ async def _send_intake_submit_reply(service_case_id: int) -> None:
             try:
                 from app.services.checkin_reward_settings import (
                     build_reward_receipt_paragraph,
-                    get_reward_tier_config,
                 )
+                from app.services.checkin_rewards import lock_reward_config_for_case
 
-                reward_paragraph = build_reward_receipt_paragraph(
-                    await get_reward_tier_config(session)
+                reward_config = await lock_reward_config_for_case(
+                    session,
+                    service_case_id=service_case.id,
                 )
+                if reward_config is not None:
+                    # 承诺先落库再发消息；渠道失败或进程重试都继续使用同一份规则。
+                    await session.commit()
+                reward_paragraph = build_reward_receipt_paragraph(reward_config)
             except ValueError:
                 logger.warning(
-                    "打卡奖励档位配置非法，收据话术按停用处理。", exc_info=True
+                    "打卡奖励档位配置或承诺快照非法，收据话术按停用处理。",
+                    exc_info=True,
                 )
             # 奖励介绍以档位配置为唯一来源，动态生成；已被运营静态粘进旧配置的
             # 标准奖励段在这里归一：模板里有占位符就删掉防重复，没有占位符就

@@ -196,10 +196,10 @@ async def test_reconcile_creates_each_tier_once_and_skips_stale_progress(db_sess
 
 
 @pytest.mark.asyncio
-async def test_progress_notice_is_dropped_when_tier_removed_and_returns_when_added_back(
+async def test_promised_tier_survives_later_global_config_change(
     db_session,
 ) -> None:
-    """档位删掉后排队中的差一天提醒不再发；档位加回来要能重新提醒。"""
+    """介绍后删改后台档位，差一天提醒和最终奖励仍兑现原承诺。"""
     from app.services import checkin_rewards as rewards_module
     from app.services.channels.base import ChannelSendResult
 
@@ -237,32 +237,91 @@ async def test_progress_notice_is_dropped_when_tier_removed_and_returns_when_add
         sent.append(content)
         return ChannelSendResult(success=True, message_id="fake-progress")
 
-    # 运营把 3 天那档删掉：排队中的提醒必须作废，不能再把取消掉的奖励发出去。
+    # 运营把 3 天那档删掉，只影响后来的用户；这个用户已经锁定原承诺。
     await set_reward_tier_config(db_session, _config((7,)))
     delivered = await rewards_module._deliver_pending_progress_notices(
         service_case_id=service_case.id, send_text=fake_send
     )
-    assert delivered == 0
-    assert sent == []
+    assert delivered == 1
+    assert sent == ["你已经累计完成 2 天完整打卡，再完成 1 天，就能获得 1 管咖啡～"]
     notice = await db_session.scalar(
         select(CheckinRewardProgressNotice).where(
             CheckinRewardProgressNotice.service_case_id == service_case.id
         )
     )
     assert notice is not None
-    assert notice.notification_status == "skipped"
+    assert notice.notification_status == "sent"
 
-    # 档位加回来：作废过的那条不能挡住新提醒，奖品名跟当前配置走。
-    await set_reward_tier_config(db_session, _config((3, 7)))
-    again = await reconcile_case_rewards(
-        db_session, service_case_id=service_case.id, through_date=date(2026, 8, 2)
+    db_session.add(
+        Checkin(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            checkin_date=date(2026, 8, 3),
+            content="第 3 天完整打卡",
+            parsed_json=_parsed(),
+        )
     )
-    assert again.new_progress_threshold == 2
-    delivered = await rewards_module._deliver_pending_progress_notices(
-        service_case_id=service_case.id, send_text=fake_send
+    await db_session.flush()
+    reached = await reconcile_case_rewards(
+        db_session, service_case_id=service_case.id, through_date=date(2026, 8, 3)
     )
-    assert delivered == 1
-    assert sent == ["你已经累计完成 2 天完整打卡，再完成 1 天，就能获得 1 管咖啡～"]
+    qualification = await db_session.scalar(
+        select(CheckinRewardQualification).where(
+            CheckinRewardQualification.service_case_id == service_case.id,
+            CheckinRewardQualification.tier_days == 3,
+        )
+    )
+    assert reached.new_qualification_days == (3,)
+    assert qualification is not None
+    assert qualification.reward_name == "1 管咖啡"
+
+
+@pytest.mark.asyncio
+async def test_new_user_after_config_change_locks_new_reward_terms(db_session) -> None:
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "tiers": [{"days": 3, "reward_text": "原承诺奖品"}],
+        },
+    )
+    earlier_case = _case()
+    db_session.add(earlier_case)
+    await db_session.flush()
+    await reconcile_case_rewards(db_session, service_case_id=earlier_case.id)
+
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "tiers": [{"days": 5, "reward_text": "新承诺奖品"}],
+        },
+    )
+    later_case = _case()
+    db_session.add(later_case)
+    await db_session.flush()
+    await reconcile_case_rewards(db_session, service_case_id=later_case.id)
+
+    programs = list(
+        await db_session.scalars(
+            select(CheckinRewardProgram)
+            .where(
+                CheckinRewardProgram.service_case_id.in_(
+                    [earlier_case.id, later_case.id]
+                )
+            )
+            .order_by(CheckinRewardProgram.service_case_id)
+        )
+    )
+    snapshots = {
+        row.service_case_id: row.reward_config_snapshot["tiers"] for row in programs
+    }
+    assert snapshots[earlier_case.id] == [
+        {"days": 3, "reward_text": "原承诺奖品"}
+    ]
+    assert snapshots[later_case.id] == [
+        {"days": 5, "reward_text": "新承诺奖品"}
+    ]
 
 
 @pytest.mark.asyncio
@@ -812,7 +871,7 @@ async def test_reward_status_tool_returns_total_tiers_choice_and_shipment_histor
 
 
 @pytest.mark.asyncio
-async def test_reward_status_tool_uses_current_non_default_tiers(db_session) -> None:
+async def test_reward_status_tool_uses_promised_non_default_tiers(db_session) -> None:
     await set_reward_tier_config(
         db_session,
         {
@@ -826,6 +885,17 @@ async def test_reward_status_tool_uses_current_non_default_tiers(db_session) -> 
     service_case = _case()
     db_session.add(service_case)
     await db_session.flush()
+    await reconcile_case_rewards(db_session, service_case_id=service_case.id)
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "tiers": [
+                {"days": 6, "reward_text": "新版杯子"},
+                {"days": 12, "reward_text": "新版咖啡"},
+            ],
+        },
+    )
     tools = {
         tool.name: tool
         for tool in build_reward_shipping_tools(

@@ -37,6 +37,7 @@ from app.services.checkin_reward_settings import (
     CheckinRewardTier,
     CheckinRewardTierConfig,
     get_reward_tier_config,
+    parse_reward_tiers_config,
 )
 from app.services.service_case_queries import (
     SERVICE_CASE_SETTLEMENT_GRACE,
@@ -142,10 +143,19 @@ async def case_participates_in_current_round(
 
 async def _active_reward_tiers(
     session: AsyncSession,
+    *,
+    service_case_id: int,
 ) -> tuple[CheckinRewardTier, ...]:
-    """当前生效的档位；总开关关闭或配置非法时一档都没有。"""
+    """这个用户当前生效的承诺档位；总开关关闭时一档都没有。"""
     config = await load_reward_program(session)
-    return config.active_tiers() if config is not None else ()
+    if config is None or not config.enabled:
+        return ()
+    program = await session.scalar(
+        select(CheckinRewardProgram).where(
+            CheckinRewardProgram.service_case_id == service_case_id
+        )
+    )
+    return reward_config_for_program(program, fallback=config).active_tiers()
 
 
 def is_effective_reward_checkin(checkin: Checkin) -> bool:
@@ -308,6 +318,54 @@ async def _program_for_locked_case(
     return program
 
 
+def reward_config_for_program(
+    program: CheckinRewardProgram | None,
+    *,
+    fallback: CheckinRewardTierConfig,
+) -> CheckinRewardTierConfig:
+    """有个人承诺就读承诺；历史记录没有快照时才兼容读当前配置。"""
+    if program is None or program.reward_config_snapshot is None:
+        return fallback
+    snapshot = parse_reward_tiers_config(program.reward_config_snapshot)
+    if not snapshot.enabled or not snapshot.tiers:
+        raise ValueError("用户奖励承诺快照必须包含已开启的有效档位。")
+    return snapshot
+
+
+def _lock_reward_config_snapshot(
+    program: CheckinRewardProgram,
+    config: CheckinRewardTierConfig,
+) -> CheckinRewardTierConfig:
+    if program.reward_config_snapshot is not None:
+        return reward_config_for_program(program, fallback=config)
+    program.reward_config_snapshot = config.to_dict()
+    program.reward_terms_locked_at = datetime.now(timezone.utc)
+    return config
+
+
+async def lock_reward_config_for_case(
+    session: AsyncSession,
+    *,
+    service_case_id: int,
+) -> CheckinRewardTierConfig | None:
+    """在奖励介绍发送前锁定这个用户的承诺，并返回同一份配置。"""
+    service_case = await session.scalar(
+        select_active_service_cases(ServiceCase.id == service_case_id).with_for_update()
+    )
+    if service_case is None:
+        return None
+    config = await load_reward_program(session)
+    if not await case_participates_in_current_round(
+        session,
+        service_case=service_case,
+        config=config,
+    ):
+        return None
+    assert config is not None
+    program = await _program_for_locked_case(session, service_case_id=service_case_id)
+    return _lock_reward_config_snapshot(program, config)
+
+
 async def _open_shipment(
     session: AsyncSession, *, service_case_id: int
 ) -> CheckinRewardShipment | None:
@@ -353,6 +411,9 @@ async def reconcile_case_rewards(
         # 总开关关闭、配置非法，或服务单在本轮开启时刻之前创建：本轮不结算。
         return RewardReconciliation(0, (), (), None)
 
+    assert config is not None
+    program = await _program_for_locked_case(session, service_case_id=service_case_id)
+    config = _lock_reward_config_snapshot(program, config)
     valid_dates = await valid_reward_checkin_dates(
         session,
         service_case=service_case,
@@ -368,7 +429,6 @@ async def reconcile_case_rewards(
             )
         )
     }
-    program = await _program_for_locked_case(session, service_case_id=service_case_id)
     shipment = await _open_shipment(session, service_case_id=service_case_id)
     stale_progress = list(
         await session.scalars(
@@ -409,9 +469,8 @@ async def reconcile_case_rewards(
         program.choice_updated_at = datetime.now(timezone.utc)
 
     new_progress_threshold = None
-    # 进度提醒只面向仍配着的档位：threshold = tier.days - 1，即"再完成 1 天"。
-    # 已经发出去的提醒不受影响；排队还没发的由发送环节按当前生效档位作废
-    # （见 _deliver_pending_progress_notices）。
+    # 进度提醒只面向这个用户已经锁定的档位：threshold = tier.days - 1，
+    # 即“再完成 1 天”。后台后来改档不会改变这里的个人承诺。
     active_days = {tier.days for tier in active_tiers}
     candidate_next = complete_checkin_days + 1
     next_tier_days = (
@@ -517,7 +576,10 @@ async def render_qualification_notice(
     unsent = [row for row in all_rows if row.shipment_id not in shipped_ids]
     active_shipment = await _open_shipment(session, service_case_id=service_case_id)
     highest = max(row.tier_days for row in newly_qualified)
-    active_tiers = await _active_reward_tiers(session)
+    active_tiers = await _active_reward_tiers(
+        session,
+        service_case_id=service_case_id,
+    )
     max_active_days = (
         max(tier.days for tier in active_tiers) if active_tiers else highest
     )
@@ -548,7 +610,7 @@ async def render_qualification_notice(
 def render_progress_notice(
     row: CheckinRewardProgressNotice, tier: CheckinRewardTier
 ) -> str:
-    """差一天提醒。奖品名由调用方按当前生效档位传入，这里不自己回落取名。"""
+    """差一天提醒。奖品名由调用方按这个用户锁定的承诺传入。"""
     return (
         f"你已经累计完成 {row.threshold_days} 天完整打卡，"
         f"再完成 1 天，就能获得 {tier.display}～"
@@ -756,11 +818,14 @@ async def _deliver_pending_progress_notices(
             )
             if row is None:
                 return sent
-            # 档位被删掉（或本轮已关闭）后，排队中的提醒不再发：提醒里的奖品
-            # 已经不存在，发出去等于把取消掉的奖励又承诺一遍。作废后不再重试，
-            # 档位加回来、用户仍然差一天时，对账会把这条改回待发。
+            # 总开关关闭后，排队中的提醒不再发；保持开启时后台删改档位不影响
+            # 这个用户已经锁定的承诺。
             active_tier_map = {
-                tier.days: tier for tier in await _active_reward_tiers(session)
+                tier.days: tier
+                for tier in await _active_reward_tiers(
+                    session,
+                    service_case_id=service_case_id,
+                )
             }
             tier = active_tier_map.get(row.next_tier_days)
             if tier is None:

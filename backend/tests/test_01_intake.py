@@ -3072,6 +3072,7 @@ async def test_intake_receipt_only_promises_rewards_when_enabled(
     db_session, monkeypatch, enabled, expects_reward
 ):
     from app.api.routes import questionnaires
+    from app.models.checkin_reward import CheckinRewardProgram
     from app.models.message import Message, MessageDirection
     from app.models.service_case import ServiceCase
     from app.models.user import User
@@ -3127,6 +3128,37 @@ async def test_intake_receipt_only_promises_rewards_when_enabled(
     assert "{reward_intro}" not in receipt.content
     assert "{plan_start_line}" not in receipt.content
     assert "2026年08月20日" in receipt.content
+    program = await db_session.scalar(
+        select(CheckinRewardProgram).where(
+            CheckinRewardProgram.service_case_id == service_case.id
+        )
+    )
+    assert (program is not None and program.reward_config_snapshot is not None) is enabled
+    if enabled:
+        await set_reward_tier_config(
+            db_session,
+            {
+                "enabled": True,
+                "tiers": [{"days": 14, "reward_text": "修改后的奖品"}],
+            },
+        )
+        changed_paragraph = build_reward_receipt_paragraph(
+            await get_reward_tier_config(db_session)
+        )
+        await questionnaires._send_intake_submit_reply(service_case.id)
+        receipts = list(
+            await db_session.scalars(
+                select(Message)
+                .where(
+                    Message.service_case_id == service_case.id,
+                    Message.direction == MessageDirection.OUTBOUND,
+                )
+                .order_by(Message.id)
+            )
+        )
+        assert len(receipts) == 2
+        assert expected_paragraph in receipts[-1].content
+        assert changed_paragraph not in receipts[-1].content
 
 
 def test_overview_measurements_only_get_units_when_numeric():

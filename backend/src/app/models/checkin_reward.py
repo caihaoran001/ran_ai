@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -32,6 +33,10 @@ class CheckinRewardProgram(TimestampMixin, Base):
     recipient_phone: Mapped[str | None] = mapped_column(String(32))
     shipping_address: Mapped[str | None] = mapped_column(String(1000))
     choice_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reward_config_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    reward_terms_locked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
 
 class CheckinRewardShipment(TimestampMixin, Base):
