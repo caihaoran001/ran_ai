@@ -1125,7 +1125,8 @@ async def test_reward_tool_reports_non_participation_before_round_moment(
     assert payload["complete_checkin_days"] == 0
     assert "本轮开启后新建的服务单才参与" in payload["reply_instruction"]
     assert refused["ok"] is False
-    assert "没有已获得" in refused["error"]
+    assert refused["batch_closed"] is True
+    assert refused["error"] == "本批已结束，不能自助登记发货或继续累积。"
 
 
 @pytest.mark.asyncio
@@ -1382,3 +1383,223 @@ async def test_reward_admin_attributes_by_case_creation_moment(
     assert batch_keys.index(f"round:{closed_round.id}") < batch_keys.index(
         legacy_row["batch_key"]
     )
+
+
+async def _closed_batch_case(db_session):
+    """建单早于本轮开启时刻的服务单，参与标记为 False。"""
+    moment = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    await db_session.execute(delete(CheckinRewardRound))
+    await db_session.flush()
+    db_session.add(CheckinRewardRound(started_on=date(2026, 8, 1), created_at=moment))
+    service_case = _case()
+    service_case.created_at = moment - timedelta(seconds=1)
+    db_session.add(service_case)
+    await db_session.flush()
+    return service_case
+
+
+@pytest.mark.asyncio
+async def test_closed_batch_refuses_accumulate_and_keeps_active_draft(db_session) -> None:
+    service_case = await _closed_batch_case(db_session)
+    choice_at = datetime(2026, 8, 2, 3, 0, tzinfo=timezone.utc)
+    program = CheckinRewardProgram(
+        service_case_id=service_case.id,
+        current_choice="pending_choice",
+        choice_tier_days=3,
+        choice_updated_at=choice_at,
+    )
+    shipment = CheckinRewardShipment(
+        service_case_id=service_case.id,
+        status="missing_address",
+        requested_at=datetime(2026, 8, 2, 2, 0, tzinfo=timezone.utc),
+    )
+    db_session.add_all([program, shipment])
+    await db_session.flush()
+    qualification = CheckinRewardQualification(
+        service_case_id=service_case.id,
+        tier_days=3,
+        reward_code="coffee_tube",
+        reward_name="咖啡",
+        quantity=1,
+        qualified_on=date(2026, 8, 3),
+        shipment_id=shipment.id,
+    )
+    db_session.add(qualification)
+    await db_session.flush()
+
+    tool = build_reward_shipping_tools(
+        context=AgentRunContext(service_case_id=service_case.id)
+    )[0]
+    result = await tool.ainvoke({"action": "accumulate"})
+
+    assert result["ok"] is False
+    assert result["batch_closed"] is True
+    assert result["participating"] is False
+    await db_session.refresh(program)
+    await db_session.refresh(shipment)
+    await db_session.refresh(qualification)
+    assert program.current_choice == "pending_choice"
+    assert program.choice_updated_at == choice_at
+    assert shipment.status == "missing_address"
+    assert qualification.shipment_id == shipment.id
+
+
+@pytest.mark.asyncio
+async def test_closed_batch_refuses_ship_now_and_creates_no_shipment(db_session) -> None:
+    service_case = await _closed_batch_case(db_session)
+    program = CheckinRewardProgram(
+        service_case_id=service_case.id,
+        current_choice="pending_choice",
+        choice_tier_days=3,
+    )
+    qualification = CheckinRewardQualification(
+        service_case_id=service_case.id,
+        tier_days=3,
+        reward_code="coffee_tube",
+        reward_name="咖啡",
+        quantity=1,
+        qualified_on=date(2026, 8, 3),
+    )
+    db_session.add_all([program, qualification])
+    message = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="现在发货，收件人张三，手机号13800138000，详细地址杭州市西湖区某街道88号",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+
+    tool = build_reward_shipping_tools(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=message.id,
+        )
+    )[0]
+    result = await tool.ainvoke(
+        {
+            "action": "ship_now",
+            "recipient_name": "张三",
+            "recipient_phone": "13800138000",
+            "shipping_address": "杭州市西湖区某街道88号",
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["batch_closed"] is True
+    assert result["error"] == "本批已结束，不能自助登记发货或继续累积。"
+    assert await db_session.scalar(
+        select(CheckinRewardShipment).where(
+            CheckinRewardShipment.service_case_id == service_case.id
+        )
+    ) is None
+    await db_session.refresh(program)
+    await db_session.refresh(qualification)
+    assert program.current_choice == "pending_choice"
+    assert program.recipient_name is None
+    assert qualification.shipment_id is None
+
+
+@pytest.mark.asyncio
+async def test_closed_batch_get_status_still_returns_earned_rewards_with_guidance(
+    db_session,
+) -> None:
+    service_case = await _closed_batch_case(db_session)
+    db_session.add(
+        CheckinRewardQualification(
+            service_case_id=service_case.id,
+            tier_days=3,
+            reward_code="coffee_tube",
+            reward_name="咖啡",
+            quantity=1,
+            qualified_on=date(2026, 8, 3),
+        )
+    )
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reward_shipping_tools(
+            context=AgentRunContext(service_case_id=service_case.id)
+        )
+    }
+
+    payload = await tools["manage_reward_shipping"].ainvoke({"action": "get_status"})
+    read_payload = await tools["get_checkin_reward_status"].ainvoke({})
+
+    assert payload["ok"] is True
+    assert payload["participating"] is False
+    assert payload["has_earned_rewards"] is True
+    assert payload["earned_rewards"] == "1 管咖啡"
+    guidance = payload["reply_instruction"]
+    assert "不参与" in guidance
+    assert "本轮开启后新建的服务单才参与" in guidance
+    assert "不要记录收件人、手机号、地址" in guidance
+    assert "联系班主任" in guidance
+    assert read_payload["reply_instruction"] == guidance
+
+
+@pytest.mark.asyncio
+async def test_participating_case_accumulate_still_records(db_session) -> None:
+    moment = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    await db_session.execute(delete(CheckinRewardRound))
+    await db_session.flush()
+    db_session.add(CheckinRewardRound(started_on=date(2026, 8, 1), created_at=moment))
+    service_case = _case()
+    service_case.created_at = moment + timedelta(seconds=1)
+    db_session.add(service_case)
+    await db_session.flush()
+    program = CheckinRewardProgram(
+        service_case_id=service_case.id,
+        current_choice="pending_choice",
+        choice_tier_days=3,
+    )
+    shipment = CheckinRewardShipment(
+        service_case_id=service_case.id,
+        status="missing_address",
+        requested_at=datetime(2026, 8, 2, 2, 0, tzinfo=timezone.utc),
+    )
+    db_session.add_all([program, shipment])
+    await db_session.flush()
+    qualification = CheckinRewardQualification(
+        service_case_id=service_case.id,
+        tier_days=3,
+        reward_code="coffee_tube",
+        reward_name="咖啡",
+        quantity=1,
+        qualified_on=date(2026, 8, 3),
+        shipment_id=shipment.id,
+    )
+    message = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="2",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add_all([qualification, message])
+    await db_session.flush()
+
+    tool = build_reward_shipping_tools(
+        context=AgentRunContext(
+            service_case_id=service_case.id,
+            trigger_id=message.id,
+        )
+    )[0]
+    result = await tool.ainvoke({"action": "accumulate"})
+
+    assert result["recorded"] == "accumulate"
+    assert result["participating"] is True
+    await db_session.refresh(program)
+    await db_session.refresh(shipment)
+    await db_session.refresh(qualification)
+    assert program.current_choice == "accumulate"
+    assert program.choice_updated_at is not None
+    assert shipment.status == "cancelled"
+    assert qualification.shipment_id is None

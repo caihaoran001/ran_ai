@@ -213,6 +213,25 @@ def _paused_write_result() -> dict[str, Any]:
     }
 
 
+def _closed_batch_write_result() -> dict[str, Any]:
+    """建单早于本轮开启时刻的服务单：批次已关闭，拒绝一切自助写。
+
+    与 `_paused_write_result` 是两条不同的路径：这里奖励开关是开着的，只是这个
+    服务单不参与本轮，所以只拒绝写、不谎报计划暂停。
+    """
+    return {
+        "ok": False,
+        "rewards_enabled": True,
+        "participating": False,
+        "batch_closed": True,
+        "error": "本批已结束，不能自助登记发货或继续累积。",
+        "reply_instruction": (
+            "本服务单所属批次已结束：不要记录收件信息或寄送/累积选择；"
+            "如实告知已获得的奖励，并引导他联系班主任处理寄送。"
+        ),
+    }
+
+
 async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
     program: CheckinRewardProgram | None = status["program"]
     active: CheckinRewardShipment | None = status["active_shipment"]
@@ -332,6 +351,8 @@ async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
         payload["reply_instruction"] = (
             "本服务单不参与本轮打卡奖励（本轮开启后新建的服务单才参与）；"
             "只告知已获得的奖励，不要承诺或计算新的奖励进度。"
+            "若用户想寄送或继续累积已获得的奖励，不要记录收件人、手机号、地址或任何选择，"
+            "让他联系班主任处理寄送。"
         )
     return payload
 
@@ -386,6 +407,9 @@ def build_reward_shipping_tools(
             )
             if action == "get_status":
                 return await _public_payload(session, status)
+            # 关闭批次硬闸门：非读动作一律在此拒绝，未参与本轮的服务单不得自助写入。
+            if not status["participating"]:
+                return _closed_batch_write_result()
 
             source = await _current_user_source(session, context)
             if source is None:
