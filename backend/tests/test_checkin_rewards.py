@@ -1435,6 +1435,9 @@ async def test_closed_batch_refuses_accumulate_and_keeps_active_draft(db_session
     assert result["ok"] is False
     assert result["batch_closed"] is True
     assert result["participating"] is False
+    assert "不要说继续累积或“攒着”仍可办理" in result["reply_instruction"]
+    assert "也不要让用户找班主任办理更多累积" in result["reply_instruction"]
+    assert "联系班主任处理这些已得奖励的寄送" in result["reply_instruction"]
     await db_session.refresh(program)
     await db_session.refresh(shipment)
     await db_session.refresh(qualification)
@@ -1492,6 +1495,7 @@ async def test_closed_batch_refuses_ship_now_and_creates_no_shipment(db_session)
     assert result["ok"] is False
     assert result["batch_closed"] is True
     assert result["error"] == "本批已结束，不能自助登记发货或继续累积。"
+    assert "不要说继续累积或“攒着”仍可办理" in result["reply_instruction"]
     assert await db_session.scalar(
         select(CheckinRewardShipment).where(
             CheckinRewardShipment.service_case_id == service_case.id
@@ -1539,7 +1543,18 @@ async def test_closed_batch_get_status_still_returns_earned_rewards_with_guidanc
     assert "本轮开启后新建的服务单才参与" in guidance
     assert "不要记录收件人、手机号、地址" in guidance
     assert "联系班主任" in guidance
+    assert "不要说继续累积仍可办理、也不要说以后还能再攒" in guidance
     assert read_payload["reply_instruction"] == guidance
+
+    closed_batch_text = "本批已结束，自助登记已关闭，已得奖励需联系班主任"
+    assert payload["current_choice_text"] == closed_batch_text
+    assert payload["operational_status_text"] == closed_batch_text
+    assert "待选择" not in payload["current_choice_text"]
+    assert "继续累积" not in payload["current_choice_text"]
+    assert "待选择" not in payload["operational_status_text"]
+    assert "继续累积" not in payload["operational_status_text"]
+    assert read_payload["current_choice_text"] == closed_batch_text
+    assert read_payload["operational_status_text"] == closed_batch_text
 
 
 @pytest.mark.asyncio
@@ -1592,10 +1607,15 @@ async def test_participating_case_accumulate_still_records(db_session) -> None:
             trigger_id=message.id,
         )
     )[0]
+    status_before = await tool.ainvoke({"action": "get_status"})
+    assert status_before["participating"] is True
+    assert status_before["current_choice_text"] == "待选择现在发货或继续累积"
     result = await tool.ainvoke({"action": "accumulate"})
 
     assert result["recorded"] == "accumulate"
     assert result["participating"] is True
+    assert result["current_choice_text"] == "选择继续累积"
+    assert result["operational_status_text"] == "已选择继续累积"
     await db_session.refresh(program)
     await db_session.refresh(shipment)
     await db_session.refresh(qualification)

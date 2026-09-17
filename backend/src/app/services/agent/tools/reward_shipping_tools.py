@@ -227,7 +227,8 @@ def _closed_batch_write_result() -> dict[str, Any]:
         "error": "本批已结束，不能自助登记发货或继续累积。",
         "reply_instruction": (
             "本服务单所属批次已结束：不要记录收件信息或寄送/累积选择；"
-            "如实告知已获得的奖励，并引导他联系班主任处理寄送。"
+            "不要说继续累积或“攒着”仍可办理，也不要让用户找班主任办理更多累积；"
+            "如实告知已获得的奖励，并引导他联系班主任处理这些已得奖励的寄送。"
         ),
     }
 
@@ -268,6 +269,10 @@ async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
         "shipped": "已发货",
         "no_reward": "尚未获得奖品",
     }[operational_status]
+    if not status["participating"]:
+        closed_batch_text = "本批已结束，自助登记已关闭，已得奖励需联系班主任"
+        choice_text = closed_batch_text
+        operational_status_text = closed_batch_text
     reward_tiers = []
     for tier in await _display_reward_tiers(session):
         qualification = qualifications_by_tier.get(tier.days)
@@ -351,8 +356,9 @@ async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
         payload["reply_instruction"] = (
             "本服务单不参与本轮打卡奖励（本轮开启后新建的服务单才参与）；"
             "只告知已获得的奖励，不要承诺或计算新的奖励进度。"
-            "若用户想寄送或继续累积已获得的奖励，不要记录收件人、手机号、地址或任何选择，"
+            "若用户想寄送已获得的奖励，不要记录收件人、手机号、地址或任何选择，"
             "让他联系班主任处理寄送。"
+            "不要说继续累积仍可办理、也不要说以后还能再攒。"
         )
     return payload
 
