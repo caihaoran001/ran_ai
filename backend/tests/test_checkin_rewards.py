@@ -196,6 +196,69 @@ async def test_reconcile_creates_each_tier_once_and_skips_stale_progress(db_sess
 
 
 @pytest.mark.asyncio
+async def test_same_reward_at_multiple_tiers_keeps_every_qualification(
+    db_session,
+) -> None:
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "tiers": [
+                {"days": 3, "reward_text": "咖啡 1 盒"},
+                {"days": 7, "reward_text": "咖啡 1 盒"},
+            ],
+        },
+    )
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    for offset in range(7):
+        db_session.add(
+            Checkin(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                content=f"完整打卡 {offset + 1}",
+                parsed_json=_parsed(),
+            )
+        )
+    await db_session.flush()
+
+    result = await reconcile_case_rewards(
+        db_session,
+        service_case_id=service_case.id,
+        through_date=date(2026, 8, 7),
+    )
+    qualifications = list(
+        await db_session.scalars(
+            select(CheckinRewardQualification)
+            .where(CheckinRewardQualification.service_case_id == service_case.id)
+            .order_by(CheckinRewardQualification.tier_days)
+        )
+    )
+    notice = await render_qualification_notice(
+        db_session,
+        service_case_id=service_case.id,
+        newly_qualified=qualifications,
+    )
+    tools = {
+        tool.name: tool
+        for tool in build_reward_shipping_tools(
+            context=AgentRunContext(service_case_id=service_case.id)
+        )
+    }
+    status = await tools["get_checkin_reward_status"].ainvoke({})
+
+    assert result.new_qualification_days == (3, 7)
+    assert len(qualifications) == 2
+    assert "本次新获得：咖啡 1 盒×2" in notice
+    assert "目前尚未寄出：咖啡 1 盒×2" in notice
+    assert status["earned_rewards"] == "咖啡 1 盒×2"
+    assert status["unshipped_rewards"] == "咖啡 1 盒×2"
+    assert [tier["earned"] for tier in status["reward_tiers"]] == [True, True]
+
+
+@pytest.mark.asyncio
 async def test_promised_tier_survives_later_global_config_change(
     db_session,
 ) -> None:

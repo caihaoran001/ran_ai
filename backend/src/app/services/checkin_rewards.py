@@ -517,13 +517,13 @@ _LEGACY_REWARD_UNITS = {
 
 
 def _qualification_display(rows: list[CheckinRewardQualification]) -> str:
-    """老资格按旧格式聚合展示（如 3 管咖啡）；v2 资格直接展示配置的一句话奖励。"""
+    """老资格按单位聚合；新版同名资格合并数量，但不能把不同档位直接去重。"""
 
     legacy_quantities: dict[str, int] = defaultdict(int)
     legacy_templates: dict[str, CheckinRewardQualification] = {}
     legacy_first_days: dict[str, int] = {}
-    modern: list[tuple[int, str]] = []
-    seen_texts: set[str] = set()
+    modern_quantities: dict[str, int] = defaultdict(int)
+    modern_first_days: dict[str, int] = {}
     for row in sorted(rows, key=lambda item: item.tier_days):
         code = row.reward_code or ""
         if code in _LEGACY_REWARD_UNITS:
@@ -534,12 +534,12 @@ def _qualification_display(rows: list[CheckinRewardQualification]) -> str:
             )
             continue
         text = row.reward_name or ""
-        if row.quantity > 1:
-            text = f"{text}×{row.quantity}"
-        if not text or text in seen_texts:
+        if not text:
             continue
-        seen_texts.add(text)
-        modern.append((row.tier_days, text))
+        modern_quantities[text] += row.quantity
+        modern_first_days[text] = min(
+            modern_first_days.get(text, row.tier_days), row.tier_days
+        )
     parts: list[tuple[int, str]] = [
         (
             legacy_first_days[code],
@@ -547,7 +547,13 @@ def _qualification_display(rows: list[CheckinRewardQualification]) -> str:
         )
         for code, quantity in legacy_quantities.items()
     ]
-    parts.extend(modern)
+    parts.extend(
+        (
+            modern_first_days[text],
+            text if quantity == 1 else f"{text}×{quantity}",
+        )
+        for text, quantity in modern_quantities.items()
+    )
     parts.sort(key=lambda item: item[0])
     return "、".join(text for _, text in parts) or "暂无"
 
