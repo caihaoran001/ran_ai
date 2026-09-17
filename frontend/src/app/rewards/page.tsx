@@ -167,53 +167,56 @@ function CheckinEvidenceDay({ day }: { day: RewardCheckinDay }) {
 
 function Day28GrantLedger({ rows }: { rows: Day28BenefitGrantCase[] }) {
   return (
-    <section className="panel overflow-hidden">
-      <div className="panel-header-clean">
-        <h2 className="flex items-center gap-2 text-lg font-extrabold text-slate-950">
+    <details className="panel group/grants overflow-hidden">
+      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden sm:px-5">
+        <span className="flex items-center gap-2 text-sm font-bold text-slate-900">
           <Ticket className="h-4 w-4 text-cyan-700" />
           发放记录
-        </h2>
-        <p className="mt-1 text-sm text-slate-600">
+        </span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform duration-200 group-open/grants:rotate-180 motion-reduce:transition-none" />
+      </summary>
+      <div className="border-t border-slate-200">
+        <p className="px-4 py-4 text-sm text-slate-600 sm:px-5">
           客户走完 28 天后助教发出的券。这里记的是「领取入口已经发到群里」——商城还没打通，
           系统看不到客户领没领、用没用，所以不会出现「已到账」。同一位客户的同一张券只会发一次。
         </p>
-      </div>
-      {rows.length ? (
-        <ol className="border-t border-slate-200">
-          {rows.map((row) => (
-            <li key={row.service_case_id} className="border-t border-slate-200 px-4 py-4 first:border-t-0 sm:px-5">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <span className="font-bold text-slate-950">{row.user_name}</span>
-                <span className="text-break text-xs text-slate-600">{row.group_name || "—"}</span>
-                <Link
-                  href={`/cases/${row.service_case_id}`}
-                  className="text-xs font-bold text-cyan-800 hover:underline"
-                >
-                  {row.case_no} · 查看服务单
-                </Link>
-              </div>
-              <ul className="mt-2 grid gap-2 sm:grid-cols-2">
-                {row.grants.map((grant) => (
-                  <li
-                    key={grant.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"
+        {rows.length ? (
+          <ol className="border-t border-slate-200">
+            {rows.map((row) => (
+              <li key={row.service_case_id} className="border-t border-slate-200 px-4 py-4 first:border-t-0 sm:px-5">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="font-bold text-slate-950">{row.user_name}</span>
+                  <span className="text-break text-xs text-slate-600">{row.group_name || "—"}</span>
+                  <Link
+                    href={`/cases/${row.service_case_id}`}
+                    className="text-xs font-bold text-cyan-800 hover:underline"
                   >
-                    <span className="font-semibold text-slate-900">{grant.benefit_name}</span>
-                    <span className="shrink-0 text-xs text-slate-500">
-                      已发出领取入口 · {formatDate(grant.granted_at)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <div className="empty-state border-t border-slate-200 py-10">
-          还没有发出过结营权益。
-        </div>
-      )}
-    </section>
+                    {row.case_no} · 查看服务单
+                  </Link>
+                </div>
+                <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {row.grants.map((grant) => (
+                    <li
+                      key={grant.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"
+                    >
+                      <span className="font-semibold text-slate-900">{grant.benefit_name}</span>
+                      <span className="shrink-0 text-xs text-slate-500">
+                        已发出领取入口 · {formatDate(grant.granted_at)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div className="empty-state border-t border-slate-200 py-10">
+            还没有发出过结营权益。
+          </div>
+        )}
+      </div>
+    </details>
   );
 }
 
