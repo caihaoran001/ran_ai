@@ -11,6 +11,7 @@ import {
   type RewardShipment,
 } from "@/lib/api";
 import { ShipmentAction } from "./shipment-action";
+import { CheckinRewardSwitch } from "./checkin-reward-switch";
 import { CheckinRewardTierConfig } from "./checkin-reward-tier-config";
 import { Day28BenefitConfig } from "./day28-benefit-config";
 
@@ -384,14 +385,17 @@ export default async function RewardsPage() {
         </div>
       </header>
 
-      <div>
-        <h2 className="text-xl font-extrabold text-slate-950">打卡奖励（实物）</h2>
-        <p className="mt-1 text-sm leading-6 text-slate-600">
-          累计完整打卡达标后寄出的实物奖励；达标资格由系统累计，收件信息由群内 Agent 记录，运营寄出后在这里确认。
-        </p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-xl font-extrabold text-slate-950">打卡奖励（实物）</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-600">
+            累计完整打卡达标后寄出的实物奖励；达标资格由系统累计，收件信息由群内 Agent 记录，运营寄出后在这里确认。
+          </p>
+        </div>
+        <CheckinRewardSwitch />
       </div>
 
-      <RulesDisclosure title="奖励规则配置（总开关与档位）">
+      <RulesDisclosure title="档位配置">
         <CheckinRewardTierConfig />
       </RulesDisclosure>
 
