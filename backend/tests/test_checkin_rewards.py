@@ -50,7 +50,7 @@ async def _reward_program_enabled(db_session):
             "enabled": True,
             "program_start_date": PROGRAM_START,
             "tiers": [
-                {"days": tier.days, "reward_text": tier.reward_text, "enabled": True}
+                {"days": tier.days, "reward_text": tier.reward_text}
                 for tier in DEFAULT_REWARD_TIERS
             ],
         },
@@ -192,6 +192,76 @@ async def test_reconcile_creates_each_tier_once_and_skips_stale_progress(db_sess
     assert "目前尚未寄出：1 管咖啡、1 盒钥匙" in text
     assert "1 现在寄出" in text
     assert "2 继续累积" in text
+
+
+@pytest.mark.asyncio
+async def test_progress_notice_is_dropped_when_tier_removed_and_returns_when_added_back(
+    db_session,
+) -> None:
+    """档位删掉后排队中的差一天提醒不再发；档位加回来要能重新提醒。"""
+    from app.services import checkin_rewards as rewards_module
+    from app.services.channels.base import ChannelSendResult
+
+    def _config(days: tuple[int, ...]) -> dict:
+        names = {3: "1 管咖啡", 7: "1 盒钥匙"}
+        return {
+            "enabled": True,
+            "program_start_date": PROGRAM_START,
+            "tiers": [{"days": day, "reward_text": names[day]} for day in days],
+        }
+
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    for offset in range(2):
+        db_session.add(
+            Checkin(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                content="完整打卡",
+                parsed_json=_parsed(),
+            )
+        )
+    await db_session.flush()
+
+    first = await reconcile_case_rewards(
+        db_session, service_case_id=service_case.id, through_date=date(2026, 8, 2)
+    )
+    assert first.new_progress_threshold == 2
+
+    sent: list[str] = []
+
+    async def fake_send(group_id: str, content: str) -> ChannelSendResult:
+        sent.append(content)
+        return ChannelSendResult(success=True, message_id="fake-progress")
+
+    # 运营把 3 天那档删掉：排队中的提醒必须作废，不能再把取消掉的奖励发出去。
+    await set_reward_tier_config(db_session, _config((7,)))
+    delivered = await rewards_module._deliver_pending_progress_notices(
+        service_case_id=service_case.id, send_text=fake_send
+    )
+    assert delivered == 0
+    assert sent == []
+    notice = await db_session.scalar(
+        select(CheckinRewardProgressNotice).where(
+            CheckinRewardProgressNotice.service_case_id == service_case.id
+        )
+    )
+    assert notice is not None
+    assert notice.notification_status == "skipped"
+
+    # 档位加回来：作废过的那条不能挡住新提醒，奖品名跟当前配置走。
+    await set_reward_tier_config(db_session, _config((3, 7)))
+    again = await reconcile_case_rewards(
+        db_session, service_case_id=service_case.id, through_date=date(2026, 8, 2)
+    )
+    assert again.new_progress_threshold == 2
+    delivered = await rewards_module._deliver_pending_progress_notices(
+        service_case_id=service_case.id, send_text=fake_send
+    )
+    assert delivered == 1
+    assert sent == ["你已经累计完成 2 天完整打卡，再完成 1 天，就能获得 1 管咖啡～"]
 
 
 @pytest.mark.asyncio
@@ -1142,7 +1212,7 @@ async def test_reopen_moves_program_start_and_keeps_it_until_next_off(
         db_session,
         {
             "enabled": True,
-            "tiers": [{"days": 5, "reward_text": "改后的奖励", "enabled": True}],
+            "tiers": [{"days": 5, "reward_text": "改后的奖励"}],
         },
     )
     assert edited.program_start_date == date(2026, 8, 1)
@@ -1184,7 +1254,7 @@ async def test_switch_off_to_on_records_one_round_and_stays_single_while_enabled
         db_session,
         {
             "enabled": True,
-            "tiers": [{"days": 5, "reward_text": "改后的奖励", "enabled": True}],
+            "tiers": [{"days": 5, "reward_text": "改后的奖励"}],
         },
     )
     rounds = await _rounds(db_session)

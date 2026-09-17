@@ -34,7 +34,6 @@ from app.services.channels.base import ChannelSendResult
 from app.services.checkin_completion import is_complete_checkin
 from app.services.checkin_completion import complete_checkin_item_prefix
 from app.services.checkin_reward_settings import (
-    DEFAULT_REWARD_TIERS,
     CheckinRewardTier,
     CheckinRewardTierConfig,
     get_reward_tier_config,
@@ -141,24 +140,12 @@ async def case_participates_in_current_round(
     return _ensure_utc(service_case.created_at) >= cutoff
 
 
-async def _configured_reward_tiers(
-    session: AsyncSession,
-) -> tuple[CheckinRewardTier, ...]:
-    """展示用：读全部档位（含关闭的）；非法时回落到默认四档。"""
-    config = await load_reward_program(session)
-    return config.tiers if config is not None else DEFAULT_REWARD_TIERS
-
-
 async def _active_reward_tiers(
     session: AsyncSession,
 ) -> tuple[CheckinRewardTier, ...]:
-    """展示用：只返回开关打开的档位；非法配置按"全部关闭"处理。"""
+    """当前生效的档位；总开关关闭或配置非法时一档都没有。"""
     config = await load_reward_program(session)
     return config.active_tiers() if config is not None else ()
-
-
-async def _reward_tier_map(session: AsyncSession) -> dict[int, CheckinRewardTier]:
-    return {tier.days: tier for tier in await _configured_reward_tiers(session)}
 
 
 def is_effective_reward_checkin(checkin: Checkin) -> bool:
@@ -422,14 +409,17 @@ async def reconcile_case_rewards(
         program.choice_updated_at = datetime.now(timezone.utc)
 
     new_progress_threshold = None
-    # 进度提醒只面向仍开着的档位：threshold = tier.days - 1，即"再完成 1 天"。
-    # 已产生的进度提醒不受开关影响（stale 逻辑在上文只按天数收敛）。
+    # 进度提醒只面向仍配着的档位：threshold = tier.days - 1，即"再完成 1 天"。
+    # 已经发出去的提醒不受影响；排队还没发的由发送环节按当前生效档位作废
+    # （见 _deliver_pending_progress_notices）。
     active_days = {tier.days for tier in active_tiers}
     candidate_next = complete_checkin_days + 1
     next_tier_days = (
         candidate_next if candidate_next in active_days and candidate_next not in existing else None
     )
     if next_tier_days is not None and next_tier_days not in existing:
+        # 同一服务单+同一门槛只有一条提醒（数据库唯一约束）。被作废（skipped）
+        # 的那条在档位加回来、用户又正好差一天时重新生效，而不是另插一条。
         progress = await session.scalar(
             select(CheckinRewardProgressNotice).where(
                 CheckinRewardProgressNotice.service_case_id == service_case_id,
@@ -444,6 +434,11 @@ async def reconcile_case_rewards(
                     next_tier_days=next_tier_days,
                 )
             )
+            new_progress_threshold = complete_checkin_days
+        elif progress.notification_status == "skipped":
+            progress.notification_status = "pending"
+            progress.next_tier_days = next_tier_days
+            progress.notification_message_id = None
             new_progress_threshold = complete_checkin_days
 
     await session.flush()
@@ -550,16 +545,10 @@ async def render_qualification_notice(
     return "\n".join(lines)
 
 
-async def render_progress_notice(
-    session: AsyncSession, row: CheckinRewardProgressNotice
+def render_progress_notice(
+    row: CheckinRewardProgressNotice, tier: CheckinRewardTier
 ) -> str:
-    tier_map = await _reward_tier_map(session)
-    tier = tier_map.get(row.next_tier_days)
-    if tier is None:
-        return (
-            f"你已经累计完成 {row.threshold_days} 天完整打卡，"
-            "再完成 1 天，就能获得下一档奖励～"
-        )
+    """差一天提醒。奖品名由调用方按当前生效档位传入，这里不自己回落取名。"""
     return (
         f"你已经累计完成 {row.threshold_days} 天完整打卡，"
         f"再完成 1 天，就能获得 {tier.display}～"
@@ -767,7 +756,18 @@ async def _deliver_pending_progress_notices(
             )
             if row is None:
                 return sent
-            content = await render_progress_notice(session, row)
+            # 档位被删掉（或本轮已关闭）后，排队中的提醒不再发：提醒里的奖品
+            # 已经不存在，发出去等于把取消掉的奖励又承诺一遍。作废后不再重试，
+            # 档位加回来、用户仍然差一天时，对账会把这条改回待发。
+            active_tier_map = {
+                tier.days: tier for tier in await _active_reward_tiers(session)
+            }
+            tier = active_tier_map.get(row.next_tier_days)
+            if tier is None:
+                row.notification_status = "skipped"
+                await session.commit()
+                continue
+            content = render_progress_notice(row, tier)
             message = await _begin_notice_send(
                 session,
                 service_case=service_case,
