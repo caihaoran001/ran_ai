@@ -306,6 +306,11 @@ export default async function RewardsPage() {
                   <div>
                     <span className="block text-xs font-semibold text-slate-500">完整打卡</span>
                     <span className="font-extrabold text-slate-950">{row.complete_checkin_days} 天</span>
+                    {row.participating ? null : (
+                      <span className="block text-xs font-medium text-slate-500">
+                        本单不参与本轮，只算到已发奖励需要的那几天
+                      </span>
+                    )}
                   </div>
                   <div>
                     <span className="block text-xs font-semibold text-slate-500">尚未寄出</span>
@@ -355,7 +360,9 @@ export default async function RewardsPage() {
                     <span className="min-w-0">
                       <span className="block text-sm font-bold text-slate-950">完整打卡证据</span>
                       <span className="mt-0.5 block text-xs leading-5 text-slate-600">
-                        共 {row.checkin_days.length} 天；展开后可核对日期、五项答案和用户原话
+                        {row.participating
+                          ? `共 ${row.checkin_days.length} 天；展开后可核对日期、五项答案和用户原话`
+                          : `共 ${row.checkin_days.length} 天（已发奖励对应部分）；本单不参与本轮，之后的完整打卡不再计入`}
                       </span>
                     </span>
                     <ChevronDown className="h-5 w-5 shrink-0 text-slate-500 transition-transform duration-200 group-open/evidence:rotate-180 motion-reduce:transition-none" />

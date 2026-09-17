@@ -820,6 +820,61 @@ async def test_reward_admin_lists_each_counted_day_with_five_items_and_original_
 
 
 @pytest.mark.asyncio
+async def test_reward_admin_freezes_evidence_when_case_not_in_current_round(
+    db_session, admin_client
+) -> None:
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    db_session.add(
+        CheckinRewardQualification(
+            service_case_id=service_case.id,
+            tier_days=3,
+            reward_code="day_3",
+            reward_name="1 管咖啡",
+            quantity=1,
+            qualified_on=date(2026, 8, 3),
+        )
+    )
+    for offset in range(5):
+        db_session.add(
+            Checkin(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                content="结构化打卡",
+                parsed_json=_parsed(),
+            )
+        )
+    await db_session.flush()
+
+    await set_reward_tier_config(db_session, {"enabled": False})
+    response = await admin_client.get("/checkin-rewards")
+    assert response.status_code == 200, response.text
+    row = next(
+        item for item in response.json() if item["service_case_id"] == service_case.id
+    )
+    assert row["participating"] is False
+    assert row["complete_checkin_days"] == 3
+    assert [item["checkin_date"] for item in row["checkin_days"]] == [
+        "2026-08-01",
+        "2026-08-02",
+        "2026-08-03",
+    ]
+
+    await set_reward_tier_config(
+        db_session, {"enabled": True, "program_start_date": "2026-08-01"}
+    )
+    response = await admin_client.get("/checkin-rewards")
+    assert response.status_code == 200, response.text
+    row = next(
+        item for item in response.json() if item["service_case_id"] == service_case.id
+    )
+    assert row["participating"] is True
+    assert row["complete_checkin_days"] == 5
+
+
+@pytest.mark.asyncio
 async def test_admin_marks_complete_shipment_as_shipped_and_notifies(
     db_session, admin_client
 ) -> None:

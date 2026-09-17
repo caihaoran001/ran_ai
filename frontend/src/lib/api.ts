@@ -149,6 +149,7 @@ export type RewardAdminCase = {
   group_name?: string | null;
   service_status: string;
   complete_checkin_days: number;
+  participating: boolean;
   current_choice?: string | null;
   unshipped_rewards: string;
   operational_status: string;

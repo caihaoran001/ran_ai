@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.db.session import get_session
 from app.models.checkin_reward import (
     CheckinRewardProgram,
@@ -33,11 +35,15 @@ from app.services.checkin_rewards import (
     OPEN_SHIPMENT_STATUSES,
     _qualification_display,
     deliver_pending_shipment_notices,
+    load_reward_program,
     reward_checkin_evidence_message_ids,
     reward_checkin_items,
     valid_reward_checkins,
 )
-from app.services.service_case_queries import active_service_case_condition
+from app.services.service_case_queries import (
+    active_service_case_condition,
+    checkin_first_day,
+)
 
 
 router = APIRouter()
@@ -77,6 +83,8 @@ async def list_checkin_rewards(
     case_ids = [row.id for row in service_cases]
     if not case_ids:
         return []
+    config = await load_reward_program(session)
+    tz = ZoneInfo(get_settings().reminder_timezone)
     programs = {
         row.service_case_id: row
         for row in await session.scalars(
@@ -109,6 +117,7 @@ async def list_checkin_rewards(
     valid_checkins_by_case: dict[int, list[Checkin]] = {}
     evidence_ids_by_checkin: dict[int, list[int]] = {}
     all_evidence_ids: set[int] = set()
+    participating_by_case: dict[int, bool] = {}
     for service_case in service_cases:
         if service_case.id not in reward_case_ids:
             continue
@@ -116,6 +125,21 @@ async def list_checkin_rewards(
             session,
             service_case=service_case,
         )
+        participating = config is not None and config.participates(
+            checkin_first_day(service_case, tz)
+        )
+        participating_by_case[service_case.id] = participating
+        if not participating:
+            # 不参与本轮（关掉总开关时即全部不参与）：证据只保留已发奖励
+            # 需要的那几天，之后的完整打卡不再计入，页面数字随之冻结。
+            granted_days = max(
+                (
+                    row.tier_days
+                    for row in qualifications_by_case.get(service_case.id, [])
+                ),
+                default=0,
+            )
+            valid_checkins = valid_checkins[:granted_days]
         valid_checkins_by_case[service_case.id] = valid_checkins
         for checkin in valid_checkins:
             message_ids = reward_checkin_evidence_message_ids(checkin)
@@ -176,6 +200,7 @@ async def list_checkin_rewards(
                 group_name=service_case.group_name,
                 service_status=service_case.status.value,
                 complete_checkin_days=len(valid_checkins),
+                participating=participating_by_case.get(service_case.id, False),
                 current_choice=program.current_choice if program else None,
                 unshipped_rewards=_qualification_display(unshipped),
                 operational_status=_operational_status(
