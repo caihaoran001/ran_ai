@@ -286,24 +286,24 @@ export default async function RewardsPage() {
         ))}
       </section>
 
-      <div className="grid gap-4">
-        {rows.map((row) => {
-          const status = statusCopy[row.operational_status] ?? statusCopy.qualified;
-          return (
-            <details key={row.service_case_id} className="panel group/case overflow-hidden">
-              <summary className="panel-header-clean flex cursor-pointer list-none flex-col gap-4 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden lg:flex-row lg:items-start lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-lg font-extrabold text-slate-950">{row.user_name}</h2>
-                    <span className={`status-pill ${status.className}`}>{status.label}</span>
+      <RulesDisclosure title="已达标客户明细">
+        <div className="grid gap-4">
+          {rows.map((row) => {
+            const status = statusCopy[row.operational_status] ?? statusCopy.qualified;
+            return (
+              <section key={row.service_case_id} className="panel overflow-hidden">
+                <div className="panel-header-clean flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-lg font-extrabold text-slate-950">{row.user_name}</h2>
+                      <span className={`status-pill ${status.className}`}>{status.label}</span>
+                    </div>
+                    <p className="text-break mt-1 text-sm text-slate-600">{row.group_name || row.group_id}</p>
+                    <Link href={`/cases/${row.service_case_id}`} className="mt-2 inline-block text-xs font-bold text-cyan-800 hover:underline">
+                      {row.case_no} · 查看服务单
+                    </Link>
                   </div>
-                  <p className="text-break mt-1 text-sm text-slate-600">{row.group_name || row.group_id}</p>
-                  <Link href={`/cases/${row.service_case_id}`} className="mt-2 inline-block text-xs font-bold text-cyan-800 hover:underline">
-                    {row.case_no} · 查看服务单
-                  </Link>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="grid flex-1 grid-cols-2 gap-x-8 gap-y-2 text-sm lg:text-right">
+                  <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm lg:text-right">
                     <div>
                       <span className="block text-xs font-semibold text-slate-500">完整打卡</span>
                       <span className="font-extrabold text-slate-950">{row.complete_checkin_days} 天</span>
@@ -318,69 +318,68 @@ export default async function RewardsPage() {
                       <span className="font-extrabold text-slate-950">{row.unshipped_rewards}</span>
                     </div>
                   </div>
-                  <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform duration-200 group-open/case:rotate-180 motion-reduce:transition-none" />
                 </div>
-              </summary>
 
-              <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(15rem,0.7fr)_minmax(24rem,1.3fr)]">
-                <div>
-                  <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-                    <Gift className="h-4 w-4 text-cyan-700" />
-                    已获得奖励
-                  </h3>
-                  <ol className="mt-3 grid gap-2">
-                    {row.qualifications.map((qualification) => (
-                      <li key={qualification.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
-                        <span className="font-semibold text-slate-900">{qualification.reward}</span>
-                        <span className="shrink-0 text-xs text-slate-500">满 {qualification.tier_days} 天 · {qualification.qualified_on}</span>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-                <div>
-                  <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-                    <Truck className="h-4 w-4 text-cyan-700" />
-                    寄送批次
-                  </h3>
-                  <div className="mt-3 grid gap-3">
-                    {row.shipments.length ? row.shipments.map((shipment) => (
-                      <ShipmentCard key={shipment.id} shipment={shipment} />
-                    )) : (
-                      <div className="empty-state rounded-xl border border-dashed border-slate-300 py-8">
-                        用户尚未选择立即寄出，当前奖励继续保留在该服务单下。
-                      </div>
-                    )}
+                <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(15rem,0.7fr)_minmax(24rem,1.3fr)]">
+                  <div>
+                    <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                      <Gift className="h-4 w-4 text-cyan-700" />
+                      已获得奖励
+                    </h3>
+                    <ol className="mt-3 grid gap-2">
+                      {row.qualifications.map((qualification) => (
+                        <li key={qualification.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+                          <span className="font-semibold text-slate-900">{qualification.reward}</span>
+                          <span className="shrink-0 text-xs text-slate-500">满 {qualification.tier_days} 天 · {qualification.qualified_on}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                  <div>
+                    <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                      <Truck className="h-4 w-4 text-cyan-700" />
+                      寄送批次
+                    </h3>
+                    <div className="mt-3 grid gap-3">
+                      {row.shipments.length ? row.shipments.map((shipment) => (
+                        <ShipmentCard key={shipment.id} shipment={shipment} />
+                      )) : (
+                        <div className="empty-state rounded-xl border border-dashed border-slate-300 py-8">
+                          用户尚未选择立即寄出，当前奖励继续保留在该服务单下。
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="border-t border-slate-200 px-4 py-4 sm:px-5 sm:py-5">
-                <details className="group/evidence">
-                  <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden">
-                    <span className="min-w-0">
-                      <span className="block text-sm font-bold text-slate-950">完整打卡证据</span>
-                      <span className="mt-0.5 block text-xs leading-5 text-slate-600">
-                        {row.participating
-                          ? `共 ${row.checkin_days.length} 天；展开后可核对日期、五项答案和用户原话`
-                          : `共 ${row.checkin_days.length} 天（已发奖励对应部分）；本单不参与本轮，之后的完整打卡不再计入`}
+                <div className="border-t border-slate-200 px-4 py-4 sm:px-5 sm:py-5">
+                  <details className="group/evidence">
+                    <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4 py-3.5 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden">
+                      <span className="min-w-0">
+                        <span className="block text-sm font-bold text-slate-950">完整打卡证据</span>
+                        <span className="mt-0.5 block text-xs leading-5 text-slate-600">
+                          {row.participating
+                            ? `共 ${row.checkin_days.length} 天；展开后可核对日期、五项答案和用户原话`
+                            : `共 ${row.checkin_days.length} 天（已发奖励对应部分）；本单不参与本轮，之后的完整打卡不再计入`}
+                        </span>
                       </span>
-                    </span>
-                    <ChevronDown className="h-5 w-5 shrink-0 text-slate-500 transition-transform duration-200 group-open/evidence:rotate-180 motion-reduce:transition-none" />
-                  </summary>
-                  <ol className="border-t border-slate-200">
-                    {row.checkin_days.map((day) => <CheckinEvidenceDay key={day.checkin_id} day={day} />)}
-                  </ol>
-                </details>
-              </div>
-            </details>
-          );
-        })}
-        {rows.length === 0 ? (
-          <section className="panel empty-state py-14">
-            目前还没有达标奖励记录。
-          </section>
-        ) : null}
-      </div>
+                      <ChevronDown className="h-5 w-5 shrink-0 text-slate-500 transition-transform duration-200 group-open/evidence:rotate-180 motion-reduce:transition-none" />
+                    </summary>
+                    <ol className="border-t border-slate-200">
+                      {row.checkin_days.map((day) => <CheckinEvidenceDay key={day.checkin_id} day={day} />)}
+                    </ol>
+                  </details>
+                </div>
+              </section>
+            );
+          })}
+          {rows.length === 0 ? (
+            <section className="panel empty-state py-14">
+              目前还没有达标奖励记录。
+            </section>
+          ) : null}
+        </div>
+      </RulesDisclosure>
 
       <div className="border-t border-slate-200 pt-7">
         <h2 className="text-xl font-extrabold text-slate-950">结营券</h2>
