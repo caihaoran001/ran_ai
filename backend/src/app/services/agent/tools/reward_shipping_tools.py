@@ -596,11 +596,10 @@ def build_reward_shipping_tools(
             coroutine=get_checkin_reward_status,
             name="get_checkin_reward_status",
             description=(
-                "Read THIS user's authoritative cumulative complete-checkin days, all 3/7/14/28-day reward "
-                "rules, earned and unshipped rewards, current ship-now/accumulate choice, and actual shipment "
-                "history/status. Use this for every customer question about check-in totals or rewards; never "
-                "derive an exact total from the highest earned tier. If program_paused=true, disclose no old "
-                "reward rules or history and reply only with reply_instruction. This tool is read-only."
+                "Read THIS user's current configured reward tiers, cumulative complete-check-in days, earned "
+                "and unshipped rewards, and shipping status/history. Use the returned values as the source of "
+                "truth; never infer check-in totals from earned tiers. If program_paused=true, reply only with "
+                "reply_instruction. Read-only."
             ),
         ),
     ]

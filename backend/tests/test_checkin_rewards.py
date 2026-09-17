@@ -812,6 +812,39 @@ async def test_reward_status_tool_returns_total_tiers_choice_and_shipment_histor
 
 
 @pytest.mark.asyncio
+async def test_reward_status_tool_uses_current_non_default_tiers(db_session) -> None:
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "tiers": [
+                {"days": 5, "reward_text": "1 个杯子"},
+                {"days": 10, "reward_text": "2 管咖啡"},
+            ],
+        },
+    )
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reward_shipping_tools(
+            context=AgentRunContext(service_case_id=service_case.id)
+        )
+    }
+
+    tool = tools["get_checkin_reward_status"]
+    result = await tool.ainvoke({})
+
+    assert [
+        (tier["required_complete_days"], tier["reward"])
+        for tier in result["reward_tiers"]
+    ] == [(5, "1 个杯子"), (10, "2 管咖啡")]
+    assert "3/7/14/28" not in tool.description
+    assert "current configured reward tiers" in tool.description
+
+
+@pytest.mark.asyncio
 async def test_reward_admin_lists_each_counted_day_with_five_items_and_original_messages(
     db_session, admin_client
 ) -> None:
