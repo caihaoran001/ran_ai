@@ -36,17 +36,16 @@ from app.schemas.checkin_reward import (
 from app.services.checkin_presentation import load_personalized_checkin_labels
 from app.services.checkin_rewards import (
     OPEN_SHIPMENT_STATUSES,
+    _ensure_utc,
     _qualification_display,
+    case_participates_in_current_round,
     deliver_pending_shipment_notices,
     load_reward_program,
     reward_checkin_evidence_message_ids,
     reward_checkin_items,
     valid_reward_checkins,
 )
-from app.services.service_case_queries import (
-    active_service_case_condition,
-    checkin_first_day,
-)
+from app.services.service_case_queries import active_service_case_condition
 
 
 router = APIRouter()
@@ -89,14 +88,12 @@ async def list_checkin_rewards(
     rounds = list(
         await session.scalars(
             select(CheckinRewardRound).order_by(
-                CheckinRewardRound.started_on, CheckinRewardRound.id
+                CheckinRewardRound.created_at, CheckinRewardRound.id
             )
         )
     )
     open_round = next((row for row in rounds if row.closed_at is None), None)
-    rounds_newest_first = sorted(
-        rounds, key=lambda row: (row.started_on, row.id), reverse=True
-    )
+    rounds_newest_first = list(reversed(rounds))
     programs = {
         row.service_case_id: row
         for row in await session.scalars(
@@ -137,8 +134,11 @@ async def list_checkin_rewards(
             session,
             service_case=service_case,
         )
-        participating = config is not None and config.participates(
-            checkin_first_day(service_case, tz)
+        participating = await case_participates_in_current_round(
+            session,
+            service_case=service_case,
+            config=config,
+            open_round=open_round,
         )
         participating_by_case[service_case.id] = participating
         if not participating:
@@ -192,13 +192,19 @@ async def list_checkin_rewards(
             item_ids=case_item_ids,
         )
 
-    def _attributed_round(first_day: date | None) -> CheckinRewardRound | None:
-        if first_day is None:
+    def _attributed_round(created_at: datetime | None) -> CheckinRewardRound | None:
+        if created_at is None:
             return None
-        for row in rounds_newest_first:
-            if row.started_on <= first_day:
-                return row
-        return None
+        created = _ensure_utc(created_at)
+        matched: CheckinRewardRound | None = None
+        for row in rounds:
+            if row.created_at is None:
+                continue
+            if created >= _ensure_utc(row.created_at):
+                matched = row
+            else:
+                break
+        return matched
 
     def _legacy_created_on(
         qualifications: list[CheckinRewardQualification],
@@ -223,7 +229,7 @@ async def list_checkin_rewards(
         program = programs.get(service_case.id)
         if not qualifications and not shipments:
             continue
-        attributed = _attributed_round(checkin_first_day(service_case, tz))
+        attributed = _attributed_round(service_case.created_at)
         if attributed is None:
             legacy_created_on = _legacy_created_on(qualifications, shipments)
             batch_key = (

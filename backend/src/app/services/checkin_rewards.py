@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time as time_of_day, timezone
 import logging
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -18,6 +18,7 @@ from app.models.checkin_reward import (
     CheckinRewardProgram,
     CheckinRewardProgressNotice,
     CheckinRewardQualification,
+    CheckinRewardRound,
     CheckinRewardShipment,
 )
 from app.models.message import (
@@ -71,6 +72,73 @@ async def load_reward_program(
     except ValueError:
         logger.warning("打卡奖励档位配置非法，本轮不结算。", exc_info=True)
         return None
+
+
+class _UnsetType:
+    __slots__ = ()
+
+
+_UNSET = _UnsetType()
+
+
+def _ensure_utc(moment: datetime) -> datetime:
+    """把可能为 naive 的时刻按 UTC 处理；带时区的统一换算到 UTC 再比较。"""
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def _participation_cutoff(
+    open_round: CheckinRewardRound | None,
+    config: CheckinRewardTierConfig,
+) -> datetime | None:
+    """本轮参与的起始时刻（UTC）。
+
+    优先用当前未关闭轮次的 `created_at`——那正是总开关"关→开"的时刻；
+    没有轮次记账（手工改库的旧配置）时回落到活动起始日当天 00:00（北京）。
+    两者都没有时不设限，返回 None。
+    """
+    if open_round is not None:
+        return _ensure_utc(open_round.created_at)
+    if config.program_start_date is not None:
+        return datetime.combine(
+            config.program_start_date,
+            time_of_day.min,
+            tzinfo=ZoneInfo("Asia/Shanghai"),
+        ).astimezone(timezone.utc)
+    return None
+
+
+async def _load_open_reward_round(session: AsyncSession) -> CheckinRewardRound | None:
+    """当前未关闭的奖励轮次；正常情况下最多一条。"""
+    return await session.scalar(
+        select(CheckinRewardRound)
+        .where(CheckinRewardRound.closed_at.is_(None))
+        .order_by(CheckinRewardRound.id)
+        .limit(1)
+    )
+
+
+async def case_participates_in_current_round(
+    session: AsyncSession,
+    *,
+    service_case: ServiceCase,
+    config: CheckinRewardTierConfig | None,
+    open_round: CheckinRewardRound | None | _UnsetType = _UNSET,
+) -> bool:
+    """服务单是否参与本轮打卡奖励：只看建单时刻是否在开关开启之后。
+
+    奖励是产品成本，只有本轮开启那一刻（含）之后新建的服务单才参与；开启前一秒
+    建的单都不参与。`open_round` 可由调用方一次性预加载后传入，避免逐单查询。
+    """
+    if config is None or not config.enabled:
+        return False
+    if isinstance(open_round, _UnsetType):
+        open_round = await _load_open_reward_round(session)
+    cutoff = _participation_cutoff(open_round, config)
+    if cutoff is None:
+        return True
+    return _ensure_utc(service_case.created_at) >= cutoff
 
 
 async def _configured_reward_tiers(
@@ -292,9 +360,10 @@ async def reconcile_case_rewards(
         return RewardReconciliation(0, (), (), None)
 
     config = await load_reward_program(session)
-    tz = ZoneInfo(timezone_name or get_settings().reminder_timezone)
-    if config is None or not config.participates(checkin_first_day(service_case, tz)):
-        # 总开关关闭、配置非法，或服务单在活动起始日之前开始：本轮不结算。
+    if not await case_participates_in_current_round(
+        session, service_case=service_case, config=config
+    ):
+        # 总开关关闭、配置非法，或服务单在本轮开启时刻之前创建：本轮不结算。
         return RewardReconciliation(0, (), (), None)
 
     valid_dates = await valid_reward_checkin_dates(

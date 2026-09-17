@@ -14,9 +14,7 @@ import json
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from zoneinfo import ZoneInfo
 
-from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.service_case import ServiceCase, ServiceCaseStatus
 from app.services.checkin_reward_settings import (
@@ -24,8 +22,10 @@ from app.services.checkin_reward_settings import (
     CheckinRewardTierConfig,
     get_reward_tier_config,
 )
-from app.services.checkin_rewards import valid_reward_checkin_dates
-from app.services.service_case_queries import checkin_first_day
+from app.services.checkin_rewards import (
+    case_participates_in_current_round,
+    valid_reward_checkin_dates,
+)
 
 
 async def main(*, apply: bool) -> None:
@@ -52,12 +52,9 @@ async def main(*, apply: bool) -> None:
             if config is not None
             else [tier.days for tier in DEFAULT_REWARD_TIERS]
         )
-        tz = ZoneInfo(get_settings().reminder_timezone)
         for service_case in cases:
-            participating = (
-                config.participates(checkin_first_day(service_case, tz))
-                if config is not None
-                else False
+            participating = await case_participates_in_current_round(
+                session, service_case=service_case, config=config
             )
             valid_dates = (
                 await valid_reward_checkin_dates(

@@ -31,6 +31,7 @@ from app.services.checkin_reward_settings import (
     set_reward_tier_config,
 )
 from app.services.checkin_rewards import (
+    case_participates_in_current_round,
     is_effective_reward_checkin,
     reconcile_case_rewards,
     render_qualification_notice,
@@ -953,11 +954,13 @@ async def test_admin_can_mark_reward_shipped_while_program_is_off(
 
 
 @pytest.mark.asyncio
-async def test_case_started_before_program_start_does_not_accrue(db_session) -> None:
-    await set_reward_tier_config(
-        db_session, {"enabled": True, "program_start_date": "2026-08-10"}
-    )
+async def test_case_created_before_round_moment_does_not_accrue(db_session) -> None:
+    moment = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    await db_session.execute(delete(CheckinRewardRound))
+    await db_session.flush()
+    db_session.add(CheckinRewardRound(started_on=date(2026, 8, 1), created_at=moment))
     service_case = _case()
+    service_case.created_at = moment - timedelta(seconds=1)
     db_session.add(service_case)
     await db_session.flush()
     for offset in range(3):
@@ -976,6 +979,14 @@ async def test_case_started_before_program_start_does_not_accrue(db_session) -> 
 
     assert result.new_qualification_days == ()
     assert result.new_progress_threshold is None
+    assert (
+        await db_session.scalar(
+            select(CheckinRewardProgressNotice).where(
+                CheckinRewardProgressNotice.service_case_id == service_case.id
+            )
+        )
+        is None
+    )
 
     tools = {
         tool.name: tool
@@ -987,6 +998,134 @@ async def test_case_started_before_program_start_does_not_accrue(db_session) -> 
     assert payload["participating"] is False
     assert payload["complete_checkin_days"] == 0
     assert "不参与" in payload["reply_instruction"]
+
+
+@pytest.mark.asyncio
+async def test_participation_boundary_is_the_round_enable_moment(db_session) -> None:
+    moment = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    await db_session.execute(delete(CheckinRewardRound))
+    await db_session.flush()
+    db_session.add(CheckinRewardRound(started_on=date(2026, 8, 1), created_at=moment))
+
+    before = _case()
+    before.created_at = moment - timedelta(seconds=1)
+    after = _case()
+    after.created_at = moment + timedelta(seconds=1)
+    db_session.add_all([before, after])
+    await db_session.flush()
+    for service_case in (before, after):
+        for offset in range(3):
+            db_session.add(
+                Checkin(
+                    service_case_id=service_case.id,
+                    group_id=service_case.group_id,
+                    checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                    content="完整打卡",
+                    parsed_json=_parsed(),
+                )
+            )
+    await db_session.flush()
+
+    before_result = await reconcile_case_rewards(
+        db_session, service_case_id=before.id
+    )
+    after_result = await reconcile_case_rewards(db_session, service_case_id=after.id)
+
+    assert before_result.complete_checkin_days == 0
+    assert before_result.new_qualification_days == ()
+    assert before_result.new_progress_threshold is None
+    assert after_result.new_qualification_days == (3,)
+
+
+@pytest.mark.asyncio
+async def test_participation_falls_back_to_program_start_date_without_round(
+    db_session,
+) -> None:
+    config = await set_reward_tier_config(
+        db_session, {"enabled": True, "program_start_date": "2026-08-10"}
+    )
+    await db_session.execute(delete(CheckinRewardRound))
+    await db_session.flush()
+    # 2026-08-10 00:00 北京 == 2026-08-09 16:00 UTC
+    cutoff = datetime(2026, 8, 9, 16, 0, tzinfo=timezone.utc)
+    before = _case()
+    before.created_at = cutoff - timedelta(seconds=1)
+    at_cutoff = _case()
+    at_cutoff.created_at = cutoff
+    after = _case()
+    after.created_at = cutoff + timedelta(seconds=1)
+    db_session.add_all([before, at_cutoff, after])
+    await db_session.flush()
+
+    assert (
+        await case_participates_in_current_round(
+            db_session, service_case=before, config=config
+        )
+        is False
+    )
+    assert (
+        await case_participates_in_current_round(
+            db_session, service_case=at_cutoff, config=config
+        )
+        is True
+    )
+    assert (
+        await case_participates_in_current_round(
+            db_session, service_case=after, config=config
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_reward_tool_reports_non_participation_before_round_moment(
+    db_session,
+) -> None:
+    moment = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    await db_session.execute(delete(CheckinRewardRound))
+    await db_session.flush()
+    db_session.add(CheckinRewardRound(started_on=date(2026, 8, 1), created_at=moment))
+    service_case = _case()
+    service_case.created_at = moment - timedelta(seconds=1)
+    db_session.add(service_case)
+    await db_session.flush()
+    message = Message(
+        service_case_id=service_case.id,
+        group_id=service_case.group_id,
+        direction=MessageDirection.INBOUND,
+        sender_type=MessageSenderType.USER,
+        message_type="text",
+        content="现在发货，收件人张三，手机号13800138000，详细地址杭州市西湖区某街道88号",
+        purpose=MessagePurpose.CHAT,
+        status=MessageStatus.RECEIVED,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    tools = {
+        tool.name: tool
+        for tool in build_reward_shipping_tools(
+            context=AgentRunContext(
+                service_case_id=service_case.id,
+                trigger_id=message.id,
+            )
+        )
+    }
+
+    payload = await tools["get_checkin_reward_status"].ainvoke({})
+    refused = await tools["manage_reward_shipping"].ainvoke(
+        {
+            "action": "ship_now",
+            "recipient_name": "张三",
+            "recipient_phone": "13800138000",
+            "shipping_address": "杭州市西湖区某街道88号",
+        }
+    )
+
+    assert payload["participating"] is False
+    assert payload["complete_checkin_days"] == 0
+    assert "本轮开启后新建的服务单才参与" in payload["reply_instruction"]
+    assert refused["ok"] is False
+    assert "没有已获得" in refused["error"]
 
 
 @pytest.mark.asyncio
@@ -1129,8 +1268,16 @@ async def test_reward_admin_groups_case_under_current_then_closed_round(
 async def test_reward_admin_puts_reward_without_matching_round_into_legacy_batch(
     db_session, admin_client
 ) -> None:
+    round_moment = datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc)
+    await db_session.execute(delete(CheckinRewardRound))
+    await db_session.flush()
+    db_session.add(
+        CheckinRewardRound(started_on=date(2026, 8, 13), created_at=round_moment)
+    )
     service_case = _case()
     service_case.service_plan_start_date = date(2026, 7, 1)
+    # 该单建单早于所有已记录轮次，只能落到 legacy。
+    service_case.created_at = round_moment - timedelta(days=30)
     db_session.add(service_case)
     await db_session.flush()
     db_session.add(
@@ -1141,7 +1288,7 @@ async def test_reward_admin_puts_reward_without_matching_round_into_legacy_batch
             reward_name="咖啡",
             quantity=1,
             qualified_on=date(2026, 7, 3),
-            # 北京 2026-08-13 12:00；该单早于所有已记录轮次，只能落到 legacy。
+            # 北京 2026-08-13 12:00，legacy 批次日期取自这条资格。
             created_at=datetime(2026, 8, 13, 4, 0, tzinfo=timezone.utc),
         )
     )
@@ -1169,3 +1316,69 @@ async def test_reward_admin_puts_reward_without_matching_round_into_legacy_batch
     batch_order = {b["key"]: index for index, b in enumerate(payload["batches"])}
     order_seq = [batch_order[item["batch_key"]] for item in payload["cases"]]
     assert order_seq == sorted(order_seq)
+
+
+@pytest.mark.asyncio
+async def test_reward_admin_attributes_by_case_creation_moment(
+    db_session, admin_client
+) -> None:
+    await db_session.execute(delete(CheckinRewardRound))
+    await db_session.flush()
+    window_start = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+    open_moment = datetime(2026, 7, 1, 0, 0, tzinfo=timezone.utc)
+    closed_round = CheckinRewardRound(
+        started_on=date(2026, 6, 1),
+        closed_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        created_at=window_start,
+    )
+    db_session.add(closed_round)
+    db_session.add(
+        CheckinRewardRound(started_on=date(2026, 7, 1), created_at=open_moment)
+    )
+    await db_session.flush()
+
+    inside = _case()
+    inside.created_at = window_start + timedelta(hours=1)
+    legacy = _case()
+    legacy.created_at = window_start - timedelta(hours=1)
+    db_session.add_all([inside, legacy])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            CheckinRewardQualification(
+                service_case_id=inside.id,
+                tier_days=3,
+                reward_code="coffee_tube",
+                reward_name="咖啡",
+                quantity=1,
+                qualified_on=date(2026, 6, 3),
+            ),
+            CheckinRewardQualification(
+                service_case_id=legacy.id,
+                tier_days=3,
+                reward_code="coffee_tube",
+                reward_name="咖啡",
+                quantity=1,
+                qualified_on=date(2026, 5, 31),
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    payload = (await admin_client.get("/checkin-rewards")).json()
+    inside_row = next(
+        item for item in payload["cases"] if item["service_case_id"] == inside.id
+    )
+    legacy_row = next(
+        item for item in payload["cases"] if item["service_case_id"] == legacy.id
+    )
+
+    assert inside_row["batch_key"] == f"round:{closed_round.id}"
+    assert inside_row["participating"] is False
+    assert legacy_row["batch_key"].startswith("legacy:")
+    assert legacy_row["participating"] is False
+    assert payload["batches"][0]["key"] == "current"
+    batch_keys = [batch["key"] for batch in payload["batches"]]
+    assert batch_keys.index(f"round:{closed_round.id}") < batch_keys.index(
+        legacy_row["batch_key"]
+    )

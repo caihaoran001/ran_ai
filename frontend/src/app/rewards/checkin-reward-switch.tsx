@@ -224,7 +224,7 @@ export function CheckinRewardSwitch() {
             </h3>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               {pendingEnabled
-                ? "开启当天会记为新一轮的活动起始日；只有之后新开启的服务单参与，其他在服客户的打卡不会计入本轮。"
+                ? "开启那一刻就是新一轮的起点；只有开启之后新建立的服务单才参与，开启之前建立的服务单（包括服务还没开始的）都不会计入本轮。"
                 : "关闭后停止累计与发放新资格；当前批次会清空，已发奖励与历史批次保留，寄送不受影响。"}
             </p>
             <div className="mt-5 flex justify-end gap-2">

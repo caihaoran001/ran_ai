@@ -9,9 +9,11 @@ from __future__ import annotations
    资格不受影响（由调用方保证，这里只提供 `active_tiers()` 过滤）。
 3. **奖励是一句话自由文本。** 如"1 管咖啡"，不拆数量与单位；天数 1..28
    可自定义、可增删，不锁死固定档位。
-4. **只有活动起始日之后新开的服务单参与。** 开关从"关"变"开"时自动记录活动
-   起始日；服务开始日早于它的服务单不参与本轮，避免临近服务结束的用户被拉
-   进来却注定拿不到奖励。关闭再打开就是新一轮，起始日更新为新的开启日。
+4. **只有本轮开启那一刻之后新建的服务单参与。** 开关从"关"变"开"时自动记录
+   活动起始日并开一轮；参与判定由 `checkin_rewards.case_participates_in_current_round`
+   按轮次开启时刻（秒级）与建单时刻比较，开启前建的服务单不参与本轮，避免临近
+   服务结束的用户被拉进来却注定拿不到奖励。关闭再打开就是新一轮，起始日更新为
+   新的开启日。
 
 缺配置（库里没有这一行）时默认总开关关闭、不产生任何新奖励。库里存着一份
 非法配置时不静默回落，直接抛出让调用方看见（同 day28 券配置）。
@@ -68,18 +70,6 @@ class CheckinRewardTierConfig:
         if not self.enabled:
             return ()
         return tuple(tier for tier in self.tiers if tier.enabled)
-
-    def participates(self, first_day: date | None) -> bool:
-        """服务单是否参与本轮：服务开始日不早于活动起始日。
-
-        没记起始日（手工改库的旧配置）视为不限制；服务还没开始（first_day 为
-        空）不参与，等服务开始后再算。
-        """
-        if not self.enabled or first_day is None:
-            return False
-        if self.program_start_date is None:
-            return True
-        return first_day >= self.program_start_date
 
     def by_days(self, days: int) -> CheckinRewardTier | None:
         for tier in self.tiers:

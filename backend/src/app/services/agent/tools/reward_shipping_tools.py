@@ -3,13 +3,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any, Literal
-from zoneinfo import ZoneInfo
 
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.checkin_reward import (
     CheckinRewardProgram,
@@ -27,6 +25,7 @@ from app.services.agent.state import AgentRunContext
 from app.services.checkin_rewards import (
     OPEN_SHIPMENT_STATUSES,
     _qualification_display,
+    case_participates_in_current_round,
     valid_reward_checkins,
 )
 from app.services.checkin_reward_settings import (
@@ -34,10 +33,7 @@ from app.services.checkin_reward_settings import (
     CheckinRewardTierConfig,
     get_reward_tier_config,
 )
-from app.services.service_case_queries import (
-    checkin_first_day,
-    select_active_service_cases,
-)
+from app.services.service_case_queries import select_active_service_cases
 
 
 logger = logging.getLogger(__name__)
@@ -124,8 +120,9 @@ async def _reward_status(
     )
     if service_case is None:
         raise ValueError("当前服务单不存在或已删除。")
-    tz = ZoneInfo(get_settings().reminder_timezone)
-    participating = config.participates(checkin_first_day(service_case, tz))
+    participating = await case_participates_in_current_round(
+        session, service_case=service_case, config=config
+    )
     program = await session.scalar(
         select(CheckinRewardProgram).where(
             CheckinRewardProgram.service_case_id == service_case_id
@@ -332,13 +329,8 @@ async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
         ),
     }
     if not status["participating"]:
-        start_text = (
-            f"（活动自 {status['program_start_date'].isoformat()} 日起对新开启的服务单生效）"
-            if status["program_start_date"] is not None
-            else ""
-        )
         payload["reply_instruction"] = (
-            f"本服务单不参与本轮打卡奖励{start_text}；"
+            "本服务单不参与本轮打卡奖励（本轮开启后新建的服务单才参与）；"
             "只告知已获得的奖励，不要承诺或计算新的奖励进度。"
         )
     return payload
