@@ -168,12 +168,12 @@ function CheckinEvidenceDay({ day }: { day: RewardCheckinDay }) {
 function Day28GrantLedger({ rows }: { rows: Day28BenefitGrantCase[] }) {
   return (
     <details className="panel group/grants overflow-hidden">
-      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden sm:px-5">
+      <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden sm:px-5">
         <span className="flex items-center gap-2 text-sm font-bold text-slate-900">
-          <Ticket className="h-4 w-4 text-cyan-700" />
+          <Ticket className="h-5 w-5 text-cyan-700" />
           发放记录
         </span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform duration-200 group-open/grants:rotate-180 motion-reduce:transition-none" />
+        <ChevronDown className="h-5 w-5 shrink-0 text-slate-500 transition-transform duration-200 group-open/grants:rotate-180 motion-reduce:transition-none" />
       </summary>
       <div className="border-t border-slate-200">
         <p className="px-4 py-4 text-sm text-slate-600 sm:px-5">
@@ -223,12 +223,12 @@ function Day28GrantLedger({ rows }: { rows: Day28BenefitGrantCase[] }) {
 function RulesDisclosure({ title, children }: { title: string; children: ReactNode }) {
   return (
     <details className="panel group/rules overflow-hidden">
-      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden sm:px-5">
+      <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-600 [&::-webkit-details-marker]:hidden sm:px-5">
         <span className="flex items-center gap-2 text-sm font-bold text-slate-900">
-          <Settings className="h-4 w-4 text-cyan-700" />
+          <Settings className="h-5 w-5 text-cyan-700" />
           {title}
         </span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform duration-200 group-open/rules:rotate-180 motion-reduce:transition-none" />
+        <ChevronDown className="h-5 w-5 shrink-0 text-slate-500 transition-transform duration-200 group-open/rules:rotate-180 motion-reduce:transition-none" />
       </summary>
       <div className="border-t border-slate-200 p-4 sm:p-5">
         {children}
