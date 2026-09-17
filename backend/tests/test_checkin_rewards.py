@@ -28,6 +28,7 @@ from app.services.agent.state import AgentRunContext
 from app.services.agent.tools.reward_shipping_tools import build_reward_shipping_tools
 from app.services.checkin_reward_settings import (
     DEFAULT_REWARD_TIERS,
+    get_reward_tier_config,
     set_reward_tier_config,
 )
 from app.services.checkin_rewards import (
@@ -1222,6 +1223,31 @@ async def test_reopen_moves_program_start_and_keeps_it_until_next_off(
 
     today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
     assert reopened.program_start_date == today
+
+
+@pytest.mark.asyncio
+async def test_reward_program_cannot_be_enabled_without_any_tiers(
+    db_session,
+    admin_client,
+) -> None:
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": False,
+            "tiers": [],
+        },
+    )
+
+    response = await admin_client.post(
+        "/settings/checkin-reward-tiers",
+        json={"enabled": True, "tiers": []},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "开启打卡奖励前，请至少添加一个奖励档位。"
+    config = await get_reward_tier_config(db_session)
+    assert config.enabled is False
+    assert config.tiers == ()
 
 
 async def _rounds(db_session) -> list[CheckinRewardRound]:

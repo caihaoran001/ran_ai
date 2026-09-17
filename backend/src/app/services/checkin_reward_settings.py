@@ -153,6 +153,8 @@ def parse_reward_tiers_config(payload: object) -> CheckinRewardTierConfig:
         # 每档没有独立开关：存下来的每一条都生效，不生效的档位直接删掉。
         tiers.append(CheckinRewardTier(days=days, reward_text=reward_text))
     tiers.sort(key=lambda tier: tier.days)
+    if enabled and not tiers:
+        raise ValueError("开启打卡奖励前，请至少添加一个奖励档位。")
     return CheckinRewardTierConfig(
         enabled=enabled,
         program_start_date=program_start_date,

@@ -29,7 +29,6 @@ from app.services.checkin_rewards import (
     valid_reward_checkins,
 )
 from app.services.checkin_reward_settings import (
-    DEFAULT_REWARD_TIERS,
     CheckinRewardTierConfig,
     get_reward_tier_config,
 )
@@ -184,16 +183,6 @@ async def _reward_status(
     }
 
 
-async def _display_reward_tiers(session) -> list:
-    try:
-        config = await get_reward_tier_config(session)
-        tiers = list(config.tiers)
-    except ValueError:
-        logger.warning("打卡奖励档位配置非法，展示已回落到默认四档。", exc_info=True)
-        tiers = list(DEFAULT_REWARD_TIERS)
-    return tiers or list(DEFAULT_REWARD_TIERS)
-
-
 async def _load_reward_config(session) -> CheckinRewardTierConfig | None:
     """后台奖励配置；损坏时按"本轮停用"处理，不猜规则。"""
     try:
@@ -233,7 +222,12 @@ def _closed_batch_write_result() -> dict[str, Any]:
     }
 
 
-async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
+async def _public_payload(
+    session,
+    status: dict[str, Any],
+    *,
+    config: CheckinRewardTierConfig,
+) -> dict[str, Any]:
     program: CheckinRewardProgram | None = status["program"]
     active: CheckinRewardShipment | None = status["active_shipment"]
     qualifications: list[CheckinRewardQualification] = status["qualifications"]
@@ -274,7 +268,7 @@ async def _public_payload(session, status: dict[str, Any]) -> dict[str, Any]:
         choice_text = closed_batch_text
         operational_status_text = closed_batch_text
     reward_tiers = []
-    for tier in await _display_reward_tiers(session):
+    for tier in config.tiers:
         qualification = qualifications_by_tier.get(tier.days)
         shipment = (
             shipments_by_id.get(qualification.shipment_id)
@@ -383,6 +377,7 @@ def build_reward_shipping_tools(
                 await _reward_status(
                     session, service_case_id=service_case.id, config=config
                 ),
+                config=config,
             )
 
     async def manage_reward_shipping(
@@ -412,7 +407,7 @@ def build_reward_shipping_tools(
                 session, service_case_id=service_case.id, config=config
             )
             if action == "get_status":
-                return await _public_payload(session, status)
+                return await _public_payload(session, status, config=config)
             # 关闭批次硬闸门：非读动作一律在此拒绝，未参与本轮的服务单不得自助写入。
             if not status["participating"]:
                 return _closed_batch_write_result()
@@ -450,6 +445,7 @@ def build_reward_shipping_tools(
                         await _reward_status(
                             session, service_case_id=service_case.id, config=config
                         ),
+                        config=config,
                     ),
                     "recorded": "accumulate",
                     "reply_instruction": "已记下继续累积，告诉用户等下一阶段达标后再一起确认寄送。",
@@ -519,7 +515,7 @@ def build_reward_shipping_tools(
                     session, service_case_id=service_case.id, config=config
                 )
                 return {
-                    **await _public_payload(session, refreshed),
+                    **await _public_payload(session, refreshed, config=config),
                     "recorded": "save_shipping_info",
                     "reply_instruction": "完整收件信息已保存；未明确要求立即寄出时，不要声称已经申请发货。",
                 }
@@ -571,7 +567,7 @@ def build_reward_shipping_tools(
                 session, service_case_id=service_case.id, config=config
             )
             return {
-                **await _public_payload(session, refreshed),
+                **await _public_payload(session, refreshed, config=config),
                 "recorded": "ship_now",
                 "reply_instruction": "收件信息已齐，告诉用户已记下，等待班主任安排寄出。",
             }
