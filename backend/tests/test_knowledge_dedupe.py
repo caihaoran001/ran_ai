@@ -19,13 +19,14 @@ from app.services.knowledge_dedupe import (
 
 
 class StubAI:
-    def __init__(self, payload: dict):
-        self.payload = payload
+    def __init__(self, payload: dict | list[dict]):
+        self.payloads = payload if isinstance(payload, list) else [payload]
         self.calls = 0
 
     async def generate_text(self, **_: object) -> str:
+        payload = self.payloads[min(self.calls, len(self.payloads) - 1)]
         self.calls += 1
-        return json.dumps(self.payload, ensure_ascii=False)
+        return json.dumps(payload, ensure_ascii=False)
 
 
 def _draft(*, draft_type: str = "qa") -> KnowledgeDraft:
@@ -127,28 +128,78 @@ async def test_approval_does_not_shortcut_identical_text_with_hash(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_semantic_judge_returns_one_call_merged_canonical_answer() -> None:
+async def test_semantic_judge_rewrites_winner_in_second_call() -> None:
     decision = await _judge_candidates(
         _draft(),
         [_candidate()],
+        ai=StubAI(
+            [
+                {
+                    "assessments": [
+                        {
+                            "chunk_id": 9,
+                            "relation": "same_meaning",
+                            "answer_relation": "candidate_adds_value",
+                            "reason": "问法一致，新答案补齐了时间边界。",
+                        }
+                    ]
+                },
+                {
+                    "canonical_question": "晚A应该什么时候喝？",
+                    "canonical_answer": "晚A在睡前1至2小时喝完；如方案另有安排，以审核后的方案为准。",
+                },
+            ]
+        ),
+    )
+    assert decision.action == "update"
+    assert decision.target is not None
+    assert decision.canonical_answer == "晚A在睡前1至2小时喝完;如方案另有安排,以审核后的方案为准。"
+
+
+@pytest.mark.asyncio
+async def test_rewrite_failure_fails_closed() -> None:
+    with pytest.raises(KnowledgeDedupeUnavailable, match="合并重写失败"):
+        await _judge_candidates(
+            _draft(),
+            [_candidate()],
+            ai=StubAI(
+                [
+                    {
+                        "assessments": [
+                            {
+                                "chunk_id": 9,
+                                "relation": "same_meaning",
+                                "answer_relation": "candidate_adds_value",
+                                "reason": "问法一致，新答案补齐了时间边界。",
+                            }
+                        ]
+                    },
+                    {"unexpected": "payload"},
+                ]
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_case_update_skips_rewrite() -> None:
+    decision = await _judge_candidates(
+        _draft(draft_type="case"),
+        [_candidate(draft_type="case")],
         ai=StubAI(
             {
                 "assessments": [
                     {
                         "chunk_id": 9,
-                        "relation": "same_meaning",
+                        "relation": "same_story",
                         "answer_relation": "candidate_adds_value",
-                        "reason": "问法一致，新答案补齐了时间边界。",
-                        "canonical_question": "晚A应该什么时候喝？",
-                        "canonical_answer": "晚A在睡前1至2小时喝完；如方案另有安排，以审核后的方案为准。",
+                        "reason": "同一服务单内同一事件被重复采集。",
                     }
                 ]
             }
         ),
     )
     assert decision.action == "update"
-    assert decision.target is not None
-    assert decision.canonical_answer == "晚A在睡前1至2小时喝完;如方案另有安排,以审核后的方案为准。"
+    assert decision.canonical_answer is None
 
 
 @pytest.mark.asyncio
