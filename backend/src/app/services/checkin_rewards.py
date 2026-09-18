@@ -994,6 +994,12 @@ async def _reward_case_ids(
     if not rows:
         return [], []
 
+    config = await load_reward_program(session)
+    open_round = (
+        await _load_open_reward_round(session)
+        if config is not None and config.enabled
+        else None
+    )
     case_ids = [service_case.id for service_case, _ in rows]
     qualified_by_case: dict[int, set[int]] = defaultdict(set)
     for service_case_id, tier_days in (
@@ -1034,6 +1040,14 @@ async def _reward_case_ids(
     notice_ids: list[int] = []
     reconcile_ids: list[int] = []
     for service_case, program in rows:
+        participates = service_case.status == ServiceCaseStatus.IN_SERVICE
+        if service_case.status == ServiceCaseStatus.COMPLETED:
+            participates = await case_participates_in_current_round(
+                session,
+                service_case=service_case,
+                config=config,
+                open_round=open_round,
+            )
         has_finished = (
             service_case.status == ServiceCaseStatus.COMPLETED
             and _highest_promised_tier_earned(
@@ -1041,9 +1055,12 @@ async def _reward_case_ids(
                 qualified_days=qualified_by_case[service_case.id],
             )
         )
-        if not has_finished:
+        if participates and not has_finished:
             reconcile_ids.append(service_case.id)
-        if not has_finished or service_case.id in pending_notice_case_ids:
+        if (
+            (participates and not has_finished)
+            or service_case.id in pending_notice_case_ids
+        ):
             notice_ids.append(service_case.id)
     return notice_ids, reconcile_ids
 

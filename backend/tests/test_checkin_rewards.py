@@ -1602,6 +1602,32 @@ async def test_completed_case_stops_reconciliation_after_highest_tier_is_earned(
     assert service_case.id not in reconciliation_ids
 
 
+@pytest.mark.asyncio
+async def test_completed_case_stops_reconciliation_when_reward_round_is_closed(
+    db_session,
+) -> None:
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    await reconcile_case_rewards(
+        db_session,
+        service_case_id=service_case.id,
+        through_date=date(2026, 8, 1),
+    )
+    service_case.status = ServiceCaseStatus.COMPLETED
+    service_case.ended_at = datetime(2026, 8, 28, 15, 59, tzinfo=timezone.utc)
+    await set_reward_tier_config(db_session, {"enabled": False})
+    await db_session.flush()
+
+    notice_ids, reconciliation_ids = await _reward_case_ids(
+        db_session,
+        local_now=datetime(2026, 10, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    assert service_case.id not in notice_ids
+    assert service_case.id not in reconciliation_ids
+
+
 async def _rounds(db_session) -> list[CheckinRewardRound]:
     return list(
         await db_session.scalars(
