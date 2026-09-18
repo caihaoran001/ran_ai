@@ -9,6 +9,8 @@ import pytest
 from app.models.knowledge_draft import KnowledgeDraft
 from app.services.knowledge_base import _knowledge_files
 from app.services.knowledge_dedupe import (
+    _CASE_CANDIDATE_LIMIT,
+    _FAQ_CANDIDATE_LIMIT,
     KnowledgeCandidate,
     KnowledgeDedupeUnavailable,
     _judge_candidates,
@@ -16,6 +18,11 @@ from app.services.knowledge_dedupe import (
     knowledge_draft_idempotency_hash,
     normalize_knowledge_text,
 )
+
+
+def test_dedupe_candidate_limits_match_business_budget() -> None:
+    assert _FAQ_CANDIDATE_LIMIT == 5
+    assert _CASE_CANDIDATE_LIMIT == 3
 
 
 class StubAI:

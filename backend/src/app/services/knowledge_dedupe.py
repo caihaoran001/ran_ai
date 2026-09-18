@@ -21,7 +21,7 @@ from app.services.embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
-_FAQ_CANDIDATE_LIMIT = 8
+_FAQ_CANDIDATE_LIMIT = 5
 _CASE_CANDIDATE_LIMIT = 3
 _SAME_RELATIONS = {"same_meaning", "same_story"}
 _ALLOWED_RELATIONS = _SAME_RELATIONS | {"conditional_variant", "related", "different"}
