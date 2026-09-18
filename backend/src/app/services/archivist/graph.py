@@ -709,7 +709,7 @@ class ArchivistPipeline:
         from app.services.final_review_answers import load_progress, should_ask
         from app.services.final_review_runner import (
             asked_nodes_for,
-            final_review_active_for,
+            final_review_active_for_case,
             sent_question_snapshots,
         )
         from app.services.final_review_scripts import (
@@ -717,7 +717,7 @@ class ArchivistPipeline:
             Q_CONTACT_PREFERENCE, Q_REASON_CONTINUE, Q_REASON_PAUSE,
         )
 
-        if not final_review_active_for(self.settings, self.service_case.id):
+        if not await final_review_active_for_case(self.session, self.settings, self.service_case.id):
             return []
         asked = await asked_nodes_for(
             self.session, service_case_id=self.service_case.id

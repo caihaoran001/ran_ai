@@ -408,6 +408,35 @@ async def update_day28_benefits_api(
     return _benefit_setting(config)
 
 
+class FinalReviewRolloutSetting(BaseModel):
+    full_enabled: bool = False
+
+
+class FinalReviewRolloutUpdate(BaseModel):
+    full_enabled: bool = False
+
+
+@router.get("/settings/final-review-rollout", response_model=FinalReviewRolloutSetting)
+async def get_final_review_rollout_api(
+    session: AsyncSession = Depends(get_session),
+) -> FinalReviewRolloutSetting:
+    from app.services.final_review_rollout import is_full_enabled
+
+    return FinalReviewRolloutSetting(full_enabled=await is_full_enabled(session))
+
+
+@router.post("/settings/final-review-rollout", response_model=FinalReviewRolloutSetting)
+async def update_final_review_rollout_api(
+    payload: FinalReviewRolloutUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> FinalReviewRolloutSetting:
+    from app.services.final_review_rollout import set_full_enabled
+
+    saved = await set_full_enabled(session, payload.full_enabled)
+    await session.commit()
+    return FinalReviewRolloutSetting(full_enabled=saved)
+
+
 class CheckinRewardTierEntry(BaseModel):
     days: int
     reward_text: str

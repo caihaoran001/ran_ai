@@ -14,6 +14,7 @@ import { ShipmentAction } from "./shipment-action";
 import { CheckinRewardSwitch } from "./checkin-reward-switch";
 import { CheckinRewardTierConfig } from "./checkin-reward-tier-config";
 import { Day28BenefitConfig } from "./day28-benefit-config";
+import { FinalReviewRolloutSwitch } from "./final-review-rollout-switch";
 
 const statusCopy: Record<string, { label: string; className: string }> = {
   pending_shipment: {
@@ -453,10 +454,15 @@ export default async function RewardsPage() {
       </RulesDisclosure>
 
       <div className="border-t border-slate-200 pt-7">
-        <h2 className="text-xl font-extrabold text-slate-950">结营券</h2>
-        <p className="mt-1 text-sm leading-6 text-slate-600">
-          客户走完 28 天后助教在群里发出的领取入口；商城未打通，系统只记录「入口已发出」，同一位客户的同一张券只会发一次。
-        </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-xl font-extrabold text-slate-950">结营回访与结营券</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              26到30天自动回访，29天发券、没发出去补到35天；商城未打通，系统只记录「入口已发出」，同一位客户的同一张券只会发一次。
+            </p>
+          </div>
+          <FinalReviewRolloutSwitch />
+        </div>
       </div>
 
       <RulesDisclosure title="券配置（面额、链接与启停）">

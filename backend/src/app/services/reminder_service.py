@@ -533,7 +533,7 @@ class ReminderService:
         from app.services.archivist.checkin_projection import (
             mark_contradictions_pending_confirmation,
         )
-        from app.services.final_review_runner import should_skip_daily_checklist
+        from app.services.final_review_runner import should_skip_daily_checklist_for_case
         from app.services.archivist.followup import (
             finalize_checkin_followup_cycles,
             is_followup_paused,
@@ -585,8 +585,8 @@ class ReminderService:
                 )
                 if service_case.status == ServiceCaseStatus.COMPLETED:
                     plans = [plan for plan in plans if plan.kind == "daily_checklist"]
-                if should_skip_daily_checklist(
-                    self.settings, service_case_id=service_case.id, day=service_day
+                if await should_skip_daily_checklist_for_case(
+                    session, self.settings, service_case_id=service_case.id, day=service_day
                 ):
                     # 结营复盘的几天让位：同一天既问昨日五项又问结营复盘，客户只会回一个。
                     # 体重矛盾核对与次晨空腹提醒不受影响，它们仍是当天必要的确认。
@@ -696,6 +696,7 @@ class ReminderService:
             NODE_EARLIEST_DAY,
             NODE_RESULTS,
             final_review_case_ids,
+            is_full_rollout_enabled,
             load_case_state,
             plan_benefit_topup,
             plan_benefit_notice,
@@ -706,9 +707,6 @@ class ReminderService:
         )
 
         case_ids = final_review_case_ids(self.settings)
-        if not case_ids:
-            # 开关开了但白名单是空的：一单都不跑。见 final_review_active_for。
-            return
         tz = ZoneInfo(self.settings.reminder_timezone)
         now = now or datetime.now(tz)
         if now.tzinfo is None:
@@ -719,15 +717,40 @@ class ReminderService:
             return
 
         async with SessionLocal() as session:
-            candidates = [
-                row.id
-                for row in await session.scalars(
-                    select_present_service_cases(
-                        ServiceCase.id.in_(case_ids),
-                        ServiceCase.ai_auto_reply_enabled.is_(True),
+            full = await is_full_rollout_enabled(session)
+            if full:
+                # 全量：捞近38天内开单、在群、开自动回复的单；26—35天的口径
+                # 由每单的 day 再卡，这里只做粗筛（各时区前后各留2天余量）。
+                earliest = datetime.combine(
+                    today - timedelta(days=38), time.min
+                ).replace(tzinfo=timezone.utc)
+                latest = datetime.combine(
+                    today - timedelta(days=23), time.max
+                ).replace(tzinfo=timezone.utc)
+                candidates = [
+                    row.id
+                    for row in await session.scalars(
+                        select_present_service_cases(
+                            ServiceCase.ai_auto_reply_enabled.is_(True),
+                            ServiceCase.started_at.is_not(None),
+                            ServiceCase.started_at >= earliest,
+                            ServiceCase.started_at <= latest,
+                        )
                     )
-                )
-            ]
+                ]
+            else:
+                if not case_ids:
+                    # 全量关闭且白名单是空的：一单都不跑。见 final_review_active_for。
+                    return
+                candidates = [
+                    row.id
+                    for row in await session.scalars(
+                        select_present_service_cases(
+                            ServiceCase.id.in_(case_ids),
+                            ServiceCase.ai_auto_reply_enabled.is_(True),
+                        )
+                    )
+                ]
 
         for case_id in candidates:
             async with SessionLocal() as session:
@@ -754,10 +777,10 @@ class ReminderService:
                     # 明确暂停联系要尊重；沉默不等于暂停。
                     continue
                 if (
-                    service_case.risk_level == "high"
-                    or service_case.refund_pending_confirmation
+                    service_case.refund_pending_confirmation
                     or service_case.status == ServiceCaseStatus.REFUNDED
                 ):
+                    # 高风险不跳过（用户已确认可回访）；只跳过退款相关。
                     continue
 
                 # 权益独立判断，不要求回答、也不依赖任何问答节点已经完成。

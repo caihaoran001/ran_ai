@@ -4,8 +4,8 @@ from __future__ import annotations
 
 三条设计边界，改这里之前先读：
 
-1. **只在白名单服务单上跑。** 开关打开、白名单为空 = 一单都不跑。这条链路会向真实
-   客户群发消息并发出券的领取入口，灰度不是可选项。
+1. **只在白名单或全量开关打开的服务单上跑。** 全量关闭且白名单为空 = 一单都不跑。
+   这条链路会向真实客户群发消息并发出券的领取入口，灰度不是可选项。
 2. **不补过期的问题。** 每个服务单每天最多一轮计划问话；权益独立按资格发放，
    不以回答为条件。明确暂停联系仍停止主动触达。
 3. **券的链接由确定性代码兜底。** 助教负责说人话，但每一张已占名额的券，其领取
@@ -105,10 +105,36 @@ def final_review_active_for(settings: Settings, service_case_id: int) -> bool:
 
     白名单为空时返回 False——"开关开了但没填白名单"必须是"一单都不跑"，
     而不是"全量放开"，否则一次误配就是给所有在服客户群发券。
+    全量开关在库里，带会话的调用方请用 `final_review_active_for_case`。
     """
     if not settings.final_review_enabled:
         return False
     return service_case_id in final_review_case_ids(settings)
+
+
+async def is_full_rollout_enabled(session: AsyncSession) -> bool:
+    """后台全量开关是否打开；读不到、配坏了都按关闭处理。"""
+    try:
+        from app.services.final_review_rollout import is_full_enabled
+
+        return await is_full_enabled(session)
+    except Exception:
+        logger.warning("Final review rollout flag unreadable, treating as off", exc_info=True)
+        return False
+
+
+async def final_review_active_for_case(
+    session: AsyncSession, settings: Settings, service_case_id: int
+) -> bool:
+    """这个服务单现在要不要跑结营复盘（含全量开关）。
+
+    全量打开 = 到期自动跑，不再看名单；全量关闭 = 只看白名单。
+    """
+    if not settings.final_review_enabled:
+        return False
+    if service_case_id in final_review_case_ids(settings):
+        return True
+    return await is_full_rollout_enabled(session)
 
 
 def node_question_ids(script: FinalReviewScript, node: str) -> list[str]:
@@ -461,11 +487,20 @@ def ensure_benefit_links(text: str, plan: NodePlan, *, language: str = "zh") -> 
 
 
 def should_skip_daily_checklist(settings: Settings, *, service_case_id: int, day: int) -> bool:
-    """结营复盘期间让位每日五项清单追问。"""
+    """结营复盘期间让位每日五项清单追问（白名单口径）。"""
     return (
         final_review_active_for(settings, service_case_id)
         and day in CHECKLIST_QUIET_DAYS
     )
+
+
+async def should_skip_daily_checklist_for_case(
+    session: AsyncSession, settings: Settings, *, service_case_id: int, day: int
+) -> bool:
+    """结营复盘期间让位每日五项清单追问（含全量开关）。"""
+    if day not in CHECKLIST_QUIET_DAYS:
+        return False
+    return await final_review_active_for_case(session, settings, service_case_id)
 
 
 # 条件题的触发题：这道题该不该问，取决于客户对触发题的回答，所以只有触发题
@@ -586,7 +621,7 @@ async def reply_question_metadata(
     session: AsyncSession, *, settings: Settings, service_case_id: int, content: str
 ) -> dict[str, Any]:
     """普通回复中的可选追问也存题目快照；发送失败的记录不会被当成已问。"""
-    if not final_review_active_for(settings, service_case_id):
+    if not await final_review_active_for_case(session, settings, service_case_id):
         return {}
     case = await session.get(ServiceCase, service_case_id)
     if case is None:
@@ -618,7 +653,7 @@ async def followup_prompt_block(
 
     触发条件（客户这句到底是不是在答上一题）只能由模型判断，所以条件说明一并给它。
     """
-    if not final_review_active_for(settings, service_case.id):
+    if not await final_review_active_for_case(session, settings, service_case.id):
         return ""
     script = await get_active_script(session, language=str(language))
     progress = await load_progress(session, service_case_id=service_case.id)

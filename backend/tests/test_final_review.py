@@ -1068,6 +1068,27 @@ def test_whitelist_is_required_even_when_the_switch_is_on():
     assert final_review_active_for(off, 534) is False
 
 
+@pytest.mark.asyncio
+async def test_rollout_flag_defaults_off(db_session):
+    from app.services.final_review_rollout import is_full_enabled
+
+    assert await is_full_enabled(db_session) is False
+
+
+@pytest.mark.asyncio
+async def test_full_rollout_covers_non_whitelisted_case(db_session):
+    from app.services.final_review_rollout import set_full_enabled
+    from app.services.final_review_runner import final_review_active_for_case
+
+    settings = SimpleNamespace(final_review_enabled=True, final_review_case_ids="534")
+    assert await final_review_active_for_case(db_session, settings, 1) is False
+    await set_full_enabled(db_session, True)
+    assert await final_review_active_for_case(db_session, settings, 1) is True
+    assert await final_review_active_for_case(db_session, settings, 534) is True
+    await set_full_enabled(db_session, False)
+    assert await final_review_active_for_case(db_session, settings, 1) is False
+
+
 def test_daily_checklist_yields_only_on_the_review_days():
     settings = SimpleNamespace(final_review_enabled=True, final_review_case_ids="534")
     assert should_skip_daily_checklist(settings, service_case_id=534, day=27) is True
@@ -2873,17 +2894,24 @@ async def test_failed_benefit_send_releases_grant_and_retries(db_session, monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("risk", ["high", "refund_pending"])
-async def test_review_does_not_interrupt_risk_or_refund_handling(db_session, monkeypatch, risk):
+async def test_review_does_not_interrupt_refund_handling(db_session, monkeypatch):
     case, service, now, sent = await _scheduled_review_case(db_session, monkeypatch, day=29)
     await set_benefit_config(db_session, _TOPUP_CONFIG)
-    if risk == "high":
-        case.risk_level = "high"
-    else:
-        case.refund_pending_confirmation = True
+    case.refund_pending_confirmation = True
     await db_session.commit()
     await service.check_final_review_once(now)
     assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_review_still_runs_for_high_risk(db_session, monkeypatch):
+    # 高风险可回访：调度只跳过退款相关，不跳过高风险。
+    case, service, now, sent = await _scheduled_review_case(db_session, monkeypatch, day=29)
+    await set_benefit_config(db_session, _TOPUP_CONFIG)
+    case.risk_level = "high"
+    await db_session.commit()
+    await service.check_final_review_once(now)
+    assert len(sent) >= 1 and "#微信小店" in sent[0]
 
 
 @pytest.mark.asyncio
