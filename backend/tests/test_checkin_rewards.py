@@ -32,6 +32,7 @@ from app.services.checkin_reward_settings import (
     set_reward_tier_config,
 )
 from app.services.checkin_rewards import (
+    _reward_case_ids,
     case_participates_in_current_round,
     is_effective_reward_checkin,
     reconcile_case_rewards,
@@ -388,7 +389,7 @@ async def test_new_user_after_config_change_locks_new_reward_terms(db_session) -
 
 
 @pytest.mark.asyncio
-async def test_completed_case_can_settle_day28_during_grace_without_counting_day29(
+async def test_completed_case_keeps_counting_complete_checkins_after_day28(
     db_session,
 ) -> None:
     service_case = _case()
@@ -412,12 +413,80 @@ async def test_completed_case_can_settle_day28_during_grace_without_counting_day
         db_session,
         service_case_id=service_case.id,
         through_date=date(2026, 8, 29),
-        allow_completed_settlement=True,
     )
 
-    assert result.complete_checkin_days == 28
-    assert result.valid_dates[-1] == date(2026, 8, 28)
+    assert result.complete_checkin_days == 29
+    assert result.valid_dates[-1] == date(2026, 8, 29)
     assert result.new_qualification_days == (3, 7, 14, 28)
+
+
+@pytest.mark.asyncio
+async def test_completed_case_can_earn_day60_without_continuation(db_session) -> None:
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "tiers": [
+                {"days": 26, "reward_text": "第一个奖励"},
+                {"days": 45, "reward_text": "第二个奖励"},
+                {"days": 60, "reward_text": "第三个奖励"},
+            ],
+        },
+    )
+    service_case = _case()
+    service_case.status = ServiceCaseStatus.COMPLETED
+    service_case.ended_at = datetime(2026, 8, 28, 15, 59, tzinfo=timezone.utc)
+    db_session.add(service_case)
+    await db_session.flush()
+    for offset in range(60):
+        db_session.add(
+            Checkin(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                content=f"完整打卡 {offset + 1}",
+                parsed_json=_parsed(),
+            )
+        )
+    await db_session.flush()
+
+    result = await reconcile_case_rewards(
+        db_session,
+        service_case_id=service_case.id,
+        through_date=date(2026, 9, 29),
+    )
+
+    assert result.complete_checkin_days == 60
+    assert result.new_qualification_days == (26, 45, 60)
+    assert service_case.service_continued_at is None
+
+
+@pytest.mark.asyncio
+async def test_member_left_case_does_not_gain_new_long_term_rewards(db_session) -> None:
+    service_case = _case()
+    service_case.status = ServiceCaseStatus.COMPLETED
+    service_case.member_left_at = datetime.now(timezone.utc)
+    db_session.add(service_case)
+    await db_session.flush()
+    db_session.add(
+        Checkin(
+            service_case_id=service_case.id,
+            group_id=service_case.group_id,
+            checkin_date=date(2026, 8, 1),
+            content="退群前完整打卡",
+            parsed_json=_parsed(),
+        )
+    )
+    await db_session.flush()
+
+    result = await reconcile_case_rewards(
+        db_session,
+        service_case_id=service_case.id,
+        through_date=date(2026, 8, 1),
+    )
+
+    assert result.complete_checkin_days == 0
+    assert result.new_qualification_days == ()
 
 
 @pytest.mark.asyncio
@@ -1414,6 +1483,123 @@ async def test_reward_program_cannot_be_enabled_without_any_tiers(
     config = await get_reward_tier_config(db_session)
     assert config.enabled is False
     assert config.tiers == ()
+
+
+@pytest.mark.asyncio
+async def test_reward_tiers_accept_day60_and_reject_above_year_cap(
+    db_session,
+    admin_client,
+) -> None:
+    response = await admin_client.post(
+        "/settings/checkin-reward-tiers",
+        json={
+            "enabled": True,
+            "tiers": [
+                {"days": 26, "reward_text": "第一个奖励"},
+                {"days": 45, "reward_text": "第二个奖励"},
+                {"days": 60, "reward_text": "第三个奖励"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert [tier["days"] for tier in response.json()["tiers"]] == [26, 45, 60]
+
+    rejected = await admin_client.post(
+        "/settings/checkin-reward-tiers",
+        json={
+            "enabled": True,
+            "tiers": [{"days": 366, "reward_text": "超限奖励"}],
+        },
+    )
+
+    assert rejected.status_code == 400
+    assert "只允许 1..365" in rejected.json()["detail"]
+    config = await get_reward_tier_config(db_session)
+    assert [tier.days for tier in config.tiers] == [26, 45, 60]
+
+
+@pytest.mark.asyncio
+async def test_completed_case_with_unfinished_long_term_tier_stays_in_reconciliation(
+    db_session,
+) -> None:
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "tiers": [{"days": 60, "reward_text": "长期奖励"}],
+        },
+    )
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    await reconcile_case_rewards(
+        db_session,
+        service_case_id=service_case.id,
+        through_date=date(2026, 8, 1),
+    )
+    service_case.status = ServiceCaseStatus.COMPLETED
+    service_case.ended_at = datetime(2026, 8, 28, 15, 59, tzinfo=timezone.utc)
+    await db_session.flush()
+
+    notice_ids, reconciliation_ids = await _reward_case_ids(
+        db_session,
+        local_now=datetime(2026, 10, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    assert service_case.id in notice_ids
+    assert service_case.id in reconciliation_ids
+
+
+@pytest.mark.asyncio
+async def test_completed_case_stops_reconciliation_after_highest_tier_is_earned(
+    db_session,
+) -> None:
+    await set_reward_tier_config(
+        db_session,
+        {
+            "enabled": True,
+            "tiers": [{"days": 3, "reward_text": "最高档奖励"}],
+        },
+    )
+    service_case = _case()
+    db_session.add(service_case)
+    await db_session.flush()
+    for offset in range(3):
+        db_session.add(
+            Checkin(
+                service_case_id=service_case.id,
+                group_id=service_case.group_id,
+                checkin_date=date(2026, 8, 1) + timedelta(days=offset),
+                content="完整打卡",
+                parsed_json=_parsed(),
+            )
+        )
+    await db_session.flush()
+    await reconcile_case_rewards(
+        db_session,
+        service_case_id=service_case.id,
+        through_date=date(2026, 8, 3),
+    )
+    service_case.status = ServiceCaseStatus.COMPLETED
+    service_case.ended_at = datetime(2026, 8, 28, 15, 59, tzinfo=timezone.utc)
+    qualification = await db_session.scalar(
+        select(CheckinRewardQualification).where(
+            CheckinRewardQualification.service_case_id == service_case.id,
+            CheckinRewardQualification.tier_days == 3,
+        )
+    )
+    assert qualification is not None
+    qualification.notification_status = "sent"
+    await db_session.flush()
+
+    notice_ids, reconciliation_ids = await _reward_case_ids(
+        db_session,
+        local_now=datetime(2026, 10, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    assert service_case.id not in notice_ids
+    assert service_case.id not in reconciliation_ids
 
 
 async def _rounds(db_session) -> list[CheckinRewardRound]:

@@ -15,6 +15,8 @@ type SavedTier = {
   reward_text: string;
 };
 
+const MAX_REWARD_DAYS = 365;
+
 async function readError(res: Response) {
   const raw = await res.text();
   try {
@@ -88,7 +90,7 @@ export function CheckinRewardTierConfig() {
       typeof tier.days !== "number" ||
       !Number.isInteger(tier.days) ||
       tier.days < 1 ||
-      tier.days > 28;
+      tier.days > MAX_REWARD_DAYS;
     const duplicate =
       typeof tier.days === "number" &&
       Number.isInteger(tier.days) &&
@@ -113,7 +115,7 @@ export function CheckinRewardTierConfig() {
     ).map((tier) => tier.days);
     const max = numbers.length > 0 ? Math.max(...numbers) : 0;
     const next = max + 7;
-    setTiers((prev) => [...prev, { days: next <= 28 ? next : "", reward_text: "" }]);
+    setTiers((prev) => [...prev, { days: next <= MAX_REWARD_DAYS ? next : "", reward_text: "" }]);
   }
 
   async function save() {
@@ -170,7 +172,7 @@ export function CheckinRewardTierConfig() {
           <h3 className="text-base font-semibold text-slate-900">打卡实物奖励档位</h3>
           <p className="mt-1 text-sm leading-relaxed text-slate-500">
             客户累计打卡满指定天数后可领取对应实物奖励。总开关在页面标题右侧控制；
-            这里维护各档位天数与奖励内容，发放资格仍以服务端判定为准。
+            这里维护各档位天数与奖励内容；28 天结营后仍在群内完整打卡，也会继续累计奖励。
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -206,10 +208,10 @@ export function CheckinRewardTierConfig() {
                   <input
                     type="number"
                     min={1}
-                    max={28}
+                    max={MAX_REWARD_DAYS}
                     step={1}
                     aria-label={`第${index + 1}档天数`}
-                    placeholder="1..28"
+                    placeholder={`1..${MAX_REWARD_DAYS}`}
                     className={`w-24 rounded-md border px-3 py-1.5 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${
                       rowError.daysInvalid || rowError.duplicate
                         ? "border-rose-400 bg-white"
@@ -252,9 +254,9 @@ export function CheckinRewardTierConfig() {
                 <p className="mt-3 flex items-start gap-1.5 text-sm font-medium text-rose-700">
                   <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                   {rowError.duplicate
-                    ? "天数与其他档位重复，请改成 1..28 内不重复的天数。"
+                    ? `天数与其他档位重复，请改成 1..${MAX_REWARD_DAYS} 内不重复的天数。`
                     : rowError.daysInvalid
-                      ? "天数请填写 1..28 的整数。"
+                      ? `天数请填写 1..${MAX_REWARD_DAYS} 的整数。`
                       : "奖励不能为空，请填写一句话奖励。"}
                 </p>
               )}
@@ -282,7 +284,7 @@ export function CheckinRewardTierConfig() {
       </div>
 
       <p className="mt-4 text-xs leading-relaxed text-slate-500">
-        天数取 1..28 的整数且不可重复，奖励为一句话描述；校验不通过时会标红并禁用保存。
+        天数取 1..{MAX_REWARD_DAYS} 的整数且不可重复，奖励为一句话描述；校验不通过时会标红并禁用保存。
         后端仍会整份校验并拒收，不合规时错误信息会直接显示在下方。
       </p>
 

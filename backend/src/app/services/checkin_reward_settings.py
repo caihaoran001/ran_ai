@@ -7,7 +7,7 @@ from __future__ import annotations
 1. **整份拒收。** 任何一档不合规就整份抛 ValueError，不写半份混合规则。
 2. **总开关只影响未来资格。** 关闭后不再产生新资格与新进度提醒，已经获得的
    资格不受影响（由调用方保证，这里只提供 `active_tiers()` 过滤）。
-3. **奖励是一句话自由文本。** 如"1 管咖啡"，不拆数量与单位；天数 1..28
+3. **奖励是一句话自由文本。** 如"1 管咖啡"，不拆数量与单位；天数 1..365
    可自定义、可增删，不锁死固定档位。
 4. **档位只有"在"和"不在"。** 没有每档独立开关：要这档就加一条、不要就删掉，
    不存在"存着但不生效"的中间状态。历史上存过的每档启用标记在解析时被忽略
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 SETTING_KEY = "checkin_reward_tiers"
 
 MIN_DAYS = 1
-MAX_DAYS = 28
+MAX_DAYS = 365
 MAX_TEXT_CHARS = 100
 
 
@@ -139,9 +139,11 @@ def parse_reward_tiers_config(payload: object) -> CheckinRewardTierConfig:
         try:
             days = int(raw.get("days"))
         except (TypeError, ValueError) as exc:
-            raise ValueError("档位天数必须是 1..28 的整数。") from exc
+            raise ValueError(f"档位天数必须是 {MIN_DAYS}..{MAX_DAYS} 的整数。") from exc
         if days < MIN_DAYS or days > MAX_DAYS:
-            raise ValueError(f"档位天数超出范围：{days}，只允许 1..28。")
+            raise ValueError(
+                f"档位天数超出范围：{days}，只允许 {MIN_DAYS}..{MAX_DAYS}。"
+            )
         if days in seen:
             raise ValueError(f"档位天数重复：{days}")
         seen.add(days)

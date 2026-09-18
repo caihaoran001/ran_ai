@@ -122,7 +122,7 @@ class CheckinRewardRound(TimestampMixin, Base):
 
 
 class CheckinRewardProgressNotice(TimestampMixin, Base):
-    """2/6/13/27 天进度提醒去重账本。"""
+    """每个奖励档位达标前一天的进度提醒去重账本。"""
 
     __tablename__ = "checkin_reward_progress_notices"
     __table_args__ = (

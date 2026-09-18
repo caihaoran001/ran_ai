@@ -43,9 +43,6 @@ from app.services.service_case_queries import (
     SERVICE_CASE_SETTLEMENT_GRACE,
     checkin_first_day,
     select_active_service_cases,
-    service_continuation_active,
-    service_phase_end_date,
-    service_settlement_ended,
 )
 
 
@@ -199,10 +196,6 @@ async def valid_reward_checkins(
         Checkin.checkin_date >= first_day,
         Checkin.deleted_at.is_(None),
     ]
-    if not service_continuation_active(service_case):
-        phase_end = service_phase_end_date(service_case, tz)
-        if phase_end is not None:
-            conditions.append(Checkin.checkin_date <= phase_end)
     if through_date is not None:
         conditions.append(Checkin.checkin_date <= through_date)
     rows = list(
@@ -386,7 +379,6 @@ async def reconcile_case_rewards(
     service_case_id: int,
     through_date: date | None = None,
     timezone_name: str | None = None,
-    allow_completed_settlement: bool = False,
 ) -> RewardReconciliation:
     """按现有打卡账本补齐奖励资格和进度提醒。
 
@@ -398,10 +390,11 @@ async def reconcile_case_rewards(
     )
     if service_case is None:
         raise ValueError("服务单不存在或已删除。")
-    allowed_statuses = {ServiceCaseStatus.IN_SERVICE}
-    if allow_completed_settlement:
-        allowed_statuses.add(ServiceCaseStatus.COMPLETED)
-    if service_case.status not in allowed_statuses:
+    if (
+        service_case.member_left_at is not None
+        or service_case.status
+        not in {ServiceCaseStatus.IN_SERVICE, ServiceCaseStatus.COMPLETED}
+    ):
         return RewardReconciliation(0, (), (), None)
 
     config = await load_reward_program(session)
@@ -938,6 +931,123 @@ async def deliver_pending_shipment_notices(
     return sent
 
 
+def _highest_promised_tier_earned(
+    program: CheckinRewardProgram | None,
+    *,
+    qualified_days: set[int],
+) -> bool:
+    """已结营用户拿满个人承诺的最高档后，不再重复统计打卡。"""
+
+    if program is None or program.reward_config_snapshot is None:
+        return False
+    try:
+        snapshot = parse_reward_tiers_config(program.reward_config_snapshot)
+    except ValueError:
+        logger.warning(
+            "用户奖励承诺快照无法解析，保留结算任务以暴露错误 service_case_id=%s",
+            program.service_case_id,
+            exc_info=True,
+        )
+        return False
+    tiers = snapshot.active_tiers()
+    return bool(tiers) and max(tier.days for tier in tiers) in qualified_days
+
+
+async def _reward_case_ids(
+    session: AsyncSession,
+    *,
+    local_now: datetime,
+) -> tuple[list[int], list[int]]:
+    """返回（需要通知的服务单，需要重新结算的服务单）。
+
+    在服用户沿用原扫描范围；已结营用户只有锁定过奖励承诺才长期参与。刚结营但
+    尚未生成承诺行的服务单仍保留一天兼容窗口，避免结营调度与首次结算竞态。
+    """
+
+    recent_cutoff = local_now.astimezone(timezone.utc) - SERVICE_CASE_SETTLEMENT_GRACE
+    rows = list(
+        (
+            await session.execute(
+                select(ServiceCase, CheckinRewardProgram)
+                .outerjoin(
+                    CheckinRewardProgram,
+                    CheckinRewardProgram.service_case_id == ServiceCase.id,
+                )
+                .where(
+                    ServiceCase.deleted_at.is_(None),
+                    ServiceCase.member_left_at.is_(None),
+                    (ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
+                    | (
+                        (ServiceCase.status == ServiceCaseStatus.COMPLETED)
+                        & (
+                            CheckinRewardProgram.reward_config_snapshot.is_not(None)
+                            | (
+                                ServiceCase.ended_at.is_not(None)
+                                & (ServiceCase.ended_at >= recent_cutoff)
+                            )
+                        )
+                    ),
+                )
+            )
+        ).all()
+    )
+    if not rows:
+        return [], []
+
+    case_ids = [service_case.id for service_case, _ in rows]
+    qualified_by_case: dict[int, set[int]] = defaultdict(set)
+    for service_case_id, tier_days in (
+        await session.execute(
+            select(
+                CheckinRewardQualification.service_case_id,
+                CheckinRewardQualification.tier_days,
+            ).where(CheckinRewardQualification.service_case_id.in_(case_ids))
+        )
+    ).all():
+        qualified_by_case[service_case_id].add(tier_days)
+
+    pending_notice_case_ids = set(
+        await session.scalars(
+            select(CheckinRewardQualification.service_case_id)
+            .where(
+                CheckinRewardQualification.service_case_id.in_(case_ids),
+                CheckinRewardQualification.notification_status.in_(
+                    PENDING_NOTICE_STATUSES
+                ),
+            )
+            .distinct()
+        )
+    )
+    pending_notice_case_ids.update(
+        await session.scalars(
+            select(CheckinRewardProgressNotice.service_case_id)
+            .where(
+                CheckinRewardProgressNotice.service_case_id.in_(case_ids),
+                CheckinRewardProgressNotice.notification_status.in_(
+                    PENDING_NOTICE_STATUSES
+                ),
+            )
+            .distinct()
+        )
+    )
+
+    notice_ids: list[int] = []
+    reconcile_ids: list[int] = []
+    for service_case, program in rows:
+        has_finished = (
+            service_case.status == ServiceCaseStatus.COMPLETED
+            and _highest_promised_tier_earned(
+                program,
+                qualified_days=qualified_by_case[service_case.id],
+            )
+        )
+        if not has_finished:
+            reconcile_ids.append(service_case.id)
+        if not has_finished or service_case.id in pending_notice_case_ids:
+            notice_ids.append(service_case.id)
+    return notice_ids, reconcile_ids
+
+
 async def check_checkin_rewards_once(
     *,
     now: datetime | None = None,
@@ -948,43 +1058,17 @@ async def check_checkin_rewards_once(
     local_now = now.astimezone(tz) if now is not None else datetime.now(tz)
     await recover_interrupted_reward_notices()
     async with SessionLocal() as session:
-        settlement_cutoff = local_now.astimezone(timezone.utc) - SERVICE_CASE_SETTLEMENT_GRACE
-        case_rows = list(
-            await session.scalars(
-                select(ServiceCase).where(
-                    ServiceCase.deleted_at.is_(None),
-                    # 客户已退群的服务单不再结算奖励、也不往群里发奖励通知：
-                    # 群位可能已经换成新客户了。
-                    ServiceCase.member_left_at.is_(None),
-                    (
-                        (ServiceCase.status == ServiceCaseStatus.IN_SERVICE)
-                        | (
-                            (ServiceCase.status == ServiceCaseStatus.COMPLETED)
-                            & ServiceCase.ended_at.is_not(None)
-                            & (ServiceCase.ended_at >= settlement_cutoff)
-                        )
-                    ),
-                )
-            )
+        case_ids, reconciliation_case_ids = await _reward_case_ids(
+            session,
+            local_now=local_now,
         )
-    case_rows = [
-        row
-        for row in case_rows
-        if row.status != ServiceCaseStatus.COMPLETED
-        or not service_settlement_ended(row, local_now, tz)
-    ]
-    case_ids = [row.id for row in case_rows]
-    completed_case_ids = {
-        row.id for row in case_rows if row.status == ServiceCaseStatus.COMPLETED
-    }
-    for service_case_id in case_ids:
+    for service_case_id in reconciliation_case_ids:
         async with SessionLocal() as session:
             await reconcile_case_rewards(
                 session,
                 service_case_id=service_case_id,
                 through_date=local_now.date(),
                 timezone_name=settings.reminder_timezone,
-                allow_completed_settlement=service_case_id in completed_case_ids,
             )
             await session.commit()
 
