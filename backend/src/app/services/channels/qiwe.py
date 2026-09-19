@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import hashlib
 import logging
 from pathlib import Path
 import random
@@ -110,6 +111,7 @@ class QiWeChannel:
                 "fileId": data.get("fileId"),
                 "fileSize": data.get("fileSize"),
                 "filename": data.get("filename") or path.name,
+                "fileMd5": data.get("fileMd5") or _file_md5_hex(path),
             },
         }
         result = await self._post_json("/api/qw/doApi", payload)
@@ -559,24 +561,26 @@ class QiWeChannel:
 
     async def _upload_file(self, file_path: Path) -> ChannelSendResult:
         try:
+            content = file_path.read_bytes()
             async with self._client_context() as client:
-                with file_path.open("rb") as file_obj:
-                    response = await client.post(
-                        f"{self.base_url}/api/qw/doFileApi",
-                        headers={"X-QIWEI-TOKEN": self.token},
-                        data={
-                            "method": "/cloud/cdnBigUpload",
-                            "guid": self.guid,
-                            "fileType": "5",
-                        },
-                        files={
-                            "file": (
-                                file_path.name,
-                                file_obj,
-                                "application/octet-stream",
-                            )
-                        },
-                    )
+                response = await client.post(
+                    f"{self.base_url}/api/qw/doApi",
+                    headers={"X-QIWEI-TOKEN": self.token},
+                    data={
+                        "method": "/cloud/cdnBigUpload",
+                        "guid": self.guid,
+                        "fileType": "5",
+                        "filename": file_path.name,
+                        "fileMd5": hashlib.md5(content).hexdigest(),
+                    },
+                    files={
+                        "file": (
+                            file_path.name,
+                            content,
+                            "application/octet-stream",
+                        )
+                    },
+                )
                 response.raise_for_status()
                 data = response.json()
         except Exception as exc:
@@ -598,6 +602,14 @@ class _BorrowedAsyncClient:
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         return None
+
+
+def _file_md5_hex(file_path: Path) -> str:
+    digest = hashlib.md5()
+    with file_path.open("rb") as file_obj:
+        for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _qiwe_result(data: dict[str, Any]) -> ChannelSendResult:

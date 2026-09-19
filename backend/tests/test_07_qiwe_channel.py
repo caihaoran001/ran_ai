@@ -304,6 +304,7 @@ async def test_qiwe_send_document_uploads_then_sends_file(tmp_path):
                 "fileId": "file-id",
                 "fileSize": 5,
                 "filename": "doc.txt",
+                "fileMd5": "5d41402abc4b2a76b9719d911017c592",
             },
         },
         {"code": 0, "msg": "成功", "data": {"msgUniqueIdentifier": "msg-file"}},
@@ -314,10 +315,39 @@ async def test_qiwe_send_document_uploads_then_sends_file(tmp_path):
 
     assert result.success is True
     assert result.message_id == "msg-file"
+    assert client.calls[0][0] == "http://manager.qiweapi.com/qiwe/api/qw/doApi"
     assert client.calls[0][1]["data"]["method"] == "/cloud/cdnBigUpload"
     assert client.calls[0][1]["data"]["fileType"] == "5"
+    assert client.calls[0][1]["data"]["filename"] == "doc.txt"
+    assert client.calls[0][1]["data"]["fileMd5"] == "5d41402abc4b2a76b9719d911017c592"
     assert client.calls[1][1]["json"]["method"] == "/msg/sendFile"
     assert client.calls[1][1]["json"]["params"]["fileId"] == "file-id"
+    assert client.calls[1][1]["json"]["params"]["fileMd5"] == "5d41402abc4b2a76b9719d911017c592"
+
+
+@pytest.mark.asyncio
+async def test_qiwe_send_document_falls_back_to_local_md5(tmp_path):
+    file_path = tmp_path / "doc.txt"
+    file_path.write_text("hello", encoding="utf-8")
+    client = FakeClient([
+        {
+            "code": 0,
+            "msg": "成功",
+            "data": {
+                "fileAesKey": "aes",
+                "fileId": "file-id",
+                "fileSize": 5,
+                "filename": "doc.txt",
+            },
+        },
+        {"code": 0, "msg": "成功", "data": {"msgUniqueIdentifier": "msg-file"}},
+    ])
+    channel = QiWeChannel(_settings(), http_client=client)
+
+    result = await channel.send_document("room-1", str(file_path))
+
+    assert result.success is True
+    assert client.calls[1][1]["json"]["params"]["fileMd5"] == "5d41402abc4b2a76b9719d911017c592"
 
 
 @pytest.mark.asyncio
