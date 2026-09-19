@@ -351,6 +351,57 @@ async def test_qiwe_send_document_falls_back_to_local_md5(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_qiwe_send_text_retries_without_quote_when_rejected():
+    client = FakeClient([
+        {"code": 400, "msg": "设备不存在或无权限", "data": {}},
+        {"code": 0, "msg": "成功", "data": {"msgUniqueIdentifier": "msg-plain"}},
+    ])
+    channel = QiWeChannel(_settings(), http_client=client)
+
+    result = await channel.send_text(
+        "room-1",
+        "hello",
+        reply_to="origin-id",
+        reply_context={
+            "senderId": "user-1",
+            "senderName": "蔡浩然",
+            "timestamp": 1780000000,
+            "msgData": {"content": "我刚才说的那句话"},
+        },
+    )
+
+    assert result.success is True
+    assert result.message_id == "msg-plain"
+    assert len(client.calls) == 2
+    assert "reply" in client.calls[0][1]["json"]["params"]
+    assert "reply" not in client.calls[1][1]["json"]["params"]
+    assert client.calls[1][1]["json"]["params"]["content"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_qiwe_send_text_no_retry_when_first_attempt_succeeds():
+    client = FakeClient([
+        {"code": 0, "msg": "成功", "data": {"msgUniqueIdentifier": "msg-1"}}
+    ])
+    channel = QiWeChannel(_settings(), http_client=client)
+
+    result = await channel.send_text(
+        "room-1",
+        "hello",
+        reply_to="origin-id",
+        reply_context={
+            "senderId": "user-1",
+            "senderName": "蔡浩然",
+            "timestamp": 1780000000,
+            "msgData": {"content": "我刚才说的那句话"},
+        },
+    )
+
+    assert result.success is True
+    assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_qiwe_aggregator_merges_consecutive_user_messages():
     engine = FakeEngine()
     aggregator = QiWeMessageAggregator(FakeChannel(), window_seconds=0.01, engine=engine)

@@ -77,11 +77,7 @@ class QiWeChannel:
         if reply_payload:
             params["reply"] = reply_payload
 
-        payload = {
-            "method": "/msg/sendText",
-            "params": params,
-        }
-        return await self._post_json("/api/qw/doApi", payload)
+        return await self._post_with_quote_fallback("/msg/sendText", params)
 
     async def send_document(
         self,
@@ -368,11 +364,7 @@ class QiWeChannel:
         if reply_payload:
             params["reply"] = reply_payload
 
-        payload = {
-            "method": "/msg/sendHyperText",
-            "params": params,
-        }
-        return await self._post_json("/api/qw/doApi", payload, rate_limit=True)
+        return await self._post_with_quote_fallback("/msg/sendHyperText", params)
 
     async def send_feed_video(
         self,
@@ -533,6 +525,33 @@ class QiWeChannel:
                 delivery_uncertain=True,
             )
         return _qiwe_result(data)
+
+    async def _post_with_quote_fallback(
+        self, method: str, params: dict[str, Any]
+    ) -> ChannelSendResult:
+        """先带引用发；新平台拒收引用时（明确失败、未实际发出）降级重发纯文本。
+
+        新版要求 reply.type 与被引用消息类型一致、msgData 结构匹配，
+        不可引用的消息会整单失败。失败是平台明确返回的业务失败，
+        消息并未发出，此时去掉引用重试一次是安全的。
+        """
+        reply_attached = "reply" in params
+        result = await self._post_json("/api/qw/doApi", {"method": method, "params": params})
+        if (
+            reply_attached
+            and result is not None
+            and not result.success
+            and not result.delivery_uncertain
+        ):
+            logger.warning(
+                "QiWe send with quote rejected (error=%s); retrying without quote",
+                result.error,
+            )
+            plain_params = {key: value for key, value in params.items() if key != "reply"}
+            result = await self._post_json(
+                "/api/qw/doApi", {"method": method, "params": plain_params}, rate_limit=False
+            )
+        return result
 
     async def _post_json(self, path: str, payload: dict[str, Any], *, rate_limit: bool = True) -> ChannelSendResult:
         if not self._ready:
